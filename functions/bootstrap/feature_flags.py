@@ -88,6 +88,9 @@ REGISTRY: dict[str, Flag] = {
              "Google Maps grounding in text chat"),
         Flag("deepdive_public_profiles", "bool", "deepdive_public_profiles",
              "deep-dive public social-profile photo discovery"),
+        Flag("deepdive_validate_links", "bool", None,
+             "validate every deep-dive link (404/soft-404/dead hosts dropped) "
+             "before it is stored or shown", default=True),
         Flag("deepdive_blocked_regions", "list", "deepdive_blocked_regions",
              "location tokens for which the public-profile step is skipped"),
         Flag("vertex_ai_search", "bool", "vertex_ai_search",

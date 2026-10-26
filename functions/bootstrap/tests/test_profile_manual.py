@@ -326,6 +326,21 @@ def test_ai_rewrite_with_same_public_text_makes_no_proposal_and_clears_stale():
     assert pm.list_proposals(db, UID) == []
 
 
+def test_list_proposals_clears_stale_and_malformed_proposals():
+    db = _db()
+    _ingest_write(db, "interests", "She climbs and surfs.")
+    [prop] = pm.list_proposals(db, UID)
+    ref = story._pages_col(db, UID).document("interests")
+    # The user's own edit now matches Ayma's rewrite: nothing left to review.
+    ref.set({"user_edits": prop["after"]}, merge=True)
+    assert pm.list_proposals(db, UID) == []
+    assert _doc(db, "interests")["pending_proposal"] is None
+    # A proposal in an unexpected shape is cleared rather than shown blank.
+    ref.set({"pending_proposal": "not-a-dict"}, merge=True)
+    assert pm.list_proposals(db, UID) == []
+    assert _doc(db, "interests")["pending_proposal"] is None
+
+
 def test_new_private_and_first_time_pages_are_written_straight_through():
     db = _db()
     _ingest_write(db, "family", "She has two sisters.")

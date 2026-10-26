@@ -14,6 +14,7 @@
   "llm_fallback_to_google": false,
   "maps_grounding": true,
   "deepdive_public_profiles": true,
+  "deepdive_validate_links": true,
   "deepdive_blocked_regions": ["illinois", "texas", "eu"],
   "vertex_ai_search": true,
   "vertex_ai_search_daily_cap": 300,

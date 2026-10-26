@@ -1085,11 +1085,25 @@ class _LinkRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final isSocial = block.blockId.startsWith('social:');
+    final label = block.linkLabel.isNotEmpty ? block.linkLabel : block.url;
     return Row(
       children: [
+        if (isSocial) ...[
+          Icon(_socialIcon(block.tag), size: 16, color: ac.accent),
+          const SizedBox(width: 8),
+          if (block.tag.isNotEmpty)
+            Text(
+              _socialName(block.tag),
+              style: AymaType.sans(size: 13, soft: true, color: ac.fgMute),
+            ),
+          const SizedBox(width: 8),
+        ],
         Expanded(
           child: Text(
-            block.linkLabel.isNotEmpty ? block.linkLabel : block.url,
+            label,
+            maxLines: isSocial ? 1 : 2,
+            overflow: TextOverflow.ellipsis,
             style: AymaType.sans(size: 13, color: ac.accent, height: 1.35),
           ),
         ),
@@ -1110,6 +1124,26 @@ class _LinkRow extends StatelessWidget {
     );
   }
 }
+
+IconData _socialIcon(String platform) => switch (platform.toLowerCase()) {
+      'github' => Icons.code,
+      'youtube' => Icons.play_circle_outline,
+      'instagram' => Icons.camera_alt_outlined,
+      'linkedin' => Icons.work_outline,
+      'x' => Icons.alternate_email,
+      'facebook' => Icons.people_outline,
+      'tiktok' => Icons.music_note,
+      _ => Icons.public,
+    };
+
+String _socialName(String platform) => switch (platform.toLowerCase()) {
+      'github' => 'GitHub',
+      'youtube' => 'YouTube',
+      'linkedin' => 'LinkedIn',
+      'tiktok' => 'TikTok',
+      'x' => 'X',
+      final p => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1),
+    };
 
 /// Opens [url] in the external browser; ignores anything that isn't a
 /// parseable http(s) URL.

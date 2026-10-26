@@ -97,11 +97,11 @@ Map<String, dynamic> _report({
             'heading': 'Links',
             'blocks': [
               {
-                'block_id': 'link:https://github.com/suhailps93',
+                'block_id': 'link:https://example.com/alumni/suhailps93',
                 'type': 'link',
                 'editable': true,
-                'url': 'https://github.com/suhailps93',
-                'label': 'GitHub Profile',
+                'url': 'https://example.com/alumni/suhailps93',
+                'label': 'Alumni page',
               },
             ],
           },
@@ -114,6 +114,7 @@ Map<String, dynamic> _report({
                 'editable': true,
                 'url': 'https://instagram.com/suhail.p.sulaiman',
                 'label': '@suhail.p.sulaiman',
+                'tag': 'instagram',
               },
             ],
           },
@@ -996,7 +997,7 @@ void main() {
     expect(find.text('SOCIAL PROFILES'), findsOneWidget);
 
     await tester.tap(find.byKey(
-      const ValueKey('livingReportBlock:link:https://github.com/suhailps93'),
+      const ValueKey('livingReportBlock:link:https://example.com/alumni/suhailps93'),
     ));
     await tester.pumpAndSettle();
     expect(find.text('Ask Ayma'), findsOneWidget);
@@ -1005,7 +1006,7 @@ void main() {
     expect(correctCalls, hasLength(1));
     expect(correctCalls.single['scope'], 'block');
     expect(correctCalls.single['block_ids'],
-        ['link:https://github.com/suhailps93']);
+        ['link:https://example.com/alumni/suhailps93']);
   });
 
   testWidgets('a "Social profiles" block is tappable for edit',
