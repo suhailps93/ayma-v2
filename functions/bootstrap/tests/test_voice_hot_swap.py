@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("livekit.agents")
 pytest.importorskip("livekit.plugins.google.realtime")
 
-from livekit.agents import Agent, AgentSession, llm  # noqa: E402
+from livekit.agents import Agent, AgentSession, AgentStateChangedEvent, llm  # noqa: E402
 
 import agent  # noqa: E402
 import voices  # noqa: E402
@@ -74,7 +74,9 @@ def _seeded_session():
     return session
 
 
-def _swapper(session, factory, *, route="vertex", voice="Aoede", language=""):
+def _swapper(
+    session, factory, *, route="vertex", voice="Aoede", language="", muted=False
+):
     sw = agent.VoiceSwapper(
         session,
         system_prompt="SYSTEM PROMPT",
@@ -82,9 +84,38 @@ def _swapper(session, factory, *, route="vertex", voice="Aoede", language=""):
         voice_name=voice,
         voice_language=language,
         model_factory=factory,
+        session_id="s-1",
+        provider="livekit_inference" if route == "inference" else "google",
+        is_muted=lambda: muted,
+        settle_seconds=0.0,
+        verify_seconds=0.1,
     )
     sw.tools = []
     return sw
+
+
+def _speak(session):
+    session.emit(
+        "agent_state_changed",
+        AgentStateChangedEvent(old_state="listening", new_state="speaking"),
+    )
+
+
+def _new_sessions_speak(session, pattern=None):
+    """Make each handoff's new session start speaking (``pattern[i]`` False =
+    the i-th new session stays silent, like the hung gateway reply)."""
+    real = session.update_agent
+    count = [0]
+
+    def _update(new_agent):
+        real(new_agent)
+        i = count[0]
+        count[0] += 1
+        if pattern is None or (i < len(pattern) and pattern[i]):
+            asyncio.get_running_loop().call_soon(_speak, session)
+
+    session.update_agent = _update
+    return count
 
 
 async def _no_heads_up(_session, *a, **k):
@@ -132,6 +163,7 @@ def test_live_tool_without_reconnect_is_truthful():
 def test_swap_rebuilds_model_and_carries_history_once(monkeypatch):
     monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
     session = _seeded_session()
+    _new_sessions_speak(session)
     factory = _Factory()
     sw = _swapper(session, factory)
     tools_before = sw.tools
@@ -161,6 +193,7 @@ def test_swap_rebuilds_model_and_carries_history_once(monkeypatch):
 def test_swap_note_and_confirmation_in_new_session(monkeypatch):
     monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
     session = _seeded_session()
+    _new_sessions_speak(session)
     sw = _swapper(session, _Factory())
 
     async def _run():
@@ -192,6 +225,7 @@ def test_swap_note_and_confirmation_in_new_session(monkeypatch):
 def test_session_level_relays_survive_the_swap(monkeypatch):
     monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
     session = _seeded_session()
+    _new_sessions_speak(session)
     seen = []
     session.on("metrics_collected", lambda ev: seen.append(ev))
     session.on("conversation_item_added", lambda ev: seen.append(ev))
@@ -210,6 +244,7 @@ def test_session_level_relays_survive_the_swap(monkeypatch):
 def test_accent_reconnects_with_language_hint_on_google(monkeypatch):
     monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
     session = _seeded_session()
+    _new_sessions_speak(session)
     factory = _Factory()
     sw = _swapper(session, factory)
 
@@ -243,6 +278,7 @@ def test_same_voice_does_not_reconnect():
 def test_back_to_back_requests_swap_serially_to_the_latest(monkeypatch):
     monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
     session = _seeded_session()
+    _new_sessions_speak(session)
     factory = _Factory()
     sw = _swapper(session, factory, route="inference")
 
@@ -312,3 +348,248 @@ def test_await_heads_up_gives_up_when_none_comes():
     s = _StateSession()
     asyncio.run(asyncio.wait_for(agent._await_heads_up(s, 0.05, 1.0), 0.5))
     assert s.handlers == []
+
+
+# --- Founder test 2026-10-26: "change your voice to a male voice that speaks
+# American English" -> heads-up, then silence. The new LiveKit Inference
+# session hung on a reply requested the instant it was set up.
+
+
+def _reports(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        agent, "capture_exception", lambda exc=None, tags=None: sent.append((exc, tags))
+    )
+    return sent
+
+
+def test_confirmation_waits_for_the_new_session_to_settle(monkeypatch):
+    order = []
+
+    class _S:
+        async def generate_reply(self, *, instructions):
+            order.append("reply")
+
+    async def _sleep(seconds):
+        order.append(("settle", seconds))
+
+    a = agent.SwappedVoiceAgent(
+        confirm_instructions="confirm", settle_seconds=1.0, instructions="x"
+    )
+    monkeypatch.setattr(agent.SwappedVoiceAgent, "session", property(lambda s: _S()))
+    monkeypatch.setattr(agent.asyncio, "sleep", _sleep)
+    asyncio.run(a.on_enter())
+    assert order == [("settle", 1.0), "reply"]
+    assert agent._SWAP_SETTLE_SECONDS > 0
+
+
+def test_silent_new_session_is_rebuilt_once(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    sent = _reports(monkeypatch)
+    session = _seeded_session()
+    _new_sessions_speak(session, [False, True])
+    factory = _Factory()
+    sw = _swapper(session, factory, route="inference")
+
+    async def _run():
+        sw.request("Puck", "")
+        await sw._task
+
+    asyncio.run(_run())
+    assert [c[0] for c in factory.calls] == ["Puck", "Puck"]
+    assert sw._live == ("Puck", None)
+    new = session.current_agent
+    assert new.llm.voice == "Puck"
+    assert "Confirm in one short" in new._confirm_instructions
+    assert len(sent) == 1
+    exc, tags = sent[0]
+    assert isinstance(exc, agent.VoiceSwapError)
+    assert tags == {
+        "voice_swap": "failed",
+        "session_id": "s-1",
+        "voice_provider": "livekit_inference",
+    }
+
+
+def test_two_silent_sessions_restore_the_old_voice_honestly(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    sent = _reports(monkeypatch)
+    session = _seeded_session()
+    _new_sessions_speak(session, [False, False, True])
+    factory = _Factory()
+    sw = _swapper(session, factory, route="inference")
+
+    async def _run():
+        sw.request("Puck", "")
+        await sw._task
+        # A retry of the same ask later is a real swap again, not "already
+        # the current voice".
+        assert sw.request("Puck", "")[0] is True
+        sw._task.cancel()
+
+    asyncio.run(_run())
+    assert [c[0] for c in factory.calls] == ["Puck", "Puck", "Aoede"]
+    restored = session.current_agent
+    assert restored.llm.voice == "Aoede"
+    assert "couldn't switch voices, staying with my current one" in (
+        restored._confirm_instructions
+    )
+    assert "Puck" in restored._confirm_instructions
+    assert "Never claim the switch worked" in restored._confirm_instructions
+    assert restored.instructions == "SYSTEM PROMPT"
+    assert sw._live == ("Aoede", None)
+    assert len(sent) == 2
+
+
+def test_failed_restore_is_reported_not_raised(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    sent = _reports(monkeypatch)
+    session = _seeded_session()
+    _new_sessions_speak(session, [False, False, False])
+    sw = _swapper(session, _Factory(), route="inference")
+
+    async def _run():
+        sw.request("Puck", "")
+        await sw._task
+
+    asyncio.run(_run())
+    assert len(sent) == 3
+    assert "restore" in str(sent[-1][0])
+
+
+def test_muted_silence_is_not_a_failure(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    sent = _reports(monkeypatch)
+    session = _seeded_session()
+    _new_sessions_speak(session, [False])
+    factory = _Factory()
+    sw = _swapper(session, factory, route="inference", muted=True)
+
+    async def _run():
+        sw.request("Puck", "")
+        await sw._task
+
+    asyncio.run(_run())
+    assert [c[0] for c in factory.calls] == ["Puck"]
+    assert sent == [] and sw._live == ("Puck", None)
+
+
+def test_tool_result_does_not_wait_for_the_swap():
+    """The tool returns its result (which prompts the heads-up) at once while
+    the swap waits for that heads-up: neither waits on the other."""
+    session = _seeded_session()
+    _new_sessions_speak(session)
+    factory = _Factory()
+    sw = _swapper(session, factory, route="inference")
+    tool = svp.bind_live(_Chain(), "u1", sw.request)
+
+    async def _run():
+        msg = tool(request="a male voice", accent_language="American English")
+        assert "Switching my voice, one second" in msg
+        await asyncio.sleep(0.05)
+        assert not sw._task.done() and factory.calls == []
+        _speak(session)  # the heads-up plays
+        session.emit(
+            "agent_state_changed",
+            AgentStateChangedEvent(old_state="speaking", new_state="listening"),
+        )
+        await asyncio.wait_for(sw._task, 1.0)
+
+    asyncio.run(_run())
+    assert factory.calls == [("Charon", "American English", "inference")]
+    assert isinstance(session.current_agent, agent.SwappedVoiceAgent)
+
+
+def test_swap_proceeds_when_the_heads_up_never_comes(monkeypatch):
+    real = agent._await_heads_up
+
+    async def _short(session):
+        await real(session, 0.05, 0.05)
+
+    monkeypatch.setattr(agent, "_await_heads_up", _short)
+    session = _seeded_session()
+    _new_sessions_speak(session)
+    factory = _Factory()
+    sw = _swapper(session, factory, route="inference")
+
+    async def _run():
+        sw.request("Puck", "")
+        await asyncio.wait_for(sw._task, 1.0)
+
+    asyncio.run(_run())
+    assert [c[0] for c in factory.calls] == ["Puck"]
+
+
+@pytest.mark.parametrize(
+    "kwargs, preset, accent",
+    [
+        # What the live model actually sent in the 2026-10-26 repro runs.
+        ({"request": "Puck", "accent_language": "en-US"}, "Puck", "en-US"),
+        ({"request": "Fenrir", "accent_language": "en-US"}, "Fenrir", "en-US"),
+        ({"request": "male", "voice_name": "Puck"}, "Puck", ""),
+        ({"voice_name": "puck"}, "Puck", ""),
+        ({"accent_language": "a male voice, American English"}, "Charon",
+         "a male voice, American English"),
+        ({"accent_language": "female, British"}, "Kore", "female, British"),
+        ({"request": "a male voice that speaks American English"}, "Charon", ""),
+        ({"accent_language": "a soft Southern US accent"}, None,
+         "a soft Southern US accent"),
+    ],
+)
+def test_voice_asks_map_to_presets(kwargs, preset, accent):
+    got = svp._persist(
+        _Chain(), "u1", kwargs.get("request", ""), kwargs.get("voice_name", ""),
+        kwargs.get("accent_language", ""),
+    )
+    assert got == (preset, accent)
+
+
+def test_american_english_hint_only_where_honoured():
+    assert voices.bcp47_hint("American English") == "en-US"
+    google = _swapper(_seeded_session(), _Factory(), route="vertex")
+    assert google._hint("American English") == "en-US"
+    inference = _swapper(_seeded_session(), _Factory(), route="inference")
+    assert inference._hint("American English") is None
+    reconnecting, detail = inference.request(None, "American English")
+    assert not reconnecting and "en-US" not in detail
+
+
+def test_model_build_failures_say_so_on_the_current_session(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    sent = _reports(monkeypatch)
+    session = _seeded_session()
+    old = session.current_agent
+    replies = []
+    session.generate_reply = lambda *, instructions: replies.append(instructions)
+
+    def _boom(*a, **k):
+        raise RuntimeError("no model")
+
+    sw = _swapper(session, _boom, route="inference")
+
+    async def _run():
+        sw.request("Puck", "")
+        await sw._task
+
+    asyncio.run(_run())
+    assert session.current_agent is old
+    assert len(replies) == 1 and "couldn't switch voices" in replies[0]
+    assert [str(e) for e, _ in sent] == ["no model", "no model"]
+    assert sw._live == ("Aoede", None)
+
+
+def test_call_ending_mid_swap_stops_retrying(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    sent = _reports(monkeypatch)
+    session = _seeded_session()
+    count = _new_sessions_speak(session, [False, False, False])
+    factory = _Factory()
+    sw = _swapper(session, factory, route="inference")
+    session.emit("close", object())
+
+    async def _run():
+        sw.request("Puck", "")
+        await sw._task
+
+    asyncio.run(_run())
+    assert count[0] == 1 and len(sent) == 1

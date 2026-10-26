@@ -26,7 +26,20 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   is made once per call and tagged on `raw_turns.voice_provider`.
 - A mid-call `set_voice_preference` hot-swaps the Live model (`VoiceSwapper`:
   heads-up line, `update_agent` to a `SwappedVoiceAgent` on a new model with the
-  spoken history carried over, then a confirmation in the new voice).
+  spoken history carried over, then a confirmation in the new voice). The
+  confirmation is requested only after a 1 s settle (`_SWAP_SETTLE_SECONDS`): on
+  the Inference gateway a reply asked for the instant the new session is set up
+  is acknowledged and then never produced, which blocked the turn queue and left
+  the call on "Listening" (founder test 2026-10-26). Each new session must start
+  speaking within 6 s (`_SWAP_VERIFY_SECONDS`) or it is interrupted and rebuilt
+  once; if that one is silent too, the previous voice is restored and Ayma says
+  she couldn't switch (`prompts/voice_swap_failed.md`). Every step logs
+  `voice-swap ...` with the session id and provider; failures go to Sentry
+  (`VoiceSwapError`, tags `session_id`, `voice_provider`). Muted ("shut up")
+  silence is not counted as a failure. The tool maps a preset named anywhere
+  (`request="Puck"`, any case) and a gender word put in `accent_language`
+  ("male" -> Charon, "female" -> Kore); the `en-US` hint for "American English"
+  is passed on the Google route only (Inference ignores hints).
 - The app-control tools (`current_screen`, `open_screen`, `app_action`,
   `account_action`) read `users/{uid}/voice_context/current` and queue commands
   at `users/{uid}/app_commands/pending` (`functions/bootstrap/app_registry.json`).
