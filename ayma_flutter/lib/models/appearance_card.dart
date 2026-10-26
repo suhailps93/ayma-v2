@@ -114,8 +114,8 @@ class AppearanceCardData {
     final nextSteps = [
       for (final prefix in const ['face', 'body'])
         for (final b in blocks)
-          if (b.type == kBlockFact &&
-              b.blockId.startsWith('$prefix:reco:') &&
+          if (isRecommendation(b) &&
+              b.blockId.startsWith('$prefix:') &&
               b.text.trim().isNotEmpty)
             (_category(b.tag), b.text.trim()),
     ];
@@ -131,6 +131,10 @@ class AppearanceCardData {
       nextSteps: nextSteps,
     );
   }
+
+  /// A face/body recommendation fact: shown only in "What to do next".
+  static bool isRecommendation(ReportBlock b) =>
+      b.type == kBlockFact && RegExp(r'^(face|body):reco:').hasMatch(b.blockId);
 
   /// "6.3" for a 0-10 score; a whole number drops the ".0".
   static String? _score(Object? v) {
