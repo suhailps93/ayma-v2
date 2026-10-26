@@ -6,6 +6,7 @@ import 'package:ayma_flutter/services/app_context.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -340,5 +341,33 @@ void main() {
     expect(
         exploreSummary(query: '', filterLabel: 'Mutual', cards: const []),
         'No search text, filter "Mutual": nobody is listed.');
+  });
+
+  testWidgets('Ayma picks an Explore filter chip through ui_action',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final handle = tester.ensureSemantics();
+    final api = _api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X',
+           'liked': true},
+          {'uid': 'b', 'name': 'Bo', 'age': 30, 'location': 'Y'},
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+    final cap = ScreenCapture(
+      routeOf: () => '/explore',
+      popupOpen: () => false,
+      settle: () => tester.pumpAndSettle(),
+    );
+    final s = cap.capture();
+    expect(s.visible, contains('Ash'));
+    final chip = s.controls.firstWhere((c) => c.label.contains('Your likes'));
+    final r = await cap.perform(control: chip.id, label: chip.label, op: 'tap');
+    expect(r.ok, isTrue, reason: r.reason);
+    expect(find.text('Bo'), findsNothing);
+    expect(r.result, isNot(contains('Bo')));
+    handle.dispose();
   });
 }

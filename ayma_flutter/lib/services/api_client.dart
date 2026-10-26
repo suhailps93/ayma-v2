@@ -1402,6 +1402,9 @@ class ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async {
     final http.Response response;
@@ -1430,6 +1433,9 @@ class ApiClient {
           'screen_subject_uid': screenSubjectUid,
           'screen_subject_name': screenSubjectName,
           'screen_note': screenNote,
+          'screen_route': screenRoute,
+          'screen_detail': screenDetail,
+          'screen_visible': screenVisible,
         }),
       );
     } on http.ClientException catch (e) {
@@ -1472,6 +1478,9 @@ class ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
@@ -1497,6 +1506,9 @@ class ApiClient {
         'screen_subject_uid': screenSubjectUid,
         'screen_subject_name': screenSubjectName,
         'screen_note': screenNote,
+        'screen_route': screenRoute,
+        'screen_detail': screenDetail,
+        'screen_visible': screenVisible,
       });
 
     final http.StreamedResponse res;

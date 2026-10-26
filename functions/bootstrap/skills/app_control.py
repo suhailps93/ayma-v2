@@ -31,12 +31,16 @@ the single source of truth (founder bug, 2026-10-25: asked to open the "Your
 profile is 59% complete" card, Ayma said no such page existed). ``open_screen``
 opens any registered destination by key or the user's own words and sends the
 client the route ``path`` to push; ``app_action`` changes any registered
-setting; ``account_action`` runs the destructive ones (sign out, delete
-account, withdraw consent, wipe memory) only after an explicit confirmation
-in a later turn.
+setting; ``account_action`` runs sign out and wipe memory only after an
+explicit confirmation in a later turn. ``ui_action`` operates any visible
+control (tap, toggle, pick, slide, type, scroll, back) by the id the live
+screen capture gave it, except what the registry's ``ui_action_policy``
+denies (checked here on the label and again by the app on the real control).
 Pages that need a specific person/record go through ``open_profile``,
-``open_message_thread`` and ``open_match_report``. Payment pages only ever
-open; nothing here can buy anything.
+``open_message_thread`` and ``open_match_report``. Delete account, withdraw
+face-matching consent and every purchase are navigate-only (founder rule,
+2026-10-25): the tool opens the page and the user acts there themselves; no
+tool path here can delete the account, withdraw consent or buy anything.
 """
 
 from __future__ import annotations
@@ -187,7 +191,39 @@ def _is_fresh(updated_at) -> bool:
     return (time.time() - ts) <= _STALE_SECONDS
 
 
+_NOTHING_OPEN = "The user hasn't opened anything specific."
+
+# The generic capture (route, headings, text, controls) is two halves of at
+# most ~1,500 characters each on the client; this caps what reaches a prompt.
+_VISIBLE_MAX_CHARS = 3200
+
+
 def _describe(ctx: dict) -> str:
+    """One description of the user's screen: the screen's own slug-based line,
+    the route's registry name and what can be opened from it, then the live
+    capture of what is on it (text and operable controls)."""
+    base = _describe_screen(ctx)
+    route = str(ctx.get("route") or "").strip()
+    visible = str(ctx.get("visible") or "").strip()[:_VISIBLE_MAX_CHARS]
+    name = app_registry.route_name(route) if route else ""
+    if base == _NOTHING_OPEN and name:
+        base = f"The user is on {name}."
+    parts = [base]
+    if route:
+        parts.append(f"Route: {route}" + (f" ({name})." if name else "."))
+        dest = app_registry.destination_for_route(route)
+        items = app_registry.found_on(dest["key"]) if dest else []
+        if items and dest["key"] != "profile":
+            parts.append("On this page: " + "; ".join(items) + ".")
+    if visible:
+        parts.append(
+            "On screen now (live; controls read [id] type \"label\" = state "
+            "and ui_action operates them by id): " + visible
+        )
+    return " ".join(parts)
+
+
+def _describe_screen(ctx: dict) -> str:
     screen = str(ctx.get("screen") or "").strip()
     subject = str(ctx.get("subject_name") or "").strip()
     subject_uid = str(ctx.get("subject_uid") or "").strip()
@@ -259,7 +295,7 @@ def _describe(ctx: dict) -> str:
         return "The user is looking at someone's profile."
     if screen:
         return f"The user is on the {screen} screen."
-    return "The user hasn't opened anything specific."
+    return _NOTHING_OPEN
 
 
 def _resolve_person(db, uid: str, name: str) -> tuple[str | None, str]:
@@ -309,11 +345,11 @@ def _bind_current_screen(db, uid: str) -> Callable[..., str]:
         try:
             snap = _voice_context_doc(db, uid).get()
         except Exception:  # noqa: BLE001
-            return "The user hasn't opened anything specific."
+            return _NOTHING_OPEN
         data = snap.to_dict() if getattr(snap, "exists", False) else None
         data = data or {}
         if not data or not _is_fresh(data.get("updated_at")):
-            return "The user hasn't opened anything specific."
+            return _NOTHING_OPEN
         screen = str(data.get("screen") or "").strip()
         subject_uid = str(data.get("subject_uid") or "").strip()
         # Text chat already gets a real briefing on the profile it's shown
@@ -329,20 +365,17 @@ def _bind_current_screen(db, uid: str) -> Callable[..., str]:
             except Exception:  # noqa: BLE001
                 briefing = ""
             if briefing:
-                return briefing
+                extra = _describe(data) if data.get("visible") else ""
+                return f"{briefing}\n{extra}".strip()
         return _describe(data)
 
     return current_screen
 
 
 def _not_a_page(asked: str) -> str:
-    """The honest answer for a request that matches no destination: the
-    registry's own explanation when it's a known-unavailable thing, a pointer
-    to the right tool when it's a setting/action, otherwise "doesn't exist"
-    with the real list."""
-    gone = app_registry.find_unavailable(asked)
-    if gone:
-        return f"Not available: {gone['say']}"
+    """The honest answer for a request that matches no destination (known
+    unavailable things are answered before this): a pointer to the right tool
+    when it's a setting/action, otherwise "doesn't exist" with the real list."""
     act = app_registry.find_account_action(asked)
     if act:
         return (
@@ -401,10 +434,34 @@ async def _navigate(db, uid: str, key: str, path: str, label: str) -> str:
     return _NOT_NAVIGATED
 
 
+async def _navigate_only(db, uid: str, dest_key: str, say: str) -> str:
+    """Delete account, withdraw consent and every purchase never run from a
+    tool: open the page where the user does it themselves and hand the model
+    the kind, brief line to say."""
+    dest = app_registry.find_destination(dest_key)
+    path, label = await asyncio.to_thread(_resolve_path, db, uid, dest)
+    nav = await _navigate(db, uid, dest["key"], path, label)
+    if nav.startswith("navigated:"):
+        return (
+            f"Not done, by design: you never do this for the user. {nav} "
+            f"Tell them kindly and briefly: \"{say}\""
+        )
+    return f"Not done, by design: you never do this for the user. {nav}"
+
+
+async def _unavailable_reply(db, uid: str, gone: dict) -> str:
+    if gone.get("navigate"):
+        return await _navigate_only(db, uid, gone["navigate"], gone["say"])
+    return f"Not available: {gone['say']}"
+
+
 def _bind_open_screen(db, uid: str) -> Callable[..., str]:
     async def open_screen(screen: str = "") -> str:
         dest = app_registry.find_destination(screen)
         if dest is None:
+            gone = app_registry.find_unavailable(screen.strip())
+            if gone:
+                return await _unavailable_reply(db, uid, gone)
             return _not_a_page(screen.strip())
         path, label = await asyncio.to_thread(_resolve_path, db, uid, dest)
         return await _navigate(db, uid, dest["key"], path, label)
@@ -622,10 +679,12 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
             a, value = _LEGACY_ACTIONS[a]
         gone = app_registry.find_unavailable(a, exact=True)
         if gone:
-            return f"Not available: {gone['say']}"
+            return await _unavailable_reply(db, uid, gone)
         setting = app_registry.find_setting(a)
         if setting is None:
             act = app_registry.find_account_action(a)
+            if act and act["handler"] == "navigate_only":
+                return await _navigate_only(db, uid, act["destination"], act["say"])
             if act:
                 return (
                     f"'{action.strip()}' is a destructive action — use "
@@ -634,7 +693,7 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
                 )
             gone = app_registry.find_unavailable(a)
             if gone:
-                return f"Not available: {gone['say']}"
+                return await _unavailable_reply(db, uid, gone)
             return (
                 f"There is no '{action.strip()}' setting in the app — tell the "
                 "user plainly. Settings that exist: "
@@ -732,13 +791,15 @@ def _bind_account_action(
         if act is None:
             gone = app_registry.find_unavailable(action)
             if gone:
-                return f"Not available: {gone['say']}"
+                return await _unavailable_reply(db, uid, gone)
             return (
                 f"There is no '{action.strip()}' account action — tell the user "
                 "plainly. Actions that exist: "
                 + ", ".join(a["key"] for a in app_registry.account_actions())
                 + "."
             )
+        if act["handler"] == "navigate_only":
+            return await _navigate_only(db, uid, act["destination"], act["say"])
         quote_now = last_user_quote(turns)
         ref = _pending_doc(db, uid)
         if not confirmed:
@@ -794,19 +855,76 @@ def _bind_account_action(
         ack = await _await_ack(db, uid, cmd_id)
         if not (ack and ack.get("ok")):
             return _NOT_APPLIED
-        if act["key"] == "withdraw_consent":
-            return (
-                "Done: consent withdrawal started — face data is deleted, then "
-                "the account, and the app is signing them out."
-            )
-        if act["key"] == "delete_account":
-            return (
-                "Done: account deletion started; the app is signing them out. "
-                "They can recover it by signing back in within 30 days."
-            )
         return "Done: signing them out now."
 
     return account_action
+
+
+# What ui_action accepts, and the control type each id prefix means (the
+# app's ScreenCapture numbers controls as <prefix><n>, e.g. "s3").
+_UI_OPS = frozenset(
+    "tap long_press set_text increase decrease scroll_up scroll_down "
+    "dismiss back".split()
+)
+_UI_ID_TYPES = {
+    "b": "button", "s": "switch", "c": "checkbox", "r": "radio", "f": "field",
+    "v": "slider", "l": "list", "k": "link", "t": "tab", "i": "item",
+}
+_UI_ID = re.compile(r"^([a-z])(\d{1,4})$")
+
+
+def _mirrored_route(db, uid: str) -> str:
+    """The route of the fresh voice mirror, or ``""`` (text chat, no call)."""
+    try:
+        snap = _voice_context_doc(db, uid).get()
+        data = snap.to_dict() if getattr(snap, "exists", False) else None
+    except Exception:  # noqa: BLE001
+        return ""
+    if not data or not _is_fresh(data.get("updated_at")):
+        return ""
+    return str(data.get("route") or "").strip()
+
+
+def _bind_ui_action(db, uid: str) -> Callable[..., str]:
+    async def ui_action(
+        control: str = "", label: str = "", action: str = "tap", value: str = ""
+    ) -> str:
+        op = (action.strip().lower() or "tap").replace(" ", "_")
+        if op not in _UI_OPS:
+            return (
+                f"'{action.strip()}' isn't a ui_action. Use one of: "
+                + ", ".join(sorted(_UI_OPS)) + "."
+            )
+        cid = control.strip().strip("[]").lower()
+        m = _UI_ID.match(cid)
+        needs_control = op != "back" and not (op.startswith("scroll") and not cid)
+        if needs_control and (not m or not label.strip()):
+            return (
+                "Pass the control's [id] and its exact label from the screen "
+                "context (in a call, call current_screen first)."
+            )
+        ctype = _UI_ID_TYPES.get(m.group(1), "") if m else ""
+        if op == "set_text" and ctype != "field":
+            return "set_text only works on a field (an [f...] id)."
+        route = await asyncio.to_thread(_mirrored_route, db, uid)
+        denied = app_registry.ui_denial(label, ctype, route)
+        if denied:
+            return f"Not done, by design: {denied['say']}"
+        cmd_id = _queue_command(db, uid, {
+            "action": "ui_action", "control": cid,
+            "label": label.strip()[:200], "op": op, "value": value[:500],
+        })
+        ack = await _await_ack(db, uid, cmd_id)
+        if not ack:
+            return _NOT_APPLIED
+        if not ack.get("ok"):
+            reason = str(ack.get("reason") or "").strip()
+            return f"Not done: {reason}" if reason else _NOT_APPLIED
+        done = f"Done: {op} on {label.strip() or 'the screen'}."
+        result = str(ack.get("result") or "").strip()[:_VISIBLE_MAX_CHARS]
+        return f"{done} Screen now: {result}" if result else done
+
+    return ui_action
 
 
 _CURRENT_SCREEN = {
@@ -952,6 +1070,21 @@ _ACCOUNT_ACTION = {
     },
 }
 
+_UI_ACTION = {
+    "name": "ui_action",
+    "description": _prompt("app_control_ui_action"),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "control": {"type": "string"},
+            "label": {"type": "string"},
+            "action": {"type": "string"},
+            "value": {"type": "string"},
+        },
+        "required": ["action"],
+    },
+}
+
 _OPEN_MATCH_REPORT = {
     "name": "open_match_report",
     "description": (
@@ -977,6 +1110,7 @@ COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_OPEN_MATCH_REPORT, bind=_bind_open_match_report),
     Skill(declaration=_APP_ACTION, bind=_bind_app_action),
     Skill(declaration=_ACCOUNT_ACTION, bind=_bind_account_action),
+    Skill(declaration=_UI_ACTION, bind=_bind_ui_action),
 ]
 
 VOICE_SKILLS: list[Skill] = [

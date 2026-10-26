@@ -61,6 +61,7 @@ TOOL_LABELS = {
     "open_match_report": "Opened your match report",
     "app_action": "Did that for you",
     "account_action": "Handled your account request",
+    "ui_action": "Did that on your screen",
 }
 
 
@@ -101,6 +102,7 @@ WORKING_LABELS = {
     "open_match_report": "Opening the match report…",
     "app_action": "Changing that…",
     "account_action": "Checking your account request…",
+    "ui_action": "Doing that on your screen…",
     # Questionnaire skill
     "next_questions": "Thinking what to ask…",
     "record_answer": "Noting that down…",

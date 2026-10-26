@@ -888,6 +888,12 @@ class ChatRequest(BaseModel):
     screen_subject_uid: str = Field(default="", max_length=128)
     screen_subject_name: str = Field(default="", max_length=200)
     screen_note: str = Field(default="", max_length=500)
+    # The generic capture of that screen (route pattern, a screen-owned
+    # summary, and the live text + operable controls); see
+    # `app_registry.json` `screen_context`.
+    screen_route: str = Field(default="", max_length=200)
+    screen_detail: str = Field(default="", max_length=1500)
+    screen_visible: str = Field(default="", max_length=3200)
 
 
 _USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
@@ -1127,15 +1133,20 @@ async def _prepare_chat(
     viewing_profile_uid = req.viewing_profile_uid.strip()
     # Skip when the profile case already covers it — a bare "looking at X's
     # profile" line would only be redundant next to the full briefing below.
+    screen_route = req.screen_route.strip()
     current_screen_context = (
         ""
-        if not screen or (screen == "profile" and viewing_profile_uid)
+        if not (screen or screen_route)
+        or (screen == "profile" and viewing_profile_uid)
         else app_control_mod._describe(
             {
                 "screen": screen,
                 "subject_uid": req.screen_subject_uid.strip(),
                 "subject_name": req.screen_subject_name.strip(),
                 "note": req.screen_note.strip(),
+                "detail": req.screen_detail.strip(),
+                "route": screen_route,
+                "visible": req.screen_visible.strip(),
             }
         )
     )
@@ -2003,6 +2014,9 @@ class VoiceContextRequest(BaseModel):
     note: str = Field(default="", max_length=200)
     # What the screen is showing (e.g. Explore's visible people), capped.
     detail: str = Field(default="", max_length=1500)
+    # The route pattern and the generic live capture (text + controls).
+    route: str = Field(default="", max_length=200)
+    visible: str = Field(default="", max_length=3200)
 
 
 def _voice_context_doc(uid: str):
@@ -2022,7 +2036,7 @@ async def set_voice_context(
     """The LiveKit agent's ``current_screen`` tool reads this so Ayma knows
     what "them / this / here" means in a call. The client posts it on every
     screen change while a session is live, and clears it when the call ends."""
-    if not req.screen.strip():
+    if not (req.screen.strip() or req.route.strip()):
         await asyncio.to_thread(_voice_context_doc(uid).delete)
         return {"ok": True, "cleared": True}
     await asyncio.to_thread(
@@ -2033,6 +2047,8 @@ async def set_voice_context(
             "subject_name": req.subject_name.strip(),
             "note": req.note.strip(),
             "detail": req.detail.strip(),
+            "route": req.route.strip(),
+            "visible": req.visible.strip(),
             "updated_at": _server_ts(),
         },
     )

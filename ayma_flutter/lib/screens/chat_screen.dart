@@ -1846,6 +1846,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenSubjectUid: _pageContext?.subjectUid ?? '',
           screenSubjectName: _pageContext?.subjectName ?? '',
           screenNote: _pageContext?.note ?? '',
+          screenRoute: _pageContext?.route ?? '',
+          screenDetail: _pageContext?.detail ?? '',
+          screenVisible: _pageContext?.visible ?? '',
           clientMsgId: msgId,
         );
 
@@ -1872,6 +1875,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenSubjectUid: _pageContext?.subjectUid ?? '',
           screenSubjectName: _pageContext?.subjectName ?? '',
           screenNote: _pageContext?.note ?? '',
+          screenRoute: _pageContext?.route ?? '',
+          screenDetail: _pageContext?.detail ?? '',
+          screenVisible: _pageContext?.visible ?? '',
           clientMsgId: msgId,
         )) {
           if (!mounted) return;

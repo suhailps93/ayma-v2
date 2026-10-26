@@ -109,8 +109,77 @@ def test_settings_and_actions_are_complete():
         if s["kind"] == "enum":
             assert s["values"], s
     for a in app_registry.account_actions():
+        if a["handler"] == "navigate_only":
+            # Never executed by a tool: only opens the page, with a kind line.
+            assert app_registry.find_destination(a["destination"]), a
+            assert a["say"].strip() and "confirm_phrase" not in a, a
+            continue
         assert a["confirm_phrase"].startswith("yes"), a
         assert a["question"].endswith(("?", ".")), a
+
+
+def test_delete_withdraw_and_purchase_are_navigate_only():
+    acts = {a["key"]: a for a in app_registry.account_actions()}
+    assert acts["delete_account"]["destination"] == "delete_account"
+    assert acts["withdraw_consent"]["destination"] == "biometric_consent"
+    for key in ("delete_account", "withdraw_consent"):
+        assert acts[key]["handler"] == "navigate_only"
+    assert {a["key"] for a in acts.values() if a["handler"] != "navigate_only"} == {
+        "sign_out", "wipe_memory"
+    }
+    purchase = next(u for u in app_registry.unavailable() if u["key"] == "purchase")
+    assert purchase["navigate"] == "credits"
+
+
+def test_every_router_route_sends_screen_context_or_has_a_reason():
+    """The app captures every route's screen context generically; a route may
+    only opt out with a reason, and only routes the router really has."""
+    routes = _router_paths()
+    opted_out = app_registry.no_context_routes()
+    assert all(r.strip() for r in opted_out.values()), opted_out
+    assert set(opted_out) <= routes, set(opted_out) - routes
+    for route in routes - set(opted_out):
+        assert app_registry.route_name(route), (
+            f"{route} sends screen context but the registry can't name it"
+        )
+
+
+@pytest.mark.parametrize("label,ctype,route,dialog", [
+    ("Delete account", "button", "/settings", ""),
+    ("Delete photo", "button", "/profile/me/public", ""),
+    ("Withdraw consent", "button", "/settings/biometric-consent", ""),
+    ("Upgrade to Pro", "button", "/profile/plan", ""),
+    ("Switch to Plus", "button", "/profile/plan", ""),
+    ("Start free trial", "button", "/profile/plan", ""),
+    ("Subscribe", "button", "/profile/usage/trial", ""),
+    ("$9.99 / month", "item", "/profile/plan", ""),
+    ("I agree", "button", "/consent", ""),
+    ("Continue", "button", "/consent", ""),
+    ("I accept the Terms", "checkbox", "/preboarding", ""),
+    ("Password", "field", "/settings", ""),
+    ("Verification code", "field", "/signin", ""),
+    ("Card number", "field", "/profile/plan", ""),
+    ("Confirm", "button", "/settings", "Delete your account? This can't be undone."),
+    ("Sign out", "button", "/profile", ""),
+])
+def test_ui_denial_blocks_the_denylist(label, ctype, route, dialog):
+    assert app_registry.ui_denial(label, ctype, route, dialog), label
+
+
+@pytest.mark.parametrize("label,ctype,route,dialog", [
+    ("Dark mode", "switch", "/settings", ""),
+    ("Pause matching", "switch", "/settings", ""),
+    ("Hiking", "item", "/explore", ""),
+    ("First name", "field", "/settings/profile", ""),
+    ("Max", "tab", "/profile/plan", ""),
+    ("Restore purchases", "button", "/profile/plan", ""),
+    ("Manage in store", "button", "/profile/plan", ""),
+    ("Cancel", "button", "/settings", "Delete your account?"),
+    ("Back", "button", "/settings/delete-account", ""),
+    ("Direct messages", "switch", "/notifications/prefs", ""),
+])
+def test_ui_denial_allows_everything_else(label, ctype, route, dialog):
+    assert app_registry.ui_denial(label, ctype, route, dialog) is None, label
 
 
 def test_profile_completeness_card_resolves_to_complete_profile():

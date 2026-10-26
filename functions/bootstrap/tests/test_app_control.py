@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
+import pytest
+
+import app_registry
 import skills
 from skills import app_control
 
@@ -444,7 +448,7 @@ def test_open_profile_reports_when_nobody_matches():
 
 _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "open_message_thread",
-    "open_match_report", "app_action", "account_action",
+    "open_match_report", "app_action", "account_action", "ui_action",
 }
 
 
@@ -656,7 +660,7 @@ def test_app_action_reports_failure_without_an_ack(monkeypatch):
 
 def test_app_action_rejects_an_unknown_action():
     db = _Db()
-    out = _run(app_control._bind_app_action(db, "me")("delete_my_account"))
+    out = _run(app_control._bind_app_action(db, "me")("log_out"))
     assert "account_action" in out
     assert _PENDING not in db.store
 
@@ -809,8 +813,8 @@ def _turns(*user_lines):
 
 def test_account_action_first_call_only_asks():
     db = _acking_db()
-    out = _run(app_control._bind_account_action(db, "me")("delete_account"))
-    assert out.startswith("Not done yet") and "yes, delete my account" in out
+    out = _run(app_control._bind_account_action(db, "me")("sign_out"))
+    assert out.startswith("Not done yet") and "yes, sign me out" in out
     assert _PENDING not in db.store
 
 
@@ -824,23 +828,23 @@ def test_account_action_refuses_confirmation_without_a_request_first():
 def test_account_action_text_needs_a_new_affirmative_message():
     db = _acking_db()
     first = app_control._bind_account_action(
-        db, "me", turns=_turns("delete my account")
+        db, "me", turns=_turns("sign me out")
     )
-    _run(first("delete_account"))
+    _run(first("sign_out"))
     # Same message (the model chaining ask + confirm in one turn): refused.
-    assert _run(first("delete_account", True)).startswith("Not done")
+    assert _run(first("sign_out", True)).startswith("Not done")
     assert _PENDING not in db.store
     # A later "no" is refused too.
     no = app_control._bind_account_action(
-        db, "me", turns=_turns("delete my account", "no, not sure")
+        db, "me", turns=_turns("sign me out", "no, not sure")
     )
-    assert _run(no("delete_account", True)).startswith("Not done")
+    assert _run(no("sign_out", True)).startswith("Not done")
     yes = app_control._bind_account_action(
-        db, "me", turns=_turns("delete my account", "yes, delete my account")
+        db, "me", turns=_turns("sign me out", "yes, sign me out")
     )
-    out = _run(yes("delete_account", True))
+    out = _run(yes("sign_out", True))
     assert out.startswith("Done:")
-    assert db.store[_PENDING]["name"] == "delete_account"
+    assert db.store[_PENDING]["name"] == "sign_out"
 
 
 def test_account_action_voice_needs_time_for_the_spoken_yes(monkeypatch):
@@ -868,20 +872,224 @@ def test_account_action_wipe_memory_runs_server_side(monkeypatch):
     assert wiped == ["me"]
 
 
-def test_account_action_never_purchases():
-    act = app_control._bind_account_action(_Db(), "me")
-    assert _run(act("buy credits")).startswith("Not available:")
+def _navigated_only(db, out, path):
+    """The tool refused to act and only queued a navigate to ``path``."""
+    assert out.startswith("Not done, by design"), out
+    assert "navigated:" in out
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "navigate" and cmd["path"] == path, cmd
 
 
-def test_account_action_withdraw_consent_needs_confirmation(monkeypatch):
+def test_account_action_purchase_only_opens_the_plan_page():
+    for words in ("buy credits", "subscribe for me", "purchase"):
+        db = _acking_db()
+        out = _run(app_control._bind_account_action(db, "me")(words, True))
+        _navigated_only(db, out, "/profile/plan")
+        assert "Plan page" in out
+
+
+def test_app_action_purchase_only_opens_the_plan_page():
+    db = _acking_db()
+    out = _run(app_control._bind_app_action(db, "me")("buy credits"))
+    _navigated_only(db, out, "/profile/plan")
+
+
+def test_open_screen_purchase_words_open_the_plan_page():
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("checkout"))
+    assert out.startswith(("navigated:", "Not done, by design"))
+    assert db.store[_PENDING]["path"] == "/profile/plan"
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_account_action_delete_account_is_navigate_only(monkeypatch, confirmed):
+    monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
+    db = _acking_db()
+    act = app_control._bind_account_action(
+        db, "me", turns=_turns("delete my account", "yes, delete my account")
+    )
+    out = _run(act("delete my account", confirmed))
+    _navigated_only(db, out, "/settings/delete-account")
+    assert "Tap Delete account there when you're ready" in out
+    # Never an executing command, whatever the model passes.
+    assert db.store[_PENDING].get("name") is None
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_account_action_withdraw_consent_is_navigate_only(monkeypatch, confirmed):
+    monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
     db = _acking_db()
     act = app_control._bind_account_action(db, "me")
-    first = _run(act("withdraw my consent"))
-    assert first.startswith("Not done yet") and "deletes your account" in first
-    assert _PENDING not in db.store
+    out = _run(act("withdraw my consent", confirmed))
+    _navigated_only(db, out, "/settings/biometric-consent")
+    assert db.store[_PENDING].get("name") is None
+
+
+def test_app_action_delete_account_is_navigate_only():
+    db = _acking_db()
+    out = _run(app_control._bind_app_action(db, "me")("delete_account"))
+    _navigated_only(db, out, "/settings/delete-account")
+
+
+def test_navigate_only_is_honest_when_the_app_never_navigates(monkeypatch):
+    _fast_acks(monkeypatch)
+    out = _run(app_control._bind_account_action(_Db(), "me")("delete_account"))
+    assert out.startswith("Not done, by design") and "did NOT navigate" in out
+
+
+def test_no_tool_path_sends_delete_or_withdraw_to_the_app():
+    for a in app_registry.account_actions():
+        if a["key"] in ("delete_account", "withdraw_consent"):
+            assert a["handler"] == "navigate_only", a
+    src = (Path(app_control.__file__)).read_text(encoding="utf-8")
+    assert "deleteAccount" not in src and "withdraw_biometric" not in src
+
+
+def test_sign_out_still_works_with_one_confirmation(monkeypatch):
     monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
-    assert _run(act("withdraw_consent", True)).startswith("Done:")
-    assert db.store[_PENDING]["name"] == "withdraw_consent"
+    db = _acking_db()
+    act = app_control._bind_account_action(db, "me")
+    assert _run(act("sign out")).startswith("Not done yet")
+    assert _PENDING not in db.store
+    assert _run(act("sign_out", True)) == "Done: signing them out now."
+    assert db.store[_PENDING] == {**db.store[_PENDING], "name": "sign_out"}
+
+
+# --- ui_action -----------------------------------------------------------
+
+class _UiAckStore(_AckStore):
+    """A healthy client that also reports the screen after the action, or
+    refuses with a reason (the app-side denylist)."""
+
+    def __init__(self, *a, reason="", **k):
+        super().__init__(*a, **k)
+        self._reason = reason
+
+    def __setitem__(self, key, value):
+        dict.__setitem__(self, key, value)
+        if key == _PENDING and isinstance(value, dict) and value.get("id"):
+            self.acked.append(value["id"])
+            ack = {"id": value["id"], "ok": not self._reason}
+            if self._reason:
+                ack["reason"] = self._reason
+            else:
+                ack["result"] = '[s1] switch "Dark mode" = on'
+            dict.__setitem__(self, _ACK, ack)
+
+
+def test_ui_action_taps_an_allowed_control_and_reports_the_screen():
+    db = _Db(_UiAckStore())
+    out = _run(app_control._bind_ui_action(db, "me")("s1", "Dark mode", "tap"))
+    assert out.startswith("Done: tap on Dark mode.") and '"Dark mode" = on' in out
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "ui_action" and cmd["control"] == "s1"
+    assert cmd["label"] == "Dark mode" and cmd["op"] == "tap"
+
+
+def test_ui_action_sets_text_in_a_profile_field():
+    db = _Db(_UiAckStore())
+    out = _run(app_control._bind_ui_action(db, "me")(
+        "[f2]", "First name", "set_text", "Sam"))
+    assert out.startswith("Done:")
+    assert db.store[_PENDING]["value"] == "Sam"
+
+
+@pytest.mark.parametrize("control,label,op", [
+    ("b4", "Delete account", "tap"),
+    ("b2", "Upgrade to Pro", "tap"),
+    ("b3", "Start free trial", "tap"),
+    ("b1", "Subscribe", "tap"),
+    ("b5", "Withdraw consent", "tap"),
+    ("c1", "I agree to the Terms of Service", "tap"),
+    ("c2", "I have read the biometric policy", "tap"),
+    ("f1", "Password", "set_text"),
+    ("f3", "Verification code", "set_text"),
+    ("b6", "Sign out", "tap"),
+    ("b7", "Wipe memory", "tap"),
+])
+def test_ui_action_denylist_is_enforced_server_side(control, label, op):
+    db = _Db(_UiAckStore())
+    out = _run(app_control._bind_ui_action(db, "me")(control, label, op, "x"))
+    assert out.startswith("Not done, by design:"), out
+    assert _PENDING not in db.store
+
+
+def test_ui_action_denies_everything_on_a_denied_route_from_the_mirror():
+    db = _Db(_UiAckStore())
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "", "route": "/settings/delete-account",
+        "updated_at": _FreshTs(),
+    }
+    out = _run(app_control._bind_ui_action(db, "me")("b1", "Continue", "tap"))
+    assert out.startswith("Not done, by design:")
+    assert _PENDING not in db.store
+
+
+def test_ui_action_plan_page_switch_is_a_purchase_but_tabs_are_fine():
+    db = _Db(_UiAckStore())
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "", "route": "/profile/plan", "updated_at": _FreshTs(),
+    }
+    act = app_control._bind_ui_action(db, "me")
+    assert _run(act("b2", "Switch to Plus", "tap")).startswith("Not done")
+    assert _run(act("t1", "Max", "tap")).startswith("Done:")
+
+
+def test_ui_action_relays_the_app_side_refusal():
+    db = _Db(_UiAckStore(reason="that control is no longer on screen"))
+    out = _run(app_control._bind_ui_action(db, "me")("b9", "Save", "tap"))
+    assert out == "Not done: that control is no longer on screen"
+
+
+def test_ui_action_needs_an_id_and_label_except_back_and_page_scroll():
+    db = _Db(_UiAckStore())
+    act = app_control._bind_ui_action(db, "me")
+    assert _run(act("", "", "tap")).startswith("Pass the control")
+    assert _run(act("", "", "back")).startswith("Done:")
+    assert _run(act("", "", "scroll_down")).startswith("Done:")
+    assert _run(act("b1", "Save", "fly")).startswith("'fly' isn't")
+
+
+def test_ui_action_is_a_command_tool_in_voice_and_text():
+    assert "ui_action" in {s.name for s in app_control.COMMAND_SKILLS}
+    desc = app_control._UI_ACTION["description"]
+    assert "Delete" not in desc or "Never for" in desc
+    assert "{{" not in desc and "set_text" in desc
+
+
+# --- screen context (generic capture) ------------------------------------
+
+def test_describe_names_any_route_and_includes_the_live_capture():
+    out = app_control._describe({
+        "screen": "", "route": "/settings/accent-color",
+        "visible": 'Title: Accent colour\n[b1] button "Save"',
+    })
+    assert out.startswith("The user is on Accent colour.")
+    assert "Route: /settings/accent-color" in out
+    assert '[b1] button "Save"' in out and "ui_action" in out
+
+
+def test_describe_lists_what_sits_on_settings_like_the_you_tab():
+    out = app_control._describe({"screen": "", "route": "/settings"})
+    assert "Delete account" in out and "Accent colour" in out
+
+
+def test_describe_keeps_the_slug_line_for_known_screens():
+    out = app_control._describe({
+        "screen": "messages", "route": "/messages", "visible": "Sam: hi",
+    })
+    assert out.startswith("The user is on their Messages list.")
+    assert "Sam: hi" in out
+
+
+def test_current_screen_reads_route_and_capture_from_the_mirror():
+    db = _Db()
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "", "route": "/notifications",
+        "visible": '[i1] item "Sam liked your profile"', "updated_at": _FreshTs(),
+    }
+    out = app_control._bind_current_screen(db, "me")()
+    assert "Notifications" in out and "Sam liked your profile" in out
 
 
 def test_text_account_action_is_bound_with_the_transcript():

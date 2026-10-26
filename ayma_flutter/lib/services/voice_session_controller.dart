@@ -6,6 +6,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'api_client.dart';
 import 'app_command_service.dart';
 import 'app_context.dart';
+import 'screen_capture.dart';
 import 'call_permissions.dart';
 import 'error_reporting.dart';
 import 'transcript_store.dart';
@@ -645,6 +646,7 @@ class VoiceSessionController extends ChangeNotifier {
     if (_mirroring) return;
     _mirroring = true;
     _commands.start();
+    ScreenCapture.instance.setLive(true);
     _pushContext();
     // The screen may be set a beat after the call goes live (a route still
     // settling). If we pushed nothing, try once more shortly.
@@ -681,6 +683,7 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> _stopScreenAwareness() async {
     if (!_mirroring) return;
     _mirroring = false;
+    ScreenCapture.instance.setLive(false);
     _ctxDebounce?.cancel();
     _ctxDebounce = null;
     _ctxRetry?.cancel();

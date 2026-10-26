@@ -1,6 +1,7 @@
 import 'package:ayma_flutter/screens/voice_call_screen.dart';
 import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
+import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
@@ -123,29 +124,45 @@ void main() {
     expect(went, ['/signin']);
   });
 
-  test('confirmed delete_account deletes, then signs out; a failed delete '
-      'stays signed in on the Delete account screen', () async {
+  test('delete_account and withdraw_consent are never executable commands',
+      () async {
     final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
     final nav = <String>[];
-    var deletes = 0;
     final svc = AppCommandService(
       auth: auth,
       navigate: nav.add,
-      go: (_) {},
+      go: nav.add,
       clearPushToken: () async {},
-      deleteAccount: () async {
-        deletes++;
-        if (deletes == 1) throw Exception('offline');
-      },
     );
-    svc.handleCommand({'action': 'app_action', 'name': 'delete_account'});
-    await svc.runAfterAck();
+    for (final name in ['delete_account', 'withdraw_consent']) {
+      expect(svc.handleCommand({'action': 'app_action', 'name': name}),
+          isFalse);
+      await svc.runAfterAck();
+    }
     expect(auth.currentUser, isNotNull);
-    expect(nav, ['/settings/delete-account']);
-    svc.handleCommand({'action': 'app_action', 'name': 'delete_account'});
-    await svc.runAfterAck();
-    expect(deletes, 2);
-    expect(auth.currentUser, isNull);
+    expect(nav, isEmpty);
+  });
+
+  test('ui_action runs through the executor and reports its outcome',
+      () async {
+    final seen = <Map<String, dynamic>>[];
+    final svc = AppCommandService(uiAction: (cmd) async {
+      seen.add(cmd);
+      return const UiActionResult.done('[s1] switch "Dark mode" = on');
+    });
+    final out = await svc.runUiAction({
+      'action': 'ui_action',
+      'control': 's1',
+      'label': 'Dark mode',
+      'op': 'tap',
+    });
+    expect(out.ok, isTrue);
+    expect(out.result, contains('= on'));
+    expect(seen.single['control'], 's1');
+    final failing = AppCommandService(uiAction: (_) async => throw StateError('x'));
+    final failed = await failing.runUiAction({'action': 'ui_action'});
+    expect(failed.ok, isFalse);
+    expect(failed.reason, isNotEmpty);
   });
 
   test('search_explore stashes the trimmed query and opens Explore', () {

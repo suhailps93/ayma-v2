@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../screens/chat_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/screen_capture.dart';
 import '../services/ayma_session.dart';
 import '../services/voice_transport.dart';
 import 'ask_ayma_context.dart';
@@ -96,6 +97,8 @@ Future<void> showPageContextAymaPopup(
   required WidgetBuilder navBarBuilder,
   VoidCallback? onExpandRequested,
 }) async {
+  // Fresh capture of the page under the popup (its route, text, controls).
+  ScreenCapture.instance.refreshNow();
   final rawPrior = AppContext.instance.current.value;
   // `screen == 'ayma'` means "the mirror hadn't updated off the Ayma tab
   // yet" (a real switch's own `AppContext.set` can lag a synchronous tap by

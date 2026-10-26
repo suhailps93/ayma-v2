@@ -25,8 +25,10 @@ import 'services/revenuecat_service.dart';
 import 'services/meta_integrations.dart';
 import 'services/sentry_config.dart';
 import 'services/push_service.dart';
+import 'services/screen_capture.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
+import 'widgets/ask_ayma_overlay.dart';
 import 'widgets/keyboard_dismiss.dart';
 
 Future<void> main() async {
@@ -78,6 +80,15 @@ Future<void> main() async {
 
   DevPanelFlag.instance.listen(FirebaseFirestore.instance);
   AppCommandHost(AppCommandService.shared).attach();
+  // Every screen tells Ayma what is on it, and she can operate its controls
+  // (ui_action). Her own chat popup's modal barrier hides the page's
+  // controls, so it closes before she acts on the page behind it.
+  ScreenCapture.instance.attach(appRouter, beforeAct: () async {
+    if (!isPageContextAymaPopupOpen) return;
+    screenPopupTracker.navigator?.pop();
+    await pendingPageContextAymaPopup;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+  });
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();
   await orbAnimationSettingsGlobal.load();

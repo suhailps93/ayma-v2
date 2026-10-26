@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/app_context.dart';
+import '../services/screen_capture.dart';
 import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
 import '../services/chat_inbox.dart';
@@ -159,6 +160,7 @@ class _MainShellScreenState extends State<MainShellScreen>
     // was just looking at (another tab, or a pushed route that popped back
     // to one) is what the Ayma tab's context chip should name.
     final leavingToAyma = i == 0 && _index != 0;
+    if (leavingToAyma) ScreenCapture.instance.refreshNow();
     final prior = AppContext.instance.current.value;
     setState(() {
       _tab(i);

@@ -6,6 +6,7 @@ import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -159,5 +160,65 @@ void main() {
     expect(sent, [
       {'distance_pref': 'anywhere'}
     ]);
+  });
+
+  testWidgets('Ayma edits profile fields and preferences through ui_action',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 3200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final handle = tester.ensureSemantics();
+    final sent = <Map<String, dynamic>>[];
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/profile/preferences' && req.method == 'PUT') {
+          sent.add(jsonDecode(req.body) as Map<String, dynamic>);
+          return http.Response(jsonEncode({'ok': true}), 200);
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    final svc = _FakeProfileService(ProfileData(
+      name: 'Sam',
+      firstName: 'Sam',
+      birthdate: DateTime(1996, 5, 4),
+      gender: 'Man',
+      interestedIn: const ['Women'],
+      location: 'Berlin',
+      partnerAgeMin: 26,
+      partnerAgeMax: 38,
+      distancePreference: '50',
+    ));
+    await tester.pumpWidget(MaterialApp(
+        home: ProfileSettingsScreen(profileService: svc, apiClient: api)));
+    await tester.pumpAndSettle();
+    final cap = ScreenCapture(
+      routeOf: () => '/settings/profile',
+      popupOpen: () => false,
+      settle: () => tester.pumpAndSettle(),
+    );
+    var s = cap.capture();
+    final location = s.controls.firstWhere(
+        (c) => c.type == 'field' && c.label.contains('Location'));
+    expect(location.state, '"Berlin"');
+    final typed = await cap.perform(
+        control: location.id, label: location.label, op: 'set_text',
+        value: 'Munich');
+    expect(typed.ok, isTrue, reason: typed.reason);
+    expect(find.text('Munich'), findsOneWidget);
+
+    s = cap.capture();
+    final anywhere =
+        s.controls.firstWhere((c) => c.label.contains('Anywhere is fine'));
+    expect((await cap.perform(
+            control: anywhere.id, label: anywhere.label, op: 'tap'))
+        .ok, isTrue);
+    s = cap.capture();
+    final save = s.controls.firstWhere((c) => c.label == 'Save');
+    expect((await cap.perform(control: save.id, label: 'Save', op: 'tap')).ok,
+        isTrue);
+    expect(sent.single['distance_pref'], 'anywhere');
+    handle.dispose();
   });
 }
