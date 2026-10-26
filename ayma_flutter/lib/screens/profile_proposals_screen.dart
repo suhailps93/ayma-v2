@@ -85,7 +85,7 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
           : list == null
               ? const Center(child: CircularProgressIndicator())
               : list.isEmpty
-                  ? const Center(child: Text('No suggested updates.'))
+                  ? const Center(child: Text('No suggestions right now'))
                   : ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
@@ -157,7 +157,12 @@ class _ProposalCard extends StatelessWidget {
                     onPressed: busy ? null : onDismiss,
                     child: const Text('Dismiss')),
                 const SizedBox(width: 8),
+                // The app theme gives FilledButton a full-width minimum size;
+                // inside a Row that is an infinite width, which fails layout
+                // and left this whole screen blank (build 2208).
                 FilledButton(
+                    style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 44)),
                     onPressed: busy ? null : onApply,
                     child: const Text('Apply')),
               ],
