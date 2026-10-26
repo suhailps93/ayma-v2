@@ -93,3 +93,14 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 ## 6. V2 backlog (founder-declared; do NOT build for V1)
 - Instagram and Facebook integrations (sign-in and photo import), hidden behind flag `meta_integrations` (off). Reasons: Meta's Instagram login API supports professional accounts only; Facebook Login needs a Meta app plus review.
 - **Ayma plug-in / MCP skill ("bring your own agent")**: let every user connect their own AI agent (ChatGPT, Claude, Gemini, etc.) to Ayma. The user chats with their agent to build their story and profile details inside Ayma, and the same agent can search for matches and chat with other users' agents through Ayma. Open design points for later: auth and scopes (OAuth/MCP server), per-user consent and data-sharing controls, rate limits and cost, moderation and safety of agent-to-agent chat, 18+ and biometric-consent gates still apply, disclosure when a conversation is agent-driven.
+
+## Tested by Suhail on 2026-10-26 (build 2211) — CLOSED, do not re-offer
+- Voice call stays alive through the call and back-to-back calls (keepalive). PASS.
+- Call notification Hang Up and Mute (mic). PASS.
+- Send a message in one confirmation + opens the DM chat. PASS.
+- Plan page combined + credits period filter (see purchase note below).
+
+## Found during testing 2026-10-26 (fixes in flight on all-features-on)
+- Muted orb: must NOT unmute on tap; keep orb colour, show muted badge only (agent re-running). RETEST.
+- Ayma hallucinated 'great match on paper' with zero data — grounding fix in progress.
+- Test/fake purchase does not add credits (no webhook on Test Store) — /billing/sync fix in progress; may need REVENUECAT_SECRET_API_KEY.
