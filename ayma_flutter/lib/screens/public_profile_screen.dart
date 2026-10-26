@@ -15,6 +15,7 @@ import '../theme.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_rail_icons.dart';
+import '../widgets/inline_photo_carousel.dart';
 import '../widgets/ayma_tab_bar.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
@@ -469,10 +470,12 @@ class _TitleBar extends StatelessWidget {
 
 /// The photo carousel + name/age/location header shared by every screen that
 /// shows "the same photo header a viewer sees when they open this profile" —
-/// [ProfileBody], which every profile screen renders through (photos are
-/// display-only there — the owner edits them via `ProfilePhotoEditor`
-/// from [MyPublicProfileScreen]). Extracted so there's exactly ONE photo-carousel
-/// implementation, not a near-identical second one per caller.
+/// [ProfileBody], which every profile screen renders through. Photos are
+/// display-only for everyone else; on the owner's own [MyPublicProfileScreen]
+/// the thumbnail strip becomes the inline editor (add / delete / set-primary /
+/// drag-reorder) when [ProfilePhotoHeader.editing] is passed. Extracted so
+/// there's exactly ONE photo-carousel implementation, not a near-identical
+/// second one per caller.
 class ProfilePhotoHeader extends StatefulWidget {
   const ProfilePhotoHeader({
     super.key,
@@ -484,6 +487,7 @@ class ProfilePhotoHeader extends StatefulWidget {
     this.isOnline = false,
     this.blockedMessage,
     this.actions,
+    this.editing,
   });
 
   /// Ready-to-render download URLs, primary first.
@@ -509,8 +513,15 @@ class ProfilePhotoHeader extends StatefulWidget {
 
   /// An optional overlay floating on the photo itself, bottom-right (e.g.
   /// [PublicProfileBody]'s like/chat/web-search/run-match rail). Null shows
-  /// no overlay — [MyPublicProfileScreen] leaves photos display-only.
+  /// no overlay.
   final Widget? actions;
+
+  /// Non-null ONLY on the owner's own "My public profile": turns the thumbnail
+  /// strip into the inline editor (add tile, per-photo star + delete,
+  /// drag-reorder). Null everywhere else keeps photos display-only. When set,
+  /// the carousel renders the controller's live [GridPhoto] list rather than
+  /// [photos].
+  final InlinePhotoEditing? editing;
 
   @override
   State<ProfilePhotoHeader> createState() => _ProfilePhotoHeaderState();
@@ -532,7 +543,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
   }
 
   void _goToPage(int i) {
-    if (i == _page) return;
+    if (i == _page || !_controller.hasClients) return;
     _controller.animateToPage(
       i,
       duration: const Duration(milliseconds: 250),
@@ -540,9 +551,19 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
     );
   }
 
+  bool get _editable => widget.editing != null;
+
+  /// The photos the carousel shows: in edit mode the controller's live grid
+  /// (so adds/removes/reorders show instantly), otherwise the passed list.
+  List<String> get _photos => _editable
+      ? widget.editing!.controller.photos.map((g) => g.downloadUrl).toList()
+      : widget.photos;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final photos = _photos;
+    final page = photos.isEmpty ? 0 : _page.clamp(0, photos.length - 1);
     final h1 = (widget.seed.hashCode.abs() % 360).toDouble();
     final fallback = DecoratedBox(
       decoration: BoxDecoration(
@@ -565,14 +586,14 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              widget.photos.isEmpty
+              photos.isEmpty
                   ? fallback
                   : PageView.builder(
                       controller: _controller,
                       onPageChanged: (i) => setState(() => _page = i),
-                      itemCount: widget.photos.length,
+                      itemCount: photos.length,
                       itemBuilder: (_, i) => AymaPhoto(
-                        url: widget.photos[i],
+                        url: photos[i],
                         displayWidth: 900,
                         error: fallback,
                       ),
@@ -690,13 +711,38 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
         // Horizontal filmstrip of photo thumbnails pinned along the bottom
         // edge of the header, below the gradient scrim, on its own solid
         // dark strip — replaces the small dot indicator this header used to
-        // show instead (founder reference screenshot). Only shown with more
-        // than one photo, same threshold the old dot indicator used.
-        if (widget.photos.length > 1)
-          _Filmstrip(
-            photos: widget.photos,
+        // show instead (founder reference screenshot).
+        if (_editable)
+          // Inline editor: always shown (even with 0–1 photos, so the add tile
+          // is reachable), with per-thumb star + delete and drag-reorder.
+          InlinePhotoStrip(
+            photos: photos,
             fallback: fallback,
-            currentPage: _page,
+            currentPage: page,
+            busy: widget.editing!.controller.busy,
+            onSelect: _goToPage,
+            onAddPhoto: widget.editing!.onAddPhoto,
+            onSetPrimary: (i) {
+              final grid = widget.editing!.controller.photos;
+              if (i >= 0 && i < grid.length) {
+                widget.editing!.onSetPrimary(grid[i]);
+              }
+            },
+            onRemove: (i) {
+              final grid = widget.editing!.controller.photos;
+              if (i >= 0 && i < grid.length) {
+                widget.editing!.onRemove(grid[i]);
+              }
+            },
+            onReorder: widget.editing!.controller.reorder,
+          )
+        else if (photos.length > 1)
+          // Read-only: the plain thumbnail strip, shown only with more than one
+          // photo (same threshold the old dot indicator used).
+          _Filmstrip(
+            photos: photos,
+            fallback: fallback,
+            currentPage: page,
             onSelect: _goToPage,
           ),
         if (widget.blockedMessage != null)
@@ -803,6 +849,7 @@ class ProfileBody extends StatelessWidget {
     this.profile,
     this.headerLoading = false,
     this.bottomPadding = 0,
+    this.editing,
   });
 
   final String reportType;
@@ -812,9 +859,14 @@ class ProfileBody extends StatelessWidget {
   final bool headerLoading;
   final double bottomPadding;
 
+  /// Inline photo editing for the owner's own profile only (null elsewhere —
+  /// see [ProfilePhotoHeader.editing]).
+  final InlinePhotoEditing? editing;
+
   @override
   Widget build(BuildContext context) {
     final p = profile;
+    final edit = editing;
     return ListView(
       padding: EdgeInsets.only(bottom: bottomPadding),
       children: [
@@ -822,6 +874,21 @@ class ProfileBody extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 48),
             child: Center(child: CircularProgressIndicator()),
+          )
+        else if (p != null && edit != null)
+          // Own profile: rebuild the header on every edit so the carousel
+          // reflects the controller's live grid.
+          ListenableBuilder(
+            listenable: edit.controller,
+            builder: (context, _) => ProfilePhotoHeader(
+              photos: p.photos,
+              seed: p.uid.isEmpty ? reportId : p.uid,
+              name: p.name,
+              age: p.age,
+              location: p.location,
+              isOnline: p.isOnline,
+              editing: edit,
+            ),
           )
         else if (p != null)
           ProfilePhotoHeader(

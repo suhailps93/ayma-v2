@@ -1,5 +1,6 @@
 import photo_ops
 import pytest
+import schema
 
 
 class _Doc:
@@ -22,6 +23,9 @@ class _Doc:
         cur = dict(self._s.get(self._k) or {}) if merge else {}
         cur.update(payload)
         self._s[self._k] = cur
+
+    def delete(self):
+        self._s.pop(self._k, None)
 
     def collection(self, name):
         return _Col(self._s, self._k + (name,))
@@ -153,7 +157,13 @@ def test_add_photos_all_failing_still_returns_the_untouched_grid():
     assert result["photos"] == [{"media_id": "keep", "order": 0}]
 
 
-def test_remove_photo_is_soft_and_renumbers():
+def _hidden(db):
+    return db.store.get(("users", "u1", "profile", "main"), {}).get(
+        "hidden_photos"
+    )
+
+
+def test_remove_photo_hides_from_public_but_keeps_for_analysis():
     db = _db_with_media(
         "m1", "m2", "m3",
         photos=[
@@ -163,9 +173,17 @@ def test_remove_photo_is_soft_and_renumbers():
         ],
     )
     photo_ops.remove_photo(db, "u1", "m2")
+    # Gone from the public grid, renumbered…
     assert _grid(db) == [
         {"media_id": "m1", "order": 0},
         {"media_id": "m3", "order": 1},
+    ]
+    # …but kept in the hidden list for analysis…
+    assert _hidden(db) == [{"media_id": "m2", "order": 0}]
+    # …and the analysis pool still includes it (public first, hidden after).
+    prof = db.store[("users", "u1", "profile", "main")]
+    assert [p["media_id"] for p in schema.analysis_photo_entries(prof)] == [
+        "m1", "m3", "m2",
     ]
     # user_media docs are untouched (remove is soft — the media record stays,
     # moderation status and all)
@@ -173,6 +191,80 @@ def test_remove_photo_is_soft_and_renumbers():
         "storage_path": "uploads/u1/m2",
         "moderation_status": "approved",
     }
+
+
+def test_remove_then_readd_restores_from_hidden_without_duplicating():
+    db = _db_with_media(
+        "m1", "m2",
+        photos=[
+            {"media_id": "m1", "order": 0},
+            {"media_id": "m2", "order": 1},
+        ],
+    )
+    photo_ops.remove_photo(db, "u1", "m2")
+    assert _hidden(db) == [{"media_id": "m2", "order": 0}]
+    photo_ops.add_photo(db, "u1", "m2")  # re-add (undo a committed removal)
+    assert _grid(db) == [
+        {"media_id": "m1", "order": 0},
+        {"media_id": "m2", "order": 1},
+    ]
+    assert _hidden(db) == []  # not left behind in the hidden list
+
+
+def test_set_primary_moves_a_photo_to_the_front():
+    db = _db_with_media(
+        "a", "b", "c",
+        photos=[
+            {"media_id": "a", "order": 0},
+            {"media_id": "b", "order": 1},
+            {"media_id": "c", "order": 2},
+        ],
+    )
+    photo_ops.set_primary(db, "u1", "c")
+    assert _grid(db) == [
+        {"media_id": "c", "order": 0},
+        {"media_id": "a", "order": 1},
+        {"media_id": "b", "order": 2},
+    ]
+
+
+def test_set_primary_is_a_noop_for_a_non_public_photo():
+    db = _db_with_media(
+        "a", "b",
+        photos=[{"media_id": "a", "order": 0}, {"media_id": "b", "order": 1}],
+    )
+    photo_ops.remove_photo(db, "u1", "b")  # b is now hidden
+    photo_ops.set_primary(db, "u1", "b")  # can't promote a hidden photo
+    assert _grid(db) == [{"media_id": "a", "order": 0}]
+
+
+class _DelBucket:
+    def __init__(self):
+        self.deleted = []
+
+    def blob(self, path):
+        bucket = self
+
+        class _Blob:
+            def delete(self_):
+                bucket.deleted.append(path)
+
+        return _Blob()
+
+
+def test_delete_permanent_erases_the_media_everywhere():
+    db = _db_with_media(
+        "m1", "m2",
+        photos=[{"media_id": "m1", "order": 0}, {"media_id": "m2", "order": 1}],
+    )
+    photo_ops.remove_photo(db, "u1", "m2")  # m2 hidden
+    bucket = _DelBucket()
+    photo_ops.delete_photo_permanent(db, "u1", "m2", bucket)
+    assert _grid(db) == [{"media_id": "m1", "order": 0}]
+    assert _hidden(db) == []  # dropped from the hidden list too
+    # The media doc and its Storage blob are gone (analysis erased).
+    assert ("users", "u1", "user_media", "m2") not in db.store
+    assert bucket.deleted == ["uploads/u1/m2"]
 
 
 def test_reorder_photos_sets_primary_and_keeps_unlisted_at_end():

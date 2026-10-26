@@ -30,6 +30,7 @@ from pathlib import Path
 
 import gemini
 import media_embed
+import schema
 import token_ledger
 from config import CONFIG
 
@@ -525,8 +526,8 @@ def gather_profile_images(db, uid: str) -> list[tuple[bytes, str, str]]:
         ) or {}
     except Exception:  # noqa: BLE001
         return []
-    entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
-    entries.sort(key=lambda p: p.get("order", 0))
+    # Public grid + removed-from-public photos kept for analysis (§8.3).
+    entries = schema.analysis_photo_entries(prof)
     out: list[tuple[bytes, str, str]] = []
     for e in entries[:_MAX_PHOTOS]:
         sp = str(e.get("storage_path") or "").strip()  # legacy inline shape

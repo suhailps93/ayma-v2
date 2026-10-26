@@ -5010,12 +5010,54 @@ async def media_photos_remove(
     background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Soft-remove a photo from the grid — the ``user_media`` doc, Storage
-    file and embedding all stay (§8.3, §8.7 step 5)."""
+    """Remove a photo from the PUBLIC profile — it moves to the hidden list, so
+    it leaves every public reader but stays in Ayma's analysis pool and its
+    ``user_media`` doc/Storage/embedding are untouched (§8.3, §8.7 step 5).
+    Reversible by re-adding. For an irreversible erase see
+    ``/media/photos/{id}/delete``."""
     import photo_ops
 
     photos = await asyncio.to_thread(
         photo_ops.remove_photo, get_db(), uid, media_id
+    )
+    # The public lead photo may have changed — rebuild physical attributes.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "photos": photos}
+
+
+@app.post("/media/photos/{media_id}/primary")
+async def media_photos_set_primary(
+    media_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Make ``media_id`` the primary (hero) public photo (§8.3). A no-op for an
+    id that isn't currently a public photo."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.set_primary, get_db(), uid, media_id
+    )
+    # The lead photo changed — rebuild the physical-attributes record.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "photos": photos}
+
+
+@app.post("/media/photos/{media_id}/delete")
+async def media_photos_delete_permanent(
+    media_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Delete a photo EVERYWHERE — drop it from the public grid and the hidden
+    list, then erase the ``user_media`` doc and its Storage blob so the
+    face/body embedding and analysis go too (§8.3). Not reversible; the inline
+    carousel gates this behind a second "Delete everywhere" confirm. The usual
+    "remove" (``/remove``) only hides it from the public profile."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.delete_photo_permanent, get_db(), uid, media_id, _bucket()
     )
     # The photo set changed — rebuild the physical-attributes record.
     background.add_task(physical_attributes.refresh, get_db(), uid)
