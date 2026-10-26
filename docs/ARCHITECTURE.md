@@ -354,11 +354,14 @@ Read paths, all over the same pages:
 flowchart TB
   RT["raw_turns (immutable)<br/>text + voice transcript + image refs"]
   Ingest[Ingest]
-  Page["wiki_pages/{pageId}<br/>ai_body · visibility · user_edits · user_hidden · frontmatter · links"]
+  Page["wiki_pages/{pageId}<br/>ai_body · visibility · user_edits · user_hidden · pending_proposal · frontmatter · links"]
   Lint[Lint — periodic]
+  Review["Per-change review<br/>Apply → public · Dismiss → ai_only span (private + notes)"]
 
   RT -->|on turn complete| Ingest
   Ingest -->|create/update pages + cross-refs| Page
+  Ingest -.->|rewrite of public text| Review
+  Review -->|user applies/dismisses each change| Page
   Page --> Lint
   Lint -->|flag contradictions, stale claims, orphans| Page
 
@@ -376,7 +379,10 @@ Immutable, append-only, never edited by the LLM: typed messages, voice transcrip
 
 - **Ingest** — fires on every `/post-turn` call, one turn at a time. Reads the turn text/images, writes or updates the relevant wiki pages with cross-references, sets `frontmatter` and `visibility`. Images get a vision-captioning pass and voice content (including DM voice notes) gets transcribed before ingest, so both become text the same downstream pipeline can process. Wiki content derived from DM images/voice defaults to `visibility: ai_only` (Piece 6 §6.8) — the user already has the raw content in their DM thread, so Ayma's derived understanding of it stays in her private analysis rather than echoing back into the user's own narrative view.
 - **Query** — `/bootstrap` and `/chat` compile relevant `ai_body` pages directly into the system prompt.
-- **Approve-before-apply** — when ingest rewrites a page that already shows public text, the new `ai_body` is kept but the public text is not changed: the rewrite is stored as `pending_proposal` (`before`/`after`/`created_at`) on the page (`profile_manual.route_ai_update`). `GET /profile/proposals` lists them with a sentence diff; `POST /profile/proposals/{page_id}/apply|dismiss` acts on one. The "Ayma suggests N updates" banner on My public profile counts that same list, and the Suggested updates screen always shows cards, an empty state ("No suggestions right now") or an error with Retry. A proposal that no longer differs from the current public text, or is not a dict, is cleared (and logged) when the list is read, so the banner never counts a card that cannot render.
+- **Approve-before-apply (per change)** — when ingest rewrites a page that already shows public text, the new `ai_body` is kept but the public text is not changed: the rewrite is stored as `pending_proposal` (`before`/`after`/`created_at`/`decided`) on the page (`profile_manual.route_ai_update`). The user reviews it **one change at a time**. `GET /profile/proposals` returns the pending changes grouped by section, each added/removed sentence a `{id, op, text}` row with a stable id (`c0`, `c1`, … positional on the frozen `before`/`after`, so ids survive re-renders). `POST /profile/proposals/{page_id}/changes/{change_id}/apply|dismiss` decides one change; `POST /profile/proposals/{page_id}/apply|dismiss` decides the whole section (Apply all / Dismiss all). Decisions accumulate in the proposal's `decided` map and the public text is rebuilt from `before` + the decisions each time (`_rebuild_public`); when every change is decided the proposal is cleared and a version is committed (author `ayma`).
+  - **Three surfaces.** Public profile = the `public` spans of the page body (`story.strip_private_spans`, what `public_profile.py` serves and the Public view shows). Private profile = the user's "Your Story" editor (`get_story`, `story.strip_ai_only_spans` — public + private spans, ai_only hidden). Ayma's Notes = `story.get_ai_notes` (the full body incl. `{{ai_only}}` spans). Ayma's matching/chat read path is every page's `ai_body`, unfiltered (`wiki_query.read_wiki_context`).
+  - **Apply vs Dismiss, nothing lost.** Apply an addition → it shows on the public profile. Dismiss an addition → it is **not** discarded: it is kept as an inline `{{ai_only}}` span (so it stays in the private profile / Ayma's Notes, never public) and remains in `ai_body` (the rewrite put it there), so Ayma still knows it for matching/chat. Apply a removal → the sentence leaves the public profile but is kept as an `{{ai_only}}` span and appended to `ai_body`. Dismiss a removal → the sentence stays public. Pinned sentences and existing `ai_only` spans are re-attached on every rebuild, so a decision can never drop them.
+  - The "Ayma suggests N updates to your public profile" banner on My public profile counts the remaining undecided changes across sections; the "Public profile updates" screen renders one row per change (removed = red strikethrough, added = gray) with its own Apply/Dismiss plus an Apply all / Dismiss all per multi-change section, and always shows the empty state ("No suggestions right now") or an error with Retry. A proposal that is not a dict, whose changes are all decided, or whose public text no longer differs from the current public text, is cleared (and logged) when the list is read, so the banner never counts a change that cannot render.
 - **Lint** — a scheduled Cloud Scheduler job that scans `wiki_pages` for contradictions, stale claims, orphan pages, and missing links, and flags them on the page for admin review. Does not auto-resolve.
 
 ### 2.4 Pending-questions queue

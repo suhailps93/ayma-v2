@@ -30,9 +30,23 @@ numbers or email addresses (links are allowed), and a model safety pass
 Later AI updates to a public page's text are never applied silently:
 :func:`route_ai_update` (called by ``wiki_ingest``) freezes the current public
 text as the page's ``user_edits`` and stores the AI's rewrite as a
-``pending_proposal`` on the page, which the user applies or dismisses
-(:func:`apply_proposal` / :func:`dismiss_proposal`). Pinned sentences and
-``ai_only`` spans are re-attached to every proposal, so approval can never
+``pending_proposal`` on the page. The user then reviews it **one change at a
+time**: the sentence diff is split into per-change rows with stable ids
+(:func:`list_proposals`), and each added or removed sentence is applied
+(:func:`apply_change`) or dismissed (:func:`dismiss_change`) on its own; the
+decisions so far are kept in the proposal's ``decided`` map until every change
+is resolved, when the proposal is cleared. :func:`apply_proposal` /
+:func:`dismiss_proposal` decide the whole section at once (Apply all / Dismiss
+all).
+
+Applying a change shows it on the **public** profile; dismissing it never
+discards anything. A dismissed addition — and any sentence removed from the
+public text — is kept as an inline ``{{ai_only}}`` span and in the page's
+``ai_body``, which is exactly how "Ayma's notes" holds material that is off
+the public profile: ``story.get_ai_notes`` still shows it and Ayma's
+matching/chat read path (``wiki_query.read_wiki_context``) reads every page's
+``ai_body`` unfiltered, so Ayma keeps knowing it. Pinned sentences and
+``ai_only`` spans are re-attached on every rebuild, so a decision can never
 drop them. Everything lives on the ``wiki_pages`` docs, so account deletion
 and the knowledge wipe already cover it.
 """
@@ -678,81 +692,234 @@ def route_ai_update(page_id: str, cur: dict, payload: dict) -> dict:
     return out
 
 
-def _proposal_view(page_id: str, data: dict) -> dict:
-    prop = data.get(F_PROPOSAL) or {}
-    before = story.strip_private_spans(prop.get("before") or "")
-    after = story.strip_private_spans(prop.get("after") or "")
-    created = prop.get("created_at")
-    return {
-        "page_id": page_id,
-        "title": story._section_title(
-            page_id,
-            str(data.get(story.F_PAGE_TYPE) or "misc"),
-            data.get(story.F_TITLE) or "",
-        ),
-        "before": before,
-        "after": after,
-        "diff": diff_segments(before, after),
-        "created_at": created.isoformat() if hasattr(created, "isoformat") else None,
-    }
+def _title(page_id: str, data: dict) -> str:
+    return story._section_title(
+        page_id,
+        str(data.get(story.F_PAGE_TYPE) or "misc"),
+        data.get(story.F_TITLE) or "",
+    )
+
+
+def _iter_changes(before_public: str, after_public: str):
+    """Yield ``(segment, change_id)`` over the sentence diff. ``change_id`` is
+    ``None`` for unchanged sentences and ``c0``, ``c1`` … for each added or
+    removed sentence, in diff order. Both ``before`` and ``after`` are frozen
+    on the proposal, so these ids are stable — a single change can be applied
+    or dismissed on its own and the rest re-render correctly."""
+    k = 0
+    for seg in diff_segments(before_public, after_public):
+        if seg["op"] == "same":
+            yield seg, None
+        else:
+            yield seg, f"c{k}"
+            k += 1
+
+
+def _change_items(before_public: str, after_public: str) -> list[dict]:
+    """The reviewable changes: one ``{id, op, text}`` per added/removed
+    sentence."""
+    return [
+        {"id": cid, "op": seg["op"], "text": seg["text"]}
+        for seg, cid in _iter_changes(before_public, after_public)
+        if cid is not None
+    ]
+
+
+def _decided_map(prop: dict) -> dict[str, str]:
+    dec = prop.get("decided")
+    return dict(dec) if isinstance(dec, dict) else {}
+
+
+def _rebuild_public(
+    before_public: str, after_public: str, decided: dict[str, str]
+) -> tuple[str, list[str]]:
+    """The public text to show given the decisions so far, plus the sentences
+    to keep privately (so nothing is discarded):
+
+    * unchanged sentence -> stays public;
+    * added sentence -> public once *applied*; a *dismissed* one is kept
+      privately (never shown publicly);
+    * removed sentence -> stays public until the removal is *applied*, then it
+      is kept privately rather than dropped.
+
+    An undecided change leaves the public text exactly as it was.
+    """
+    public: list[str] = []
+    private: list[str] = []
+    for seg, cid in _iter_changes(before_public, after_public):
+        if cid is None:
+            public.append(seg["text"])
+            continue
+        verdict = decided.get(cid)
+        if seg["op"] == "add":
+            if verdict == "applied":
+                public.append(seg["text"])
+            elif verdict == "dismissed":
+                private.append(seg["text"])
+        else:  # remove
+            if verdict == "applied":
+                private.append(seg["text"])
+            else:
+                public.append(seg["text"])
+    return _norm(" ".join(public)), private
+
+
+def _compose_body(
+    current_body: str, new_public: str, private: list[str], pinned: list[str]
+) -> str:
+    """Rebuild the stored body: ``new_public`` as the public text, every
+    existing private / ``ai_only`` span kept, each ``private`` sentence added
+    as an ``ai_only`` note (Ayma still has it and it shows in Ayma's Notes, but
+    never on the public profile), and every pinned sentence kept public."""
+    body = _build_body(current_body, new_public, private)
+    public_now = _norm(story.strip_private_spans(body))
+    segments = story.parse_spans(body)
+    for sentence in pinned:
+        if _norm(sentence) and _norm(sentence) not in public_now:
+            segments.append({"text": "\n\n" + sentence, "kind": "public"})
+    return story._serialize_spans(segments).strip()
+
+
+def _write_decided(
+    db,
+    uid: str,
+    page_id: str,
+    ref,
+    data: dict,
+    prop: dict,
+    before_public: str,
+    after_public: str,
+    items: list[dict],
+    decided: dict[str, str],
+) -> dict:
+    """Write the public text, private notes and ``ai_body`` implied by
+    ``decided``, keep the proposal with its decisions until every change is
+    resolved (then clear it), and commit a version. Dismissed additions and
+    applied removals are appended to ``ai_body`` so Ayma's matching/chat still
+    know them."""
+    new_public, private = _rebuild_public(before_public, after_public, decided)
+    pinned = list(data.get(F_PINNED) or [])
+    body = _compose_body(story._effective_body(data), new_public, private, pinned)
+    ai_body = (data.get(story.F_AI_BODY) or "").strip()
+    fresh = [p for p in private if _norm(p) not in _norm(ai_body)]
+    if fresh:
+        ai_body = (ai_body + "\n\n" if ai_body else "") + " ".join(fresh)
+    remaining = [it for it in items if it["id"] not in decided]
+    ref.set(
+        {
+            story.F_USER_EDITS: body,
+            story.F_USER_UPDATED_AT: story._server_ts(),
+            story.F_AI_BODY: ai_body,
+            F_PROPOSAL: None if not remaining else {**prop, "decided": decided},
+        },
+        merge=True,
+    )
+    version_id = story._snapshot_section(
+        db, uid, page_id, story.AUTHOR_AYMA, "update reviewed by you"
+    )
+    return {"ok": True, "remaining": len(remaining), "head_version_id": version_id}
 
 
 def list_proposals(db, uid: str) -> list[dict]:
-    """Every pending update the review screen can show; the profile banner
-    counts this same list. A proposal that is not a dict, or whose public
-    text no longer differs from the current public text (an older rewrite
-    overtaken by the user's own edit), has nothing to review: it is cleared
-    here and logged, so the banner never counts a card that cannot render."""
+    """Every pending public-profile change, grouped by section, each change a
+    ``{id, op, text}`` row with its own stable id. The profile banner counts
+    the changes across this list. A proposal that is not a dict, whose changes
+    have all been decided, or whose public text no longer differs from the
+    current public text (an older rewrite overtaken by the user's own edit),
+    has nothing left to review: it is cleared here and logged, so the banner
+    never counts a change that cannot render."""
     out = []
     for snap in story._pages_col(db, uid).stream():
         data = snap.to_dict() or {}
         prop = data.get(F_PROPOSAL)
         if not prop or data.get(story.F_USER_HIDDEN) is True:
             continue
-        view = _proposal_view(snap.id, data) if isinstance(prop, dict) else None
+        if not isinstance(prop, dict):
+            snap.reference.set({F_PROPOSAL: None}, merge=True)
+            logger.info(
+                "profile proposal cleared as malformed uid=%s page=%s", uid, snap.id
+            )
+            continue
+        before_public = story.strip_private_spans(prop.get("before") or "")
+        after_public = story.strip_private_spans(prop.get("after") or "")
+        decided = _decided_map(prop)
+        pending = [
+            it for it in _change_items(before_public, after_public)
+            if it["id"] not in decided
+        ]
         current = _norm(story.strip_private_spans(story._effective_body(data)))
-        if view is None or not any(
-            d["op"] != "same" for d in view["diff"]
-        ) or _norm(view["after"]) == current:
+        if not pending or _norm(after_public) == current:
             snap.reference.set({F_PROPOSAL: None}, merge=True)
             logger.info(
                 "profile proposal cleared as stale uid=%s page=%s", uid, snap.id
             )
             continue
-        out.append(view)
+        out.append(
+            {"page_id": snap.id, "title": _title(snap.id, data), "changes": pending}
+        )
     out.sort(key=lambda p: p["title"].lower())
     return out
 
 
-def apply_proposal(db, uid: str, page_id: str) -> dict:
-    """Make the pending rewrite the page's text. ``KeyError`` when none."""
+def _load_proposal(db, uid: str, page_id: str) -> tuple:
+    """``(ref, data, prop, before_public, after_public, items)`` for a page
+    with a dict proposal. ``KeyError`` when there is none."""
     ref, data = story._require_page(db, uid, page_id)
     prop = data.get(F_PROPOSAL)
-    if not prop:
+    if not isinstance(prop, dict):
         raise KeyError(page_id)
-    body = preserve(
-        prop.get("after") or "",
-        story._effective_body(data),
-        list(data.get(F_PINNED) or []),
+    before_public = story.strip_private_spans(prop.get("before") or "")
+    after_public = story.strip_private_spans(prop.get("after") or "")
+    items = _change_items(before_public, after_public)
+    return ref, data, prop, before_public, after_public, items
+
+
+def _decide_one(db, uid: str, page_id: str, change_id: str, verdict: str) -> dict:
+    ref, data, prop, before_public, after_public, items = _load_proposal(
+        db, uid, page_id
     )
-    ref.set(
-        {
-            story.F_USER_EDITS: body,
-            story.F_USER_UPDATED_AT: story._server_ts(),
-            F_PROPOSAL: None,
-        },
-        merge=True,
+    decided = _decided_map(prop)
+    if change_id not in {it["id"] for it in items} or change_id in decided:
+        raise KeyError(change_id)
+    decided[change_id] = verdict
+    return _write_decided(
+        db, uid, page_id, ref, data, prop, before_public, after_public, items, decided
     )
-    return {
-        "head_version_id": story._snapshot_section(
-            db, uid, page_id, story.AUTHOR_AYMA, "update approved by you"
-        )
-    }
+
+
+def apply_change(db, uid: str, page_id: str, change_id: str) -> dict:
+    """Show one added sentence on the public profile (or carry out one
+    removal). ``KeyError`` when the change is unknown or already decided."""
+    return _decide_one(db, uid, page_id, change_id, "applied")
+
+
+def dismiss_change(db, uid: str, page_id: str, change_id: str) -> dict:
+    """Keep one change off the public profile. It is not discarded: it stays
+    in the private profile and Ayma's notes. ``KeyError`` when the change is
+    unknown or already decided."""
+    return _decide_one(db, uid, page_id, change_id, "dismissed")
+
+
+def _decide_all(db, uid: str, page_id: str, verdict: str) -> dict:
+    ref, data, prop, before_public, after_public, items = _load_proposal(
+        db, uid, page_id
+    )
+    decided = _decided_map(prop)
+    for it in items:
+        decided.setdefault(it["id"], verdict)
+    return _write_decided(
+        db, uid, page_id, ref, data, prop, before_public, after_public, items, decided
+    )
+
+
+def apply_proposal(db, uid: str, page_id: str) -> dict:
+    """Apply every remaining change in one section (Apply all). ``KeyError``
+    when there is no pending update."""
+    return _decide_all(db, uid, page_id, "applied")
 
 
 def dismiss_proposal(db, uid: str, page_id: str) -> dict:
-    ref, data = story._require_page(db, uid, page_id)
-    if not data.get(F_PROPOSAL):
-        raise KeyError(page_id)
-    ref.set({F_PROPOSAL: None}, merge=True)
-    return {"ok": True}
+    """Dismiss every remaining change in one section (Dismiss all) — each is
+    kept in the private profile and Ayma's notes. ``KeyError`` when there is no
+    pending update."""
+    return _decide_all(db, uid, page_id, "dismissed")
