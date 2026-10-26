@@ -60,6 +60,7 @@ from auth import (  # noqa: E402
 from config import CONFIG  # noqa: E402
 import agent_wake  # noqa: E402
 import gemini  # noqa: E402
+from llm_provider import get_llm_provider  # noqa: E402
 import billing  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -1521,8 +1522,9 @@ async def chat(
 
 
 async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
-    """The non-streaming Gemini call for one prepared turn."""
-    return await gemini.generate_reply(
+    """The non-streaming chat call for one prepared turn (chat surface →
+    Gemini by default, Meta when ``LLM_PROVIDER_CHAT=meta``)."""
+    return await get_llm_provider("chat").generate_reply(
         req.message,
         system_prompt=ctx.system_prompt,
         tool_declarations=session_tool_declarations(
@@ -1670,7 +1672,7 @@ async def chat_stream(
         try:
             try:
                 async with asyncio.timeout(_CHAT_TURN_TIMEOUT_SECONDS):
-                    async for ev in gemini.generate_reply_events(
+                    async for ev in get_llm_provider("chat").generate_reply_events(
                         req.message,
                         system_prompt=ctx.system_prompt,
                         tool_declarations=session_tool_declarations(

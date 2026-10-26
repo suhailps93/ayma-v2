@@ -519,6 +519,61 @@ class Config:
     """Voice calls: how long Ayma waits for the caller to speak first before
     opening the conversation herself. ``0`` (or negative) disables the opener."""
 
+    # ---------------------------------------------------------------- #
+    # META MODEL API — hackathon Deliverable A (NEW work, Oct 2026).
+    # An OpenAI-compatible provider (Meta Muse Spark) selectable per
+    # surface behind the ``LLM_PROVIDER_<SURFACE>`` flags below; Gemini
+    # stays the default and the fallback. See ``docs/META_PROVIDER.md``.
+    #
+    # Per ``AGENTS.md`` every model id (Gemini OR Meta) lives only in this
+    # module. The ``META_API_KEY`` is a SECRET — it is read from the
+    # environment (Secret Manager → Cloud Run) at the call site in
+    # ``llm_provider.py``, never stored here. The base URL is non-secret
+    # config and MUST be confirmed against https://dev.meta.ai/docs/quickstart
+    # before any live call (override with ``META_API_BASE_URL``).
+    # ---------------------------------------------------------------- #
+
+    meta_api_base_url: str
+    """OpenAI-compatible base URL of the Meta Model API. Non-secret; the
+    ``META_API_KEY`` secret authenticates against it. The committed default is
+    a placeholder — confirm the real base path from the Meta quickstart and set
+    ``META_API_BASE_URL`` before going live. No live call can succeed until both
+    this and the ``META_API_KEY`` secret are correct."""
+
+    meta_chat_model: str
+    """Meta Muse Spark LLM id used for the chat / matching / reports / practice
+    surfaces when their ``LLM_PROVIDER_*`` flag is ``meta``. Override with
+    ``META_CHAT_MODEL``."""
+
+    meta_open_weights_model: str
+    """Open-weights Muse Spark id (Baseten-hostable; the hackathon's
+    ``$10k Best Build on Meta Open Weight Models`` target). Override with
+    ``META_OPEN_WEIGHTS_MODEL``. Not wired into a surface yet — exposed so an
+    eval or a self-hosted deployment can select it without a hardcoded id."""
+
+    meta_transcribe_model: str
+    """Meta Muse Voice Transcribe (STT) id for the voice cascade. Override with
+    ``META_TRANSCRIBE_MODEL``. Exposed for the voice surface; the live voice
+    agent still runs on Gemini Live until a Meta cascade is wired."""
+
+    llm_provider_chat: str
+    llm_provider_matching: str
+    llm_provider_reports: str
+    llm_provider_practice: str
+    llm_provider_voice: str
+    """Per-surface provider switch, ``gemini`` | ``meta``. Each surface flips
+    and rolls back independently via ``LLM_PROVIDER_<SURFACE>`` (e.g.
+    ``LLM_PROVIDER_CHAT=meta``); ``LLM_PROVIDER`` sets the default for any
+    surface whose own var is unset. ALL default to ``gemini`` — production
+    behaviour is unchanged until a surface is explicitly flipped. Read by
+    ``llm_provider.get_llm_provider(surface)``."""
+
+    llm_meta_fallback: bool
+    """When a surface is routed to ``meta`` and the Meta call fails (no key yet,
+    transport error, bad response), retry once on Gemini. Default True — so a
+    flip can never take a surface down. ``LLM_META_FALLBACK=false`` to disable
+    (e.g. in an eval that must measure Meta on its own)."""
+
 
 def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
     raw = os.getenv(name, default)
@@ -622,6 +677,34 @@ def _load() -> Config:
         voice_opener_grace_seconds=float(
             os.getenv("VOICE_OPENER_GRACE_SECONDS", "1.5")
         ),
+        # META MODEL API (hackathon Deliverable A) — see the block above.
+        meta_api_base_url=os.getenv(
+            "META_API_BASE_URL", "https://api.meta.ai/v1"
+        ).rstrip("/"),
+        meta_chat_model=os.getenv("META_CHAT_MODEL", "muse-spark"),
+        meta_open_weights_model=os.getenv(
+            "META_OPEN_WEIGHTS_MODEL", "meta-models/muse-spark-open-1026"
+        ),
+        meta_transcribe_model=os.getenv(
+            "META_TRANSCRIBE_MODEL", "muse-voice-transcribe"
+        ),
+        llm_provider_chat=os.getenv(
+            "LLM_PROVIDER_CHAT", os.getenv("LLM_PROVIDER", "gemini")
+        ).strip().lower(),
+        llm_provider_matching=os.getenv(
+            "LLM_PROVIDER_MATCHING", os.getenv("LLM_PROVIDER", "gemini")
+        ).strip().lower(),
+        llm_provider_reports=os.getenv(
+            "LLM_PROVIDER_REPORTS", os.getenv("LLM_PROVIDER", "gemini")
+        ).strip().lower(),
+        llm_provider_practice=os.getenv(
+            "LLM_PROVIDER_PRACTICE", os.getenv("LLM_PROVIDER", "gemini")
+        ).strip().lower(),
+        llm_provider_voice=os.getenv(
+            "LLM_PROVIDER_VOICE", os.getenv("LLM_PROVIDER", "gemini")
+        ).strip().lower(),
+        llm_meta_fallback=os.getenv("LLM_META_FALLBACK", "true").strip().lower()
+        == "true",
         dm_viewing_window_seconds=int(
             os.getenv("DM_VIEWING_WINDOW_SECONDS", "25")
         ),

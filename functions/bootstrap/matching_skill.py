@@ -35,6 +35,7 @@ from pathlib import Path
 import ai_assessment
 import gemini
 import match_deterministic
+from llm_provider import get_llm_provider
 import matching_schema
 import question_tree
 from wiki_query import read_wiki_context
@@ -311,7 +312,7 @@ def _confidence(
 async def _run_llm(
     contents: str, dim_keys: list[str], *, uid: str
 ) -> dict:
-    result = await gemini.generate_json(
+    result = await get_llm_provider("matching").generate_json(
         contents,
         system_prompt=_load_prompt(),
         response_schema=_response_schema(dim_keys),

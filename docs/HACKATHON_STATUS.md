@@ -1,0 +1,5 @@
+# Hackathon status (meta-hackathon branch)
+
+One status line per deliverable/agent. Append only — never edit a prior line.
+
+- 2026-10-26 — **Deliverable A (Meta provider port)**: `LLMProvider` abstraction (`functions/bootstrap/llm_provider.py`) with `GeminiProvider` (default) + `MetaProvider` (OpenAI-compatible Meta Muse Spark; text, event-streamed chat, structured JSON, Gemini fallback). Per-surface flag `LLM_PROVIDER_<SURFACE>` (chat/matching/reports/practice/voice), all default `gemini`. Wired: chat (`main.py`), matching (`matching_skill.py`), reports (`body_report.py`, `face_report.py`); `get_llm_provider("practice")` exposed for the Practice Date agent. Embeddings stay on Gemini (documented hybrid). Model ids in `config.py` only (`META_CHAT_MODEL`/`META_OPEN_WEIGHTS_MODEL`/`META_TRANSCRIBE_MODEL`). Eval harness `scripts/meta_vs_gemini_eval.py` (dry-run + live). Tests: `tests/test_llm_provider.py` (17, all green). Docs: `docs/META_PROVIDER.md`. **Blocked on `META_API_KEY` (+ Team ID, payment card) in Secret Manager before any live Meta call**; until then flips fall back to Gemini. Flip: set `LLM_PROVIDER_<SURFACE>=meta` on Cloud Run.
