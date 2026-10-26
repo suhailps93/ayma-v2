@@ -653,6 +653,14 @@ class Config:
     ``META_TRANSCRIBE_MODEL``. Exposed for the voice surface; the live voice
     agent still runs on Gemini Live until a Meta cascade is wired."""
 
+    meta_reasoning_effort: str
+    """Reasoning budget for Muse Spark chat calls. Every Muse Spark variant is a
+    reasoning model (there is no non-reasoning Meta chat model); the API floor is
+    ``minimal`` (``none`` is rejected). We pin ``minimal`` so conversational
+    replies stay fast (~0.6s, ~20 reasoning tokens) instead of burning the token
+    budget on reasoning (~450 tokens, content truncated). Override with
+    ``META_REASONING_EFFORT`` (minimal|low|medium|high|xhigh|max)."""
+
     llm_provider_chat: str
     llm_provider_matching: str
     llm_provider_reports: str
@@ -826,13 +834,14 @@ def _load() -> Config:
         meta_api_base_url=os.getenv(
             "META_API_BASE_URL", "https://api.meta.ai/v1"
         ).rstrip("/"),
-        meta_chat_model=os.getenv("META_CHAT_MODEL", "muse-spark"),
+        meta_chat_model=os.getenv("META_CHAT_MODEL", "muse-spark-1.3"),
         meta_open_weights_model=os.getenv(
             "META_OPEN_WEIGHTS_MODEL", "meta-models/muse-spark-open-1026"
         ),
         meta_transcribe_model=os.getenv(
-            "META_TRANSCRIBE_MODEL", "muse-voice-transcribe"
+            "META_TRANSCRIBE_MODEL", "muse-voice-transcribe-1.0"
         ),
+        meta_reasoning_effort=os.getenv("META_REASONING_EFFORT", "minimal"),
         llm_provider_chat=os.getenv(
             "LLM_PROVIDER_CHAT", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),

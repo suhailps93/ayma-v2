@@ -24,9 +24,17 @@ surface is explicitly flipped.
   `LLM_PROVIDER` as the default for any surface whose own var is unset. **All
   default to `gemini`.**
 * Model ids live only in `config.py` (per `AGENTS.md`): `META_CHAT_MODEL`
-  (`muse-spark`), `META_OPEN_WEIGHTS_MODEL`
+  (`muse-spark-1.3`), `META_OPEN_WEIGHTS_MODEL`
   (`meta-models/muse-spark-open-1026`, the $10k open-weights target),
-  `META_TRANSCRIBE_MODEL` (`muse-voice-transcribe`, voice cascade).
+  `META_TRANSCRIBE_MODEL` (`muse-voice-transcribe-1.0`, voice cascade). Model
+  ids confirmed live via `GET https://api.meta.ai/v1/models` (2026-10-26).
+* **Reasoning effort `META_REASONING_EFFORT` (default `minimal`)** — every Muse
+  Spark variant is a reasoning model and there is no non-reasoning Meta chat
+  model (the API rejects `reasoning_effort: none`; floor is `minimal`). At the
+  default effort a trivial reply burns ~450 reasoning tokens and ~2s+; pinned to
+  `minimal` it drops to ~20 reasoning tokens and ~0.6s, which is what Ayma's
+  conversational surfaces need. Passed as `extra_body` so it works regardless of
+  the installed OpenAI SDK version.
 * **Eval harness** — `functions/bootstrap/scripts/meta_vs_gemini_eval.py` runs
   fixed matching pairs + report prompts through both providers and prints a
   comparison. Dry-run (no key) shows the exact request each side would send;
@@ -63,19 +71,32 @@ Roll back by removing the var (or setting it to `gemini`) and restarting. With
 surface to Gemini automatically; set `LLM_META_FALLBACK=false` only when you
 need to measure Meta on its own (e.g. in the eval).
 
-## REQUIRED before any live Meta call
+## Status (2026-10-26) — live
 
-1. **`META_API_KEY`** — the Meta Model API key, NOT yet available (the Meta
-   account + $150 credit claim are being set up). Add it to **Google Secret
-   Manager** and mount it on the Cloud Run services; never a plaintext env var
-   in a deploy config, never committed. Until it is set, any surface flipped to
-   `meta` falls back to Gemini (or raises a clear `META_API_KEY is not set`
-   error if fallback is off).
-2. **Account Team ID + a payment card** on the Meta account (card is required
-   to use credits; overspend bills the card — monitor usage).
-3. **Confirm `META_API_BASE_URL`** against <https://dev.meta.ai/docs/quickstart>.
-   The committed default (`https://api.meta.ai/v1`) is a placeholder; set the
-   real base path via the `META_API_BASE_URL` env var.
+1. **`META_API_KEY`** — ✅ in **Google Secret Manager** (`META_API_KEY`), the
+   Cloud Run SA (`235381544962-compute@…`) granted `secretAccessor`, mounted in
+   `deploy-api.sh` / `deploy-agent.sh`. Never committed, never a plaintext env
+   var.
+2. **Account Team ID `1115399524571844`** (Project `1115393394567311`); $150
+   credit claim **submitted**. ⚠️ Until the credit posts to Billing → free
+   credits, **every Meta call bills the card** — monitor usage.
+3. **`META_API_BASE_URL`** — ✅ confirmed `https://api.meta.ai/v1` (authenticated
+   `GET /models` returns 200 with our key).
+
+### Eval (live, 2026-10-26, `scripts/meta_vs_gemini_eval.py --live`)
+
+Both providers passed all four fixtures; **Muse Spark was faster on every case**
+(e.g. match 1.5s vs Gemini 7.1s; report 1.8s vs 4.2s). Known quirk: on the
+**reports** JSON schema Muse Spark sometimes emits a key with a trailing space
+(`"strengths "`) — harmless for `practice`/`chat` (conversational, no strict
+schema) but a parser risk, so **reports stays on Gemini** until this is handled.
+
+### Flipped surface
+
+`practice` (text) → Meta (`LLM_PROVIDER_PRACTICE=meta` in `deploy-api.sh`), with
+`LLM_META_FALLBACK=true` so any Meta hiccup degrades to Gemini. Voice practice
+still runs on Gemini Live (the Meta STT→Spark→TTS cascade is not wired yet).
+`chat`, `matching`, `reports`, `voice` remain on Gemini.
 
 ## Embeddings stay on Gemini (deliberate hybrid)
 

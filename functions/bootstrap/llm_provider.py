@@ -272,6 +272,7 @@ class MetaProvider(LLMProvider):
                 temperature=temperature,
                 max_tokens=4096,
                 response_format=_response_format(response_schema, feature),
+                extra_body={"reasoning_effort": CONFIG.meta_reasoning_effort},
             )
             token_ledger.record(
                 uid, feature, _MetaResponse(getattr(resp, "usage", None)),
@@ -392,6 +393,7 @@ class MetaProvider(LLMProvider):
             temperature=0.9,
             max_tokens=1024,
             tools=tools,
+            extra_body={"reasoning_effort": CONFIG.meta_reasoning_effort},
         )
         token_ledger.record(
             uid, feature, _MetaResponse(getattr(resp, "usage", None)),
@@ -448,6 +450,7 @@ class MetaProvider(LLMProvider):
                 temperature=0.9,
                 max_tokens=1024,
                 tools=tools,
+                extra_body={"reasoning_effort": CONFIG.meta_reasoning_effort},
             )
             token_ledger.record(
                 uid, feature, _MetaResponse(getattr(resp, "usage", None)),
