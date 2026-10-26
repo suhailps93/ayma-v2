@@ -77,7 +77,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import billing
 import feature_flags
@@ -132,7 +132,45 @@ FEATURE_PHOTO_MODERATION = "photo_moderation"  # profile/generated-photo safety 
 FEATURE_PHOTO_ATTRS = "photo_attrs"  # per-photo shot-type/attribute tagging (record-only)
 FEATURE_PHOTO_CAPTION = "photo_caption"  # private photo-log caption (record-only)
 FEATURE_DM_INGEST = "dm_ingest"  # DM voice transcription / photo caption for the wiki (record-only)
+FEATURE_PROFILE_MANUAL = "profile_manual"  # manual profile-edit diff classification
 FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (ai_assessment.py)
+
+# The one user-facing label per ledger feature key — the Plan page's "Where
+# your credits went" list shows these, never the raw key. Every FEATURE_*
+# constant above MUST have an entry (enforced by test_every_feature_has_a_label).
+FEATURE_LABELS = {
+    FEATURE_CHAT: "Text chat with Ayma",
+    FEATURE_VOICE: "Voice with Ayma",
+    FEATURE_ICEBREAKERS: "Icebreakers",
+    FEATURE_MATCHING: "Match scoring",
+    FEATURE_WIKI: "Building your wiki",
+    FEATURE_EXPLORE: "Explore search",
+    FEATURE_REENGAGE: "Ayma checking in",
+    FEATURE_DEEPDIVE: "Web research",
+    FEATURE_FACE_REPORT: "Face report",
+    FEATURE_BODY_REPORT: "Body report",
+    FEATURE_PHYSICAL_ATTRS: "Appearance details",
+    FEATURE_COMPLETENESS: "Profile completeness",
+    FEATURE_SUMMARY: "Conversation memory",
+    FEATURE_PERSONA_EVOLUTION: "Ayma's learning",
+    FEATURE_CAREER_TIMELINE: "Career timeline",
+    FEATURE_PHOTO_EDIT: "Photo edits",
+    FEATURE_IMAGE_GEN: "Image creation",
+    FEATURE_PHOTO_MODERATION: "Photo safety check",
+    FEATURE_PHOTO_ATTRS: "Reading your photos",
+    FEATURE_PHOTO_CAPTION: "Photo captions",
+    FEATURE_DM_INGEST: "Message notes",
+    FEATURE_PROFILE_MANUAL: "Profile edits",
+    FEATURE_AI_NOTES: "Ayma's notes",
+}
+FEATURE_LABEL_FALLBACK = "Other"
+
+# The periods the Plan page can filter "where your credits went" by.
+PERIOD_SINCE_CREDIT = "since_credit"
+PERIOD_7D = "7d"
+PERIOD_30D = "30d"
+PERIOD_ALL = "all"
+PERIODS = (PERIOD_SINCE_CREDIT, PERIOD_7D, PERIOD_30D, PERIOD_ALL)
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 
@@ -956,6 +994,82 @@ def spend_groups(uid: str) -> list[dict]:
     return out
 
 
+def last_credit_update(data: dict, b: dict) -> datetime | None:
+    """When credits were last added to the account: the latest of the billing
+    stamp (start grant, selfie unlock, daily rollover, plan grant/renewal,
+    expiry to free — see ``billing``) and the top-level ``credits_updated_at``
+    (free reload / admin credit via :func:`topup`). ``None`` for an account
+    that predates the stamp and has not been touched since."""
+    stamps = [
+        v for v in (b.get("credits_updated_at"), data.get("credits_updated_at"))
+        if hasattr(v, "isoformat")
+    ]
+    return max(stamps) if stamps else None
+
+
+def period_usage(uid: str, period: str) -> dict:
+    """Credits spent per feature over ``period`` (one of :data:`PERIODS`),
+    aggregated server-side from ``users/{uid}/spend_events`` and returned in
+    credits only — never dollars. Each event's real cost is converted at
+    ``credits_per_usd`` and rounded per feature; ``total_credits`` is the sum
+    of the returned rows, so a header built from it always equals its rows.
+    ``since`` is the effective period start (ISO) or ``None`` when unbounded;
+    when the retained events do not reach back to the requested start (the
+    collection is capped at ``SPEND_EVENTS_CAP``) it is the oldest retained
+    event instead, so the figure is never silently under-reported. Raises
+    ``ValueError`` for an unknown period."""
+    if period not in PERIODS:
+        raise ValueError(f"unknown period: {period}")
+    now = datetime.now(timezone.utc)
+    if period == PERIOD_SINCE_CREDIT:
+        data, b = _load(uid)
+        since = last_credit_update(data, b)
+    elif period == PERIOD_7D:
+        since = now - timedelta(days=7)
+    elif period == PERIOD_30D:
+        since = now - timedelta(days=30)
+    else:
+        since = None
+    events_col = (
+        get_db().collection("users").document(uid).collection(_SPEND_SUBCOLLECTION)
+    )
+    query = events_col.order_by("ts")
+    if since is not None:
+        query = query.where("ts", ">=", since)
+    cost_usd: dict[str, float] = {}
+    for snap in query.stream():
+        d = snap.to_dict() or {}
+        feature = str(d.get("feature") or "misc")
+        cost_usd[feature] = cost_usd.get(feature, 0.0) + float(
+            d.get("cost_usd", 0) or 0
+        )
+    first = events_col.count().get()[0]
+    if isinstance(first, (list, tuple)):
+        first = first[0]
+    if int(first.value) >= SPEND_EVENTS_CAP:
+        oldest = next(iter(events_col.order_by("ts").limit(1).stream()), None)
+        oldest_ts = (oldest.to_dict() or {}).get("ts") if oldest else None
+        if hasattr(oldest_ts, "isoformat") and (since is None or oldest_ts > since):
+            since = oldest_ts
+    cpu = max(1, CONFIG.credits_per_usd)
+    rows = [
+        {
+            "key": k,
+            "label": FEATURE_LABELS.get(k, FEATURE_LABEL_FALLBACK),
+            "credits": credits,
+        }
+        for k, v in cost_usd.items()
+        if (credits := int(v * cpu + 0.5)) > 0
+    ]
+    rows.sort(key=lambda r: (-r["credits"], r["label"]))
+    return {
+        "period": period,
+        "since": since.isoformat() if since is not None else None,
+        "features": rows,
+        "total_credits": sum(r["credits"] for r in rows),
+    }
+
+
 def reset_real_money(uid: str) -> dict:
     """Reset the Real money tab's "since last reset" tracker to $0.00
     (founder request 2026-09-26: "That resets the tracker to zero. It should
@@ -986,7 +1100,9 @@ def reset_real_money(uid: str) -> dict:
     return usage(uid, include_dollars=True)
 
 
-def usage(uid: str, *, include_dollars: bool = False) -> dict:
+def usage(
+    uid: str, *, include_dollars: bool = False, period: str | None = None
+) -> dict:
     """The client-facing view: raw lifetime token accounting (total + a
     per-feature breakdown across chat / voice / matching / wiki / explore /
     reengage) plus the derived credit balance and per-action credit costs.
@@ -1009,6 +1125,9 @@ def usage(uid: str, *, include_dollars: bool = False) -> dict:
     and ``spend_groups`` (which carries per-conversation ``cost_usd``) are
     included only when ``include_dollars`` is true — set by the admin-claim
     ``GET /usage`` path and the ``/admin/users/{uid}/credits`` inspector.
+
+    ``period`` (one of :data:`PERIODS`) adds ``period_usage`` — the credits
+    per feature for that window (see :func:`period_usage`), credits only.
     """
     u = _read(uid)
     cred = credits(uid)
@@ -1033,6 +1152,8 @@ def usage(uid: str, *, include_dollars: bool = False) -> dict:
         "trial_end": cred["trial_end"],
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
     }
+    if period is not None:
+        view["period_usage"] = period_usage(uid, period)
     if include_dollars:
         view.update({
             "cost_usd": round(u["cost_usd"], 6),

@@ -36,6 +36,23 @@ String subscriptionDate(DateTime t) {
   return '${_months[d.month - 1]} ${d.day}, ${d.year}';
 }
 
+/// "Oct 25, 6:20 PM" — the local start of a credit-history period.
+String periodStart(DateTime t) {
+  final d = t.toLocal();
+  final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+  final m = d.minute.toString().padLeft(2, '0');
+  return '${_months[d.month - 1]} ${d.day}, $h:$m ${d.hour < 12 ? 'AM' : 'PM'}';
+}
+
+/// The periods "Where your credits went" can be filtered by: the server
+/// period id and its chip label. The first is the default.
+const _creditPeriods = [
+  ('since_credit', 'Since last credit update'),
+  ('7d', 'Last 7 days'),
+  ('30d', 'Last 30 days'),
+  ('all', 'All time'),
+];
+
 /// A Free-plan balance at or below this shows the "what still works" note
 /// before the user actually hits zero.
 const _lowFreeCredits = 10;
@@ -49,21 +66,6 @@ const _planFeatures = [
   'Match scoring and reports',
   'Cancel anytime from your store account',
 ];
-
-/// Feature → user-facing label for the "where your credits went" list.
-const _featureLabels = {
-  'chat': 'Text chat with Ayma',
-  'voice': 'Voice with Ayma',
-  'icebreakers': 'Icebreakers',
-  'matching': 'Match scoring',
-  'wiki': 'Building your wiki',
-  'explore': 'Explore search',
-  'reengage': 'Ayma checking in',
-  'photos': 'Reading your photos',
-  'dm': 'Message notes',
-  'lint': 'Wiki housekeeping',
-  'misc': 'Other',
-};
 
 class _PlanData {
   const _PlanData({
@@ -119,9 +121,17 @@ class _PlanScreenState extends State<PlanScreen> {
 
   Future<UsageSummary?> _usage() async {
     try {
-      final u = await _api.usage();
+      final u = await _api.usage(period: _creditPeriods.first.$1);
       CreditsBalance.instance.remaining.value = u.creditsRemaining;
       return u;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<PeriodUsage?> _periodUsage(String period) async {
+    try {
+      return (await _api.usage(period: period)).periodUsage;
     } catch (_) {
       return null;
     }
@@ -228,12 +238,8 @@ class _PlanScreenState extends State<PlanScreen> {
     final id =
         _selected ??
         d.status.productId ??
-        d.plans
-            .where((p) => p.name == _recommendedPlan)
-            .firstOrNull
-            ?.productId;
-    return d.plans.where((p) => p.productId == id).firstOrNull ??
-        d.plans.first;
+        d.plans.where((p) => p.name == _recommendedPlan).firstOrNull?.productId;
+    return d.plans.where((p) => p.productId == id).firstOrNull ?? d.plans.first;
   }
 
   /// Why [p] can't be bought right now, or null when it can. [retry] is true
@@ -289,11 +295,8 @@ class _PlanScreenState extends State<PlanScreen> {
       unavailable: unavailable,
       onPressed: unavailable == null && !_busy
           ? () => _run(
-              () => _rc.purchase(
-                p,
-                replacing: s.productId,
-                isUpgrade: isUpgrade,
-              ),
+              () =>
+                  _rc.purchase(p, replacing: s.productId, isUpgrade: isUpgrade),
               success: '${p.name} is active.',
               empty: '',
             )
@@ -349,7 +352,11 @@ class _PlanScreenState extends State<PlanScreen> {
                             : null,
                       ),
                       const SizedBox(height: 40),
-                      _CreditHistory(usage: d.usage),
+                      _CreditHistory(
+                        initial: d.usage?.periodUsage,
+                        available: d.usage != null,
+                        load: _periodUsage,
+                      ),
                       const SizedBox(height: 32),
                       Divider(height: 0.5, color: ac.lineSoft),
                       const SizedBox(height: 8),
@@ -507,20 +514,12 @@ class _Hero extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   kOutOfCreditsStillFree,
-                  style: AymaType.sans(
-                    size: 13,
-                    color: ac.fgDim,
-                    height: 1.45,
-                  ),
+                  style: AymaType.sans(size: 13, color: ac.fgDim, height: 1.45),
                 ),
                 const SizedBox(height: 6),
                 Text(
                   kOutOfCreditsNeedsCredits,
-                  style: AymaType.sans(
-                    size: 13,
-                    color: ac.fgDim,
-                    height: 1.45,
-                  ),
+                  style: AymaType.sans(size: 13, color: ac.fgDim, height: 1.45),
                 ),
               ],
             ),
@@ -730,30 +729,72 @@ class _PlanDetail extends StatelessWidget {
   }
 }
 
-/// Where credits went, per feature — a quiet list in credits only.
-class _CreditHistory extends StatelessWidget {
-  const _CreditHistory({required this.usage});
+/// Where credits went, per feature, for a selectable period — a quiet list in
+/// credits only. The header total, the rows and the shares all come from the
+/// same server-side period aggregate, so they always agree.
+class _CreditHistory extends StatefulWidget {
+  const _CreditHistory({
+    required this.initial,
+    required this.available,
+    required this.load,
+  });
 
-  final UsageSummary? usage;
+  /// The default period's usage, loaded with the page.
+  final PeriodUsage? initial;
+
+  /// False when `/usage` itself could not be loaded.
+  final bool available;
+  final Future<PeriodUsage?> Function(String period) load;
+
+  @override
+  State<_CreditHistory> createState() => _CreditHistoryState();
+}
+
+class _CreditHistoryState extends State<_CreditHistory> {
+  String _period = _creditPeriods.first.$1;
+  PeriodUsage? _usage;
+  bool _loading = false;
+  bool _failed = false;
+  int _request = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _usage = widget.initial;
+    _failed = widget.initial == null;
+  }
+
+  Future<void> _select(String period) async {
+    if (period == _period) return;
+    final request = ++_request;
+    setState(() {
+      _period = period;
+      _loading = true;
+    });
+    final result = await widget.load(period);
+    if (!mounted || request != _request) return;
+    setState(() {
+      _usage = result;
+      _failed = result == null;
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final u = usage;
-    final entries = u == null
-        ? const <MapEntry<String, int>>[]
-        : (u.features.entries.where((e) => u.creditsForFeature(e.value) > 0)
-              .toList()
-            ..sort((a, b) => b.value.compareTo(a.value)));
+    final u = _usage;
+    final quiet = AymaType.sans(size: 14, soft: true, color: ac.fgMute);
+    final since = u?.since;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
             const Expanded(child: Eyebrow('Where your credits went')),
-            if (u != null)
+            if (u != null && !_loading)
               Text(
-                '${u.creditsUsed} spent',
+                '${u.totalCredits} spent',
                 key: const ValueKey('plan-credits-used'),
                 style: AymaType.mono(
                   size: 11,
@@ -763,46 +804,94 @@ class _CreditHistory extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 8),
-        if (u == null)
+        if (!widget.available)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              'Unavailable right now.',
-              style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
-            ),
+            child: Text('Unavailable right now.', style: quiet),
           )
-        else if (entries.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              'Nothing spent yet.',
-              style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
-            ),
-          )
-        else
-          for (var i = 0; i < entries.length; i++) ...[
-            if (i > 0) Divider(height: 0.5, color: ac.lineSoft),
+        else ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final (id, label) in _creditPeriods)
+                ChoiceChip(
+                  key: ValueKey('credit-period-$id'),
+                  label: Text(label),
+                  selected: _period == id,
+                  onSelected: (_) => _select(id),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+          if (since != null && !_loading && !_failed)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _featureLabels[entries[i].key] ?? entries[i].key,
-                      style: AymaType.sans(size: 14, color: ac.fgDim),
-                    ),
-                  ),
-                  Text(
-                    '${u.creditsForFeature(entries[i].value)} cr',
-                    style: AymaType.mono(
-                      size: 12,
-                      color: ac.fgDim,
-                    ).copyWith(letterSpacing: 0.5),
-                  ),
-                ],
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'since ${periodStart(since)}',
+                key: const ValueKey('plan-credits-since'),
+                style: AymaType.mono(
+                  size: 11,
+                  color: ac.fgMute,
+                ).copyWith(letterSpacing: 0.5),
               ),
             ),
-          ],
+          const SizedBox(height: 4),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (_failed || u == null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text('Unavailable right now.', style: quiet),
+            )
+          else if (u.features.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'No credits used in this period',
+                key: const ValueKey('plan-credits-empty'),
+                style: quiet,
+              ),
+            )
+          else
+            for (var i = 0; i < u.features.length; i++) ...[
+              if (i > 0) Divider(height: 0.5, color: ac.lineSoft),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        u.features[i].label,
+                        style: AymaType.sans(size: 14, color: ac.fgDim),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        '${u.features[i].credits} cr · '
+                        '${(u.features[i].credits * 100 / u.totalCredits).round()}%',
+                        style: AymaType.mono(
+                          size: 12,
+                          color: ac.fgDim,
+                        ).copyWith(letterSpacing: 0.5),
+                        textAlign: TextAlign.end,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+        ],
       ],
     );
   }
@@ -847,9 +936,7 @@ class _ActionBar extends StatelessWidget {
                 width: double.infinity,
                 child: FilledButton(
                   key: const ValueKey('plan-primary-action'),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 52),
-                  ),
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 52)),
                   onPressed: onPressed,
                   child: Text(label),
                 ),
@@ -880,9 +967,7 @@ class _ActionBar extends StatelessWidget {
                   width: double.infinity,
                   child: TextButton(
                     key: const ValueKey('continue-free'),
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(0, 44),
-                    ),
+                    style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
                     onPressed: onContinueFree,
                     child: const Text('Continue with free plan'),
                   ),

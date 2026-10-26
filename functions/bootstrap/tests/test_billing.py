@@ -684,3 +684,19 @@ def test_non_trial_purchase_is_not_flagged_trial(db):
     c = token_ledger.credits("u1")
     assert c["is_trial"] is False and c["trial_end"] is None
     assert c["remaining"] == 1400
+
+
+# --- credits_updated_at: the "since last credit update" period start --------
+
+def test_credit_adding_events_stamp_credits_updated_at(db):
+    assert db.user()["billing"]["credits_updated_at"] == T0  # start grant
+    _set_day(1)
+    token_ledger.credits("u1")  # daily-allowance rollover
+    assert db.user()["billing"]["credits_updated_at"] == T0 + timedelta(days=1)
+    _handle(db, _event("INITIAL_PURCHASE"), now=T0 + timedelta(days=1, hours=2))
+    assert db.user()["billing"]["credits_updated_at"] == (
+        T0 + timedelta(days=1, hours=2)
+    )
+    later = T0 + timedelta(days=5)
+    _handle(db, _event("RENEWAL", eid="e2", expires=later + timedelta(days=30)), now=later)
+    assert db.user()["billing"]["credits_updated_at"] == later

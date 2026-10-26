@@ -4647,16 +4647,24 @@ async def story_set_linkedin(
 @app.get("/usage")
 async def token_usage(
     caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
+    period: str | None = None,
 ) -> dict[str, object]:
     """This user's lifetime Gemini-token usage — the running total plus a
     per-feature breakdown (chat / voice / matching / wiki / explore / reengage)
     — and the derived credit balance (grant + top-ups − used). Credits only:
     the dollar cost / real-money fields are included solely for callers on the
     dev-view allowlist (``CONFIG.dev_view_emails`` / ``dev_view_uids``), and
-    ``is_dev`` tells the app whether to show its Dev view entry."""
+    ``is_dev`` tells the app whether to show its Dev view entry. ``period``
+    (``since_credit`` | ``7d`` | ``30d`` | ``all``) adds ``period_usage``: the
+    credits spent per feature (with friendly labels) over that window."""
     uid, is_dev = caller
+    if period is not None and period not in token_ledger.PERIODS:
+        raise HTTPException(status_code=400, detail="unknown period")
+    extra = {} if period is None else {"period": period}
     view = await asyncio.to_thread(
-        functools.partial(token_ledger.usage, uid, include_dollars=is_dev)
+        functools.partial(
+            token_ledger.usage, uid, include_dollars=is_dev, **extra
+        )
     )
     return {**view, "is_dev": is_dev}
 

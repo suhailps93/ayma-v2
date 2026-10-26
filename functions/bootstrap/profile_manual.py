@@ -51,6 +51,7 @@ from pathlib import Path
 import gemini
 import report_blocks as rb
 import story
+import token_ledger
 from wiki_schema import page_types
 
 logger = logging.getLogger("ayma.profile_manual")
@@ -395,7 +396,7 @@ async def _classify(uid: str, blocks: list[dict]) -> dict[str, str]:
             system_prompt=_prompt("profile_diff_classify.md"),
             response_schema=_CLASSIFY_SCHEMA,
             uid=uid,
-            feature="profile_manual",
+            feature=token_ledger.FEATURE_PROFILE_MANUAL,
             enforce_cap=False,
         )
     except Exception:  # noqa: BLE001 - fall back to the safe defaults
@@ -435,7 +436,7 @@ async def _moderate(uid: str, added_text: str) -> None:
             system_prompt=_prompt("profile_text_moderation.md"),
             response_schema=_MODERATION_SCHEMA,
             uid=uid,
-            feature="profile_manual",
+            feature=token_ledger.FEATURE_PROFILE_MANUAL,
             enforce_cap=False,
         )
     except Exception as exc:  # noqa: BLE001 - public text fails closed

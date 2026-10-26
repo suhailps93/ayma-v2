@@ -9,6 +9,9 @@ reference with composite indexes — until then it grows per phase.
 Account/auth metadata only, written by auth/session flows, never by the AI
 (§3.2). Fields land as their steps do: `session_mode`, `marketing_turn_count`,
 `interview_turn_count`, `created_at`, `linked_at`, admin-claim mirror.
+`billing.credits_updated_at` (timestamp) is stamped whenever credits are added (start grant, selfie unlock, daily
+rollover, plan grant/renewal, expiry to free); top-ups write the top-level `credits_updated_at`. The newest of the two
+is the "since last credit update" start of the Plan page credit history.
 
 ## `users/{uid}/profile/main`  *(Step 7)*
 Structured onboarding fields: `name`, `birthdate`, `gender`, `interested_in`,

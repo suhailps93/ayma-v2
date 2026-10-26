@@ -24,6 +24,11 @@ State lives in ``users/{uid}.billing``::
                    verification selfie (anti-abuse); until then only the daily
                    allowance applies. Absent on accounts initialised before
                    this gate == unlocked.
+    credits_updated_at: when credits were last added to the account (initial
+                   start grant, selfie unlock, daily-allowance rollover, plan
+                   grant/renewal, expiry back to free) — the "since last
+                   credit update" period start. Top-ups/admin credits stamp
+                   the top-level ``credits_updated_at`` instead.
     start_grant_blocked: the selfie matched another grant-holding account
                    (duplicate); the grant stays withheld permanently.
 
@@ -134,6 +139,7 @@ def normalize(
             initialized=True, plan=PLAN_FREE, init_cost_usd=cost,
             legacy_bonus_usd=_legacy_bonus_usd(data, cfg),
             paid_spent_closed_usd=0.0, start_grant_unlocked=bool(verified),
+            credits_updated_at=now,
         )
         changed = True
     elif (
@@ -142,6 +148,7 @@ def normalize(
         and not b.get("start_grant_blocked")
     ):
         b["start_grant_unlocked"] = True
+        b["credits_updated_at"] = now
         changed = True
     if b.get("plan") != PLAN_FREE:
         end = b.get("period_end")
@@ -154,6 +161,7 @@ def normalize(
         if b.get("daily_day") != today:
             b["daily_day"] = today
             b["daily_base_free_usd"] = free_spend(b, cost)
+            b["credits_updated_at"] = now
             changed = True
     return b, changed
 
@@ -269,6 +277,7 @@ def _apply(db, uid: str, ev: dict, cfg: Config, now: datetime) -> str:
             plan=plan, product_id=tier.product_id, pool_usd=pool,
             period_start_cost_usd=cost, period_end=expires, is_trial=is_trial,
             cancel_at_period_end=False, billing_issue=False, pending_plan=None,
+            credits_updated_at=now,
         )
         ref.set({"billing": b}, merge=True)
         return f"granted_{plan}_trial" if is_trial else f"granted_{plan}"
@@ -294,6 +303,7 @@ def _apply(db, uid: str, ev: dict, cfg: Config, now: datetime) -> str:
         _settle(b, cost)
         b["daily_day"] = now.astimezone(timezone.utc).strftime("%Y-%m-%d")
         b["daily_base_free_usd"] = free_spend(b, cost)
+        b["credits_updated_at"] = now
         ref.set({"billing": b}, merge=True)
         return "expired_to_free"
 

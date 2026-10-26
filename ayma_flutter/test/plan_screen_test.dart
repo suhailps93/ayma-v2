@@ -115,7 +115,9 @@ ApiClient _api({
   int remaining = 58,
   String plan = 'free',
   String? periodEnd,
-  Map<String, int> features = const {'chat': 30000, 'matching': 3000},
+  Map<String, int> rows = const {'Text chat with Ayma': 30, 'Match scoring': 3},
+  Set<String> emptyPeriods = const {},
+  List<String>? periodsAsked,
   bool fail = false,
   void Function()? onUsage,
 }) {
@@ -123,10 +125,25 @@ ApiClient _api({
     expect(req.url.path, '/usage');
     onUsage?.call();
     if (fail) return http.Response('down', 503);
+    final period = req.url.queryParameters['period'];
+    if (period != null) periodsAsked?.add(period);
+    final shown = period != null && emptyPeriods.contains(period)
+        ? const <String, int>{}
+        : rows;
     return http.Response(
       jsonEncode({
         'total': 33000,
-        'features': features,
+        'features': {'chat': 30000},
+        if (period != null)
+          'period_usage': {
+            'period': period,
+            'since': period == 'all' ? null : '2026-10-25T18:20:00',
+            'features': [
+              for (final e in shown.entries)
+                {'key': 'k', 'label': e.key, 'credits': e.value},
+            ],
+            'total_credits': shown.values.fold<int>(0, (a, b) => a + b),
+          },
         'credits': {
           'grant': 100,
           'added': 0,
@@ -182,18 +199,24 @@ void main() {
 
     expect(find.text('RECOMMENDED'), findsOneWidget);
     expect(find.text('CURRENT'), findsNothing);
-    expect(find.byKey(const ValueKey('plan-detail-ayma_pro_monthly')),
-        findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('plan-detail-ayma_pro_monthly')),
+      findsOneWidget,
+    );
     expect(find.text('1400'), findsOneWidget);
     expect(find.text('\$20 / month'), findsOneWidget);
     expect(_actionLabel(tester), 'Upgrade to Pro');
     expect(_actionEnabled(tester), isFalse);
-    expect(find.text('Subscriptions are not available in this build.'),
-        findsOneWidget);
+    expect(
+      find.text('Subscriptions are not available in this build.'),
+      findsOneWidget,
+    );
 
     expect(find.text('Text chat with Ayma'), findsOneWidget);
-    expect(find.text('30 cr'), findsOneWidget);
-    expect(find.text('42 spent'), findsOneWidget);
+    expect(find.text('30 cr · 91%'), findsOneWidget);
+    expect(find.text('3 cr · 9%'), findsOneWidget);
+    expect(find.text('33 spent'), findsOneWidget);
+    expect(find.text('since Oct 25, 6:20 PM'), findsOneWidget);
     expect(find.textContaining('tok'), findsNothing);
     expect(find.byKey(const ValueKey('renewal-note')), findsOneWidget);
     expect(find.byKey(const ValueKey('plan-reassurance')), findsNothing);
@@ -206,7 +229,9 @@ void main() {
     expect(_actionLabel(tester), 'Upgrade to Pro');
     expect(find.text('€20,00 / month'), findsOneWidget); // offering price
 
-    await tester.tap(find.byKey(const ValueKey('plan-segment-ayma_max_monthly')));
+    await tester.tap(
+      find.byKey(const ValueKey('plan-segment-ayma_max_monthly')),
+    );
     await tester.pumpAndSettle();
     expect(find.text('8000'), findsOneWidget);
     expect(find.text('1400'), findsNothing);
@@ -258,10 +283,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened.toString(), 'https://store.example/manage');
 
-    await tester.tap(find.byKey(const ValueKey('plan-segment-ayma_plus_monthly')));
+    await tester.tap(
+      find.byKey(const ValueKey('plan-segment-ayma_plus_monthly')),
+    );
     await tester.pumpAndSettle();
     expect(_actionLabel(tester), 'Switch to Plus');
-    await tester.tap(find.byKey(const ValueKey('plan-segment-ayma_max_monthly')));
+    await tester.tap(
+      find.byKey(const ValueKey('plan-segment-ayma_max_monthly')),
+    );
     await tester.pumpAndSettle();
     expect(_actionLabel(tester), 'Upgrade to Max');
   });
@@ -359,7 +388,10 @@ void main() {
     var calls = 0;
     await _pump(
       tester,
-      PlanScreen(service: rc, api: _api(remaining: 77, onUsage: () => calls++)),
+      PlanScreen(
+        service: rc,
+        api: _api(remaining: 77, onUsage: () => calls++),
+      ),
     );
     calls = 0;
     CreditsBalance.instance.remaining.value = null;
@@ -503,19 +535,93 @@ void main() {
     );
     var s = cap.capture();
     final max = s.controls.firstWhere(
-        (c) => c.label.contains('Max') && !c.label.contains('Upgrade'));
-    final picked = await cap.perform(control: max.id, label: max.label, op: 'tap');
+      (c) => c.label.contains('Max') && !c.label.contains('Upgrade'),
+    );
+    final picked = await cap.perform(
+      control: max.id,
+      label: max.label,
+      op: 'tap',
+    );
     expect(picked.ok, isTrue, reason: picked.reason);
     expect(_actionLabel(tester), 'Upgrade to Max');
 
     s = cap.capture();
     final upgrade = s.controls.firstWhere((c) => c.label == 'Upgrade to Max');
     expect(upgrade.line, contains('(user only)'));
-    final refused =
-        await cap.perform(control: upgrade.id, label: upgrade.label, op: 'tap');
+    final refused = await cap.perform(
+      control: upgrade.id,
+      label: upgrade.label,
+      op: 'tap',
+    );
     expect(refused.ok, isFalse);
     expect(refused.reason, contains('Plan page'));
     expect(rc.bought, isEmpty);
     handle.dispose();
   });
+
+  testWidgets('credit history: filter chips re-query the server and the '
+      'header, rows and since line follow the selected period', (tester) async {
+    final asked = <String>[];
+    await _pump(
+      tester,
+      PlanScreen(
+        service: _FakeRc(on: false),
+        api: _api(emptyPeriods: {'7d'}, periodsAsked: asked),
+      ),
+    );
+    expect(asked, ['since_credit']);
+    expect(find.text('Since last credit update'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('credit-period-7d')));
+    await tester.pumpAndSettle();
+    expect(asked.last, '7d');
+    expect(find.text('No credits used in this period'), findsOneWidget);
+    expect(find.text('0 spent'), findsOneWidget);
+    expect(find.text('Text chat with Ayma'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('credit-period-all')));
+    await tester.pumpAndSettle();
+    expect(asked.last, 'all');
+    expect(find.text('33 spent'), findsOneWidget);
+    expect(find.byKey(const ValueKey('plan-credits-since')), findsNothing);
+    expect(find.textContaining('_'), findsNothing); // no raw feature keys
+  });
+
+  for (final dark in [false, true]) {
+    testWidgets('credit history does not overflow on a small phone with '
+        'large text (${dark ? 'dark' : 'light'})', (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final errors = <String>[];
+      final prior = FlutterError.onError;
+      FlutterError.onError = (d) => errors.add(d.toString());
+      addTearDown(() => FlutterError.onError = prior);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: dark ? AymaTheme.dark : AymaTheme.light,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: PlanScreen(
+            service: _FakeRc(on: false),
+            api: _api(
+              rows: {'Profile completeness and a very long label here': 19000},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('plan-credits-used')),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      // The page's other sections are laid out by their own tests; the
+      // credit history must never be among the overflowing widgets.
+      expect(errors.where((e) => e.contains('_CreditHistory')), isEmpty);
+    });
+  }
 }

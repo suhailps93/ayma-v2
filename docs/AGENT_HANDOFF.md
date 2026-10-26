@@ -78,6 +78,12 @@ Rule: every figure comes straight from the provider (no manual or estimated numb
 
 Credits: display layer over `users/{uid}.token_usage`. Open follow-ups F1/F2 in `PLAN.md` (calibrate cost vs
 measured tokens; keep browse + text chat free for zero-credit users).
+Plan page "Where your credits went": `GET /usage?period=since_credit|7d|30d|all` adds `period_usage` (credits only,
+friendly labels from `token_ledger.FEATURE_LABELS`, the one label map; a test fails if a `FEATURE_*` has no label),
+aggregated from `users/{uid}/spend_events` cost at `credits_per_usd`; header total = sum of rows. "Since last credit
+update" starts at the newest of `billing.credits_updated_at` (stamped on start grant, selfie unlock, daily rollover,
+plan grant/renewal, expiry) and the top-level `credits_updated_at` (free reload). Events are capped (500), so a
+longer window starts at the oldest retained event instead of under-reporting.
 
 ---
 
