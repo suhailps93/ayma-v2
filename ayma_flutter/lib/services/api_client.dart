@@ -766,8 +766,9 @@ class ApiClient {
       'distance_pref': distancePref,
   });
 
-  /// `GET /profile/proposals` — Ayma's pending updates to the public profile
-  /// text, each with a sentence-level diff, awaiting Apply or Dismiss.
+  /// `GET /profile/proposals` — Ayma's pending updates to the PUBLIC profile,
+  /// grouped by section, each an individual change (added or removed sentence)
+  /// the user applies or dismisses on its own.
   Future<List<ProfileProposal>> profileProposals() async {
     final m = await _getJson('/profile/proposals');
     return ((m['proposals'] as List?) ?? const [])
@@ -776,12 +777,33 @@ class ApiClient {
         .toList();
   }
 
+  /// Apply one change: show that added sentence on the public profile (or
+  /// carry out that removal).
+  Future<void> profileChangeApply(String pageId, String changeId) => _sendJson(
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}'
+        '/changes/${Uri.encodeComponent(changeId)}/apply',
+    {},
+  );
+
+  /// Dismiss one change: keep it off the public profile but in the private
+  /// profile and Ayma's notes.
+  Future<void> profileChangeDismiss(String pageId, String changeId) =>
+      _sendJson(
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}'
+        '/changes/${Uri.encodeComponent(changeId)}/dismiss',
+    {},
+  );
+
+  /// Apply every remaining change in one section at once.
   Future<void> profileProposalApply(String pageId) => _sendJson(
     'POST',
     '/profile/proposals/${Uri.encodeComponent(pageId)}/apply',
     {},
   );
 
+  /// Dismiss every remaining change in one section at once.
   Future<void> profileProposalDismiss(String pageId) => _sendJson(
     'POST',
     '/profile/proposals/${Uri.encodeComponent(pageId)}/dismiss',
@@ -4093,38 +4115,44 @@ class ProfileTextRejected implements Exception {
 }
 
 /// One piece of a proposal's sentence diff: [op] is `same` | `add` | `remove`.
-class ProfileDiffPart {
-  const ProfileDiffPart(this.op, this.text);
+/// One reviewable change to the public profile: an added (`op == 'add'`) or
+/// removed (`op == 'remove'`) sentence, with its own stable [id] so it can be
+/// applied or dismissed on its own.
+class ProfileChange {
+  const ProfileChange({required this.id, required this.op, required this.text});
 
+  factory ProfileChange.fromMap(Map<String, dynamic> m) => ProfileChange(
+    id: m['id'] as String? ?? '',
+    op: m['op'] as String? ?? 'add',
+    text: m['text'] as String? ?? '',
+  );
+
+  final String id;
   final String op;
   final String text;
 }
 
-/// Ayma's pending rewrite of one public-profile section.
+/// Ayma's pending updates to one public-profile section — a group header over
+/// its individual [changes].
 class ProfileProposal {
   const ProfileProposal({
     required this.pageId,
     required this.title,
-    required this.diff,
+    required this.changes,
   });
 
   factory ProfileProposal.fromMap(Map<String, dynamic> m) => ProfileProposal(
     pageId: m['page_id'] as String? ?? '',
     title: m['title'] as String? ?? '',
-    diff: ((m['diff'] as List?) ?? const [])
+    changes: ((m['changes'] as List?) ?? const [])
         .whereType<Map>()
-        .map(
-          (d) => ProfileDiffPart(
-            d['op'] as String? ?? 'same',
-            d['text'] as String? ?? '',
-          ),
-        )
+        .map((d) => ProfileChange.fromMap(d.cast<String, dynamic>()))
         .toList(),
   );
 
   final String pageId;
   final String title;
-  final List<ProfileDiffPart> diff;
+  final List<ProfileChange> changes;
 }
 
 /// `GET /story` result.

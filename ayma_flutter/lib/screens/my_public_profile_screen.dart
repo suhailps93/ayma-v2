@@ -166,12 +166,14 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
     }
   }
 
-  /// How many of Ayma's suggested rewrites await approval. A failed lookup
-  /// just hides the banner; the profile itself is unaffected.
+  /// How many individual changes Ayma suggests for the public profile (summed
+  /// across sections). A failed lookup just hides the banner; the profile
+  /// itself is unaffected.
   Future<void> _loadPendingUpdates() async {
     try {
       final list = await _api.profileProposals();
-      if (mounted) setState(() => _pendingUpdates = list.length);
+      final count = list.fold<int>(0, (n, p) => n + p.changes.length);
+      if (mounted) setState(() => _pendingUpdates = count);
     } on Object {
       if (mounted) setState(() => _pendingUpdates = 0);
     }
@@ -240,8 +242,9 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
           if (_pendingUpdates > 0)
             MaterialBanner(
               content: Text(_pendingUpdates == 1
-                  ? 'Ayma suggests an update to your profile.'
-                  : 'Ayma suggests $_pendingUpdates updates to your profile.'),
+                  ? 'Ayma suggests an update to your public profile.'
+                  : 'Ayma suggests $_pendingUpdates updates to your '
+                      'public profile.'),
               actions: [
                 TextButton(
                     onPressed: _reviewUpdates, child: const Text('Review')),

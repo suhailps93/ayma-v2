@@ -127,6 +127,24 @@ def test_new_scored_matches_multiple_still_deep_links_to_the_list(_capture):
     assert _capture[0]["actor_uid"] == ""
 
 
+def test_profile_suggestions_zero_count_is_a_noop(_capture):
+    _run(nt.notify_profile_suggestions(object(), "u1", 0))
+    assert _capture == []
+
+
+def test_profile_suggestions_deep_links_to_the_review_screen(_capture):
+    _run(nt.notify_profile_suggestions(object(), "u1", 1))
+    _run(nt.notify_profile_suggestions(object(), "u1", 3))
+    assert _capture[0]["type"] == "profile_suggestions"
+    assert _capture[0]["fixed_preview"] == (
+        "Ayma suggests 1 update to your public profile."
+    )
+    assert _capture[1]["fixed_preview"] == (
+        "Ayma suggests 3 updates to your public profile."
+    )
+    assert _capture[0]["deep_link"] == "profile_suggestions"
+
+
 def test_ayma_reply_pushes_a_clean_preview_to_the_chat(monkeypatch):
     seen = []
 

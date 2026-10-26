@@ -21,6 +21,10 @@ NOTIF_SKILL_DONE = "skill_result"
 # chat (app backgrounded/closed, or a message that waited for credits). Push
 # only — the reply itself is the durable record, so no centre entry is written.
 NOTIF_AYMA_REPLY = "ayma_reply"
+# Ayma has proposed one or more new updates to the user's PUBLIC profile that
+# are waiting to be reviewed (applied or dismissed). Deep-links to the review
+# screen; deduped so the user isn't re-pinged for an unchanged pending set.
+NOTIF_PROFILE_SUGGESTIONS = "profile_suggestions"
 
 NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_DM,
@@ -29,6 +33,7 @@ NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_CHECKIN,
     NOTIF_SKILL_DONE,
     NOTIF_AYMA_REPLY,
+    NOTIF_PROFILE_SUGGESTIONS,
 )
 
 NOTIFICATIONS_COLLECTION = "notifications"

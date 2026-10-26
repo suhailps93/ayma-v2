@@ -23,6 +23,7 @@ import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/screens/matches_screen.dart';
 import 'package:ayma_flutter/screens/messages_screen.dart';
 import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
+import 'package:ayma_flutter/screens/profile_proposals_screen.dart';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
 import 'package:ayma_flutter/screens/notification_prefs_screen.dart';
 import 'package:ayma_flutter/screens/physical_attributes_report_screen.dart';
@@ -159,6 +160,8 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         shell(NotificationPrefsScreen(service: notifications)),
     MyPublicProfileScreen.path: () =>
         shell(MyPublicProfileScreen(apiClient: api, myUid: 'me')),
+    ProfileProposalsScreen.path: () =>
+        shell(ProfileProposalsScreen(apiClient: api)),
     GoogleAccountScreen.path: () =>
         shell(GoogleAccountScreen(service: GoogleAccountService(api: api))),
     InstagramScreen.path: () => shell(

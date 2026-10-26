@@ -4528,8 +4528,10 @@ async def profile_public_text_save(
 
 @app.get("/profile/proposals")
 async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Ayma's pending updates to the public profile text, each with a
-    sentence-level before/after diff, awaiting Apply or Dismiss."""
+    """Ayma's pending public-profile updates, grouped by section — each change
+    an individual ``{id, op, text}`` row the user applies or dismisses on its
+    own. Apply shows it publicly; Dismiss keeps it in the private profile and
+    Ayma's notes."""
     return {
         "proposals": await asyncio.to_thread(
             profile_manual.list_proposals, get_db(), uid
@@ -4537,10 +4539,39 @@ async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object
     }
 
 
+@app.post("/profile/proposals/{page_id}/changes/{change_id}/apply")
+async def profile_change_apply(
+    page_id: str, change_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Apply one change — show that added sentence on the public profile (or
+    carry out that removal)."""
+    try:
+        return await asyncio.to_thread(
+            profile_manual.apply_change, get_db(), uid, page_id, change_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such pending change.")
+
+
+@app.post("/profile/proposals/{page_id}/changes/{change_id}/dismiss")
+async def profile_change_dismiss(
+    page_id: str, change_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Dismiss one change — keep it off the public profile but in the private
+    profile and Ayma's notes."""
+    try:
+        return await asyncio.to_thread(
+            profile_manual.dismiss_change, get_db(), uid, page_id, change_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such pending change.")
+
+
 @app.post("/profile/proposals/{page_id}/apply")
 async def profile_proposal_apply(
     page_id: str, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
+    """Apply all of a section's remaining changes at once."""
     try:
         return await asyncio.to_thread(
             profile_manual.apply_proposal, get_db(), uid, page_id
@@ -4553,6 +4584,8 @@ async def profile_proposal_apply(
 async def profile_proposal_dismiss(
     page_id: str, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
+    """Dismiss all of a section's remaining changes at once — each kept in the
+    private profile and Ayma's notes."""
     try:
         return await asyncio.to_thread(
             profile_manual.dismiss_proposal, get_db(), uid, page_id
