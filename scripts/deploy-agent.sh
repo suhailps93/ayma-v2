@@ -23,7 +23,11 @@ IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/ayma-agent:
 # never a plaintext value here. Text / matching / embeddings stay keyless on
 # Vertex (Main API is unaffected). Set to false to fall back to Vertex
 # gemini-live-2.5-flash-native-audio.
-ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true"
+#
+# AYMA_AGENT_URL is this service's own URL: each active call holds a
+# keep-alive request open against it (agent_keepalive.py) so Cloud Run does
+# not scale the instance down mid-call.
+ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true"
 SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SENTRY_DSN=SENTRY_DSN_AGENT:latest"
 
 # min-instances=0 is the PERMANENT intended config (founder decision,
@@ -64,7 +68,11 @@ args=(run deploy ayma-agent
   # --cpu-boost speeds up exactly the cold-start path scale-to-zero now
   # depends on (extra CPU during container startup / import / first
   # LiveKit-registration handshake).
-  --no-cpu-throttling --cpu-boost --memory 2Gi)
+  --no-cpu-throttling --cpu-boost --memory 2Gi
+  # Each call's keep-alive request (agent_keepalive.py) lasts as long as the
+  # call; the 300 s default would cut it every 5 minutes. The client reopens
+  # a hold that ends mid-call, so calls past 60 min stay covered. Free.
+  --timeout 3600)
 
 if [[ "$mode" == "--full" || "$mode" == "--release" ]]; then
   args+=(--set-env-vars "$ENV_VARS" --set-secrets "$SECRETS")

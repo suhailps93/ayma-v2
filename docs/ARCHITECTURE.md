@@ -45,7 +45,7 @@ flowchart LR
 
   subgraph GCP["Google Cloud project ayma-ai"]
     API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
-    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping,<br/>kept up per call by a /keepalive request to itself<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
@@ -86,6 +86,7 @@ flowchart LR
   API --> Links -->|HEAD/GET, public IPs only| Web
   API --> FS & GCS
   API -->|wake ping| Agent
+  Agent -->|per-call /keepalive hold<br/>via its own service URL| Agent
   API -->|push| Firebase
   API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
   API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
@@ -995,7 +996,7 @@ Query patterns that need one (exact Firestore index definitions are a `firestore
 Two Cloud Run services — not one, and not Firebase Cloud Functions:
 
 - **Main API** (`functions/bootstrap/main.py`) — every route in §10.2 except the agent worker itself. Request-driven: `min-instances: 0`, default (throttled) CPU. Cloud Scheduler jobs (§10.5) hit endpoints on this same service.
-- **LiveKit Agent Worker** — a separate deployable. It holds a persistent outbound connection to LiveKit Cloud waiting for job dispatch, which needs `--no-cpu-throttling` (always-on CPU) and `min-instances: 1` in production — a request-driven service can't support a background process that isn't tied to an incoming HTTP request. In development, it runs with `min-instances: 0` like the API (accepting a cold start on first manual voice test) to avoid the always-on cost; the prod/dev split is finalized in Piece 12.
+- **LiveKit Agent Worker** — a separate deployable. It holds a persistent outbound connection to LiveKit Cloud waiting for job dispatch, which needs `--no-cpu-throttling` (always-on CPU) — a request-driven service can't support a background process that isn't tied to an incoming HTTP request. It runs `min-instances: 0` (founder decision 2026-09-19, no idle cost): `/bootstrap` and `/welcome/token` wake it with an HTTP ping (`agent_wake.py`), and each active call holds a long-lived `/keepalive` request against the service's own URL (`agent_keepalive.py`, request timeout 3600 s) so Cloud Run counts the instance as busy and never scales it down mid-call (a LiveKit call alone is not traffic to Cloud Run). Details: `docs/agent.md`, `docs/deploy.md`.
 
 Neither service is a Firebase Cloud Function: Firebase Functions has no mode for a persistent, non-request-driven background process, which rules it out for the agent worker outright, and offers no benefit over deploying the FastAPI app directly to Cloud Run for the Main API.
 
@@ -1107,12 +1108,12 @@ One environment — a single Firebase/GCP project, created during Environment Se
 
 ### 12.2 Cloud Run configs
 
-`min-instances`/CPU allocation for the two services from §10.1, as a config flip on the same project over time rather than a dev-vs-prod project split:
+`min-instances`/CPU allocation for the two services from §10.1 (current state; history in `docs/deploy.md`):
 
-| Service | Now (pre-release) | At release |
-|---|---|---|
-| Main API | `min-instances: 0`, default CPU | unchanged |
-| Agent Worker | `min-instances: 0`, default CPU (cold start accepted on manual voice tests) | `min-instances: 1`, `--no-cpu-throttling` |
+| Service | Config |
+|---|---|
+| Main API | `min-instances: 0`, default CPU |
+| Agent Worker | `min-instances: 0` (permanent, 2026-09-19), `--no-cpu-throttling --cpu-boost`, 2Gi, `--timeout 3600` for the per-call keep-alive request |
 
 ### 12.3 Secrets management
 

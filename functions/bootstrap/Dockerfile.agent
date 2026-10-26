@@ -24,6 +24,7 @@ COPY . ./
 # (§1.7 step 9), not livekit-agents' local turn-detector / inference models, so
 # there is nothing to pre-fetch.
 
-# Cloud Run assigns $PORT; agent.py binds the worker health server to it.
+# Cloud Run assigns $PORT; agent.py binds the keep-alive server (health,
+# wake ping, per-call /keepalive) to it and the worker health server to 8081.
 ENV PORT=8080
 CMD ["sh", "-c", "exec python agent.py start"]

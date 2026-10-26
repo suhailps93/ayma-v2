@@ -22,6 +22,7 @@ def test_capture_is_noop_when_uninitialised(monkeypatch):
     monkeypatch.setattr(monitoring, "_initialised", False)
     monkeypatch.setattr(builtins, "__import__", guard)
     monitoring.capture_exception(RuntimeError("boom"))
+    monitoring.capture_message("drain with calls", tags={"active_jobs": "1"})
 
 
 def test_scrub_event_drops_bodies_and_user_content():

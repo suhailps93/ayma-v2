@@ -79,6 +79,50 @@ request-CPU-only instance never completes worker registration (confirmed in
 logs, Step 13), because that registration runs in a background task outside
 any HTTP request. `--cpu-boost` speeds up the cold start itself.
 
+`--timeout 3600`: the per-call keep-alive request (below) lasts as long as
+the call, and the 300 s default would cut it every five minutes.
+
+### Per-call keep-alive (`agent_keepalive.py`)
+
+Cloud Run only counts in-flight HTTP requests as work. A LiveKit call runs
+over the worker's own outbound connection, so with `min-instances 0` an
+instance carrying a live call looked idle and could be reaped: founder call
+2026-10-26 02:55 UTC got SIGTERM 15 s in and was killed 10 s later. Now each
+job (call), before it even connects to the room, opens a GET
+`$AYMA_AGENT_URL/keepalive?job=<id>&instance=<id>` (ID token, same invoker
+identity as the wake ping) through the public load balancer and holds it
+until the call and its end-of-call flush are done (`CallKeepAlive.release`,
+a job shutdown callback that waits for `SessionFlush.run`). An instance
+serving a request is never scaled down, and on a redeploy the old revision
+keeps it until the request ends.
+
+- `$PORT` (8080) is served by `KeepAliveServer` in the worker's main process
+  (`AymaAgentServer.run`): `/` health/wake and `/keepalive`, a stream that
+  writes `.\n` every 20 s and ends after 3000 s (under the 3600 s request
+  timeout) or when the caller goes away. The livekit-agents health server
+  moved to the internal port 8081 (`AGENT_WORKER_HEALTH_PORT`), because its
+  routes are fixed inside `AgentServer.run`.
+- Pinning: the load balancer may send the request to another instance,
+  which would keep the wrong one alive. The request carries this instance's
+  id (metadata server); any other instance answers 409 at once and the
+  client retries (0.5 s steps, up to 5 s) until it lands home. A hold that
+  ends mid-call (3000 s cap, network drop) is reopened right away.
+- No-op off Cloud Run (no `K_SERVICE`) or without `AYMA_AGENT_URL` (set by
+  `deploy-agent.sh --full`).
+- Logs: `keepalive held job=...`, `keepalive released job=... after Ns`,
+  `keepalive hold start/end job=... active_holds=N`, and
+  `keepalive not held yet job=...` after 20 failed attempts.
+- SIGTERM: livekit-agents drains (stops taking new jobs, waits for active
+  ones, `drain_timeout`), but Cloud Run kills the container 10 s after
+  SIGTERM and that grace is not configurable, so the keep-alive (which stops
+  the SIGTERM in the first place) is the real protection.
+  `AymaAgentServer.drain` logs `shutdown signal with active calls:
+  active_jobs=N keepalive_holds=M` and sends a Sentry event ("ayma-agent got
+  SIGTERM with active calls") when calls are still running.
+- Cost: none fixed. The instance is billed while it runs either way
+  (instance-based billing, `--no-cpu-throttling`); the hold only keeps it
+  from being stopped while it has work.
+
 Scale-to-zero only works because `ayma-api`'s `/bootstrap` and
 `/welcome/token` now send this service's own URL an authenticated "wake" GET
 the instant a voice call starts (`functions/bootstrap/agent_wake.py`) — Cloud
@@ -104,7 +148,9 @@ deploy).
 ## Tests
 
 `.venv-agent` + `pytest tests/test_agent.py tests/test_voice_hot_swap.py
-tests/test_inference_routing.py` — model config (Vertex, Dev-API and Inference
+tests/test_inference_routing.py tests/test_agent_keepalive.py` — keep-alive
+server/client (instance pinning, retry, release after the flush), SIGTERM
+drain reporting, model config (Vertex, Dev-API and Inference
 branches), room seed parsing (incl. `voice_name`), transcript relay, hot voice
 swap, end-of-call flush. All offline.
 
@@ -124,3 +170,6 @@ Look for `registered worker` against the LiveKit URL. With `min-instances 0`
 the container only runs when woken (a real voice-call attempt, or manually via
 `curl` with an ID token — see `agent_wake.py`), so tail logs during/right
 after an on-device voice test rather than expecting a steady-state worker.
+During a call expect `keepalive held job=...` within a few seconds of the
+job starting and `keepalive released job=...` after the flush; a
+`shutdown signal with active calls` line means a call was still reaped.

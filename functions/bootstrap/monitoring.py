@@ -102,3 +102,18 @@ def capture_exception(
         for key, value in tags.items():
             scope.set_tag(key, value)
         sentry_sdk.capture_exception(exc)
+
+
+def capture_message(
+    message: str, level: str = "warning", tags: dict[str, str] | None = None
+) -> None:
+    """Report an event that is not an exception; no-op when disabled.
+    ``tags`` follow the same rule as ``capture_exception``."""
+    if not _initialised:
+        return
+    import sentry_sdk
+
+    with sentry_sdk.new_scope() as scope:
+        for key, value in (tags or {}).items():
+            scope.set_tag(key, value)
+        sentry_sdk.capture_message(message, level=level)
