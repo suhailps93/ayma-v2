@@ -543,7 +543,16 @@ def _bind_open_profile(db, uid: str) -> Callable[..., str]:
         )
         ack = await _await_ack(db, uid, cmd_id)
         if ack and ack.get("ok"):
-            return f"navigated: screen=profile — {full}'s profile is open."
+            # Hand the model the same honest briefing the chat/voice screen
+            # context gives — who they are, any public wiki, whether a match
+            # was actually computed — so it can't talk up a stranger it just
+            # opened as "a great match" off a bare "profile is open" line
+            # (founder bug 2026-10-25).
+            briefing = await asyncio.to_thread(
+                public_profile._viewing_profile_context, db, uid, other
+            )
+            opened = f"navigated: screen=profile — {full}'s profile is open."
+            return f"{opened}\n{briefing}" if briefing else opened
         return _NOT_NAVIGATED
 
     return open_profile

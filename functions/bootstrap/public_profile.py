@@ -303,15 +303,27 @@ def _has_chatted(db, uid_a: str, uid_b: str) -> bool:
 def _viewing_profile_context(db, uid: str, other: str) -> str:
     """A briefing on ``other`` so Ayma can talk about them when the user shares
     or opens their profile (§5.6): who they are, their public wiki, and — if a
-    match was run — that pair's private ``ai_explanation``.
+    match was run — that pair's computed score and private ``ai_explanation``.
+
+    The briefing ends with an explicit, honest statement of *what data exists*
+    — how complete their profile is, whether any public wiki is available, and
+    whether a compatibility score has actually been computed for this pair
+    (``has_match_score``). With little or nothing to go on it says so in so
+    many words (founder bug 2026-10-25: Ayma called a near-empty stranger "a
+    great match on paper" with no score and no facts). The persona rule
+    ("Talking about a match or another member" in ``persona.md``) stands on
+    these flags; the honest data here is what stops the model inventing a match
+    it never ran.
 
     Shared by text chat (``main.py``'s ``/chat``, via ``viewing_profile_uid``)
-    and voice (``skills/app_control.py``'s ``current_screen`` tool, via the
-    live voice-context mirror's ``subject_uid``) — both need the same real
-    briefing, not two copies of this logic."""
+    and voice (``skills/app_control.py``'s ``current_screen`` /
+    ``open_profile`` tools, via the live voice-context mirror's
+    ``subject_uid``) — both need the same real briefing, not two copies of
+    this logic."""
     if not other or other == uid:
         return ""
     parts: list[str] = []
+    completeness_pct: int | None = None
     try:
         prof = (
             db.collection("users")
@@ -329,8 +341,12 @@ def _viewing_profile_context(db, uid: str, other: str) -> str:
         if bits:
             head += f" ({', '.join(bits)})"
         parts.append(f"The user is looking at {head}'s profile.")
+        raw_pct = (prof.get("completeness") or {}).get("score")
+        if isinstance(raw_pct, (int, float)):
+            completeness_pct = round(float(raw_pct))
     except Exception:  # noqa: BLE001
         parts.append("The user is looking at another person's profile.")
+    wiki_count = 0
     try:
         pages = _public_pages(db, other)
         for p in pages[:8]:
@@ -338,15 +354,49 @@ def _viewing_profile_context(db, uid: str, other: str) -> str:
             body = " ".join(str(p.get("body") or "").split())[:600]
             if body:
                 parts.append(f"[{title}] {body}")
+                wiki_count += 1
     except Exception:  # noqa: BLE001
         pass
+    has_match_score = False
+    has_match_read = False
     try:
         snap = db.collection(MATCHES_COLLECTION).document(
             sorted_pair_key(uid, other)
         ).get()
-        expl = (snap.to_dict() or {}).get("ai_explanation", "") if snap.exists else ""
+        mdoc = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        score = mdoc.get("score")
+        if isinstance(score, (int, float)):
+            has_match_score = True
+            parts.append(
+                f"A match has been computed for you two: {round(float(score))}"
+                "/100 compatibility (this is a real, computed score — you may "
+                "cite it)."
+            )
+        expl = mdoc.get("ai_explanation", "")
         if expl:
+            has_match_read = True
             parts.append(f"Your private read on this match: {expl}")
     except Exception:  # noqa: BLE001
         pass
+    # Honest data flags: tell the model plainly what it does and doesn't have
+    # so it can't mistake a thin profile for grounds to assert compatibility.
+    flags: list[str] = []
+    if completeness_pct is not None:
+        flags.append(f"their profile is {completeness_pct}% complete")
+    flags.append(
+        "a compatibility score HAS been computed for this pair"
+        if has_match_score
+        else "NO compatibility/match score has been computed for this pair"
+    )
+    if wiki_count == 0:
+        flags.append("you have no profile notes/wiki facts about them")
+    parts.append("DATA YOU HAVE: " + "; ".join(flags) + ".")
+    if not has_match_score and not has_match_read and wiki_count == 0:
+        parts.append(
+            "You do NOT have enough to judge compatibility. Do not state or "
+            "imply any match score, that they are a good/bad match, or that "
+            "their background or interests align — you have no basis for it. "
+            "Say honestly you don't have much on them yet and offer to run a "
+            "match or research them."
+        )
     return "\n".join(parts)
