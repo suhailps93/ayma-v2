@@ -41,6 +41,8 @@
     {"route": "/physical-attributes/:id", "via": "open_screen my_appearance", "reason": "a legacy physical-profile report, folded into the Appearance report history"}
   ],
   "non_navigable": [
+    {"route": "/practice/:uid", "reason": "Practice Date simulator; opened only from the Practice button on a profile, never on request"},
+    {"route": "/practice/:uid/debrief", "reason": "Practice Date debrief; reached only by ending a practice session"},
     {"route": "/consent", "reason": "biometric consent gate; the router forces it while consent is required and it must only ever be answered by the user's own tap"},
     {"route": "/splash", "reason": "app start-up bootstrap; re-running it mid-session would restart the app flow"},
     {"route": "/under-18", "reason": "age-gate outcome screen (18+ gate); never opened on request"},

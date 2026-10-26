@@ -21,7 +21,7 @@ _SCREENS = _REPO / "ayma_flutter" / "lib" / "screens"
 def _screen_paths() -> dict[str, str]:
     """``{"XScreen.path": "/x", ...}`` from every ``static const`` path."""
     out: dict[str, str] = {}
-    for f in _SCREENS.glob("*.dart"):
+    for f in _SCREENS.parent.rglob("*.dart"):
         current = ""
         for line in f.read_text(encoding="utf-8").splitlines():
             m = re.match(r"\s*class (\w+)\b", line)

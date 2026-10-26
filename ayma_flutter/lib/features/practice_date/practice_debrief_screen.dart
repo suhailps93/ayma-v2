@@ -179,10 +179,12 @@ class _Section extends StatelessWidget {
             children: [
               Icon(icon, size: 18, color: tint),
               const SizedBox(width: 8),
-              Text(
-                title,
-                style: AymaType.sans(
-                    size: 16, weight: FontWeight.w600, color: ac.fg),
+              Expanded(
+                child: Text(
+                  title,
+                  style: AymaType.sans(
+                      size: 16, weight: FontWeight.w600, color: ac.fg),
+                ),
               ),
             ],
           ),

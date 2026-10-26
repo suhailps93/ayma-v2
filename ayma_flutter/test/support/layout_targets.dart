@@ -32,6 +32,8 @@ import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
 import 'package:ayma_flutter/screens/privacy_screen.dart';
 import 'package:ayma_flutter/screens/profile_settings_screen.dart';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
+import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
+import 'package:ayma_flutter/features/practice_date/practice_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/screens/recovery_screen.dart';
 import 'package:ayma_flutter/screens/release_notes_screen.dart';
@@ -143,6 +145,10 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
       AppearanceReportScreen(reportId: 'r1', apiClient: api, myUid: 'me'),
     ),
     PublicProfileScreen.path: () => PublicProfileScreen(uid: 'her', api: api),
+    PracticeScreen.path: () =>
+        PracticeScreen(uid: 'her', name: 'Dana', api: api),
+    PracticeDebriefScreen.path: () =>
+        PracticeDebriefScreen(sessionId: 'p1', name: 'Dana', api: api),
     ExploreScreen.path: () => shell(
       ExploreScreen(apiClient: api, initialQuery: 'climbers in Denver'),
     ),

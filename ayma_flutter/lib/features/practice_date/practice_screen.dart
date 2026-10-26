@@ -182,14 +182,18 @@ class _PracticeScreenState extends State<PracticeScreen> {
         top: false,
         child: Column(
           children: [
-            _SimulationBanner(
-              text: _start?.banner ??
-                  (_personaName.isEmpty
-                      ? "Practice mode — you're talking to a simulation, not a real person."
-                      : "Practice mode — you're talking to a simulated version of "
-                          "$_personaName, not the real person."),
+            Flexible(
+              child: SingleChildScrollView(
+                child: _SimulationBanner(
+                  text: _start?.banner ??
+                      (_personaName.isEmpty
+                          ? "Practice mode — you're talking to a simulation, not a real person."
+                          : "Practice mode — you're talking to a simulated version of "
+                              "$_personaName, not the real person."),
+                ),
+              ),
             ),
-            Expanded(child: _body(ac)),
+            Expanded(flex: 4, child: _body(ac)),
             if (_coachHint.isNotEmpty) _CoachHint(text: _coachHint),
             if (_start != null && _error == null) _composer(ac),
           ],

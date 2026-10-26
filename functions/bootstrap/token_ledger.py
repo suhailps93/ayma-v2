@@ -163,6 +163,7 @@ FEATURE_LABELS = {
     FEATURE_DM_INGEST: "Message notes",
     FEATURE_PROFILE_MANUAL: "Profile edits",
     FEATURE_AI_NOTES: "Ayma's notes",
+    FEATURE_PRACTICE: "Practice Date",
 }
 FEATURE_LABEL_FALLBACK = "Other"
 
