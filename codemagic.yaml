@@ -112,7 +112,9 @@ workflows:
           # compile-time kill switch. The runtime flag is Firestore
           # app_config/sentry. Never commit the DSN.
           VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
+          test -n "$REVENUECAT_ANDROID_KEY" || { echo "REVENUECAT_ANDROID_KEY is not set"; exit 1; }
           flutter build apk --release \
+            --dart-define=REVENUECAT_ANDROID_KEY="$REVENUECAT_ANDROID_KEY" \
             --dart-define=SENTRY_DSN="$SENTRY_DSN" \
             --dart-define=SENTRY_ENABLED="${SENTRY_ENABLED:-true}" \
             --dart-define=SENTRY_ENVIRONMENT=production \
@@ -229,7 +231,9 @@ workflows:
           # compile-time kill switch. The runtime flag is Firestore
           # app_config/sentry. Never commit the DSN.
           VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
+          test -n "$REVENUECAT_IOS_KEY" || { echo "REVENUECAT_IOS_KEY is not set"; exit 1; }
           flutter build ipa --release \
+            --dart-define=REVENUECAT_IOS_KEY="$REVENUECAT_IOS_KEY" \
             --dart-define=SENTRY_DSN="$SENTRY_DSN" \
             --dart-define=SENTRY_ENABLED="${SENTRY_ENABLED:-true}" \
             --dart-define=SENTRY_ENVIRONMENT=production \

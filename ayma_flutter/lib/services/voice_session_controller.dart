@@ -6,7 +6,9 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'api_client.dart';
 import 'app_command_service.dart';
 import 'app_context.dart';
+import 'screen_capture.dart';
 import 'call_permissions.dart';
+import 'error_reporting.dart';
 import 'transcript_store.dart';
 import 'voice_transport.dart';
 
@@ -14,6 +16,17 @@ import 'voice_transport.dart';
 /// state machine in ARCHITECTURE.md §1.3 — the `listening`/`thinking`/`speaking`
 /// sub-states are surfaced through [agentSpeaking] rather than as phases).
 enum VoiceSessionPhase { idle, connecting, waking, live, error }
+
+/// A voice start that failed without an exception of its own (the agent never
+/// joined, the server returned no credentials) — what gets reported.
+class VoiceStartError implements Exception {
+  const VoiceStartError(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'VoiceStartError: $message';
+}
 
 /// Owns the LiveKit voice-session lifecycle for the chat screen: `POST
 /// /bootstrap`, room connect, mic publish, transcript relay, teardown (§1.7
@@ -32,7 +45,9 @@ class VoiceSessionController extends ChangeNotifier {
     AppCommandService? appCommandService,
     CallPermissions? callPermissions,
     Duration? idleGuardTimeout,
+    ErrorReporter? errorReporter,
   })  : _store = transcriptStore,
+        _reporter = errorReporter ?? ErrorReporter.instance,
         _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
         _transportFactory =
@@ -58,6 +73,16 @@ class VoiceSessionController extends ChangeNotifier {
   /// for the background call notification — F4/item 3), rather than
   /// discovering a missing permission only once the app is backgrounded.
   final CallPermissions _permissions;
+
+  /// Where failed starts / dropped calls are reported (Sentry + Crashlytics).
+  final ErrorReporter _reporter;
+
+  /// The voice backend `/bootstrap` reported for this call, for report tags.
+  String _provider = '';
+
+  /// Set once the current [start] has used its one automatic retry after the
+  /// agent failed to join (see [_onWakingTimeout]).
+  bool _noJoinRetried = false;
 
   /// How long to wait in [VoiceSessionPhase.waking] for the agent to join
   /// before giving up. `ayma-agent` is permanently scale-to-zero (2026-09-19
@@ -151,17 +176,20 @@ class VoiceSessionController extends ChangeNotifier {
   bool get muted => _muted;
 
   /// True while the agent has been told to "shut up" and is deliberately
-  /// silent (server-side `MuteState`); cleared when she is called back by
-  /// name and on session end. Distinct from [muted], the user's own mic.
+  /// silent (server-side `MuteState`, authoritative: the agent re-publishes
+  /// it on every change and whenever the app (re)joins the room); cleared
+  /// when she is called back by name or unmuted ([unmuteAyma]), and on
+  /// session end. Distinct from [muted], the user's own mic.
   bool _aymaQuiet = false;
   bool get aymaQuiet => _aymaQuiet;
 
-  /// True from the moment the one-shot ice-relay-retry kicks in for the
-  /// current `start()` — the first connect attempt died with an
+  /// True from the moment a one-shot retry kicks in for the current
+  /// `start()`: either the first connect attempt died with an
   /// ICE-connectivity timeout ([isIceConnectivityFailure]) and we're retrying
-  /// once with the ICE transport policy forced to TURN relay. The existing
-  /// connecting status line reads "Reconnecting…" instead of "Connecting…"
-  /// while this is set; no other UI.
+  /// once with the ICE transport policy forced to TURN relay, or the agent
+  /// never joined and we're starting over in a fresh room
+  /// ([_onWakingTimeout]). The existing connecting status line reads
+  /// "Reconnecting…" instead of "Connecting…" while this is set; no other UI.
   bool _relayRetrying = false;
   bool get relayRetrying => _relayRetrying;
 
@@ -211,6 +239,8 @@ class VoiceSessionController extends ChangeNotifier {
     _muted = false;
     _pendingToolLabels.clear();
     _activeToolLabel = null;
+    _noJoinRetried = false;
+    _provider = '';
     active = this;
     _setPhase(VoiceSessionPhase.connecting);
     // Best-effort and fire-before-connect: ask for whatever the call will
@@ -219,7 +249,13 @@ class VoiceSessionController extends ChangeNotifier {
     // actually needs it. Never blocks or fails the call — a foreground call
     // never needed this permission in the first place.
     unawaited(_permissions.ensureCallStartPermissions());
+    await _attempt();
+  }
 
+  /// One full connect attempt: credentials, room connect, mic publish, then
+  /// `waking` until the agent joins. Every failure tears down, is reported
+  /// (with tags) and lands in [VoiceSessionPhase.error] with a clear message.
+  Future<void> _attempt() async {
     try {
       final String url;
       final String token;
@@ -241,9 +277,12 @@ class VoiceSessionController extends ChangeNotifier {
         }
         url = session.livekitUrl;
         token = session.livekitToken;
+        _provider = session.voiceProvider;
       }
       debugPrint('[voice] token ok: url=$url tokenLen=${token.length}');
       if (token.isEmpty || url.isEmpty) {
+        _report(const VoiceStartError('no voice credentials in response'),
+            null, 'no_credentials');
         _fail('The server did not return voice credentials.');
         return;
       }
@@ -272,7 +311,8 @@ class VoiceSessionController extends ChangeNotifier {
 
       try {
         await transport.setMicrophoneEnabled(true);
-      } catch (e) {
+      } catch (e, st) {
+        _report(e, st, 'mic_permission');
         await _teardown();
         _fail('Ayma needs microphone access for voice.');
         return;
@@ -290,15 +330,42 @@ class VoiceSessionController extends ChangeNotifier {
       } else {
         _wakingTimer = Timer(_wakingTimeout, _onWakingTimeout);
       }
-    } on ApiException catch (e) {
+    } on ApiException catch (e, st) {
       debugPrint('[voice] ApiException: ${e.message}');
+      _report(e, st, 'token_fetch',
+          extra: {'http_status': '${e.statusCode ?? 'none'}'});
       await _teardown();
       _fail(e.message);
     } catch (e, st) {
       debugPrint('[voice] start() FAILED: $e\n$st');
+      _report(e, st, 'connect');
       await _teardown();
       _fail('Could not start voice ($e).');
     }
+  }
+
+  /// Reports a voice failure as a handled event, never blocking the caller.
+  /// Tags are ids/categories only (no user text, no uid, no room name — the
+  /// room name embeds the uid).
+  void _report(
+    Object error,
+    StackTrace? stack,
+    String stage, {
+    Map<String, String> extra = const {},
+  }) {
+    final screen = AppContext.instance.current.value.screen;
+    unawaited(_reporter.report(error, stack, reason: 'voice_$stage', tags: {
+      'feature': 'voice',
+      'voice_stage': stage,
+      'voice_phase': _phase.name,
+      'session_id': sessionId.isEmpty ? 'none' : sessionId,
+      'provider': _provider.isEmpty ? 'unknown' : _provider,
+      'route': screen.isEmpty ? 'unknown' : screen,
+      'welcome': '$welcome',
+      'attempt': _noJoinRetried ? '2' : '1',
+      'relay': '$_relayRetrying',
+      ...extra,
+    }));
   }
 
   /// Build a fresh transport, wire every stream listener, and connect —
@@ -354,6 +421,8 @@ class VoiceSessionController extends ChangeNotifier {
       if (!identical(_transport, transport)) return;
       unawaited(_teardown());
       if (_cappedError) return;
+      _report(const VoiceStartError('voice connection dropped'), null,
+          'dropped');
       _fail('The voice connection dropped.');
     });
 
@@ -405,14 +474,38 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoiceSessionPhase.idle);
   }
 
-  /// The agent never joined within [_wakingTimeout] — tear down and surface a
-  /// clear error instead of a silent dead "Listening".
+  /// The agent never joined within [_wakingTimeout]. Reported, then retried
+  /// once automatically: a fresh `/bootstrap` gets a brand-new room (so a new
+  /// agent dispatch) and re-sends the wake ping, and by now a cold worker has
+  /// usually finished starting. A second miss tears down and surfaces a clear
+  /// error instead of a silent dead "Listening".
   void _onWakingTimeout() {
     _wakingTimer = null;
     if (_phase != VoiceSessionPhase.waking) return;
     debugPrint('[voice] waking timed out — agent never joined');
+    _report(
+      VoiceStartError('agent did not join within ${_wakingTimeout.inSeconds}s'),
+      null,
+      'agent_no_join',
+    );
+    if (!_noJoinRetried) {
+      _noJoinRetried = true;
+      unawaited(_retryAfterNoJoin());
+      return;
+    }
     unawaited(_teardown());
     _fail("Ayma didn't pick up — try again in a moment.");
+  }
+
+  Future<void> _retryAfterNoJoin() async {
+    debugPrint('[voice] no-join retry: starting over in a fresh room');
+    await _teardown();
+    // A stop() while the old room was being left ends the call for good.
+    if (_phase != VoiceSessionPhase.waking || active != this) return;
+    _agentReadySeen = false;
+    _relayRetrying = true;
+    _setPhase(VoiceSessionPhase.connecting);
+    await _attempt();
   }
 
   void _onTranscriptSegment(TranscriptSegment seg) {
@@ -500,7 +593,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// credits" banner kept showing at the top of chat forever, since it's
   /// only ever re-checked (and reset) inside the next [start()] call, which
   /// nothing prompts the user to retry. Call this right after a successful
-  /// credit top-up (see `UsageScreen._reload`) so the banner actually goes
+  /// credit top-up (see `DeveloperScreen._reload`) so the banner actually goes
   /// away once the reason for it is gone, instead of only after the user
   /// happens to try voice again.
   void clearCappedError() {
@@ -534,6 +627,24 @@ class VoiceSessionController extends ChangeNotifier {
     }
   }
 
+  /// The user tapped Unmute (the quiet chip, the nav-bar orb, or the call
+  /// notification's "Unmute Ayma" action): ask the agent to talk again.
+  /// [aymaQuiet] is not flipped here — it follows the agent's own
+  /// `agent_mute` echo, so the app can never claim she is back while the
+  /// agent still has her muted. A failed send leaves her quiet (the control
+  /// stays up to retry, and saying "Ayma" still works).
+  Future<void> unmuteAyma() async {
+    final transport = _transport;
+    if (!_aymaQuiet || _phase != VoiceSessionPhase.live || transport == null) {
+      return;
+    }
+    try {
+      await transport.sendAgentMuteControl(muted: false);
+    } catch (e) {
+      debugPrint('[voice] unmute request failed: $e');
+    }
+  }
+
   void _setPhase(VoiceSessionPhase phase) {
     _phase = phase;
     if (phase == VoiceSessionPhase.live) _startScreenAwareness();
@@ -555,6 +666,7 @@ class VoiceSessionController extends ChangeNotifier {
     if (_mirroring) return;
     _mirroring = true;
     _commands.start();
+    ScreenCapture.instance.setLive(true);
     _pushContext();
     // The screen may be set a beat after the call goes live (a route still
     // settling). If we pushed nothing, try once more shortly.
@@ -591,6 +703,7 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> _stopScreenAwareness() async {
     if (!_mirroring) return;
     _mirroring = false;
+    ScreenCapture.instance.setLive(false);
     _ctxDebounce?.cancel();
     _ctxDebounce = null;
     _ctxRetry?.cancel();

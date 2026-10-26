@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/manual_profile_edit_screen.dart';
 import 'package:ayma_flutter/screens/profile_proposals_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -149,8 +150,8 @@ void main() {
     expect(find.byType(ManualProfileEditScreen), findsOneWidget);
   });
 
-  testWidgets('proposals show a diff and Apply / Dismiss remove the card',
-      (tester) async {
+  testWidgets('each change has its own Apply / Dismiss; applying one leaves '
+      'the rest', (tester) async {
     final calls = <String>[];
     final api = _api((r) async {
       if (r.method == 'GET') {
@@ -160,17 +161,76 @@ void main() {
                 {
                   'page_id': 'interests',
                   'title': 'Interests',
-                  'diff': [
-                    {'op': 'same', 'text': 'She climbs.'},
-                    {'op': 'remove', 'text': 'She bakes.'},
-                    {'op': 'add', 'text': 'She surfs.'},
+                  'changes': [
+                    {'id': 'c0', 'op': 'remove', 'text': 'She bakes.'},
+                    {'id': 'c1', 'op': 'add', 'text': 'She surfs.'},
                   ],
                 },
                 {
                   'page_id': 'career',
                   'title': 'Career',
-                  'diff': [
-                    {'op': 'add', 'text': 'She is a doctor.'}
+                  'changes': [
+                    {'id': 'c0', 'op': 'add', 'text': 'She is a doctor.'}
+                  ],
+                },
+              ]
+            }),
+            200,
+            headers: _json);
+      }
+      calls.add(r.url.path);
+      return http.Response(jsonEncode({'ok': true, 'remaining': 0}), 200,
+          headers: _json);
+    });
+    await tester.pumpWidget(MaterialApp(
+        theme: AymaTheme.light, home: ProfileProposalsScreen(apiClient: api)));
+    await tester.pumpAndSettle();
+
+    // Each added/removed sentence renders as its own row, with the explainer.
+    expect(find.text('+ She surfs.'), findsOneWidget);
+    expect(find.text('- She bakes.'), findsOneWidget);
+    expect(find.text('+ She is a doctor.'), findsOneWidget);
+    expect(find.textContaining('Dismiss keeps it private'), findsOneWidget);
+    // The multi-change section offers Apply all / Dismiss all.
+    expect(find.text('Apply all'), findsOneWidget);
+
+    expect(tester.takeException(), isNull);
+
+    // Apply just the first change (the removal in Interests); the add stays.
+    await tester.tap(find.text('Apply').first);
+    await tester.pumpAndSettle();
+    expect(calls, ['/profile/proposals/interests/changes/c0/apply']);
+    expect(find.text('- She bakes.'), findsNothing);
+    expect(find.text('+ She surfs.'), findsOneWidget);
+    expect(find.text('Interests'), findsOneWidget);
+
+    // Dismiss the remaining Interests change; the section's gone.
+    await tester.tap(find.text('Dismiss').first);
+    await tester.pumpAndSettle();
+    expect(calls.last, '/profile/proposals/interests/changes/c1/dismiss');
+    expect(find.text('Interests'), findsNothing);
+    expect(find.text('Career'), findsOneWidget);
+
+    // The last change clears the screen to its empty state.
+    await tester.tap(find.text('Dismiss'));
+    await tester.pumpAndSettle();
+    expect(calls.last, '/profile/proposals/career/changes/c0/dismiss');
+    expect(find.text('No suggestions right now'), findsOneWidget);
+  });
+
+  testWidgets('Apply all decides a whole section at once', (tester) async {
+    final calls = <String>[];
+    final api = _api((r) async {
+      if (r.method == 'GET') {
+        return http.Response(
+            jsonEncode({
+              'proposals': [
+                {
+                  'page_id': 'interests',
+                  'title': 'Interests',
+                  'changes': [
+                    {'id': 'c0', 'op': 'add', 'text': 'She surfs.'},
+                    {'id': 'c1', 'op': 'add', 'text': 'She paints.'},
                   ],
                 },
               ]
@@ -181,22 +241,31 @@ void main() {
       calls.add(r.url.path);
       return http.Response(jsonEncode({'ok': true}), 200, headers: _json);
     });
-    await tester
-        .pumpWidget(MaterialApp(home: ProfileProposalsScreen(apiClient: api)));
+    await tester.pumpWidget(MaterialApp(
+        theme: AymaTheme.light, home: ProfileProposalsScreen(apiClient: api)));
     await tester.pumpAndSettle();
 
-    expect(find.text('+ She surfs.'), findsOneWidget);
-    expect(find.text('- She bakes.'), findsOneWidget);
-    expect(find.text('She climbs.'), findsOneWidget);
-
-    await tester.tap(find.text('Apply').first);
+    await tester.tap(find.text('Apply all'));
     await tester.pumpAndSettle();
     expect(calls, ['/profile/proposals/interests/apply']);
-    expect(find.text('Interests'), findsNothing);
+    expect(find.text('No suggestions right now'), findsOneWidget);
+  });
 
-    await tester.tap(find.text('Dismiss'));
+  testWidgets('proposals screen shows an error with Retry, then the empty state',
+      (tester) async {
+    var fail = true;
+    final api = _api((r) async {
+      if (fail) return http.Response('boom', 500);
+      return http.Response(jsonEncode({'proposals': []}), 200, headers: _json);
+    });
+    await tester.pumpWidget(MaterialApp(
+        theme: AymaTheme.light, home: ProfileProposalsScreen(apiClient: api)));
     await tester.pumpAndSettle();
-    expect(calls.last, '/profile/proposals/career/dismiss');
-    expect(find.text('No suggested updates.'), findsOneWidget);
+    expect(find.text("Couldn't load the suggestions."), findsOneWidget);
+
+    fail = false;
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(find.text('No suggestions right now'), findsOneWidget);
   });
 }

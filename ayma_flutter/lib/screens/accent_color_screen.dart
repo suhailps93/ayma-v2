@@ -6,7 +6,7 @@ import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_back_button.dart';
 
-/// Live accent controls with hue, saturation, brightness and neutral presets.
+/// Live accent controls with hue, saturation, brightness and neutral shortcuts.
 class AccentColorScreen extends StatefulWidget {
   const AccentColorScreen({super.key, this.controller});
 
@@ -78,7 +78,7 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;
@@ -172,7 +172,7 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
             child: OutlinedButton.icon(
               onPressed: _reset,
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Reset to Cherry Fuchsia'),
+              label: const Text('Reset to default'),
             ),
           ),
         ],

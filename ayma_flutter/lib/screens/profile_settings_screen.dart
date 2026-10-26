@@ -2,20 +2,26 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/age_gate.dart';
+import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_toast.dart';
+import '../widgets/overflow_guards.dart';
+import '../widgets/partner_preferences_fields.dart';
 
 /// Post-onboarding editor for the structured profile fields (§4.5, §4.6 step 7).
 ///
 /// Same six fields as preboarding minus the photo (photo management is Step 60).
 /// Writes only the structured `users/{uid}/profile/main` doc — never the wiki.
 class ProfileSettingsScreen extends StatefulWidget {
-  const ProfileSettingsScreen({super.key, this.profileService});
+  const ProfileSettingsScreen(
+      {super.key, this.profileService, this.apiClient});
 
   static const path = '/settings/profile';
 
   final ProfileService? profileService;
+  final ApiClient? apiClient;
 
   @override
   State<ProfileSettingsScreen> createState() => _ProfileSettingsScreenState();
@@ -24,6 +30,7 @@ class ProfileSettingsScreen extends StatefulWidget {
 class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -38,6 +45,11 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   DateTime? _birthdate;
   String? _gender;
   final Set<String> _interestedIn = {};
+  RangeValues _ageRange =
+      const RangeValues(partnerAgeFloor, partnerAgeCeiling);
+  RangeValues? _savedAgeRange;
+  String _distance = defaultDistancePref;
+  String? _savedDistance;
 
   @override
   void initState() {
@@ -75,6 +87,22 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         _interestedIn
           ..clear()
           ..addAll(data?.interestedIn ?? const []);
+        final lo = data?.partnerAgeMin;
+        final hi = data?.partnerAgeMax;
+        if (lo != null && hi != null) {
+          _ageRange = RangeValues(
+            lo.clamp(partnerAgeFloor, partnerAgeCeiling).toDouble(),
+            hi.clamp(partnerAgeFloor, partnerAgeCeiling).toDouble(),
+          );
+          _savedAgeRange = _ageRange;
+        } else {
+          _ageRange = defaultPartnerAgeRange(_birthdate);
+        }
+        final dist = data?.distancePreference ?? '';
+        if (distancePrefOptions.containsKey(dist)) {
+          _distance = dist;
+          _savedDistance = dist;
+        }
         _loading = false;
       });
     } catch (e) {
@@ -126,15 +154,22 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         interestedIn: _interestedIn.toList(),
         location: _locationController.text,
       );
+      final saveAge = _savedAgeRange != _ageRange;
+      final saveDistance = _savedDistance != _distance;
+      if (saveAge || saveDistance) {
+        await _api.profilePreferencesSave(
+          partnerAgeMin: saveAge ? _ageRange.start.round() : null,
+          partnerAgeMax: saveAge ? _ageRange.end.round() : null,
+          distancePref: saveDistance ? _distance : null,
+        );
+        _savedAgeRange = _ageRange;
+        _savedDistance = _distance;
+      }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile saved')),
-      );
+      AymaToast.show(context, 'Profile saved', kind: AymaToastKind.success);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Save failed ($e)')),
-      );
+      AymaToast.show(context, 'Save failed ($e)', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -150,12 +185,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(_error!,
-                        style: AymaType.sans(size: 14, color: AymaColors.error)),
-                  ),
+              ? CenteredScroll(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(_error!,
+                      style: AymaType.sans(size: 14, color: AymaColors.error)),
                 )
               : ListView(
                   // iOS has no keyboard-dismiss key — dragging the form away
@@ -242,6 +275,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                       onChanged: (_) => setState(() {}),
                       decoration:
                           const InputDecoration(hintText: 'City, country'),
+                    ),
+                    const SizedBox(height: 20),
+                    PartnerPreferencesFields(
+                      ages: _ageRange,
+                      distance: _distance,
+                      onAgesChanged: (v) => setState(() => _ageRange = v),
+                      onDistanceChanged: (v) =>
+                          setState(() => _distance = v),
                     ),
                     const SizedBox(height: 32),
                     FilledButton(

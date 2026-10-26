@@ -7,8 +7,10 @@ import '../services/credits_balance.dart';
 import '../services/revenuecat_service.dart';
 import '../services/trial_paywall_gate.dart';
 import '../theme.dart';
-import 'plans_screen.dart';
-import 'subscription_screen.dart' show subscriptionDate;
+import '../widgets/ayma_toast.dart';
+import '../widgets/overflow_guards.dart';
+import 'plan_screen.dart';
+
 
 /// Days before the trial ends that the reminder step is shown at.
 const _reminderLeadDays = 2;
@@ -48,9 +50,9 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   bool _busy = false;
 
-  void _say(String msg) {
+  void _say(String msg, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    AymaToast.show(context, msg, kind: kind);
   }
 
   Future<void> _continue() async {
@@ -60,12 +62,15 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
       final outcome = await _rc.purchase(widget.offer.plan);
       if (outcome != PurchaseOutcome.success) return;
       try {
+        // Grant the trial's credit pool from the new entitlement (the
+        // webhook-less Test Store path; idempotent), then show the balance.
+        final remaining = await _rc.syncEntitlement(_api);
         CreditsBalance.instance.remaining.value =
-            (await _api.usage()).creditsRemaining;
+            remaining ?? (await _api.usage()).creditsRemaining;
       } catch (_) {/* the Credits screen refreshes on its next load */}
       if (mounted) Navigator.of(context).pop(true);
     } on PurchaseFailure catch (e) {
-      _say(e.message);
+      _say(e.message, kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -74,7 +79,7 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
   Future<void> _seeAllPlans() async {
     final done = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => PlansScreen(
+        builder: (_) => PlanScreen(
           service: widget.service,
           api: widget.api,
           showContinueFree: widget.onboarding,
@@ -113,8 +118,8 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
     ];
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
+        child: ChromeColumn(
+          header: [
             Align(
               alignment: Alignment.centerRight,
               child: IconButton(
@@ -124,26 +129,26 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
                 onPressed: () => Navigator.of(context).pop(false),
               ),
             ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                children: [
-                  Text(
-                    'Unlock all of Ayma Pro for ${offer.label}, free.',
-                    key: const ValueKey('trial-title'),
-                    style: AymaType.serif(size: 30, color: ac.fg),
-                  ),
-                  const SizedBox(height: 28),
-                  for (var i = 0; i < steps.length; i++)
-                    _Step(
-                      icon: steps[i].$1,
-                      title: steps[i].$2,
-                      body: steps[i].$3,
-                      last: i == steps.length - 1,
-                    ),
-                ],
+          ],
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            children: [
+              Text(
+                'Unlock all of Ayma Pro for ${offer.label}, free.',
+                key: const ValueKey('trial-title'),
+                style: AymaType.serif(size: 30, color: ac.fg),
               ),
-            ),
+              const SizedBox(height: 28),
+              for (var i = 0; i < steps.length; i++)
+                _Step(
+                  icon: steps[i].$1,
+                  title: steps[i].$2,
+                  body: steps[i].$3,
+                  last: i == steps.length - 1,
+                ),
+            ],
+          ),
+          footer: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
               child: Column(
@@ -259,7 +264,7 @@ class _Step extends StatelessWidget {
 
 /// Out-of-credits entry point: shows the trial paywall for an eligible,
 /// unsubscribed user at most once per day per device; every other case (or
-/// any failure) opens [PlansScreen] as before.
+/// any failure) opens [PlanScreen].
 Future<void> openTrialPaywallOrPlans(
   GoRouter router, {
   RevenueCatService? service,
@@ -278,7 +283,7 @@ Future<void> openTrialPaywallOrPlans(
       }
     }
   } catch (_) {/* fall through to the plain plans list */}
-  await router.push(PlansScreen.path);
+  await router.push(PlanScreen.path);
 }
 
 /// Shown once per account right before the first chat. Never blocks: with no
@@ -309,7 +314,7 @@ Future<void> showOnboardingPaywall(
         onboarding: true,
       );
     } else if ((await rc.plans()).any((p) => p.package != null)) {
-      page = PlansScreen(service: rc, api: api, showContinueFree: true);
+      page = PlanScreen(service: rc, api: api, showContinueFree: true);
     }
   } catch (_) {
     return;

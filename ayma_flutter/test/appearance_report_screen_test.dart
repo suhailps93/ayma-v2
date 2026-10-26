@@ -29,6 +29,16 @@ Map<String, dynamic> _block(String id, String type, {String text = '', bool edit
 
 ApiClient _api({String? requirePath}) {
   final mockHttp = MockClient((request) async {
+    if (request.url.path == '/appearance/eligibility') {
+      // Empty groups -> the pre-run sheet shows the add-the-missing-kind
+      // prompts (and no network thumbnails, so the sheet settles cleanly).
+      return http.Response(
+        jsonEncode({'face': const [], 'body': const [],
+            'has_face_photo': false, 'has_body_photo': false}),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
     if (requirePath != null) {
       expect(request.url.path, requirePath);
     }
@@ -88,7 +98,8 @@ void main() {
         findsOneWidget);
   });
 
-  testWidgets('Re-run opens the profile photo editor', (tester) async {
+  testWidgets('Re-run opens the Appearance pre-run sheet (Face/Body groups)',
+      (tester) async {
     final router = GoRouter(
       initialLocation: '/appearance/current',
       routes: [
@@ -97,18 +108,27 @@ void main() {
           builder: (_, __) => AppearanceReportScreen(
               reportId: 'current', myUid: 'u1', apiClient: _api()),
         ),
-        GoRoute(
-          path: '/profile/me/public',
-          builder: (_, __) => const Scaffold(body: Text('RUN SCREEN')),
-        ),
+        GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
       ],
     );
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Re-run'));
-    await tester.pumpAndSettle();
-    expect(find.text('RUN SCREEN'), findsOneWidget);
+    // Open the sheet and let its eligibility load (no pumpAndSettle so a loaded
+    // thumbnail's CachedNetworkImage can't block settling).
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    expect(find.text('Face analysis'), findsOneWidget);
+    expect(find.text('Body analysis'), findsOneWidget);
+    expect(find.text('Run analysis'), findsOneWidget);
+    // Both groups empty here -> each prompts to add the missing kind.
+    expect(find.text('Add a photo that clearly shows your face.'),
+        findsOneWidget);
+    expect(find.text('Add a full-body photo for a body report.'),
+        findsOneWidget);
   });
 
   testWidgets('falls back to reportId when no signed-in uid is available',

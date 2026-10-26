@@ -26,6 +26,8 @@ class ChatKickoff {
     this.editSelf = false,
     this.wantFace = true,
     this.wantBody = true,
+    this.faceMediaIds,
+    this.bodyMediaIds,
     this.topicPrompt = '',
     this.screenContext,
     this.draftBody = '',
@@ -70,18 +72,23 @@ class ChatKickoff {
   /// One unified "Appearance" read of the user's photos — structured attributes
   /// plus an honest face and physique analysis. Runs over the whole profile
   /// grid; [extraPaths] are extra chat-uploaded photos folded in. [wantFace] /
-  /// [wantBody] are set from `GET /appearance/coverage` on the Skills screen so
-  /// a section with no usable photo is skipped rather than guessed.
+  /// [wantBody] gate each axis (a skipped axis runs neither). [faceMediaIds] /
+  /// [bodyMediaIds] — when non-null — name the exact grid photos the pre-run
+  /// sheet chose for each axis; null means auto-pick the first eligible.
   factory ChatKickoff.appearance({
     List<String> extraPaths = const [],
     bool wantFace = true,
     bool wantBody = true,
+    List<String>? faceMediaIds,
+    List<String>? bodyMediaIds,
     bool useAllPhotos = true,
   }) =>
       ChatKickoff._('appearance',
           attachmentPaths: extraPaths,
           wantFace: wantFace,
           wantBody: wantBody,
+          faceMediaIds: faceMediaIds,
+          bodyMediaIds: bodyMediaIds,
           photoSource: useAllPhotos ? 'existing' : 'added');
 
   /// Bring something into the Ayma chat to talk about — it shows as a card and
@@ -197,6 +204,11 @@ class ChatKickoff {
   final bool wantFace;
   final bool wantBody;
 
+  /// [appearance]: the exact grid photos chosen for each axis in the pre-run
+  /// sheet, or null to auto-pick the first eligible one.
+  final List<String>? faceMediaIds;
+  final List<String>? bodyMediaIds;
+
   /// [discussTopic]: the node's `ayma_prompt` — a one-line hint of what Ayma
   /// should draw out. Carried for context; the seeded turn stays short.
   final String topicPrompt;
@@ -208,7 +220,15 @@ class ChatInbox {
 
   final ValueNotifier<ChatKickoff?> pending = ValueNotifier(null);
 
+  /// Bumped when a skill the app started in the background (a match, a web
+  /// search) has finished server-side. The server has already written its
+  /// result into the conversation as a report card turn; [ChatScreen] listens
+  /// and pulls it in, so the card appears without reopening the chat.
+  final ValueNotifier<int> resultsLanded = ValueNotifier(0);
+
   void push(ChatKickoff k) => pending.value = k;
+
+  void resultLanded() => resultsLanded.value++;
 
   /// Take and clear the pending kickoff (returns null if none).
   ChatKickoff? take() {

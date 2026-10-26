@@ -143,6 +143,7 @@ class _FakeApi extends ApiClient {
   @override
   Future<AppearanceReportResult> runAppearanceReport({
     List<String> imagePaths = const [], bool wantFace = true, bool wantBody = true,
+    List<String>? faceMediaIds, List<String>? bodyMediaIds,
   }) async {
     calls.add('run_appearance');
     return runAppearance!();
@@ -268,7 +269,7 @@ class _FakeApi extends ApiClient {
     return deepDiveReportResult ??
         DeepDiveReport(
           name: 'Me', summary: '', confidence: 'high', caveats: '',
-          isSelf: true, otherUid: '', subjectImage: '', createdAt: null,
+          isSelf: true, otherUid: '', subjectImage: '',
           facts: const [], links: const [], webImages: const [],
         );
   }
@@ -294,6 +295,9 @@ class _FakeApi extends ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async* {
     chatCalls.add({
@@ -327,6 +331,9 @@ class _FakeApi extends ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async {
     chatCalls.add({
@@ -866,7 +873,7 @@ void main() {
       ])
       ..deepDiveReportResult = DeepDiveReport(
         name: 'Me', summary: '', confidence: 'high', caveats: '',
-        isSelf: true, otherUid: '', subjectImage: '', createdAt: null,
+        isSelf: true, otherUid: '', subjectImage: '',
         facts: const [
           DeepDiveFact(id: 'f1', claim: 'Works at Acme', category: 'work',
               sourceUrl: '', confidence: 'high'),

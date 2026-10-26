@@ -7,14 +7,18 @@ import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
+import '../services/chat_inbox.dart';
 import '../services/deep_dive_activity.dart';
 import '../services/match_activity.dart';
 import '../services/tab_request.dart';
 import '../theme.dart';
 import '../widgets/ask_ayma_overlay.dart';
+import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_rail_icons.dart';
+import '../widgets/inline_photo_carousel.dart';
 import '../widgets/ayma_tab_bar.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import 'voice_call_screen.dart';
@@ -111,14 +115,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _likedOverride = true;
         _mutualLike = mutual;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(mutual ? "It's mutual — say hi!" : 'Liked.'),
-      ));
+      AymaToast.show(context, mutual ? "It's mutual — say hi!" : 'Liked.',
+          kind: AymaToastKind.success);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't send that like.")),
-        );
+        AymaToast.show(context, "Couldn't send that like.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _liking = false);
@@ -131,6 +133,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
+          scrollable: true,
           title: const Text('Remove your like?'),
           content:
               const Text("You'll drop out of each other's matches."),
@@ -154,14 +157,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _likedOverride = false;
         _mutualLike = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Removed your like.')),
-      );
+      AymaToast.show(context, 'Removed your like.',
+          kind: AymaToastKind.success);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't remove that like.")),
-        );
+        AymaToast.show(context, "Couldn't remove that like.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _liking = false);
@@ -186,18 +187,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       }
       final reportId = res.reportId.isNotEmpty ? res.reportId : p.uid;
       if (res.queued) {
-        unawaited(DeepDiveActivity.instance.start(
-          reportId,
-          previousCreatedAt: null,
-          api: _api,
-        ));
+        unawaited(DeepDiveActivity.instance.start(reportId, api: _api));
       }
       context.push('/deep-dive/${Uri.encodeComponent(reportId)}');
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't start that web search.")),
-        );
+        AymaToast.show(context, "Couldn't start that web search.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _startingSearch = false);
@@ -217,22 +213,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         setState(() => _score = res.score);
         if (id != null && mounted) context.push('/match/$id');
       } else if (res.ok && res.queued && id != null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              "Running the match — I'll open it when it's ready. "
-              "You can leave this screen."),
-        ));
+        AymaToast.show(
+            context,
+            "Running the match — I'll open it when it's ready. "
+            'You can leave this screen.');
         await _awaitMatchReport(id);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't calculate that match.")),
-        );
+        AymaToast.show(context, "Couldn't calculate that match.",
+            kind: AymaToastKind.error);
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't calculate that match.")),
-        );
+        AymaToast.show(context, "Couldn't calculate that match.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _scoring = false);
@@ -248,6 +241,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       try {
         final report = await _api.matchReport(matchId);
         if (report != null && report.score != null) {
+          ChatInbox.instance.resultLanded();
           if (mounted) {
             setState(() => _score = report.score);
             context.push('/match/$matchId');
@@ -276,49 +270,39 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   /// page-context popup instead of navigating back to the shell (founder
   /// ask: "like the story edit"). A second orb tap while that popup is
   /// already open (its own on-top copy of this same bar, wired to this same
-  /// method — see [_navBar]) dismisses it and heads to the real Ayma tab
-  /// instead of stacking a second popup (founder ask, round 2).
+  /// method — see [_navBar]) grows the popup to full screen in place instead
+  /// of stacking a second one.
+  /// Any other tab while the popup is open closes it first (same reason as
+  /// `NavBarShell._onTabTap`: a declarative `context.go` would strand it).
   Future<void> _onTabTap(int i) async {
     if (i == 0) {
       if (isPageContextAymaPopupOpen) {
-        // `_goToTab`'s `context.go` replaces this whole route, popup
-        // included — but it doesn't pop the popup *for* us (an
-        // imperatively-pushed route like this modal sheet sits outside
-        // go_router's own page stack, so a declarative navigation alone
-        // leaves it stranded on top, still showing). Pop it explicitly,
-        // then wait for that pop's own dismiss transition to actually
-        // finish (`pendingPageContextAymaPopup`) before navigating — doing
-        // both in the same frame instead tears the transition down
-        // mid-flight ("animation still running after the widget tree was
-        // disposed").
-        Navigator.of(context).pop();
-        await pendingPageContextAymaPopup;
-        if (mounted) _goToTab(0);
+        pageContextAymaPopupSheet.expand();
       } else {
-        showPageContextAymaPopup(
-          context,
-          navBarBuilder: _navBar,
-          // The popup header's expand button re-enters this very method as
-          // a second orb tap — the "already open" branch above dismisses
-          // the popup and heads to the real Ayma tab, chip dropped.
-          onExpandRequested: () => _onTabTap(0),
-        );
+        showPageContextAymaPopup(context, navBarBuilder: _navBar);
       }
-    } else {
-      _goToTab(i);
+      return;
     }
+    if (isPageContextAymaPopupOpen) {
+      Navigator.of(context).pop();
+      await pendingPageContextAymaPopup;
+      if (!mounted) return;
+    }
+    _goToTab(i);
   }
 
   /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
   /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
   /// renders behaves identically to this screen's own bar, including a tap
-  /// on it deciding to dismiss the popup and navigate rather than opening a
-  /// second one.
+  /// on it expanding the popup rather than opening a second one. That copy
+  /// highlights the orb while the popup is expanded to full screen.
   Widget _navBar(BuildContext context) {
+    final expanded =
+        AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;
     return ListenableBuilder(
       listenable: AymaSession.instance.voice,
       builder: (context, _) => AymaTabBar(
-        index: -1,
+        index: expanded ? 0 : -1,
         voice: AymaSession.instance.voice,
         onSelected: _onTabTap,
         onOrbLongPress: () =>
@@ -375,8 +359,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           // Stack rather than as `Scaffold.bottomNavigationBar` deliberately:
           // that property would shrink `body`'s height, which would in turn
           // double-count the clearance the action rail below already adds
-          // for this same bar (`AymaTabBar.contentHeight` +
-          // `MediaQuery.paddingOf(context).bottom`). Living here instead,
+          // for this same bar (`AymaTabBar.heightFor`). Living here instead,
           // `body` still spans the *whole* screen exactly as before this bar
           // existed, so the rail's own bottom offset is the only place that
           // math happens.
@@ -399,20 +382,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 // top-right (`global_ayma_launcher.dart`'s
                 // `Alignment.topRight`), so that number no longer clears
                 // anything real — it was just dead space. `AymaTabBar
-                // .contentHeight` is the bar's own real on-screen height
-                // (excluding the device's own bottom safe-area inset, which
-                // is added back here explicitly rather than relying on
-                // `SafeArea`'s `minimum` — that widget takes the *larger* of
-                // the device inset or `minimum`, not their sum, which would
-                // under-clear the bar on any device with a real inset, e.g.
-                // an iPhone's home-indicator area); `16` is a small,
+                // .heightFor` is the bar's own real on-screen height in this
+                // window (compact in short windows), bottom safe-area inset
+                // included — summed explicitly rather than relying on
+                // `SafeArea`'s `minimum`, which takes the *larger* of the
+                // device inset or `minimum`, not their sum); `16` is a small,
                 // consistent gap above the bar, matching the rail's own
                 // `16` right inset and the app's other edge insets.
                 Positioned(
                   right: 16,
-                  bottom: MediaQuery.paddingOf(context).bottom +
-                      AymaTabBar.contentHeight +
-                      16,
+                  bottom: AymaTabBar.heightFor(context) + 16,
                   child: _Actions(
                     key: const Key('profileActionRail'),
                     p: p,
@@ -482,10 +461,12 @@ class _TitleBar extends StatelessWidget {
 
 /// The photo carousel + name/age/location header shared by every screen that
 /// shows "the same photo header a viewer sees when they open this profile" —
-/// [ProfileBody], which every profile screen renders through (photos are
-/// display-only there — the owner edits them via `ProfilePhotoEditor`
-/// from [MyPublicProfileScreen]). Extracted so there's exactly ONE photo-carousel
-/// implementation, not a near-identical second one per caller.
+/// [ProfileBody], which every profile screen renders through. Photos are
+/// display-only for everyone else; on the owner's own [MyPublicProfileScreen]
+/// the thumbnail strip becomes the inline editor (add / delete / set-primary /
+/// drag-reorder) when [ProfilePhotoHeader.editing] is passed. Extracted so
+/// there's exactly ONE photo-carousel implementation, not a near-identical
+/// second one per caller.
 class ProfilePhotoHeader extends StatefulWidget {
   const ProfilePhotoHeader({
     super.key,
@@ -497,6 +478,7 @@ class ProfilePhotoHeader extends StatefulWidget {
     this.isOnline = false,
     this.blockedMessage,
     this.actions,
+    this.editing,
   });
 
   /// Ready-to-render download URLs, primary first.
@@ -522,8 +504,15 @@ class ProfilePhotoHeader extends StatefulWidget {
 
   /// An optional overlay floating on the photo itself, bottom-right (e.g.
   /// [PublicProfileBody]'s like/chat/web-search/run-match rail). Null shows
-  /// no overlay — [MyPublicProfileScreen] leaves photos display-only.
+  /// no overlay.
   final Widget? actions;
+
+  /// Non-null ONLY on the owner's own "My public profile": turns the thumbnail
+  /// strip into the inline editor (add tile, per-photo star + delete,
+  /// drag-reorder). Null everywhere else keeps photos display-only. When set,
+  /// the carousel renders the controller's live [GridPhoto] list rather than
+  /// [photos].
+  final InlinePhotoEditing? editing;
 
   @override
   State<ProfilePhotoHeader> createState() => _ProfilePhotoHeaderState();
@@ -545,7 +534,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
   }
 
   void _goToPage(int i) {
-    if (i == _page) return;
+    if (i == _page || !_controller.hasClients) return;
     _controller.animateToPage(
       i,
       duration: const Duration(milliseconds: 250),
@@ -553,9 +542,19 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
     );
   }
 
+  bool get _editable => widget.editing != null;
+
+  /// The photos the carousel shows: in edit mode the controller's live grid
+  /// (so adds/removes/reorders show instantly), otherwise the passed list.
+  List<String> get _photos => _editable
+      ? widget.editing!.controller.photos.map((g) => g.downloadUrl).toList()
+      : widget.photos;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final photos = _photos;
+    final page = photos.isEmpty ? 0 : _page.clamp(0, photos.length - 1);
     final h1 = (widget.seed.hashCode.abs() % 360).toDouble();
     final fallback = DecoratedBox(
       decoration: BoxDecoration(
@@ -578,14 +577,14 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              widget.photos.isEmpty
+              photos.isEmpty
                   ? fallback
                   : PageView.builder(
                       controller: _controller,
                       onPageChanged: (i) => setState(() => _page = i),
-                      itemCount: widget.photos.length,
+                      itemCount: photos.length,
                       itemBuilder: (_, i) => AymaPhoto(
-                        url: widget.photos[i],
+                        url: photos[i],
                         displayWidth: 900,
                         error: fallback,
                       ),
@@ -703,13 +702,38 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
         // Horizontal filmstrip of photo thumbnails pinned along the bottom
         // edge of the header, below the gradient scrim, on its own solid
         // dark strip — replaces the small dot indicator this header used to
-        // show instead (founder reference screenshot). Only shown with more
-        // than one photo, same threshold the old dot indicator used.
-        if (widget.photos.length > 1)
-          _Filmstrip(
-            photos: widget.photos,
+        // show instead (founder reference screenshot).
+        if (_editable)
+          // Inline editor: always shown (even with 0–1 photos, so the add tile
+          // is reachable), with per-thumb star + delete and drag-reorder.
+          InlinePhotoStrip(
+            photos: photos,
             fallback: fallback,
-            currentPage: _page,
+            currentPage: page,
+            busy: widget.editing!.controller.busy,
+            onSelect: _goToPage,
+            onAddPhoto: widget.editing!.onAddPhoto,
+            onSetPrimary: (i) {
+              final grid = widget.editing!.controller.photos;
+              if (i >= 0 && i < grid.length) {
+                widget.editing!.onSetPrimary(grid[i]);
+              }
+            },
+            onRemove: (i) {
+              final grid = widget.editing!.controller.photos;
+              if (i >= 0 && i < grid.length) {
+                widget.editing!.onRemove(grid[i]);
+              }
+            },
+            onReorder: widget.editing!.controller.reorder,
+          )
+        else if (photos.length > 1)
+          // Read-only: the plain thumbnail strip, shown only with more than one
+          // photo (same threshold the old dot indicator used).
+          _Filmstrip(
+            photos: photos,
+            fallback: fallback,
+            currentPage: page,
             onSelect: _goToPage,
           ),
         if (widget.blockedMessage != null)
@@ -816,6 +840,7 @@ class ProfileBody extends StatelessWidget {
     this.profile,
     this.headerLoading = false,
     this.bottomPadding = 0,
+    this.editing,
   });
 
   final String reportType;
@@ -825,9 +850,14 @@ class ProfileBody extends StatelessWidget {
   final bool headerLoading;
   final double bottomPadding;
 
+  /// Inline photo editing for the owner's own profile only (null elsewhere —
+  /// see [ProfilePhotoHeader.editing]).
+  final InlinePhotoEditing? editing;
+
   @override
   Widget build(BuildContext context) {
     final p = profile;
+    final edit = editing;
     return ListView(
       padding: EdgeInsets.only(bottom: bottomPadding),
       children: [
@@ -835,6 +865,21 @@ class ProfileBody extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 48),
             child: Center(child: CircularProgressIndicator()),
+          )
+        else if (p != null && edit != null)
+          // Own profile: rebuild the header on every edit so the carousel
+          // reflects the controller's live grid.
+          ListenableBuilder(
+            listenable: edit.controller,
+            builder: (context, _) => ProfilePhotoHeader(
+              photos: p.photos,
+              seed: p.uid.isEmpty ? reportId : p.uid,
+              name: p.name,
+              age: p.age,
+              location: p.location,
+              isOnline: p.isOnline,
+              editing: edit,
+            ),
           )
         else if (p != null)
           ProfilePhotoHeader(

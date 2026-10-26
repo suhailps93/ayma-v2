@@ -52,6 +52,23 @@ def mark_pending(db, uid: str, session_id: str) -> None:
         logger.exception("mark_pending failed for %s/%s", uid, session_id)
 
 
+def clear_pending(db, uid: str, session_id: str) -> None:
+    """Drop one ``raw_turns`` doc's re-ingest flag after a successful ingest.
+    Best-effort — never raises (a leftover flag only costs one re-ingest)."""
+    if not uid or not session_id:
+        return
+    try:
+        from firebase_admin import firestore
+
+        _col(db, uid).document(session_id).set(
+            {_PENDING: firestore.DELETE_FIELD,
+             _PENDING_AT: firestore.DELETE_FIELD},
+            merge=True,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("clear_pending failed for %s/%s", uid, session_id)
+
+
 def _turns(data: dict) -> list[Turn]:
     out: list[Turn] = []
     for t in (data.get("turns") or []):
@@ -114,7 +131,6 @@ async def drain(db, uid: str, *, limit: int = _MAX_PER_DRAIN) -> int:
 async def sweep(db, user_limit: int = 200) -> dict:
     """Nightly: drain pending ingests for every user that has any. Bounded by
     ``user_limit`` users scanned per run."""
-    from firebase_admin import firestore
 
     scanned = drained = 0
     try:

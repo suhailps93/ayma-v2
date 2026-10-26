@@ -6,13 +6,17 @@ import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
+import '../legal/biometric_consent_text.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/biometric_consent.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/phone_number_field.dart';
+import 'biometric_info_screen.dart';
 import 'privacy_screen.dart';
 import 'splash_screen.dart';
 import 'terms_screen.dart';
@@ -21,6 +25,12 @@ import 'terms_screen.dart';
 /// anonymous browsing — so this is the first screen an unauthenticated user
 /// sees. On success it routes to [SplashScreen], which bootstraps and sends the
 /// user on to the voice intro / preboarding / main app.
+///
+/// Clickwrap: two separate, required checkboxes (unticked by default) — the
+/// Terms + Privacy Policy, and the face-recognition (biometric) consent —
+/// and every sign-in button stays disabled until both are ticked. The
+/// biometric consent is kept on the device ([PendingBiometricConsent]) and
+/// recorded server-side by the splash screen right after sign-in.
 class SignInScreen extends StatefulWidget {
   const SignInScreen({
     super.key,
@@ -56,6 +66,20 @@ class _SignInScreenState extends State<SignInScreen> {
 
   _Stage _stage = _Stage.pick;
   bool _busy = false;
+
+  /// The two clickwrap boxes; both are required before any sign-in.
+  bool _termsAccepted = false;
+  bool _biometricAccepted = false;
+  bool get _consentsGiven => _termsAccepted && _biometricAccepted;
+
+  void _setBiometric(bool value) {
+    setState(() => _biometricAccepted = value);
+    if (value) {
+      PendingBiometricConsent.save(kBiometricConsentVersion);
+    } else {
+      PendingBiometricConsent.clear();
+    }
+  }
 
   /// Email flow mode: false = sign in to an existing account, true = create
   /// a new one. The two used to be one ambiguous "Continue" that silently
@@ -118,15 +142,13 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
-  void _snack(String m) {
+  void _snack(String m, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(m)));
+    AymaToast.show(context, m, kind: kind);
   }
 
   Future<void> _run(Future<UserCredential> Function() action) async {
-    if (_busy) return;
+    if (_busy || !_consentsGiven) return;
     setState(() => _busy = true);
     try {
       await action();
@@ -134,17 +156,18 @@ class _SignInScreenState extends State<SignInScreen> {
       if (!mounted) return;
       context.go(SplashScreen.path);
     } on FirebaseAuthException catch (e) {
-      _snack(_friendly(e));
+      _snack(_friendly(e), kind: AymaToastKind.error);
     } on GoogleSignInException catch (e) {
       if (e.code != GoogleSignInExceptionCode.canceled) {
-        _snack('Google sign-in failed (${e.code.name}).');
+        _snack('Google sign-in failed (${e.code.name}).',
+            kind: AymaToastKind.error);
       }
     } on SignInWithAppleAuthorizationException catch (e) {
       if (e.code != AuthorizationErrorCode.canceled) {
-        _snack('Apple sign-in isn’t set up yet.');
+        _snack('Apple sign-in isn’t set up yet.', kind: AymaToastKind.warning);
       }
     } catch (e) {
-      _snack('Sign-in failed. Try again.');
+      _snack('Sign-in failed. Try again.', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -179,11 +202,12 @@ class _SignInScreenState extends State<SignInScreen> {
   Future<void> _submitEmail() async {
     final email = _email.text.trim();
     if (email.isEmpty || _password.text.length < 6) {
-      _snack('Enter an email and a password of at least 6 characters.');
+      _snack('Enter an email and a password of at least 6 characters.',
+          kind: AymaToastKind.warning);
       return;
     }
     if (_createMode && _confirmPassword.text != _password.text) {
-      _snack('Those passwords don’t match.');
+      _snack('Those passwords don’t match.', kind: AymaToastKind.warning);
       return;
     }
     await _run(
@@ -212,7 +236,8 @@ class _SignInScreenState extends State<SignInScreen> {
   Future<void> _forgotPassword() async {
     final email = _email.text.trim();
     if (email.isEmpty) {
-      _snack('Enter your email above first, then tap “Forgot password?”.');
+      _snack('Enter your email above first, then tap “Forgot password?”.',
+          kind: AymaToastKind.warning);
       return;
     }
     setState(() => _busy = true);
@@ -227,18 +252,20 @@ class _SignInScreenState extends State<SignInScreen> {
         'too-many-requests' =>
           'Too many attempts. Wait a minute and try again.',
         _ => 'Couldn’t send the reset email. Try again in a moment.',
-      });
+      }, kind: AymaToastKind.error);
     } catch (_) {
-      _snack('Couldn’t send the reset email. Try again in a moment.');
+      _snack('Couldn’t send the reset email. Try again in a moment.',
+          kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _sendCode() async {
+    if (!_consentsGiven) return;
     final field = _phoneFieldKey.currentState;
     if (field == null || !field.isPlausible) {
-      _snack('Enter your phone number.');
+      _snack('Enter your phone number.', kind: AymaToastKind.warning);
       return;
     }
     final phone = field.e164;
@@ -252,12 +279,12 @@ class _SignInScreenState extends State<SignInScreen> {
             _verificationId = id;
             _busy = false;
           });
-          _snack('Code sent.');
+          _snack('Code sent.', kind: AymaToastKind.success);
         },
         verificationFailed: (e) {
           if (!mounted) return;
           setState(() => _busy = false);
-          _snack(_friendly(e));
+          _snack(_friendly(e), kind: AymaToastKind.error);
         },
         autoSignedIn: (_) async {
           await _stopVoice();
@@ -267,7 +294,7 @@ class _SignInScreenState extends State<SignInScreen> {
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         setState(() => _busy = false);
-        _snack(_friendly(e));
+        _snack(_friendly(e), kind: AymaToastKind.error);
       }
     }
   }
@@ -362,7 +389,14 @@ class _SignInScreenState extends State<SignInScreen> {
                       textAlign: TextAlign.center,
                       style: AymaType.serif(size: 26, color: ac.fg),
                     ),
-                    const SizedBox(height: 36),
+                    const SizedBox(height: 28),
+                    _ConsentBoxes(
+                      termsAccepted: _termsAccepted,
+                      biometricAccepted: _biometricAccepted,
+                      onTerms: (v) => setState(() => _termsAccepted = v),
+                      onBiometric: _setBiometric,
+                    ),
+                    const SizedBox(height: 16),
                     if (_stage == _Stage.pick) ..._pick(ac),
                     if (_stage == _Stage.email) ..._emailForm(ac),
                     if (_stage == _Stage.phone) ..._phoneForm(ac),
@@ -378,8 +412,6 @@ class _SignInScreenState extends State<SignInScreen> {
                         }),
                         child: const Text('Back'),
                       ),
-                    const SizedBox(height: 8),
-                    _TermsLine(),
                   ],
                 ),
               ),
@@ -395,7 +427,9 @@ class _SignInScreenState extends State<SignInScreen> {
     // only (`_appleOffered`). Google/email/phone follow as a single row of
     // equal compact buttons, never stacked full-width like Apple's.
     if (_appleOffered) ...[
-      _AppleBtn(onTap: () => _run(_auth.signInWithApple)),
+      _AppleBtn(
+        onTap: _consentsGiven ? () => _run(_auth.signInWithApple) : null,
+      ),
       const SizedBox(height: 12),
     ],
     Row(
@@ -404,7 +438,7 @@ class _SignInScreenState extends State<SignInScreen> {
           child: _CompactBtn(
             icon: Icons.g_mobiledata,
             label: 'Google',
-            onTap: () => _run(_auth.signInWithGoogle),
+            onTap: _consentsGiven ? () => _run(_auth.signInWithGoogle) : null,
           ),
         ),
         const SizedBox(width: 8),
@@ -412,7 +446,9 @@ class _SignInScreenState extends State<SignInScreen> {
           child: _CompactBtn(
             icon: Icons.mail_outline,
             label: 'Email',
-            onTap: () => setState(() => _stage = _Stage.email),
+            onTap: _consentsGiven
+                ? () => setState(() => _stage = _Stage.email)
+                : null,
           ),
         ),
         const SizedBox(width: 8),
@@ -420,7 +456,9 @@ class _SignInScreenState extends State<SignInScreen> {
           child: _CompactBtn(
             icon: Icons.phone_outlined,
             label: 'Phone',
-            onTap: () => setState(() => _stage = _Stage.phone),
+            onTap: _consentsGiven
+                ? () => setState(() => _stage = _Stage.phone)
+                : null,
           ),
         ),
       ],
@@ -484,7 +522,7 @@ class _SignInScreenState extends State<SignInScreen> {
     ],
     const SizedBox(height: 16),
     FilledButton(
-      onPressed: _submitEmail,
+      onPressed: _consentsGiven ? _submitEmail : null,
       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
       child: Text(_createMode ? 'Create account' : 'Sign in'),
     ),
@@ -515,7 +553,7 @@ class _SignInScreenState extends State<SignInScreen> {
       const SizedBox(height: 16),
       if (!codeStage)
         FilledButton(
-          onPressed: _sendCode,
+          onPressed: _consentsGiven ? _sendCode : null,
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
           child: const Text('Send code'),
         )
@@ -528,7 +566,7 @@ class _SignInScreenState extends State<SignInScreen> {
         ),
         const SizedBox(height: 16),
         FilledButton(
-          onPressed: _confirmCode,
+          onPressed: _consentsGiven ? _confirmCode : null,
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
           child: const Text('Verify'),
         ),
@@ -541,7 +579,7 @@ class _SignInScreenState extends State<SignInScreen> {
 /// founder's reference layout, distinct from the compact row below it.
 class _AppleBtn extends StatelessWidget {
   const _AppleBtn({required this.onTap});
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -571,7 +609,7 @@ class _CompactBtn extends StatelessWidget {
   });
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -594,7 +632,25 @@ class _CompactBtn extends StatelessWidget {
   }
 }
 
-class _TermsLine extends StatelessWidget {
+/// The two clickwrap checkboxes, each required and unticked by default:
+/// (1) 18+ and the Terms (which include use of data for advertising) +
+/// Privacy Policy, (2) the face-recognition
+/// (biometric) consent, with a link to the full Biometric Information section.
+/// Kept separate on purpose — the biometric consent is never folded into the
+/// Terms acceptance.
+class _ConsentBoxes extends StatelessWidget {
+  const _ConsentBoxes({
+    required this.termsAccepted,
+    required this.biometricAccepted,
+    required this.onTerms,
+    required this.onBiometric,
+  });
+
+  final bool termsAccepted;
+  final bool biometricAccepted;
+  final ValueChanged<bool> onTerms;
+  final ValueChanged<bool> onBiometric;
+
   @override
   Widget build(BuildContext context) {
     final base = Theme.of(context).textTheme.bodySmall;
@@ -602,28 +658,60 @@ class _TermsLine extends StatelessWidget {
       decoration: TextDecoration.underline,
       fontWeight: FontWeight.w600,
     );
-    return Text.rich(
-      TextSpan(
-        text: 'By continuing you confirm you are 18 or older and agree to our ',
-        style: base,
-        children: [
-          TextSpan(
-            text: 'Terms',
-            style: linkStyle,
-            recognizer: TapGestureRecognizer()
-              ..onTap = () => context.push(TermsScreen.path),
+    TextSpan link(String text, String path) => TextSpan(
+          text: text,
+          style: linkStyle,
+          recognizer: TapGestureRecognizer()
+            ..onTap = () => context.push(path),
+        );
+    Widget box({
+      required Key key,
+      required bool value,
+      required ValueChanged<bool> onChanged,
+      required InlineSpan label,
+    }) =>
+        CheckboxListTile(
+          key: key,
+          value: value,
+          onChanged: (v) => onChanged(v ?? false),
+          controlAffinity: ListTileControlAffinity.leading,
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text.rich(label),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        box(
+          key: const Key('signin_terms_checkbox'),
+          value: termsAccepted,
+          onChanged: onTerms,
+          label: TextSpan(
+            text: "I'm 18 or older and I agree to the ",
+            style: base,
+            children: [
+              link('Terms', TermsScreen.path),
+              const TextSpan(
+                text: ' (including use of my data for advertising) and ',
+              ),
+              link('Privacy Policy', PrivacyScreen.path),
+              const TextSpan(text: '.'),
+            ],
           ),
-          const TextSpan(text: ' and '),
-          TextSpan(
-            text: 'Privacy Policy',
-            style: linkStyle,
-            recognizer: TapGestureRecognizer()
-              ..onTap = () => context.push(PrivacyScreen.path),
+        ),
+        box(
+          key: const Key('signin_biometric_checkbox'),
+          value: biometricAccepted,
+          onChanged: onBiometric,
+          label: TextSpan(
+            text: 'I consent to face recognition. $kBiometricConsentSignInLine ',
+            style: base,
+            children: [
+              link('Biometric Information', BiometricInfoScreen.path),
+            ],
           ),
-          const TextSpan(text: '.'),
-        ],
-      ),
-      textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 }

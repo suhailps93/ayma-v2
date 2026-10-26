@@ -291,6 +291,67 @@ def test_media_photos_batch_requires_at_least_one_id(monkeypatch):
     assert resp.status_code == 422
 
 
+def _stub_refresh(monkeypatch):
+    async def _noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(main.physical_attributes, "refresh", _noop)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+
+def test_media_photos_remove_hides_from_public(monkeypatch):
+    import photo_ops
+
+    seen = []
+    monkeypatch.setattr(
+        photo_ops, "remove_photo",
+        lambda db, uid, mid: seen.append((uid, mid)) or [{"media_id": "keep"}],
+    )
+    _stub_refresh(monkeypatch)
+    resp = client.post("/media/photos/m-9/remove", headers=_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert resp.json()["photos"] == [{"media_id": "keep"}]
+    assert seen == [("u-7", "m-9")]
+
+
+def test_media_photos_set_primary(monkeypatch):
+    import photo_ops
+
+    seen = []
+    monkeypatch.setattr(
+        photo_ops, "set_primary",
+        lambda db, uid, mid: seen.append((uid, mid)) or [{"media_id": mid}],
+    )
+    _stub_refresh(monkeypatch)
+    resp = client.post("/media/photos/m-3/primary", headers=_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert resp.json()["photos"] == [{"media_id": "m-3"}]
+    assert seen == [("u-7", "m-3")]
+
+
+def test_media_photos_delete_permanent_passes_the_bucket(monkeypatch):
+    import photo_ops
+
+    seen = []
+    sentinel = object()
+    monkeypatch.setattr(
+        photo_ops, "delete_photo_permanent",
+        lambda db, uid, mid, bucket: seen.append((uid, mid, bucket)) or [],
+    )
+    monkeypatch.setattr(main, "_bucket", lambda: sentinel)
+    _stub_refresh(monkeypatch)
+    resp = client.post("/media/photos/m-x/delete", headers=_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert resp.json()["photos"] == []
+    assert seen == [("u-7", "m-x", sentinel)]
+
+
+def test_media_photos_mutations_require_a_token():
+    for path in ("/media/photos/m/remove", "/media/photos/m/primary",
+                 "/media/photos/m/delete"):
+        assert client.post(path).status_code in (401, 403)
+
+
 def test_media_502_when_pipeline_fails(monkeypatch):
     async def _boom(*_a, **_k):
         raise RuntimeError("vertex is grumpy")

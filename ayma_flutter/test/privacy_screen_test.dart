@@ -22,6 +22,7 @@ void main() {
     expect(text, contains('Ayma Privacy Policy'));
     expect(text, contains('Data we collect'));
     expect(text, contains('automatically analyses your own photos'));
+    expect(text, isNot(contains('**')));
   });
 
   test('kPrivacyText covers the disclosed points', () {
@@ -29,21 +30,30 @@ void main() {
     expect(kPrivacyText, contains('Google Firebase'));
     expect(kPrivacyText, contains('Google Gemini / Vertex AI'));
     expect(kPrivacyText, contains('LiveKit'));
+    expect(kPrivacyText, contains('RevenueCat'));
+    expect(kPrivacyText, contains('Sentry'));
     // data categories
-    expect(kPrivacyText, contains('facial analysis and physique'));
+    expect(kPrivacyText, contains('Facial analysis and physique'));
+    expect(kPrivacyText, contains('Face data (biometric)'));
     expect(kPrivacyText, contains('voice sessions'));
     expect(kPrivacyText, contains('Approximate location'));
     // rights + retention
     expect(kPrivacyText, contains('Access and portability'));
-    expect(kPrivacyText, contains('short recovery window'));
+    expect(kPrivacyText, contains('**Deletion has a 30-day recovery window**'));
     // no sale, children, transfers
-    expect(kPrivacyText, contains('We do not sell your personal data'));
+    expect(kPrivacyText, contains('we do not sell your personal data'));
+    // advertising + encryption, stated plainly and in bold
+    expect(kPrivacyText, contains('## Advertising'));
+    expect(kPrivacyText, contains('**No ads are shown in the current version'));
+    expect(kPrivacyText, contains('**Ayma is not end-to-end encrypted.**'));
+    expect(kPrivacyText, isNot(contains('Internal note')));
+    expect(kPrivacyText, isNot(contains('|')));
     expect(kPrivacyText, contains('18 and over'));
     expect(kPrivacyText, contains('International data transfers'));
   });
 
   test('kPrivacyText is dated today and has no unresolved placeholders', () {
-    expect(kPrivacyText, contains('_Last updated: 2026-09-19_'));
+    expect(kPrivacyText, contains('_Last updated: 2026-10-25_'));
     expect(kPrivacyText, isNot(contains('PLACEHOLDER')));
   });
 }

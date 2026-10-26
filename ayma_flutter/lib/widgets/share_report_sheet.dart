@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/report_share.dart';
+import '../services/meta_integrations.dart';
 import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
@@ -9,9 +10,11 @@ import '../services/dm_service.dart';
 import '../services/match_service.dart';
 import '../services/share_service.dart';
 import '../theme.dart';
+import 'ayma_toast.dart';
 
-/// The AppBar Share action every shareable report screen (web research,
-/// Appearance, Match) carries. [reportType]/[reportId] are the same pair the
+/// The AppBar Share action the web-research and Match report screens carry
+/// (Appearance shares its image report card instead,
+/// `report_card_share_sheet.dart`). [reportType]/[reportId] are the same pair the
 /// screen's `LivingReportView` reads.
 class ShareReportButton extends StatelessWidget {
   const ShareReportButton({
@@ -83,16 +86,15 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
       _share ??= await _svc.create(widget.reportType, widget.reportId);
 
   /// Runs [action] with the created share, guarding against double taps and
-  /// surfacing any failure as a snack bar.
+  /// surfacing any failure as a toast.
   Future<void> _run(Future<void> Function(ReportShare s) action) async {
     if (_busy) return;
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = AymaToast.of(context);
     setState(() => _busy = true);
     try {
       await action(await _ensureShare());
     } catch (_) {
-      messenger.showSnackBar(
-          const SnackBar(content: Text("Couldn't share that right now.")));
+      toast.show("Couldn't share that right now.", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -129,9 +131,9 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
           ),
         );
         if (picked == null || !mounted) return;
-        final messenger = ScaffoldMessenger.of(context);
+        final toast = AymaToast.of(context);
         await _svc.sendToThread(widget.dmService ?? DmService(), picked, s);
-        messenger.showSnackBar(const SnackBar(content: Text('Sent.')));
+        toast.show('Sent.', kind: AymaToastKind.success);
         if (mounted) Navigator.pop(context);
       });
 
@@ -142,11 +144,12 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_busy) const LinearProgressIndicator(),
-          ListTile(
-            leading: const Icon(Icons.camera_alt_outlined),
-            title: const Text('Instagram Story'),
-            onTap: _instagram,
-          ),
+          if (MetaIntegrations.enabled.value)
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Instagram Story'),
+              onTap: _instagram,
+            ),
           ListTile(
             leading: const Icon(Icons.auto_awesome_outlined),
             title: const Text('Share to Ayma'),

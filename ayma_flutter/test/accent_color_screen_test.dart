@@ -57,6 +57,15 @@ void main() {
     expect(profiles.serverWrites.last, c.color);
   });
 
+  testWidgets('the preset swatch row is gone', (tester) async {
+    final c = AccentColorController(profileService: _FakeProfiles());
+    await tester.pumpWidget(host(c));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byKey(const Key('accentPreset_green')), findsNothing);
+    expect(find.byKey(const Key('hueStrip')), findsOneWidget);
+  });
+
   testWidgets('reset returns to Cherry Fuchsia and persists it', (
     tester,
   ) async {
@@ -66,11 +75,11 @@ void main() {
     await tester.pumpWidget(host(c));
     await tester.pump(const Duration(milliseconds: 400));
 
-    await tester.scrollUntilVisible(find.text('Reset to Cherry Fuchsia'), 200);
+    await tester.scrollUntilVisible(find.text('Reset to default'), 200);
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.ensureVisible(find.text('Reset to Cherry Fuchsia'));
+    await tester.ensureVisible(find.text('Reset to default'));
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('Reset to Cherry Fuchsia'));
+    await tester.tap(find.text('Reset to default'));
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(c.color, AymaColors.accent);
@@ -83,10 +92,15 @@ void main() {
       final c = AccentColorController(profileService: profiles);
       await tester.pumpWidget(host(c));
       await tester.pump(const Duration(milliseconds: 400));
+      await tester.scrollUntilVisible(find.text('Black'), 200);
       await tester.ensureVisible(find.text('Black'));
+      await tester.pump(const Duration(milliseconds: 400));
       await tester.tap(find.text('Black'));
       await tester.pump(const Duration(milliseconds: 400));
       expect(c.color, Colors.black);
+      await tester.scrollUntilVisible(find.text('Gray'), 200);
+      await tester.ensureVisible(find.text('Gray'));
+      await tester.pump(const Duration(milliseconds: 400));
       await tester.tap(find.text('Gray'));
       await tester.pump(const Duration(milliseconds: 400));
       expect(c.color.r, c.color.g);

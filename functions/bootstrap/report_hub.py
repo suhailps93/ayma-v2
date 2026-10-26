@@ -242,6 +242,11 @@ def get_report(db, report_type: str, report_id: str, viewer_uid: str) -> dict:
             ),
             "created_at": _iso(created_at),
             "updated_at": _iso(updated_at),
+            # Appearance only: the analysed photos the owner has removed from
+            # their shareable report card (by Storage path). Card-only — the
+            # full report above still carries every photo. Empty / absent for
+            # every other report type.
+            "card_hidden_photos": report.get("card_hidden_photos") or [],
         },
     }
 

@@ -1,0 +1,45 @@
+{
+  "_doc": "Synthetic inputs for scripts/llm_side_by_side.py. No real user data.",
+  "match_pairs": [
+    {
+      "id": "outdoorsy_pair",
+      "intent": "long_term",
+      "wiki_a": "Maya, 29, ER nurse in Denver. Hikes every weekend, trail runs, wants two kids eventually. Direct communicator, says what she feels in the moment. Close with her sister. Dealbreakers: smoking, someone who avoids conflict. Recharges outdoors and with a small group of friends. Saves aggressively, rents, wants to buy a house at 33.",
+      "wiki_b": "Daniel, 31, backend engineer in Boulder. Climbs and bikes, camps monthly. Wants kids in 2-3 years. Calm, sometimes goes quiet when upset but works to talk it through later. Does not smoke. Close to his parents. Saves a lot, wants a house in the mountains. Reads sci-fi, cooks on Sundays."
+    },
+    {
+      "id": "mismatched_pair",
+      "intent": "long_term",
+      "wiki_a": "Priya, 34, startup founder in San Francisco. Works 70-hour weeks, travels constantly, does not want kids. Wants a partner who is equally ambitious and independent. Dealbreakers: wants children, wants her to move cities. Values intellectual debate, hates small talk.",
+      "wiki_b": "Tom, 33, elementary school teacher in Sacramento. Wants three kids and a stable home near his family; would never leave Sacramento. Loves quiet evenings, board games and church on Sundays. Gets overwhelmed by constant travel. Warm, patient, conflict-averse."
+    },
+    {
+      "id": "thin_profiles",
+      "intent": "casual",
+      "wiki_a": "Alex, 26. Likes music and going out. Works in marketing. Not looking for anything serious yet.",
+      "wiki_b": "Sam, 27. Bartender, likes concerts and travel. Open to seeing where things go."
+    }
+  ],
+  "transcripts": [
+    {
+      "id": "career_and_family",
+      "turns": [
+        {"role": "ayma", "text": "Hey! What's been taking up most of your head lately?"},
+        {"role": "user", "text": "Honestly work. I'm a product manager at a fintech, just got promoted to lead a team of six and I'm terrified I'll be bad at managing people."},
+        {"role": "ayma", "text": "Congrats on the promotion. What scares you most about it?"},
+        {"role": "user", "text": "My dad was a really harsh boss at his shop growing up and I swore I'd never be like that. I'm 32, grew up in Ohio, moved to Chicago for college and stayed. My mom passed two years ago which kind of changed what I want from life."},
+        {"role": "ayma", "text": "I'm sorry about your mom. How did it change what you want?"},
+        {"role": "user", "text": "I want a real family now. Kids, a house with a garden, Sunday dinners. I used to just want career stuff. Also I run half marathons, I'm training for Chicago in October, and I never drink on weekdays."}
+      ]
+    },
+    {
+      "id": "dating_history",
+      "turns": [
+        {"role": "ayma", "text": "Tell me about your last relationship if you're up for it."},
+        {"role": "user", "text": "We were together three years. She wanted to move to Seattle for her job, I didn't want to leave my friends in Austin, we kept arguing about it and it ended last spring. I'm not bitter, I just realized I need someone who is rooted like me."},
+        {"role": "ayma", "text": "What does rooted look like to you?"},
+        {"role": "user", "text": "Someone who has a community, a favorite coffee place, who hosts dinners. I'm a chef, I cook for people to say I love you. I'm 35, vegetarian, love dogs, have a rescue named Biscuit. Hate gossip and people who are rude to waiters."}
+      ]
+    }
+  ]
+}

@@ -1,18 +1,16 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
-import '../services/chat_service.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_photo.dart';
+import 'my_public_profile_screen.dart';
 import 'main_shell_screen.dart';
-import 'plans_screen.dart';
+import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
 /// Things Ayma can do on demand about *you* — search the web, and one unified
@@ -30,16 +28,12 @@ class SkillsScreen extends StatefulWidget {
     super.key,
     this.profileService,
     this.api,
-    this.imagePicker,
-    this.chatService,
   });
 
   static const path = '/skills';
 
   final ProfileService? profileService;
   final ApiClient? api;
-  final ImagePicker? imagePicker;
-  final ChatService? chatService;
 
   @override
   State<SkillsScreen> createState() => _SkillsScreenState();
@@ -50,14 +44,8 @@ class _SkillsScreenState extends State<SkillsScreen>
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
   late final ApiClient _api = widget.api ?? ApiClient();
-  late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
-  late final ChatService _chat = widget.chatService ?? ChatService();
 
   ProfileData? _profile;
-  bool _busy = false;
-
-  /// Shown on the busy overlay while photos upload ("Uploading photo 2 of 4…").
-  String _busyMsg = '';
 
   @override
   void initState() {
@@ -86,6 +74,7 @@ class _SkillsScreenState extends State<SkillsScreen>
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Search the web about me'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -130,74 +119,8 @@ class _SkillsScreenState extends State<SkillsScreen>
 
   // --- Appearance -------------------------------------------------------
 
-  /// The Appearance skill. Show the photo-source sheet with a live coverage
-  /// line, resolve the choice, upload any added photos, then hand a
-  /// fully-specified [ChatKickoff.appearance] to the chat. Never hard-blocks —
-  /// the user can run it with a gap.
-  Future<void> _runAppearance() async {
-    if (_busy) return;
-    final choice = await showModalBottomSheet<_AppearanceChoice>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => _AppearanceSheet(api: _api, picker: _picker),
-    );
-    if (choice == null || !mounted) return;
-
-    var paths = <String>[];
-    if (choice.mode == 'gap' && choice.pickedPath.isNotEmpty) {
-      paths = [choice.pickedPath];
-    } else if (choice.mode == 'added') {
-      final List<XFile> picked;
-      try {
-        picked = await _picker.pickMultiImage(maxWidth: 1600, imageQuality: 88);
-      } catch (_) {
-        _snack("Couldn't open your gallery — try again.");
-        return;
-      }
-      if (picked.isEmpty || !mounted) return;
-      final take = picked.take(6).toList();
-      setState(() {
-        _busy = true;
-        _busyMsg = take.length == 1
-            ? 'Uploading your photo…'
-            : 'Uploading photo 1 of ${take.length}…';
-      });
-      try {
-        for (var i = 0; i < take.length; i++) {
-          if (mounted && take.length > 1) {
-            setState(() =>
-                _busyMsg = 'Uploading photo ${i + 1} of ${take.length}…');
-          }
-          final up = await _chat.uploadChatImage(File(take[i].path));
-          paths.add(up.storagePath);
-        }
-      } catch (_) {
-        if (mounted) setState(() { _busy = false; _busyMsg = ''; });
-        _snack("Couldn't upload those photos — try again.");
-        return;
-      }
-      if (mounted) setState(() { _busy = false; _busyMsg = ''; });
-    }
-    if (!mounted) return;
-
-    // Added photos may themselves supply a missing shot, so want both sections;
-    // an "existing photos" run trusts the coverage gate.
-    final addedPhotos = paths.isNotEmpty;
-    ChatInbox.instance.push(ChatKickoff.appearance(
-      extraPaths: paths,
-      wantFace: addedPhotos || choice.wantFace,
-      wantBody: addedPhotos || choice.wantBody,
-      useAllPhotos: choice.mode != 'added',
-    ));
-    if (mounted) context.go(MainShellScreen.path);
-  }
-
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
+  /// The Appearance skill — see [runAppearanceFromPreRunSheet].
+  Future<void> _runAppearance() => runAppearanceFromPreRunSheet(context, _api);
 
   @override
   Widget build(BuildContext context) {
@@ -206,58 +129,33 @@ class _SkillsScreenState extends State<SkillsScreen>
       appBar: AppBar(
         leading: const AymaBackButton(),
         title: const Text('Skills')),
-      body: Stack(
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
-          ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            children: [
-              _SkillCard(
-                icon: Icons.travel_explore,
-                title: 'Search the web about me',
-                body: "Ayma looks you up online so you don't have to repeat "
-                    'yourself, then confirms what she found in chat.',
-                onTap: _busy ? null : _searchWeb,
-                history: _WebSearchReportLink(api: widget.api),
-              ),
-              _SkillCard(
-                icon: Icons.auto_awesome_outlined,
-                title: 'Appearance',
-                body: 'A full read of your photos: your structured attributes '
-                    'plus an honest face and physique analysis.',
-                onTap: _busy ? null : _runAppearance,
-                history: _AppearanceReportLink(api: widget.api),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Each run uses credits based on the work it does — a longer '
-                'photo set or a hard-to-find name uses a bit more.',
-                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-              ),
-              const SizedBox(height: 20),
-              _CreditsRow(api: widget.api),
-            ],
+          _SkillCard(
+            icon: Icons.travel_explore,
+            title: 'Search the web about me',
+            body: "Ayma looks you up online so you don't have to repeat "
+                'yourself, then confirms what she found in chat.',
+            onTap: _searchWeb,
+            history: _WebSearchReportLink(api: widget.api),
           ),
-          if (_busy)
-            Positioned.fill(
-              child: ColoredBox(
-                color: AymaColors.scrimBusy,
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const AymaOrb(size: 56, state: AymaOrbState.thinking),
-                      if (_busyMsg.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        Text(
-                          _busyMsg,
-                          style: AymaType.sans(size: 13, color: Colors.white),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          _SkillCard(
+            icon: Icons.auto_awesome_outlined,
+            title: 'Appearance',
+            body: 'A full read of your photos: your structured attributes '
+                'plus an honest face and physique analysis.',
+            onTap: _runAppearance,
+            history: _AppearanceReportLink(api: widget.api),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Each run uses credits based on the work it does — a longer '
+            'photo set or a hard-to-find name uses a bit more.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+          ),
+          const SizedBox(height: 20),
+          _CreditsRow(api: widget.api),
         ],
       ),
     );
@@ -301,7 +199,7 @@ class _CreditsRowState extends State<_CreditsRow> {
     final ac = context.ac;
     final n = _remaining;
     return InkWell(
-      onTap: () => context.push(PlansScreen.path),
+      onTap: () => context.push(PlanScreen.path),
       borderRadius: BorderRadius.circular(10),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
@@ -327,196 +225,286 @@ class _CreditsRowState extends State<_CreditsRow> {
   }
 }
 
-/// The choice the Appearance photo-source sheet returns.
+/// The choice the Appearance pre-run sheet returns: which axes to run and the
+/// exact grid photos chosen for each (empty/null when that axis is skipped or
+/// has no eligible photo).
 class _AppearanceChoice {
-  const _AppearanceChoice(
-    this.mode, {
-    this.pickedPath = '',
-    this.wantFace = true,
-    this.wantBody = true,
+  const _AppearanceChoice({
+    required this.wantFace,
+    required this.wantBody,
+    this.faceMediaIds,
+    this.bodyMediaIds,
   });
 
-  /// `existing` (run over the current grid) | `added` (pick a fresh set) |
-  /// `gap` (one photo picked to fill a missing face / body shot).
-  final String mode;
-  final String pickedPath;
   final bool wantFace;
   final bool wantBody;
+  final List<String>? faceMediaIds;
+  final List<String>? bodyMediaIds;
 }
 
-/// The photo-source sheet for the Appearance skill: a live coverage line
-/// (✓/✗ face photo, ✓/✗ body photo) with an inline "add the missing
-/// one" action, then "use what I have" / "add photos".
-class _AppearanceSheet extends StatefulWidget {
-  const _AppearanceSheet({required this.api, required this.picker});
+/// Show the Appearance pre-run sheet (the Face/Body photo groups) and, if the
+/// user taps Run, hand a fully-specified [ChatKickoff.appearance] to the Ayma
+/// chat and navigate to the shell. Shared by the Skills-screen Appearance
+/// action and the Appearance report screen's Re-run, so both entry points show
+/// the same grouping and skip/add-photo choices. Never hard-blocks: a skipped
+/// or empty group simply doesn't run.
+Future<void> runAppearanceFromPreRunSheet(
+    BuildContext context, ApiClient api) async {
+  final choice = await showModalBottomSheet<_AppearanceChoice>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => AppearancePreRunSheet(api: api),
+  );
+  if (choice == null || !context.mounted) return;
+  ChatInbox.instance.push(ChatKickoff.appearance(
+    wantFace: choice.wantFace,
+    wantBody: choice.wantBody,
+    faceMediaIds: choice.wantFace ? choice.faceMediaIds : null,
+    bodyMediaIds: choice.wantBody ? choice.bodyMediaIds : null,
+  ));
+  if (context.mounted) context.go(MainShellScreen.path);
+}
+
+/// The pre-run sheet for the Appearance skill: the current grid photos grouped
+/// into "Face analysis" and "Body analysis" as thumbnails, each group with a
+/// skip toggle, and — for an empty group — a clear "add the missing kind"
+/// prompt that reuses the real add-photo flow (the inline photo carousel on
+/// My public profile, [MyPublicProfileScreen.editPhotosPath]). Running
+/// never forces a photo: a skipped or empty group simply doesn't run, and the
+/// report shows an add-photo prompt for it rather than a bogus 0-score section.
+class AppearancePreRunSheet extends StatefulWidget {
+  const AppearancePreRunSheet({super.key, required this.api});
 
   final ApiClient api;
-  final ImagePicker picker;
 
   @override
-  State<_AppearanceSheet> createState() => _AppearanceSheetState();
+  State<AppearancePreRunSheet> createState() => AppearancePreRunSheetState();
 }
 
-class _AppearanceSheetState extends State<_AppearanceSheet> {
-  AppearanceCoverage? _coverage;
-  bool _picking = false;
+class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
+  AppearanceEligibility? _elig;
+  bool _loading = true;
+  bool _skipFace = false;
+  bool _skipBody = false;
 
   @override
   void initState() {
     super.initState();
-    _loadCoverage();
+    _load();
   }
 
-  Future<void> _loadCoverage() async {
+  Future<void> _load() async {
     try {
-      final c = await widget.api.appearanceCoverage();
-      if (mounted) setState(() => _coverage = c);
+      final e = await widget.api.appearanceEligibility();
+      if (mounted) setState(() { _elig = e; _loading = false; });
     } catch (_) {
-      // No coverage line on failure — the run still works.
-      if (mounted) setState(() => _coverage = const AppearanceCoverage());
+      // No groups on failure — the run still works (auto-pick server-side).
+      if (mounted) {
+        setState(() { _elig = const AppearanceEligibility(); _loading = false; });
+      }
     }
   }
 
-  Future<void> _addMissing() async {
-    if (_picking) return;
-    setState(() => _picking = true);
-    final chat = ChatService();
-    XFile? picked;
-    try {
-      picked = await widget.picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1600,
-        imageQuality: 88,
-      );
-    } catch (_) {
-      picked = null;
-    }
-    if (picked == null) {
-      if (mounted) setState(() => _picking = false);
-      return;
-    }
-    try {
-      final up = await chat.uploadChatImage(File(picked.path));
-      if (!mounted) return;
-      Navigator.pop(
-        context,
-        _AppearanceChoice('gap',
-            pickedPath: up.storagePath, wantFace: true, wantBody: true),
-      );
-    } catch (_) {
-      if (mounted) setState(() => _picking = false);
-    }
+  Future<void> _addPhoto() async {
+    // Reuse the real add-photo flow: the inline photo carousel on My public
+    // profile, opened straight into its photo picker. On return, re-read
+    // eligibility so a freshly-added (and classified) photo shows in its group.
+    await context.push(MyPublicProfileScreen.editPhotosPath);
+    if (!mounted) return;
+    setState(() => _loading = true);
+    await _load();
+  }
+
+  void _run() {
+    final e = _elig ?? const AppearanceEligibility();
+    final faceRun = !_skipFace && e.face.isNotEmpty;
+    final bodyRun = !_skipBody && e.body.isNotEmpty;
+    Navigator.pop(
+      context,
+      _AppearanceChoice(
+        wantFace: faceRun,
+        wantBody: bodyRun,
+        faceMediaIds:
+            faceRun ? [for (final p in e.face) p.mediaId] : null,
+        bodyMediaIds:
+            bodyRun ? [for (final p in e.body) p.mediaId] : null,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final cov = _coverage;
+    final e = _elig;
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Which photos should I use for your Appearance report?',
-                style: AymaType.sans(size: 14, color: ac.fgDim),
-              ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your Appearance report',
+              style: AymaType.serif(size: 20, color: ac.fg),
             ),
-          ),
-          if (cov != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      _CoverageChip(ok: cov.hasFacePhoto, label: 'Face photo'),
-                      const SizedBox(width: 16),
-                      _CoverageChip(
-                          ok: cov.hasBodyPhoto, label: 'Body photo'),
-                    ],
-                  ),
-                  if (!cov.hasBodyPhoto)
-                    _picking
-                        ? const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 1.6),
-                            ),
-                          )
-                        : TextButton.icon(
-                            onPressed: () => _addMissing(),
-                            icon: const Icon(Icons.add_a_photo_outlined,
-                                size: 16),
-                            label: const Text('Add a body photo'),
-                          )
-                  else if (!cov.hasFacePhoto && !_picking)
-                    TextButton.icon(
-                      onPressed: () => _addMissing(),
-                      icon: const Icon(Icons.add_a_photo_outlined, size: 16),
-                      label: const Text('Add a face photo'),
-                    )
-                  else if (cov.hasBodyPhoto &&
-                      !cov.hasFittedBodyPhoto &&
-                      !_picking)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        'For a more accurate body read, a photo without '
-                        'loose or baggy clothing helps.',
-                        style: AymaType.sans(size: 12, color: ac.fgDim),
-                      ),
-                    ),
-                ],
-              ),
+            const SizedBox(height: 4),
+            Text(
+              "Here's which of your photos I'll use. Skip a section, or add a "
+              'photo for one you want — never required.',
+              style: AymaType.sans(size: 12.5, soft: true, color: ac.fgMute),
             ),
-          ListTile(
-            leading: const Icon(Icons.photo_library_outlined),
-            title: const Text('Use the photos I already have'),
-            onTap: () => Navigator.pop(
-              context,
-              _AppearanceChoice(
-                'existing',
-                wantFace: cov?.hasFacePhoto ?? true,
-                wantBody: cov?.hasBodyPhoto ?? true,
+            const SizedBox(height: 16),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: AymaOrb(size: 40, state: AymaOrbState.thinking),
+                ),
+              )
+            else ...[
+              _AxisGroup(
+                title: 'Face analysis',
+                icon: Icons.face_retouching_natural_outlined,
+                photos: e?.face ?? const [],
+                skipped: _skipFace,
+                emptyPrompt: 'Add a photo that clearly shows your face.',
+                onToggleSkip: () => setState(() => _skipFace = !_skipFace),
+                onAddPhoto: _addPhoto,
               ),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.add_a_photo_outlined),
-            title: const Text('Add photos'),
-            onTap: () => Navigator.pop(context, const _AppearanceChoice('added')),
-          ),
-        ],
+              const SizedBox(height: 16),
+              _AxisGroup(
+                title: 'Body analysis',
+                icon: Icons.accessibility_new_outlined,
+                photos: e?.body ?? const [],
+                skipped: _skipBody,
+                emptyPrompt: 'Add a full-body photo for a body report.',
+                onToggleSkip: () => setState(() => _skipBody = !_skipBody),
+                onAddPhoto: _addPhoto,
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: FilledButton(
+                  onPressed: _run,
+                  child: const Text('Run analysis'),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 }
 
-class _CoverageChip extends StatelessWidget {
-  const _CoverageChip({required this.ok, required this.label});
+/// One axis group inside [AppearancePreRunSheet]: its eligible photos as a
+/// horizontal thumbnail strip (dimmed when skipped), a skip/include toggle when
+/// it has photos, or an add-photo prompt when it is empty.
+class _AxisGroup extends StatelessWidget {
+  const _AxisGroup({
+    required this.title,
+    required this.icon,
+    required this.photos,
+    required this.skipped,
+    required this.emptyPrompt,
+    required this.onToggleSkip,
+    required this.onAddPhoto,
+  });
 
-  final bool ok;
-  final String label;
+  final String title;
+  final IconData icon;
+  final List<EligiblePhoto> photos;
+  final bool skipped;
+  final String emptyPrompt;
+  final VoidCallback onToggleSkip;
+  final VoidCallback onAddPhoto;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(ok ? Icons.check_circle : Icons.cancel_outlined,
-            size: 15, color: ok ? ac.accent : ac.fgMute),
-        const SizedBox(width: 5),
-        Text(label, style: AymaType.sans(size: 12, color: ac.fgDim)),
-      ],
+    final hasPhotos = photos.isNotEmpty;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: ac.lineSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: ac.fgDim),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: AymaType.sans(
+                      size: 14, weight: FontWeight.w600, color: ac.fg),
+                ),
+              ),
+              if (hasPhotos)
+                TextButton(
+                  onPressed: onToggleSkip,
+                  child: Text(skipped ? 'Include' : 'Skip'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (hasPhotos)
+            Opacity(
+              opacity: skipped ? 0.4 : 1.0,
+              child: SizedBox(
+                height: 64,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: photos.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) => ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      width: 64,
+                      height: 64,
+                      child: AymaPhoto(
+                        url: photos[i].url,
+                        fit: BoxFit.cover,
+                        displayWidth: 64,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  emptyPrompt,
+                  style: AymaType.sans(size: 12.5, color: ac.fgDim),
+                ),
+                const SizedBox(height: 6),
+                TextButton.icon(
+                  onPressed: onAddPhoto,
+                  icon: const Icon(Icons.add_a_photo_outlined, size: 16),
+                  label: const Text('Add photo'),
+                ),
+              ],
+            ),
+          if (skipped && hasPhotos)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                "Skipped — I won't run this section.",
+                style: AymaType.sans(size: 11.5, color: ac.fgMute),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

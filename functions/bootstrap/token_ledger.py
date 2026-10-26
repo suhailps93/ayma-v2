@@ -77,9 +77,10 @@ from __future__ import annotations
 import logging
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import billing
+import feature_flags
 import schema
 from config import CONFIG, PLAN_FREE
 from db import get_db
@@ -131,7 +132,45 @@ FEATURE_PHOTO_MODERATION = "photo_moderation"  # profile/generated-photo safety 
 FEATURE_PHOTO_ATTRS = "photo_attrs"  # per-photo shot-type/attribute tagging (record-only)
 FEATURE_PHOTO_CAPTION = "photo_caption"  # private photo-log caption (record-only)
 FEATURE_DM_INGEST = "dm_ingest"  # DM voice transcription / photo caption for the wiki (record-only)
+FEATURE_PROFILE_MANUAL = "profile_manual"  # manual profile-edit diff classification
 FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (ai_assessment.py)
+
+# The one user-facing label per ledger feature key — the Plan page's "Where
+# your credits went" list shows these, never the raw key. Every FEATURE_*
+# constant above MUST have an entry (enforced by test_every_feature_has_a_label).
+FEATURE_LABELS = {
+    FEATURE_CHAT: "Text chat with Ayma",
+    FEATURE_VOICE: "Voice with Ayma",
+    FEATURE_ICEBREAKERS: "Icebreakers",
+    FEATURE_MATCHING: "Match scoring",
+    FEATURE_WIKI: "Building your wiki",
+    FEATURE_EXPLORE: "Explore search",
+    FEATURE_REENGAGE: "Ayma checking in",
+    FEATURE_DEEPDIVE: "Web research",
+    FEATURE_FACE_REPORT: "Face report",
+    FEATURE_BODY_REPORT: "Body report",
+    FEATURE_PHYSICAL_ATTRS: "Appearance details",
+    FEATURE_COMPLETENESS: "Profile completeness",
+    FEATURE_SUMMARY: "Conversation memory",
+    FEATURE_PERSONA_EVOLUTION: "Ayma's learning",
+    FEATURE_CAREER_TIMELINE: "Career timeline",
+    FEATURE_PHOTO_EDIT: "Photo edits",
+    FEATURE_IMAGE_GEN: "Image creation",
+    FEATURE_PHOTO_MODERATION: "Photo safety check",
+    FEATURE_PHOTO_ATTRS: "Reading your photos",
+    FEATURE_PHOTO_CAPTION: "Photo captions",
+    FEATURE_DM_INGEST: "Message notes",
+    FEATURE_PROFILE_MANUAL: "Profile edits",
+    FEATURE_AI_NOTES: "Ayma's notes",
+}
+FEATURE_LABEL_FALLBACK = "Other"
+
+# The periods the Plan page can filter "where your credits went" by.
+PERIOD_SINCE_CREDIT = "since_credit"
+PERIOD_7D = "7d"
+PERIOD_30D = "30d"
+PERIOD_ALL = "all"
+PERIODS = (PERIOD_SINCE_CREDIT, PERIOD_7D, PERIOD_30D, PERIOD_ALL)
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 
@@ -204,6 +243,23 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # introductory rate in effect through 2026-12-31 (rises to $1.50 / $7.50
     # on 2027-01-01 — revisit this table then).
     "gemini-3.7-flash": {"input": 0.75, "output": 3.75},
+    # LiveKit Inference text models (inference_llm.py) — keyed by the
+    # provider-prefixed id the gateway bills against. Rates: livekit.com/
+    # pricing/inference (2026-10-25). The gateway's completion_tokens already
+    # include reasoning tokens, so output is priced in full.
+    # Accepted by the gateway but not on LiveKit's price list: assumed equal to
+    # Google's own rate for the same model (unverified).
+    "google/gemini-3.7-flash": {"input": 0.75, "output": 3.75},
+    "google/gemini-3.8-flash": {"input": 0.75, "output": 3.75},
+    "google/gemini-3.5-flash": {"input": 1.50, "output": 9.00},
+    "google/gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50},
+    "google/gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50},
+    "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    "google/gemini-3.1-pro-preview": {"input": 4.00, "output": 18.00},
+    # LiveKit Inference realtime (VOICE_PROVIDER=inference): token-billed at
+    # the same audio rates as the direct Live API.
+    "google/gemini-3.8-live": {"input": 3.00, "output": 12.00},
+    "google/gemini-3.8-live-extended-thinking": {"input": 3.00, "output": 12.00},
     # Gemini Live native-audio voice session (agent.py). The pricing page
     # splits text vs. audio/video rates; livekit's RealtimeModelMetrics
     # input_tokens/output_tokens are "each already inclusive of audio" (see
@@ -255,7 +311,7 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
 CACHED_INPUT_RATE_FACTOR = 0.10
 
 
-def live_model_id() -> str:
+def live_model_id(inference: bool | None = None) -> str:
     """The Gemini Live model id voice traffic ACTUALLY uses right now — the
     Developer-API model (``gemini-3.8-live``, or whatever
     ``GEMINI_LIVE_DEV_MODEL`` overrides it to) when ``GEMINI_LIVE_USE_DEV_API``
@@ -265,11 +321,34 @@ def live_model_id() -> str:
     (the pre-2026-09-26 accuracy bug: voice was always priced as
     ``gemini-live-2.5-flash-native-audio`` while real traffic ran
     ``gemini-3.1-flash-live-preview``)."""
+    if inference is None:
+        inference = feature_flags.get("voice_provider") == "inference"
+    if inference:
+        return CONFIG.inference_live_model
     return (
         CONFIG.gemini_live_dev_model
         if CONFIG.gemini_live_use_dev_api
         else CONFIG.gemini_live_model
     )
+
+
+PROVIDER_VERTEX = "google_vertex"
+PROVIDER_DEV_API = "google_dev_api"
+PROVIDER_LIVEKIT_INFERENCE = "livekit_inference"
+
+
+def provider_for(feature: str, model: str | None = None) -> str:
+    """Which backend billed a recorded call — the ``provider`` field on
+    ``spend_events`` docs and the ``token_usage.providers`` buckets. Inference
+    model ids are provider-prefixed (``google/...``); otherwise voice follows
+    ``GEMINI_LIVE_USE_DEV_API`` and every other call is Vertex. Rows written
+    before this field existed have no ``provider`` (readers treat that as
+    ``google``)."""
+    if (model or "").startswith("google/"):
+        return PROVIDER_LIVEKIT_INFERENCE
+    if feature == FEATURE_VOICE and CONFIG.gemini_live_use_dev_api:
+        return PROVIDER_DEV_API
+    return PROVIDER_VERTEX
 
 
 def _model_for_feature(feature: str) -> str:
@@ -403,6 +482,8 @@ def add(
     model: str | None = None,
     session_id: str | None = None,
     image_output_tokens: int = 0,
+    provider: str | None = None,
+    fallback_from: str | None = None,
 ) -> None:
     """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
     still drives the credit cap exactly as before; ``input_tokens``/
@@ -421,9 +502,16 @@ def add(
     this call belongs to (a chat ``s-…`` session or a LiveKit voice room id)
     when the caller knows it — it groups the spend event written here into a
     per-conversation row on the Credits screen's "Real money" tab; without it
-    the event falls back to calendar-day grouping."""
+    the event falls back to calendar-day grouping. ``provider`` (default
+    :func:`provider_for`) is stored on the spend event and accumulated into
+    ``token_usage.providers.<provider>`` (``tokens``, ``cost_usd`` and a
+    per-feature split) so spend can be reconciled per vendor bill.
+    ``fallback_from`` marks a call that ran on ``provider`` only because the
+    named provider failed (LiveKit Inference -> Google): it is stored on the
+    event and counted in ``providers.<provider>.fallbacks``."""
     if not uid or tokens <= 0:
         return
+    provider = provider or provider_for(feature, model)
     try:
         from firebase_admin import firestore
 
@@ -455,6 +543,15 @@ def add(
             # Same Increment write as cost_usd, but the field starts absent
             # today — so unlike cost_usd it carries no pre-tracking history.
             payload[_REAL_MONEY_FIELD] = firestore.Increment(cost)
+        payload["providers"] = {
+            provider: {
+                "tokens": firestore.Increment(tokens),
+                "cost_usd": firestore.Increment(cost),
+                "features": {feature: firestore.Increment(tokens)},
+            }
+        }
+        if fallback_from:
+            payload["providers"][provider]["fallbacks"] = firestore.Increment(1)
         user_ref = get_db().collection("users").document(uid)
         user_ref.set({_FIELD: payload}, merge=True)
         # Per-event spend record — one doc per recorded call (voice: one per
@@ -465,6 +562,7 @@ def add(
             "ts": datetime.now(timezone.utc),
             "feature": feature,
             "model": model or _model_for_feature(feature),
+            "provider": provider,
             "input": input_tokens,
             "output": output_tokens,
             # The implicit-cache-hit subset of `input` — 0 when the call had
@@ -473,6 +571,8 @@ def add(
             "total": tokens,
             "cost_usd": cost,
         }
+        if fallback_from:
+            event["fallback_from"] = fallback_from
         if image_output_tokens > 0:
             event["image_output"] = image_output_tokens
         if session_id:
@@ -487,9 +587,9 @@ def add(
         # `cached=` is the implicit-cache-hit subset of `in=` — grep it to
         # verify the byte-stable chat prefix is actually hitting the cache.
         logger.info(
-            "token-usage add uid=%s feature=%s model=%s in=%d out=%d "
-            "cached=%d total=%d",
-            uid, feature, model or _model_for_feature(feature),
+            "token-usage add uid=%s feature=%s provider=%s model=%s in=%d "
+            "out=%d cached=%d total=%d",
+            uid, feature, provider, model or _model_for_feature(feature),
             input_tokens, output_tokens, cached_input, tokens,
         )
     except Exception:  # noqa: BLE001 - metering must never break a request
@@ -503,6 +603,8 @@ def record(
     *,
     model: str | None = None,
     session_id: str | None = None,
+    provider: str | None = None,
+    fallback_from: str | None = None,
 ) -> None:
     """Extract the token count from a ``google-genai`` response and add it,
     along with the input/output split for cost audits and the implicit-cache
@@ -519,7 +621,8 @@ def record(
         uid, feature, total_tokens,
         input_tokens=input_tokens, output_tokens=output_tokens,
         cached_input=cached_input,
-        model=model, session_id=session_id,
+        model=model, session_id=session_id, provider=provider,
+        fallback_from=fallback_from,
         image_output_tokens=image_output_share(
             response, actual_model, output_tokens
         ),
@@ -891,6 +994,82 @@ def spend_groups(uid: str) -> list[dict]:
     return out
 
 
+def last_credit_update(data: dict, b: dict) -> datetime | None:
+    """When credits were last added to the account: the latest of the billing
+    stamp (start grant, selfie unlock, daily rollover, plan grant/renewal,
+    expiry to free — see ``billing``) and the top-level ``credits_updated_at``
+    (free reload / admin credit via :func:`topup`). ``None`` for an account
+    that predates the stamp and has not been touched since."""
+    stamps = [
+        v for v in (b.get("credits_updated_at"), data.get("credits_updated_at"))
+        if hasattr(v, "isoformat")
+    ]
+    return max(stamps) if stamps else None
+
+
+def period_usage(uid: str, period: str) -> dict:
+    """Credits spent per feature over ``period`` (one of :data:`PERIODS`),
+    aggregated server-side from ``users/{uid}/spend_events`` and returned in
+    credits only — never dollars. Each event's real cost is converted at
+    ``credits_per_usd`` and rounded per feature; ``total_credits`` is the sum
+    of the returned rows, so a header built from it always equals its rows.
+    ``since`` is the effective period start (ISO) or ``None`` when unbounded;
+    when the retained events do not reach back to the requested start (the
+    collection is capped at ``SPEND_EVENTS_CAP``) it is the oldest retained
+    event instead, so the figure is never silently under-reported. Raises
+    ``ValueError`` for an unknown period."""
+    if period not in PERIODS:
+        raise ValueError(f"unknown period: {period}")
+    now = datetime.now(timezone.utc)
+    if period == PERIOD_SINCE_CREDIT:
+        data, b = _load(uid)
+        since = last_credit_update(data, b)
+    elif period == PERIOD_7D:
+        since = now - timedelta(days=7)
+    elif period == PERIOD_30D:
+        since = now - timedelta(days=30)
+    else:
+        since = None
+    events_col = (
+        get_db().collection("users").document(uid).collection(_SPEND_SUBCOLLECTION)
+    )
+    query = events_col.order_by("ts")
+    if since is not None:
+        query = query.where("ts", ">=", since)
+    cost_usd: dict[str, float] = {}
+    for snap in query.stream():
+        d = snap.to_dict() or {}
+        feature = str(d.get("feature") or "misc")
+        cost_usd[feature] = cost_usd.get(feature, 0.0) + float(
+            d.get("cost_usd", 0) or 0
+        )
+    first = events_col.count().get()[0]
+    if isinstance(first, (list, tuple)):
+        first = first[0]
+    if int(first.value) >= SPEND_EVENTS_CAP:
+        oldest = next(iter(events_col.order_by("ts").limit(1).stream()), None)
+        oldest_ts = (oldest.to_dict() or {}).get("ts") if oldest else None
+        if hasattr(oldest_ts, "isoformat") and (since is None or oldest_ts > since):
+            since = oldest_ts
+    cpu = max(1, CONFIG.credits_per_usd)
+    rows = [
+        {
+            "key": k,
+            "label": FEATURE_LABELS.get(k, FEATURE_LABEL_FALLBACK),
+            "credits": credits,
+        }
+        for k, v in cost_usd.items()
+        if (credits := int(v * cpu + 0.5)) > 0
+    ]
+    rows.sort(key=lambda r: (-r["credits"], r["label"]))
+    return {
+        "period": period,
+        "since": since.isoformat() if since is not None else None,
+        "features": rows,
+        "total_credits": sum(r["credits"] for r in rows),
+    }
+
+
 def reset_real_money(uid: str) -> dict:
     """Reset the Real money tab's "since last reset" tracker to $0.00
     (founder request 2026-09-26: "That resets the tracker to zero. It should
@@ -921,7 +1100,9 @@ def reset_real_money(uid: str) -> dict:
     return usage(uid, include_dollars=True)
 
 
-def usage(uid: str, *, include_dollars: bool = False) -> dict:
+def usage(
+    uid: str, *, include_dollars: bool = False, period: str | None = None
+) -> dict:
     """The client-facing view: raw lifetime token accounting (total + a
     per-feature breakdown across chat / voice / matching / wiki / explore /
     reengage) plus the derived credit balance and per-action credit costs.
@@ -944,6 +1125,9 @@ def usage(uid: str, *, include_dollars: bool = False) -> dict:
     and ``spend_groups`` (which carries per-conversation ``cost_usd``) are
     included only when ``include_dollars`` is true — set by the admin-claim
     ``GET /usage`` path and the ``/admin/users/{uid}/credits`` inspector.
+
+    ``period`` (one of :data:`PERIODS`) adds ``period_usage`` — the credits
+    per feature for that window (see :func:`period_usage`), credits only.
     """
     u = _read(uid)
     cred = credits(uid)
@@ -968,6 +1152,8 @@ def usage(uid: str, *, include_dollars: bool = False) -> dict:
         "trial_end": cred["trial_end"],
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
     }
+    if period is not None:
+        view["period_usage"] = period_usage(uid, period)
     if include_dollars:
         view.update({
             "cost_usd": round(u["cost_usd"], 6),

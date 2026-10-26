@@ -193,6 +193,56 @@ def test_coverage_flags_loose_clothing_as_not_fitted():
     assert cov["has_fitted_body_photo"] is False
 
 
+# --- eligibility (pre-run face/body grouping) -------------------------------
+
+
+def test_eligibility_groups_grid_photos_by_axis(monkeypatch):
+    # m1 = face only, m2 = body only, m3 = both (a full body with a clear face).
+    monkeypatch.setattr(
+        photo_attrs, "_grid_media_ids", lambda prof: ["m1", "m2", "m3"]
+    )
+    import public_profile
+
+    monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    docs = {
+        ("users", "u1", "profile", "main"): {"photos": [{"media_id": "m1"}]},
+        ("users", "u1", "user_media", "m1"): {
+            "storage_path": "p1.jpg",
+            "attributes": {"usable_for_face": True, "usable_for_body": False},
+        },
+        ("users", "u1", "user_media", "m2"): {
+            "storage_path": "p2.jpg",
+            "attributes": {"usable_for_face": False, "usable_for_body": True},
+        },
+        ("users", "u1", "user_media", "m3"): {
+            "storage_path": "p3.jpg",
+            "attributes": {"usable_for_face": True, "usable_for_body": True},
+        },
+    }
+    out = photo_attrs.eligibility(_Db(docs), "u1")
+    assert [e["media_id"] for e in out["face"]] == ["m1", "m3"]
+    assert [e["media_id"] for e in out["body"]] == ["m2", "m3"]
+    assert out["face"][0]["url"] == "https://cdn/p1.jpg"
+    assert out["has_face_photo"] is True and out["has_body_photo"] is True
+
+
+def test_eligibility_empty_body_group_when_only_a_face_photo(monkeypatch):
+    monkeypatch.setattr(photo_attrs, "_grid_media_ids", lambda prof: ["m1"])
+    import public_profile
+
+    monkeypatch.setattr(public_profile, "_photo_url", lambda sp: "https://cdn/x")
+    docs = {
+        ("users", "u1", "profile", "main"): {"photos": [{"media_id": "m1"}]},
+        ("users", "u1", "user_media", "m1"): {
+            "storage_path": "p1.jpg",
+            "attributes": {"usable_for_face": True, "usable_for_body": False},
+        },
+    }
+    out = photo_attrs.eligibility(_Db(docs), "u1")
+    assert out["face"] and out["body"] == []
+    assert out["has_body_photo"] is False
+
+
 # --- resync_usable_for_body -------------------------------------------------
 
 

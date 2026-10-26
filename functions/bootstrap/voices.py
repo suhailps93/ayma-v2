@@ -2,7 +2,8 @@
 
 A fixed set — not free-form synthesis. ``ayma_voice_name`` on
 ``users/{uid}/profile/main`` holds the chosen preset; the agent worker reads it
-at session start (voice can't hot-swap mid-call). The default preset comes from
+at session start, and a mid-call change reconnects the Live session in the new
+voice (agent.py ``VoiceSwapper``). The default preset comes from
 ``CONFIG.gemini_live_voice`` per the AGENTS.md "model strings live in config"
 rule; this module only names the selectable set and their character.
 """
@@ -14,11 +15,11 @@ import re
 # name -> short description used both for the settings picker and for the
 # LLM "closest match" selection in the set_voice_preference skill.
 VOICE_PRESETS: dict[str, str] = {
-    "Aoede": "warm, bright, mid-range — the default",
+    "Aoede": "warm, bright, mid-range — leans feminine; the default",
     "Kore": "calm, even, gently authoritative — leans feminine",
     "Leda": "youthful, light, upbeat — leans feminine",
     "Zephyr": "airy, soft, soothing — leans feminine",
-    "Puck": "playful, quick, expressive — gender-neutral",
+    "Puck": "playful, quick, expressive — leans masculine",
     "Charon": "deep, steady, measured — leans masculine",
     "Fenrir": "gravelly, low, intense — leans masculine",
     "Orus": "clear, firm, confident — leans masculine",
@@ -35,6 +36,16 @@ def is_valid_voice(name: str) -> bool:
 
 def presets_block() -> str:
     return "\n".join(f"- {n}: {d}" for n, d in VOICE_PRESETS.items())
+
+
+def presets_by_lean() -> str:
+    """``"feminine: Aoede, Kore, …; masculine: Charon, …"`` — derived from the
+    descriptions above so the tool description never drifts from them."""
+    groups: dict[str, list[str]] = {}
+    for name, desc in VOICE_PRESETS.items():
+        m = re.search(r"leans (\w+)", desc)
+        groups.setdefault(m.group(1) if m else "other", []).append(name)
+    return "; ".join(f"{k}: {', '.join(v)}" for k, v in groups.items())
 
 
 # --- Speaking language / accent (§13.3) -------------------------------------
@@ -110,7 +121,34 @@ _LANG_HINTS: list[tuple[str, str]] = [
     ("indian english", "en-IN"),
     ("southern us", "en-US"),
     ("american", "en-US"),
+    # Last: "an Indian accent" with no named Indian language → Indian English.
+    ("indian", "en-IN"),
 ]
+
+
+# A user line at most this many words long that carries a letter outside
+# plain ASCII, from someone whose call language is English, is treated as a
+# misheard fragment ("el número", "murió", "Größe") rather than a request.
+_FRAGMENT_MAX_WORDS = 4
+
+
+def is_misheard_fragment(text: str, preference: str) -> bool:
+    """True when ``text`` (the caller's latest transcribed line) looks like
+    speech recognition mishearing an English speaker as another language: a
+    short line (up to ``_FRAGMENT_MAX_WORDS`` words) containing a non-ASCII
+    letter, while the user's call language (``preference``) is English or
+    unset. The voice agent refuses to run a tool on such a line (founder test
+    2026-10-26: "el número" / "murió" turned a call Spanish). Never true for
+    a user whose saved language is not English, where those letters are
+    expected, nor for plain-ASCII lines like "yes" or "do it", so short
+    confirmations still work."""
+    hint = bcp47_hint(preference)
+    if hint is not None and not hint.lower().startswith("en"):
+        return False
+    words = (text or "").split()
+    if not words or len(words) > _FRAGMENT_MAX_WORDS:
+        return False
+    return any(ch.isalpha() and not ch.isascii() for ch in text)
 
 
 def bcp47_hint(text: str) -> str | None:

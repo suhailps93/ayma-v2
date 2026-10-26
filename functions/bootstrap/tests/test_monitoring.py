@@ -22,6 +22,7 @@ def test_capture_is_noop_when_uninitialised(monkeypatch):
     monkeypatch.setattr(monitoring, "_initialised", False)
     monkeypatch.setattr(builtins, "__import__", guard)
     monitoring.capture_exception(RuntimeError("boom"))
+    monitoring.capture_message("drain with calls", tags={"active_jobs": "1"})
 
 
 def test_scrub_event_drops_bodies_and_user_content():
@@ -74,7 +75,25 @@ class _FakeSdk:
         pass
 
     def capture_exception(self, exc):
-        self.captured.append(exc)
+        self.captured.append((exc, dict(self.scope_tags)) if self.scope_tags else exc)
+
+    scope_tags: dict = {}
+
+    def new_scope(self):
+        sdk = self
+
+        class _Scope:
+            def __enter__(self):
+                sdk.scope_tags = {}
+                return self
+
+            def __exit__(self, *_a):
+                sdk.scope_tags = {}
+
+            def set_tag(self, key, value):
+                sdk.scope_tags[key] = value
+
+        return _Scope()
 
 
 def _fake_sdk(monkeypatch):
@@ -100,12 +119,17 @@ def test_init_uses_low_sampling_and_no_pii(monkeypatch):
 
 def test_kill_switch_disables_init(monkeypatch):
     sdk = _fake_sdk(monkeypatch)
-    monkeypatch.setattr(
-        monitoring,
-        "CONFIG",
-        dataclasses.replace(monitoring.CONFIG, sentry_enabled=False),
-    )
+    monkeypatch.setenv("FLAG_SENTRY", "false")
     assert monitoring.init_sentry("ayma-api") is False
     assert sdk.init_kwargs is None
     monitoring.capture_exception(RuntimeError("x"))
     assert sdk.captured == []
+
+
+def test_capture_tags_one_event_only(monkeypatch):
+    sdk = _fake_sdk(monkeypatch)
+    assert monitoring.init_sentry("ayma-agent") is True
+    err = RuntimeError("swap")
+    monitoring.capture_exception(err, tags={"session_id": "s-1", "voice_provider": "x"})
+    monitoring.capture_exception(err)
+    assert sdk.captured == [(err, {"session_id": "s-1", "voice_provider": "x"}), err]

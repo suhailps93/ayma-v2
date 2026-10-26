@@ -76,7 +76,7 @@ def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
     index must win over whatever string it retyped, since an index can only
     point at a URL that was actually seen."""
     sources = [
-        {"url": "https://github.com/dana93", "title": "GitHub — dana93"},
+        {"url": "https://github.com/dana93/portfolio", "title": "GitHub — dana93"},
         {"url": "https://ted.com/x", "title": "TEDx talk"},
     ]
 
@@ -110,7 +110,7 @@ def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
 
     d = _run(deep_dive.run("Dana Reis", uid="u1"))
     assert d["facts"][0]["source_url"] == "https://ted.com/x"
-    assert d["links"][0]["url"] == "https://github.com/dana93"
+    assert d["links"][0]["url"] == "https://github.com/dana93/portfolio"
     assert d["links"][0]["title"] == "GitHub Profile - dana93"
     # the internal-only field never leaks into the stored/returned shape
     assert "source_index" not in d["facts"][0]
@@ -1885,3 +1885,132 @@ def test_correct_endpoint_returns_usage_capped_on_the_credit_cap(monkeypatch):
     )
     assert r.status_code == 200
     assert r.json() == {"usage_capped": True}
+
+
+# --- run status (§ web research "Searching the web…" banner) -----------------
+
+
+def _run_db(status, started_minutes_ago):
+    from datetime import datetime, timedelta, timezone
+
+    from fake_firestore import FakeDb
+
+    started = datetime.now(timezone.utc) - timedelta(minutes=started_minutes_ago)
+    return FakeDb({
+        ("users", "me", "deep_dive_runs", "name_me"): {
+            "status": status, "started_at": started, "finished_at": None,
+        },
+    })
+
+
+def test_run_status_reports_a_fresh_running_run_as_running():
+    db = _run_db("running", 2)
+    assert deep_dive.run_status(db, "me", "name_me") == "running"
+
+
+def test_run_status_marks_a_stale_running_run_failed_and_persists_it():
+    db = _run_db("running", deep_dive.RUN_STALE_MINUTES + 5)
+    assert deep_dive.run_status(db, "me", "name_me") == "failed"
+    doc = db.docs[("users", "me", "deep_dive_runs", "name_me")]
+    assert doc["status"] == "failed" and doc["finished_at"] is not None
+
+
+def test_run_status_passes_finished_states_through_and_is_empty_without_a_run():
+    assert deep_dive.run_status(_run_db("done", 60), "me", "name_me") == "done"
+    assert deep_dive.run_status(_run_db("failed", 60), "me", "name_me") == "failed"
+    assert deep_dive.run_status(_run_db("done", 0), "me", "other") == ""
+
+
+def test_mark_run_running_resets_the_finish_and_done_keeps_the_start():
+    from fake_firestore import FakeDb
+
+    db = FakeDb()
+    deep_dive.mark_run(db, "me", "name_me", deep_dive.RUN_RUNNING)
+    doc = db.docs[("users", "me", "deep_dive_runs", "name_me")]
+    assert doc["status"] == "running" and doc["finished_at"] is None
+    started = doc["started_at"]
+    deep_dive.mark_run(db, "me", "name_me", deep_dive.RUN_DONE)
+    doc = db.docs[("users", "me", "deep_dive_runs", "name_me")]
+    assert doc["status"] == "done" and doc["started_at"] is started
+
+
+def _record_runs(monkeypatch):
+    marks = []
+    monkeypatch.setattr(
+        main.deep_dive, "mark_run",
+        lambda _db, uid, rid, status: marks.append((uid, rid, status)),
+    )
+    return marks
+
+
+def test_endpoint_opens_a_running_run_and_returns_its_report_id(monkeypatch):
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+
+    async def _no_job(*a, **k):
+        return None
+
+    monkeypatch.setattr(main, "_deep_dive_job", _no_job)
+    marks = _record_runs(monkeypatch)
+
+    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    assert r.status_code == 200
+    assert r.json()["report_id"] == "name_suhail-pallath"
+    assert marks == [("me", "name_suhail-pallath", "running")]
+
+
+def test_job_marks_its_run_done_after_storing_the_dive(monkeypatch):
+    marks = _record_runs(monkeypatch)
+
+    async def _fake_run(*a, **k):
+        return {**_DIGEST, "name": "Me"}
+
+    async def _finish(*a, **k):
+        return {}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+    monkeypatch.setattr(main, "_finish_deep_dive", _finish)
+    _run(main._deep_dive_job("me", "Me", "", True, "", True))
+    assert marks == [("me", "name_me", "done")]
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("boom"), token_ledger.TokenCapExceeded()]
+)
+def test_job_marks_its_run_failed_when_the_search_raises(monkeypatch, error):
+    marks = _record_runs(monkeypatch)
+
+    async def _fail(*a, **k):
+        raise error
+
+    monkeypatch.setattr(main.deep_dive, "run", _fail)
+    _run(main._deep_dive_job("me", "Dana", "", False, "other", True))
+    assert marks == [("me", "uid_other", "failed")]
+
+
+def test_job_marks_its_run_failed_even_when_cancelled(monkeypatch):
+    marks = _record_runs(monkeypatch)
+
+    async def _cancelled(*a, **k):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(main.deep_dive, "run", _cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        _run(main._deep_dive_job("me", "Me", "", True, "", True))
+    assert marks == [("me", "name_me", "failed")]
+
+
+def test_deep_dive_report_endpoint_returns_the_callers_run_status(monkeypatch):
+    stored = {"digest": {**_DIGEST, "name": "Me"}, "name": "Me", "target_uid": ""}
+    monkeypatch.setattr(main.deep_dive, "read_dive", lambda *a: stored)
+    seen = []
+
+    def _status(_db, uid, rid):
+        seen.append((uid, rid))
+        return "running"
+
+    monkeypatch.setattr(main.deep_dive, "run_status", _status)
+    r = _client.get("/deep-dive-report/name_me", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["run_status"] == "running"
+    assert seen == [("me", "name_me")]

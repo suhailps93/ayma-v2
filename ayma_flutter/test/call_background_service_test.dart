@@ -100,6 +100,21 @@ void main() {
       expect(transport.micCalls, [true, false]);
     });
 
+    test('unmuteAyma asks the agent to talk again (notification '
+        '"Unmute Ayma")', () async {
+      final transport = FakeVoiceTransport();
+      final voice = await _liveController(transport);
+      final service = CallBackgroundService(voice, debugSupportedOverride: true);
+
+      transport.emitAgentMute(true);
+      await Future<void>.delayed(Duration.zero);
+      await service.debugHandleNativeCall(const MethodCall('unmuteAyma'));
+
+      expect(transport.muteControlCalls, [false]);
+      // The user's own mic is untouched.
+      expect(voice.muted, isFalse);
+    });
+
     test('setMuted mirrors CallKit\'s own mute button only on an actual '
         'change', () async {
       final transport = FakeVoiceTransport();
@@ -193,6 +208,149 @@ void main() {
 
       expect(service.debugUiActive, isFalse);
       expect(calls.last.method, 'stop');
+    });
+  });
+
+  group('notification reflects Ayma\'s quiet state', () {
+    test('agent_mute updates the notification text and Unmute Ayma flag, '
+        'with or without the app in the foreground', () async {
+      final transport = FakeVoiceTransport();
+      final gateway = _FakeGateway(granted: true);
+      final voice = await _liveController(
+        transport,
+        callPermissions: CallPermissions(gateway: gateway),
+      );
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+      final service = CallBackgroundService(
+        voice,
+        permissions: CallPermissions(gateway: gateway),
+        debugSupportedOverride: true,
+      )..start();
+      await Future<void>.delayed(Duration.zero);
+      Map args() => calls.last.arguments as Map;
+      expect(args()['status'], 'Voice call');
+      expect(args()['aymaQuiet'], isFalse);
+
+      // Backgrounding changes nothing: the service is driven by the
+      // controller, not by lifecycle, so a locked screen still updates.
+      transport.emitAgentMute(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(calls.last.method, 'update');
+      expect(args()['aymaQuiet'], isTrue);
+      expect(args()['status'], CallBackgroundService.quietStatus);
+
+      // The user's mic state never hides that Ayma is quiet.
+      await service.debugHandleNativeCall(const MethodCall('toggleMute'));
+      await Future<void>.delayed(Duration.zero);
+      expect(args()['muted'], isTrue);
+      expect(args()['status'], CallBackgroundService.quietStatus);
+
+      transport.emitAgentMute(false);
+      await Future<void>.delayed(Duration.zero);
+      expect(args()['aymaQuiet'], isFalse);
+      expect(args()['status'], 'Mic muted');
+
+      service.dispose();
+      await voice.stop();
+    });
+  });
+
+  group('shared across shells (notification Hang Up / Mute stay wired)', () {
+    Future<void> tapFromNotification(String method) async {
+      const codec = StandardMethodCodec();
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        channel.name,
+        codec.encodeMethodCall(MethodCall(method)),
+        (_) {},
+      );
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    test('a second shell disposing keeps the first one\'s handler, so the '
+        'notification still mutes and hangs up the call', () async {
+      final transport = FakeVoiceTransport();
+      final gateway = _FakeGateway(granted: true);
+      final voice = await _liveController(
+        transport,
+        callPermissions: CallPermissions(gateway: gateway),
+      );
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+
+      // Shell A is up during the call; shell B is pushed / built as its
+      // replacement, then shell A (or B) is disposed.
+      final a = CallBackgroundService.acquire(
+        voice,
+        permissions: CallPermissions(gateway: gateway),
+        debugSupportedOverride: true,
+      );
+      final b = CallBackgroundService.acquire(voice);
+      expect(identical(a, b), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(calls.where((c) => c.method == 'start'), hasLength(1));
+
+      a.release();
+      expect(a.debugUiActive, isTrue);
+
+      await tapFromNotification('toggleMute');
+      expect(voice.muted, isTrue);
+      expect(calls.last.method, 'update');
+      expect((calls.last.arguments as Map)['muted'], isTrue);
+
+      await tapFromNotification('toggleMute');
+      expect(voice.muted, isFalse);
+
+      await tapFromNotification('hangUp');
+      expect(voice.phase, VoiceSessionPhase.idle);
+      expect(transport.disconnectCalls, 1);
+      expect(calls.last.method, 'stop');
+      expect(b.debugUiActive, isFalse);
+
+      b.release();
+    });
+
+    test('the last release unhooks the handler and a later acquire starts '
+        'a fresh service', () async {
+      final transport = FakeVoiceTransport();
+      final voice = await _liveController(transport);
+      final first =
+          CallBackgroundService.acquire(voice, debugSupportedOverride: true);
+      first.release();
+
+      await tapFromNotification('hangUp');
+      expect(voice.phase, VoiceSessionPhase.live);
+
+      final second =
+          CallBackgroundService.acquire(voice, debugSupportedOverride: true);
+      expect(identical(first, second), isFalse);
+      await tapFromNotification('hangUp');
+      expect(voice.phase, VoiceSessionPhase.idle);
+      second.release();
+    });
+
+    test('disposing an older instance never clears a newer one\'s handler',
+        () async {
+      final transport = FakeVoiceTransport();
+      final voice = await _liveController(transport);
+      final older =
+          CallBackgroundService(voice, debugSupportedOverride: true)..start();
+      final newer =
+          CallBackgroundService(voice, debugSupportedOverride: true)..start();
+      older.dispose();
+
+      await tapFromNotification('hangUp');
+      expect(voice.phase, VoiceSessionPhase.idle);
+      newer.dispose();
     });
   });
 }

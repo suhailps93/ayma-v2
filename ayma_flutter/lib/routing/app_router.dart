@@ -2,7 +2,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/meta_integrations.dart';
 import '../services/app_context.dart';
+import '../services/screen_capture.dart';
+import '../services/biometric_consent.dart';
+import '../screens/biometric_consent_screen.dart';
+import '../screens/biometric_consent_settings_screen.dart';
+import '../screens/biometric_info_screen.dart';
 import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
 import '../screens/ayma_settings_screen.dart';
@@ -22,6 +28,7 @@ import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
 import '../screens/invite_friends_screen.dart';
 import '../screens/my_public_profile_screen.dart';
+import '../screens/profile_proposals_screen.dart';
 import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
@@ -37,11 +44,10 @@ import '../screens/settings_screen.dart';
 import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
-import '../screens/plans_screen.dart';
+import '../screens/plan_screen.dart';
+import '../screens/developer_screen.dart';
 import '../screens/trial_paywall_screen.dart';
 import '../services/revenuecat_service.dart';
-import '../screens/subscription_screen.dart';
-import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/terms_screen.dart';
@@ -72,10 +78,21 @@ import '../widgets/nav_bar_shell.dart';
 /// - [PublicProfileScreen], which renders [AymaTabBar] itself (a
 ///   `Stack`+`Align`, tuned together with its own action rail's clearance —
 ///   see its own doc) rather than through [NavBarShell].
+/// Where a signed-in user without the face-matching consent may still be.
+const _consentPendingAllowed = {
+  BiometricConsentScreen.path,
+  BiometricInfoScreen.path,
+  SplashScreen.path,
+  TermsScreen.path,
+  PrivacyScreen.path,
+  RecoveryScreen.path,
+  UnderageScreen.path,
+};
+
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   // Lets screens re-assert their voice screen-context when a child route pops.
-  observers: [screenRouteObserver],
+  observers: [screenRouteObserver, screenPopupTracker],
   // Sign-in gate (§3.3): unauthenticated users can only reach the sign-in,
   // splash, terms and recovery screens; everything else bounces to sign-in.
   redirect: (context, state) {
@@ -87,6 +104,7 @@ final appRouter = GoRouter(
       SplashScreen.path,
       TermsScreen.path,
       PrivacyScreen.path,
+      BiometricInfoScreen.path,
       RecoveryScreen.path,
     };
     // A shared-report link is public (the snapshot needs no auth).
@@ -94,8 +112,17 @@ final appRouter = GoRouter(
       return SignInScreen.path;
     }
     if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
+    // Mandatory face-matching consent: once the server says this account
+    // doesn't have it, only the one-time consent screen (and the legal pages)
+    // stay reachable.
+    if (signedIn &&
+        BiometricConsentState.instance.required &&
+        !_consentPendingAllowed.contains(loc)) {
+      return BiometricConsentScreen.path;
+    }
     return null;
   },
+  refreshListenable: BiometricConsentState.instance,
   routes: [
     GoRoute(
       path: SplashScreen.path,
@@ -186,7 +213,7 @@ final appRouter = GoRouter(
       // `Scaffold.bottomNavigationBar` — see its own doc for why) — the
       // founder flagged this exact screen by name for the bar before this
       // wrapper existed, and it's tuned together with its own action rail's
-      // clearance math (`AymaTabBar.contentHeight`). Wrapping it here too
+      // clearance math (`AymaTabBar.heightFor`). Wrapping it here too
       // would stack a second bar under/behind the first.
       path: PublicProfileScreen.path,
       builder: (context, state) =>
@@ -232,10 +259,6 @@ final appRouter = GoRouter(
           const NavBarShell(child: NotificationPrefsScreen()),
     ),
     GoRoute(
-      path: '/settings/photos',
-      redirect: (context, state) => MyPublicProfileScreen.editPhotosPath,
-    ),
-    GoRoute(
       path: MyPublicProfileScreen.path,
       builder: (context, state) =>
           NavBarShell(
@@ -244,12 +267,19 @@ final appRouter = GoRouter(
                       state.uri.queryParameters['edit'] == 'photos')),
     ),
     GoRoute(
+      path: ProfileProposalsScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: ProfileProposalsScreen()),
+    ),
+    GoRoute(
       path: GoogleAccountScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: GoogleAccountScreen()),
     ),
     GoRoute(
       path: InstagramScreen.path,
+      redirect: (context, state) =>
+          MetaIntegrations.enabled.value ? null : MainShellScreen.path,
       builder: (context, state) => const NavBarShell(child: InstagramScreen()),
     ),
     GoRoute(
@@ -268,13 +298,8 @@ final appRouter = GoRouter(
           const NavBarShell(child: AccentColorScreen()),
     ),
     GoRoute(
-      path: UsageScreen.path,
-      builder: (context, state) => const NavBarShell(child: UsageScreen()),
-    ),
-    GoRoute(
-      path: SubscriptionScreen.path,
-      builder: (context, state) =>
-          const NavBarShell(child: SubscriptionScreen()),
+      path: PlanScreen.path,
+      builder: (context, state) => const NavBarShell(child: PlanScreen()),
     ),
     GoRoute(
       path: TrialPaywallScreen.path,
@@ -282,12 +307,13 @@ final appRouter = GoRouter(
         final offer = state.extra;
         return offer is TrialOffer
             ? TrialPaywallScreen(offer: offer)
-            : const NavBarShell(child: PlansScreen());
+            : const NavBarShell(child: PlanScreen());
       },
     ),
     GoRoute(
-      path: PlansScreen.path,
-      builder: (context, state) => const NavBarShell(child: PlansScreen()),
+      path: DeveloperScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: DeveloperScreen()),
     ),
     GoRoute(
       path: FeedbackScreen.path,
@@ -305,6 +331,19 @@ final appRouter = GoRouter(
     GoRoute(
       path: SkillsScreen.path,
       builder: (context, state) => const NavBarShell(child: SkillsScreen()),
+    ),
+    GoRoute(
+      path: BiometricConsentScreen.path,
+      builder: (context, state) => const BiometricConsentScreen(),
+    ),
+    GoRoute(
+      path: BiometricInfoScreen.path,
+      builder: (context, state) => const BiometricInfoScreen(),
+    ),
+    GoRoute(
+      path: BiometricConsentSettingsScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: BiometricConsentSettingsScreen()),
     ),
     GoRoute(
       path: DeleteAccountScreen.path,

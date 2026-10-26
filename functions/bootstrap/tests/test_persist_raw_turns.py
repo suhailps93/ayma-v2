@@ -14,10 +14,14 @@ class _FakeDoc:
     def __init__(self):
         self.written = None
         self.merge = None
+        self.writes = []
 
     def set(self, payload, merge=False):
-        self.written = payload
+        # Merge like Firestore does, so the raw_turns write and the
+        # ingest_pending flag writes that follow it accumulate on one doc.
+        self.written = {**(self.written or {}), **payload} if merge else payload
         self.merge = merge
+        self.writes.append(dict(payload))
 
 
 class _FakeDb:
@@ -83,11 +87,11 @@ def test_persist_and_ingest_calls_both_persist_and_wiki_ingest(monkeypatch):
     db = _FakeDb()
     calls = []
 
-    async def _fake_ingest_or_defer(_db, uid, session_id, turns):
+    async def _fake_ingest(_db, uid, session_id, turns):
         calls.append((uid, session_id, [t.text for t in turns]))
         return 1
 
-    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest_or_defer)
+    monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
 
     turns = [
         Turn(
@@ -100,8 +104,12 @@ def test_persist_and_ingest_calls_both_persist_and_wiki_ingest(monkeypatch):
     ]
     _run(persist_and_ingest(db, "uid-1", "sess-voice-1", turns))
 
-    # The raw transcript is still durably persisted...
-    assert db.path == ["users", "uid-1", "raw_turns", "sess-voice-1"]
+    # The raw transcript is still durably persisted (the pending-flag writes
+    # that follow target the very same doc)...
+    assert db.path[:4] == ["users", "uid-1", "raw_turns", "sess-voice-1"]
+    assert set(zip(db.path[::4], db.path[1::4], db.path[2::4], db.path[3::4])) == {
+        ("users", "uid-1", "raw_turns", "sess-voice-1")
+    }
     assert db.doc.written["turn_count"] == 3
     # ...and, unlike before the fix, the same session-end hook also attempts
     # a wiki write for the exact same window — including the answer that
@@ -116,7 +124,7 @@ def test_persist_and_ingest_is_a_noop_for_empty_turns(monkeypatch):
     db = _FakeDb()
     called = []
     monkeypatch.setattr(
-        wiki_ingest, "ingest_or_defer",
+        wiki_ingest, "ingest",
         lambda *a, **k: called.append(1),
     )
     _run(persist_and_ingest(db, "uid-1", "sess-1", []))
@@ -131,7 +139,7 @@ def test_persist_and_ingest_swallows_an_ingest_failure(monkeypatch):
     async def _boom(*a, **k):
         raise RuntimeError("gemini is down")
 
-    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _boom)
+    monkeypatch.setattr(wiki_ingest, "ingest", _boom)
 
     # Must not raise.
     _run(persist_and_ingest(db, "uid-1", "sess-1", [Turn("user", "hi")]))
@@ -149,11 +157,11 @@ def test_persist_and_ingest_swallows_a_raw_turns_persist_failure(monkeypatch):
     monkeypatch.setattr(post_turn, "persist_raw_turns", _boom)
     calls = []
 
-    async def _fake_ingest_or_defer(_db, uid, session_id, turns):
+    async def _fake_ingest(_db, uid, session_id, turns):
         calls.append((uid, session_id))
         return 0
 
-    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest_or_defer)
+    monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
 
     _run(persist_and_ingest(object(), "uid-1", "sess-1", [Turn("user", "hi")]))
     assert calls == [("uid-1", "sess-1")]
@@ -171,7 +179,7 @@ def test_persist_and_ingest_refreshes_the_summary_at_level_2(monkeypatch):
     async def _fake_ingest(*_a, **_k):
         return 0
 
-    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest)
+    monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
     updated = []
 
     async def _fake_update(_db, uid, turns, *, session_id=""):
@@ -195,7 +203,7 @@ def test_persist_and_ingest_skips_the_summary_at_level_0(monkeypatch):
     async def _fake_ingest(*_a, **_k):
         return 0
 
-    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest)
+    monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
     updated = []
 
     async def _fake_update(*_a):
@@ -215,7 +223,7 @@ def test_persist_and_ingest_swallows_a_summary_failure(monkeypatch):
     async def _fake_ingest(*_a, **_k):
         return 0
 
-    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest)
+    monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
 
     async def _boom(*_a):
         raise RuntimeError("summarizer down")
@@ -224,3 +232,74 @@ def test_persist_and_ingest_swallows_a_summary_failure(monkeypatch):
     # Must not raise — this runs in shutdown/disconnect hooks.
     _run(persist_and_ingest(db, "uid-1", "sess-1", [Turn("user", "hi")]))
     assert db.doc.written["turn_count"] == 1
+
+
+# --- shutdown-deadline safety (2026-10-25) ----------------------------------
+#
+# Production: the worker process was SIGUSR1-killed 10 s into every call's
+# shutdown flush, mid wiki ingest. The raw window must land and be flagged
+# ingest_pending BEFORE the LLM call, so a kill leaves it for the nightly
+# backfill sweep; the flag clears only once the ingest actually succeeded.
+
+
+def test_persist_and_ingest_flags_pending_before_ingest_and_clears_after(
+    monkeypatch,
+):
+    db = _FakeDb()
+    seen_at_ingest = {}
+
+    async def _fake_ingest(_db, uid, session_id, turns):
+        seen_at_ingest.update(db.doc.written)
+        return 1
+
+    monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
+    _run(persist_and_ingest(db, "uid-1", "sess-1", [Turn("user", "hi")]))
+
+    # At ingest time the transcript is durable and flagged for the sweep...
+    assert seen_at_ingest["turn_count"] == 1
+    assert seen_at_ingest["ingest_pending"] is True
+    # ...and after a successful ingest the flag is removed again.
+    from firebase_admin import firestore
+
+    assert db.doc.written["ingest_pending"] is firestore.DELETE_FIELD
+
+
+def test_persist_and_ingest_leaves_pending_when_ingest_fails(monkeypatch):
+    db = _FakeDb()
+
+    async def _boom(*a, **k):
+        raise RuntimeError("gemini is down")
+
+    monkeypatch.setattr(wiki_ingest, "ingest", _boom)
+    _run(persist_and_ingest(db, "uid-1", "sess-1", [Turn("user", "hi")]))
+    assert db.doc.written["ingest_pending"] is True
+
+
+def test_persist_and_ingest_runs_ingest_and_summary_concurrently(monkeypatch):
+    import context_opt
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    db = _FakeDb()
+    both_running = asyncio.Event()
+    running = []
+
+    async def _wait_for_both(tag):
+        running.append(tag)
+        if len(running) == 2:
+            both_running.set()
+        await asyncio.wait_for(both_running.wait(), timeout=2)
+
+    async def _fake_ingest(*_a, **_k):
+        await _wait_for_both("ingest")
+        return 1
+
+    async def _fake_update(*_a, **_k):
+        await _wait_for_both("summary")
+        return True
+
+    monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
+    monkeypatch.setattr(context_opt, "maybe_update_summary", _fake_update)
+    _run(persist_and_ingest(
+        db, "uid-1", "sess-1", [Turn("user", f"t{i}") for i in range(30)]
+    ))
+    assert sorted(running) == ["ingest", "summary"]

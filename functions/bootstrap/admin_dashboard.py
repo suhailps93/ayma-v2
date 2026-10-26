@@ -74,6 +74,11 @@ DASHBOARD_HTML = """<!doctype html>
   .badge.muse { background: #e8eefc; color: #2b4fa0; }
   .badge.stale { background: #fff4e0; color: #a06a00; }
   .vendor-unavail { color: #a06a00; font-size: 13px; }
+  .stale-alert { background: #fff4e0; color: #7a5200; border: 1px solid #f0cf8f; padding: 12px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+  .stale-alert strong { display: block; margin-bottom: 6px; }
+  .stale-alert ul { margin: 0; padding-left: 18px; }
+  .stale-alert li { margin: 3px 0; overflow-wrap: anywhere; }
+  .stale-alert a { color: inherit; font-weight: 600; }
   .vendor-entry { margin: 4px 0; font-size: 13px; }
   details.how ol { margin: 6px 0 4px 18px; padding: 0; }
   @media (prefers-color-scheme: dark) {
@@ -81,6 +86,7 @@ DASHBOARD_HTML = """<!doctype html>
     .badge.muse { background: #1c2440; color: #9db4f5; }
     .badge.stale { background: #3a2c10; color: #ffcf7a; }
     .vendor-unavail { color: #ffcf7a; }
+    .stale-alert { background: #3a2c10; color: #ffcf7a; border-color: #6b5220; }
   }
   .err {
     background: #fdecea; color: #a02020; border: 1px solid #f2b8b5;
@@ -152,6 +158,11 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="err" id="err"></div>
 
   <div id="dataArea">
+    <div class="stale-alert" id="staleAlert" role="alert" style="display:none;"></div>
+    <h2>Feature flags (read-only)</h2>
+    <div class="scan-note">Effective values. Source: env = FLAG_ override, firestore = config/feature_flags, default = code default. Change with scripts/flags.py.</div>
+    <div id="flagList"></div>
+
     <h2>All vendors</h2>
     <div class="scan-note" id="vendorMeta"></div>
     <div id="vendorList"></div>
@@ -308,7 +319,29 @@ DASHBOARD_HTML = """<!doctype html>
     });
   }
 
+  function renderStaleAlert(list) {
+    var box = document.getElementById('staleAlert');
+    box.innerHTML = '';
+    if (!list || !list.length) { box.style.display = 'none'; return; }
+    box.appendChild(el('strong', 'Vendor data needs attention (' + list.length + ')'));
+    var ul = el('ul');
+    list.forEach(function (a) {
+      var li = el('li');
+      var what = a.kind === 'stale'
+        ? 'stale' + (a.age_hours === null ? ' (no fetch time)' : ' (' + a.age_hours + 'h old)')
+        : 'unavailable: ' + a.reason;
+      li.appendChild(document.createTextNode(a.name + ' - ' + what + ' - '));
+      var link = el('a', 'how to check');
+      link.href = a.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      li.appendChild(link);
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+    box.style.display = 'block';
+  }
+
   function renderVendors(v) {
+    renderStaleAlert(v.stale);
     var host = document.getElementById('vendorList');
     host.innerHTML = '';
     document.getElementById('vendorMeta').textContent =
@@ -357,6 +390,33 @@ DASHBOARD_HTML = """<!doctype html>
     t.appendChild(tb); host.appendChild(t);
   }
 
+  function renderFlags(d) {
+    var host = document.getElementById('flagList');
+    host.innerHTML = '';
+    var t = el('table');
+    var hr = el('tr');
+    ['Flag', 'Value', 'Source', 'What it does'].forEach(function (h) { hr.appendChild(el('th', h)); });
+    var thead = el('thead'); thead.appendChild(hr); t.appendChild(thead);
+    var tb = el('tbody');
+    Object.keys(d.flags || {}).forEach(function (name) {
+      var f = d.flags[name];
+      var tr = el('tr');
+      tr.appendChild(el('td', name));
+      tr.appendChild(el('td', Array.isArray(f.value) ? f.value.join(', ') || '(none)' : String(f.value)));
+      tr.appendChild(el('td', f.source));
+      tr.appendChild(el('td', f.description));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); host.appendChild(t);
+  }
+
+  function loadFlags(pw) {
+    return fetch('/admin/feature-flags', { headers: { 'X-Admin-Password': pw } }).then(function (res) {
+      if (!res.ok) { throw new Error('Feature flags failed (' + res.status + ').'); }
+      return res.json();
+    }).then(renderFlags);
+  }
+
   function loadVendors(pw) {
     return fetch('/admin/vendors', { headers: { 'X-Admin-Password': pw } }).then(function (res) {
       if (!res.ok) { throw new Error('Vendor list failed (' + res.status + ').'); }
@@ -388,7 +448,7 @@ DASHBOARD_HTML = """<!doctype html>
     loginStatus.textContent = 'Loading…';
     dataArea.style.display = 'none';
 
-    Promise.all([loadProviderSpend(pw), loadVendors(pw)]).then(function () {
+    Promise.all([loadProviderSpend(pw), loadVendors(pw), loadFlags(pw)]).then(function () {
       loginStatus.textContent = 'Loaded.';
       refreshBtn.style.display = '';
       dataArea.style.display = 'block';

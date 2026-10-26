@@ -4,7 +4,9 @@ import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_quiet_chip.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/overflow_guards.dart';
 
 /// The founder's "voice-only mode" (2026-09-25 ask): a full-screen,
 /// phone-call-style presentation of an already-connecting-or-live voice
@@ -28,7 +30,7 @@ import '../widgets/out_of_credits.dart';
 /// there's nothing useful left to show here — [_onVoiceChange] pops the
 /// screen automatically so the user lands back on `ChatScreen`, which already
 /// owns all of that error/idle handling (the red banner, the out-of-credits
-/// card, snackbars) — no duplicate error UI is built here.
+/// card, toasts) — no duplicate error UI is built here.
 class VoiceCallScreen extends StatefulWidget {
   const VoiceCallScreen({super.key, required this.voice});
 
@@ -93,7 +95,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             };
             return Stack(
               children: [
-                Center(
+                // Scrolls instead of overflowing in a short window (the
+                // 220px orb plus the quiet chip, split-screen / landscape).
+                CenteredScroll(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -119,9 +123,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                             .copyWith(letterSpacing: 2),
                       ),
                       if (voice.aymaQuiet && phase == VoiceSessionPhase.live)
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(24, 16, 24, 0),
-                          child: AymaQuietChip(),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                          child: AymaQuietChip(onUnmute: voice.unmuteAyma),
                         ),
                     ],
                   ),
@@ -223,14 +227,14 @@ Future<void> toggleVoiceCall(
     await voice.stop();
     return;
   }
-  final messenger = ScaffoldMessenger.of(context);
+  final toast = AymaToast.of(context);
   await voice.start();
   if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
     if (!context.mounted) return;
     if (voice.cappedError) {
       showOutOfCreditsSheet(context);
     } else {
-      messenger.showSnackBar(SnackBar(content: Text(voice.errorMessage!)));
+      toast.show(voice.errorMessage!, kind: AymaToastKind.error);
     }
   }
 }

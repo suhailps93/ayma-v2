@@ -1,11 +1,15 @@
 package com.ayma.ayma_flutter
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
@@ -23,8 +27,9 @@ import java.io.IOException
  * update, and stop that service (F4 — background call notification).
  *
  * Also hosts the tiny "ayma/media_save" channel the full-screen image viewer
- * uses to save a photo into the device gallery (MediaStore `Pictures/Ayma`) —
- * a dozen lines here instead of a whole gallery-saver plugin.
+ * and the report card's "Save image" use to save into the device gallery
+ * (MediaStore `Pictures/Ayma`) — a dozen lines here instead of a whole
+ * gallery-saver plugin.
  */
 class MainActivity : FlutterActivity() {
 
@@ -33,12 +38,47 @@ class MainActivity : FlutterActivity() {
         const val SHARE_CHANNEL = "ayma/share"
         const val PUSH_CHANNEL = "ayma/push"
 
+        /**
+         * Notification channel for FCM `notification`-payload pushes the system
+         * displays on its own (web-search ready, new match, Ayma check-in …).
+         * IMPORTANCE_HIGH so they pop as a heads-up alert, and named by the
+         * manifest's `default_notification_channel_id` meta-data. The backend
+         * pins each push to it (`ANDROID_DEFAULT_CHANNEL` in
+         * notifications_schema.py); keep the two strings equal. DMs render on
+         * their own `ayma_dm_messages` channel ([DmMessagingService]).
+         */
+        const val DEFAULT_CHANNEL_ID = "ayma_default"
+
         /** True while the app is on screen; [DmMessagingService] posts nothing then. */
         @Volatile
         var isResumed = false
     }
 
     private var pushChannel: MethodChannel? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        ensureDefaultPushChannel()
+    }
+
+    /**
+     * Creates the IMPORTANCE_HIGH push channel the system displays background
+     * notification-payload pushes on. Must exist before any such push arrives
+     * (the system builds those notifications itself — no app code runs), so it
+     * is created here on every launch; [NotificationManager.createNotificationChannel]
+     * is a no-op once the channel exists, and the user's own importance choice
+     * is preserved.
+     */
+    private fun ensureDefaultPushChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel(DEFAULT_CHANNEL_ID) != null) return
+        manager.createNotificationChannel(
+            NotificationChannel(
+                DEFAULT_CHANNEL_ID, "General", NotificationManager.IMPORTANCE_HIGH
+            )
+        )
+    }
 
     override fun onResume() {
         super.onResume()
@@ -78,10 +118,12 @@ class MainActivity : FlutterActivity() {
                     val status = call.argument<String>("status")
                         ?: "Voice call"
                     val muted = call.argument<Boolean>("muted") ?: false
+                    val aymaQuiet = call.argument<Boolean>("aymaQuiet") ?: false
                     val startTimeMillis = call.argument<Number>("startTimeMillis")
                     val intent = Intent(this, CallForegroundService::class.java).apply {
                         putExtra(CallForegroundService.EXTRA_STATUS, status)
                         putExtra(CallForegroundService.EXTRA_MUTED, muted)
+                        putExtra(CallForegroundService.EXTRA_AYMA_QUIET, aymaQuiet)
                         if (startTimeMillis != null) {
                             putExtra(
                                 CallForegroundService.EXTRA_START_TIME,
@@ -134,6 +176,20 @@ class MainActivity : FlutterActivity() {
                         result.error("STORY_FAILED", e.message, null)
                     }
                 }
+                "sendToApp" -> {
+                    val path = call.argument<String>("path")
+                    val packages = call.argument<List<String>>("packages") ?: emptyList()
+                    val text = call.argument<String>("text") ?: ""
+                    if (path == null) {
+                        result.error("ARGS", "missing path", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        result.success(sendImageToApp(path, packages, text))
+                    } catch (e: Exception) {
+                        result.error("SEND_FAILED", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -172,18 +228,51 @@ class MainActivity : FlutterActivity() {
      */
     private fun shareToInstagramStory(path: String, appId: String, contentUrl: String): Boolean {
         val uri = FileProvider.getUriForFile(
-            this, "$packageName.flutter.share_provider", File(path)
+            this, "$packageName.fileprovider", File(path)
         )
         val intent = Intent("com.instagram.share.ADD_TO_STORY").apply {
             setDataAndType(uri, "image/png")
-            putExtra("source_application", appId)
-            putExtra("content_url", contentUrl)
+            if (appId.isNotEmpty()) putExtra("source_application", appId)
+            if (contentUrl.isNotEmpty()) putExtra("content_url", contentUrl)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         if (intent.resolveActivity(packageManager) == null) return false
         grantUriPermission("com.instagram.android", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         startActivity(intent)
         return true
+    }
+
+    /**
+     * Sends the PNG at [path] (plus optional [text]) to the first installed
+     * app in [packages] with a plain ACTION_SEND — the report card's
+     * WhatsApp / Instagram targets (Instagram then offers Stories). Same
+     * share_plus FileProvider as [shareToInstagramStory]. Returns false when
+     * none of [packages] is installed, so Dart falls back to the share sheet.
+     */
+    private fun sendImageToApp(path: String, packages: List<String>, text: String): Boolean {
+        val uri = FileProvider.getUriForFile(
+            this, "$packageName.fileprovider", File(path)
+        )
+        for (pkg in packages) {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                if (text.isNotEmpty()) putExtra(Intent.EXTRA_TEXT, text)
+                setPackage(pkg)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            if (intent.resolveActivity(packageManager) != null) {
+                // The intent flag grants read access to the resolved activity,
+                // but an explicit grant to the target package is more reliable
+                // across OEMs (some drop the flag grant on a direct, non-chooser
+                // startActivity) — without it the receiver gets a URI it can't
+                // read and the image silently fails to attach.
+                grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(intent)
+                return true
+            }
+        }
+        return false
     }
 
     /**

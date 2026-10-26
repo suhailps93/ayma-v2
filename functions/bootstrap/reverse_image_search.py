@@ -366,8 +366,11 @@ async def auto_scan(db, uid: str) -> None:
         logger.exception("web-photo-search: scan-flag read failed for %s", uid)
         return
 
+    import biometric_consent
     import skill_reports
 
+    if not biometric_consent.has_consent_fresh(db, uid):
+        return  # no face matching without consent — leave the flag unset
     if not skill_reports.primary_profile_photo_path(db, uid):
         return  # no photo yet — leave the flag unset, retry later
 

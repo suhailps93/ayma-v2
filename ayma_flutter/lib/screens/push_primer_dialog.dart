@@ -22,6 +22,7 @@ Future<void> showPushPrimer(
     context: context,
     barrierDismissible: false,
     builder: (ctx) => AlertDialog(
+      scrollable: true,
       title: const Text('Stay in the loop'),
       content: Text(
         'Turn on notifications to hear about new messages, matches, and '

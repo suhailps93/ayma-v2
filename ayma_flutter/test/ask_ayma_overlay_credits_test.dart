@@ -1,6 +1,6 @@
 // A capped Ayma reply inside the "Edit with Ayma" sheet must render a
 // persistent, always-visible Upgrade affordance — not rely solely on a
-// SnackBar, which is easy to miss or may have already auto-dismissed by the
+// toast, which is easy to miss or may have already auto-dismissed by the
 // time the user looks (see `ask_ayma_overlay.dart`'s `_send`). Same treatment
 // `chat_screen.dart`'s `_TranscriptLine` gives `turn.capped`.
 import 'package:ayma_flutter/services/api_client.dart';
@@ -36,6 +36,9 @@ class _FakeApi extends ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async* {
     // The sheet always tries the stream first — fail it so every call
@@ -64,6 +67,9 @@ class _FakeApi extends ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async =>
       reply;
@@ -92,7 +98,7 @@ Future<void> _pumpSheet(WidgetTester tester, ApiClient api) async {
         ),
       ),
       GoRoute(
-        path: '/profile/usage/plans',
+        path: '/profile/plan',
         builder: (_, __) => const Scaffold(body: Text('USAGE PAGE')),
       ),
     ],
@@ -124,7 +130,7 @@ void main() {
     expect(find.textContaining("I've used up the shared assistant budget"),
         findsOneWidget);
     // …alongside a persistent, always-visible Upgrade affordance, not just a
-    // SnackBar that could already be gone.
+    // toast that could already be gone.
     // The upgrade sheet opens automatically on the capped reply; dismiss it.
     await tester.tap(find.text('Keep exploring'));
     await tester.pumpAndSettle();

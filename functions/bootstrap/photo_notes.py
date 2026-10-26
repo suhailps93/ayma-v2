@@ -270,10 +270,16 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
     Expects each candidate to carry a ``_embedding`` hint (already-known
     embedding, or ``None``) — consumed and removed here.
     """
+    import biometric_consent
     import deep_dive_images
 
     refs: list[list[float]] | None = None  # lazy — only fetched if needed
-    budget = _MAX_NEW_EMBEDS_PER_CALL
+    # No new face embeddings without the owner's biometric consent.
+    budget = (
+        _MAX_NEW_EMBEDS_PER_CALL
+        if biometric_consent.has_consent_fresh(db, uid)
+        else 0
+    )
 
     kept: list[dict] = []
     kept_embeddings: list[list[float]] = []

@@ -5,10 +5,12 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/living_report.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/dev_panel_flag.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_orb.dart';
 import 'ayma_photo.dart';
+import 'overflow_guards.dart';
 import 'score_bar.dart';
 
 /// The ONE shared, block-based renderer for every "Living Report" —
@@ -111,6 +113,7 @@ class LivingReportView extends StatefulWidget {
     this.shrinkWrap = false,
     this.showTitle = true,
     this.loader,
+    this.hideBlock,
   });
 
   final String reportType;
@@ -127,8 +130,8 @@ class LivingReportView extends StatefulWidget {
   /// this widget as one item inside ITS OWN outer scrollable alongside other,
   /// not-yet-block-modeled content (cover stats, the photo gallery, the
   /// career timeline, the merged Appearance card) rather than giving this
-  /// report the whole screen the way Appearance/deep-dive/My-public-profile
-  /// do. Default `false` (an independently scrolling full-screen list) is
+  /// report the whole screen the way deep-dive/My-public-profile do.
+  /// Default `false` (an independently scrolling full-screen list) is
   /// unchanged for every other caller.
   final bool shrinkWrap;
 
@@ -151,6 +154,10 @@ class LivingReportView extends StatefulWidget {
   /// read-only shared-report view loads a public snapshot instead.
   final Future<LivingReport> Function()? loader;
 
+  /// Blocks this returns true for are not drawn (a section left with none of
+  /// its blocks is dropped) — for a host screen that shows them elsewhere.
+  final bool Function(ReportBlock block)? hideBlock;
+
   @override
   State<LivingReportView> createState() => LivingReportViewState();
 }
@@ -171,16 +178,16 @@ class LivingReportViewState extends State<LivingReportView>
   final Set<String> _selected = {};
 
   /// [reportType] -> the [AppContext] screen slug it should track as, for
-  /// the (only) two callers that give this widget the whole screen with no
-  /// bespoke chrome of their own ([LivingReportView.shrinkWrap] false —
-  /// `appearance_report_screen.dart`, `deep_dive_report_screen.dart`).
+  /// the (only) caller that gives this widget the whole screen with no
+  /// bespoke chrome of its own ([LivingReportView.shrinkWrap] false —
+  /// `deep_dive_report_screen.dart`).
   /// Every other current [reportType] embeds with `shrinkWrap: true`
-  /// (`match_report_screen.dart` keeps its own richer, subject-aware
-  /// tracking; `my_public_profile_screen.dart`/`story_editor_screen.dart`
-  /// track their own screen once for the whole page instead) — see
+  /// (`match_report_screen.dart` and `appearance_report_screen.dart` keep
+  /// their own richer tracking; `my_public_profile_screen.dart`/
+  /// `story_editor_screen.dart` track their own screen once for the whole
+  /// page instead) — see
   /// [reassertScreenContext]'s early return.
   static const _screenSlugs = {
-    'appearance': 'appearance_report',
     'deep_dive': 'deep_dive_report',
   };
 
@@ -436,6 +443,22 @@ class LivingReportViewState extends State<LivingReportView>
     return _buildReport(context, report);
   }
 
+  List<ReportSection> _visibleSections(LivingReport report) {
+    final hide = widget.hideBlock;
+    if (hide == null) return report.sections;
+    return [
+      for (final s in report.sections)
+        if (s.blocks.isEmpty || s.blocks.any((b) => !hide(b)))
+          ReportSection(
+            heading: s.heading,
+            blocks: [
+              for (final b in s.blocks)
+                if (!hide(b)) b,
+            ],
+          ),
+    ];
+  }
+
   Widget _buildReport(BuildContext context, LivingReport report) {
     final ac = context.ac;
     final canEdit = report.meta.viewerCanEdit;
@@ -464,7 +487,7 @@ class LivingReportViewState extends State<LivingReportView>
                   style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
                 ),
               ),
-            for (final section in report.sections) ...[
+            for (final section in _visibleSections(report)) ...[
               _SectionView(
                 section: section,
                 report: report,
@@ -502,7 +525,7 @@ class LivingReportViewState extends State<LivingReportView>
     // floating bar to (it sizes to its content, inside a HOST screen's own
     // outer scrollable) — the selection bar renders as a normal trailing
     // item instead of a `Positioned` overlay there; everywhere else
-    // (Appearance/deep-dive/My-public-profile/Story's own full-bleed use)
+    // (deep-dive/My-public-profile/Story's own full-bleed use)
     // it's still the floating bottom bar.
     if (widget.shrinkWrap) {
       return Column(
@@ -687,9 +710,7 @@ class _Sentence extends StatelessWidget {
     final ac = context.ac;
     // `tone` recolours this ONE sentence — never a new typography role (see
     // the "Typography contract" note atop this file): same [_bodyStyle]
-    // font/size/weight, just a different [color], same as
-    // `SelectableMarkdown`'s old `privateColor`/`aiOnlyColor` did for the
-    // pre-Living-Report Story editor. `private` -> the app's existing muted
+    // font/size/weight, just a different [color]. `private` -> the app's existing muted
     // "dimmed" tone; `ai_only` -> the app's existing red "removed" tone (see
     // `story.py`'s own docstring) — never the raw `{{private}}`/`{{ai_only}}`
     // delimiters themselves, which `story.sentence_spans` already stripped
@@ -791,11 +812,19 @@ class _FactRow extends StatelessWidget {
       children: [
         _LinkifiedText('• ${block.text}',
             style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+        // The model's raw tag / confidence label is a dev-facing annotation:
+        // shown only while the `dev_panel` flag is on.
         if (block.tag.isNotEmpty || conf.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 14, top: 2),
-            child: Text('${block.tag}$conf',
-                style: AymaType.mono(size: 9, color: ac.fgMute)),
+          ValueListenableBuilder<bool>(
+            valueListenable: DevPanelFlag.instance.enabled,
+            builder: (context, dev, _) => !dev
+                ? const SizedBox.shrink()
+                : Padding(
+                    key: const ValueKey('fact-dev-annotation'),
+                    padding: const EdgeInsets.only(left: 14, top: 2),
+                    child: Text('${block.tag}$conf',
+                        style: AymaType.mono(size: 9, color: ac.fgMute)),
+                  ),
           ),
       ],
     );
@@ -940,15 +969,22 @@ class _StatRow extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Expanded(
+              flex: 2,
               child: Text(block.label,
                   style: AymaType.sans(
                       size: 13.5, weight: FontWeight.w600, color: ac.fg)),
             ),
             const SizedBox(width: 8),
-            Text(display,
-                style: AymaType.serif(
-                    size: 18,
-                    color: banded ? _bandColor(context, n, max) : ac.accent)),
+            // At most a third of the row, so a long value at large text
+            // wraps instead of pushing the row off screen.
+            Flexible(
+              child: Text(display,
+                  textAlign: TextAlign.end,
+                  style: AymaType.serif(
+                      size: 18,
+                      color:
+                          banded ? _bandColor(context, n, max) : ac.accent)),
+            ),
           ],
         ),
         const SizedBox(height: 6),
@@ -1078,11 +1114,25 @@ class _LinkRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final isSocial = block.blockId.startsWith('social:');
+    final label = block.linkLabel.isNotEmpty ? block.linkLabel : block.url;
     return Row(
       children: [
+        if (isSocial) ...[
+          Icon(_socialIcon(block.tag), size: 16, color: ac.accent),
+          const SizedBox(width: 8),
+          if (block.tag.isNotEmpty)
+            Text(
+              _socialName(block.tag),
+              style: AymaType.sans(size: 13, soft: true, color: ac.fgMute),
+            ),
+          const SizedBox(width: 8),
+        ],
         Expanded(
           child: Text(
-            block.linkLabel.isNotEmpty ? block.linkLabel : block.url,
+            label,
+            maxLines: isSocial ? 1 : 2,
+            overflow: TextOverflow.ellipsis,
             style: AymaType.sans(size: 13, color: ac.accent, height: 1.35),
           ),
         ),
@@ -1103,6 +1153,26 @@ class _LinkRow extends StatelessWidget {
     );
   }
 }
+
+IconData _socialIcon(String platform) => switch (platform.toLowerCase()) {
+      'github' => Icons.code,
+      'youtube' => Icons.play_circle_outline,
+      'instagram' => Icons.camera_alt_outlined,
+      'linkedin' => Icons.work_outline,
+      'x' => Icons.alternate_email,
+      'facebook' => Icons.people_outline,
+      'tiktok' => Icons.music_note,
+      _ => Icons.public,
+    };
+
+String _socialName(String platform) => switch (platform.toLowerCase()) {
+      'github' => 'GitHub',
+      'youtube' => 'YouTube',
+      'linkedin' => 'LinkedIn',
+      'tiktok' => 'TikTok',
+      'x' => 'X',
+      final p => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1),
+    };
 
 /// Opens [url] in the external browser; ignores anything that isn't a
 /// parseable http(s) URL.
@@ -1343,18 +1413,16 @@ class _ErrorMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("Couldn't load that report.",
-                textAlign: TextAlign.center,
-                style: AymaType.sans(size: 14, color: ac.fgMute)),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
+    return CenteredScroll(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text("Couldn't load that report.",
+              textAlign: TextAlign.center,
+              style: AymaType.sans(size: 14, color: ac.fgMute)),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
       ),
     );
   }

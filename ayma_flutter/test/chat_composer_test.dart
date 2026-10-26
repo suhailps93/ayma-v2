@@ -125,6 +125,113 @@ void main() {
     });
   }
 
+  group('connecting composer', () {
+    Future<void> pumpComposer(
+      WidgetTester tester, {
+      required ComposerMode mode,
+      required String statusLabel,
+      bool reduceMotion = false,
+    }) async {
+      final controller = TextEditingController();
+      final focus = FocusNode();
+      final level = ValueNotifier<double>(0);
+      addTearDown(() {
+        controller.dispose();
+        focus.dispose();
+        level.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [AymaTokens.light]),
+          home: Scaffold(
+            body: Center(
+              child: MediaQuery(
+                data: MediaQueryData(disableAnimations: reduceMotion),
+                child: SizedBox(
+                  width: 390,
+                  height: 56,
+                  child: ChatComposer(
+                    mode: mode,
+                    controller: controller,
+                    focusNode: focus,
+                    canSend: false,
+                    onSend: () {},
+                    onAttach: () {},
+                    onMicPressed: () {},
+                    onStopPressed: () {},
+                    onMuteTap: () {},
+                    muted: false,
+                    userAmplitude: level,
+                    aiAmplitude: level,
+                    statusLabel: statusLabel,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    testWidgets(
+      'shows a spinner and the connecting label, never the live mic',
+      (tester) async {
+        await pumpComposer(
+          tester,
+          mode: ComposerMode.connecting,
+          statusLabel: 'Connecting…',
+        );
+        expect(find.text('Connecting…'), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        // The lit "capturing" mic (listening) must not be shown while
+        // connecting — that is exactly what read as "Listening" too early.
+        expect(find.byIcon(Icons.mic_rounded), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('waking reuses the same connecting mode and label', (
+      tester,
+    ) async {
+      await pumpComposer(
+        tester,
+        mode: ComposerMode.connecting,
+        statusLabel: 'Waking Ayma…',
+      );
+      expect(find.text('Waking Ayma…'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+    });
+
+    testWidgets('reduced motion swaps the spinner for a static unlit mic', (
+      tester,
+    ) async {
+      await pumpComposer(
+        tester,
+        mode: ComposerMode.connecting,
+        statusLabel: 'Connecting…',
+        reduceMotion: true,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+      expect(find.text('Connecting…'), findsOneWidget);
+    });
+
+    testWidgets('live listening shows the mic and no connecting spinner', (
+      tester,
+    ) async {
+      await pumpComposer(
+        tester,
+        mode: ComposerMode.listening,
+        statusLabel: 'Listening…',
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      expect(find.text('Listening…'), findsOneWidget);
+    });
+  });
+
   group('AmplitudeWaveBuffer', () {
     test(
       'produces different sample content across pushes at a constant '

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'chat_inbox.dart';
 
 /// App-wide record of which match reports are currently recalculating
 /// server-side. The rubric job outlives the screen that kicked it off, so this
@@ -39,7 +40,10 @@ class MatchActivity {
         await Future<void>.delayed(interval);
         try {
           final r = await client.matchReport(matchId);
-          if (r != null && r.score != null && r.score != previousScore) return;
+          if (r != null && r.score != null && r.score != previousScore) {
+            ChatInbox.instance.resultLanded();
+            return;
+          }
         } catch (_) {
           // transient — keep polling
         }

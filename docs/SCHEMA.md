@@ -9,6 +9,9 @@ reference with composite indexes — until then it grows per phase.
 Account/auth metadata only, written by auth/session flows, never by the AI
 (§3.2). Fields land as their steps do: `session_mode`, `marketing_turn_count`,
 `interview_turn_count`, `created_at`, `linked_at`, admin-claim mirror.
+`billing.credits_updated_at` (timestamp) is stamped whenever credits are added (start grant, selfie unlock, daily
+rollover, plan grant/renewal, expiry to free); top-ups write the top-level `credits_updated_at`. The newest of the two
+is the "since last credit update" start of the Plan page credit history.
 
 ## `users/{uid}/profile/main`  *(Step 7)*
 Structured onboarding fields: `name`, `birthdate`, `gender`, `interested_in`,
@@ -105,9 +108,16 @@ the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching
 Constants: `functions/bootstrap/notifications_schema.py`.
 
 ## Media & Instagram  *(Step 58 schema; §8.1, §8.3, §8.6, §9.1)*
-- `users/{uid}/profile/main.photos`: `[{ media_id, order }, …]` — `order: 0` is
-  the Explore-card primary and the photo-attribute source (§6.3). Add/remove/
-  reorder is Step 60; deletion is a soft removal (array entry only).
+- `users/{uid}/profile/main.photos`: `[{ media_id, order }, …]` — the PUBLIC
+  grid; `order: 0` is the Explore-card primary and the photo-attribute source
+  (§6.3). Managed inline in the carousel (add / ✕ remove / ★ set-primary /
+  drag-reorder, §8.3).
+- `users/{uid}/profile/main.hidden_photos`: `[{ media_id, order }, …]` — photos
+  removed from the PUBLIC profile but kept privately (§8.3). Same shape as
+  `photos`; invisible to every public reader, but still in the analysis pool
+  (`schema.analysis_photo_entries` = `photos` + `hidden_photos`) and their
+  `user_media` docs are untouched. "Delete everywhere" removes the entry from
+  here too and erases the `user_media` doc + Storage blob.
 - `users/{uid}.instagram_access_token`: long-lived OAuth token (Firestore is
   encrypted at rest); removed by `POST /instagram/disconnect`, which leaves
   imported photos in place.
@@ -119,3 +129,53 @@ Constants: `functions/bootstrap/notifications_schema.py`.
   entry (feeds normal wiki ingest, §8.2). Module: `functions/bootstrap/instagram.py`.
 
 Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47).
+
+## Consent, preferences and app control  *(all-features-on, 2026-10-25)*
+- `users/{uid}.biometric_consent`: `{ consented_at, consent_version, region, source }`
+  — mandatory face-matching consent, backend-authored only (`biometric_consent.py`;
+  `firestore.rules` lets the client write only `onboarding_started` on `users/{uid}`).
+  `consent_version` must equal `CONSENT_VERSION` to count; `region` is an ISO
+  alpha-2 code or `""`; `source` is `app` | `admin_seed`. Withdrawal replaces the
+  map with `{ withdrawn_at, consent_version }` and then soft-deletes the account.
+  Not a knowledge field: a memory wipe keeps it.
+- `users/{uid}/profile/main.qz_partner_age_min` / `qz_partner_age_max`: partner
+  age range (both 18+), the questionnaire's hard-filter mirror written by
+  `PUT /profile/preferences` and by Ayma's `record_answer`; the answers themselves
+  live at `users/{uid}/questionnaire/{node_id}`. Explore uses the saved range as
+  its default age filter.
+- `users/{uid}/profile/main.distance_pref`: `"10"` | `"25"` | `"50"` | `"100"` |
+  `"anywhere"` (miles); also recorded as the nearest `relocation_radius` answer.
+- `users/{uid}/profile/main.report_card_hidden_photos`: `[storage_path, …]` — the
+  analysed photos the owner has removed from their shareable Appearance report
+  card, by Storage path. Card-only (the photo and its analysis stay in the full
+  report). Written by `POST /appearance/card/hidden` (validated to the caller's
+  own analysed pool), read by `report_adapters.appearance_blocks` and surfaced on
+  the report meta as `card_hidden_photos`, so the on-screen card and the exported
+  1080x1920 PNG show the same photos.
+- `users/{uid}/voice_context/current`: `{ screen, subject_uid, subject_name, note,
+  detail (≤1500 chars, e.g. Explore's visible people), updated_at }` — what the
+  app shows during a live call, read by the agent's `current_screen` tool.
+- `users/{uid}/app_commands/pending` / `ack`: one queued UI command from Ayma
+  (`open_screen` / `app_action` / `account_action`, and the `navigate` to `/dm/<threadId>`
+  that `send_dm_message` queues after a send) and the client's `{ id, ok }`.
+- `users/{uid}/sessions/{sessionId}.pending_dm`: `{ id, other_uid, other_name, body, at,
+  quote, user_lines }`, the one DM waiting for the user's yes (5 min); `last_dm_sent`:
+  `{ other_name, body, thread_id, at }`, so a repeated confirm never sends twice.
+- `users/{uid}/raw_turns/{sessionId}.voice_provider`: `google` | `livekit_inference`
+  (voice sessions only).
+- `users/{uid}/deep_dive_runs/{report_id}`: `{ status: running|done|failed,
+  started_at, finished_at }` — the caller's latest queued web search for that
+  report (`deep_dive.mark_run` / `run_status`), backend-authored only. A
+  `running` doc older than 10 minutes is rewritten to `failed` when read.
+
+## Runtime config and ops  *(all-features-on)*
+- `config/feature_flags`: flat flag keys (`docs/FEATURE_FLAGS.md`) plus `_history`
+  (last 20 writes, for `scripts/flags.py rollback`). Backend-only.
+- `app_config/{sentry,meta_integrations,dev_panel}.enabled`: client-readable mirrors
+  of those flags.
+- `dev_panel_attempts/{uid | ip_<sha256 prefix> | _all}`: `{ failures, locked_until }` lockout counters (`_all` also carries `window_start`)
+  for `POST /dev/flags`.
+- `vertex_search_usage/{YYYY-MM-DD}`: `{ count }` — the Vertex AI Search daily cap.
+- `vendor_spend/*`: Muse-collected vendor figures (`vendor`, `metric`, `amount`,
+  `currency`, `period`, `source_url`, `collected_by`, `fetched_at`, `note`),
+  validated by `vendor_spend.py`.

@@ -119,15 +119,21 @@ def photo_block(
     caption: str = "",
     verified: bool | None = None,
     status: str | None = None,
+    photo_id: str | None = None,
     editable: bool = False,
 ) -> dict:
     """``status`` is omitted (like ``verified``) unless a caller has
     something to say — e.g. ``"pending"`` for a reverse-image-search
-    candidate awaiting the owner's confirm/reject."""
+    candidate awaiting the owner's confirm/reject.
+
+    ``photo_id`` — a stable identifier for the underlying photo, independent
+    of the (token-bearing) download ``url``. Appearance passes the Storage
+    path so the shareable report card can refer to a specific analysed photo
+    across sessions (hide-from-card); omitted everywhere else."""
     return _block(
         block_id, PHOTO, editable=editable,
         url=str(url or ""), caption=str(caption or ""), verified=verified,
-        status=status,
+        status=status, photo_id=(str(photo_id) if photo_id else None),
     )
 
 

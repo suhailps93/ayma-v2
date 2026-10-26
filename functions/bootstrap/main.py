@@ -59,6 +59,7 @@ from auth import (  # noqa: E402
 )
 from config import CONFIG  # noqa: E402
 import agent_wake  # noqa: E402
+import feature_flags  # noqa: E402
 import gemini  # noqa: E402
 import billing  # noqa: E402
 import token_ledger  # noqa: E402
@@ -112,7 +113,6 @@ import photo_notes  # noqa: E402
 import photo_attrs  # noqa: E402
 import physical_attributes  # noqa: E402
 import appearance  # noqa: E402
-from media_embed import process_media  # noqa: E402
 import backfill_ops  # noqa: E402
 import completeness  # noqa: E402
 import skill_runs  # noqa: E402
@@ -128,6 +128,7 @@ from skills import (  # noqa: E402
     make_session_tool_fns,
     session_tool_declarations,
 )
+from skills import questionnaire as questionnaire_skill  # noqa: E402
 import turn_caps  # noqa: E402
 import context_opt  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn, format_recent_turns  # noqa: E402
@@ -141,6 +142,13 @@ import reverse_image_search  # noqa: E402
 import report_hub  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
+# Python drops INFO from every ``ayma.*`` logger unless a handler is attached
+# (the root logger has none, so only WARNING+ reached Cloud Logging). The
+# diagnostic lines the deep-dive discovery sources emit are INFO.
+_ayma_logs = logging.getLogger("ayma")
+if not _ayma_logs.handlers:
+    _ayma_logs.addHandler(logging.StreamHandler())
+    _ayma_logs.setLevel(logging.INFO)
 
 # Cap on the recent-turns window a client may send (§1.5 — it is bounded
 # client-side; the server enforces its own ceiling regardless).
@@ -214,21 +222,6 @@ def _ayma_voice_language(uid: str) -> str:
         return ""
 
 
-def _voice_language_directive(pref: str) -> str:
-    """A system-prompt line: speak the way the user asked by default, but
-    follow the caller if they switch language mid-call."""
-    if not pref:
-        return (
-            "\n\nSpeak English by default. If the caller talks to you in "
-            "another language, switch and keep replying in theirs until they "
-            "switch back."
-        )
-    return (
-        f"\n\nSpeak like this by default: {pref}. If the caller clearly moves "
-        "to another language, follow them into it and switch back when they do."
-    )
-
-
 def _server_ts():
     from firebase_admin import firestore
 
@@ -293,6 +286,21 @@ def _interview_progress(uid: str, mode: str) -> str:
         )
     except Exception:  # noqa: BLE001
         logger.exception("interview progress read failed for %s", uid)
+        return ""
+
+
+def _preferences_context(uid: str, mode: str) -> str:
+    """The user's saved partner preferences for the system prompt (voice and
+    chat). Empty for marketing mode. Best-effort: a read failure omits it."""
+    if mode == session_mode.MODE_MARKETING:
+        return ""
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        return session_mode.describe_preferences(
+            snap.to_dict() if snap.exists else None
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("preferences context read failed for %s", uid)
         return ""
 
 
@@ -390,10 +398,71 @@ from monitoring import init_sentry  # noqa: E402
 
 init_sentry("ayma-api")  # no-op without SENTRY_DSN
 
-app = FastAPI(title="Ayma Main API", version=CONFIG.version)
+import biometric_consent  # noqa: E402
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: E402
+from firebase_admin import auth as _firebase_auth  # noqa: E402
+
+# Signed-in calls that must work before the biometric consent is recorded:
+# routing (/bootstrap reports `biometric_consent_required` itself), the age
+# declaration, the consent endpoints, account delete / recover, and the
+# pre-sign-in / sign-in helpers.
+_CONSENT_EXEMPT_PATHS = frozenset({
+    "/health",
+    "/bootstrap",
+    "/age-gate/declare",
+    "/biometric-consent",
+    "/biometric-consent/withdraw",
+    "/account/delete",
+    "/account/recover",
+    "/welcome/token",
+    "/instagram/signin-auth-url",
+    "/instagram/signin",
+})
+_optional_bearer = HTTPBearer(auto_error=False)
+
+
+async def require_biometric_consent(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
+) -> None:
+    """App-wide gate (founder decision 2026-10-25): every authenticated
+    feature endpoint refuses a caller without a biometric consent record with
+    403 ``{"code": "biometric_consent_required"}``, which the app turns into
+    the consent screen. Unauthenticated routes (cron, admin password, public
+    share pages, webhooks) and an invalid token (the route's own auth answers
+    401) pass through untouched."""
+    if credentials is None or request.url.path in _CONSENT_EXEMPT_PATHS:
+        return
+    try:
+        uid = _firebase_auth.verify_id_token(credentials.credentials)["uid"]
+    except Exception:  # noqa: BLE001 - the route's own auth dependency rejects it
+        return
+    if not await asyncio.to_thread(biometric_consent.has_consent, get_db(), uid):
+        raise _consent_required_error()
+
+
+def _consent_required_error() -> HTTPException:
+    """403 ``biometric_consent_required``; the header lets the app's HTTP
+    layer spot it on any call without parsing the body."""
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": biometric_consent.CODE_REQUIRED,
+            "message": biometric_consent.REQUIRED_MESSAGE,
+        },
+        headers={"X-Ayma-Consent-Required": "1"},
+    )
+
+
+app = FastAPI(
+    title="Ayma Main API",
+    version=CONFIG.version,
+    dependencies=[Depends(require_biometric_consent)],
+)
 
 # Per-endpoint fixed-window rate limiting (§10.4, §10.6 step 3). Wraps every
 # route; `/cron/*` is still additionally protected by the X-Cron-Secret check.
+import ratelimit  # noqa: E402
 from ratelimit import RateLimiter  # noqa: E402
 
 app.add_middleware(RateLimiter)
@@ -483,6 +552,17 @@ async def bootstrap(
     # circuit, so an out-of-credits user still lands on their real screen.
     mode = _session_mode(caller)
 
+    # Mandatory biometric consent (biometric_consent.py): nothing past
+    # onboarding — no voice room, no background face jobs — until it is
+    # recorded. The app then records the consent ticked at sign-in, or shows
+    # the one-time consent screen.
+    if not await asyncio.to_thread(biometric_consent.has_consent, get_db(), uid):
+        return {
+            "biometric_consent_required": True,
+            "session_mode": mode,
+            "uid": uid,
+        }
+
     # Automatic one-time self deep-dive (§ auto analysis): fires on the first
     # app open once onboarding has given us a real name, writes only to the
     # user's private `ai_only` memory, and never blocks this response.
@@ -528,18 +608,14 @@ async def bootstrap(
     # purely to read `session_mode` before the user has asked for voice at
     # all — no real caller ever starts a voice session with an empty
     # `session_id`; see `newSessionId()`, always non-empty) must not touch
-    # the user's voice room. `room_name_for(uid)` is deterministic — one room
-    # per user, reused across every call — so waking the scale-to-zero agent
-    # and seeding that room here would waste a Cloud Run cold start on a call
-    # that never connects, and worse: `seed_room_context` can create the room
-    # and race LiveKit's auto-dispatch-on-room-creation into starting an
-    # agent job against *this* call's empty `recent_turns`, well before the
-    # user's real, later /bootstrap-for-voice call reseeds the same room with
-    # the actual history — history an already-dispatched job (which only
-    # reads room metadata once, at its own startup, per `_read_room_seed`)
-    # would never see. A credible mechanism behind Ayma re-asking
-    # already-covered ground on nothing more than the app being reopened
-    # (founder report, 2026-09-25) — token minting alone is cheap/stateless
+    # any voice room. Waking the scale-to-zero agent and seeding a room here
+    # would waste a Cloud Run cold start on a call that never connects, and
+    # `seed_room_context` creating the room would trigger LiveKit's
+    # auto-dispatch-on-room-creation into an agent job for a room nobody
+    # joins, seeded with this call's empty `recent_turns` (when room names
+    # were still one-per-user, the mechanism behind Ayma re-asking
+    # already-covered ground on nothing more than the app being reopened,
+    # founder report 2026-09-25). Token minting alone is cheap/stateless
     # (just a signed JWT) so it still happens unconditionally below, keeping
     # this call's response shape unchanged for `splash_screen.dart`.
     if session_id:
@@ -581,6 +657,7 @@ async def bootstrap(
             wiki_context=wiki_ctx,
             session_mode=mode,
             profile_progress=_interview_progress(uid, mode),
+            preferences_context=_preferences_context(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
             db=get_db(),
             summary_context=summary_text,
@@ -588,7 +665,7 @@ async def bootstrap(
             # API re-bills every resident token per turn, so the seed drops
             # the persona rules that cannot fire in a voice session.
             variant="voice",
-        ) + _voice_language_directive(voice_language)
+        ) + "\n\n" + prompt_module.voice_language_directive(voice_language)
         # Phase 0 measurement (cost program 2026-09-26): what this voice
         # session's Live context is being seeded with, by component. The Live
         # API re-bills the accumulated session context every turn, so this
@@ -633,6 +710,9 @@ async def bootstrap(
             "token": token,
             "url": CONFIG.livekit_url,
             "room": room,
+            # The configured voice backend (`inference` / `google`), only so
+            # the client can tag a failed voice start in its crash reports.
+            "voice_provider": feature_flags.get("voice_provider"),
         },
     }
 
@@ -800,6 +880,12 @@ class ChatRequest(BaseModel):
     screen_subject_uid: str = Field(default="", max_length=128)
     screen_subject_name: str = Field(default="", max_length=200)
     screen_note: str = Field(default="", max_length=500)
+    # The generic capture of that screen (route pattern, a screen-owned
+    # summary, and the live text + operable controls); see
+    # `app_registry.json` `screen_context`.
+    screen_route: str = Field(default="", max_length=200)
+    screen_detail: str = Field(default="", max_length=1500)
+    screen_visible: str = Field(default="", max_length=3200)
 
 
 _USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
@@ -1039,15 +1125,20 @@ async def _prepare_chat(
     viewing_profile_uid = req.viewing_profile_uid.strip()
     # Skip when the profile case already covers it — a bare "looking at X's
     # profile" line would only be redundant next to the full briefing below.
+    screen_route = req.screen_route.strip()
     current_screen_context = (
         ""
-        if not screen or (screen == "profile" and viewing_profile_uid)
+        if not (screen or screen_route)
+        or (screen == "profile" and viewing_profile_uid)
         else app_control_mod._describe(
             {
                 "screen": screen,
                 "subject_uid": req.screen_subject_uid.strip(),
                 "subject_name": req.screen_subject_name.strip(),
                 "note": req.screen_note.strip(),
+                "detail": req.screen_detail.strip(),
+                "route": screen_route,
+                "visible": req.screen_visible.strip(),
             }
         )
     )
@@ -1092,6 +1183,7 @@ async def _prepare_chat(
         wiki_context=wiki_ctx,
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
+        preferences_context=_preferences_context(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
         viewing_profile_context=public_profile_mod._viewing_profile_context(
             get_db(), uid, viewing_profile_uid
@@ -1912,6 +2004,11 @@ class VoiceContextRequest(BaseModel):
     subject_uid: str = Field(default="", max_length=128)
     subject_name: str = Field(default="", max_length=120)
     note: str = Field(default="", max_length=200)
+    # What the screen is showing (e.g. Explore's visible people), capped.
+    detail: str = Field(default="", max_length=1500)
+    # The route pattern and the generic live capture (text + controls).
+    route: str = Field(default="", max_length=200)
+    visible: str = Field(default="", max_length=3200)
 
 
 def _voice_context_doc(uid: str):
@@ -1931,7 +2028,7 @@ async def set_voice_context(
     """The LiveKit agent's ``current_screen`` tool reads this so Ayma knows
     what "them / this / here" means in a call. The client posts it on every
     screen change while a session is live, and clears it when the call ends."""
-    if not req.screen.strip():
+    if not (req.screen.strip() or req.route.strip()):
         await asyncio.to_thread(_voice_context_doc(uid).delete)
         return {"ok": True, "cleared": True}
     await asyncio.to_thread(
@@ -1941,6 +2038,9 @@ async def set_voice_context(
             "subject_uid": req.subject_uid.strip(),
             "subject_name": req.subject_name.strip(),
             "note": req.note.strip(),
+            "detail": req.detail.strip(),
+            "route": req.route.strip(),
+            "visible": req.visible.strip(),
             "updated_at": _server_ts(),
         },
     )
@@ -2074,6 +2174,8 @@ async def verification_selfie(
             status_code=403,
             detail="storage_path must be under the caller's verification/ tree.",
         )
+    if not await asyncio.to_thread(biometric_consent.has_consent, get_db(), uid):
+        raise _consent_required_error()
     try:
         image, mime = await asyncio.to_thread(
             media_embed.download_bytes, req.storage_path
@@ -2169,6 +2271,71 @@ async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
     return {"ok": True, **result}
 
 
+class BiometricConsentRequest(BaseModel):
+    agreed: bool
+    consent_version: str = Field(min_length=1, max_length=40)
+    region: str = Field(default="", max_length=8)
+
+
+@app.get("/biometric-consent")
+async def biometric_consent_status(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The caller's face-matching consent state (consent screen, Settings)."""
+    try:
+        return await asyncio.to_thread(biometric_consent.status, get_db(), uid)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("biometric consent status read failed for %s", uid)
+        raise HTTPException(
+            status_code=502, detail="Could not read your consent."
+        ) from exc
+
+
+@app.post("/biometric-consent")
+async def biometric_consent_accept(
+    req: BiometricConsentRequest, uid: str = Depends(require_not_underage_uid)
+) -> dict[str, object]:
+    """Record the explicit "I agree" from the consent screen. Validates that
+    the person agreed to the current consent version; 400 otherwise. A
+    soft-deleted account must be recovered first (409): writing the record
+    would recreate the live ``users/{uid}`` doc."""
+    if await asyncio.to_thread(_recovery_required, uid):
+        raise HTTPException(
+            status_code=409, detail="Recover your account first."
+        )
+    try:
+        result = await asyncio.to_thread(
+            biometric_consent.record, get_db(), uid,
+            agreed=req.agreed, version=req.consent_version, region=req.region,
+        )
+    except biometric_consent.ConsentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("biometric consent write failed for %s", uid)
+        raise HTTPException(
+            status_code=502, detail="Could not save your consent."
+        ) from exc
+    return {"ok": True, **result}
+
+
+@app.post("/biometric-consent/withdraw")
+async def biometric_consent_withdraw(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Withdraw the consent: deletes all face data now and deletes the
+    account (consent is required to use Ayma)."""
+    try:
+        result = await asyncio.to_thread(
+            biometric_consent.withdraw, get_db(), _bucket(), uid
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("biometric consent withdrawal failed for %s", uid)
+        raise HTTPException(
+            status_code=502, detail="Could not withdraw your consent."
+        ) from exc
+    return {"ok": True, **result}
+
+
 class AgeDeclaration(BaseModel):
     birthdate: str = Field(max_length=40)
 
@@ -2223,6 +2390,13 @@ async def explore(
         "age_max": age_max,
     }
     filters = explore_mod.merge_filters(dropdown, nl)
+    try:
+        snap = await asyncio.to_thread(schema.profile_doc(get_db(), uid).get)
+        filters = explore_mod.apply_saved_age_range(
+            filters, snap.to_dict() if snap.exists else None
+        )
+    except Exception:  # noqa: BLE001 - no saved range just means no default
+        logger.warning("explore: saved age range read failed", exc_info=True)
     try:
         cards = await asyncio.to_thread(
             explore_mod.explore, get_db(), uid, filters, min(limit, 60)
@@ -2357,24 +2531,35 @@ async def _deep_dive_job(
 ) -> None:
     """The slow part of a deep dive, run as a background task so it finishes
     even if the app is backgrounded or closed. Delivers via a push + the chat
-    transcript. Never raises."""
+    transcript. Never raises.
+
+    Always finishes the run doc the endpoint opened (``done`` once the digest
+    is stored, ``failed`` otherwise) so the app's "Searching the web…" state
+    ends; a job killed before its ``finally`` is caught by the stale-run
+    timeout in :func:`deep_dive.run_status`."""
+    report_id = deep_dive.dive_report_id("" if is_self else target, name)
+    status = deep_dive.RUN_FAILED
     try:
-        digest = await deep_dive.run(
-            name, db=get_db(), uid=uid, context=context,
-            is_self=is_self, target_uid="" if is_self else target, force=force,
-        )
-    except token_ledger.TokenCapExceeded:
-        logger.info("deep-dive job skipped for %s (credit cap)", uid)
-        return
-    except Exception:  # noqa: BLE001
-        logger.exception("deep-dive job failed for %s", uid)
-        return
-    try:
-        await _finish_deep_dive(
-            uid, digest, is_self=is_self, target=target, name=name, notify=True,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("deep-dive job delivery failed for %s", uid)
+        try:
+            digest = await deep_dive.run(
+                name, db=get_db(), uid=uid, context=context,
+                is_self=is_self, target_uid="" if is_self else target, force=force,
+            )
+        except token_ledger.TokenCapExceeded:
+            logger.info("deep-dive job skipped for %s (credit cap)", uid)
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive job failed for %s", uid)
+            return
+        status = deep_dive.RUN_DONE
+        try:
+            await _finish_deep_dive(
+                uid, digest, is_self=is_self, target=target, name=name, notify=True,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive job delivery failed for %s", uid)
+    finally:
+        await asyncio.to_thread(deep_dive.mark_run, get_db(), uid, report_id, status)
 
 
 @app.post("/deep-dive")
@@ -2428,11 +2613,16 @@ async def deep_dive_endpoint(
             uid, cached, is_self=is_self, target=target, name=name, notify=False,
         )
 
+    report_id = deep_dive.dive_report_id("" if is_self else target, name)
+    await asyncio.to_thread(
+        deep_dive.mark_run, get_db(), uid, report_id, deep_dive.RUN_RUNNING,
+    )
     background.add_task(
         _deep_dive_job, uid, name, context, is_self, target, req.force,
     )
     return {
         "queued": True,
+        "report_id": report_id,
         "is_self": is_self,
         "subject_image": _deep_dive_subject_image(is_self, target),
         "tool_label": _deep_dive_label(is_self, name),
@@ -2445,7 +2635,10 @@ async def deep_dive_report(
 ) -> dict[str, object]:
     """Re-open a stored deep dive by id — from a chat ``[deep_dive:<id>]``
     marker or the "View research" button on a profile. 404 when the caller has
-    no such dive.
+    no such dive. ``run_status`` is the caller's latest queued run on this
+    report (``running`` / ``done`` / ``failed`` / ``""`` — see
+    :func:`deep_dive.run_status`); the app shows its in-progress banner only
+    while it is ``running``.
 
     A ``uid_<subject>``-shaped id (a dive on a known app user) is
     self-describing and lives under that PERSON's own collection, not the
@@ -2477,6 +2670,7 @@ async def deep_dive_report(
     data = await asyncio.to_thread(_read)
     if data is None:
         raise HTTPException(status_code=404, detail="No such report.")
+    run = await asyncio.to_thread(deep_dive.run_status, get_db(), uid, report_id)
     digest = data.get("digest") or {}
     # A self-describing id's subject is the uid embedded in it (it may have
     # been swapped above for that subject's own, differently-keyed, self-dive
@@ -2500,6 +2694,7 @@ async def deep_dive_report(
         "created_at": (
             created.isoformat() if hasattr(created, "isoformat") else None
         ),
+        "run_status": run,
     }
 
 
@@ -3361,7 +3556,7 @@ async def profile_share(
     return {"ok": True, "message_id": msg_id}
 
 
-# --- Shareable reports (web research / Appearance / Match) ----------------
+# --- Shareable reports (web research / Match) ------------------------------
 
 
 class ShareCreateRequest(BaseModel):
@@ -3541,7 +3736,18 @@ async def block_user(
     return {"ok": True}
 
 
-@app.get("/instagram/auth-url")
+def _require_meta_integrations() -> None:
+    """Instagram / Facebook are deferred to V2: 404 while the flag is off."""
+    import feature_flags
+
+    if not feature_flags.enabled("meta_integrations"):
+        raise HTTPException(
+            status_code=404,
+            detail="Instagram and Facebook integrations are not available.",
+        )
+
+
+@app.get("/instagram/auth-url", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_auth_url(uid: str = Depends(require_uid)) -> dict[str, str]:
     """The URL the client opens to authorise Instagram access (§8.1)."""
     import instagram
@@ -3556,7 +3762,7 @@ class InstagramConnectRequest(BaseModel):
     code: str = Field(min_length=1, max_length=4096)
 
 
-@app.post("/instagram/connect")
+@app.post("/instagram/connect", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_connect(
     req: InstagramConnectRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
@@ -3572,7 +3778,7 @@ async def instagram_connect(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.post("/instagram/disconnect")
+@app.post("/instagram/disconnect", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_disconnect(
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
@@ -3583,7 +3789,7 @@ async def instagram_disconnect(
     return {"ok": True}
 
 
-@app.get("/instagram/signin-auth-url")
+@app.get("/instagram/signin-auth-url", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_signin_auth_url() -> dict[str, str]:
     """"Sign in with Instagram" (new) — the URL the client opens to authorise.
     Unlike ``/instagram/auth-url`` above, this is reachable with no Firebase
@@ -3600,7 +3806,7 @@ class InstagramSigninRequest(BaseModel):
     code: str = Field(min_length=1, max_length=4096)
 
 
-@app.post("/instagram/signin")
+@app.post("/instagram/signin", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_signin(req: InstagramSigninRequest) -> dict[str, object]:
     """Exchange the OAuth ``code``, resolve/create the Firebase user tied to
     that Instagram identity, and mint a custom token
@@ -3692,6 +3898,17 @@ async def admin_provider_spend() -> dict[str, object]:
     import provider_spend
 
     return await asyncio.to_thread(provider_spend.snapshot)
+
+
+@app.get(
+    "/admin/feature-flags", dependencies=[Depends(require_admin_password)]
+)
+async def admin_feature_flags() -> dict[str, object]:
+    """Effective value and source of every feature flag (read-only) — see
+    ``feature_flags.py`` / docs/FEATURE_FLAGS.md."""
+    import feature_flags
+
+    return {"flags": await asyncio.to_thread(feature_flags.snapshot)}
 
 
 @app.get("/admin/vendors", dependencies=[Depends(require_admin_password)])
@@ -4253,6 +4470,34 @@ class ProfileTextSaveRequest(BaseModel):
     base_version: str = Field(min_length=1, max_length=64)
 
 
+class PartnerPreferencesRequest(BaseModel):
+    partner_age_min: int | None = Field(default=None, ge=18, le=99)
+    partner_age_max: int | None = Field(default=None, ge=18, le=99)
+    distance_pref: str | None = Field(default=None, max_length=16)
+
+
+@app.put("/profile/preferences")
+async def profile_preferences_save(
+    req: PartnerPreferencesRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Edit profile: save the partner age range and distance preference where
+    matching already reads them (questionnaire doc + ``qz_*`` profile mirror).
+    422 on a value the questionnaire would not accept."""
+    try:
+        recorded = await asyncio.to_thread(
+            lambda: questionnaire_skill.save_partner_preferences(
+                get_db(),
+                uid,
+                age_min=req.partner_age_min,
+                age_max=req.partner_age_max,
+                distance_pref=req.distance_pref,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, "recorded": recorded}
+
+
 @app.get("/profile/public-text")
 async def profile_public_text(uid: str = Depends(require_uid)) -> dict[str, object]:
     """The caller's public profile as one plain text (each section under a
@@ -4283,8 +4528,10 @@ async def profile_public_text_save(
 
 @app.get("/profile/proposals")
 async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Ayma's pending updates to the public profile text, each with a
-    sentence-level before/after diff, awaiting Apply or Dismiss."""
+    """Ayma's pending public-profile updates, grouped by section — each change
+    an individual ``{id, op, text}`` row the user applies or dismisses on its
+    own. Apply shows it publicly; Dismiss keeps it in the private profile and
+    Ayma's notes."""
     return {
         "proposals": await asyncio.to_thread(
             profile_manual.list_proposals, get_db(), uid
@@ -4292,10 +4539,39 @@ async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object
     }
 
 
+@app.post("/profile/proposals/{page_id}/changes/{change_id}/apply")
+async def profile_change_apply(
+    page_id: str, change_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Apply one change — show that added sentence on the public profile (or
+    carry out that removal)."""
+    try:
+        return await asyncio.to_thread(
+            profile_manual.apply_change, get_db(), uid, page_id, change_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such pending change.")
+
+
+@app.post("/profile/proposals/{page_id}/changes/{change_id}/dismiss")
+async def profile_change_dismiss(
+    page_id: str, change_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Dismiss one change — keep it off the public profile but in the private
+    profile and Ayma's notes."""
+    try:
+        return await asyncio.to_thread(
+            profile_manual.dismiss_change, get_db(), uid, page_id, change_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such pending change.")
+
+
 @app.post("/profile/proposals/{page_id}/apply")
 async def profile_proposal_apply(
     page_id: str, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
+    """Apply all of a section's remaining changes at once."""
     try:
         return await asyncio.to_thread(
             profile_manual.apply_proposal, get_db(), uid, page_id
@@ -4308,6 +4584,8 @@ async def profile_proposal_apply(
 async def profile_proposal_dismiss(
     page_id: str, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
+    """Dismiss all of a section's remaining changes at once — each kept in the
+    private profile and Ayma's notes."""
     try:
         return await asyncio.to_thread(
             profile_manual.dismiss_proposal, get_db(), uid, page_id
@@ -4415,16 +4693,24 @@ async def story_set_linkedin(
 @app.get("/usage")
 async def token_usage(
     caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
+    period: str | None = None,
 ) -> dict[str, object]:
     """This user's lifetime Gemini-token usage — the running total plus a
     per-feature breakdown (chat / voice / matching / wiki / explore / reengage)
     — and the derived credit balance (grant + top-ups − used). Credits only:
     the dollar cost / real-money fields are included solely for callers on the
     dev-view allowlist (``CONFIG.dev_view_emails`` / ``dev_view_uids``), and
-    ``is_dev`` tells the app whether to show its Dev view entry."""
+    ``is_dev`` tells the app whether to show its Dev view entry. ``period``
+    (``since_credit`` | ``7d`` | ``30d`` | ``all``) adds ``period_usage``: the
+    credits spent per feature (with friendly labels) over that window."""
     uid, is_dev = caller
+    if period is not None and period not in token_ledger.PERIODS:
+        raise HTTPException(status_code=400, detail="unknown period")
+    extra = {} if period is None else {"period": period}
     view = await asyncio.to_thread(
-        functools.partial(token_ledger.usage, uid, include_dollars=is_dev)
+        functools.partial(
+            token_ledger.usage, uid, include_dollars=is_dev, **extra
+        )
     )
     return {**view, "is_dev": is_dev}
 
@@ -4469,6 +4755,93 @@ async def credits_topup(
     return await asyncio.to_thread(token_ledger.usage, uid)
 
 
+class DevFlagsRequest(BaseModel):
+    """Body of ``POST /dev/flags`` — only ``dev_panel`` may be written."""
+
+    model_config = {"extra": "forbid"}
+
+    password: str = Field(min_length=1, max_length=256)
+    dev_panel: bool
+
+
+@app.get("/dev/flags")
+async def dev_flags_get(uid: str = Depends(require_uid)) -> dict[str, bool]:
+    """The effective ``dev_panel`` flag (the app's Developer panel gate)."""
+    import dev_flags
+
+    return {"dev_panel": await asyncio.to_thread(dev_flags.current)}
+
+
+class DevVerifyRequest(BaseModel):
+    """Body of ``POST /dev/verify`` — the Developer panel's unlock check."""
+
+    model_config = {"extra": "forbid"}
+
+    password: str = Field(min_length=1, max_length=256)
+
+
+@app.post("/dev/verify")
+async def dev_verify(
+    request: Request, body: DevVerifyRequest, uid: str = Depends(require_uid)
+) -> dict[str, bool]:
+    """Verify the Developer-panel password server-side without changing any
+    flag. The app calls this to unlock the panel's contents; the same
+    constant-time compare and Firestore-backed lockout as ``POST /dev/flags``
+    apply, and the password is never logged."""
+    import dev_flags
+
+    try:
+        await asyncio.to_thread(
+            dev_flags.verify,
+            get_db(), uid, body.password,
+            ip=ratelimit.trusted_client_ip(request),
+        )
+    except dev_flags.NotConfigured as exc:
+        raise HTTPException(
+            status_code=503, detail="Developer access is not configured."
+        ) from exc
+    except dev_flags.LockedOut as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many wrong passwords. Try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except dev_flags.BadPassword as exc:
+        raise HTTPException(status_code=403, detail="Wrong password.") from exc
+    return {"ok": True}
+
+
+@app.post("/dev/flags")
+async def dev_flags_set(
+    request: Request, body: DevFlagsRequest, uid: str = Depends(require_uid)
+) -> dict[str, bool]:
+    """Switch ``dev_panel`` live from the app's Developer panel. The password
+    is checked server-side against ``DEV_PANEL_PASSWORD`` with a Firestore-backed
+    lockout (see ``dev_flags``); the write lands in ``config/feature_flags`` and
+    its ``app_config/dev_panel`` mirror, which the app listens to."""
+    import dev_flags
+
+    try:
+        value = await asyncio.to_thread(
+            dev_flags.set_dev_panel,
+            get_db(), uid, body.password, body.dev_panel,
+            ip=ratelimit.trusted_client_ip(request),
+        )
+    except dev_flags.NotConfigured as exc:
+        raise HTTPException(
+            status_code=503, detail="Developer flag switching is not configured."
+        ) from exc
+    except dev_flags.LockedOut as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many wrong passwords. Try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except dev_flags.BadPassword as exc:
+        raise HTTPException(status_code=403, detail="Wrong password.") from exc
+    return {"dev_panel": value}
+
+
 @app.post("/webhooks/revenuecat", dependencies=[Depends(require_revenuecat)])
 async def revenuecat_webhook(request: Request) -> dict[str, str]:
     """RevenueCat subscription events -> plan/pool changes (``billing``).
@@ -4491,6 +4864,59 @@ async def revenuecat_webhook(request: Request) -> dict[str, str]:
         logger.exception("revenuecat webhook failed")
         raise HTTPException(status_code=500, detail="Webhook failed.") from exc
     return {"status": status_text}
+
+
+class BillingSyncRequest(BaseModel):
+    """Body of ``POST /billing/sync``: the app-reported active entitlement.
+    Used ONLY by the dev-view fallback when no RevenueCat REST key is
+    provisioned (debug testing); otherwise ignored — the server reads the
+    entitlement from RevenueCat's REST API itself."""
+
+    model_config = {"extra": "forbid"}
+
+    product_id: str | None = Field(default=None, max_length=120)
+    expires_at_ms: int | None = Field(default=None, ge=0)
+    is_trial: bool = False
+
+
+@app.post("/billing/sync")
+async def billing_sync(
+    body: BillingSyncRequest,
+    caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
+) -> dict[str, object]:
+    """Grant/refresh this user's monthly plan credits from their current
+    RevenueCat entitlement — the sandbox/Test-Store path and a production
+    resilience fallback alongside the webhook (which stays the source of
+    truth). With ``REVENUECAT_SECRET_API_KEY`` set the server reads the active
+    entitlement from RevenueCat's REST API (authoritative, works for everyone
+    incl. the Test Store). Without it, a dev-view caller's client-reported
+    entitlement is trusted (debug testing only) and no one else is credited.
+    Idempotent: a re-sync in the same billing period never re-adds credits.
+    Returns the refreshed usage view plus ``sync_status``."""
+    uid, is_dev = caller
+    entitlement = None
+    if CONFIG.revenuecat_secret_api_key:
+        try:
+            entitlement = await asyncio.to_thread(
+                billing.fetch_active_entitlement, uid, CONFIG
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("revenuecat REST entitlement lookup failed")
+            raise HTTPException(
+                status_code=502, detail="Could not reach RevenueCat."
+            ) from exc
+    elif is_dev:
+        entitlement = billing.client_entitlement(
+            body.product_id, body.expires_at_ms, body.is_trial
+        )
+    try:
+        status_text = await asyncio.to_thread(
+            billing.sync_entitlement, get_db(), uid, entitlement, CONFIG
+        )
+    except billing.UnknownUser as exc:
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    view = await asyncio.to_thread(token_ledger.usage, uid)
+    return {"sync_status": status_text, **view}
 
 
 class FeedbackRequest(BaseModel):
@@ -4709,12 +5135,54 @@ async def media_photos_remove(
     background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Soft-remove a photo from the grid — the ``user_media`` doc, Storage
-    file and embedding all stay (§8.3, §8.7 step 5)."""
+    """Remove a photo from the PUBLIC profile — it moves to the hidden list, so
+    it leaves every public reader but stays in Ayma's analysis pool and its
+    ``user_media`` doc/Storage/embedding are untouched (§8.3, §8.7 step 5).
+    Reversible by re-adding. For an irreversible erase see
+    ``/media/photos/{id}/delete``."""
     import photo_ops
 
     photos = await asyncio.to_thread(
         photo_ops.remove_photo, get_db(), uid, media_id
+    )
+    # The public lead photo may have changed — rebuild physical attributes.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "photos": photos}
+
+
+@app.post("/media/photos/{media_id}/primary")
+async def media_photos_set_primary(
+    media_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Make ``media_id`` the primary (hero) public photo (§8.3). A no-op for an
+    id that isn't currently a public photo."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.set_primary, get_db(), uid, media_id
+    )
+    # The lead photo changed — rebuild the physical-attributes record.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "photos": photos}
+
+
+@app.post("/media/photos/{media_id}/delete")
+async def media_photos_delete_permanent(
+    media_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Delete a photo EVERYWHERE — drop it from the public grid and the hidden
+    list, then erase the ``user_media`` doc and its Storage blob so the
+    face/body embedding and analysis go too (§8.3). Not reversible; the inline
+    carousel gates this behind a second "Delete everywhere" confirm. The usual
+    "remove" (``/remove``) only hides it from the public profile."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.delete_photo_permanent, get_db(), uid, media_id, _bucket()
     )
     # The photo set changed — rebuild the physical-attributes record.
     background.add_task(physical_attributes.refresh, get_db(), uid)
@@ -5049,9 +5517,16 @@ class AppearanceReportRequest(BaseModel):
     # the vision passes alongside the user's profile grid. Capped, best-effort.
     image_paths: list[str] = Field(default_factory=list, max_length=6)
     # Gate the face / physique sections — the client sets these from
-    # ``GET /appearance/coverage`` but the run is never hard-blocked.
+    # ``GET /appearance/coverage`` / ``/eligibility`` but the run is never
+    # hard-blocked. A skipped axis (``want_*=False``) reports as ``skipped``.
     want_face: bool = True
     want_body: bool = True
+    # The explicit grid photos the pre-run sheet chose for each axis. ``None``
+    # (field omitted) means "auto-pick the first eligible grid photo"; a list
+    # restricts the axis to those grid media ids, server-validated to the
+    # caller's own, currently-eligible photos.
+    face_media_ids: list[str] | None = Field(default=None, max_length=6)
+    body_media_ids: list[str] | None = Field(default=None, max_length=6)
 
 
 @app.post("/appearance/report")
@@ -5093,6 +5568,8 @@ async def appearance_report_run(
             extra_images=extra or None,
             want_face=bool(req.want_face),
             want_body=bool(req.want_body),
+            face_media_ids=req.face_media_ids,
+            body_media_ids=req.body_media_ids,
             source="endpoint",
         )
     except token_ledger.TokenCapExceeded:
@@ -5155,6 +5632,18 @@ async def appearance_coverage_get(
     return await asyncio.to_thread(photo_attrs.coverage, get_db(), uid)
 
 
+@app.get("/appearance/eligibility")
+async def appearance_eligibility_get(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """``{face: [{media_id, url}], body: [...], has_face_photo,
+    has_body_photo}`` for the caller — their current grid photos grouped by
+    which Appearance axis each is eligible for, so the pre-run sheet can show
+    the Face and Body photo groups as thumbnails and let the user pick or skip
+    per axis. Derived from the shot-type tags; never hard-blocks a run."""
+    return await asyncio.to_thread(photo_attrs.eligibility, get_db(), uid)
+
+
 class AppearanceFindingCorrectRequest(BaseModel):
     # A physical_attributes field name (e.g. "visible_tattoos"), or "face" /
     # "body" for those two composite reads.
@@ -5184,6 +5673,34 @@ async def appearance_finding_correct(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class AppearanceCardHiddenRequest(BaseModel):
+    # Storage paths of the caller's OWN analysed photos to keep off the
+    # shareable report card (card-only — never deletes the photo or its
+    # analysis). Validated server-side against the caller's analysed pool.
+    hidden: list[str] = Field(default_factory=list, max_length=32)
+
+
+@app.post("/appearance/card/hidden")
+async def appearance_card_hidden_set(
+    req: AppearanceCardHiddenRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Set which of the caller's analysed photos are hidden from their
+    shareable Appearance report card (§ report card: remove-from-card). The
+    card builder and the exported 1080x1920 share image both honour this
+    list, so the shared picture matches what the user sees. Card-only: it does
+    NOT delete the underlying photo or its analysis — the full report still
+    shows every photo. 422 if an id isn't one of the caller's own analysed
+    photos. Returns ``{hidden: [...]}`` (the stored list)."""
+    try:
+        stored = await asyncio.to_thread(
+            appearance.set_card_hidden, get_db(), uid, req.hidden
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"hidden": stored}
 
 
 # --- generic reports (§ generic reports) --------------------------------
@@ -5406,6 +5923,18 @@ class CompatibilityRequest(BaseModel):
     force: bool = False
 
 
+def _match_label(name: str) -> str:
+    return f"Checked your match with {name}"
+
+
+def _match_chat_text(name: str, pct: int, match_id: str) -> str:
+    """The chat event for a finished match: a one-line teaser with the score
+    and the `[match:<id>]` sentinel (the client strips it and shows the match
+    card that opens `/match/<id>`). Never the report itself (§ founder: keep
+    report-result chat messages to a teaser + link)."""
+    return f"Your match with {name} is ready: {pct}%.\n\n[match:{match_id}]"
+
+
 async def _match_job(uid: str, other: str) -> None:
     """Score one pair and persist ``matches/{matchId}``, then push. Runs as a
     background task so it completes even if the app leaves. Never raises."""
@@ -5454,9 +5983,28 @@ async def _match_job(uid: str, other: str) -> None:
         # block the match result itself from landing.
         logger.exception("match job: stale candidate cleanup failed for %s x %s", uid, other)
 
+    pct = round(float(result["score"]) * 100)
     try:
-        pct = round(float(result["score"]) * 100)
         name = _profile_full_name(other) or "your match"
+    except Exception:  # noqa: BLE001 - a name read must not lose the result
+        logger.exception("match job: name read failed for %s", other)
+        name = "your match"
+    # Drop the result into the Ayma conversation as an event, the same way a
+    # finished deep dive does (`_finish_deep_dive`): a short line plus the
+    # `[match:<id>]` sentinel the chat renders as a tappable match-score card.
+    # Whoever started the match (a tap on the profile, Recalculate on the
+    # report, or Ayma tapping Run match for the user in a call or in text),
+    # the result lands in the chat even though it finishes after that turn.
+    try:
+        chat_history.append(
+            db, uid, "ayma",
+            _match_chat_text(name, pct, match_id),
+            tools=[_match_label(name)],
+            subject_image=_deep_dive_subject_image(False, other) or None,
+        )
+    except Exception:  # noqa: BLE001 - the chat event must never block the push
+        logger.exception("match chat event failed for %s", uid)
+    try:
         await notifications_triggers.notify_skill_done(
             db, uid, f"Your match with {name} is ready — {pct}%.",
             f"match/{match_id}",

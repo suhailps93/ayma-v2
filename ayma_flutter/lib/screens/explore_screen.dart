@@ -9,6 +9,7 @@ import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -75,10 +76,26 @@ class ExploreScreenState extends State<ExploreScreen> {
     _load();
   }
 
+  static const _filterLabels = {
+    _Filter.all: 'Everyone',
+    _Filter.liked: 'Your likes',
+    _Filter.mutual: 'Mutual',
+    _Filter.scored: 'Match run',
+  };
+
+  /// Mirrors what the grid shows (query, active chip, the people) into the
+  /// screen context Ayma reads, so she can describe the page.
   void _syncContext() {
     AppContext.instance.set(
       screen: 'explore',
       note: _searchController.text.trim(),
+      detail: _loading || _error != null
+          ? ''
+          : exploreSummary(
+              query: _searchController.text,
+              filterLabel: _filterLabels[_filter]!,
+              cards: _visibleCards,
+            ),
     );
   }
 
@@ -107,6 +124,15 @@ class ExploreScreenState extends State<ExploreScreen> {
         _cards = cards;
         _loading = false;
       });
+      _syncContext();
+      AppContext.instance.exploreReport.value = ExploreReport(
+        query: _searchController.text.trim(),
+        summary: exploreSummary(
+          query: _searchController.text,
+          filterLabel: _filterLabels[_filter]!,
+          cards: _visibleCards,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -128,8 +154,8 @@ class ExploreScreenState extends State<ExploreScreen> {
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
+        child: ChromeColumn(
+          header: [
             // Same rendering as the old plain serif `Text` (identical
             // padding/size defaults), plus a back arrow when this screen is
             // pushed standalone (`/explore` deep link / `open_screen`) —
@@ -152,7 +178,9 @@ class ExploreScreenState extends State<ExploreScreen> {
               ),
             ),
             SizedBox(
-              height: 38,
+              // The chip row's height follows the text size, so large text
+              // never squeezes the chips' labels.
+              height: MediaQuery.textScalerOf(context).scale(14) + 24,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -168,8 +196,11 @@ class ExploreScreenState extends State<ExploreScreen> {
                           _Filter.scored => 'Match run',
                         }),
                         selected: _filter == f,
-                        onSelected: (_) => setState(
-                            () => _filter = _filter == f ? _Filter.all : f),
+                        onSelected: (_) {
+                          setState(
+                              () => _filter = _filter == f ? _Filter.all : f);
+                          _syncContext();
+                        },
                         visualDensity: VisualDensity.compact,
                       ),
                     ),
@@ -177,56 +208,100 @@ class ExploreScreenState extends State<ExploreScreen> {
               ),
             ),
             const SizedBox(height: 4),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(_error!,
-                                style: AymaType.sans(
-                                    size: 14, color: AymaColors.error)),
-                          ),
-                        )
-                      : _visibleCards.isEmpty
-                          ? Center(
-                              child: Text(
-                                  _filter == _Filter.all
-                                      ? 'No one matches that yet.'
-                                      : 'Nothing here for this filter.',
-                                  style: AymaType.sans(
-                                      size: 15,
-                                      soft: true,
-                                      color: ac.fgMute)),
-                            )
-                          : GridView.builder(
-                              // Search field above: dragging the results
-                              // away dismisses the keyboard (iOS has no
-                              // dismiss key).
-                              keyboardDismissBehavior:
-                                  ScrollViewKeyboardDismissBehavior.onDrag,
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 12,
-                                crossAxisSpacing: 12,
-                                childAspectRatio: 0.66,
-                              ),
-                              itemCount: _visibleCards.length,
-                              itemBuilder: (context, i) => FadeSlideIn(
-                                delay: staggerDelay(i),
-                                child:
-                                    _Card(card: _visibleCards[i], api: _api),
-                              ),
-                            ),
-            ),
           ],
+          body: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? CenteredScroll(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(_error!,
+                          style: AymaType.sans(
+                              size: 14, color: AymaColors.error)),
+                    )
+                  : _visibleCards.isEmpty
+                      ? Center(
+                          child: Text(
+                              _filter == _Filter.all
+                                  ? 'No one matches that yet.'
+                                  : 'Nothing here for this filter.',
+                              style: AymaType.sans(
+                                  size: 15,
+                                  soft: true,
+                                  color: ac.fgMute)),
+                        )
+                      : GridView.builder(
+                          // Search field above: dragging the results
+                          // away dismisses the keyboard (iOS has no
+                          // dismiss key).
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          // Two columns on a phone; more on the Fold's inner
+                          // display, a tablet or landscape, instead of two
+                          // giant cards.
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 240,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 0.66,
+                          ),
+                          itemCount: _visibleCards.length,
+                          itemBuilder: (context, i) => FadeSlideIn(
+                            delay: staggerDelay(i),
+                            child:
+                                _Card(card: _visibleCards[i], api: _api),
+                          ),
+                        ),
+          headerShare: 0.5,
+          footerShare: 0.5,
         ),
       ),
     );
   }
+}
+
+/// Most people listed in [exploreSummary]; the rest are only counted.
+const _summaryMaxPeople = 12;
+const _summaryMaxChars = 1200;
+
+/// Plain-text description of what Explore is showing — the applied search and
+/// chip filter, how many people, and the first few (name, age, place, score,
+/// like state) — capped so it can ride along as screen context or tool output.
+@visibleForTesting
+String exploreSummary({
+  required String query,
+  required String filterLabel,
+  required List<ExploreCard> cards,
+}) {
+  final q = query.trim();
+  final head = StringBuffer(q.isEmpty ? 'No search text' : 'Search "$q"')
+    ..write(', filter "$filterLabel": ');
+  final others = cards.where((c) => !c.isSelf).toList();
+  if (others.isEmpty) {
+    head.write('nobody is listed.');
+    return head.toString();
+  }
+  head.write('${others.length} ${others.length == 1 ? 'person' : 'people'}');
+  final parts = <String>[];
+  for (final c in others.take(_summaryMaxPeople)) {
+    final bits = <String>[
+      c.name.isEmpty ? 'Someone' : c.name,
+      if (c.age != null) '${c.age}',
+      if (c.location.isNotEmpty) c.location,
+      if (c.score != null) '${(c.score! * 100).round()}% match',
+      if (c.mutual) 'mutual like' else if (c.liked) 'you liked',
+    ];
+    parts.add(bits.join(', '));
+  }
+  head.write(': ${parts.join('; ')}');
+  if (others.length > _summaryMaxPeople) {
+    head.write('; and ${others.length - _summaryMaxPeople} more');
+  }
+  final out = head.toString();
+  return out.length <= _summaryMaxChars
+      ? out
+      : '${out.substring(0, _summaryMaxChars - 1)}…';
 }
 
 class _Card extends StatelessWidget {

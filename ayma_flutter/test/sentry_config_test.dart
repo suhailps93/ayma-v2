@@ -21,23 +21,25 @@ void main() {
           sentryShouldRun(on, dsn: 'https://k@o.ingest/1', compiledIn: false),
           isFalse);
       expect(
-          sentryShouldRun(const SentryFlag(), dsn: 'https://k@o.ingest/1'),
+          sentryShouldRun(const SentryFlag(enabled: false),
+              dsn: 'https://k@o.ingest/1'),
           isFalse);
     });
   });
 
   group('SentryFlag', () {
-    test('defaults are off with low trace rate', () {
+    test('defaults are on with low trace rate', () {
       const f = SentryFlag();
-      expect(f.enabled, isFalse);
+      expect(f.enabled, isTrue);
       expect(f.tracesSampleRate, 0.05);
       expect(f.errorSampleRate, 1.0);
     });
 
-    test('fromMap only enables on literal true and rejects bad rates', () {
-      expect(SentryFlag.fromMap(null).enabled, isFalse);
-      expect(SentryFlag.fromMap({'enabled': 'true'}).enabled, isFalse);
-      expect(SentryFlag.fromMap({'enabled': 1}).enabled, isFalse);
+    test('fromMap only disables on literal false and rejects bad rates', () {
+      expect(SentryFlag.fromMap(null).enabled, isTrue);
+      expect(SentryFlag.fromMap({'enabled': 'false'}).enabled, isTrue);
+      expect(SentryFlag.fromMap({'enabled': 0}).enabled, isTrue);
+      expect(SentryFlag.fromMap({'enabled': false}).enabled, isFalse);
       final f = SentryFlag.fromMap({
         'enabled': true,
         'traces_sample_rate': 5,
@@ -55,8 +57,8 @@ void main() {
       expect(g.errorSampleRate, 0.5);
     });
 
-    test('loadCached is off with nothing cached', () async {
-      expect((await SentryFlag.loadCached()).enabled, isFalse);
+    test('loadCached is on with nothing cached', () async {
+      expect((await SentryFlag.loadCached()).enabled, isTrue);
     });
 
     test('refresh caches the Firestore flag, and flipping it off sticks',
@@ -74,11 +76,11 @@ void main() {
       expect((await SentryFlag.loadCached()).enabled, isFalse);
     });
 
-    test('a missing flag doc turns it off', () async {
-      SharedPreferences.setMockInitialValues({'sentry_flag_enabled': true});
-      expect((await SentryFlag.loadCached()).enabled, isTrue);
-      await SentryFlag.refresh(FakeFirebaseFirestore());
+    test('a missing flag doc falls back to on', () async {
+      SharedPreferences.setMockInitialValues({'sentry_flag_enabled': false});
       expect((await SentryFlag.loadCached()).enabled, isFalse);
+      await SentryFlag.refresh(FakeFirebaseFirestore());
+      expect((await SentryFlag.loadCached()).enabled, isTrue);
     });
   });
 

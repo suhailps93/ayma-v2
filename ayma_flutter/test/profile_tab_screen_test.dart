@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/credits_balance.dart';
+import 'package:ayma_flutter/services/meta_integrations.dart';
 import 'package:ayma_flutter/widgets/completeness_ring.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -89,7 +90,7 @@ Widget _host(ApiClient api) {
         '/skills',
         '/appearance/current',
         '/deep-dive/rep1',
-        '/profile/usage',
+        '/profile/plan',
       ])
         GoRoute(
           path: path,
@@ -106,6 +107,30 @@ Widget _host(ApiClient api) {
 
 void main() {
   setUp(() => CreditsBalance.instance.remaining.value = null);
+  tearDown(() => MetaIntegrations.enabled.value = false);
+
+  test('the meta flag only turns on for a literal enabled:true', () {
+    expect(MetaIntegrations.parse(null), isFalse);
+    expect(MetaIntegrations.parse({'enabled': 'true'}), isFalse);
+    expect(MetaIntegrations.parse({'enabled': true}), isTrue);
+  });
+
+  testWidgets('meta_integrations off hides the Connect Instagram row',
+      (tester) async {
+    MetaIntegrations.enabled.value = false;
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    expect(find.text('Connect Instagram', skipOffstage: false), findsNothing);
+  });
+
+  testWidgets('meta_integrations on shows the Connect Instagram row',
+      (tester) async {
+    MetaIntegrations.enabled.value = true;
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    expect(
+        find.text('Connect Instagram', skipOffstage: false), findsOneWidget);
+  });
 
   testWidgets('the Invite friends row renders and taps through',
       (tester) async {
@@ -139,10 +164,10 @@ void main() {
       'Profile details',
       'Search the web about me',
       'Appearance',
-      'User settings',
+      'Settings',
       'AYMA',
       'Ayma’s settings',
-      'Credits',
+      'Plan',
     ];
     final ys = [for (final t in order) tester.getTopLeft(find.text(t)).dy];
     expect([...ys]..sort(), ys, reason: 'rows must appear in this order');
@@ -150,16 +175,16 @@ void main() {
     expect(find.text('Pause matching'), findsNothing);
   });
 
-  testWidgets('User settings, Ayma\'s settings and Credits tap through',
+  testWidgets('Settings, Ayma\'s settings and Plan tap through',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     for (final entry in const {
-      'User settings': '/settings',
+      'Settings': '/settings',
       'Ayma’s settings': '/settings/ayma',
-      'Credits': '/profile/usage',
+      'Plan': '/profile/plan',
     }.entries) {
       await tester.pumpWidget(_host(_api()));
       await tester.pumpAndSettle();
@@ -248,7 +273,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('0'), findsOneWidget);
 
-    // Simulates UsageScreen fetching a fresh balance elsewhere (a reload, a
+    // Simulates the Plan screen fetching a fresh balance elsewhere (a reload, a
     // pull-to-refresh) — the tab row must pick it up live, not stay on the
     // number it fetched once at its own initState.
     CreditsBalance.instance.remaining.value = 83;

@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import 'ask_ayma_action.dart';
 import 'ayma_photo.dart';
+import 'ayma_toast.dart';
 
 /// Shared photo-gallery pieces used by Your Story's inline Photos section
 /// (see `story_editor_screen.dart`) and by the appearance report screen's
@@ -109,9 +110,8 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
       await action();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't update that photo — try again.")),
-        );
+        AymaToast.show(context, "Couldn't update that photo — try again.",
+            kind: AymaToastKind.error);
       }
       return;
     } finally {

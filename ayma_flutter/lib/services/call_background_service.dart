@@ -13,7 +13,8 @@ import 'voice_session_controller.dart';
 /// bubble:
 ///
 /// - **Android**: an ongoing foreground-service notification — "Ayma", a
-///   live status line, and Hang Up / Mute actions — backed by a real
+///   live status line, and Hang Up / Mute mic actions (plus Unmute Ayma
+///   while she has been told to "shut up") — backed by a real
 ///   `Service` (`CallForegroundService.kt`), not just a displayed
 ///   notification. Requires `POST_NOTIFICATIONS` on Android 13+
 ///   ([CallPermissions] asks for it up front, when the call starts).
@@ -39,9 +40,10 @@ import 'voice_session_controller.dart';
 ///
 /// Both native sides talk back over the same `ayma/call_ui` method channel:
 /// this class only ever reflects [VoiceSessionController]'s state onto the
-/// OS and relays the two actions a user can trigger from that OS surface
-/// (hang up / mute) straight back into the controller — it never drives the
-/// call itself, so there is exactly one state machine (§ ask item 4).
+/// OS and relays the actions a user can trigger from that OS surface (hang
+/// up / mute mic / unmute Ayma) straight back into the controller — it never
+/// drives the call itself, so there is exactly one state machine (§ ask
+/// item 4).
 class CallBackgroundService {
   CallBackgroundService(
     this._voice, {
@@ -50,6 +52,52 @@ class CallBackgroundService {
   }) : _permissions = permissions ?? CallPermissions();
 
   static const _channel = MethodChannel('ayma/call_ui');
+
+  /// The one service per [VoiceSessionController], shared by every
+  /// [MainShellScreen] that shows it — see [acquire].
+  static final Map<VoiceSessionController, CallBackgroundService> _shared = {};
+
+  /// The instance whose [_onNativeCall] is installed on the process-wide
+  /// [_channel], so a disposing instance never clears another's handler.
+  static CallBackgroundService? _handlerOwner;
+
+  /// Returns the single service for [voice], starting it on first use.
+  /// Every caller must pair this with one [release].
+  ///
+  /// Routing is flat and Ayma's own `navigate` command pushes routes, so two
+  /// `MainShellScreen`s can be mounted at once (one pushed over another, or a
+  /// replacement built before the old one is disposed). When each owned its
+  /// own service, the later one's `dispose()` cleared the shared channel
+  /// handler while the earlier one kept the notification up — so Hang Up and
+  /// Mute taps reached Dart with no handler and did nothing. One ref-counted
+  /// service per call means the handler lives exactly as long as the last
+  /// screen that shows the call.
+  static CallBackgroundService acquire(
+    VoiceSessionController voice, {
+    CallPermissions? permissions,
+    @visibleForTesting bool? debugSupportedOverride,
+  }) {
+    final service = _shared.putIfAbsent(
+      voice,
+      () => CallBackgroundService(
+        voice,
+        permissions: permissions,
+        debugSupportedOverride: debugSupportedOverride,
+      ),
+    );
+    if (service._refs++ == 0) service.start();
+    return service;
+  }
+
+  /// Drops one [acquire] reference; the last one disposes the service.
+  void release() {
+    if (_refs == 0) return;
+    if (--_refs > 0) return;
+    if (identical(_shared[_voice], this)) _shared.remove(_voice);
+    dispose();
+  }
+
+  int _refs = 0;
 
   final VoiceSessionController _voice;
   final CallPermissions _permissions;
@@ -67,6 +115,7 @@ class CallBackgroundService {
   void start() {
     if (!_supported || _started) return;
     _started = true;
+    _handlerOwner = this;
     _channel.setMethodCallHandler(_onNativeCall);
     _voiceListener = _onVoiceChanged;
     _voice.addListener(_voiceListener!);
@@ -80,7 +129,10 @@ class CallBackgroundService {
     _started = false;
     if (_voiceListener != null) _voice.removeListener(_voiceListener!);
     _voiceListener = null;
-    _channel.setMethodCallHandler(null);
+    if (identical(_handlerOwner, this)) {
+      _handlerOwner = null;
+      _channel.setMethodCallHandler(null);
+    }
     unawaited(_stopUi());
   }
 
@@ -153,6 +205,9 @@ class CallBackgroundService {
   Map<String, dynamic> _statusArgs() => {
         'status': _statusText(),
         'muted': _voice.muted,
+        // Ayma told to "shut up": the notification adds an "Unmute Ayma"
+        // action (distinct from "Mute mic", the user's own mic).
+        'aymaQuiet': _voice.aymaQuiet,
         // The native side renders the live MM:SS itself (Notification
         // chronometer, driven off elapsedRealtime) from this wall-clock
         // start time, rather than trusting a string this class recomputes
@@ -162,10 +217,18 @@ class CallBackgroundService {
           'startTimeMillis': _liveSince!.millisecondsSinceEpoch,
       };
 
-  String _statusText() => _voice.muted ? 'Muted' : 'Voice call';
+  /// Notification line under "Ayma". Ayma's quiet state wins over the
+  /// user's mic state: it is the one that needs an action to undo.
+  @visibleForTesting
+  static const quietStatus = 'Shut up mode: tap Unmute to bring her back';
+
+  String _statusText() {
+    if (_voice.aymaQuiet) return quietStatus;
+    return _voice.muted ? 'Mic muted' : 'Voice call';
+  }
 
   /// Handles calls arriving *from* native — a tap on the notification's Hang
-  /// Up / Mute action (Android) or on CallKit's own end-call / mute controls
+  /// Up / Mute mic / Unmute Ayma action (Android) or on CallKit's own end-call / mute controls
   /// (iOS). Exposed for tests as [debugHandleNativeCall].
   Future<dynamic> _onNativeCall(MethodCall call) async {
     switch (call.method) {
@@ -174,6 +237,10 @@ class CallBackgroundService {
       case 'toggleMute':
         await _voice.toggleMute();
         unawaited(_pushUpdate());
+      case 'unmuteAyma':
+        // The notification is updated by the agent's `agent_mute` echo
+        // (via [_onVoiceChanged]), not optimistically here.
+        await _voice.unmuteAyma();
       case 'setMuted':
         // CallKit's own in-call mute button (iOS has no separate "Mute"
         // notification action — the system supplies this one) drives the

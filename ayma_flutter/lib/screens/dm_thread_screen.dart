@@ -13,6 +13,7 @@ import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
@@ -22,6 +23,10 @@ import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
+import '../services/screen_capture.dart';
+
+/// How many of the newest DM messages Ayma's screen context may include.
+const int _kContextMessages = 3;
 
 /// One DM conversation (§6.6, §6.11 step 9). Text send is wired; photo/voice
 /// use the same message pipeline once a file is uploaded (Step 51 ingests them).
@@ -217,8 +222,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       // about, not one-shot openers.
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Not sent ($e).')));
+        AymaToast.show(context, 'Not sent ($e).', kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -278,9 +282,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Couldn't attach that ($e).")));
+        AymaToast.show(context, "Couldn't attach that ($e).",
+            kind: AymaToastKind.error);
       }
     }
   }
@@ -314,6 +317,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Block & report'),
         content: const Text(
           'They will no longer be able to message you, this thread is hidden, '
@@ -337,8 +341,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not block ($e).')));
+        AymaToast.show(context, 'Could not block ($e).',
+            kind: AymaToastKind.error);
       }
     }
   }
@@ -424,11 +428,16 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                   itemCount: msgs.length,
                   itemBuilder: (context, i) {
                     final m = msgs[msgs.length - 1 - i];
+                    final bubble = _Bubble(message: m, mine: m.senderUid == me);
                     return FadeSlideIn(
                       key: ValueKey(m.id),
                       delay: staggerDelay(i),
                       offset: 8,
-                      child: _Bubble(message: m, mine: m.senderUid == me),
+                      // Ayma's screen context carries only the newest few
+                      // messages of a private conversation.
+                      child: i < _kContextMessages
+                          ? bubble
+                          : NoScreenContext(child: bubble),
                     );
                   },
                 );

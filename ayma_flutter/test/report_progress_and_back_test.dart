@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/screens/match_report_screen.dart';
-import 'package:ayma_flutter/screens/plans_screen.dart';
+import 'package:ayma_flutter/screens/plan_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/pending_chat_queue.dart';
@@ -137,7 +137,7 @@ void main() {
       httpClient:
           MockClient((req) async => http.Response('{"plans":[]}', 200)),
     );
-    await tester.pumpWidget(MaterialApp(home: PlansScreen(api: api)));
+    await tester.pumpWidget(MaterialApp(home: PlanScreen(api: api)));
     await tester.pump();
     expect(find.byType(AymaBackButton), findsOneWidget);
   });
@@ -154,7 +154,7 @@ void main() {
               jsonEncode({
                 'name': 'Jane',
                 'is_self': true,
-                'created_at': metaCalls <= 1 ? 't1' : 't2',
+                'run_status': metaCalls <= 1 ? '' : 'done',
                 'digest': {'summary': 's', 'facts': <dynamic>[]},
               }),
               200,
@@ -184,7 +184,7 @@ void main() {
         tester.widget<IconButton>(find.byType(IconButton).last).onPressed,
         isNull);
 
-    // The poll sees a new createdAt and clears the in-progress state.
+    // The poll sees the server's run finish and clears the in-progress state.
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(find.text('Searching the web again…'), findsNothing);

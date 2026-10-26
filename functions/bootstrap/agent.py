@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -50,10 +51,12 @@ if "pytest" not in sys.modules:  # pragma: no cover - dev/deploy only
 from google.genai import types  # noqa: E402
 from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     Agent,
+    AgentServer,
     AgentSession,
     AgentStateChangedEvent,
     ConversationItemAddedEvent,
     JobContext,
+    JobProcess,
     MetricsCollectedEvent,
     RoomOutputOptions,
     UserInputTranscribedEvent,
@@ -62,19 +65,29 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     llm,
 )
 from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
+from livekit.agents.types import NOT_GIVEN, NotGivenOr  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
+from agent_keepalive import CallKeepAlive, KeepAliveServer  # noqa: E402
 from idle_watchdog import IdleWatchdog  # noqa: E402
+import llm_routing  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
-from monitoring import capture_exception, init_sentry  # noqa: E402
+from monitoring import capture_exception, capture_message, init_sentry  # noqa: E402
 
 init_sentry("ayma-agent")  # no-op without SENTRY_DSN
 from db import get_db  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
-from prompt import compose_system_prompt, load_voice_opener  # noqa: E402
+from prompt import (  # noqa: E402
+    compose_system_prompt,
+    load_voice_opener,
+    voice_swap_confirm,
+    voice_swap_failed,
+    voice_swap_note,
+)
 import skills  # noqa: E402
+import voices  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
@@ -101,8 +114,14 @@ TOPIC_CALL_ENDING = "call_ending"
 REASON_IDLE_TIMEOUT = "idle_timeout"
 # Ayma was told to "shut up" (or called back by name) — published on every
 # muted<->unmuted transition so the client can show an "Ayma is quiet" chip
-# instead of a call that looks broken. Payload: {"muted": bool}.
+# instead of a call that looks broken. Payload: {"muted": bool}. Also
+# re-published whenever a participant (re)joins and in answer to every
+# `agent_mute_control` message, so the client's view always matches.
 TOPIC_AGENT_MUTE = "agent_mute"
+# Client -> agent: the user tapped "Unmute" in the app (the quiet chip, the
+# nav-bar orb, or the call notification's "Unmute Ayma" action). Payload:
+# {"muted": false}. Only unmuting is accepted; muting stays a spoken command.
+TOPIC_AGENT_MUTE_CONTROL = "agent_mute_control"
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -236,8 +255,51 @@ def _turn_detection_config() -> types.RealtimeInputConfig | None:
     return types.RealtimeInputConfig(automatic_activity_detection=aad)
 
 
+def build_inference_realtime_model(voice: str):
+    """Gemini Live through LiveKit Inference (``VOICE_PROVIDER=inference``).
+
+    ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
+    gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
+    protocol carries are passed: the voice preset, and server-VAD padding /
+    silence taken from the same env tuning as the direct path. Live probes
+    (docs/LIVEKIT_INFERENCE_MIGRATION.md section 1b) proved only
+    ``silence_duration_ms`` is honoured; Gemini-specific options (temperature,
+    start/end sensitivity, sliding-window context compression, affective
+    dialog, proactivity, language hint) are silently ignored by the gateway,
+    so none are passed.
+
+    Needs ``livekit-agents`` >= 1.8 (``requirements-agent.txt`` pins 1.8.9);
+    the credentials are the ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` the
+    worker already runs with.
+    """
+    from livekit.agents import inference
+
+    realtime_cls = getattr(inference, "RealtimeModel", None)
+    if realtime_cls is None:
+        raise RuntimeError(
+            "VOICE_PROVIDER=inference needs livekit-agents >= 1.8 "
+            "(inference.RealtimeModel is missing from the installed version)"
+        )
+    from openai.types.realtime.realtime_audio_input_turn_detection import ServerVad
+
+    vad: dict[str, object] = {"type": "server_vad"}
+    prefix = _env_ms("GEMINI_LIVE_PREFIX_PADDING_MS", 300)
+    silence = _env_ms("GEMINI_LIVE_SILENCE_DURATION_MS", 700)
+    if prefix is not None:
+        vad["prefix_padding_ms"] = prefix
+    if silence is not None:
+        vad["silence_duration_ms"] = silence
+    return realtime_cls(
+        model=CONFIG.inference_live_model,
+        voice=voice,
+        turn_detection=ServerVad(**vad),
+    )
+
+
 def build_realtime_model(
-    voice_name: str | None = None, language: str | None = None
+    voice_name: str | None = None,
+    language: str | None = None,
+    route: str | None = None,
 ) -> RealtimeModel:
     """Construct the Gemini Live model.
 
@@ -248,12 +310,17 @@ def build_realtime_model(
     ``ayma_voice_name`` preference (§13.3) when set and valid, else the
     ``config.py`` default. ``language`` is their ``ayma_voice_language``
     (BCP-47) default — the system prompt still lets Ayma follow the caller into
-    another language mid-call.
+    another language mid-call. ``route`` (``"vertex"`` | ``"inference"``) is the
+    already-decided provider for this call (see :func:`_run_session`); omitted,
+    it is resolved here without a uid.
     """
     import voices
 
     voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
         else CONFIG.gemini_live_voice
+
+    if (route or llm_routing.route_for("voice")) == "inference":
+        return build_inference_realtime_model(voice)
 
     dev_api = CONFIG.gemini_live_use_dev_api
     model = (
@@ -350,15 +417,13 @@ def build_realtime_model(
         # Gemini Developer API — the only place Live 3.x is served. Key comes
         # from GOOGLE_API_KEY (Secret Manager, mounted on ayma-agent only).
         #
-        # Async function calling: 3.8-live defaults to it server-side, but we
-        # deliberately do NOT pass tool_behavior=NON_BLOCKING — the plugin's
-        # default (no behavior on the declarations) round-trips fine, verified
-        # live on 2026-09-26 (toolCall -> toolResponse -> model continues),
-        # and every Ayma tool result is meant to be spoken about immediately,
-        # so the synchronous flow is the behavior we want. Revisit only if a
-        # slow tool should ever keep audio streaming while it runs
-        # (RealtimeModel(tool_behavior=types.Behavior.NON_BLOCKING) plus
-        # tool_response_scheduling are already supported by livekit 1.7.1).
+        # Async function calling: livekit-plugins-google >= 1.8 defaults
+        # 3.8-live tool declarations to NON_BLOCKING (the model keeps talking
+        # while a tool runs). Every Ayma tool result is meant to be spoken
+        # about immediately, so pin BLOCKING — the synchronous flow verified
+        # live on 2026-09-26 (toolCall -> toolResponse -> model continues).
+        # Dev API only: Vertex rejects a per-declaration ``behavior``.
+        kwargs["tool_behavior"] = types.Behavior.BLOCKING
         key = os.getenv("GOOGLE_API_KEY")
         if not key:
             raise RuntimeError(
@@ -396,13 +461,20 @@ def _publish_transcript(
     asyncio.create_task(_send())
 
 
-def _publish_tool_event(ctx: JobContext, phase: str, name: str) -> None:
+def _publish_tool_event(
+    ctx: JobContext, phase: str, name: str, label: str | None = None
+) -> None:
     """Fire-and-forget a ``tool_used`` event onto the room data channel — the
     voice equivalent of the text chat's status -> reply kicker (gemini.py).
     ``phase`` is ``"start"`` (live, present-progressive label) or ``"end"``
     (persistent, past-tense label) so the client can swap one for the other,
-    matching ``generate_reply_events``'s status -> reply pattern."""
-    label = _working_label(name) if phase == "start" else _tool_label(name)
+    matching ``generate_reply_events``'s status -> reply pattern. ``label``
+    (end only) is the outcome label when the tool's chip depends on what it
+    did (``tool_labels.outcome_label``)."""
+    if phase == "start":
+        label = _working_label(name)
+    else:
+        label = label or _tool_label(name)
     payload = json.dumps({"name": name, "label": label, "phase": phase}).encode()
 
     async def _send() -> None:
@@ -451,7 +523,9 @@ class SessionFlush:
         session_id: str,
         window: list[Turn],
         seeded_turn_count: int = 0,
+        voice_provider: str | None = None,
     ) -> None:
+        self._voice_provider = voice_provider
         self._db = db
         self._uid = uid
         self._session_id = session_id
@@ -462,12 +536,53 @@ class SessionFlush:
         # happens to have history". See `_has_new_turns`.
         self._seeded_turn_count = seeded_turn_count
         self.done = False
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Begin the flush in the background without waiting for it — called
+        the moment the AgentSession closes (caller hung up, dropped, or the
+        app ended the call), so the work overlaps LiveKit's ~20 s room
+        departure wait instead of starting only when the job's shutdown
+        callbacks run against ``shutdown_process_timeout``. Production logs
+        (2026-10-25) showed the process killed mid-flush on that deadline."""
+        if self._task is None and self._should_flush():
+            self.done = True
+            self._task = asyncio.create_task(self._flush())
 
     async def run(self) -> None:
-        if self.done:
-            return
+        """Run the flush once and wait for it. Every caller — the
+        session-close trigger, an explicit idle/out-of-credits stop, the
+        shutdown callback — awaits the same in-flight task, so the shutdown
+        callback can never return (and let the process exit) while an
+        earlier-started flush is still writing."""
+        self.start()
+        if self._task is not None:
+            await asyncio.shield(self._task)
+
+    async def _flush(self) -> None:
+        started = time.monotonic()
+        logger.info(
+            "session-flush start uid=%s session=%s turns=%d",
+            self._uid, self._session_id, len(self._window),
+        )
+        try:
+            await persist_and_ingest(
+                self._db, self._uid, self._session_id, list(self._window),
+                voice_provider=self._voice_provider,
+            )
+        except Exception:  # noqa: BLE001 - shutdown must still complete
+            logger.exception(
+                "session flush failed for %s/%s", self._uid, self._session_id
+            )
+        logger.info(
+            "session-flush end uid=%s session=%s duration_ms=%d",
+            self._uid, self._session_id,
+            int((time.monotonic() - started) * 1000),
+        )
+
+    def _should_flush(self) -> bool:
         if not self._uid or not self._session_id or not self._window:
-            return
+            return False
         if not _has_new_turns(self._window, self._seeded_turn_count):
             # A common shape for a client that never finished connecting
             # (e.g. the WebRTC/ICE handshake timing out, or the caller
@@ -479,9 +594,8 @@ class SessionFlush:
             # that were ingested once already: a wasted Gemini call charged
             # to the user's token ledger for zero new information, on every
             # single failed/retried voice-connect attempt.
-            return
-        self.done = True
-        await persist_and_ingest(self._db, self._uid, self._session_id, self._window)
+            return False
+        return True
 
 
 async def end_call_out_of_credits(
@@ -866,8 +980,44 @@ def relay_mute_control(
     ever touches replies while ``state.muted`` is true.
 
     When ``ctx`` is given, every mute transition is also published on the
-    ``agent_mute`` topic so the client can show that Ayma is deliberately quiet.
+    ``agent_mute`` topic so the client can show that Ayma is deliberately quiet,
+    and the state stays authoritative for the whole call:
+
+    * an ``agent_mute_control`` message ``{"muted": false}`` from the app (the
+      user tapped Unmute) unmutes, and the current state is always echoed back;
+    * a participant (re)joining the room gets the current state re-published,
+      so a reconnect or a fresh client never shows a stale chip.
+
+    The voice hot swap (``VoiceSwapper``) keeps this same ``AgentSession`` and
+    ``state``, so a muted call stays muted across it.
     """
+
+    def _set_muted(muted: bool) -> None:
+        state.muted = muted
+        if ctx is not None:
+            _publish_mute_state(ctx, muted)
+
+    if ctx is not None:
+
+        def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
+            if getattr(packet, "topic", None) != TOPIC_AGENT_MUTE_CONTROL:
+                return
+            try:
+                wanted = json.loads(bytes(packet.data).decode())["muted"]
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                logger.warning("malformed agent_mute_control payload dropped")
+                return
+            if wanted is not False:
+                logger.warning("agent_mute_control only accepts muted=false")
+            else:
+                state.muted = False
+            _publish_mute_state(ctx, state.muted)
+
+        ctx.room.on("data_received", _on_data)
+        ctx.room.on(
+            "participant_connected",
+            lambda _p: _publish_mute_state(ctx, state.muted),
+        )
 
     @session.on("user_input_transcribed")
     def _on_user_final(ev: UserInputTranscribedEvent) -> None:
@@ -878,13 +1028,9 @@ def relay_mute_control(
             return
         if state.muted:
             if _addresses_ayma(transcript):
-                state.muted = False
-                if ctx is not None:
-                    _publish_mute_state(ctx, False)
+                _set_muted(False)
         elif _is_mute_trigger(transcript):
-            state.muted = True
-            if ctx is not None:
-                _publish_mute_state(ctx, True)
+            _set_muted(True)
 
     @session.on("speech_created")
     def _on_speech_created(ev) -> None:  # noqa: ANN001 - SpeechCreatedEvent
@@ -913,6 +1059,7 @@ def relay_token_usage(
     session_id: str = "",
     ctx: JobContext | None = None,
     on_credits_exhausted: Callable[[], Awaitable[None]] | None = None,
+    inference: bool = False,
 ) -> None:
     """Add each Gemini Live turn's token count to the user's token ledger
     (`users/{uid}.token_usage.features.voice`) — the same lifetime cap the
@@ -943,6 +1090,10 @@ def relay_token_usage(
     if not uid:
         return
 
+    voice_provider = (
+        token_ledger.PROVIDER_LIVEKIT_INFERENCE if inference
+        else token_ledger.provider_for(token_ledger.FEATURE_VOICE)
+    )
     tally = {"turns": 0, "input": 0, "output": 0, "total": 0}
     # Guards the callback to fire at most once — several `metrics_collected`
     # events can land in quick succession (e.g. overlapping turns) while the
@@ -970,7 +1121,7 @@ def relay_token_usage(
         # — the same selection build_realtime_model makes), threaded into the
         # cost computation so the ledger prices real traffic, not the Vertex
         # default it may not be using (pre-2026-09-26 accuracy bug).
-        model = token_ledger.live_model_id()
+        model = token_ledger.live_model_id(inference=inference)
         logger.info(
             "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model, in_tok, out_tok, total,
@@ -990,6 +1141,7 @@ def relay_token_usage(
             output_tokens=out_tok,
             model=model,
             session_id=session_id,
+            provider=voice_provider,
         )
 
         if on_credits_exhausted is None or cap_triggered["done"]:
@@ -1096,22 +1248,422 @@ async def _await_room_seed(ctx: JobContext) -> RoomSeed:
     return seed
 
 
+_MISHEARD_TOOL_REFUSAL = (
+    "Not done: the user's last line looks like a misheard fragment, not a "
+    "request. Don't act on it; ask them to say it again."
+)
+
+
+def misheard_fragment_guard(
+    window: list[Turn], seeded: int, preference: Callable[[], str]
+) -> Callable[[], str | None]:
+    """A ``make_livekit_tools`` guard: refuse a tool call when the newest line
+    in the call is the caller's and looks like speech recognition mishearing
+    them (``voices.is_misheard_fragment``, founder test 2026-10-26: "el
+    número" / "murió"). Only lines spoken in this call count (``seeded`` is
+    the window length at call start), and only when that line is the latest
+    turn, so a reply Ayma already gave since then lifts it. ``preference``
+    returns the caller's current speaking language (it can change mid-call)."""
+    import voices
+
+    def _guard() -> str | None:
+        if len(window) <= seeded:
+            return None
+        last = window[-1]
+        if last.role == ROLE_USER and voices.is_misheard_fragment(
+            last.text, preference()
+        ):
+            logger.info("tool call refused: misheard fragment %r", last.text)
+            return _MISHEARD_TOOL_REFUSAL
+        return None
+
+    return _guard
+
+
 def _session_tools(
-    ctx: JobContext, uid: str, on_activity: Callable[[], None] | None = None
+    ctx: JobContext,
+    uid: str,
+    on_activity: Callable[[], None] | None = None,
+    on_voice_change: Callable[[str | None, str], tuple[bool, str]] | None = None,
+    guard: Callable[[], str | None] | None = None,
+    session_id: str = "",
+    window: list[Turn] | None = None,
 ) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
     (§1.7 step 3) so the client can show what Ayma is doing mid-call, the way
-    the text chat's status -> reply kicker already does."""
+    the text chat's status -> reply kicker already does. ``guard`` (see
+    :func:`misheard_fragment_guard`) can refuse a call before it runs.
+    ``session_id`` and ``window`` (the call's live turn list) let
+    ``send_dm_message`` keep its pending send and check the caller's own yes."""
     if not uid:
         return []
 
-    def _on_call(phase: str, name: str) -> None:
+    def _on_call(phase: str, name: str, label: str | None) -> None:
         if on_activity is not None:
             on_activity()
-        _publish_tool_event(ctx, phase, name)
+        _publish_tool_event(ctx, phase, name, label)
 
-    return skills.make_livekit_tools(get_db(), uid, on_call=_on_call)
+    return skills.make_livekit_tools(
+        get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change,
+        guard=guard, session_id=session_id,
+        turns=(lambda: list(window)) if window is not None else None,
+    )
+
+
+# Mid-call voice switch (founder request 2026-10-25): Gemini Live fixes the
+# voice (and the speech-language hint) when the Live session is set up, so a
+# change during the call reconnects it. Before the reconnect Ayma says a short
+# heads-up in the old voice; we wait for that to finish playing, bounded by
+# these timeouts so a heads-up that never comes (muted, or the model skipped
+# it) costs at most _HEADS_UP_START_TIMEOUT of extra gap.
+_HEADS_UP_START_TIMEOUT = 2.0
+_HEADS_UP_END_TIMEOUT = 8.0
+# How long the new Live session is left to settle before the confirmation is
+# requested. A reply asked for the instant the new session has been set up
+# (instructions, history, tools) is lost on the LiveKit Inference gateway: it
+# acknowledges the response (response.created) and then sends nothing, ever,
+# and the turn queue stays blocked behind it, so the call sits on "Listening"
+# (founder test 2026-10-26; reproduced live without a room: 24 of 27 immediate
+# replies hung, 0 of 17 after a 0.5-2 s settle).
+_SWAP_SETTLE_SECONDS = 1.0
+# The new session must start speaking (the confirmation, or a reply to the
+# caller) within this long after the settle, or it is treated as dead.
+_SWAP_VERIFY_SECONDS = 6.0
+# Fresh sessions built for one switch before giving up and restoring the
+# previous voice.
+_SWAP_ATTEMPTS = 2
+
+
+async def _await_heads_up(
+    session: AgentSession,
+    start_timeout: float = _HEADS_UP_START_TIMEOUT,
+    end_timeout: float = _HEADS_UP_END_TIMEOUT,
+) -> None:
+    """Return once the agent has spoken (and finished) its heads-up line, or
+    once it is clear none is coming."""
+    started = asyncio.Event()
+    finished = asyncio.Event()
+
+    def _on_state(ev: AgentStateChangedEvent) -> None:
+        if ev.new_state == "speaking":
+            started.set()
+        elif started.is_set():
+            finished.set()
+
+    session.on("agent_state_changed", _on_state)
+    try:
+        if session.agent_state == "speaking":
+            started.set()
+        try:
+            await asyncio.wait_for(started.wait(), timeout=start_timeout)
+        except asyncio.TimeoutError:
+            return
+        try:
+            await asyncio.wait_for(finished.wait(), timeout=end_timeout)
+        except asyncio.TimeoutError:
+            logger.warning("voice-swap heads-up still playing after %.0fs", end_timeout)
+    finally:
+        session.off("agent_state_changed", _on_state)
+
+
+class VoiceSwapError(RuntimeError):
+    """A mid-call voice switch whose new Live session never spoke (reported
+    to Sentry with the session id and provider)."""
+
+
+class SwappedVoiceAgent(Agent):
+    """The same Ayma agent rebuilt on a new Live model after a mid-call voice
+    switch. Its first line is a one-shot reply (the confirmation in the new
+    voice, or the honest "couldn't switch" after a restore), requested once
+    the new session has settled (see ``_SWAP_SETTLE_SECONDS``); there is no
+    opener or greeting on this path."""
+
+    def __init__(
+        self, *, confirm_instructions: str, settle_seconds: float, **kwargs
+    ) -> None:
+        super().__init__(**kwargs)
+        self._confirm_instructions = confirm_instructions
+        self._settle_seconds = settle_seconds
+
+    async def on_enter(self) -> None:
+        try:
+            await asyncio.sleep(self._settle_seconds)
+            await self.session.generate_reply(instructions=self._confirm_instructions)
+        except Exception:  # noqa: BLE001 - a missed confirmation shouldn't kill the call
+            logger.exception("voice-swap confirmation failed")
+
+
+class VoiceSwapper:
+    """Applies a mid-call ``set_voice_preference`` change to the running call.
+
+    The swap is an ``AgentSession.update_agent`` handoff to a
+    :class:`SwappedVoiceAgent` whose ``llm`` is a freshly built realtime model
+    (same builder, same provider route, new voice / language hint): the
+    framework closes the old Live session and opens a new one on the same room,
+    seeded with the conversation so far. The ``AgentSession`` itself stays, so
+    everything wired onto it — transcript relay into the raw_turns window, mute
+    control, agent-state relay, token metering, the idle watchdog — carries on
+    untouched. Function-call items are dropped from the carried history (their
+    ids belong to the closed Live session); the spoken turns, the instructions
+    (system prompt with wiki memory) and the tools carry over as they were.
+
+    Each new session is verified: it must start speaking within
+    ``_SWAP_VERIFY_SECONDS`` of settling. One that doesn't is interrupted and
+    rebuilt (up to ``_SWAP_ATTEMPTS`` sessions); if none speaks, the previous
+    voice is restored and Ayma says honestly that she couldn't switch. Every
+    step is logged and every failure goes to Sentry tagged with the session id
+    and provider. While Ayma is muted ("shut up") the confirmation is
+    suppressed by design, so silence is not counted as a failure then."""
+
+    def __init__(
+        self,
+        session: AgentSession,
+        *,
+        system_prompt: str,
+        route: str,
+        voice_name: str = "",
+        voice_language: str = "",
+        model_factory: Callable[..., object] | None = None,
+        session_id: str = "",
+        provider: str = "",
+        is_muted: Callable[[], bool] = lambda: False,
+        settle_seconds: float = _SWAP_SETTLE_SECONDS,
+        verify_seconds: float = _SWAP_VERIFY_SECONDS,
+    ) -> None:
+        self._session = session
+        self._system_prompt = system_prompt
+        self._route = route
+        self._factory = model_factory or build_realtime_model
+        self._session_id = session_id
+        self._provider = provider or route
+        self._is_muted = is_muted
+        self._settle = settle_seconds
+        self._verify = verify_seconds
+        self.tools: list = []
+        self._voice = (
+            voice_name if voices.is_valid_voice(voice_name) else CONFIG.gemini_live_voice
+        )
+        self._language = voice_language
+        # What the running Live session was actually built with.
+        self._live_voice, self._live_language = self._voice, voice_language
+        self._task: asyncio.Task | None = None
+        self._closed = False
+        session.on("close", self._on_close)
+
+    def _on_close(self, _ev) -> None:  # noqa: ANN001 - CloseEvent
+        self._closed = True
+
+    @property
+    def language(self) -> str:
+        """The caller's current speaking-language preference (updated by a
+        mid-call ``set_voice_preference``)."""
+        return self._language
+
+    @property
+    def _live(self) -> tuple[str, str | None]:
+        return self._live_voice, self._hint(self._live_language)
+
+    def _hint(self, language: str) -> str | None:
+        # The LiveKit Inference gateway ignores the language hint (see
+        # build_inference_realtime_model), so only the Google route has one.
+        if self._route == "inference" or not language:
+            return None
+        return voices.bcp47_hint(language)
+
+    def _describe(self, voice: str, language: str) -> str:
+        desc = voices.VOICE_PRESETS.get(voice, "")
+        text = f"the {voice} voice" + (f" ({desc})" if desc else "")
+        if language:
+            text += f", speaking: {language}"
+        return text
+
+    def request(self, preset: str | None, accent: str) -> tuple[bool, str]:
+        """The ``set_voice_preference`` live hook: record the new target and,
+        when it needs a new Live session, schedule the reconnect. Returns
+        ``(reconnecting, detail)`` — ``detail`` says truthfully what changes.
+
+        Never blocks: the tool returns straight away (its result is what makes
+        the model say the heads-up), and the reconnect runs as its own task
+        that waits for that heads-up, so the tool call and the swap can never
+        wait on each other."""
+        parts: list[str] = []
+        if preset:
+            same = preset == self._voice
+            parts.append(
+                f"voice → {preset} ({voices.VOICE_PRESETS[preset]})"
+                + (" — that is already the current voice" if same else "")
+            )
+            self._voice = preset
+        if accent:
+            self._language = accent
+            hint = self._hint(accent)
+            parts.append(
+                f"accent/language → {accent}: Gemini Live has no accent "
+                + (
+                    f"setting, so the speech-language hint is set to {hint} and "
+                    if hint
+                    else "setting, so "
+                )
+                + "you speak that way yourself from now on"
+            )
+        reconnecting = (self._voice, self._hint(self._language)) != self._live
+        if reconnecting:
+            self._task = asyncio.get_running_loop().create_task(
+                self._swap(self._task)
+            )
+        return reconnecting, "; ".join(parts)
+
+    def _report(self, exc: BaseException) -> None:
+        capture_exception(
+            exc,
+            tags={
+                "voice_swap": "failed",
+                "session_id": self._session_id or "?",
+                "voice_provider": self._provider,
+            },
+        )
+
+    async def _swap(self, previous: asyncio.Task | None) -> None:
+        if previous is not None:
+            # Serialise back-to-back requests; each one already logged its
+            # own failure.
+            await asyncio.gather(previous, return_exceptions=True)
+        voice, language = self._voice, self._language
+        if (voice, self._hint(language)) == self._live:
+            return
+        old_voice, old_language = self._live_voice, self._live_language
+        change = self._describe(voice, language)
+        logger.info(
+            "voice-swap start session=%s provider=%s voice=%s->%s hint=%s",
+            self._session_id or "?", self._provider, old_voice, voice,
+            self._hint(language),
+        )
+        try:
+            await _await_heads_up(self._session)
+            handed_off = False
+            for attempt in range(1, _SWAP_ATTEMPTS + 1):
+                step = f"attempt {attempt}"
+                try:
+                    if await self._handoff(
+                        voice, language,
+                        confirm=voice_swap_confirm(change),
+                        instructions=f"{self._system_prompt}\n\n{voice_swap_note(change)}",
+                        step=step,
+                    ):
+                        self._live_voice, self._live_language = voice, language
+                        return
+                    handed_off = True
+                    self._report(
+                        VoiceSwapError(
+                            f"voice swap {step} produced no audio within "
+                            f"{self._verify:.0f}s"
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 - try again, then restore
+                    self._report(exc)
+                    logger.exception("voice-swap %s failed", step)
+                if self._closed:
+                    logger.info("voice-swap abandoned: the call ended")
+                    return
+            # Back to the voice the call was on, and say so. The saved default
+            # (already written by the tool) stays, so the next call uses it.
+            if (self._voice, self._language) == (voice, language):
+                self._voice, self._language = old_voice, old_language
+            if handed_off:
+                restored = await self._handoff(
+                    old_voice, old_language,
+                    confirm=voice_swap_failed(change),
+                    instructions=self._system_prompt,
+                    step="restore",
+                )
+                if not restored:
+                    self._report(VoiceSwapError("voice swap restore produced no audio"))
+                    logger.error(
+                        "voice-swap restore failed session=%s provider=%s",
+                        self._session_id or "?", self._provider,
+                    )
+            else:
+                # No new session was ever handed the call: the original one
+                # is still live, so say it there.
+                self._session.generate_reply(instructions=voice_swap_failed(change))
+        except Exception as exc:  # noqa: BLE001 - keep the call on the old voice
+            self._report(exc)
+            logger.exception("voice swap failed; staying on the current voice")
+
+    async def _handoff(
+        self,
+        voice: str,
+        language: str,
+        *,
+        confirm: str,
+        instructions: str,
+        step: str,
+    ) -> bool:
+        """Hand the call to a new Live session on ``voice``/``language`` and
+        return whether it started speaking in time. A silent one is
+        interrupted so its stuck reply no longer blocks the turn queue."""
+        model = self._factory(voice, language, route=self._route)
+        history = self._session.current_agent.chat_ctx.copy(
+            exclude_function_call=True,
+            exclude_instructions=True,
+            exclude_empty_message=True,
+            exclude_handoff=True,
+            exclude_config_update=True,
+        )
+        new_agent = SwappedVoiceAgent(
+            confirm_instructions=confirm,
+            settle_seconds=self._settle,
+            instructions=instructions,
+            tools=self.tools,
+            chat_ctx=history,
+            llm=model,
+        )
+        spoke = asyncio.Event()
+
+        def _on_state(ev: AgentStateChangedEvent) -> None:
+            if ev.new_state == "speaking" and self._session.current_agent is new_agent:
+                spoke.set()
+
+        self._session.on("agent_state_changed", _on_state)
+        started = time.monotonic()
+        try:
+            self._session.update_agent(new_agent)
+            logger.info(
+                "voice-swap %s handoff session=%s provider=%s voice=%s hint=%s items=%d",
+                step, self._session_id or "?", self._provider, voice,
+                self._hint(language), len(history.items),
+            )
+            try:
+                await asyncio.wait_for(spoke.wait(), timeout=self._settle + self._verify)
+            except asyncio.TimeoutError:
+                if self._is_muted():
+                    logger.info(
+                        "voice-swap %s unverified: Ayma is muted session=%s",
+                        step, self._session_id or "?",
+                    )
+                    return True
+                logger.warning(
+                    "voice-swap %s silent after %.1fs session=%s provider=%s",
+                    step, time.monotonic() - started, self._session_id or "?",
+                    self._provider,
+                )
+                await self._interrupt()
+                return False
+            logger.info(
+                "voice-swap %s speaking after %.1fs session=%s provider=%s",
+                step, time.monotonic() - started, self._session_id or "?",
+                self._provider,
+            )
+            return True
+        finally:
+            self._session.off("agent_state_changed", _on_state)
+
+    async def _interrupt(self) -> None:
+        try:
+            await asyncio.wait_for(self._session.interrupt(force=True), timeout=2.0)
+        except Exception:  # noqa: BLE001 - the next handoff closes it anyway
+            logger.warning("voice-swap interrupt of the silent reply failed", exc_info=True)
 
 
 def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
@@ -1125,15 +1677,22 @@ def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
 
 
 async def entrypoint(ctx: JobContext) -> None:
-    """Join the dispatched room and run one Gemini Live voice session."""
+    """Join the dispatched room and run one Gemini Live voice session.
+
+    The call's keep-alive (``agent_keepalive``) starts first, before the room
+    connect, so Cloud Run sees this instance as busy for the whole call and
+    its end-of-call flush; the job's shutdown callback releases it."""
+    keepalive = CallKeepAlive.for_job(ctx.job.id)
+    keepalive.start()
+    ctx.add_shutdown_callback(keepalive.release)
     try:
-        await _run_session(ctx)
+        await _run_session(ctx, keepalive)
     except Exception as exc:
         capture_exception(exc)
         raise
 
 
-async def _run_session(ctx: JobContext) -> None:
+async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     await ctx.connect()
     seed = await _await_room_seed(ctx)
 
@@ -1146,33 +1705,72 @@ async def _run_session(ctx: JobContext) -> None:
     # may never come (see `post_turn.persist_and_ingest`'s docstring for the
     # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
+    # Provider decided ONCE per call (runtime Firestore flag, optional uid
+    # allowlist) and threaded to the model, the session record and the ledger.
+    route = llm_routing.route_for("voice", uid=seed.uid)
+    use_inference = route == "inference"
+    voice_provider = (
+        token_ledger.PROVIDER_LIVEKIT_INFERENCE if use_inference
+        else token_ledger.provider_for(token_ledger.FEATURE_VOICE)
+    )
+    logger.info(
+        "voice-provider uid=%s session=%s provider=%s",
+        seed.uid, seed.session_id or "?", voice_provider,
+    )
     flush = SessionFlush(
-        get_db(), seed.uid, seed.session_id, window, seeded_turn_count=len(window)
+        get_db(), seed.uid, seed.session_id, window,
+        seeded_turn_count=len(window), voice_provider=voice_provider,
     )
     ctx.add_shutdown_callback(flush.run)
+    keepalive.hold_for(flush.run)
 
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
     session = AgentSession(
-        llm=build_realtime_model(seed.voice_name, seed.voice_language),
+        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
         allow_interruptions=True,
     )
     relay_transcripts(ctx, session, collector=window)
+    # Session closed = the conversation is over (no more turns can arrive):
+    # start the memory write now rather than at job shutdown (see
+    # SessionFlush.start).
+    session.on("close", lambda _ev: flush.start())
     relay_agent_state(ctx, session)
-    relay_mute_control(session, MuteState(), ctx)
+    mute = MuteState()
+    relay_mute_control(session, mute, ctx)
     relay_token_usage(
         session,
         seed.uid,
         session_id=seed.session_id,
         ctx=ctx,
+        inference=use_inference,
         on_credits_exhausted=lambda: end_call_out_of_credits(
             ctx, session, seed.uid, flush.run
         ),
     )
     watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
-    tools = _session_tools(
-        ctx, seed.uid, on_activity=watchdog.touch if watchdog else None
+    swapper = VoiceSwapper(
+        session,
+        system_prompt=seed.system_prompt,
+        route=route,
+        voice_name=seed.voice_name,
+        voice_language=seed.voice_language,
+        session_id=seed.session_id,
+        provider=voice_provider,
+        is_muted=lambda: mute.muted,
     )
+    tools = _session_tools(
+        ctx,
+        seed.uid,
+        on_activity=watchdog.touch if watchdog else None,
+        on_voice_change=swapper.request,
+        guard=misheard_fragment_guard(
+            window, len(window), lambda: swapper.language
+        ),
+        session_id=seed.session_id,
+        window=window,
+    )
+    swapper.tools = tools
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
@@ -1249,18 +1847,97 @@ async def maybe_open_conversation(
     return True
 
 
+# Imported lazily by the voice/inference stack or the session-end flush;
+# measured blocking the job's event loop for 3-6 s on first use in production
+# (2026-10-25 "event loop blocked ... importing" warnings), right at call start
+# and again during the end-of-call flush. Imported once per process instead.
+_PREWARM_MODULES = (
+    "google.auth.compute_engine.credentials",
+    "openai.types.realtime",
+    "livekit.agents.inference.realtime.gpt_live",
+    "wiki_ingest",
+    "backfill_ops",
+)
+
+
+def prewarm(proc: JobProcess) -> None:
+    """Worker prewarm hook: runs in each job process before it takes a job."""
+    import importlib
+
+    for name in _PREWARM_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - a missing optional module only costs latency
+            logger.warning("prewarm import of %s failed", name, exc_info=True)
+
+
 def worker_options() -> WorkerOptions:
     return WorkerOptions(
         entrypoint_fnc=entrypoint,
-        # Cloud Run assigns the container port ($PORT); the worker's health
-        # server must bind it so the startup probe passes. Falls back to the
-        # livekit-agents default when run outside Cloud Run.
-        port=int(os.getenv("PORT", "8081")),
+        prewarm_fnc=prewarm,
+        # The Cloud Run port ($PORT) belongs to AymaAgentServer's keep-alive
+        # server (routes can't be added to the worker's own health server,
+        # which is built and started inside AgentServer.run), so the worker's
+        # health server binds an internal port.
+        port=int(os.getenv("AGENT_WORKER_HEALTH_PORT", "8081")),
         # Scale-to-zero service — keep the pre-forked job pool tiny.
         num_idle_processes=1,
         drain_timeout=int(os.getenv("AGENT_DRAIN_TIMEOUT", "30")),
+        # How long a job process gets, after the room closes, to finish its
+        # shutdown callbacks (the SessionFlush memory write: raw_turns, wiki
+        # ingest, summary) before the worker SIGUSR1-kills it. The library
+        # default of 10 s was killing every call's flush mid-ingest
+        # ("process did not exit in time, killing process", 2026-10-25).
+        # The instance runs --no-cpu-throttling, so the CPU is there to use.
+        shutdown_process_timeout=float(
+            os.getenv("AGENT_SHUTDOWN_PROCESS_TIMEOUT", "60")
+        ),
     )
 
 
+class AymaAgentServer(AgentServer):
+    """The LiveKit worker plus the per-call keep-alive server on ``$PORT``.
+
+    On SIGTERM the CLI calls ``drain()``: livekit-agents marks the worker
+    unavailable for new jobs and waits for the active ones. Cloud Run kills
+    the container 10 s after SIGTERM (not configurable), so a drain can't
+    save a long call; the keep-alive request is what stops Cloud Run from
+    sending SIGTERM to an instance with a live call. A drain that still finds
+    active calls is logged and reported to Sentry."""
+
+    _keepalive_server: KeepAliveServer | None = None
+
+    async def run(self, *, devmode: bool = False, unregistered: bool = False) -> None:
+        self._keepalive_server = KeepAliveServer(
+            "0.0.0.0", int(os.getenv("PORT", "8080"))
+        )
+        await self._keepalive_server.start()
+        await super().run(devmode=devmode, unregistered=unregistered)
+
+    async def drain(self, timeout: NotGivenOr[int | None] = NOT_GIVEN) -> None:
+        active = len(self.active_jobs)
+        holds = self._keepalive_server.active_holds if self._keepalive_server else 0
+        if active:
+            logger.warning(
+                "shutdown signal with active calls: active_jobs=%d "
+                "keepalive_holds=%d; draining (Cloud Run kills in 10 s)",
+                active, holds,
+            )
+            capture_message(
+                "ayma-agent got SIGTERM with active calls",
+                tags={"active_jobs": str(active), "keepalive_holds": str(holds)},
+            )
+        else:
+            logger.info("shutdown signal with no active calls; draining")
+        await super().drain(timeout)
+
+    async def aclose(self) -> None:
+        try:
+            await super().aclose()
+        finally:
+            if self._keepalive_server is not None:
+                await self._keepalive_server.aclose()
+
+
 if __name__ == "__main__":
-    cli.run_app(worker_options())
+    cli.run_app(AymaAgentServer.from_server_options(worker_options()))

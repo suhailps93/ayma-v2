@@ -1,0 +1,329 @@
+import 'dart:convert';
+
+import 'package:ayma_flutter/legal/biometric_consent_text.dart';
+import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
+import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
+import 'package:ayma_flutter/screens/splash_screen.dart';
+import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/biometric_consent.dart';
+import 'package:ayma_flutter/widgets/biometric_consent_panel.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// An [ApiClient] over a [MockClient] that records every request.
+class _Recorded {
+  _Recorded(this.handler);
+
+  final Future<http.Response> Function(http.Request) handler;
+  final requests = <http.Request>[];
+
+  ApiClient get api => ApiClient(
+    httpClient: MockClient((req) async {
+      requests.add(req);
+      return handler(req);
+    }),
+    auth: MockFirebaseAuth(signedIn: true),
+  );
+}
+
+http.Response _json(Object body, [int status = 200]) =>
+    http.Response(jsonEncode(body), status);
+
+void main() {
+  setUp(BiometricConsentState.instance.clear);
+
+  group('BiometricConsentPanel', () {
+    testWidgets(
+      'I agree stays disabled until the box is ticked, then records',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 4000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+        final rec = _Recorded(
+          (_) async => _json({'ok': true, 'consented': true}),
+        );
+        var agreed = false;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: BiometricConsentPanel(
+                  api: rec.api,
+                  region: 'US',
+                  onAgreed: () => agreed = true,
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final button = find.byKey(const Key('biometric_consent_agree'));
+        expect(tester.widget<FilledButton>(button).onPressed, isNull);
+        await tester.tap(button);
+        await tester.pump();
+        expect(rec.requests, isEmpty);
+
+        await tester.tap(find.byKey(const Key('biometric_consent_checkbox')));
+        await tester.pump();
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+
+        expect(agreed, isTrue);
+        expect(rec.requests.single.url.path, '/biometric-consent');
+        expect(jsonDecode(rec.requests.single.body), {
+          'agreed': true,
+          'consent_version': kBiometricConsentVersion,
+          'region': 'US',
+        });
+      },
+    );
+
+    testWidgets('a failed save shows an error and does not continue', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final rec = _Recorded((_) async => _json({'detail': 'x'}, 400));
+      var agreed = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: BiometricConsentPanel(
+                api: rec.api,
+                region: '',
+                onAgreed: () => agreed = true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('biometric_consent_checkbox')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('biometric_consent_agree')));
+      await tester.pumpAndSettle();
+      expect(agreed, isFalse);
+      expect(find.textContaining("Couldn't save your consent"), findsOneWidget);
+    });
+  });
+
+  group('consent-required signal', () {
+    test('a 403 carrying the consent header marks consent required', () async {
+      final rec = _Recorded(
+        (_) async => http.Response(
+          jsonEncode({
+            'detail': {'code': 'biometric_consent_required'},
+          }),
+          403,
+          headers: {kConsentRequiredHeader: '1'},
+        ),
+      );
+      await expectLater(
+        rec.api.verificationStatus(),
+        throwsA(isA<ApiException>()),
+      );
+      expect(BiometricConsentState.instance.required, isTrue);
+    });
+
+    test('an ordinary 403 does not', () async {
+      final rec = _Recorded((_) async => http.Response('no', 403));
+      await expectLater(
+        rec.api.verificationStatus(),
+        throwsA(isA<ApiException>()),
+      );
+      expect(BiometricConsentState.instance.required, isFalse);
+    });
+
+    test('bootstrap reports consent required with the session mode', () async {
+      final rec = _Recorded(
+        (_) async => _json({
+          'biometric_consent_required': true,
+          'session_mode': 'active',
+          'uid': 'u1',
+        }),
+      );
+      final result = await rec.api.bootstrap(sessionId: '');
+      expect(result.biometricConsentRequired, isTrue);
+      expect(result.sessionMode, 'active');
+      expect(BiometricConsentState.instance.required, isTrue);
+    });
+
+    test('accepting clears the signal', () async {
+      BiometricConsentState.instance.markRequired();
+      final rec = _Recorded((_) async => _json({'ok': true}));
+      await rec.api.acceptBiometricConsent(region: 'GB');
+      expect(BiometricConsentState.instance.required, isFalse);
+    });
+  });
+
+  group('splash routing', () {
+    late _Recorded rec;
+
+    GoRouter router() {
+      var consented = false;
+      rec = _Recorded((req) async {
+        if (req.url.path == '/biometric-consent') {
+          consented = true;
+          return _json({'ok': true, 'consented': true});
+        }
+        if (consented) {
+          return _json({
+            'session_mode': 'active',
+            'uid': 'u1',
+            'livekit': {'token': 't', 'url': 'wss://x', 'room': 'r'},
+          });
+        }
+        return _json({
+          'biometric_consent_required': true,
+          'session_mode': 'active',
+          'uid': 'u1',
+        });
+      });
+      return GoRouter(
+        initialLocation: '/splash',
+        routes: [
+          GoRoute(
+            path: '/splash',
+            builder: (_, __) => SplashScreen(
+              apiClient: rec.api,
+              auth: MockFirebaseAuth(signedIn: true),
+            ),
+          ),
+          GoRoute(path: '/', builder: (_, __) => const Text('screen:shell')),
+          GoRoute(
+            path: BiometricConsentScreen.path,
+            builder: (_, __) => const Text('screen:consent'),
+          ),
+        ],
+      );
+    }
+
+    testWidgets('records the consent ticked at sign-in, then routes on', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      await PendingBiometricConsent.save(kBiometricConsentVersion);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router()));
+      await tester.pumpAndSettle();
+      expect(find.text('screen:shell'), findsOneWidget);
+      final post = rec.requests.singleWhere(
+        (r) => r.url.path == '/biometric-consent',
+      );
+      expect(jsonDecode(post.body)['agreed'], isTrue);
+      expect(await PendingBiometricConsent.read(), isNull);
+      expect(BiometricConsentState.instance.required, isFalse);
+    });
+
+    testWidgets('an account with no record gets the one-time consent screen', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router()));
+      await tester.pumpAndSettle();
+      expect(find.text('screen:consent'), findsOneWidget);
+      expect(
+        rec.requests.where((r) => r.url.path == '/biometric-consent'),
+        isEmpty,
+      );
+    });
+  });
+
+  testWidgets('consent screen has only the I agree button', (tester) async {
+    tester.view.physicalSize = const Size(1080, 4000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final rec = _Recorded((_) async => _json({'ok': true}));
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (_, __) => BiometricConsentScreen(api: rec.api),
+        ),
+        GoRoute(
+          path: SplashScreen.path,
+          builder: (_, __) => const Text('screen:splash'),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    expect(find.byType(FilledButton), findsOneWidget);
+    expect(find.byType(TextButton), findsNothing);
+    expect(find.textContaining('Sign out'), findsNothing);
+    expect(find.textContaining('Delete'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('biometric_consent_checkbox')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('biometric_consent_agree')))
+          .onPressed,
+      isNull,
+      reason: 'the updated Terms must be accepted too',
+    );
+    await tester.tap(find.byKey(const Key('consent_terms_checkbox')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('biometric_consent_agree')));
+    await tester.pumpAndSettle();
+    expect(find.text('screen:splash'), findsOneWidget);
+  });
+
+  testWidgets(
+    'settings: withdrawing deletes face data + account, then signs out',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final rec = _Recorded((req) async {
+        if (req.method == 'GET') {
+          return _json({
+            'consented': true,
+            'consent_version': kBiometricConsentVersion,
+            'consented_at': '2026-10-25T10:00:00+00:00',
+            'region': 'US',
+          });
+        }
+        return _json({'ok': true, 'withdrawn': true});
+      });
+      final auth = MockFirebaseAuth(signedIn: true);
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => BiometricConsentSettingsScreen(
+              api: rec.api,
+              auth: auth,
+              clearPushToken: () async {},
+            ),
+          ),
+          GoRoute(
+            path: '/signin',
+            builder: (_, __) => const Text('screen:signin'),
+          ),
+        ],
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('biometric_consent_given')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('biometric_withdraw')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Withdraw consent and delete your account?'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('biometric_withdraw_confirm')));
+      await tester.pumpAndSettle();
+
+      expect(rec.requests.last.url.path, '/biometric-consent/withdraw');
+      expect(auth.currentUser, isNull);
+      expect(find.text('screen:signin'), findsOneWidget);
+    },
+  );
+}

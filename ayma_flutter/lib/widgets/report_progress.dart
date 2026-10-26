@@ -66,3 +66,39 @@ class ReportProgressBanner extends StatelessWidget {
     );
   }
 }
+
+/// Same strip, for a re-generation that didn't finish: the message plus a
+/// "Try again" button instead of a spinner.
+class ReportFailedBanner extends StatelessWidget {
+  const ReportFailedBanner({
+    super.key,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      width: double.infinity,
+      color: ac.accentFaint,
+      padding: const EdgeInsets.only(left: 16, right: 4),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 16, color: ac.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: AymaType.sans(size: 12.5, color: ac.error),
+            ),
+          ),
+          TextButton(onPressed: onRetry, child: const Text('Try again')),
+        ],
+      ),
+    );
+  }
+}

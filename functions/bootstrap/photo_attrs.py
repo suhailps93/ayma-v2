@@ -28,6 +28,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import schema
 import token_ledger
 
 logger = logging.getLogger("ayma.media")
@@ -149,8 +150,10 @@ async def extract_attributes(
 
 
 def _grid_media_ids(prof: dict) -> list[str]:
-    entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
-    entries.sort(key=lambda p: p.get("order", 0))
+    # Public grid + removed-from-public photos kept for analysis (§8.3), so
+    # attribute coverage still includes photos the user hid from their public
+    # profile.
+    entries = schema.analysis_photo_entries(prof)
     return [
         str(e.get("media_id") or "").strip()
         for e in entries
@@ -209,6 +212,72 @@ def coverage(db, uid: str) -> dict:
             and out["has_fitted_body_photo"]
         ):
             break
+    return out
+
+
+def eligibility(db, uid: str) -> dict:
+    """Per-photo face/body eligibility for the Appearance pre-run sheet.
+
+    Returns ``{"face": [...], "body": [...], "has_face_photo",
+    "has_body_photo"}`` where each list holds ``{"media_id", "url"}`` for every
+    current grid photo eligible for that axis (``usable_for_face`` /
+    ``usable_for_body``), in grid order — so the client can show the two groups
+    as thumbnails before a run and let the user pick which photos feed each.
+
+    The same shot-type tags :func:`coverage` reads; a photo can appear in both
+    groups (a full-body shot with a clear face) or neither (a group photo). The
+    ``url`` is the stable token-download URL the rest of the app serves photos
+    with (:func:`public_profile._photo_url`); a photo whose URL can't be
+    resolved is dropped from its group rather than shown broken. Best-effort: a
+    read failure just yields empty groups."""
+    from public_profile import _photo_url
+
+    out: dict = {
+        "face": [],
+        "body": [],
+        "has_face_photo": False,
+        "has_body_photo": False,
+    }
+    try:
+        prof = (
+            db.collection("users")
+            .document(uid)
+            .collection("profile")
+            .document("main")
+            .get()
+            .to_dict()
+        ) or {}
+    except Exception:  # noqa: BLE001
+        return out
+    for mid in _grid_media_ids(prof):
+        try:
+            media = (
+                db.collection("users")
+                .document(uid)
+                .collection("user_media")
+                .document(mid)
+                .get()
+                .to_dict()
+            ) or {}
+        except Exception:  # noqa: BLE001
+            continue
+        attrs = media.get("attributes") or {}
+        sp = str(media.get("storage_path") or "").strip()
+        if not sp:
+            continue
+        try:
+            url = _photo_url(sp)
+        except Exception:  # noqa: BLE001
+            url = None
+        if not url:
+            continue
+        entry = {"media_id": mid, "url": url}
+        if attrs.get("usable_for_face"):
+            out["face"].append(entry)
+            out["has_face_photo"] = True
+        if attrs.get("usable_for_body"):
+            out["body"].append(entry)
+            out["has_body_photo"] = True
     return out
 
 

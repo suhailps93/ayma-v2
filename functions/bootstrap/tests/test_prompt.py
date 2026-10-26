@@ -34,6 +34,17 @@ def test_no_lessons_file_adds_nothing(tmp_path, monkeypatch):
     assert prompt_mod.load_lessons() == ""
 
 
+def test_persona_forbids_ungrounded_match_claims():
+    """Founder bug 2026-10-25: Ayma called a near-empty stranger "a great
+    match on paper". The persona must carry an explicit grounding rule — only
+    characterise compatibility/alignment with a computed score or real facts —
+    so it is in every chat and voice system prompt."""
+    persona = load_persona().lower()
+    assert "talking about a match or another member" in persona
+    assert "computed match score" in persona
+    assert "align" in persona and "run a match" in persona
+
+
 class _NoConfigDb:
     """Firestore stub with no `config/ayma_persona` doc at all."""
 
@@ -326,8 +337,9 @@ def _every_layer_kwargs(turn_i=1, qnote="Questionnaire score: 42"):
 
 def test_flags_off_assembly_is_byte_identical_to_the_original_order():
     """With every context_opt flag off (the default), the assembled prompt
-    must be byte-for-byte what the pre-cost-program code produced: persona,
-    lessons, mode, questionnaire guidance, progress, questionnaire note,
+    must be byte-for-byte what the pre-cost-program code produced, plus the
+    static plan-facts block that closes the stable prefix: persona, lessons,
+    mode, questionnaire guidance, plan facts, progress, questionnaire note,
     story, screen line, wiki, history, photo note, viewing-profile — joined
     by blank lines."""
     kwargs = _every_layer_kwargs()
@@ -342,6 +354,7 @@ def test_flags_off_assembly_is_byte_identical_to_the_original_order():
     guidance = prompt_mod.load_questionnaire_guidance()
     if guidance:
         expected_parts.append(guidance)
+    expected_parts.append(prompt_mod.plan_facts())
     expected_parts += [
         kwargs["profile_progress"],
         kwargs["questionnaire_note"],
@@ -467,8 +480,8 @@ def test_voice_variant_keeps_every_rule_that_can_fire_in_a_call():
         assert "minors" in p
         assert "never a cold refusal" in p
         # DM confirm-before-send
-        assert "propose_dm_message" in p
         assert "send_dm_message" in p
+        assert "exactly one yes" in p
         assert "only on a clear" in p
         # 18+ birthdate refusal
         assert "18+ only" in p
@@ -550,3 +563,31 @@ def test_text_web_grounding_is_limited_to_dating_purposes():
     text = load_persona("text")
     assert "only for dating purposes" in text
     assert "Never use search, links or the map to" in text
+
+
+def test_voice_language_directive_defaults_to_english_and_resists_drift():
+    text = prompt_mod.voice_language_directive("")
+    assert "Speak like this by default: English." in text
+    assert "mishearing" in text and "no tool call" in text
+    assert "{language}" not in text
+
+
+def test_voice_language_directive_uses_the_saved_preference():
+    text = prompt_mod.voice_language_directive("Malayalam mixed with English")
+    assert "Speak like this by default: Malayalam mixed with English." in text
+
+
+def test_misheard_fragment_detection():
+    import voices
+
+    for garbled in ("el número", "murió", "Größe", "¿Cuándo? ¿A qué hora?"):
+        assert voices.is_misheard_fragment(garbled, "")
+    # Plain short confirmations and ordinary sentences are never fragments.
+    assert not voices.is_misheard_fragment("Yeah, do it.", "")
+    assert not voices.is_misheard_fragment("yes", "a soft Southern US accent")
+    assert not voices.is_misheard_fragment(
+        "Can you run a match score on Dillu Shakeeb, señor?", ""
+    )
+    # A user whose call language isn't English is never second-guessed.
+    assert not voices.is_misheard_fragment("murió", "Spanish")
+    assert voices.is_misheard_fragment("murió", "British English")

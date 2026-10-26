@@ -26,39 +26,43 @@ class UnderageScreen extends StatelessWidget {
       canPop: false,
       child: Scaffold(
         body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(AgeGate.mustBeAdultMessage,
-                    key: const Key('underage_title'),
-                    style: AymaType.serif(size: 28, color: ac.fg)),
-                const SizedBox(height: 12),
-                Text(
-                  "Ayma is for adults only, so we can't let you in. "
-                  "We're sorry — come back when you're 18.",
-                  style: AymaType.sans(size: 15, color: ac.fgDim, height: 1.5),
-                ),
-                const SizedBox(height: 28),
-                OutlinedButton(
-                  key: const Key('underage_terms'),
-                  onPressed: () => context.push(TermsScreen.path),
-                  child: const Text('Read the Terms'),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  key: const Key('underage_sign_out'),
-                  onPressed: () async {
-                    try {
-                      await (signOut ?? FirebaseAuth.instance.signOut)();
-                    } catch (_) {/* sign-in redirect below still applies */}
-                    if (context.mounted) context.go(SignInScreen.path);
-                  },
-                  child: const Text('Sign out'),
-                ),
-              ],
+          // Centered when it fits; scrolls in a short window or at large
+          // text instead of overflowing.
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(AgeGate.mustBeAdultMessage,
+                      key: const Key('underage_title'),
+                      style: AymaType.serif(size: 28, color: ac.fg)),
+                  const SizedBox(height: 12),
+                  Text(
+                    "Ayma is for adults only, so we can't let you in. "
+                    "We're sorry — come back when you're 18.",
+                    style: AymaType.sans(size: 15, color: ac.fgDim, height: 1.5),
+                  ),
+                  const SizedBox(height: 28),
+                  OutlinedButton(
+                    key: const Key('underage_terms'),
+                    onPressed: () => context.push(TermsScreen.path),
+                    child: const Text('Read the Terms'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    key: const Key('underage_sign_out'),
+                    onPressed: () async {
+                      try {
+                        await (signOut ?? FirebaseAuth.instance.signOut)();
+                      } catch (_) {/* sign-in redirect below still applies */}
+                      if (context.mounted) context.go(SignInScreen.path);
+                    },
+                    child: const Text('Sign out'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
