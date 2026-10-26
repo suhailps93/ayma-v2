@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/plan_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/credits_balance.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
+import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/out_of_credits.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -423,5 +424,33 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('continue-free')));
     await tester.pumpAndSettle();
     expect(result, isTrue);
+  });
+
+  testWidgets('Ayma can switch the plan selector by voice/text but never '
+      'subscribe or upgrade', (tester) async {
+    final handle = tester.ensureSemantics();
+    final rc = _FakeRc();
+    await _pump(tester, PlanScreen(service: rc, api: _api()));
+    final cap = ScreenCapture(
+      routeOf: () => '/profile/plan',
+      popupOpen: () => false,
+      settle: () => tester.pumpAndSettle(),
+    );
+    var s = cap.capture();
+    final max = s.controls.firstWhere(
+        (c) => c.label.contains('Max') && !c.label.contains('Upgrade'));
+    final picked = await cap.perform(control: max.id, label: max.label, op: 'tap');
+    expect(picked.ok, isTrue, reason: picked.reason);
+    expect(_actionLabel(tester), 'Upgrade to Max');
+
+    s = cap.capture();
+    final upgrade = s.controls.firstWhere((c) => c.label == 'Upgrade to Max');
+    expect(upgrade.line, contains('(user only)'));
+    final refused =
+        await cap.perform(control: upgrade.id, label: upgrade.label, op: 'tap');
+    expect(refused.ok, isFalse);
+    expect(refused.reason, contains('Plan page'));
+    expect(rc.bought, isEmpty);
+    handle.dispose();
   });
 }

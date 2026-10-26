@@ -48,6 +48,9 @@ void main() {
       'screen_subject_uid': '',
       'screen_subject_name': '',
       'screen_note': '',
+      'screen_route': '',
+      'screen_detail': '',
+      'screen_visible': '',
     });
   });
 
@@ -173,6 +176,9 @@ void main() {
       'screen_subject_uid': '',
       'screen_subject_name': '',
       'screen_note': '',
+      'screen_route': '',
+      'screen_detail': '',
+      'screen_visible': '',
     });
   });
 

@@ -8,6 +8,7 @@ import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
@@ -211,5 +212,24 @@ void main() {
     final b = ThemeController(initial: ThemeMode.dark);
     await b.load();
     expect(b.mode, ThemeMode.light);
+  });
+
+  testWidgets('Ayma switches the theme on Settings through ui_action',
+      (tester) async {
+    final handle = tester.ensureSemantics();
+    final c = ThemeController(initial: ThemeMode.dark);
+    await tester.pumpWidget(host(c, _FakeProfiles(), _api((_) {})));
+    await tester.pumpAndSettle();
+    final cap = ScreenCapture(
+      routeOf: () => '/settings',
+      popupOpen: () => false,
+      settle: () => tester.pumpAndSettle(),
+    );
+    final s = cap.capture();
+    final light = s.controls.firstWhere((c) => c.label == 'Light');
+    final r = await cap.perform(control: light.id, label: 'Light', op: 'tap');
+    expect(r.ok, isTrue, reason: r.reason);
+    expect(c.mode, ThemeMode.light);
+    handle.dispose();
   });
 }

@@ -1,5 +1,5 @@
 {
-  "_doc": "Single source of truth for what Ayma can open and change in the app (skills/app_control.py reads it; ayma_flutter/test/app_registry_test.dart and tests/test_app_registry.py check every GoRoute in ayma_flutter/lib/routing/app_router.dart against it). A new route must be added to destinations, parameterized or non_navigable (with a reason) or both tests fail.",
+  "_doc": "Single source of truth for what Ayma can open, see and change in the app. Delete account, withdraw consent and every purchase are navigate-only: Ayma opens the page and the user acts themselves. (skills/app_control.py reads it; ayma_flutter/test/app_registry_test.dart and tests/test_app_registry.py check every GoRoute in ayma_flutter/lib/routing/app_router.dart against it). A new route must be added to destinations, parameterized or non_navigable (with a reason) or both tests fail.",
   "destinations": [
     {"key": "ayma", "path": "/", "label": "the chat with Ayma", "aliases": ["chat", "home", "ayma tab", "back to chat", "main screen", "talk to ayma"]},
     {"key": "explore", "path": "/explore", "label": "Explore", "aliases": ["explore tab", "browse", "browse people", "search people", "discover"]},
@@ -77,15 +77,47 @@
   ],
   "account_actions": [
     {"key": "sign_out", "label": "Sign out", "aliases": ["log out", "logout", "sign me out", "signout"], "confirm_phrase": "yes, sign me out", "question": "Sign you out of Ayma on this phone?", "handler": "client", "found_on": "profile"},
-    {"key": "delete_account", "label": "Delete account (data removed after 30 days)", "aliases": ["delete my account", "close my account", "remove my account"], "confirm_phrase": "yes, delete my account", "question": "Delete your Ayma account? Your data is removed after 30 days unless you sign back in before then.", "handler": "client", "found_on": "settings"},
-    {"key": "withdraw_consent", "label": "Withdraw face matching consent (deletes face data and the account)", "aliases": ["withdraw consent", "revoke consent", "withdraw my consent", "withdraw biometric consent", "revoke biometric consent"], "confirm_phrase": "yes, withdraw and delete", "question": "Withdraw your face matching consent? Ayma can't work without it, so this deletes your face data now and then deletes your account.", "handler": "client", "found_on": "biometric_consent"},
+    {"key": "delete_account", "label": "Delete account (navigate only: the user deletes it themselves)", "aliases": ["delete my account", "close my account", "remove my account"], "handler": "navigate_only", "destination": "delete_account", "say": "I can't delete your account for you, but I've opened the Delete account page. Tap Delete account there when you're ready.", "found_on": "settings"},
+    {"key": "withdraw_consent", "label": "Withdraw face matching consent (navigate only: it deletes the account, so the user does it themselves)", "aliases": ["withdraw consent", "revoke consent", "withdraw my consent", "withdraw biometric consent", "revoke biometric consent"], "handler": "navigate_only", "destination": "biometric_consent", "say": "I can't withdraw your consent for you, since that also deletes your account, but I've opened the Face matching consent page. You can withdraw it there yourself.", "found_on": "biometric_consent"},
     {"key": "wipe_memory", "label": "Wipe what Ayma has learned (wiki + history; account stays)", "aliases": ["reset wiki", "forget everything", "wipe memory", "reset memory", "clear what you know"], "confirm_phrase": "yes, wipe it", "question": "Wipe everything I've learned about you (your wiki and our history)? Your account, profile and photos stay. This can't be undone.", "handler": "wipe_memory", "found_on": "ayma_settings"}
   ],
   "unavailable": [
-    {"key": "purchase", "aliases": ["buy", "purchase", "pay", "pay for", "checkout", "buy credits", "buy more credits", "purchase credits", "subscribe for me", "upgrade for me", "buy a plan"], "say": "Ayma never buys or subscribes on the user's behalf. Open the Plan page (open_screen credits) so they can choose there themselves."},
+    {"key": "purchase", "aliases": ["buy", "purchase", "pay", "pay for", "checkout", "buy credits", "buy more credits", "purchase credits", "subscribe for me", "upgrade for me", "buy a plan"], "navigate": "credits", "say": "I can't buy or subscribe for you, but I've opened the Plan page. Pick a plan there yourself when you're ready."},
     {"key": "app_language", "aliases": ["app language", "interface language", "translate the app", "ui language"], "say": "The app's screens are English only. Ayma can speak another language or accent: use set_voice_preference."},
     {"key": "developer_panel", "aliases": ["developer", "developer panel", "dev panel", "debug menu", "developer options"], "say": "The developer panel is hidden on purpose: tap the build stamp at the bottom of User settings seven times."},
     {"key": "connect_google", "aliases": ["connect google", "google account", "link google"], "say": "Connecting a Google account isn't offered in this version of the app."},
     {"key": "connect_instagram", "aliases": ["instagram", "connect instagram", "facebook", "link instagram"], "say": "Instagram and Facebook connections aren't available in this version of the app."}
-  ]
+  ],
+  "screen_context": {
+    "_doc": "Every routed screen tells Ayma what is on it: the app's ScreenCapture (ayma_flutter/lib/services/screen_capture.dart) reads the live semantics tree of the current route (route, title, headings, text, controls with id/type/state), capped and debounced, and sends it on the existing screen-context path (POST /voice/context for voice, the /chat screen_* fields for text). Widgets wrapped in NoScreenContext are never sent, NoAymaAction controls are shown but not operable, and obscured or secret fields never send their value. Routes below send nothing at all; tests in both repos fail when a route is neither captured nor listed here with a reason.",
+    "max_chars": 1500,
+    "no_context": [
+      {"route": "/splash", "reason": "start-up bootstrap; there is no signed-in session or content yet"},
+      {"route": "/signin", "reason": "sign-in screen: credentials and codes only, and Ayma is not running before sign-in"},
+      {"route": "/recover", "reason": "deleted-account recovery at sign-in; Ayma is not running before sign-in"},
+      {"route": "/s/:token", "reason": "public shared-report link opened outside a session"}
+    ]
+  },
+  "ui_action_policy": {
+    "_doc": "ui_action lets Ayma tap, toggle, pick, slide, type and scroll any visible control by its id from the screen context. These rules are enforced twice: by skills/app_control.py on the label the model passes, and by the app's executor on the real control (ayma_flutter/lib/services/screen_capture.dart mirrors this block; a test checks they match). A denied control is never operated: Ayma tells the user to do it themselves (navigating there is fine). Patterns are case-insensitive regular expressions.",
+    "deny": [
+      {"key": "delete", "pattern": "\\b(delete|deleting|erase|permanently|close (my )?account|remove (my )?account)\\b", "say": "Deleting the account or any data for good is something the user does themselves. Open the page (open_screen delete_account for the account) and tell them which button to tap."},
+      {"key": "withdraw_consent", "pattern": "\\b(withdraw|revoke)\\b", "say": "Withdrawing face matching consent deletes the account, so the user does it themselves on the Face matching consent page (open_screen biometric_consent)."},
+      {"key": "purchase", "pattern": "\\b(subscribe|upgrade|buy|purchase|checkout|check out|top up|pay now|get credits|start (your |a )?(free )?trial)\\b|[$\u20ac\u00a3\u00a5\u20b9]\\s?\\d", "say": "Purchases, subscriptions and credits are always the user's own tap. Open the Plan page (open_screen credits) and let them choose there."},
+      {"key": "purchase", "routes": ["/profile/plan", "/profile/usage/trial"], "pattern": "\\bswitch to\\b", "say": "Changing plan is a purchase, so the user does it themselves on the Plan page."},
+      {"key": "consent", "pattern": "\\b(i agree|agree|accept|i consent|consent to)\\b", "say": "Consent is only ever the user's own tap. Tell them where to tap it."},
+      {"key": "consent", "types": ["checkbox"], "pattern": "terms|privacy|policy|consent|agree|biometric|18", "say": "Consent and terms checkboxes are only ever ticked by the user."},
+      {"key": "account_action", "pattern": "\\b(sign out|log out|wipe)\\b", "say": "Use account_action for this; it asks the user to confirm first."}
+    ],
+    "deny_routes": [
+      {"route": "/consent", "reason": "the face-matching consent gate must only be answered by the user"},
+      {"route": "/settings/biometric-consent", "reason": "withdrawing consent deletes the account; the user acts on this page themselves"},
+      {"route": "/settings/delete-account", "reason": "account deletion is the user's own action"},
+      {"route": "/profile/usage/trial", "reason": "the trial paywall is a purchase screen"}
+    ],
+    "escape_pattern": "^(back|cancel|close|not now|no|no thanks|keep( my)? account|go back|ayma|explore|messages|you)$",
+    "secret_field_pattern": "password|passcode|\\bpin\\b|\\bcode\\b|otp|one-time|verification|card number|card|cvv|cvc|expiry|expiration|iban|account number",
+    "secret_field_say": "Passwords, codes and payment details are only ever typed by the user.",
+    "dialog_note": "Inside a dialog or sheet whose text matches a deny pattern, every control except an escape (cancel/close/no) is denied, so Ayma never confirms a denied action."
+  }
 }

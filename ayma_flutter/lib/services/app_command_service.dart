@@ -6,17 +6,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
-import '../screens/biometric_consent_settings_screen.dart';
-import '../screens/delete_account_screen.dart';
 import '../screens/explore_screen.dart';
 import '../screens/sign_in_screen.dart';
 import 'accent_color_controller.dart';
-import 'api_client.dart';
 import 'app_context.dart';
 import 'orb_animation_settings.dart';
 import 'pair_key.dart';
 import 'profile_service.dart';
 import 'push_service.dart';
+import 'screen_capture.dart';
 import 'theme_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
@@ -46,15 +44,19 @@ import 'theme_controller.dart';
 ///   never swallow a newer command that landed between our read and our
 ///   delete.
 ///
-/// Two kinds of command land here, both dispatched by `action`:
+/// Three kinds of command land here, all dispatched by `action`:
 /// * navigation — `navigate` (the route `path` the backend resolved from
 ///   `functions/bootstrap/app_registry.json`, the single source of truth for
 ///   destinations), `search_explore`, `open_profile`, `open_dm_thread`;
 /// * `app_action` — the registry's client-held settings (theme, accent,
 ///   pause matching, orb animation), each calling the exact method its
-///   screen's switch/radio calls, plus the confirmed account actions
-///   (`sign_out`, `delete_account`), which the backend only sends after the
-///   user explicitly confirmed and which run after the ack is written.
+///   screen's switch/radio calls, plus the confirmed `sign_out`, which the
+///   backend only sends after the user explicitly confirmed and which runs
+///   after the ack is written. Deleting the account and withdrawing consent
+///   are never commands: Ayma only opens those pages (founder rule);
+/// * `ui_action` — operate one on-screen control through [ScreenCapture]
+///   (which refuses the registry's denylist), acked with the outcome and
+///   what the screen shows afterwards.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
@@ -65,18 +67,16 @@ class AppCommandService {
     ProfileService? profileService,
     AccentColorController? accentController,
     OrbAnimationSettings? orbAnimationSettings,
-    Future<void> Function()? deleteAccount,
-    Future<void> Function()? withdrawConsent,
     Future<void> Function()? clearPushToken,
+    Future<UiActionResult> Function(Map<String, dynamic> cmd)? uiAction,
   })  : _accentOverride = accentController,
-        _withdrawConsentOverride = withdrawConsent,
+        _uiAction = uiAction ?? _performUiAction,
         _fsOverride = firestore,
         _authOverride = auth,
         _navigate = navigate ?? appRouter.push,
         _go = go ?? appRouter.go,
         _theme = themeController ?? themeControllerGlobal,
         _orbAnim = orbAnimationSettings ?? orbAnimationSettingsGlobal,
-        _deleteAccountOverride = deleteAccount,
         _clearPushTokenOverride = clearPushToken,
         _profilesOverride = profileService;
 
@@ -86,13 +86,20 @@ class AppCommandService {
   final void Function(String path) _go;
   final ThemeController _theme;
   final OrbAnimationSettings _orbAnim;
-  final Future<void> Function()? _deleteAccountOverride;
-  final Future<void> Function()? _withdrawConsentOverride;
   final Future<void> Function()? _clearPushTokenOverride;
+  final Future<UiActionResult> Function(Map<String, dynamic> cmd) _uiAction;
 
-  /// A confirmed account action (sign out / delete account) waiting to run
-  /// once the ack and the pending-doc cleanup are written — both live under
-  /// `users/{uid}`, which signing out or deleting the account would break.
+  static Future<UiActionResult> _performUiAction(Map<String, dynamic> cmd) =>
+      ScreenCapture.instance.perform(
+        control: (cmd['control'] as String? ?? '').trim(),
+        label: (cmd['label'] as String? ?? '').trim(),
+        op: (cmd['op'] as String? ?? '').trim(),
+        value: cmd['value'] as String? ?? '',
+      );
+
+  /// A confirmed sign out waiting to run once the ack and the pending-doc
+  /// cleanup are written — both live under `users/{uid}`, which signing out
+  /// would break.
   Future<void> Function()? _afterAck;
   final AccentColorController? _accentOverride;
   AccentColorController get _accent =>
@@ -213,6 +220,10 @@ class AppCommandService {
       return;
     }
     if (id.isNotEmpty) _lastHandledId = id;
+    if (data['action'] == 'ui_action') {
+      unawaited(_runUiAction(snap.reference, data, id));
+      return;
+    }
     var ok = false;
     try {
       ok = handleCommand(data);
@@ -236,6 +247,31 @@ class AppCommandService {
     _afterAck = null;
     if (after != null) {
       unawaited(Future.wait([acked, cleared]).then((_) => after()));
+    }
+  }
+
+  /// Operate the control, then ack with the outcome: `ok`, plus what the
+  /// screen shows now (`result`) or why it was refused (`reason`).
+  Future<void> _runUiAction(DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd, String id) async {
+    final out = await runUiAction(cmd);
+    await ref.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': out.ok,
+      if (out.ok) 'result': out.result else 'reason': out.reason,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Runs one `ui_action` command; any failure is reported, never thrown.
+  @visibleForTesting
+  Future<UiActionResult> runUiAction(Map<String, dynamic> cmd) async {
+    try {
+      return await _uiAction(cmd);
+    } catch (e) {
+      debugPrint('Ayma ui_action failed: $e');
+      return const UiActionResult.refused('the app could not do that');
     }
   }
 
@@ -317,7 +353,7 @@ class AppCommandService {
     return false;
   }
 
-  /// The registry's client-held settings and the confirmed account actions
+  /// The registry's client-held settings and the confirmed sign out
   /// (`skills/app_control.py` sends these names). Each setting calls the
   /// exact method its screen's control already calls, never a raw widget
   /// tap. An unrecognised name or value is a no-op (false), matching the
@@ -357,16 +393,6 @@ class AppCommandService {
       case 'sign_out':
         _afterAck = _signOut;
         return true;
-      case 'delete_account':
-        _afterAck = () => _deleteThenSignOut(
-            _deleteAccountOverride ?? ApiClient().deleteAccount,
-            DeleteAccountScreen.path);
-        return true;
-      case 'withdraw_consent':
-        _afterAck = () => _deleteThenSignOut(
-            _withdrawConsentOverride ?? ApiClient().withdrawBiometricConsent,
-            BiometricConsentSettingsScreen.path);
-        return true;
     }
     return false;
   }
@@ -388,22 +414,7 @@ class AppCommandService {
     }
   }
 
-  /// The same steps as the Delete account / Face matching consent screens'
-  /// confirm buttons: the server call, then sign-out. A failure leaves the
-  /// user signed in on that screen ([retryPath]), where they can retry.
-  Future<void> _deleteThenSignOut(
-      Future<void> Function() serverCall, String retryPath) async {
-    try {
-      await serverCall();
-    } catch (e) {
-      debugPrint('Ayma-requested account action failed: $e');
-      _navigate(retryPath);
-      return;
-    }
-    await _signOut();
-  }
-
-  /// Runs the account action a just-handled command queued, as `_onDoc`
+  /// Runs the sign out a just-handled command queued, as `_onDoc`
   /// does once the ack is written.
   @visibleForTesting
   Future<void> runAfterAck() async {

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/meta_integrations.dart';
 import '../services/app_context.dart';
+import '../services/screen_capture.dart';
 import '../services/biometric_consent.dart';
 import '../screens/biometric_consent_screen.dart';
 import '../screens/biometric_consent_settings_screen.dart';
@@ -90,7 +91,7 @@ const _consentPendingAllowed = {
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   // Lets screens re-assert their voice screen-context when a child route pops.
-  observers: [screenRouteObserver],
+  observers: [screenRouteObserver, screenPopupTracker],
   // Sign-in gate (§3.3): unauthenticated users can only reach the sign-in,
   // splash, terms and recovery screens; everything else bounces to sign-in.
   redirect: (context, state) {

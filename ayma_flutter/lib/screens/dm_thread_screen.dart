@@ -22,6 +22,10 @@ import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
+import '../services/screen_capture.dart';
+
+/// How many of the newest DM messages Ayma's screen context may include.
+const int _kContextMessages = 3;
 
 /// One DM conversation (§6.6, §6.11 step 9). Text send is wired; photo/voice
 /// use the same message pipeline once a file is uploaded (Step 51 ingests them).
@@ -424,11 +428,16 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                   itemCount: msgs.length,
                   itemBuilder: (context, i) {
                     final m = msgs[msgs.length - 1 - i];
+                    final bubble = _Bubble(message: m, mine: m.senderUid == me);
                     return FadeSlideIn(
                       key: ValueKey(m.id),
                       delay: staggerDelay(i),
                       offset: 8,
-                      child: _Bubble(message: m, mine: m.senderUid == me),
+                      // Ayma's screen context carries only the newest few
+                      // messages of a private conversation.
+                      child: i < _kContextMessages
+                          ? bubble
+                          : NoScreenContext(child: bubble),
                     );
                   },
                 );

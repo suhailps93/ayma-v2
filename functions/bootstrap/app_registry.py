@@ -120,3 +120,71 @@ def found_on(screen_key: str) -> list[str]:
             if e.get("found_on") == screen_key:
                 out.append(e.get("on_screen") or e["label"])
     return out
+
+
+def no_context_routes() -> dict[str, str]:
+    """``{route: reason}`` for the routes that send no screen context."""
+    return {
+        n["route"]: n["reason"] for n in registry()["screen_context"]["no_context"]
+    }
+
+
+def destination_for_route(route: str) -> dict | None:
+    r = route.strip().split("?")[0]
+    for d in destinations():
+        if d["path"].split("?")[0] == r:
+            return d
+    return None
+
+
+def route_name(route: str) -> str:
+    """A human name for a route pattern ("/settings" -> "User settings"), from
+    the destination label or the parameterized/non-navigable reason; ``""``
+    when the registry doesn't know it."""
+    r = route.strip().split("?")[0]
+    if not r:
+        return ""
+    dest = destination_for_route(r)
+    if dest:
+        return dest["label"]
+    for entry in registry()["parameterized"] + registry()["non_navigable"]:
+        if entry["route"] == r:
+            return entry["reason"]
+    return ""
+
+
+def ui_policy() -> dict:
+    return dict(registry()["ui_action_policy"])
+
+
+def ui_denial(
+    label: str, control_type: str = "", route: str = "", dialog_text: str = ""
+) -> dict | None:
+    """The ``ui_action_policy`` rule that forbids operating this control, as
+    ``{"key", "say"}``, or ``None`` when Ayma may operate it. Mirrors the app
+    executor's check (``screen_capture.dart`` ``uiDenial``)."""
+    policy = ui_policy()
+    text = " ".join(label.split()).strip()
+    escape = re.fullmatch(policy["escape_pattern"], text, re.IGNORECASE)
+    r = route.strip().split("?")[0]
+    if not escape:
+        for d in policy["deny_routes"]:
+            if d["route"] == r:
+                return {"key": "route", "say": f"Not on this page: {d['reason']}."}
+        for rule in policy["deny"]:
+            if dialog_text and not (rule.get("types") or rule.get("routes")) and (
+                re.search(rule["pattern"], dialog_text, re.IGNORECASE)
+            ):
+                return {"key": rule["key"], "say": rule["say"]}
+    for rule in policy["deny"]:
+        if rule.get("routes") and r not in rule["routes"]:
+            continue
+        if rule.get("types") and control_type not in rule["types"]:
+            continue
+        if re.search(rule["pattern"], text, re.IGNORECASE):
+            return {"key": rule["key"], "say": rule["say"]}
+    if control_type == "field" and re.search(
+        policy["secret_field_pattern"], text, re.IGNORECASE
+    ):
+        return {"key": "secret_field", "say": policy["secret_field_say"]}
+    return None
