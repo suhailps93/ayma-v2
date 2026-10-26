@@ -18,6 +18,7 @@ Only ``visibility`` differs by source; the steps do not.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -158,6 +159,118 @@ def caption_turn_text(caption: str, *, shot_type: str = "", match: str = "") -> 
     return f"{prefix} {caption}" if caption else prefix
 
 
+async def _embed_and_attrs(image: bytes, mime: str, consented: bool, uid: str):
+    """The embedding (face vector, consent-gated) and the observable
+    attributes for one image, computed concurrently — they're independent, so
+    the attribute Gemini call and the embedding call overlap instead of running
+    back to back. Returns ``(embedding | None, attributes)``.
+    """
+
+    async def _embed():
+        if not consented:
+            return None
+        return await asyncio.to_thread(media_embed.embed_image_bytes, image, mime)
+
+    embedding, attributes = await asyncio.gather(
+        _embed(),
+        photo_attrs.extract_attributes(image, mime, uid=uid),
+    )
+    return embedding, attributes
+
+
+async def _enrich(
+    db,
+    uid: str,
+    media_id: str,
+    image: bytes,
+    mime: str,
+    source: str,
+    storage_path: str,
+    *,
+    embedding: list[float] | None,
+    attributes: dict,
+    wiki_uids: list[str] | None,
+    wiki_visibility: str | None,
+    accompanying_text: str,
+) -> str:
+    """Caption the photo and fold it into the gallery note and the wiki, for an
+    already-stored, approved photo. Reuses the embedding/attributes already
+    computed, so no embedding/moderation work is repeated. Runs inline for
+    chat/DM (so Ayma sees the photo in the same conversation) and off the
+    request path as a background task for profile uploads (nothing on the
+    upload/preview path needs the caption). Never raises — a failure here must
+    not undo a stored, approved photo. Returns the caption (``""`` if none)."""
+    try:
+        # The match verdict, computed once here (reusing the embedding derived
+        # during ``process`` — no new Gemini/embedding call) and reused for the
+        # wiki-narrative fold below, so it's never recomputed for the photo.
+        shot_type = str((attributes or {}).get(photo_attrs.SHOT_TYPE_FIELD, "") or "")
+        match = ""
+        if shot_type != "group" and embedding is not None:
+            try:
+                refs = deep_dive_images.reference_embeddings_for(db, uid)
+                match = deep_dive_images.classify_face_match(embedding, refs)
+            except Exception:  # noqa: BLE001
+                match = ""
+
+        name = ""
+        if match == "self":
+            try:
+                name = deep_dive.profile_full_name(db, uid)
+            except Exception:  # noqa: BLE001
+                name = ""
+
+        caption = await _caption(
+            image, mime,
+            name=name, match=match, source=source,
+            accompanying_text=accompanying_text,
+            uid=uid,
+        )
+        if not caption:
+            return ""
+
+        _media_col(db, uid).document(media_id).set(
+            {"caption": caption}, merge=True
+        )
+
+        # Fold the caption into this photo's own gallery note (§ photo_notes
+        # ``context``) — additive to, and independent of, the wiki fold below.
+        # Best-effort; never lets a note-write problem fail the enrichment.
+        try:
+            import photo_notes
+            import public_profile
+
+            url = public_profile._photo_url(storage_path)
+            if url:
+                photo_notes.set_context(db, uid, url, context=caption)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "photo_pipeline: gallery note update failed for %s/%s",
+                uid, storage_path, exc_info=True,
+            )
+
+        if wiki_uids:
+            source_id = f"photo-{media_id}"
+            text = caption_turn_text(caption, shot_type=shot_type, match=match)
+            turn = [Turn(ROLE_USER, text)]
+            for wuid in wiki_uids:
+                try:
+                    persist_raw_turns(db, wuid, source_id, turn)
+                    await wiki_ingest(
+                        db, wuid, source_id, turn,
+                        force_visibility=wiki_visibility,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("photo caption ingest failed for %s", wuid)
+
+        return caption
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "photo_pipeline: enrichment failed for %s/%s", uid, media_id
+        )
+        return ""
+
+
 async def process(
     db,
     uid: str,
@@ -167,6 +280,8 @@ async def process(
     wiki_uids: list[str] | None = None,
     wiki_visibility: str | None = None,
     accompanying_text: str = "",
+    background=None,
+    defer_enrichment: bool = False,
 ) -> dict:
     """Run the full pipeline for one image. Returns a status dict:
     ``{media_id, moderation_status, published, reason, attributes, caption,
@@ -179,6 +294,16 @@ async def process(
     (a chat message sent with it, a DM caption) — may be empty, and always is
     for a profile-grid upload (nothing is "said" when adding one). Folded
     into the caption composer below; never required.
+
+    Moderation always blocks (the safety gate — a flagged photo stops here and
+    is never embedded or published). When ``defer_enrichment`` is set and a
+    FastAPI ``background`` tasks object is supplied, the captioning + gallery
+    note + wiki fold run *after* the response instead of on the request path:
+    the approved photo, its embedding and its attributes are all persisted
+    synchronously first (so the grid add and the Appearance pipeline see them),
+    only the caption-dependent enrichment is deferred. Callers that need the
+    caption available immediately (chat/DM, so Ayma can reference the photo in
+    the same turn) leave ``defer_enrichment`` off and get it inline.
     """
     now = datetime.now(timezone.utc)
     image, mime = media_embed.download_bytes(storage_path)
@@ -208,36 +333,10 @@ async def process(
 
     # Face data (the embedding and every face match) only with the owner's
     # biometric consent (biometric_consent.py); without it the photo is
-    # still moderated, described and stored, just never embedded.
+    # still moderated, described and stored, just never embedded. The embedding
+    # and the attribute extraction are independent, so they run concurrently.
     consented = biometric_consent.has_consent_fresh(db, uid)
-    embedding = media_embed.embed_image_bytes(image, mime) if consented else None
-    attributes = await photo_attrs.extract_attributes(image, mime, uid=uid)
-
-    # The match verdict, computed once here (reusing the embedding just
-    # derived above — no new Gemini/embedding call) and reused below for the
-    # wiki-narrative fold too, so it's never recomputed for the same photo.
-    shot_type = str(attributes.get(photo_attrs.SHOT_TYPE_FIELD, "") or "")
-    match = ""
-    if shot_type != "group" and embedding is not None:
-        try:
-            refs = deep_dive_images.reference_embeddings_for(db, uid)
-            match = deep_dive_images.classify_face_match(embedding, refs)
-        except Exception:  # noqa: BLE001
-            match = ""
-
-    name = ""
-    if match == "self":
-        try:
-            name = deep_dive.profile_full_name(db, uid)
-        except Exception:  # noqa: BLE001
-            name = ""
-
-    caption = await _caption(
-        image, mime,
-        name=name, match=match, source=source,
-        accompanying_text=accompanying_text,
-        uid=uid,
-    )
+    embedding, attributes = await _embed_and_attrs(image, mime, consented, uid)
 
     doc = _media_col(db, uid).document()
     doc.set(
@@ -252,7 +351,6 @@ async def process(
                 else {}
             ),
             "attributes": attributes,
-            "caption": caption,
             "created_at": now,
         }
     )
@@ -262,39 +360,23 @@ async def process(
             "main"
         ).set({"photo_attrs": attributes}, merge=True)
 
-    # Fold the caption into this photo's own gallery note too (§ photo_notes
-    # ``context``) — additive to, and independent of, the wiki-narrative fold
-    # below. Every source this pipeline handles (profile, chat, dm) gets this;
-    # best-effort, never lets a note-write problem fail the upload itself.
-    if caption:
-        try:
-            import photo_notes
-            import public_profile
+    enrich_args = (db, uid, doc.id, image, mime, source, storage_path)
+    enrich_kwargs = dict(
+        embedding=embedding,
+        attributes=attributes,
+        wiki_uids=wiki_uids,
+        wiki_visibility=wiki_visibility,
+        accompanying_text=accompanying_text,
+    )
 
-            url = public_profile._photo_url(storage_path)
-            if url:
-                photo_notes.set_context(db, uid, url, context=caption)
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "photo_pipeline: gallery note update failed for %s/%s",
-                uid, storage_path, exc_info=True,
-            )
-
-    if caption and wiki_uids:
-        source_id = f"photo-{doc.id}"
-        # Reuses the shot_type/match already computed above — never
-        # recomputed for the same photo.
-        text = caption_turn_text(caption, shot_type=shot_type, match=match)
-        turn = [Turn(ROLE_USER, text)]
-        for wuid in wiki_uids:
-            try:
-                persist_raw_turns(db, wuid, source_id, turn)
-                await wiki_ingest(
-                    db, wuid, source_id, turn,
-                    force_visibility=wiki_visibility,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("photo caption ingest failed for %s", wuid)
+    if defer_enrichment and background is not None:
+        # Caption + gallery note + wiki fold run after the response — the photo
+        # is already stored, approved, embedded and tagged, so the upload can
+        # return now and the grid add / preview never wait on the AI captioning.
+        background.add_task(_enrich, *enrich_args, **enrich_kwargs)
+        caption = ""
+    else:
+        caption = await _enrich(*enrich_args, **enrich_kwargs)
 
     return {
         "media_id": doc.id,

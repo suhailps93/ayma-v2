@@ -2099,6 +2099,14 @@ async def register_media(
             req.context,
             wiki_uids=[uid] if req.context in ("profile", "chat") else None,
             accompanying_text=req.caption_context,
+            background=background,
+            # A profile-grid upload needs the photo stored, moderated and
+            # tagged before it returns, but nothing on the upload/preview path
+            # consumes the caption — defer the captioning + wiki fold off the
+            # request path so the add returns as soon as the photo is safe to
+            # show. Chat/DM keep it inline so Ayma can reference the image in
+            # the same turn.
+            defer_enrichment=(req.context == "profile"),
         )
     except Exception as exc:  # noqa: BLE001 - surface embed/storage failure
         raise HTTPException(
