@@ -7,6 +7,7 @@ import 'public_profile_screen.dart' show ProfileBody;
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/inline_photo_carousel.dart';
+import '../widgets/overflow_guards.dart';
 import 'manual_profile_edit_screen.dart';
 import 'profile_proposals_screen.dart';
 
@@ -237,8 +238,12 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
+      // ChromeColumn so the pending-updates banner scrolls inside its own
+      // capped share in a very short window (split-screen, keyboard, 2x text)
+      // instead of squeezing the profile body into an overflow.
+      body: ChromeColumn(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        header: [
           if (_pendingUpdates > 0)
             MaterialBanner(
               content: Text(_pendingUpdates == 1
@@ -250,26 +255,24 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
                     onPressed: _reviewUpdates, child: const Text('Review')),
               ],
             ),
-          Expanded(
-            child: FutureBuilder<PublicProfile>(
-              future: _photoFuture,
-              builder: (context, snap) => ProfileBody(
-                key: ValueKey(_reportRev),
-                reportType: 'story_public',
-                reportId: _uid,
-                api: _api,
-                profile: snap.data,
-                headerLoading: snap.connectionState != ConnectionState.done,
-                editing: InlinePhotoEditing(
-                  controller: _photos,
-                  onAddPhoto: _addPhotos,
-                  onSetPrimary: _setPrimary,
-                  onRemove: _confirmRemove,
-                ),
-              ),
+        ],
+        body: FutureBuilder<PublicProfile>(
+          future: _photoFuture,
+          builder: (context, snap) => ProfileBody(
+            key: ValueKey(_reportRev),
+            reportType: 'story_public',
+            reportId: _uid,
+            api: _api,
+            profile: snap.data,
+            headerLoading: snap.connectionState != ConnectionState.done,
+            editing: InlinePhotoEditing(
+              controller: _photos,
+              onAddPhoto: _addPhotos,
+              onSetPrimary: _setPrimary,
+              onRemove: _confirmRemove,
             ),
           ),
-        ],
+        ),
       ),
     );
   }
