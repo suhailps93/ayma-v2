@@ -54,6 +54,19 @@ DEMO_PROFILES: list[dict] = [
                 "ai_body": "Someone curious and kind who can make me laugh.",
             },
             {
+                "id": "prompts",
+                "visibility": "public",
+                "page_type": "prompts",
+                "title": "Prompts",
+                "ai_body": (
+                    "Two truths and a lie: I've fired 300 mugs this year, I "
+                    "sold a pot to someone semi-famous, I can parallel park on "
+                    "the first try. · We'll get along if you let me drag you to "
+                    "a pottery studio and pretend you hate it. · Unusually good "
+                    "at: salvaging a glaze that was about to crack."
+                ),
+            },
+            {
                 "id": "private_notes",
                 "visibility": "private",
                 "page_type": "misc",
@@ -106,6 +119,30 @@ DEMO_PROFILES: list[dict] = [
                 ),
             },
             {
+                "id": "looking_for",
+                "visibility": "public",
+                "page_type": "dating",
+                "title": "What I'm looking for",
+                "ai_body": (
+                    "A partner in low-key adventures — someone to split a late "
+                    "set and a bowl of noodles with, who's kind to waiters and "
+                    "houseplants alike."
+                ),
+            },
+            {
+                "id": "prompts",
+                "visibility": "public",
+                "page_type": "prompts",
+                "title": "Prompts",
+                "ai_body": (
+                    "The way to my heart: cook with me and don't panic when "
+                    "the kitchen's (metaphorically) on fire. · My simple "
+                    "pleasures: a clean practice-pad session, a watered "
+                    "monstera, and ramen near midnight. · First-round question "
+                    "I'll ask you: window seat or aisle, and why you're wrong."
+                ),
+            },
+            {
                 "id": "private_notes",
                 "visibility": "private",
                 "page_type": "misc",
@@ -145,6 +182,29 @@ DEMO_PROFILES: list[dict] = [
                 ),
             },
             {
+                "id": "looking_for",
+                "visibility": "public",
+                "page_type": "dating",
+                "title": "What I'm looking for",
+                "ai_body": (
+                    "Someone curious and a little competitive — up for "
+                    "tide-pooling at dawn and losing graciously at Scrabble."
+                ),
+            },
+            {
+                "id": "prompts",
+                "visibility": "public",
+                "page_type": "prompts",
+                "title": "Prompts",
+                "ai_body": (
+                    "I geek out about: tide pools, sourdough starters, and why "
+                    "board games are serious business. · A review from a "
+                    "friend: 'competitive to a fault, will absolutely cheat at "
+                    "Monopoly, worth it.' · Date idea I'll actually say yes to: "
+                    "the aquarium, then arguing about the best exhibit over tea."
+                ),
+            },
+            {
                 "id": "ai_notes",
                 "visibility": "ai_only",
                 "page_type": "ai_notes",
@@ -181,6 +241,28 @@ DEMO_PROFILES: list[dict] = [
                 "ai_body": (
                     "Backend engineer who'd rather be backpacking. Quiet until "
                     "he isn't. Big on dumb puns and good coffee."
+                ),
+            },
+            {
+                "id": "looking_for",
+                "visibility": "public",
+                "page_type": "dating",
+                "title": "What I'm looking for",
+                "ai_body": (
+                    "A low-drama human who likes the outdoors, long drives, and "
+                    "will tolerate my puns long enough to start liking them."
+                ),
+            },
+            {
+                "id": "prompts",
+                "visibility": "public",
+                "page_type": "prompts",
+                "title": "Prompts",
+                "ai_body": (
+                    "My ideal first date: a trailhead, questionable trail mix, "
+                    "and worse puns. · I'm weirdly good at: finding the one "
+                    "coffee shop worth the detour. · Green flag I look for: you "
+                    "have a comfort movie and you're not embarrassed about it."
                 ),
             },
             {
