@@ -23,7 +23,7 @@ profile wiki, and scores matches. Users see **credits**, never dollars.
 | Data | Firestore only (no mock/local DB, ever). Rules `firestore.rules`, indexes `firestore.indexes.json` | |
 | GCP/Firebase project | `ayma-ai`, region `us-central1` | |
 | Voice infra | LiveKit Cloud project `aimma-wt34nu3l` | |
-| Billing/IAP | RevenueCat; webhook `POST /webhooks/revenuecat`. Tiers in `config.py` `PLAN_TIERS` (plus $10, pro $20, max $100; prices agreed, do not re-ask) | |
+| Billing/IAP | RevenueCat; webhook `POST /webhooks/revenuecat` (prod source of truth) + `POST /billing/sync` (app-driven, grants the pool for Test Store/sandbox and as resilience; see Credits section). Tiers in `config.py` `PLAN_TIERS` (plus $10, pro $20, max $100; prices agreed, do not re-ask) | |
 | CI | `codemagic.yaml`: `ios-testflight` (manual, on request) and `android-firebase`. Android is normally built locally | |
 | Errors | Sentry (DSN-gated, `sentry` flag) + Crashlytics | handled voice-start failures reported with id-only tags |
 | Gates | biometric consent (app-wide 403 `biometric_consent_required`), 18+ (`age_gate.py`) | see `docs/ARCHITECTURE.md` section 0 |
@@ -84,6 +84,31 @@ aggregated from `users/{uid}/spend_events` cost at `credits_per_usd`; header tot
 update" starts at the newest of `billing.credits_updated_at` (stamped on start grant, selfie unlock, daily rollover,
 plan grant/renewal, expiry) and the top-level `credits_updated_at` (free reload). Events are capped (500), so a
 longer window starts at the oldest retained event instead of under-reporting.
+
+How a purchase grants the monthly plan credits (two paths, both in `billing.py`):
+- **Production: the webhook.** `POST /webhooks/revenuecat` (shared secret `REVENUECAT_WEBHOOK_SECRET`) is the
+  source of truth. On `INITIAL_PURCHASE`/`RENEWAL`/`PRODUCT_CHANGE`/`UNCANCELLATION` it sets the plan's monthly
+  pool (`PLAN_TIERS[plan].pool_usd`) and stamps `billing.credits_updated_at`; idempotent on `event.id`.
+- **Sandbox/Test Store + resilience: `POST /billing/sync`.** A RevenueCat **Test Store** (fake/simulated)
+  purchase does **not** send the server webhook, so the SDK shows Pro while the backend never credits — this was
+  the founder's "purchase completes but credits don't go up" (build 2211). The app now calls `POST /billing/sync`
+  (authenticated) on every successful purchase/restore and on every RevenueCat customer-info change
+  (`listenForEntitlementChanges`, wired in `main.dart`). The endpoint grants/refreshes the same monthly pool,
+  idempotently — keyed on plan + period end, so a re-sync in the same period is a no-op (`already_synced`) and
+  never double-credits; no active entitlement = no grant (`no_active`); downgrade/expiry falls back lazily via
+  `normalize`. It stamps `billing.credits_updated_at` so the Plan page's "since last credit update" resets.
+  - **With `REVENUECAT_SECRET_API_KEY` set** (Secret Manager, a RevenueCat REST `sk_...` key): the server reads
+    the active entitlement from RevenueCat's REST API (`GET /v1/subscribers/{uid}`) itself — authoritative, works
+    for everyone including the Test Store, client body ignored.
+  - **Without that key** (current state): only a **dev-view** caller (founder allowlist, `dev_view_emails`/
+    `dev_view_uids`) is credited, from the app-reported entitlement in the request body — debug/test only, a
+    release client is never trusted. Everyone else gets `no_active` and the webhook stays the only grant path.
+- **Action for founder/Muse:** to make Test Store (and non-dev sandbox) purchases credit via the REST path, add
+  Secret Manager secret **`REVENUECAT_SECRET_API_KEY`** (a RevenueCat **secret** REST key, `sk_...`, from the
+  RevenueCat dashboard → API keys) and mount it on `ayma-api` — append
+  `REVENUECAT_SECRET_API_KEY=REVENUECAT_SECRET_API_KEY:latest` to the `SECRETS` line in `scripts/deploy-api.sh`,
+  then deploy with `--full`. Until then, the founder (dev-view) can test on the **debug** APK (the sync credits
+  them from the client entitlement), or use the dev "free reload" top-up tool.
 
 ---
 
@@ -223,7 +248,9 @@ bash scripts/apply-artifact-cleanup.sh                          # Artifact Regis
 Secret Manager names (values never in repo): `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `CRON_SECRET`,
 `ADMIN_PASSWORD`, `INSTAGRAM_APP_SECRET`, `GOOGLE_IMPORT_CLIENT_SECRET`, `GOOGLE_API_KEY` (agent, Developer-API
 voice), `SENTRY_DSN_API`, `SENTRY_DSN_AGENT`, `SENTRY_DSN_FLUTTER` (read at APK build time),
-`REVENUECAT_WEBHOOK_SECRET`, `DEV_PANEL_PASSWORD` (ayma-api), `PLAY_REVIEWER_CREDENTIALS`. Mounting is wired in
+`REVENUECAT_WEBHOOK_SECRET`, `DEV_PANEL_PASSWORD` (ayma-api), `PLAY_REVIEWER_CREDENTIALS`, and — **not yet
+created** — `REVENUECAT_SECRET_API_KEY` (RevenueCat REST `sk_...`, used by `POST /billing/sync`; see the Credits
+section; until it exists only dev-view/debug test purchases credit via sync). Mounting is wired in
 `scripts/deploy-api.sh` / `deploy-agent.sh`; rotation procedure in `docs/deploy.md`. Local dev secrets: gitignored
 `.env.local`. The founder keeps off-repo key backups in `~/.ayma-keys/` (not for agents to read or copy).
 Cloud Scheduler jobs `ayma-cron-*` call `/cron/*` with `X-Cron-Secret`.
