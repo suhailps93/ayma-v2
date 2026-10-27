@@ -1132,11 +1132,42 @@ Every endpoint in §10.2 except `/cron/*` requires a verified Firebase ID token 
 
 ### 11.2 App entry flow
 
+On the **very first launch only**, before the landing, a one-time **feature tour** runs (§11.2a). Once it is dismissed (or on every later launch), the normal flow runs:
+
 Splash → Firebase Auth state check → anonymous sign-in if none exists (§3.3) → `session_mode` drives a `go_router` redirect:
 
 - `marketing` → marketing chat screen (restricted-topic voice/text, §3.3)
 - `interview` → preboarding screen sequence (§4.2)
 - `active` → main app shell (§11.3)
+
+```
+first launch, not signed in            every later launch / signed-in user
++---------------------+                +---------------------+
+|  Splash             |                |  Splash             |
+|  feature_tour_seen? |── no, and ──►  |  (tour already seen |
+|                     |   user is      |   or user signed    |
+|                     |   anon/null    |   in → skip tour)    |
++----------+----------+                +----------+----------+
+           │  show once                           │
+           ▼                                       │
++---------------------+   Skip / Get started       │
+|  Feature Tour (/tour)|  set feature_tour_seen ───┘
+|  5 swipeable pages   |  → back to Splash, normal flow
++---------------------+
+                                        │ bootstrap → session_mode
+                                        ▼
+                         marketing chat / preboarding / main shell
+                         (age + biometric-consent gates unchanged)
+```
+
+### 11.2a First-launch feature tour (as built, 2026-10-26)
+
+`FeatureTourScreen` (`lib/screens/feature_tour_screen.dart`, route `/tour`) — a swipeable five-page walkthrough (dark theme, serif display headline, one-line subtitle, a small animated demo illustration per page reusing `AymaOrb` and the shared `ChatBubble`, a page-dot indicator + back chevron at the top, a big pill "Next" / "Get started" button at the bottom, and a top "Skip"). It explains, in order: voice-first dating, Ayma building your profile as you chat, practice dates, in-chat coaching, and privacy/18+/consent.
+
+- **Pure client-side pre-screen.** It never touches auth, the server-derived `session_mode`, or the age / biometric-consent gates. The splash gate only shows it when the user is anonymous/`null` **and** the tour has not been seen — so a signed-in (returning) user never sees it and cannot be trapped by it; once it is dismissed it routes back to splash and the normal `entryRouteFor` flow runs.
+- **Seen flag.** Persisted locally via `FeatureTourStore` (`lib/services/feature_tour_store.dart`), the same best-effort `SharedPreferences` pattern as `OrbAnimationSettings` — key `feature_tour_seen`, loaded at startup in `main.dart` so the splash gate is synchronous. The last page's CTA and the top "Skip" both mark it seen. The Developer panel has a "Reset feature tour" action to re-trigger it for demos.
+- **Reduced motion.** Honours `MediaQuery.disableAnimationsOf`: every illustration falls back to its final static state (AymaOrb already does this internally).
+- **Layout + tests.** The `/tour` route has a `test/layout_matrix_test.dart` entry (no overflow across the full matrix), plus `test/feature_tour_screen_test.dart` (pages advance, CTA flips on the last page, Skip/CTA set the seen flag and route onward, reduced motion renders static).
 
 ### 11.3 Main app navigation
 

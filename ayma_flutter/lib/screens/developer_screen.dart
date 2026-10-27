@@ -9,6 +9,7 @@ import '../services/ayma_session.dart';
 import '../services/credits_balance.dart';
 import '../services/dev_panel_flag.dart';
 import '../services/dev_panel_session.dart';
+import '../services/feature_tour_store.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
@@ -384,6 +385,23 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
         trailing: Icon(Icons.chevron_right, color: ac.fgMute),
         onTap: () => context.push(ReleaseNotesScreen.path),
+      ),
+      const SizedBox(height: 36),
+      const Eyebrow('Feature tour'),
+      const SizedBox(height: 8),
+      ListTile(
+        key: const ValueKey('dev-reset-feature-tour'),
+        contentPadding: EdgeInsets.zero,
+        title: Text('Reset feature tour',
+            style: AymaType.sans(size: 15, color: ac.fg)),
+        subtitle: Text('Show the first-launch walkthrough again next launch.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+        trailing: Icon(Icons.refresh, color: ac.fgMute),
+        onTap: () async {
+          await featureTourStoreGlobal.reset();
+          _say('Feature tour will show on next launch.',
+              kind: AymaToastKind.success);
+        },
       ),
     ];
   }
