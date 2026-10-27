@@ -74,6 +74,7 @@ def _route_rates() -> dict[str, str]:
         "/cron/ingest-backfill": c.rate_cron_ingest_backfill,
         "/cron/google-sync": c.rate_cron_google_sync,
         "/credits/topup": c.rate_credits_topup,
+        "/mcp": c.rate_mcp,
         "/dev/flags": "10/minute",
         "/dev/verify": "10/minute",
         "/webhooks/": c.rate_webhooks,

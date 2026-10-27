@@ -898,6 +898,38 @@ def credits(uid: str) -> dict:
     return _credit_view(*_load(uid))
 
 
+_MCP_USAGE_FIELD = "mcp_usage"
+
+
+def record_mcp_tool_call(uid: str | None, tool: str) -> None:
+    """Observability-only meter for an MCP tool call (``docs/MCP_SERVER.md``).
+
+    MCP tools do data ops, not generation — they spend **no** Ayma LLM budget —
+    so this deliberately does NOT touch ``token_usage.total`` or the credit
+    balance (an MCP call must never cost the user a credit). It increments a
+    separate, cost-free ``users/{uid}.mcp_usage`` counter
+    (``{total, tools: {<tool>: n}, updated_at}``) purely so MCP activity is
+    visible for debugging and abuse monitoring. Best-effort; never raises."""
+    if not uid or not tool:
+        return
+    try:
+        from firebase_admin import firestore
+
+        get_db().collection("users").document(uid).set(
+            {
+                _MCP_USAGE_FIELD: {
+                    "total": firestore.Increment(1),
+                    "tools": {tool: firestore.Increment(1)},
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                }
+            },
+            merge=True,
+        )
+        logger.info("mcp-tool-call uid=%s tool=%s", uid, tool)
+    except Exception:  # noqa: BLE001 - metering must never break a tool call
+        logger.exception("mcp meter failed for %s/%s", uid, tool)
+
+
 def check(uid: str | None) -> None:
     """Raise :class:`TokenCapExceeded` when the user has no credits left
     (free: start grant + today's allowance spent; paid: monthly pool spent).
