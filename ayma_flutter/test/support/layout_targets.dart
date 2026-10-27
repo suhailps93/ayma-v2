@@ -36,6 +36,7 @@ import 'package:ayma_flutter/screens/privacy_screen.dart';
 import 'package:ayma_flutter/screens/profile_settings_screen.dart';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
 import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
+import 'package:ayma_flutter/features/date_sim/taste_match_card.dart';
 import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
 import 'package:ayma_flutter/features/practice_date/practice_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
@@ -338,6 +339,21 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
       useSafeArea: true,
       builder: (_) => AppearancePreRunSheet(api: api),
     ),
+    // The date-sim result's Qloo taste-match card (long strings, sample chip),
+    // on a page of its own since the matrix pumps DateSimScreen pre-run.
+    'date-sim taste match card': (context) {
+      final taste = loadTasteMatch(api, 'her');
+      return Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [TasteMatchCard(load: taste)],
+            ),
+          ),
+        ),
+      );
+    },
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

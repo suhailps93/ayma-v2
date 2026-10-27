@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ayma × Qloo — Taste match demo</title>
+<style>
+  :root { --pink:#e8457a; --ink:#1d1b20; --muted:#6b6670; --line:#ece6ee; --bg:#fbf8fb; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  main { max-width:720px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.6rem; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; margin:14px 0; }
+  .pick { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  select, button { font:inherit; padding:10px 14px; border-radius:12px; border:1px solid var(--line); background:#fff; }
+  button { background:var(--pink); color:#fff; border:0; cursor:pointer; font-weight:600; }
+  button:disabled { opacity:.6; cursor:default; }
+  .score { font-size:2.6rem; font-weight:700; color:var(--pink); line-height:1; }
+  .label { font-weight:600; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { background:#fde9f0; color:#9a1f4b; padding:4px 10px; border-radius:999px; font-size:.9rem; }
+  .tag { font-size:.75rem; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin-left:6px; }
+  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--pink); }
+  .dom { display:grid; grid-template-columns:110px 1fr 40px; gap:8px; align-items:center; margin:6px 0; font-size:.95rem; }
+  ul { padding-left:18px; margin:6px 0 0; }
+  li { margin:6px 0; }
+  .why, .muted { color:var(--muted); font-size:.92rem; }
+  .err { color:#b3261e; }
+  footer { color:var(--muted); font-size:.85rem; margin-top:24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Taste match, powered by Qloo</h1>
+  <p class="sub">Ayma is an AI matchmaker. Pick two demo profiles: Qloo's taste graph
+    scores how much their music, film and food tastes overlap, then suggests date
+    ideas they'd both enjoy. All four profiles are synthetic demo people.</p>
+
+  <div class="card pick">
+    <select id="a" aria-label="First person"></select>
+    <span>×</span>
+    <select id="b" aria-label="Second person"></select>
+    <button id="go">Match tastes</button>
+  </div>
+
+  <div id="out"></div>
+
+  <footer>Each demo person's public "Taste" page (e.g. <em>Music: Khruangbin, Bon Iver</em>)
+    is resolved to Qloo entities; per-domain overlap of their Qloo recommendations
+    gives the score, and a joint Qloo query (both people's signals at once) ranks the
+    date spots. Only public profile data is used.</footer>
+</main>
+<script>
+const PEOPLE = [["maya","Maya · San Francisco"],["leo","Leo · Oakland"],["aisha","Aisha · Berkeley"],["noah","Noah · San Jose"]];
+const a = document.getElementById("a"), b = document.getElementById("b");
+const go = document.getElementById("go"), out = document.getElementById("out");
+for (const [id, label] of PEOPLE) { a.add(new Option(label, id)); b.add(new Option(label, id)); }
+b.value = "leo";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const DOMAIN = {music:"Music", film:"Film", dining:"Food & places"};
+
+async function run() {
+  if (a.value === b.value) { out.innerHTML = '<div class="card err">Pick two different people.</div>'; return; }
+  go.disabled = true; out.innerHTML = '<div class="card muted">Asking Qloo…</div>';
+  try {
+    const r = await fetch(`/taste/demo/pair?a=${encodeURIComponent(a.value)}&b=${encodeURIComponent(b.value)}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : (d.detail && d.detail.message) || "Request failed");
+    const domains = (d.domains || []).map(x =>
+      `<div class="dom"><span>${esc(DOMAIN[x.domain] || x.domain)}</span><div class="bar"><i style="width:${Number(x.score)||0}%"></i></div><span>${Number(x.score)||0}</span></div>`).join("");
+    const shared = (d.shared || []).map(s => `<span class="chip">${esc(s)}</span>`).join("");
+    const ideas = (d.date_ideas || []).map(i =>
+      `<li><strong>${esc(i.name)}</strong><span class="tag">${esc(i.kind)}</span>${i.address ? `<div class="muted">${esc(i.address)}</div>` : ""}<div class="why">${esc(i.why)}</div></li>`).join("");
+    out.innerHTML = `
+      <div class="card">
+        <div class="muted">${esc(d.a.name)} × ${esc(d.b.name)}${d.source === "fixture" ? '<span class="tag">sample data</span>' : '<span class="tag">live Qloo</span>'}</div>
+        <div class="score">${Number(d.score)||0}</div>
+        <div class="label">${esc(d.score_label)}</div>
+        <p>${esc(d.summary)}</p>
+        ${domains}
+        ${shared ? `<div class="chips">${shared}</div>` : ""}
+      </div>
+      <div class="card"><strong>Date ideas you'd both enjoy</strong><ul>${ideas || '<li class="muted">No ideas found.</li>'}</ul></div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="card err">${esc(e.message)}</div>`;
+  } finally { go.disabled = false; }
+}
+go.addEventListener("click", run);
+</script>
+</body>
+</html>

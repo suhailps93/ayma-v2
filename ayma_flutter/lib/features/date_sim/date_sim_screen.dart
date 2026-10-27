@@ -7,12 +7,14 @@ import '../../widgets/chat_bubble.dart';
 import '../../widgets/out_of_credits.dart';
 import '../../widgets/overflow_guards.dart';
 import 'date_sim_models.dart';
+import 'taste_match_card.dart';
 
 /// AI Date Simulation (hackathon flagship) — watch your AI and theirs feel each
 /// other out before you message them. The user sets how many messages the two
 /// personas exchange, runs it, then sees the (clearly-labelled "simulated, not
 /// sent") transcript plus a compatibility read: a 0–100 score and a short
 /// "how it went" summary, with a "Message them for real" CTA.
+/// Under the read, a [TasteMatchCard] (Qloo taste overlap + date ideas).
 ///
 /// Reuses the shared [ChatBubble] so the simulated chat reads like a real one,
 /// and the app theme tokens (light + dark). Metered/credit-aware: an
@@ -53,6 +55,9 @@ class _DateSimScreenState extends State<DateSimScreen> {
   String? _error;
   int _count = 6;
   DateSimResult? _result;
+
+  /// The Qloo taste match, fetched once when the simulation result arrives.
+  Future<TasteMatchLoad>? _taste;
 
   static const _min = 2;
   static const _max = 20;
@@ -98,6 +103,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
       }
       setState(() {
         _result = res;
+        _taste = loadTasteMatch(_api, widget.uid);
         _phase = _Phase.done;
       });
     } catch (e) {
@@ -259,6 +265,10 @@ class _DateSimScreenState extends State<DateSimScreen> {
             ),
           const SizedBox(height: 20),
           _Verdict(score: res.score, label: res.scoreLabel, summary: res.summary),
+          if (_taste != null) ...[
+            const SizedBox(height: 16),
+            TasteMatchCard(load: _taste!),
+          ],
         ],
       ),
       footer: [

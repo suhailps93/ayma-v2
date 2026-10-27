@@ -1,0 +1,532 @@
+{
+ "_comment": "Offline Qloo stand-in for the taste-match demo (qloo_client.FixtureQlooClient). Real, well-known public entities; tags are illustrative, not Qloo data. Used only when QLOO_API_KEY is absent or a live call fails.",
+ "entities": [
+  {
+   "id": "fx-khruangbin",
+   "type": "urn:entity:artist",
+   "name": "Khruangbin",
+   "tags": [
+    "psychedelic",
+    "soul",
+    "chill",
+    "groove"
+   ]
+  },
+  {
+   "id": "fx-bon-iver",
+   "type": "urn:entity:artist",
+   "name": "Bon Iver",
+   "tags": [
+    "indie",
+    "folk",
+    "ambient",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-phoebe-bridgers",
+   "type": "urn:entity:artist",
+   "name": "Phoebe Bridgers",
+   "tags": [
+    "indie",
+    "folk",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-thelonious-monk",
+   "type": "urn:entity:artist",
+   "name": "Thelonious Monk",
+   "tags": [
+    "jazz",
+    "classic",
+    "improvisation"
+   ]
+  },
+  {
+   "id": "fx-kamasi-washington",
+   "type": "urn:entity:artist",
+   "name": "Kamasi Washington",
+   "tags": [
+    "jazz",
+    "soul",
+    "cinematic",
+    "improvisation"
+   ]
+  },
+  {
+   "id": "fx-fleet-foxes",
+   "type": "urn:entity:artist",
+   "name": "Fleet Foxes",
+   "tags": [
+    "folk",
+    "indie",
+    "outdoors",
+    "harmonies"
+   ]
+  },
+  {
+   "id": "fx-the-lumineers",
+   "type": "urn:entity:artist",
+   "name": "The Lumineers",
+   "tags": [
+    "folk",
+    "americana",
+    "upbeat"
+   ]
+  },
+  {
+   "id": "fx-tame-impala",
+   "type": "urn:entity:artist",
+   "name": "Tame Impala",
+   "tags": [
+    "psychedelic",
+    "indie",
+    "groove"
+   ]
+  },
+  {
+   "id": "fx-big-thief",
+   "type": "urn:entity:artist",
+   "name": "Big Thief",
+   "tags": [
+    "indie",
+    "folk",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-badbadnotgood",
+   "type": "urn:entity:artist",
+   "name": "BADBADNOTGOOD",
+   "tags": [
+    "jazz",
+    "groove",
+    "chill",
+    "soul"
+   ]
+  },
+  {
+   "id": "fx-nick-drake",
+   "type": "urn:entity:artist",
+   "name": "Nick Drake",
+   "tags": [
+    "folk",
+    "melancholy",
+    "ambient"
+   ]
+  },
+  {
+   "id": "fx-hiatus-kaiyote",
+   "type": "urn:entity:artist",
+   "name": "Hiatus Kaiyote",
+   "tags": [
+    "soul",
+    "jazz",
+    "groove"
+   ]
+  },
+  {
+   "id": "fx-sufjan-stevens",
+   "type": "urn:entity:artist",
+   "name": "Sufjan Stevens",
+   "tags": [
+    "indie",
+    "folk",
+    "ambient",
+    "cinematic"
+   ]
+  },
+  {
+   "id": "fx-leon-bridges",
+   "type": "urn:entity:artist",
+   "name": "Leon Bridges",
+   "tags": [
+    "soul",
+    "americana",
+    "upbeat"
+   ]
+  },
+  {
+   "id": "fx-bill-evans",
+   "type": "urn:entity:artist",
+   "name": "Bill Evans",
+   "tags": [
+    "jazz",
+    "classic",
+    "chill"
+   ]
+  },
+  {
+   "id": "fx-iron--wine",
+   "type": "urn:entity:artist",
+   "name": "Iron & Wine",
+   "tags": [
+    "folk",
+    "outdoors",
+    "ambient"
+   ]
+  },
+  {
+   "id": "fx-lost-in-translation",
+   "type": "urn:entity:movie",
+   "name": "Lost in Translation",
+   "tags": [
+    "quiet",
+    "romantic",
+    "city",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-amélie",
+   "type": "urn:entity:movie",
+   "name": "Amélie",
+   "tags": [
+    "whimsical",
+    "romantic",
+    "quirky"
+   ]
+  },
+  {
+   "id": "fx-spirited-away",
+   "type": "urn:entity:movie",
+   "name": "Spirited Away",
+   "tags": [
+    "animation",
+    "whimsical",
+    "fantasy"
+   ]
+  },
+  {
+   "id": "fx-blade-runner-2049",
+   "type": "urn:entity:movie",
+   "name": "Blade Runner 2049",
+   "tags": [
+    "sci-fi",
+    "cinematic",
+    "atmospheric"
+   ]
+  },
+  {
+   "id": "fx-arrival",
+   "type": "urn:entity:movie",
+   "name": "Arrival",
+   "tags": [
+    "sci-fi",
+    "thoughtful",
+    "atmospheric"
+   ]
+  },
+  {
+   "id": "fx-my-octopus-teacher",
+   "type": "urn:entity:movie",
+   "name": "My Octopus Teacher",
+   "tags": [
+    "documentary",
+    "nature",
+    "ocean"
+   ]
+  },
+  {
+   "id": "fx-finding-nemo",
+   "type": "urn:entity:movie",
+   "name": "Finding Nemo",
+   "tags": [
+    "animation",
+    "ocean",
+    "family"
+   ]
+  },
+  {
+   "id": "fx-free-solo",
+   "type": "urn:entity:movie",
+   "name": "Free Solo",
+   "tags": [
+    "documentary",
+    "outdoors",
+    "adventure"
+   ]
+  },
+  {
+   "id": "fx-into-the-wild",
+   "type": "urn:entity:movie",
+   "name": "Into the Wild",
+   "tags": [
+    "outdoors",
+    "adventure",
+    "drama"
+   ]
+  },
+  {
+   "id": "fx-her",
+   "type": "urn:entity:movie",
+   "name": "Her",
+   "tags": [
+    "sci-fi",
+    "romantic",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-princess-mononoke",
+   "type": "urn:entity:movie",
+   "name": "Princess Mononoke",
+   "tags": [
+    "animation",
+    "fantasy",
+    "nature"
+   ]
+  },
+  {
+   "id": "fx-moonrise-kingdom",
+   "type": "urn:entity:movie",
+   "name": "Moonrise Kingdom",
+   "tags": [
+    "whimsical",
+    "quirky",
+    "romantic",
+    "adventure"
+   ]
+  },
+  {
+   "id": "fx-interstellar",
+   "type": "urn:entity:movie",
+   "name": "Interstellar",
+   "tags": [
+    "sci-fi",
+    "cinematic",
+    "adventure"
+   ]
+  },
+  {
+   "id": "fx-blue-planet-ii",
+   "type": "urn:entity:movie",
+   "name": "Blue Planet II",
+   "tags": [
+    "documentary",
+    "ocean",
+    "nature"
+   ]
+  },
+  {
+   "id": "fx-the-secret-life-of-walter-mitty",
+   "type": "urn:entity:movie",
+   "name": "The Secret Life of Walter Mitty",
+   "tags": [
+    "adventure",
+    "whimsical",
+    "outdoors"
+   ]
+  },
+  {
+   "id": "fx-before-sunrise",
+   "type": "urn:entity:movie",
+   "name": "Before Sunrise",
+   "tags": [
+    "romantic",
+    "city",
+    "thoughtful"
+   ]
+  },
+  {
+   "id": "fx-paterson",
+   "type": "urn:entity:movie",
+   "name": "Paterson",
+   "tags": [
+    "quiet",
+    "thoughtful",
+    "city"
+   ]
+  },
+  {
+   "id": "fx-tartine-bakery",
+   "type": "urn:entity:place",
+   "name": "Tartine Bakery",
+   "tags": [
+    "bakery",
+    "artisan",
+    "cozy",
+    "coffee"
+   ],
+   "city": "San Francisco",
+   "address": "600 Guerrero St, San Francisco"
+  },
+  {
+   "id": "fx-zuni-café",
+   "type": "urn:entity:place",
+   "name": "Zuni Café",
+   "tags": [
+    "californian",
+    "romantic",
+    "classic"
+   ],
+   "city": "San Francisco",
+   "address": "1658 Market St, San Francisco"
+  },
+  {
+   "id": "fx-sfjazz-center",
+   "type": "urn:entity:place",
+   "name": "SFJAZZ Center",
+   "tags": [
+    "jazz",
+    "live-music",
+    "cinematic",
+    "improvisation"
+   ],
+   "city": "San Francisco",
+   "address": "201 Franklin St, San Francisco"
+  },
+  {
+   "id": "fx-california-academy-of-sciences",
+   "type": "urn:entity:place",
+   "name": "California Academy of Sciences",
+   "tags": [
+    "ocean",
+    "nature",
+    "documentary"
+   ],
+   "city": "San Francisco",
+   "address": "55 Music Concourse Dr, San Francisco"
+  },
+  {
+   "id": "fx-roxie-theater",
+   "type": "urn:entity:place",
+   "name": "Roxie Theater",
+   "tags": [
+    "cinema",
+    "indie",
+    "quirky",
+    "melancholy"
+   ],
+   "city": "San Francisco",
+   "address": "3117 16th St, San Francisco"
+  },
+  {
+   "id": "fx-ramen-shop",
+   "type": "urn:entity:place",
+   "name": "Ramen Shop",
+   "tags": [
+    "ramen",
+    "cozy",
+    "artisan"
+   ],
+   "city": "Oakland",
+   "address": "5812 College Ave, Oakland"
+  },
+  {
+   "id": "fx-blue-bottle-coffee",
+   "type": "urn:entity:place",
+   "name": "Blue Bottle Coffee",
+   "tags": [
+    "coffee",
+    "artisan",
+    "chill"
+   ],
+   "city": "Oakland",
+   "address": "300 Webster St, Oakland"
+  },
+  {
+   "id": "fx-yoshi-s",
+   "type": "urn:entity:place",
+   "name": "Yoshi's",
+   "tags": [
+    "jazz",
+    "live-music",
+    "romantic",
+    "soul"
+   ],
+   "city": "Oakland",
+   "address": "510 Embarcadero W, Oakland"
+  },
+  {
+   "id": "fx-the-new-parkway-theater",
+   "type": "urn:entity:place",
+   "name": "The New Parkway Theater",
+   "tags": [
+    "cinema",
+    "cozy",
+    "quirky",
+    "whimsical"
+   ],
+   "city": "Oakland",
+   "address": "474 24th St, Oakland"
+  },
+  {
+   "id": "fx-cheese-board-collective",
+   "type": "urn:entity:place",
+   "name": "Cheese Board Collective",
+   "tags": [
+    "bakery",
+    "artisan",
+    "live-music",
+    "cozy"
+   ],
+   "city": "Berkeley",
+   "address": "1512 Shattuck Ave, Berkeley"
+  },
+  {
+   "id": "fx-chez-panisse",
+   "type": "urn:entity:place",
+   "name": "Chez Panisse",
+   "tags": [
+    "californian",
+    "romantic",
+    "artisan",
+    "classic"
+   ],
+   "city": "Berkeley",
+   "address": "1517 Shattuck Ave, Berkeley"
+  },
+  {
+   "id": "fx-tilden-regional-park",
+   "type": "urn:entity:place",
+   "name": "Tilden Regional Park",
+   "tags": [
+    "outdoors",
+    "nature",
+    "adventure"
+   ],
+   "city": "Berkeley",
+   "address": "2501 Grizzly Peak Blvd, Berkeley"
+  },
+  {
+   "id": "fx-philz-coffee",
+   "type": "urn:entity:place",
+   "name": "Philz Coffee",
+   "tags": [
+    "coffee",
+    "cozy",
+    "upbeat"
+   ],
+   "city": "San Jose",
+   "address": "118 Paseo de San Antonio, San Jose"
+  },
+  {
+   "id": "fx-alum-rock-park",
+   "type": "urn:entity:place",
+   "name": "Alum Rock Park",
+   "tags": [
+    "outdoors",
+    "nature",
+    "adventure",
+    "folk"
+   ],
+   "city": "San Jose",
+   "address": "15350 Penitencia Creek Rd, San Jose"
+  },
+  {
+   "id": "fx-san-pedro-square-market",
+   "type": "urn:entity:place",
+   "name": "San Pedro Square Market",
+   "tags": [
+    "live-music",
+    "upbeat",
+    "americana",
+    "cozy"
+   ],
+   "city": "San Jose",
+   "address": "87 N San Pedro St, San Jose"
+  }
+ ]
+}

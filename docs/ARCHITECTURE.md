@@ -1220,6 +1220,8 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /profile/share` | Share a profile into a DM thread | §6.11 |
 | `POST /dm/{threadId}/messages` | Send a DM message (text/photo/voice/shared_profile) | §6.8 |
 | `POST /date-sim` | AI Date Simulation: two personas converse → transcript + compatibility read | §18 |
+| `POST /taste/pair` | Qloo taste match: shared-taste score + date ideas from both public Taste pages | §19 |
+| `GET /taste/demo`, `GET /taste/demo/pair` | Public Qloo judge demo over the seeded demo profiles only | §19 |
 | `POST /dm/translate` | Translate a DM message/draft (cross-language DM); pair-only, 18+, cap-exempt | §6.12 |
 | `POST /media/upload` | Unified upload entry (`context`: profile/chat/dm), runs the §8.5 pipeline | §8.7 |
 | `POST /instagram/connect` | OAuth linking | §8.7 |
@@ -1848,3 +1850,27 @@ message; running out mid-conversation returns the partial transcript with
 ---
 
 *All 14 pieces are locked (plus §15 in-app feedback, §16 the post-plan MCP server, §17 the billing & credits ledger, and §18 AI Date Simulation). This document is the complete northstar plan — a coding agent implements against it one Implementation step at a time. Revisit a section only if a decision genuinely changes.*
+
+## 19. Taste match powered by Qloo (Qloo hackathon)
+
+Shared-taste score + taste-based date ideas for a pair, shown under the AI Date
+Simulation result (§18) and on a public judge page. Full detail:
+`docs/QLOO_TASTE.md`. Code: `functions/bootstrap/taste_match.py` (logic + HTTP),
+`qloo_client.py` (live Qloo Insights API + offline fixture), `qloo_fixture.json`,
+`taste_demo.html`. Reads PUBLIC profile data only (both people). Live when
+`QLOO_API_KEY` is mounted; otherwise — or on any live failure — the fixture.
+
+```mermaid
+flowchart LR
+  A["Person A public profile<br/>Taste page"] --> PA["parse_taste"]
+  B["Person B public profile<br/>Taste page"] --> PB["parse_taste"]
+  PA & PB --> RES["Qloo /search<br/>names → entities"]
+  RES --> RA["/v2/insights per domain<br/>(A signals)"]
+  RES --> RB["/v2/insights per domain<br/>(B signals)"]
+  RES --> RJ["/v2/insights joint<br/>(A+B signals; places in A's city)"]
+  RA & RB --> SC["overlap per domain → score,<br/>label, summary, shared"]
+  RJ --> DI["date ideas<br/>(3 places + film + music)"]
+  SC & DI --> OUT["POST /taste/pair → app card<br/>GET /taste/demo/pair → judge page"]
+  Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json)"]
+```
+

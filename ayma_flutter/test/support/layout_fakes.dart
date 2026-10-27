@@ -325,6 +325,31 @@ Object? _bodyFor(String path) {
   if (path == '/admin/feedback/media') {
     return {'path': 'uploads/a/feedback_0.png', 'url': ''};
   }
+  if (path == '/taste/pair') {
+    return {
+      'source': 'fixture',
+      'a': {'name': 'Sam'},
+      'b': {'name': 'Maya'},
+      'score': 72,
+      'score_label': 'Strong overlap with a very long label to wrap',
+      'summary': kLongText,
+      'shared': [for (var i = 0; i < 6; i++) 'A long shared taste name $i'],
+      'domains': [
+        {'domain': 'music', 'score': 72},
+        {'domain': 'film', 'score': 64},
+        {'domain': 'dining', 'score': 81},
+      ],
+      'date_ideas': [
+        for (var i = 0; i < 3; i++)
+          {
+            'name': 'A very long venue name for the date idea $i',
+            'kind': 'dining',
+            'why': kLongText,
+            'address': i.isEven ? '1234 Some Very Long Street Name, City' : null,
+          },
+      ],
+    };
+  }
   if (path == '/usage') {
     return {
       'total': 33000,

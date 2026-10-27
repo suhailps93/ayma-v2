@@ -7,6 +7,9 @@ and private / ai-only wiki notes) so the privacy extraction test
 persona context. The same data drives the live demo via
 ``scripts/seed_practice_profiles.py``.
 
+Each profile also carries a public "Taste" page (music / film / food
+favourites) that drives the Qloo taste match (``taste_match.py``).
+
 Shape mirrors production: ``users/{uid}/profile/main`` plus
 ``users/{uid}/wiki_pages/{page_id}`` with a ``visibility`` of
 ``public`` | ``private`` | ``ai_only`` and a ``{{private}}`` span inside one
@@ -34,6 +37,13 @@ DEMO_PROFILES: list[dict] = [
             "photos": [],
         },
         "wiki_pages": [
+            {
+                "id": "taste",
+                "visibility": "public",
+                "page_type": "taste",
+                "title": "Taste",
+                "ai_body": "Music: Khruangbin, Bon Iver, Phoebe Bridgers\nFilm: Lost in Translation, Amélie, Spirited Away\nFood: Tartine Bakery, Zuni Café",
+            },
             {
                 "id": "about",
                 "visibility": "public",
@@ -111,6 +121,13 @@ DEMO_PROFILES: list[dict] = [
         },
         "wiki_pages": [
             {
+                "id": "taste",
+                "visibility": "public",
+                "page_type": "taste",
+                "title": "Taste",
+                "ai_body": "Music: Thelonious Monk, Khruangbin, Kamasi Washington\nFilm: Blade Runner 2049, Arrival, Spirited Away\nFood: Ramen Shop, Blue Bottle Coffee",
+            },
+            {
                 "id": "about",
                 "visibility": "public",
                 "page_type": "about",
@@ -175,6 +192,13 @@ DEMO_PROFILES: list[dict] = [
         },
         "wiki_pages": [
             {
+                "id": "taste",
+                "visibility": "public",
+                "page_type": "taste",
+                "title": "Taste",
+                "ai_body": "Music: Bon Iver, Fleet Foxes, Phoebe Bridgers\nFilm: My Octopus Teacher, Finding Nemo, Free Solo\nFood: Tartine Bakery, Cheese Board Collective",
+            },
+            {
                 "id": "about",
                 "visibility": "public",
                 "page_type": "about",
@@ -237,6 +261,13 @@ DEMO_PROFILES: list[dict] = [
             "photos": [],
         },
         "wiki_pages": [
+            {
+                "id": "taste",
+                "visibility": "public",
+                "page_type": "taste",
+                "title": "Taste",
+                "ai_body": "Music: Fleet Foxes, The Lumineers, Kamasi Washington\nFilm: Free Solo, Into the Wild, Blade Runner 2049\nFood: Blue Bottle Coffee, Philz Coffee",
+            },
             {
                 "id": "about",
                 "visibility": "public",

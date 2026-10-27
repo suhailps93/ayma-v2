@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../env.dart';
 import '../features/date_sim/date_sim_models.dart';
+import '../features/date_sim/taste_models.dart';
 import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
@@ -1356,6 +1357,43 @@ class ApiClient {
       if (message is String && message.isNotEmpty) return message;
     } catch (_) {}
     return 'Date simulation isn’t available for this profile.';
+  }
+
+  /// `POST /taste/pair` — the taste overlap (Qloo) between the user and
+  /// [otherUid], shown on the date-sim result. Throws [NoTasteException] when
+  /// either person has no public Taste page (404 `no_taste`), else
+  /// [ApiException] on any other failure.
+  Future<TasteMatch> tastePair(String otherUid) async {
+    final r = await _http.post(
+      _uri('/taste/pair'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid}),
+    );
+    if (r.statusCode == 404) {
+      final detail = _errorDetail(r.body);
+      if (detail?['code'] == 'no_taste') {
+        final message = detail?['message'];
+        throw NoTasteException(message is String && message.isNotEmpty
+            ? message
+            : 'Add a public "Taste" page (e.g. "Music: ...") to see your '
+                'taste match.');
+      }
+    }
+    if (r.statusCode != 200) {
+      throw ApiException('Taste match failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return TasteMatch.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// The `detail` object of a FastAPI error body, or null when absent.
+  static Map<String, dynamic>? _errorDetail(String body) {
+    try {
+      final detail = (jsonDecode(body) as Map<String, dynamic>)['detail'];
+      return detail is Map<String, dynamic> ? detail : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// `GET /date-sim/estimate` — approximate credits per message count (both

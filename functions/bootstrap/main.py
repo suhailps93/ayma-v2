@@ -520,6 +520,13 @@ import date_sim  # noqa: E402
 
 app.include_router(date_sim.router)
 
+# Taste match powered by Qloo (Qloo hackathon) — shared-taste score + date ideas
+# for a pair from their public Taste pages, plus the public judge demo page over
+# the seeded demo profiles. Its own module for the same clean-lift reason.
+import taste_match  # noqa: E402
+
+app.include_router(taste_match.router)
+
 # Ayma MCP server (bring-your-own-agent) — mounted at /mcp. The whole surface is
 # dark behind the `mcp_server` feature flag (default OFF): when off its auth
 # wrapper answers every request 503, so this mount exposes nothing until the
