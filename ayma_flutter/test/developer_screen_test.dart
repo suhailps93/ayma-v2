@@ -122,6 +122,10 @@ void main() {
     expect(find.text('u1'), findsOneWidget);
     expect(find.text('\$1.08'), findsOneWidget);
     expect(find.text('Voice call · 6 turns'), findsOneWidget);
+    // The voice-stack control moved to user-facing Ayma settings; the dev panel
+    // no longer carries it.
+    expect(find.text('Voice engine'), findsNothing);
+    expect(find.byKey(const ValueKey('voice-engine-control')), findsNothing);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsOneWidget);
     expect(find.byKey(const ValueKey('dev-panel-switch')), findsOneWidget);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsOneWidget);

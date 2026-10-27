@@ -14,7 +14,6 @@ import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
-import '../widgets/voice_engine_control.dart';
 import 'admin_feedback_screen.dart';
 import 'plan_screen.dart';
 import 'release_notes_screen.dart';
@@ -337,16 +336,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                 ),
         ],
       ),
-      const SizedBox(height: 36),
-      const Eyebrow('Voice engine'),
-      const SizedBox(height: 8),
-      Text(
-        'Switch Ayma’s voice stack (§13.9). Options are pulled live from the '
-        'cloud catalog; a change takes effect on the next voice call.',
-        style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-      ),
-      const SizedBox(height: 12),
-      VoiceEngineControl(api: _api),
       const SizedBox(height: 36),
       const Eyebrow('Build'),
       const SizedBox(height: 12),

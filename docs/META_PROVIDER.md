@@ -242,7 +242,7 @@ voice call bills the card until the credit posts.
 ### Per-user voice ENGINE switcher (§13.9)
 
 `LLM_PROVIDER_VOICE_MAIN` is the deploy-time default. On top of it, each user can
-switch their own voice **stack** from developer settings via `GET /voice/engines`
+switch their own voice **stack** from the "Ayma's voice" settings screen via `GET /voice/engines`
 + `POST /voice/preference` (`voice_catalog.py`, ARCHITECTURE §13.9):
 
 * **Mode** `realtime` (Gemini Live, or OpenAI Realtime behind `VOICE_OPENAI_REALTIME`

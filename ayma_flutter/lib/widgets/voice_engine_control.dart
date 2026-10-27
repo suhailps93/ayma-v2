@@ -16,19 +16,19 @@ import 'ayma_toast.dart';
 /// so new providers appear without a client change. Saving calls
 /// `POST /voice/preference`; it takes effect on the next voice call.
 ///
-/// [fullStack] false shows only the voice + language pickers for the currently
-/// active component (the user-facing "Ayma's voice" screen) and preserves the
-/// rest of the saved stack; true shows the whole stack (developer settings).
+/// This is the user-facing "Ayma's voice" control (ARCHITECTURE §13.9): it shows
+/// the whole stack — mode, brain, STT, TTS, voice and language — so a normal user
+/// gets full control from Ayma settings. Unavailable components (e.g. OpenAI
+/// Realtime with no key) stay labelled and non-selectable via the catalog's
+/// `available`/`requires_secret` contract.
 class VoiceEngineControl extends StatefulWidget {
   const VoiceEngineControl({
     super.key,
     required this.api,
-    this.fullStack = true,
     this.onSaved,
   });
 
   final ApiClient api;
-  final bool fullStack;
   final VoidCallback? onSaved;
 
   @override
@@ -152,24 +152,22 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       key: const ValueKey('voice-engine-control'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (widget.fullStack) ...[
-          _label(ac, 'MODE'),
-          _dropdown<String>(
-            ac,
-            value: sel.mode,
-            items: [
-              for (final m in cat.modes)
-                DropdownMenuItem(value: m, child: Text(_modeLabel(m))),
-            ],
-            onChanged: (m) => setState(() => _sel = sel.copyWith(mode: m)),
-          ),
-          const SizedBox(height: 16),
-          if (sel.mode == 'realtime')
-            ..._realtimeControls(ac, cat, sel)
-          else
-            ..._cascadeControls(ac, cat, sel),
-          const SizedBox(height: 8),
-        ],
+        _label(ac, 'MODE'),
+        _dropdown<String>(
+          ac,
+          value: sel.mode,
+          items: [
+            for (final m in cat.modes)
+              DropdownMenuItem(value: m, child: Text(_modeLabel(m))),
+          ],
+          onChanged: (m) => setState(() => _sel = sel.copyWith(mode: m)),
+        ),
+        const SizedBox(height: 16),
+        if (sel.mode == 'realtime')
+          ..._realtimeControls(ac, cat, sel)
+        else
+          ..._cascadeControls(ac, cat, sel),
+        const SizedBox(height: 8),
         _voiceAndLanguage(ac, cat, sel),
         const SizedBox(height: 16),
         Align(
@@ -185,18 +183,17 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
                 : const Text('Save voice'),
           ),
         ),
-        if (widget.fullStack)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              cat.source == 'livekit'
-                  ? 'Options are pulled live from LiveKit Inference. A new '
-                      'voice starts on your next call.'
-                  : 'Showing the built-in option list (live catalog '
-                      'unavailable). A new voice starts on your next call.',
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-            ),
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Text(
+            cat.source == 'livekit'
+                ? 'Options are pulled live from LiveKit Inference. A new '
+                    'voice starts on your next call.'
+                : 'Showing the built-in option list (live catalog '
+                    'unavailable). A new voice starts on your next call.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
+        ),
       ],
     );
   }
