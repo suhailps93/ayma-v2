@@ -780,6 +780,8 @@ A single thread-aware assistant (`functions/bootstrap/dm_assist.py`, endpoint `P
 
 **Resilience & privacy:** DM assist is a nicety and NEVER blocks the thread — on any generation failure it returns the appropriate `mode` with empty chips and null tip. It reads only the requesting pair's own `matches` doc and the messages the client sent for that thread; nothing crosses to other users, and the compatibility analysis is grounding-only (never quoted back).
 
+**Client UI (`dm_thread_screen.dart`):** up to 4 suggestion chips sit above the composer; tapping one drops its text into the composer for editing (it is not auto-sent). They stay as common ground to keep talking about, not one-shot openers. The optional `tip` renders just above the composer (small, muted, with a small Ayma glyph), dismissible; a later refresh carrying a *different* tip re-surfaces it, and it is hidden entirely when `tip` is null. Body-less messages (a bare photo, a voice note, a shared card) ride along in the request tail as short placeholders (`[photo]`, `[voice message]`, …) so the back-and-forth stays intact without leaking a raw storage path. Assist is fetched on thread open and re-fetched (debounced ~1.5s) whenever an actual message is sent or received — never on keystrokes. The coaching region is capped at half the viewport and scrolls past that (`overflow_guards.CappedScroll`) so it never pushes the composer off-screen; loading/empty/failure degrade silently.
+
 ### 6.10 Storage map
 
 | What | Where |

@@ -141,6 +141,15 @@ Map<String, dynamic> _report() => {
 };
 
 Object? _bodyFor(String path) {
+  if (path == '/dm/assist') {
+    // Coach mode with the longest plausible chips + tip, so the matrix holds
+    // the suggestion bar and the tip row to every viewport/scale/RTL variant.
+    return {
+      'mode': 'coach',
+      'chips': [for (var i = 0; i < 4; i++) '$kLongText (chip $i)'],
+      'tip': kLongText,
+    };
+  }
   if (path == '/explore') {
     return {'cards': [for (var i = 0; i < 6; i++) _card(i)]};
   }
