@@ -4,11 +4,14 @@ import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/services/dev_panel_session.dart';
+import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 ApiClient _api(String sessionMode) {
   final auth = MockFirebaseAuth(signedIn: true);
@@ -61,6 +64,7 @@ GoRouter _router(String sessionMode) => GoRouter(
         GoRoute(path: '/', builder: (_, __) => const _Marker('shell')),
         GoRoute(
             path: '/recover', builder: (_, __) => const _Marker('recover')),
+        GoRoute(path: '/tour', builder: (_, __) => const _Marker('tour')),
       ],
     );
 
@@ -72,6 +76,8 @@ class _Marker extends StatelessWidget {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   for (final (mode, marker) in const [
     ('marketing', 'screen:chat'),
     ('interview', 'screen:preboarding'),
@@ -97,5 +103,37 @@ void main() {
     await tester.pump();
     expect(AppContext.instance.current.value.screen, 'splash');
     await tester.pumpAndSettle();
+  });
+
+  group('dev-only feature-tour preview gate', () {
+    setUp(() => DevPanelSession.instance.lock());
+    tearDown(() async {
+      DevPanelSession.instance.lock();
+      // Leave the shared global flag clear for any later test.
+      await featureTourStoreGlobal.reset();
+    });
+
+    testWidgets(
+        'a signed-in dev (panel unlocked, flag clear) is routed to the tour',
+        (tester) async {
+      DevPanelSession.instance.unlock('pw');
+      await tester.pumpWidget(
+        MaterialApp.router(routerConfig: _router('active')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('screen:tour'), findsOneWidget);
+      expect(find.text('screen:shell'), findsNothing);
+    });
+
+    testWidgets(
+        'a normal signed-in user (panel locked) is NOT routed to the tour',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp.router(routerConfig: _router('active')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('screen:tour'), findsNothing);
+      expect(find.text('screen:shell'), findsOneWidget);
+    });
   });
 }

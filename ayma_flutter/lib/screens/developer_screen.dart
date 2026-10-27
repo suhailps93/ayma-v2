@@ -16,6 +16,7 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/voice_engine_control.dart';
 import 'admin_feedback_screen.dart';
+import 'feature_tour_screen.dart';
 import 'plan_screen.dart';
 import 'release_notes_screen.dart';
 
@@ -428,15 +429,19 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       ListTile(
         key: const ValueKey('dev-reset-feature-tour'),
         contentPadding: EdgeInsets.zero,
-        title: Text('Reset feature tour',
+        title: Text('Reset & preview feature tour',
             style: AymaType.sans(size: 15, color: ac.fg)),
-        subtitle: Text('Show the first-launch walkthrough again next launch.',
+        subtitle: Text('Opens the first-launch walkthrough now, and clears the '
+            'seen flag so it also shows again on next launch.',
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
         trailing: Icon(Icons.refresh, color: ac.fgMute),
         onTap: () async {
+          // Dev-only preview: clear the flag (so reset + relaunch also works
+          // for a signed-in dev via the relaxed splash gate) and jump straight
+          // to the tour so it can be reviewed right here.
           await featureTourStoreGlobal.reset();
-          _say('Feature tour will show on next launch.',
-              kind: AymaToastKind.success);
+          if (!context.mounted) return;
+          context.go(FeatureTourScreen.path);
         },
       ),
     ];
