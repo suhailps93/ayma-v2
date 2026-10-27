@@ -181,6 +181,10 @@ firebase deploy --only firestore:rules --project ayma-ai
 firebase deploy --only firestore:indexes --project ayma-ai
 ```
 
+Deploy rules whenever the client-writable `profile/main` field list changes;
+until then those writes are denied (e.g. the AI Avatar toggle flipping back).
+Rules tests (Firestore emulator): `cd scripts/rules_tests && npm install && npm test`.
+
 ## Cloud Scheduler jobs
 
 `ayma-cron-lint`, `ayma-cron-purge`, `ayma-cron-match`, `ayma-cron-reengage`,
