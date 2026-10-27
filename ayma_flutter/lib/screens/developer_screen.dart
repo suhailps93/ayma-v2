@@ -111,9 +111,20 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         password: password,
         enabled: value,
       );
+      // Always reflect the server's confirmed (persisted) value — never the
+      // requested one. If the write didn't take (server answered 200 but the
+      // flag is unchanged), the switch stays where it truly is and we say so,
+      // rather than showing a success toast for a change that never landed.
       _flag.enabled.value = now;
-      _say(now ? 'AI debug notes are on.' : 'AI debug notes are off.',
-          kind: AymaToastKind.success);
+      if (now == value) {
+        _say(now ? 'AI debug notes are on.' : 'AI debug notes are off.',
+            kind: AymaToastKind.success);
+      } else {
+        _say(
+            "Couldn't save that — the server kept AI notes "
+            '${now ? 'on' : 'off'}. Try again.',
+            kind: AymaToastKind.error);
+      }
     } on ApiException catch (e) {
       if (e.statusCode == 403) {
         // The password changed under us (or the session is stale) — relock.

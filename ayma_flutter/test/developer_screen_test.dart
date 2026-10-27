@@ -202,6 +202,50 @@ void main() {
     expect(DevPanelFlag.instance.enabled.value, isFalse);
   });
 
+  testWidgets(
+      'AI-notes toggle: a write that does not take fails visibly, switch stays',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    DevPanelFlag.instance.enabled.value = true;
+    // Server answers 200 but the flag is UNCHANGED (write never landed).
+    final api = _api((req) async {
+      if (req.method == 'POST' && req.url.path == '/dev/flags') {
+        return http.Response(jsonEncode({'dev_panel': true}), 200);
+      }
+      return http.Response(jsonEncode(_usage()), 200);
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
+    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
+    await tester.pumpAndSettle();
+    // Visible error, and the flag reflects the true (unchanged) state.
+    expect(find.textContaining("Couldn't save that"), findsOneWidget);
+    expect(DevPanelFlag.instance.enabled.value, isTrue);
+  });
+
+  testWidgets('AI-notes toggle: a server error fails visibly, switch stays', (
+    tester,
+  ) async {
+    DevPanelSession.instance.unlock('pw');
+    DevPanelFlag.instance.enabled.value = true;
+    final api = _api((req) async {
+      if (req.method == 'POST' && req.url.path == '/dev/flags') {
+        return http.Response('{"detail":"boom"}', 500);
+      }
+      return http.Response(jsonEncode(_usage()), 200);
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
+    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining("Couldn't switch the flag"), findsOneWidget);
+    expect(DevPanelFlag.instance.enabled.value, isTrue);
+  });
+
   testWidgets('free reload calls topup and shows the new balance', (
     tester,
   ) async {
