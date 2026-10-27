@@ -134,6 +134,47 @@ def test_coach_returns_chips_and_tip(monkeypatch):
     assert "Me: hey!" in sent
 
 
+def test_assist_is_exempt_from_the_credit_cap(monkeypatch):
+    """Root cause of the "no chips in a real thread" bug: DM assist is a nicety
+    that must never block, so it calls the model with ``enforce_cap=False`` (the
+    cap check is skipped, exactly like the Practice coach). A zero-credit user
+    therefore still gets coaching instead of a silently-empty bar."""
+    provider = _patch_provider(
+        monkeypatch, _FakeProvider({"chips": ["tell me more"], "tip": "nice"})
+    )
+    _run(
+        dm_assist.assist(
+            _MatchDb(None), "aaa", "bbb", [{"from": "them", "text": "hi"}]
+        )
+    )
+    assert provider.calls[0][1]["enforce_cap"] is False
+
+
+def test_coach_survives_a_zero_credit_user(monkeypatch):
+    """A provider that would raise ``TokenCapExceeded`` under the cap still
+    yields coaching, because DM assist disables the cap check."""
+    import token_ledger
+
+    class _CappedProvider:
+        async def generate_json(self, contents, **kwargs):
+            # Mirror the real providers: only check the cap when asked to.
+            if kwargs.get("enforce_cap", True):
+                raise token_ledger.TokenCapExceeded("out of credits")
+            return {"chips": ["so where to from here?"], "tip": "keep going"}
+
+    _patch_provider(monkeypatch, _CappedProvider())
+    out = _run(
+        dm_assist.assist(
+            _MatchDb(None), "aaa", "bbb", [{"from": "them", "text": "hey"}]
+        )
+    )
+    assert out == {
+        "mode": "coach",
+        "chips": ["so where to from here?"],
+        "tip": "keep going",
+    }
+
+
 def test_coach_works_without_a_match_doc(monkeypatch):
     provider = _patch_provider(
         monkeypatch, _FakeProvider({"chips": ["tell me more"], "tip": ""})

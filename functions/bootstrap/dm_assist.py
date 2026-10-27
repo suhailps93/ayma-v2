@@ -16,8 +16,11 @@ opener mode yields no chips; coach mode can still work from the messages alone.
 
 Routed through the LLM provider abstraction on the ``dm_coach`` surface, which
 defaults to the Meta/Muse brain (``config.llm_provider_dm_coach``). DM assist is
-a nicety and must NEVER block the thread: on any generation failure it returns
-the appropriate mode with empty chips and a null tip.
+a nicety and must NEVER block the thread: it is exempt from the credit CAP
+(``enforce_cap=False``, like the Practice coach) so a zero-credit user still
+gets openers/coaching rather than a silently-empty bar, and on any generation
+failure it returns the appropriate mode with empty chips and a null tip. The
+spend is still metered under the ``icebreakers`` feature key.
 """
 
 from __future__ import annotations
@@ -146,6 +149,12 @@ async def assist(
             response_schema=_RESPONSE_SCHEMA,
             uid=uid,
             feature=token_ledger.FEATURE_ICEBREAKERS,
+            # DM assist is a nicety that must NEVER block the thread, so it is
+            # exempt from the credit CAP (like the Practice coach, see
+            # practice_llm): a zero-credit user still gets openers/coaching
+            # instead of a silently-empty bar. The spend is still metered —
+            # ``enforce_cap=False`` skips the cap check, not ``record``.
+            enforce_cap=False,
         )
     except Exception:  # noqa: BLE001 - DM assist is a nicety, never blocks
         logger.exception(
