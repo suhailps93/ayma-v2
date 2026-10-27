@@ -7,8 +7,10 @@ import '../routing/entry.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
+import '../services/feature_tour_store.dart';
 import '../widgets/ayma_orb.dart';
 import 'biometric_consent_screen.dart';
+import 'feature_tour_screen.dart';
 import 'sign_in_screen.dart';
 import 'underage_screen.dart';
 
@@ -46,6 +48,15 @@ class _SplashScreenState extends State<SplashScreen> {
     // Sign-in is required up front (§3.3) — no anonymous sessions. No user, or
     // an anonymous one left over from an older build, means "go sign in".
     final user = (widget.auth ?? FirebaseAuth.instance).currentUser;
+    // First-launch feature tour (§11.2): a pure client-side pre-screen shown
+    // once, only ahead of the anonymous landing — never for a signed-in
+    // (returning) user, so it can't trap them or bypass the session_mode /
+    // age / consent gates below. Once dismissed (seen flag set), it routes
+    // back here and the normal flow runs.
+    if ((user == null || user.isAnonymous) && !featureTourStoreGlobal.seen) {
+      if (mounted) context.go(FeatureTourScreen.path);
+      return;
+    }
     if (user == null || user.isAnonymous) {
       if (mounted) context.go(SignInScreen.path);
       return;

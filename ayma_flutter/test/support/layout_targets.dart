@@ -14,6 +14,7 @@ import 'package:ayma_flutter/screens/delete_account_screen.dart';
 import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/screens/explore_screen.dart';
+import 'package:ayma_flutter/screens/feature_tour_screen.dart';
 import 'package:ayma_flutter/screens/feedback_screen.dart';
 import 'package:ayma_flutter/screens/google_account_screen.dart';
 import 'package:ayma_flutter/screens/instagram_screen.dart';
@@ -53,6 +54,7 @@ import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:ayma_flutter/services/google_account_service.dart';
 import 'package:ayma_flutter/services/instagram_service.dart';
 import 'package:ayma_flutter/services/match_service.dart';
@@ -99,6 +101,8 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
   return {
     SplashScreen.path: () => SplashScreen(apiClient: api, auth: kLayoutAuth),
     UnderageScreen.path: () => UnderageScreen(signOut: () async {}),
+    FeatureTourScreen.path: () =>
+        FeatureTourScreen(store: FeatureTourStore(), onContinue: () {}),
     SignInScreen.path: () => SignInScreen(
       auth: AuthService(auth: kLayoutAuth, profileService: profiles),
       apiClient: api,

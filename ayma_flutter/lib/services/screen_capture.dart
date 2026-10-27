@@ -71,6 +71,8 @@ const Map<String, String> kNoContextRoutes = {
       'start-up bootstrap; there is no signed-in session or content yet',
   '/signin':
       'sign-in screen: credentials and codes only, and Ayma is not running before sign-in',
+  '/tour':
+      'first-launch feature tour shown once before sign-in; Ayma is not running yet',
   '/recover':
       'deleted-account recovery at sign-in; Ayma is not running before sign-in',
   '/s/:token': 'public shared-report link opened outside a session',

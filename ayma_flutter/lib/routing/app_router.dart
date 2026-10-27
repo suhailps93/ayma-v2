@@ -48,6 +48,7 @@ import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/plan_screen.dart';
 import '../screens/developer_screen.dart';
+import '../screens/feature_tour_screen.dart';
 import '../screens/trial_paywall_screen.dart';
 import '../services/revenuecat_service.dart';
 import '../screens/voice_preference_screen.dart';
@@ -108,6 +109,9 @@ final appRouter = GoRouter(
       PrivacyScreen.path,
       BiometricInfoScreen.path,
       RecoveryScreen.path,
+      // The first-launch feature tour (§11.2) runs before any sign-in — it's a
+      // pure client-side pre-screen, so an unauthenticated user can reach it.
+      FeatureTourScreen.path,
     };
     // A shared-report link is public (the snapshot needs no auth).
     if (!signedIn && !open.contains(loc) && !loc.startsWith('/s/')) {
@@ -133,6 +137,12 @@ final appRouter = GoRouter(
     GoRoute(
       path: UnderageScreen.path,
       builder: (context, state) => const UnderageScreen(),
+    ),
+    GoRoute(
+      // The first-launch feature tour (§11.2). No nav bar — like the other
+      // pre-auth screens, there is no signed-in session yet.
+      path: FeatureTourScreen.path,
+      builder: (context, state) => const FeatureTourScreen(),
     ),
     GoRoute(
       path: SignInScreen.path,
