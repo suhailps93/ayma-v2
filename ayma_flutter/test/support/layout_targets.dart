@@ -178,8 +178,7 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     ),
     InviteFriendsScreen.path: () =>
         shell(InviteFriendsScreen(api: api, share: (_) async {})),
-    VoicePreferenceScreen.path: () =>
-        shell(VoicePreferenceScreen(api: api, profileService: profiles)),
+    VoicePreferenceScreen.path: () => shell(VoicePreferenceScreen(api: api)),
     AccentColorScreen.path: () =>
         shell(
       AccentColorScreen(

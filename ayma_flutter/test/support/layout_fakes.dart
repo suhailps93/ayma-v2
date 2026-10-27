@@ -166,6 +166,81 @@ Object? _bodyFor(String path) {
       ],
     };
   }
+  if (path == '/voice/engines') {
+    final gemVoices = [
+      for (final n in ['Aoede', 'Kore', 'Puck', 'Charon'])
+        {'id': n, 'label': n, 'description': 'a long descriptive voice character'},
+    ];
+    final ttsVoices = [
+      {'id': '', 'label': 'Default voice'},
+      {'id': 'Ashley', 'label': 'Ashley', 'description': 'warm and bright voice'},
+      {'id': 'Hades', 'label': 'Hades', 'description': 'deep and intense voice'},
+    ];
+    final langs = [
+      {'code': '', 'label': 'Default (English)'},
+      {'code': 'ml-IN', 'label': 'Malayalam'},
+      {'code': 'es-ES', 'label': 'Spanish'},
+    ];
+    return {
+      'modes': ['realtime', 'cascade'],
+      'source': 'livekit',
+      'realtime_models': [
+        {
+          'id': 'gemini-live',
+          'label': 'Gemini Live (native audio)',
+          'provider': 'gemini',
+          'available': true,
+          'requires_secret': '',
+          'voices': gemVoices,
+          'languages': langs,
+        },
+        {
+          'id': 'openai-realtime',
+          'label': 'OpenAI Realtime',
+          'provider': 'openai',
+          'available': true,
+          'requires_secret': 'OPENAI_API_KEY',
+          'voices': [
+            {'id': 'alloy', 'label': 'Alloy'},
+          ],
+          'languages': langs,
+        },
+      ],
+      'brains': [
+        {'id': 'meta-muse-spark', 'label': 'Meta Muse Spark', 'provider': 'meta', 'available': true},
+        {'id': 'google/gemini-3.7-flash', 'label': 'google/gemini-3.7-flash', 'provider': 'google', 'available': true},
+      ],
+      'stt': [
+        {'id': 'deepgram/nova-3', 'label': 'deepgram/nova-3', 'provider': 'deepgram', 'available': true},
+      ],
+      'tts': [
+        {
+          'id': 'inworld/inworld-tts-1',
+          'label': 'inworld/inworld-tts-1',
+          'provider': 'inworld',
+          'available': true,
+          'voices': ttsVoices,
+          'languages': langs,
+        },
+      ],
+      'default': {
+        'mode': 'realtime',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'meta-muse-spark',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'inworld/inworld-tts-1',
+      },
+      'current': {
+        'mode': 'realtime',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'meta-muse-spark',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'inworld/inworld-tts-1',
+        'voice_id': 'Aoede',
+        'language_code': '',
+      },
+    };
+  }
   if (path.startsWith('/report/') ||
       path.startsWith('/deep-dive-report/') ||
       path.startsWith('/skills/report/') ||

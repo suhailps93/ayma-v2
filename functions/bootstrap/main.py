@@ -223,6 +223,42 @@ def _ayma_voice_language(uid: str) -> str:
         return ""
 
 
+def _voice_engine_seed(uid: str) -> dict[str, str]:
+    """Resolve the user's MAIN-voice stack preference (§13.9) into the seed the
+    agent worker needs: the mode (``""`` = deploy default), the realtime model
+    OR cascade brain/STT/TTS ids, the chosen voice and the accent/language.
+
+    ``voice_mode`` empty means the user never picked a stack, so the agent keeps
+    the deploy-time ``CONFIG.llm_provider_voice_main`` behaviour — production is
+    unchanged until a user actually chooses one."""
+    out = {
+        "voice_mode": "",
+        "realtime_model_id": "",
+        "brain_id": "",
+        "stt_id": "",
+        "tts_id": "",
+        "voice_name": _ayma_voice_name(uid),
+        "voice_language": _ayma_voice_language(uid),
+        "tts_voice": "",
+    }
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        prof = snap.to_dict() or {}
+    except Exception:  # noqa: BLE001
+        logger.exception("could not read voice stack preference for %s", uid)
+        return out
+    mode = str(prof.get(schema.PF_AYMA_VOICE_MODE, "")).strip()
+    if not mode:
+        return out
+    out["voice_mode"] = mode
+    out["realtime_model_id"] = str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
+    out["brain_id"] = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "")).strip()
+    out["stt_id"] = str(prof.get(schema.PF_AYMA_CASCADE_STT, "")).strip()
+    out["tts_id"] = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip()
+    out["tts_voice"] = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip()
+    return out
+
+
 def _server_ts():
     from firebase_admin import firestore
 
@@ -695,12 +731,19 @@ async def bootstrap(
             session_id=session_id,
         )
         voice_name = _ayma_voice_name(uid)
+        engine_seed = _voice_engine_seed(uid)
         try:
             await seed_room_context(
                 room,
                 build_room_seed(
                     system_prompt, turns, uid, session_id, voice_name,
                     voice_language=voice_language,
+                    voice_mode=engine_seed["voice_mode"],
+                    realtime_model_id=engine_seed["realtime_model_id"],
+                    brain_id=engine_seed["brain_id"],
+                    stt_id=engine_seed["stt_id"],
+                    tts_id=engine_seed["tts_id"],
+                    tts_voice=engine_seed["tts_voice"],
                 ),
             )
         except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
@@ -5004,6 +5047,142 @@ async def voice_presets(uid: str = Depends(require_uid)) -> dict[str, object]:
         # (set here or learned from conversation via set_voice_preference).
         "current_language": _ayma_voice_language(uid),
         "language_examples": list(voices.LANGUAGE_EXAMPLES),
+    }
+
+
+@app.get("/voice/engines")
+async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The selectable voice STACK (§13.9) for the developer "Voice engine"
+    control and the user-facing "Ayma's voice" screen: the two modes, the
+    realtime models (each with its voices + languages), and the cascade brains /
+    STT / TTS (TTS carrying its voices + languages), plus the user's current
+    selection. Catalog-only — no LLM spend; cached server-side
+    (``voice_catalog``). Cascade TTS voices are LiveKit-sourced when LiveKit
+    ships a catalog API, else a documented fallback
+    (``voice_catalog._TTS_FALLBACK_VOICES``)."""
+    import voice_catalog
+    import voices as _voices
+
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        prof = snap.to_dict() or {}
+    except Exception:  # noqa: BLE001
+        prof = {}
+    cat = voice_catalog.catalog()
+    default = cat["default"]  # type: ignore[index]
+    mode = str(prof.get(schema.PF_AYMA_VOICE_MODE, "")).strip() or default["mode"]
+    realtime_id = (
+        str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
+        or default["realtime_model_id"]
+    )
+    brain_id = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "")).strip() or default["brain_id"]
+    stt_id = str(prof.get(schema.PF_AYMA_CASCADE_STT, "")).strip() or default["stt_id"]
+    tts_id = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip() or default["tts_id"]
+    # The chosen voice: a Gemini preset lives in ayma_voice_name; every other
+    # voice (cascade TTS, OpenAI realtime) in ayma_tts_voice.
+    if mode == voice_catalog.MODE_REALTIME and realtime_id == voice_catalog.REALTIME_GEMINI:
+        voice_id = str(prof.get(schema.PF_AYMA_VOICE, "")).strip()
+    else:
+        voice_id = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip()
+    lang_text = str(prof.get(_voices.PF_AYMA_VOICE_LANGUAGE, "")).strip()
+    lang_code = (_voices.bcp47_hint(lang_text) or "") if lang_text else ""
+    return {
+        **cat,
+        "current": {
+            "mode": mode,
+            "realtime_model_id": realtime_id,
+            "brain_id": brain_id,
+            "stt_id": stt_id,
+            "tts_id": tts_id,
+            "voice_id": voice_id,
+            "language_code": lang_code if voice_catalog.is_valid_language(lang_code) else "",
+        },
+    }
+
+
+class VoicePreferenceBody(BaseModel):
+    mode: str = Field(min_length=1, max_length=32)
+    realtime_model_id: str = Field(default="", max_length=64)
+    brain_id: str = Field(default="", max_length=64)
+    stt_id: str = Field(default="", max_length=128)
+    tts_id: str = Field(default="", max_length=128)
+    voice_id: str = Field(default="", max_length=128)
+    language_code: str = Field(default="", max_length=32)
+
+
+@app.post("/voice/preference")
+async def set_voice_preference_endpoint(
+    body: VoicePreferenceBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist the per-user MAIN-voice stack on ``users/{uid}/profile/main``
+    (§13.9): ``{mode, realtime_model_id?, brain_id?, stt_id?, tts_id?, voice_id,
+    language_code}``. The agent reads it at the next voice session
+    (``main._voice_engine_seed`` → room seed → ``agent._run_session``); the dev
+    screen may also trigger a reconnect so a switch feels real-time."""
+    from firebase_admin import firestore
+    import voice_catalog
+    import voices as _voices
+
+    mode = body.mode.strip()
+    if mode not in voice_catalog.MODES:
+        raise HTTPException(status_code=422, detail="Unknown voice mode.")
+    if not voice_catalog.is_valid_language(body.language_code):
+        raise HTTPException(status_code=422, detail="Unknown language.")
+    voice_id = body.voice_id.strip()
+
+    payload: dict[str, object] = {
+        schema.PF_AYMA_VOICE_MODE: mode,
+        _voices.PF_AYMA_VOICE_LANGUAGE: voice_catalog.language_label(body.language_code),
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    if mode == voice_catalog.MODE_REALTIME:
+        rid = body.realtime_model_id.strip()
+        if not voice_catalog.is_valid_realtime_model(rid):
+            raise HTTPException(status_code=422, detail="Unknown realtime model.")
+        if voice_id and voice_id not in voice_catalog.realtime_voice_ids(rid):
+            raise HTTPException(status_code=422, detail="Voice not available for this model.")
+        payload[schema.PF_AYMA_REALTIME_MODEL] = rid
+        # A Gemini preset is the hot-swappable ayma_voice_name; every other
+        # realtime voice lives in ayma_tts_voice.
+        if rid == voice_catalog.REALTIME_GEMINI:
+            if voice_id:
+                payload[schema.PF_AYMA_VOICE] = voice_id
+            payload[schema.PF_AYMA_TTS_VOICE] = ""
+        else:
+            payload[schema.PF_AYMA_TTS_VOICE] = voice_id
+    else:  # cascade
+        brain_id = body.brain_id.strip()
+        stt_id = body.stt_id.strip()
+        tts_id = body.tts_id.strip()
+        if not voice_catalog.is_valid_brain(brain_id):
+            raise HTTPException(status_code=422, detail="Unknown brain.")
+        if not voice_catalog.is_valid_stt(stt_id):
+            raise HTTPException(status_code=422, detail="Unknown STT model.")
+        if not voice_catalog.is_valid_tts(tts_id):
+            raise HTTPException(status_code=422, detail="Unknown TTS model.")
+        if voice_id and voice_id not in voice_catalog.tts_voice_ids(tts_id):
+            raise HTTPException(status_code=422, detail="Voice not available for this TTS.")
+        payload[schema.PF_AYMA_CASCADE_BRAIN] = brain_id
+        payload[schema.PF_AYMA_CASCADE_STT] = stt_id
+        payload[schema.PF_AYMA_CASCADE_TTS] = tts_id
+        payload[schema.PF_AYMA_TTS_VOICE] = voice_id
+
+    try:
+        schema.profile_doc(get_db(), uid).set(payload, merge=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not save voice preference for %s", uid)
+        raise HTTPException(status_code=502, detail="Could not save preference.") from exc
+    return {
+        "ok": True,
+        "current": {
+            "mode": mode,
+            "realtime_model_id": body.realtime_model_id.strip(),
+            "brain_id": body.brain_id.strip(),
+            "stt_id": body.stt_id.strip(),
+            "tts_id": body.tts_id.strip(),
+            "voice_id": voice_id,
+            "language_code": body.language_code,
+        },
     }
 
 

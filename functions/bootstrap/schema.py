@@ -251,6 +251,16 @@ PF_HIDDEN_PHOTOS = "hidden_photos"
 PF_PHOTO_ATTRS = "photo_attrs"
 PF_PAUSED = "paused"
 PF_AYMA_VOICE = "ayma_voice_name"
+# Voice STACK preference (§13.9, voice_catalog). "" = deploy-time default.
+PF_AYMA_VOICE_MODE = "ayma_voice_mode"        # "realtime" | "cascade"
+PF_AYMA_REALTIME_MODEL = "ayma_realtime_model"  # realtime-mode model id
+PF_AYMA_CASCADE_BRAIN = "ayma_cascade_brain"    # cascade LLM id
+PF_AYMA_CASCADE_STT = "ayma_cascade_stt"        # cascade STT model id
+PF_AYMA_CASCADE_TTS = "ayma_cascade_tts"        # cascade TTS model id
+# Chosen voice id for a non-Gemini-preset voice (cascade TTS voice, or OpenAI
+# realtime voice). Gemini-preset realtime voices use PF_AYMA_VOICE instead.
+# "" = the provider's default voice.
+PF_AYMA_TTS_VOICE = "ayma_tts_voice"
 # The user's own LinkedIn profile URL, given with their consent (§ Your Story
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.
