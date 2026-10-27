@@ -149,6 +149,17 @@ def _response_format(response_schema: dict | None, name: str) -> dict | None:
     }
 
 
+def _strip_keys(obj):
+    """Recursively strip whitespace from JSON object keys. Muse Spark
+    occasionally emits ``"strengths "`` (trailing space), which would make a
+    schema field silently read as missing."""
+    if isinstance(obj, dict):
+        return {k.strip(): _strip_keys(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_keys(v) for v in obj]
+    return obj
+
+
 def _data_url(data: bytes, mime: str) -> str:
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
@@ -283,7 +294,7 @@ class MetaProvider(LLMProvider):
             text = (resp.choices[0].message.content or "").strip()
             if not text:
                 raise RuntimeError("Meta returned an empty JSON response.")
-            return json.loads(text)
+            return _strip_keys(json.loads(text))
         except Exception as exc:  # noqa: BLE001 - fall back to Gemini
             if self._fallback is None:
                 raise

@@ -97,16 +97,30 @@ need to measure Meta on its own (e.g. in the eval).
 Both providers passed all four fixtures; **Muse Spark was faster on every case**
 (e.g. match 1.5s vs Gemini 7.1s; report 1.8s vs 4.2s). Known quirk: on the
 **reports** JSON schema Muse Spark sometimes emits a key with a trailing space
-(`"strengths "`) — harmless for `practice`/`chat` (conversational, no strict
-schema) but a parser risk, so **reports stays on Gemini** until this is handled.
+(`"strengths "`). `MetaProvider.generate_json` now strips whitespace from every
+JSON key recursively, so the quirk can no longer drop a schema field.
+
+### JSON reliability check for matching + reports (2026-10-27, live)
+
+`MetaProvider` with the Gemini fallback **off** (raw failures visible), real
+`META_API_KEY`: 5 match-scoring calls (`matching_skill` schema, temp 0) and 10
+face + 10 body report calls all returned parseable, schema-valid JSON — every
+required key present, no whitespace-padded keys, 0 failures. Match dimension
+scores were stable across runs (e.g. 40-42 / 58-68). The report images were a
+synthetic non-photo, so the `usable=false` shape was exercised; the earlier
+four-fixture eval covers a real report. Because JSON failures raise inside
+`generate_json`, `LLM_META_FALLBACK=true` re-runs the call on Gemini; only a
+well-formed but semantically wrong answer is not caught by the fallback.
 
 ### Flipped surface
 
-`practice` (text) → Meta (`LLM_PROVIDER_PRACTICE=meta` in `deploy-api.sh`), with
-`LLM_META_FALLBACK=true` so any Meta hiccup degrades to Gemini.
+`practice`, `chat`, `matching` and `reports` → Meta (`LLM_PROVIDER_PRACTICE=meta`,
+`LLM_PROVIDER_CHAT=meta`, `LLM_PROVIDER_MATCHING=meta`, `LLM_PROVIDER_REPORTS=meta`
+in `deploy-api.sh`), with `LLM_META_FALLBACK=true` so any Meta hiccup degrades to
+Gemini.
 `dm_coach` (the DM assist opener/coach, §6.9) → Meta **by default** (founder
 hackathon directive — no env var needed; the config default is `meta`), same
-Gemini fallback. `chat`, `matching`, `reports`, `voice` remain on Gemini. The
+Gemini fallback. `voice` remains on Gemini. The
 **Practice Date voice cascade** below is wired but gated OFF
 (`LLM_PROVIDER_VOICE` default `gemini`).
 
@@ -292,6 +306,16 @@ Muse Spark. Flipping `LLM_PROVIDER_MATCHING=meta` only moves the scoring call;
 it does not touch embeddings and does not break matching. Web-search / URL
 grounding in chat also stays Gemini-only (Meta has no Google grounding) — a chat
 surface on Meta simply answers without live web grounding.
+
+## Cost note: chat leaves LiveKit coverage
+
+Text chat on Gemini ran through LiveKit Inference (`llm_route_chat=inference`,
+`google/gemini-3.7-flash`), covered by the LiveKit plan. With
+`LLM_PROVIDER_CHAT=meta`, `get_llm_provider("chat")` returns `MetaProvider`,
+which never enters `gemini.py`, so `llm_route_chat` is not consulted and chat
+bills the **Meta $150 credit** directly. Setting `LLM_PROVIDER_CHAT=gemini`
+restores the Inference route. Matching and reports on Gemini were Inference/
+Vertex JSON jobs; they now bill Meta too.
 
 ## Relationship to the LiveKit-Inference routing
 

@@ -118,11 +118,13 @@ flowchart LR
 
 | Work | Default route on this branch | Flag | Always on Vertex (no gateway equivalent) |
 |---|---|---|---|
-| JSON jobs (matching, wiki ingest, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
+| JSON jobs (wiki ingest, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
+| Match scoring (`matching_skill`) | **Meta Muse Spark** (`LLM_PROVIDER_MATCHING=meta` in `deploy-api.sh`; Gemini fallback) | `llm_provider_matching` | — when flipped to `gemini` it runs as a JSON job on the row above |
+| Face / body reports (`face_report`, `body_report`) | **Meta Muse Spark** (`LLM_PROVIDER_REPORTS=meta`; Gemini fallback) | `llm_provider_reports` | — when flipped to `gemini` it runs on the vision row below |
 | DM assist / icebreakers (§6.9) | **Meta Muse Spark** (`LLM_PROVIDER_DM_COACH=meta` default; Gemini fallback) | `llm_provider_dm_coach` | — when flipped to `gemini` it runs as a JSON job on the row above |
 | DM translate / cross-language (§6.12) | **Meta Muse Spark** (`LLM_PROVIDER_TRANSLATE=meta` default; Gemini fallback) | `llm_provider_translate` | — when flipped to `gemini` it runs as a JSON job on the first row |
 | Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference | `llm_route_vision` | media the gateway cannot take (HEIC, m4a, webm, ogg, aac) |
-| Text chat with tools | Inference | `llm_route_chat` | the `web_search` tool (grounded `research()` call); Maps grounding (`maps_grounding`) |
+| Text chat with tools | **Meta Muse Spark** (`LLM_PROVIDER_CHAT=meta` in `deploy-api.sh`; Gemini fallback). Leaves LiveKit Inference coverage: bills the Meta $150 credit, not LiveKit. With `chat=gemini` it is Inference via `llm_route_chat` | `llm_provider_chat` (`llm_route_chat` only applies on the Gemini path) | the `web_search` tool (grounded `research()` call); Maps grounding (`maps_grounding`) |
 | Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` | |
 | `gemini.research` (deep dive discovery, skills) | Vertex | | Google Search + URL-context grounding |
 | Embeddings (`media_embed`, face match) | Vertex `gemini-embedding-2` | | stored 2048-d index |
