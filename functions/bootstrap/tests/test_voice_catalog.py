@@ -90,3 +90,66 @@ def test_brain_route_meta_vs_inference(monkeypatch):
 def test_tts_voices_fallback_inworld():
     ids = vc.tts_voice_ids("inworld/inworld-tts-1")
     assert "" in ids and "Ashley" in ids
+
+
+def test_fallback_lists_credited_providers_with_types(monkeypatch):
+    # /v1/models is empty for this project, so the catalog is the config
+    # fallback — assert every credited provider surfaces in the RIGHT dropdown.
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    vc.clear_cache()
+    cat = vc.catalog()
+    assert cat["source"] == "fallback"
+
+    tts = {t["id"]: t for t in cat["tts"]}
+    stt = {s["id"]: s for s in cat["stt"]}
+    brains = {b["id"]: b for b in cat["brains"]}
+
+    # Fish Audio (the headline ask) is a TTS, enabled, with its documented
+    # sample voices (default + the 7 s2.1-pro voices).
+    assert "fishaudio/s2.1-pro" in tts
+    assert tts["fishaudio/s2.1-pro"]["provider"] == "fishaudio"
+    assert tts["fishaudio/s2.1-pro"]["available"] is True
+    fish_voices = {v["id"] for v in tts["fishaudio/s2.1-pro"]["voices"]}
+    assert "" in fish_voices  # vendor default, always safe
+    assert "bf322df2096a46f18c579d0baa36f41d" in fish_voices  # Adrian
+
+    # Other credited TTS providers, enabled.
+    assert tts["rime/coda"]["available"] is True
+    assert tts["gradium/default"]["available"] is True
+    assert tts["inworld/inworld-tts-1"]["available"] is True
+
+    # Credited STT providers land in the STT dropdown, enabled.
+    assert stt["deepgram/nova-3"]["provider"] == "deepgram"
+    assert stt["deepgram/nova-3"]["available"] is True
+    assert stt["assemblyai/universal-streaming"]["available"] is True
+
+    # Google LLMs land in the brain dropdown, enabled.
+    assert brains["google/gemini-3.8-flash"]["route"] == vc.ROUTE_INFERENCE
+    assert brains["google/gemini-3.8-flash"]["available"] is True
+
+
+def test_fallback_marks_uncredited_provider_disabled(monkeypatch):
+    # Cartesia is a real LiveKit TTS but NOT in the founder's credited set, so
+    # on the fallback path it must be shown disabled (honest "needs enabling")
+    # rather than as a pick that would silently fail mid-call.
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    vc.clear_cache()
+    cat = vc.catalog()
+    cartesia = next(t for t in cat["tts"] if t["id"] == "cartesia/sonic-3")
+    assert cartesia["available"] is False
+    assert cartesia["requires_secret"]  # a non-empty note
+
+
+def test_live_catalog_marks_everything_available(monkeypatch):
+    # When the live catalog IS populated, it lists exactly what credits enable,
+    # so a non-"credited-list" provider from it is still available.
+    monkeypatch.setattr(
+        vc, "_fetch_livekit_models", lambda: [
+            {"id": "cartesia/sonic-3", "type": "TTS"},
+            {"id": "fishaudio/s2.1-pro", "type": "TTS"},
+        ]
+    )
+    vc.clear_cache()
+    cat = vc.catalog()
+    assert cat["source"] == "livekit"
+    assert all(t["available"] for t in cat["tts"])

@@ -808,6 +808,23 @@ class Config:
     ``inference`` and ``model`` is the model id (config, per AGENTS.md).
     ``VOICE_CASCADE_EXTRA_BRAINS`` (CSV) — empty by default."""
 
+    voice_credited_providers: tuple[str, ...]
+    """LiveKit-Inference provider segments (``inworld``, ``deepgram``, …) this
+    project has confirmed credits for. Used ONLY on the config FALLBACK path.
+
+    The live ``/v1/models`` catalog, when reachable, lists exactly what the
+    project's credits enable, so everything it returns is marked available. But
+    for this project ``GET /v1/models`` returns an empty ``{}`` (verified
+    2026-10-27 with an InferenceGrants JWT), so the dropdowns are built from the
+    config fallback lists — and there we can't query the project. A cascade
+    option whose provider is in THIS set is shown enabled; any other provider in
+    a fallback list (e.g. ``cartesia``) is shown DISABLED with a "needs
+    enabling" note rather than as a silently-failing option (``voice_catalog``).
+
+    Default = the founder's active LiveKit startup credits (``inworld``,
+    ``deepgram``, ``fishaudio``, ``assemblyai``, ``rime``, ``gradium``,
+    ``google``). ``VOICE_CREDITED_PROVIDERS`` (CSV, lowercase) overrides."""
+
 
 def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
     raw = os.getenv(name, default)
@@ -1018,9 +1035,15 @@ def _load() -> Config:
             "VOICE_CASCADE_STT_MODELS",
             "deepgram/nova-3,assemblyai/universal-streaming",
         ),
+        # Credited providers first (shown enabled on the fallback path), then
+        # cartesia/sonic-3 — a documented LiveKit TTS the founder has NOT
+        # confirmed credits for, kept selectable but marked "needs enabling"
+        # (see voice_credited_providers). IDs from LiveKit docs
+        # (docs.livekit.io/agents/models/tts, verified 2026-10-27).
         voice_cascade_tts_models=_csv(
             "VOICE_CASCADE_TTS_MODELS",
-            "inworld/inworld-tts-1,cartesia/sonic-3,rime/mistv3",
+            "inworld/inworld-tts-1,fishaudio/s2.1-pro,rime/coda,"
+            "gradium/default,cartesia/sonic-3",
         ),
         voice_cascade_llm_models=_csv(
             "VOICE_CASCADE_LLM_MODELS",
@@ -1028,6 +1051,11 @@ def _load() -> Config:
             "google/gemini-3.5-flash-lite",
         ),
         voice_cascade_extra_brains=_csv("VOICE_CASCADE_EXTRA_BRAINS", ""),
+        voice_credited_providers=_csv(
+            "VOICE_CREDITED_PROVIDERS",
+            "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google",
+            lower=True,
+        ),
         dm_viewing_window_seconds=int(
             os.getenv("DM_VIEWING_WINDOW_SECONDS", "25")
         ),
