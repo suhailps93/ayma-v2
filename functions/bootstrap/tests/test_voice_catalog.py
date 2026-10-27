@@ -46,7 +46,7 @@ def test_catalog_uses_live_when_fetch_succeeds(monkeypatch):
     cat = vc.catalog()
     assert cat["source"] == "livekit"
     assert [s["id"] for s in cat["stt"]] == ["deepgram/nova-3"]
-    assert [t["id"] for t in cat["tts"]] == ["fishaudio/s2.1-pro"]
+    assert "fishaudio/s2.1-pro" in [t["id"] for t in cat["tts"]]
     brain_ids = [b["id"] for b in cat["brains"]]
     # Meta Muse (direct API) is merged on top of the live LLM list.
     assert "meta-muse-spark" in brain_ids
@@ -153,3 +153,39 @@ def test_live_catalog_marks_everything_available(monkeypatch):
     cat = vc.catalog()
     assert cat["source"] == "livekit"
     assert all(t["available"] for t in cat["tts"])
+
+
+def test_meta_default_is_configured_cascade_not_first_entry(monkeypatch):
+    import dataclasses
+
+    cfg = dataclasses.replace(
+        vc.CONFIG,
+        llm_provider_voice_main=vc.PROVIDER_META,
+        meta_cascade_stt_model="assemblyai/universal-streaming",
+        meta_cascade_tts_model="rime/coda",
+    )
+    monkeypatch.setattr(vc, "CONFIG", cfg)
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    vc.clear_cache()
+    d = vc.default_selection()
+    assert d["stt_id"] == "assemblyai/universal-streaming"
+    assert d["tts_id"] == "rime/coda"
+    assert d["stt_id"] != cfg.voice_cascade_stt_models[0]
+    cat = vc.catalog()
+    assert d["stt_id"] in [s["id"] for s in cat["stt"]]
+    assert d["tts_id"] in [t["id"] for t in cat["tts"]]
+
+
+def test_configured_models_added_when_missing_from_live(monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG, llm_provider_voice_main=vc.PROVIDER_META,
+        meta_cascade_stt_model="deepgram/nova-3",
+        meta_cascade_tts_model="inworld/inworld-tts-1"))
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: [
+        {"id": "x/stt", "type": "STT"}, {"id": "y/tts", "type": "TTS"}])
+    vc.clear_cache()
+    cat = vc.catalog()
+    assert "deepgram/nova-3" in [s["id"] for s in cat["stt"]]
+    assert "inworld/inworld-tts-1" in [t["id"] for t in cat["tts"]]

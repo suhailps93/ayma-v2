@@ -35,7 +35,7 @@ const int _kContextMessages = 3;
 /// Image / file attachments upload to `uploads/{uid}/dm/{threadId}/…` and send
 /// as `image` / `file` messages carrying the download URL + metadata.
 ///
-/// "Ayma in your DMs" coaching (§6.9) lives above the composer: up-to-4
+/// "Ayma in your DMs" coaching (§6.9) lives above the composer: up-to-2
 /// suggestion chips (tap → drop into the composer) plus an optional one-line
 /// tip. Both come from `POST /dm/assist` and refresh (debounced) as the
 /// conversation grows, so they stay relevant instead of being one-shot
@@ -678,16 +678,17 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               _visibleSafety != null)
             CappedScroll(
               // Never let coaching take more than half the screen — past that
-              // it scrolls inside the cap rather than squeezing out the list
-              // or the composer.
+              // it is clipped at the cap (never scrolled) rather than squeezing
+              // out the list or the composer.
               maxHeight: constraints.maxHeight * 0.5,
+              scrollable: false,
               // Pin the BOTTOM of the coaching region in view. The tip is the
               // last child and the one the founder most wants visible; without
               // this the region is top-aligned, so once the keyboard shrinks
               // the cap the tip scrolls off below the fold ("hidden behind the
               // keyboard"). Bottom-anchored, the tip sits directly above the
               // composer — which already rides above the keyboard inset — and
-              // the chips scroll off the top instead. No effect when the
+              // the chips clip off the top instead. No effect when the
               // content fits (the scroll view is then just its content tall).
               reverse: true,
               child: Column(
@@ -703,7 +704,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                     ),
                   if (_assist.chips.isNotEmpty)
                     _SuggestionBar(
-                      chips: _assist.chips,
+                      chips: _assist.chips.take(_maxCoachChips).toList(),
                       onTap: (text) {
                         _composer.text = text;
                         _composer.selection = TextSelection.collapsed(
@@ -976,6 +977,10 @@ class _PendingAttachment extends StatelessWidget {
 /// text into the composer. The set refreshes as the conversation grows — these
 /// are common ground to keep talking about, not one-shot openers, so there's
 /// no manual dismiss; an empty set simply hides the bar.
+/// Most suggestion chips shown above the composer — keeps the coaching region
+/// short enough to sit above the keyboard.
+const int _maxCoachChips = 2;
+
 class _SuggestionBar extends StatelessWidget {
   const _SuggestionBar({required this.chips, required this.onTap});
   final List<String> chips;
@@ -1019,6 +1024,8 @@ class _SuggestionBar extends StatelessWidget {
                   child: Text(
                     c,
                     softWrap: true,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: AymaType.sans(size: 13, color: ac.fg),
                   ),
                 ),
