@@ -5,7 +5,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
-import '../features/date_sim/date_sim_models.dart';
 import '../features/date_sim/taste_models.dart';
 import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
@@ -1323,29 +1322,30 @@ class ApiClient {
     return PracticeDebrief.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
-  /// `POST /date-sim` — run an AI date simulation against [otherUid]: two
-  /// personas (yours, grounded in your full own context; theirs, public-profile
-  /// only) hold a bounded conversation, returning the transcript plus a
-  /// compatibility score + summary. Nothing is sent to the other user. 404 →
-  /// null (no simulatable profile); HTTP 402 → an out-of-credits
-  /// [DateSimResult.capped].
-  Future<DateSimResult?> dateSim(String otherUid, int maxMessages) async {
+  /// `POST /date-sim` — run an AI date simulation against [otherUid] under the
+  /// client-chosen [simId]. The transcript streams into Firestore as it is
+  /// generated (read it with `DateSimService`), so the response body is not
+  /// used; this future completes when the run ends. Throws [ApiException]:
+  /// 402 out of credits, 403 AI-Avatar opt-out (message from the server),
+  /// 404 no simulatable profile.
+  Future<void> dateSim(String simId, String otherUid, int maxMessages) async {
     final r = await _http.post(
       _uri('/date-sim'),
       headers: await _headers(),
-      body: jsonEncode({'other_uid': otherUid, 'max_messages': maxMessages}),
+      body: jsonEncode({
+        'other_uid': otherUid,
+        'max_messages': maxMessages,
+        'sim_id': simId,
+      }),
     );
-    if (r.statusCode == 402) return const DateSimResult.capped();
-    if (r.statusCode == 404) return null;
-    if (r.statusCode == 403) {
-      throw ApiException(_dateSimOptOutMessage(r.body),
-          statusCode: 403, body: r.body);
-    }
-    if (r.statusCode != 200) {
-      throw ApiException('Date simulation failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    return DateSimResult.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+    if (r.statusCode == 200) return;
+    throw ApiException(
+      r.statusCode == 403
+          ? _dateSimOptOutMessage(r.body)
+          : 'Date simulation failed.',
+      statusCode: r.statusCode,
+      body: r.body,
+    );
   }
 
   /// The AI-Avatar opt-out message from a 403 `/date-sim` body

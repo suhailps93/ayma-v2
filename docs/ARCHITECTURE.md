@@ -1219,7 +1219,7 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /block` | Used from both Explore and DM | §5.10/§6.11 |
 | `POST /profile/share` | Share a profile into a DM thread | §6.11 |
 | `POST /dm/{threadId}/messages` | Send a DM message (text/photo/voice/shared_profile) | §6.8 |
-| `POST /date-sim` | AI Date Simulation: two personas converse → transcript + compatibility read | §18 |
+| `POST /date-sim` | AI Date Simulation: two personas converse, streamed to `users/{uid}/date_sims/{sim_id}` (owner-read) → transcript + compatibility read | §18 |
 | `POST /taste/pair` | Qloo taste match: shared-taste score + date ideas from both public Taste pages | §19 |
 | `GET /taste/demo`, `GET /taste/demo/pair` | Public Qloo judge demo over the seeded demo profiles only | §19 |
 | `POST /dm/translate` | Translate a DM message/draft (cross-language DM); pair-only, 18+, cap-exempt | §6.12 |
@@ -1772,7 +1772,7 @@ two personas back-and-forth". Files: engine + HTTP in
 `prompts/date_sim.md` (the two-persona framing + disclosure filter) and
 `prompts/date_sim_verdict.md` (the scored read); Flutter in
 `ayma_flutter/lib/features/date_sim/` (`date_sim_screen.dart`,
-`date_sim_models.dart`), entry button in `screens/public_profile_screen.dart`,
+`date_sim_models.dart`), `services/date_sim_service.dart` (Firestore listen), entry button in `screens/public_profile_screen.dart`,
 route in `routing/app_router.dart`, client method in `services/api_client.dart`.
 Tests: `functions/bootstrap/tests/test_date_sim.py`,
 `ayma_flutter/test/date_sim_test.dart`, and a layout-matrix entry.
@@ -1790,7 +1790,9 @@ flowchart LR
   P1 & P2 --> LOOP["N-turn alternation on Muse<br/>(practice_llm → LLMProvider,<br/>metered FEATURE_DATE_SIM,<br/>capped at max_messages)"]
   LOOP --> MOD["Advisory moderation<br/>(dm_moderation, never blocks)"]
   MOD --> V["Verdict call<br/>(date_sim_verdict.md →<br/>score 0-100 + label + summary)"]
-  V --> OUT["{transcript, score, score_label,<br/>summary} — shown to the user,<br/>never sent to the match"]
+  LOOP -. "each turn, the moment it is produced" .-> FS[("Firestore<br/>users/{uid}/date_sims/{sim_id}<br/>+ /messages/{seq}")]
+  V -- "verdict + status=done<br/>(or status=error, partial kept)" --> FS
+  FS -- "owner-read snapshots<br/>(rules; Admin-SDK writes only)" --> UI["Flutter DateSimScreen<br/>live chat + typing row,<br/>then score + summary<br/>— never sent to the match"]
 ```
 
 **Grounding asymmetry + the disclosure filter (privacy).** The USER's persona
@@ -1811,10 +1813,24 @@ while confirming the needle IS in the user's grounding and NOT in the match's.
 In the future mutual-live version each side will get its own user's full
 context; for now this is one-sided.
 
-**Endpoint.** `POST /date-sim {other_uid, max_messages}` (18+-gated like
-Practice Date) → `{simulation, persona, banner, transcript:[{from:"you"|"them",
-text}], score, score_label, summary, moderation, usage_capped}`. `max_messages`
-is clamped to `[2, 20]` (default 6). Metering: every persona turn and the
+**Endpoint + live streaming.** `POST /date-sim {other_uid, max_messages, sim_id}`
+(18+-gated like Practice Date). The client picks a random `sim_id`, starts
+listening to Firestore FIRST, then fires the POST; the response is just
+`{sim_id, status}` and the client never depends on it for the transcript. After
+the opt-out gates and persona builds pass, the backend creates
+`users/{uid}/date_sims/{sim_id}` (`status: running|done|error`, `estimate`,
+`persona`, `banner`, `max_messages`, `created_at`; `verdict`, `moderation`,
+`usage_capped` when done; `error{code,message}` on failure) and writes every
+turn to `.../messages/{seq}` (`{seq, speaker: you|them, text, at}`) the instant
+it is generated. Hang guards: each model call is bounded by `TURN_TIMEOUT_S`
+(40s) and the whole run by `RUN_DEADLINE_S` (240s, under Cloud Run's 300s); any
+failure writes `status: error` with a reason and keeps the partial transcript.
+`sim_id` is regex-validated (`^[A-Za-z0-9_-]{8,64}$`), always created under the
+CALLER's own uid, and a reused id is a 409. `firestore.rules`: the owner may
+READ `users/{uid}/date_sims/**`; client writes are denied (Admin SDK only) —
+**rules must be deployed** for the live view to read. Preflight failures still
+return 402/403/404 from the POST before any doc exists. `max_messages` is
+clamped to `[2, 20]` (default 6). Metering: every persona turn and the
 verdict call go through `practice_llm` (the shared per-surface provider — Gemini
 today, Meta Muse Spark on a flag flip) and are charged to the user under
 `token_ledger.FEATURE_DATE_SIM` ("Date simulation"); **both** personas' turns

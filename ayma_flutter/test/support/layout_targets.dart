@@ -36,6 +36,7 @@ import 'package:ayma_flutter/screens/privacy_screen.dart';
 import 'package:ayma_flutter/screens/profile_settings_screen.dart';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
 import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
+import 'package:ayma_flutter/services/date_sim_service.dart';
 import 'package:ayma_flutter/features/date_sim/taste_match_card.dart';
 import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
 import 'package:ayma_flutter/features/practice_date/practice_screen.dart';
@@ -354,6 +355,54 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         ),
       );
     },
+    // The live date-sim states (a run in progress with the typing row, a
+    // finished run with the verdict, a failed run with its partial
+    // transcript), read from seeded Firestore exactly as the screen does.
+    for (final status in ['running', 'done', 'error'])
+      'date-sim live ($status)': (context) async {
+        final fs = FakeFirebaseFirestore();
+        final sim = fs
+            .collection('users')
+            .doc('me')
+            .collection('date_sims')
+            .doc('sim1');
+        await sim.set({
+          'status': status,
+          'persona': {'name': kLongName},
+          'banner': 'Simulated — not sent to $kLongName.',
+          'max_messages': 6,
+          if (status == 'done')
+            'verdict': {
+              'score': 78,
+              'score_label': 'A promising start worth a real message',
+              'summary': '$kLongName and you kept it light and curious. ' * 4,
+            },
+          if (status == 'error')
+            'error': {'code': 'failed', 'message': 'The simulation failed.'},
+        });
+        for (var i = 0; i < 3; i++) {
+          await sim.collection('messages').doc('00$i').set({
+            'seq': i,
+            'speaker': i.isEven ? 'you' : 'them',
+            'text':
+                'A fairly long simulated chat line number $i that wraps '
+                    'across several lines on a narrow screen. ' *
+                2,
+          });
+        }
+        if (!context.mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => DateSimScreen(
+              uid: 'her',
+              name: kLongName,
+              api: api,
+              simId: 'sim1',
+              service: DateSimService(auth: kLayoutAuth, firestore: fs),
+            ),
+          ),
+        );
+      },
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

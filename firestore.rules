@@ -128,6 +128,17 @@ service cloud.firestore {
       }
     }
 
+    // ---- AI date simulations (§18): owner READ-only; the transcript is
+    // streamed in by the backend (Admin SDK), the client may never write it.
+    match /users/{uid}/date_sims/{simId} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+      match /messages/{msgId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+    }
+
     // ---- DM threads (§6.6) ------------------------------------------------
     match /dm_threads/{threadId} {
       allow read: if request.auth != null

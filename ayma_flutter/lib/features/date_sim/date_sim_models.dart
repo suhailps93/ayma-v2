@@ -1,5 +1,6 @@
-/// Models for AI Date Simulation (hackathon flagship) — the data the simulation
-/// screen exchanges with the backend `POST /date-sim`.
+/// Models for AI Date Simulation (hackathon flagship) — the live simulation
+/// state the screen reads from Firestore while the backend (`POST /date-sim`)
+/// generates it.
 ///
 /// Reuses [PracticePersona] (the match's viewer-visible identity) from the
 /// Practice Date feature, since both are built from the same public profile.
@@ -16,56 +17,67 @@ class DateSimMessage {
   final String text;
 
   factory DateSimMessage.fromMap(Map<String, dynamic> m) => DateSimMessage(
-        fromYou: (m['from'] as String?) == 'you',
-        text: (m['text'] as String?) ?? '',
-      );
+    fromYou: (m['speaker'] as String?) == 'you',
+    text: (m['text'] as String?) ?? '',
+  );
 }
 
-/// Result of `POST /date-sim` — the simulated conversation plus the
-/// compatibility read (a 0–100 [score], a short [scoreLabel] and a [summary]).
-/// [usageCapped] is true when the user is out of credits (HTTP 402, or the
-/// conversation was cut short mid-run).
-class DateSimResult {
-  const DateSimResult({
+enum DateSimStatus { running, done, error }
+
+/// The live state of one simulation, read from the sim's Firestore doc
+/// (`users/{uid}/date_sims/{simId}`, backend-written). The compatibility read
+/// is a 0–100 [score], a short [scoreLabel] and a [summary]. [usageCapped] is
+/// true when the user ran out of credits mid-run.
+class DateSimDoc {
+  const DateSimDoc({
+    this.status = DateSimStatus.running,
     this.persona = const PracticePersona(name: ''),
     this.banner = '',
-    this.messages = const [],
+    this.maxMessages = 0,
     this.score = 0,
     this.scoreLabel = '',
     this.summary = '',
     this.moderationFlagged = false,
     this.usageCapped = false,
+    this.errorMessage = '',
   });
 
+  final DateSimStatus status;
   final PracticePersona persona;
 
   /// The persistent "Simulated — not sent to `<name>`" line.
   final String banner;
-  final List<DateSimMessage> messages;
-
-  /// 0–100 compatibility read for the pair, grounded in the simulated chat.
+  final int maxMessages;
   final int score;
   final String scoreLabel;
   final String summary;
   final bool moderationFlagged;
   final bool usageCapped;
+  final String errorMessage;
 
-  /// The out-of-credits sentinel (HTTP 402) — nothing was simulated.
-  const DateSimResult.capped() : this(usageCapped: true);
+  bool get hasVerdict =>
+      scoreLabel.isNotEmpty || summary.isNotEmpty || score > 0;
 
-  factory DateSimResult.fromMap(Map<String, dynamic> m) => DateSimResult(
-        persona: PracticePersona.fromMap(
-            (m['persona'] as Map<String, dynamic>?) ?? const {}),
-        banner: (m['banner'] as String?) ?? '',
-        messages: ((m['transcript'] as List?) ?? const [])
-            .whereType<Map<String, dynamic>>()
-            .map(DateSimMessage.fromMap)
-            .toList(),
-        score: (m['score'] as num?)?.toInt() ?? 0,
-        scoreLabel: (m['score_label'] as String?) ?? '',
-        summary: (m['summary'] as String?) ?? '',
-        moderationFlagged:
-            ((m['moderation'] as Map<String, dynamic>?)?['flagged']) == true,
-        usageCapped: m['usage_capped'] == true,
-      );
+  factory DateSimDoc.fromMap(Map<String, dynamic> m) {
+    final verdict = (m['verdict'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final err = (m['error'] as Map?)?.cast<String, dynamic>() ?? const {};
+    return DateSimDoc(
+      status: switch (m['status']) {
+        'done' => DateSimStatus.done,
+        'error' => DateSimStatus.error,
+        _ => DateSimStatus.running,
+      },
+      persona: PracticePersona.fromMap(
+        (m['persona'] as Map?)?.cast<String, dynamic>() ?? const {},
+      ),
+      banner: (m['banner'] as String?) ?? '',
+      maxMessages: (m['max_messages'] as num?)?.toInt() ?? 0,
+      score: (verdict['score'] as num?)?.toInt() ?? 0,
+      scoreLabel: (verdict['score_label'] as String?) ?? '',
+      summary: (verdict['summary'] as String?) ?? '',
+      moderationFlagged: ((m['moderation'] as Map?)?['flagged']) == true,
+      usageCapped: m['usage_capped'] == true,
+      errorMessage: (err['message'] as String?) ?? '',
+    );
+  }
 }
