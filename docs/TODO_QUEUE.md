@@ -4,6 +4,24 @@ Last updated: 2026-10-26. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## Integration 2216 (meta-hackathon, 2026-10-26) — live queue (single source of truth)
+
+**DONE tonight (merged into `meta-hackathon`, built APK 2216, NOT deployed, NOT pushed):**
+- DM coach — `dm-coach-backend` + `dm-coach-flutter`: "Ayma in your DMs" assist on Muse (`POST /dm/assist`, chips + coaching tip); replaces the old `GET /dm/{thread}/icebreakers`.
+- Intro feature tour — `intro-feature-tour`: first-launch `/tour`.
+- Feedback catcher — `feedback-catcher`: in-chat `submit_feedback` card → `POST /feedback/submit`; dev-gated `GET/POST /admin/feedback` + `/admin/feedback/media`; unified `feedback` collection; Settings form repointed; retires `POST /product-feedback`.
+- Ayma MCP — `ayma-mcp`: `/mcp` bring-your-own-agent behind `mcp_server` flag **default OFF (kept off)**; OAuth device grant + opaque Firestore-validated tokens, no new secret.
+- Fail-visible "Show AI notes" toggle fix: the dev_panel toggle now surfaces a clear error and keeps the switch on the true state when the `/dev/flags` write doesn't take (was a silent false-success).
+- Version bump `1.30.0+2216`; dependency pin `sse-starlette==3.0.3` (so `mcp==2.3.0` coexists with `fastapi==0.115.6`). Tests green (flutter 1072 incl. layout matrix; backend 2433, bar the known `test_vendor_spend` date-flake).
+
+**PENDING — in-flight on separate branches, NOT yet merged (later pass):**
+- `voice-engine-switcher` — Dev Brain/STT/TTS + Cascade/Realtime engine picker, sourced from the LiveKit catalog.
+- `voice-notif-gating` — voice-call notification gating (deferred per the integration instruction; still being built).
+- `fix-launcher-icon` — black launcher-icon background.
+- `fix-splash-timeout` — startup timeout + retry.
+
+**Deploy coupling for 2216:** deploy backend (ayma-api + ayma-agent) and install the 2216 APK together — the app uses new endpoints. `ayma-api` is temporarily `min-instances=1` for testing; revert to `0` when idle, but set `1` again before the **Nov 4** demo.
+
 ## 0. PRIORITY (founder, 2026-10-25): app-side testing and changes come first. Backend/vendor/admin work waits behind them.
 
 ## 1. Pending founder question (one at a time, top first)
