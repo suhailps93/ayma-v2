@@ -1833,7 +1833,10 @@ inline prices or credit rates.
 
 **AI Avatar consent (opt-out).** Settings > Privacy > "AI Avatar" (default on)
 writes `ai_avatar_enabled` to `users/{uid}/profile/main` (client-writable in
-`firestore.rules`, like `paused`); `practice_core.ai_avatar_enabled(db, uid)`
+`firestore.rules`, like `paused`; the rules must be deployed or the write is
+denied and the switch snaps back on. The `profile/main` age gate runs only when
+a write touches `birthdate`, so toggles never depend on the stored birthdate;
+rules tests: `scripts/rules_tests`, `npm test`); `practice_core.ai_avatar_enabled(db, uid)`
 reads it, defaulting to True when unset (only an explicit `False` opts out).
 `run_simulation` checks it BEFORE any persona is built or model call is made:
 the caller opted out → 403 `ai_avatar_opt_out_self` ("Turn on AI Avatar in

@@ -48,6 +48,14 @@ service cloud.firestore {
       );
     }
 
+    // True when an update adds, removes or changes `birthdate`. The age gate
+    // only needs to run then: a toggle write (AI Avatar, pause, voice, accent)
+    // leaves `birthdate` untouched, so a stored value the gate cannot parse
+    // must not block it. Creates and any birthdate change still hit the gate.
+    function birthdateTouched() {
+      return 'birthdate' in request.resource.data.diff(resource.data).affectedKeys();
+    }
+
     // ---- users/{uid} account doc -------------------------------------------
     match /users/{uid} {
       allow read: if isOwner(uid);
@@ -69,7 +77,7 @@ service cloud.firestore {
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
                'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
-               'updated_at', 'onboarding_started'
+               'ayma_accent_color', 'updated_at', 'onboarding_started'
              ])
           && isAdultBirthdate(request.resource.data);
         allow update: if isOwner(uid)
@@ -77,9 +85,9 @@ service cloud.firestore {
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
                'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
-               'updated_at', 'onboarding_started'
+               'ayma_accent_color', 'updated_at', 'onboarding_started'
              ])
-          && isAdultBirthdate(request.resource.data);
+          && (!birthdateTouched() || isAdultBirthdate(request.resource.data));
       }
 
       // ---- wiki_pages: read non-ai_only; write user-edit fields, and let
