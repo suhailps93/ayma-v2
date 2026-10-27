@@ -1600,6 +1600,69 @@ server-side). Flutter approval surface: `screens/connect_agent_screen.dart` +
 `token_ledger.record_mcp_tool_call` (never touches credits). **Full spec, tool
 contracts and the threat model: `docs/MCP_SERVER.md`.**
 
+## 17. Billing & Credits (monetization ledger)
+
+`functions/bootstrap/token_ledger.py` + `billing.py`. One internal meter —
+`users/{uid}.token_usage.cost_usd`, the running real-dollar cost of the
+account — drives everything; **clients only ever see credits, never dollars**
+(`1 credit = $0.01` of real token cost, `CONFIG.credits_per_usd = 100`). Every
+metered Gemini call adds its priced cost to `cost_usd`; `balance()` derives the
+remaining credits from it. `token_ledger.check()` raises `TokenCapExceeded`
+when the balance hits 0; a daily reset, plan renewal or top-up clears it.
+
+### 17.1 Free plan — start grant + daily refreshing pool
+
+The free plan grants, per `config.py`:
+
+- **A one-time start grant of `FREE_START_GRANT_USD = $5.00` = 500 credits.**
+  Granted once, only after anti-abuse unlock (verified phone/email + a
+  verification selfie that doesn't match another grant-holding account —
+  `start_grant_unlocked` / `start_grant_blocked`); never re-granted after a
+  paid plan lapses.
+- **A daily allowance of `FREE_DAILY_ALLOWANCE_USD = $1.00` = 100 credits/day**
+  (raised from $0.25/25 credits on 2026-10-27 — see below). This is the
+  "Daily credits refresh every day" pool the Plan screen promises, and it
+  applies **regardless of whether the start grant was unlocked or blocked** —
+  a blocked/duplicate account still gets the daily pool.
+
+**Refresh rule (the daily pool).** The allowance resets at **00:00 UTC**, does
+**not** roll over (unused credits are lost), and is **not** re-granted within a
+day (a bounded daily pool, not per-request). It is implemented lazily, not by a
+cron: `billing.normalize()` runs on every credit read (`token_ledger._load` via
+`check`/`credits`/`usage`) and, for a free account whose stored `daily_day`
+marker != today's UTC date, stamps the new date and snapshots
+`daily_base_free_usd = free_spend` at that moment. The day's remaining allowance
+is then `FREE_DAILY_ALLOWANCE_USD − max(0, free_spend − max(pool, daily_base))`,
+so each new UTC day the base catches up to lifetime free spend and the full
+pool is available again. A zero-credit free user therefore reliably regains the
+full pool on the next day; a second read the same day re-reads the same stored
+base and never re-grants. (Tests:
+`test_zero_credit_free_user_gets_the_daily_pool_on_a_new_day`,
+`test_daily_pool_is_not_regranted_within_the_same_day`,
+`test_daily_reset_uncaps_the_user`, `test_daily_allowance_does_not_roll_over`.)
+
+**2026-10-27 fix (founder bug).** The daily allowance was `$0.25` = 25 credits —
+a single voice turn or report exhausts it, so even though the refresh logic was
+working correctly the free tier read as permanently empty ("0 credits, daily
+isn't refreshing"). Root cause was the *amount*, not the refresh mechanism (and,
+on the founder's own account, a `start_grant_blocked` withheld 500-credit start
+grant from the duplicate-face check). Fixed by raising
+`FREE_DAILY_ALLOWANCE_USD` to `$1.00` = 100 credits (env-tunable, no code change
+needed to adjust further). `plan_facts.py` and the Plan-screen copy derive the
+figure from `config.py`, so they update automatically.
+
+### 17.2 Paid tiers (unchanged by the 17.1 fix)
+
+Paid plans (`PLAN_TIERS`: Plus 700 / Pro 1,400 / Max 8,000 credits) grant a
+**monthly pool and have no daily allowance** (`daily_remaining_usd = 0`). Pools
+are set — never added repeatedly — by the RevenueCat webhook
+(`POST /webhooks/revenuecat`, idempotent on `event.id`) and the
+`POST /billing/sync` entitlement sync (idempotent on plan + period end), so a
+re-sync inside a period is a no-op. A lapsed paid period settles lazily in
+`normalize()` (open spend closed into `paid_spent_closed_usd`, plan falls back
+to free, start grant not re-granted). None of the paid arithmetic is touched by
+the free daily-allowance change.
+
 ---
 
-*All 14 pieces are locked (plus §15 in-app feedback and §16 the post-plan MCP server). This document is the complete northstar plan — a coding agent implements against it one Implementation step at a time. Revisit a section only if a decision genuinely changes.*
+*All 14 pieces are locked (plus §15 in-app feedback, §16 the post-plan MCP server, and §17 the billing & credits ledger). This document is the complete northstar plan — a coding agent implements against it one Implementation step at a time. Revisit a section only if a decision genuinely changes.*

@@ -464,8 +464,11 @@ class Config:
 
     free_daily_allowance_usd: float
     """Daily allowance once the start grant is spent, in USD of token cost
-    (internal). $0.25 == 25 credits. Resets at 00:00 UTC, never accumulates.
-    Applies to the free plan only."""
+    (internal). $1.00 == 100 credits. Resets at 00:00 UTC, never accumulates.
+    Applies to the free plan only. Env ``FREE_DAILY_ALLOWANCE_USD`` tunes it
+    without a code change (raised from $0.25 on 2026-10-27: 25 credits was a
+    single voice turn / report, so the "daily credits refresh every day"
+    free tier read as permanently empty — see billing.py)."""
 
     billing_expiry_grace_seconds: int
     """How long past ``period_end`` a paid plan stays active before the ledger
@@ -1107,7 +1110,7 @@ def _load() -> Config:
         credits_per_usd=int(os.getenv("CREDITS_PER_USD", "100")),
         free_start_grant_usd=float(os.getenv("FREE_START_GRANT_USD", "5.00")),
         free_daily_allowance_usd=float(
-            os.getenv("FREE_DAILY_ALLOWANCE_USD", "0.25")
+            os.getenv("FREE_DAILY_ALLOWANCE_USD", "1.00")
         ),
         billing_expiry_grace_seconds=int(
             os.getenv("BILLING_EXPIRY_GRACE_SECONDS", "3600")
