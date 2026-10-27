@@ -26,6 +26,15 @@ Two deliverables, both live on `meta-hackathon`:
   the user can rehearse the first conversation (text or voice), with Ayma
   coaching live and giving an end-of-session debrief. Practice Date's text
   surface already runs on Muse Spark in the deployed build.
+- **New surface — AI-to-AI date simulation (Agent Dates).** Each user's Ayma
+  agent — built from what that user shares with Ayma — can go on a simulated
+  first date with another user's agent and return a **compatibility score**
+  plus a short **how-it-went summary**. It is the optimistic version of
+  *Black Mirror*'s "Hang the DJ": the simulation finds your person before you
+  ever meet. Built during the hackathon window on the same provider
+  abstraction (Muse Spark), under the same privacy contract as Practice Date:
+  an agent's context holds only its own user's shared data, and the summary
+  reports only what happened inside the simulation.
 
 ---
 
@@ -202,6 +211,13 @@ disclosed upfront, now running on Meta models:
 The port and Practice Date are both **new work inside the hackathon window**, on
 an existing product, behind flags that keep production on Gemini until a surface
 is explicitly flipped.
+
+**Where this goes.** Practice Date teaches you to show up well; Agent Dates —
+the AI-to-AI simulation in §1 — decides who is worth showing up for. Together
+they are the first step toward the future *Black Mirror*'s "Hang the DJ"
+imagined, in its optimistic form: a digital self that dates on your behalf and
+finds your person, so real first dates stop being cold opens. That is the
+consumer story Ayma launches with on December 1, 2026.
 
 ## 9. Credit posture (no dollar figures)
 

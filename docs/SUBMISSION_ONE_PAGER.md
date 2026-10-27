@@ -14,6 +14,15 @@ from their viewer-visible profile** — so you can rehearse the first conversati
 gives a debrief at the end. Practice never sends anything to the real person.
 The text persona already runs on **Meta Muse Spark** in the deployed build.
 
+**And the next step: Agent Dates.** Each member's Ayma agent — built from what
+that member shares with Ayma — can go on a *simulated first date* with a match's
+agent and report back: a **compatibility score** and a short **how-it-went
+summary**, so the first real conversation starts with someone you'll actually
+click with. It's the optimistic *Black Mirror* "Hang the DJ" idea, built as a
+feature: your digital self dates first; you meet when it matters. Same privacy
+rule as Practice Date: an agent carries only what its own person shared, and the
+summary reports only what happened inside the simulation.
+
 ---
 
 ## Before you start — what a judge account needs
