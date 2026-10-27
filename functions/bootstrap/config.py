@@ -705,17 +705,26 @@ class Config:
     llm_provider_reports: str
     llm_provider_practice: str
     llm_provider_voice: str
+    llm_provider_dm_coach: str
     """Per-surface provider switch, ``gemini`` | ``meta``. Each surface flips
     and rolls back independently via ``LLM_PROVIDER_<SURFACE>`` (e.g.
     ``LLM_PROVIDER_CHAT=meta``); ``LLM_PROVIDER`` sets the default for any
-    surface whose own var is unset. ALL default to ``gemini`` — production
-    behaviour is unchanged until a surface is explicitly flipped. Read by
+    surface whose own var is unset. All default to ``gemini`` EXCEPT
+    ``llm_provider_dm_coach`` (see below) — production behaviour is unchanged
+    until a surface is explicitly flipped. Read by
     ``llm_provider.get_llm_provider(surface)``.
 
     NOTE: ``llm_provider_voice`` is the **Practice Date** voice switch only (the
     simulated-match roleplay). The normal/main Ayma voice call is a SEPARATE
     switch, ``llm_provider_voice_main`` below, so Practice and the main voice
-    flip independently."""
+    flip independently.
+
+    NOTE: ``llm_provider_dm_coach`` is the switch for the "Ayma in your DMs"
+    assistant (``dm_assist.py``: opener chips on an empty thread + live coaching
+    on an active one). Unlike the other surfaces it DEFAULTS to ``meta`` (Muse
+    Spark) — founder directive for the hackathon that the DM assistant runs on
+    the Meta brain. It still inherits a global ``LLM_PROVIDER`` override and the
+    Gemini fallback (``llm_meta_fallback``), so a flip can never take it down."""
 
     llm_provider_voice_main: str
     """Provider switch for the MAIN (normal, non-practice) Ayma voice call,
@@ -928,6 +937,12 @@ def _load() -> Config:
         llm_provider_voice_main=os.getenv("LLM_PROVIDER_VOICE_MAIN", "gemini"),
         llm_provider_voice=os.getenv(
             "LLM_PROVIDER_VOICE", os.getenv("LLM_PROVIDER", "gemini")
+        ).strip().lower(),
+        # Founder directive (hackathon): the DM assistant runs on Muse, so this
+        # one surface defaults to ``meta`` (still overridable per-surface or via
+        # a global LLM_PROVIDER, still Gemini-fallback-guarded).
+        llm_provider_dm_coach=os.getenv(
+            "LLM_PROVIDER_DM_COACH", os.getenv("LLM_PROVIDER", "meta")
         ).strip().lower(),
         llm_meta_fallback=os.getenv("LLM_META_FALLBACK", "true").strip().lower()
         == "true",

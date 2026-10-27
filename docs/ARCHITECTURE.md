@@ -66,6 +66,7 @@ flowchart LR
   RCS[RevenueCat]
   Sentry[Sentry]
   Muse["Muse (browser agent)"]
+  MetaAPI["Meta Model API — Muse Spark<br/>(OpenAI-compatible, Gemini fallback)"]
   Web[Public web pages<br/>robots.txt honoured, public IPs only]
 
   App -->|ID token| API
@@ -80,6 +81,7 @@ flowchart LR
   Agent -->|app_commands/pending| FS
   FS -->|app_commands| Cmd
   API -->|llm_route_json/vision/chat=inference| Gateway
+  API -->|DM assist /dm/assist §6.9 (dm_coach=meta default);<br/>other surfaces when flipped to meta| MetaAPI
   API -->|web_search, research, embeddings,<br/>batch, TTS, image edit| Vertex
   API -->|deep dive discovery| VSearch
   API -->|og:image fetch| Web
@@ -108,7 +110,8 @@ flowchart LR
 
 | Work | Default route on this branch | Flag | Always on Vertex (no gateway equivalent) |
 |---|---|---|---|
-| JSON jobs (matching, wiki ingest, icebreakers, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
+| JSON jobs (matching, wiki ingest, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
+| DM assist / icebreakers (§6.9) | **Meta Muse Spark** (`LLM_PROVIDER_DM_COACH=meta` default; Gemini fallback) | `llm_provider_dm_coach` | — when flipped to `gemini` it runs as a JSON job on the row above |
 | Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference | `llm_route_vision` | media the gateway cannot take (HEIC, m4a, webm, ogg, aac) |
 | Text chat with tools | Inference | `llm_route_chat` | the `web_search` tool (grounded `research()` call); Maps grounding (`maps_grounding`) |
 | Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` | |
@@ -667,7 +670,8 @@ flowchart LR
   P1 -->|cron stage 2, small top-K| P2
   P2 --> Match["matches/{matchId}<br/>score · user_explanation{uidA,uidB} · ai_explanation · trust_flags · status"]
   Match --> Explore
-  Match --> Cards[Match cards / icebreakers — Piece 6]
+  Match --> Cards[Match cards — Piece 6]
+  Match -->|grounds openers + coaching| DMA["DM assist /dm/assist — §6.9<br/>Meta Muse Spark · opener + coach"]
   Match -.->|score + ai_explanation; else has_match_score:false| Ayma[Ayma chat context — §5.6]
   P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
@@ -680,7 +684,7 @@ flowchart LR
 
 ### 5.8 Surfacing to the user
 
-Explore's population is a live filtered query over all eligible users (Piece 6 §6.1), not sourced from `match_candidates` — Pass-1/Pass-2 outputs only overlay a score badge on top when present. `matches/{matchId}` feeds match cards, icebreaker chips, and the per-user `user_explanation`. Initiating a conversation with a match is Piece 6's concern — this piece stops at producing the scored match doc.
+Explore's population is a live filtered query over all eligible users (Piece 6 §6.1), not sourced from `match_candidates` — Pass-1/Pass-2 outputs only overlay a score badge on top when present. `matches/{matchId}` feeds match cards, the DM assist opener/coach grounding (§6.9), and the per-user `user_explanation`. Initiating a conversation with a match is Piece 6's concern — this piece stops at producing the scored match doc.
 
 ### 5.9 Storage map
 
@@ -761,9 +765,20 @@ From Explore or a match card, a "share" action lets the user pick an existing or
 
 Every DM message becomes a `raw_turns` entry for **both** participants (§2.2). Photos get the vision-captioning step, voice notes get transcribed (§2.3) — both become text the standard ingest pipeline can process. Wiki content derived from DM images/voice defaults to `visibility: ai_only`: Ayma's understanding feeds her private analysis (matching, consistency-checking) but doesn't surface in the user's own private-wiki view, since the user already has the raw content in their DM thread. Face-embedding (§2.5) still runs on DM images regardless of visibility tier.
 
-### 6.9 Icebreaker prompts
+### 6.9 Ayma in your DMs (thread-aware assist)
 
-Suggested chips above the DM compose box, generated from that pair's `matches/{matchId}.ai_explanation`/`user_explanation` (§5.4) — no separate generation step. No chips show until a compatibility check has produced a `matches` doc for that pair.
+A single thread-aware assistant (`functions/bootstrap/dm_assist.py`, endpoint `POST /dm/assist`) that does two jobs depending on whether the thread has any messages yet — it replaces the former icebreakers-only module.
+
+**Request:** `{"other": "<other-user-uid>", "messages": [{"from": "me"|"them", "text": "..."}, ...]}`. `messages` is the recent thread tail; the server caps it to the last 12 and the client may send an empty list.
+
+**Response:** `{"mode": "opener"|"coach", "chips": ["...", ... up to 4], "tip": "<one-line nudge>"|null}`.
+
+* **Empty `messages` → `mode:"opener"`.** Chips are openers grounded in that pair's `matches/{matchId}.ai_explanation`/`user_explanation` (§5.4) — no separate generation step. No chips show until a compatibility check has produced a `matches` doc for that pair; `tip` is null.
+* **Non-empty `messages` → `mode:"coach"`.** Chips are up to four suggested next lines the user (`me`) could send, grounded in BOTH the compatibility analysis and the recent messages. `tip` is one short coaching nudge (e.g. "You're asking a lot of questions — share something about yourself"); it may be null/light encouragement when the user is doing fine. Coach mode works even without a `matches` doc (grounds on the messages alone).
+
+**Provider:** routed through the LLM provider abstraction on the `dm_coach` surface (`LLM_PROVIDER_DM_COACH`, `config.llm_provider_dm_coach`), which **defaults to `meta`** (the Muse/Meta brain — founder hackathon directive), with the standard Gemini fallback. Prompt: `functions/bootstrap/prompts/dm_coach.md` (both modes). Metered under the `icebreakers` token-ledger feature key.
+
+**Resilience & privacy:** DM assist is a nicety and NEVER blocks the thread — on any generation failure it returns the appropriate `mode` with empty chips and null tip. It reads only the requesting pair's own `matches` doc and the messages the client sent for that thread; nothing crosses to other users, and the compatibility analysis is grounding-only (never quoted back).
 
 ### 6.10 Storage map
 
@@ -784,7 +799,7 @@ Suggested chips above the DM compose box, generated from that pair's `matches/{m
 6. **Client: Explore feed UI** — cards per §6.4; like/pass/report actions per §6.5; tap opens full profile.
 7. **Backend: like/pass handling** — like updates `matches/{matchId}.status` toward `mutual_interest`; pass writes a seen/passed marker.
 8. **Backend: profile share endpoint** — attaches a `shared_profile` message into a chosen/new `dm_threads/{threadId}`.
-9. **Client: DM thread UI** — message list, compose box (text/photo/voice/shared_profile), icebreaker chips per §6.9.
+9. **Client: DM thread UI** — message list, compose box (text/photo/voice/shared_profile), DM assist chips (openers on an empty thread, live coaching on an active one) + coaching tip per §6.9.
 10. **Backend: DM message ingestion** — new messages become `raw_turns` for both participants; images captioned, voice transcribed; feeds the standard wiki ingest pipeline with the `ai_only` default from §6.8.
 11. **Backend: block/report from DM** — writes `blocks/{uid}_{blockedUid}`; hides thread from blocker; blocks further messages from the blocked side.
 
@@ -1354,9 +1369,9 @@ Every screen the app needs, each item stating what it must have — mechanics re
 
 **Messages** — two sections: **New from Ayma** (unacted `matches/{matchId}` docs, accept/reject — "send a hello" / "not for me," per §5.7 `status` transitions) and **Conversations** (DM threads ordered by `last_message_at`, §6.6), unread state per thread.
 
-**Match detail** — score badge, `user_explanation` reasoning card (§5.4), icebreaker prompts once the user opens the resulting DM thread (§6.9), accept/reject action bar.
+**Match detail** — score badge, `user_explanation` reasoning card (§5.4), DM assist opener chips once the user opens the resulting DM thread (§6.9), accept/reject action bar.
 
-**DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, icebreaker chips above the composer (§6.9), share-profile action (§6.7), block/report (§6.5).
+**DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, DM assist chips above the composer — openers on an empty thread, suggested next lines + a coaching tip on an active one (§6.9), share-profile action (§6.7), block/report (§6.5).
 
 **Profile (own)** — Public/Private tab switcher over the wiki (§2.1), completeness meter on the public tab, four wiki section rows with tap-to-open detail editor: a single conversational, chat-based editor — no separate quick-edit form and no separate AI-correction dialog — writing `user_edits`/`user_hidden` and never `ai_body` (§2.1). Inline photo-carousel management (§8.3), Instagram connect action (§8.1), Connect Google action (§8.8).
 

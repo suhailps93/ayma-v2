@@ -43,7 +43,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     Request,
 )
 from fastapi.responses import HTMLResponse, Response, StreamingResponse  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
@@ -103,7 +103,7 @@ import dm_ingest  # noqa: E402
 import dm_moderation  # noqa: E402
 import dm_ops  # noqa: E402
 import dm_schema  # noqa: E402
-import icebreakers  # noqa: E402
+import dm_assist  # noqa: E402
 import notifications_ops  # noqa: E402
 import notifications_triggers  # noqa: E402
 import schema  # noqa: E402
@@ -3528,21 +3528,31 @@ async def _run_dm_ingest(
         logger.exception("DM ingest task failed for %s", thread_id)
 
 
-@app.get("/dm/{thread_id}/icebreakers")
-async def dm_icebreakers(
-    thread_id: str, uid: str = Depends(require_adult_uid)
+class DmAssistMessage(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from", max_length=16)
+    text: str = Field(max_length=4000)
+
+
+class DmAssistRequest(BaseModel):
+    other: str = Field(min_length=1, max_length=128)
+    messages: list[DmAssistMessage] = Field(default_factory=list, max_length=200)
+
+
+@app.post("/dm/assist")
+async def dm_assist_endpoint(
+    req: DmAssistRequest, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
-    """Suggested opener chips for this thread (§6.9). Empty until a
-    compatibility check has produced a ``matches`` doc for the pair."""
-    try:
-        a, b = uids_from_pair_key(thread_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if uid not in (a, b):
-        raise HTTPException(status_code=403, detail="Not your thread.")
-    other = b if uid == a else a
-    chips = await icebreakers.suggest(get_db(), uid, other)
-    return {"icebreakers": chips}
+    """Ayma in your DMs (§6.9). Empty ``messages`` → ``mode: "opener"`` (opener
+    chips grounded in the pair's compatibility analysis); non-empty →
+    ``mode: "coach"`` (suggested next lines + a one-line coaching ``tip``). A
+    nicety that never blocks the thread: on any failure, empty chips + null
+    tip."""
+    if req.other == uid:
+        raise HTTPException(status_code=400, detail="Not a valid thread.")
+    messages = [{"from": m.from_, "text": m.text} for m in req.messages]
+    return await dm_assist.assist(get_db(), uid, req.other, messages)
 
 
 class ProfileShareRequest(BaseModel):

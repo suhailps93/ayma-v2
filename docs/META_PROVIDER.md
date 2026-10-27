@@ -19,10 +19,13 @@ surface is explicitly flipped.
     `response_format`). On any failure it **falls back to Gemini** when
     `LLM_META_FALLBACK` is on (default), so a flip can never take a surface down.
 * **`get_llm_provider(surface)`** — returns the provider a surface is configured
-  for. Surfaces: `chat`, `matching`, `reports`, `practice`, `voice`.
+  for. Surfaces: `chat`, `matching`, `reports`, `practice`, `voice`, `dm_coach`.
 * **Per-surface flag `LLM_PROVIDER_<SURFACE>`** (`gemini` | `meta`), with
   `LLM_PROVIDER` as the default for any surface whose own var is unset. **All
-  default to `gemini`.**
+  default to `gemini` EXCEPT `dm_coach`, which defaults to `meta`** — the "Ayma
+  in your DMs" assistant (§6.9: opener chips + live coaching) runs on the
+  Muse/Meta brain by founder hackathon directive. It still inherits a global
+  `LLM_PROVIDER` override and the Gemini fallback.
 * Model ids live only in `config.py` (per `AGENTS.md`): `META_CHAT_MODEL`
   (`muse-spark-1.3`), `META_OPEN_WEIGHTS_MODEL`
   (`meta-models/muse-spark-open-1026`, the $10k open-weights target),
@@ -50,6 +53,7 @@ surface is explicitly flipped.
 | matching | `matching_skill._run_llm` |
 | reports | `body_report.py`, `face_report.py` |
 | practice | not a call site yet — the Practice Date agent consumes `get_llm_provider("practice")` directly |
+| dm_coach | `dm_assist.assist` (the `POST /dm/assist` endpoint) — opener chips + live DM coaching (§6.9). **Defaults to `meta`.** |
 
 ## How to flip a surface to Meta
 
@@ -97,9 +101,11 @@ schema) but a parser risk, so **reports stays on Gemini** until this is handled.
 
 `practice` (text) → Meta (`LLM_PROVIDER_PRACTICE=meta` in `deploy-api.sh`), with
 `LLM_META_FALLBACK=true` so any Meta hiccup degrades to Gemini.
-`chat`, `matching`, `reports`, `voice` remain on Gemini. The **Practice Date
-voice cascade** below is wired but gated OFF (`LLM_PROVIDER_VOICE` default
-`gemini`).
+`dm_coach` (the DM assist opener/coach, §6.9) → Meta **by default** (founder
+hackathon directive — no env var needed; the config default is `meta`), same
+Gemini fallback. `chat`, `matching`, `reports`, `voice` remain on Gemini. The
+**Practice Date voice cascade** below is wired but gated OFF
+(`LLM_PROVIDER_VOICE` default `gemini`).
 
 ## Voice cascade (Practice Date "runs on Meta")
 

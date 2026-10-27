@@ -38,6 +38,21 @@ def test_voice_surface_defaults_to_gemini(monkeypatch):
     assert cfg.llm_provider_voice == "gemini"
 
 
+def test_dm_coach_surface_defaults_to_meta(monkeypatch):
+    # Founder directive: the DM assistant runs on Muse, so this one surface
+    # defaults to meta (unlike every other surface).
+    monkeypatch.delenv("LLM_PROVIDER_DM_COACH", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    cfg = config._load()
+    assert cfg.llm_provider_dm_coach == "meta"
+
+
+def test_dm_coach_surface_honours_explicit_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER_DM_COACH", "gemini")
+    cfg = config._load()
+    assert cfg.llm_provider_dm_coach == "gemini"
+
+
 def test_meta_cascade_defaults(monkeypatch):
     for var in (
         "META_CASCADE_TTS_MODEL",
