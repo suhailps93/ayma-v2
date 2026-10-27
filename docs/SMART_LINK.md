@@ -15,8 +15,11 @@ Every shared Appearance report card carries it in the share caption:
 built by `ReportCardShare.captionFor(refCode)`
 (`ayma_flutter/lib/services/report_card_share.dart`). The caption rides with the
 1080x1920 PNG to **WhatsApp** and the **system share sheet ("More…")**.
-**Instagram** strips shared text, so there the link is not in a caption — the
-image is the content; a user who wants the link adds it themselves.
+**Instagram** strips shared text from an image share, so there the caption can't
+ride along — the image is the content. Instead the app copies the caption (link
+included) to the clipboard and toasts *"Link copied — paste it in your story or
+caption."*, so a user who wants the link can paste it into their Instagram
+story or caption.
 
 ## Referral passthrough
 

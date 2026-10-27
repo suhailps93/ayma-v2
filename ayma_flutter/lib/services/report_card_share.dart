@@ -14,6 +14,19 @@ import 'gallery_saver.dart';
 /// Where the Share sheet can send the report card image.
 enum CardShareTarget { whatsapp, instagram, save, more }
 
+/// Thrown by [ReportCardShare.share] when a directly-targeted app (WhatsApp,
+/// Instagram) isn't installed, so the sheet can name the missing app
+/// ("WhatsApp isn't installed") instead of the generic failure toast.
+class ShareTargetNotInstalled implements Exception {
+  const ShareTargetNotInstalled(this.appLabel);
+
+  /// Human label for the missing app, e.g. 'WhatsApp'.
+  final String appLabel;
+
+  @override
+  String toString() => 'ShareTargetNotInstalled($appLabel)';
+}
+
 /// Turns the Appearance report card into a 1080x1920 PNG on the device and
 /// hands it to WhatsApp, Instagram, the gallery or the system share sheet.
 /// The image is never uploaded by us: it is rendered locally, written to the
@@ -23,14 +36,17 @@ enum CardShareTarget { whatsapp, instagram, save, more }
 /// static Firebase-hosted redirect page — see `public/get.html` and
 /// `docs/SMART_LINK.md`) so every card that lands in WhatsApp or the system
 /// share sheet comes with a one-tap way into the app (open it, else the
-/// right app store). Instagram strips shared text, so there the link rides
-/// only on whatever the user adds.
+/// right app store). Instagram strips shared text from an image share, so
+/// there the card image is handed over on its own and the caption (link
+/// included) is copied to the clipboard instead, for the user to paste into
+/// their story or caption.
 class ReportCardShare {
   ReportCardShare({
     MethodChannel? shareChannel,
     GallerySaver? gallery,
     Directory? tempDir,
     Future<void> Function(ShareParams params)? systemShare,
+    Future<void> Function(String text)? setClipboard,
   }) : _channel = shareChannel ?? const MethodChannel('ayma/share'),
        _gallery = gallery ?? const GallerySaver(),
        _tempDir = tempDir ?? Directory.systemTemp,
@@ -38,12 +54,16 @@ class ReportCardShare {
            systemShare ??
            ((p) async {
              await SharePlus.instance.share(p);
-           });
+           }),
+       _setClipboard =
+           setClipboard ??
+           ((text) => Clipboard.setData(ClipboardData(text: text)));
 
   final MethodChannel _channel;
   final GallerySaver _gallery;
   final Directory _tempDir;
   final Future<void> Function(ShareParams params) _systemShare;
+  final Future<void> Function(String text) _setClipboard;
 
   /// The Ayma smart link: a free, static Firebase-hosted page that redirects
   /// a tapper to the app (deep link), else their app store, else a web page.
@@ -191,8 +211,9 @@ class ReportCardShare {
 
   /// Sends [png] to [target]. Returns a short confirmation to show the user,
   /// or null when the app the user picked takes over. Throws on failure
-  /// (a declined gallery permission is a [PlatformException] `PERMISSION`).
-  /// [origin] anchors the share popover on iPad.
+  /// (a declined gallery permission is a [PlatformException] `PERMISSION`;
+  /// a directly-targeted app that isn't installed is a
+  /// [ShareTargetNotInstalled]). [origin] anchors the share popover on iPad.
   Future<String?> share(
     CardShareTarget target,
     Uint8List png, {
@@ -228,7 +249,19 @@ class ReportCardShare {
         // the caption (and its link), so only send it there.
         'text': target == CardShareTarget.whatsapp ? text : '',
       });
-      if (sent == true) return null;
+      if (sent == true) {
+        if (target == CardShareTarget.instagram) {
+          // Instagram took the image but dropped the text: put the caption
+          // (link included) on the clipboard so the user can paste it into
+          // their story or caption.
+          await _setClipboard(text);
+          return 'Link copied — paste it in your story or caption.';
+        }
+        return null;
+      }
+      // The targeted app isn't installed: name it instead of silently
+      // opening the system sheet or showing the generic failure toast.
+      throw ShareTargetNotInstalled(_appLabel(target));
     }
     await _systemShare(
       ShareParams(
@@ -239,6 +272,12 @@ class ReportCardShare {
     );
     return null;
   }
+
+  static String _appLabel(CardShareTarget target) => switch (target) {
+    CardShareTarget.whatsapp => 'WhatsApp',
+    CardShareTarget.instagram => 'Instagram',
+    _ => 'That app',
+  };
 }
 
 /// An already-decoded image as an [ImageProvider]: resolves synchronously,
