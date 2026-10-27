@@ -727,7 +727,8 @@ flowchart LR
   P2 --> Match["matches/{matchId}<br/>score · user_explanation{uidA,uidB} · ai_explanation · trust_flags · status"]
   Match --> Explore
   Match --> Cards[Match cards — Piece 6]
-  Match -->|grounds openers + coaching| DMA["DM assist /dm/assist — §6.9<br/>Meta Muse Spark · opener + coach"]
+  Match -->|grounds openers + coaching| DMA["DM assist /dm/assist — §6.9<br/>Meta Muse Spark · opener + coach + safety"]
+  DMA -->|safety assessment {level,reason,flags} §6.9.1| Note["Safety heads-up note<br/>dm_thread_screen · advisory, dismissible"]
   Match -.->|score + ai_explanation; else has_match_score:false| Ayma[Ayma chat context — §5.6]
   P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
@@ -827,7 +828,7 @@ A single thread-aware assistant (`functions/bootstrap/dm_assist.py`, endpoint `P
 
 **Request:** `{"other": "<other-user-uid>", "messages": [{"from": "me"|"them", "text": "..."}, ...]}`. `messages` is the recent thread tail; the server caps it to the last 12 and the client may send an empty list.
 
-**Response:** `{"mode": "opener"|"coach", "chips": ["...", ... up to 4], "tip": "<one-line nudge>"|null}`.
+**Response:** `{"mode": "opener"|"coach", "chips": ["...", ... up to 4], "tip": "<one-line nudge>"|null, "safety": {"level": "none"|"caution"|"warning", "reason": "<short>", "flags": ["..."]}}`. The `safety` block is the red-flag coach (§6.9.1); it is always present and `none` unless the other person shows genuinely concerning behaviour.
 
 * **Empty `messages` → `mode:"opener"`.** Chips are openers grounded in that pair's `matches/{matchId}.ai_explanation`/`user_explanation` (§5.4) — no separate generation step. No chips show until a compatibility check has produced a `matches` doc for that pair; `tip` is null.
 * **Non-empty `messages` → `mode:"coach"`.** Chips are up to four suggested next lines the user (`me`) could send, grounded in BOTH the compatibility analysis and the recent messages. `tip` is one short coaching nudge (e.g. "You're asking a lot of questions — share something about yourself"); it may be null/light encouragement when the user is doing fine. Coach mode works even without a `matches` doc (grounds on the messages alone).
@@ -836,7 +837,22 @@ A single thread-aware assistant (`functions/bootstrap/dm_assist.py`, endpoint `P
 
 **Resilience & privacy:** DM assist is a nicety and NEVER blocks the thread — on any generation failure it returns the appropriate `mode` with empty chips and null tip. It reads only the requesting pair's own `matches` doc and the messages the client sent for that thread; nothing crosses to other users, and the compatibility analysis is grounding-only (never quoted back).
 
-**Client UI (`dm_thread_screen.dart`):** up to 4 suggestion chips sit above the composer; tapping one drops its text into the composer for editing (it is not auto-sent). They stay as common ground to keep talking about, not one-shot openers. The optional `tip` renders just above the composer (small, muted, with a small Ayma glyph), dismissible; a later refresh carrying a *different* tip re-surfaces it, and it is hidden entirely when `tip` is null. Body-less messages (a bare photo, a voice note, a shared card) ride along in the request tail as short placeholders (`[photo]`, `[voice message]`, …) so the back-and-forth stays intact without leaking a raw storage path. Assist is fetched on thread open and re-fetched (debounced ~1.5s) whenever an actual message is sent or received — never on keystrokes. The coaching region is capped at half the viewport and scrolls past that (`overflow_guards.CappedScroll`) so it never pushes the composer off-screen; loading/empty/failure degrade silently.
+**Client UI (`dm_thread_screen.dart`):** up to 4 suggestion chips sit above the composer; tapping one drops its text into the composer for editing (it is not auto-sent). They stay as common ground to keep talking about, not one-shot openers. The optional `tip` renders just above the composer (small, muted, with a small Ayma glyph), dismissible; a later refresh carrying a *different* tip re-surfaces it, and it is hidden entirely when `tip` is null. The `safety` heads-up (§6.9.1) renders as a higher-priority note above the chips/tip, in a visually distinct calm style (shield glyph + soft tinted card, not an alarmist red banner), only when `level` is `caution`/`warning`; it is dismissible on the same re-surface rule as the tip. Body-less messages (a bare photo, a voice note, a shared card) ride along in the request tail as short placeholders (`[photo]`, `[voice message]`, …) so the back-and-forth stays intact without leaking a raw storage path. Assist is fetched on thread open and re-fetched (debounced ~1.5s) whenever an actual message is sent or received — never on keystrokes. The coaching region is capped at half the viewport and scrolls past that (`overflow_guards.CappedScroll`) so it never pushes the composer off-screen; loading/empty/failure degrade silently.
+
+#### 6.9.1 Safety red-flag coach
+
+The same single `/dm/assist` Muse call that produces the coaching chips/tip **also returns a protective safety assessment of the OTHER person** (the match, never the user) — one model call, not a separate round-trip — so Ayma can give a vulnerable user a calm, supportive heads-up when someone is behaving in a genuinely concerning way. This is a safety feature; the whole design is tuned for a **low false-positive rate**.
+
+**Schema:** `safety: {"level": "none"|"caution"|"warning", "reason": "<short supportive sentence to the user>", "flags": ["<pattern tag>", ...]}`.
+* `none` — nothing concerning (the default; also used whenever the model is unsure). The UI shows nothing.
+* `caution` — an early, mild concern worth a gentle no-pressure heads-up.
+* `warning` — a clear, genuinely concerning pattern the user should be protected from.
+
+**Patterns detected** (only in the other person's messages): love-bombing / excessive early intensity; pushing hard/fast to meet or to move off-platform; pressure for money, gift cards, crypto, or sexual images (scam / sextortion signals); requests for personal or financial information; coercion / guilt-tripping; boundary-pushing after a no; hostility / harassment; obvious catfish / inconsistency. Each flag must be grounded in something actually said — the model is instructed never to fabricate or extrapolate a threat.
+
+**Guardrails:** normal flirting, warmth, enthusiasm, compliments, or a genuine invitation to meet are explicitly **not** red flags; one keyword is not a pattern; when unsure, the model stays silent (`none`). The tone is supportive and non-judgmental — it never shames the user. Server-side normalisation (`dm_assist._clean_safety`) fails quiet: any missing/malformed block, an unknown level, or a non-`none` level with no `reason` is downgraded to a silent `none`, so the app never shows an empty or invented alarm. `flags` are trimmed and capped (`_MAX_FLAGS`).
+
+**Advisory only:** the safety note never blocks or gates sending, never changes the chips/tip, and never tells the user what to do — it only offers a heads-up the user can dismiss. Opener mode (no messages yet) is always `none`. Privacy and provider are identical to the coach (§6.9): only the requesting pair's own thread, 18+/consent-gated via `require_adult_uid`, routed on the `dm_coach` surface (Muse/Meta default), metered under the same `icebreakers` token-ledger key — i.e. cap-exempt exactly as the coach is, since it is the same call.
 
 ### 6.10 Storage map
 
@@ -1496,7 +1512,7 @@ Every screen the app needs, each item stating what it must have — mechanics re
 
 **Match detail** — score badge, `user_explanation` reasoning card (§5.4), DM assist opener chips once the user opens the resulting DM thread (§6.9), accept/reject action bar.
 
-**DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, DM assist chips above the composer — openers on an empty thread, suggested next lines + a coaching tip on an active one (§6.9), share-profile action (§6.7), block/report (§6.5).
+**DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, DM assist chips above the composer — openers on an empty thread, suggested next lines + a coaching tip on an active one (§6.9), a protective safety heads-up note when the other person shows concerning behaviour (§6.9.1), share-profile action (§6.7), block/report (§6.5).
 
 **Profile (own)** — Public/Private tab switcher over the wiki (§2.1), completeness meter on the public tab, four wiki section rows with tap-to-open detail editor: a single conversational, chat-based editor — no separate quick-edit form and no separate AI-correction dialog — writing `user_edits`/`user_hidden` and never `ai_body` (§2.1). Inline photo-carousel management (§8.3), Instagram connect action (§8.1), Connect Google action (§8.8).
 

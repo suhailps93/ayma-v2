@@ -78,7 +78,10 @@ def _patch_provider(monkeypatch, provider):
 def test_opener_returns_empty_without_a_match_doc(monkeypatch):
     provider = _patch_provider(monkeypatch, _FakeProvider(boom=True))
     out = _run(dm_assist.assist(_MatchDb(None), "aaa", "bbb", []))
-    assert out == {"mode": "opener", "chips": [], "tip": None}
+    assert out == {
+        "mode": "opener", "chips": [], "tip": None,
+        "safety": {"level": "none", "reason": "", "flags": []},
+    }
     assert provider.calls == []  # never even called the model
 
 
@@ -156,13 +159,179 @@ def test_assist_swallows_generation_errors(monkeypatch):
             _MatchDb(doc), "aaa", "bbb", [{"from": "me", "text": "hello"}]
         )
     )
-    assert out == {"mode": "coach", "chips": [], "tip": None}
+    assert out == {
+        "mode": "coach", "chips": [], "tip": None,
+        "safety": {"level": "none", "reason": "", "flags": []},
+    }
 
 
 def test_dm_coach_surface_defaults_to_meta():
     from config import CONFIG
 
     assert CONFIG.llm_provider_dm_coach == "meta"
+
+
+# --- safety red-flag coach (§6.9.1) -------------------------------------- #
+
+
+def _coach_out(monkeypatch, model_result, messages=None):
+    """Run coach-mode assist with ``model_result`` as the faked model reply."""
+    doc = {"ai_explanation": "x", "user_explanation": {"aaa": "y"}}
+    _patch_provider(monkeypatch, _FakeProvider(model_result))
+    msgs = messages or [{"from": "them", "text": "hey"}]
+    return _run(dm_assist.assist(_MatchDb(doc), "aaa", "bbb", msgs))
+
+
+def test_safety_field_always_present_and_silent_by_default(monkeypatch):
+    # A normal coach reply with no safety block → a silent 'none' assessment.
+    out = _coach_out(monkeypatch, {"chips": ["nice"], "tip": ""})
+    assert out["safety"] == {"level": "none", "reason": "", "flags": []}
+
+
+def test_opener_includes_silent_safety(monkeypatch):
+    doc = {"ai_explanation": "trail running", "user_explanation": {"aaa": "z"}}
+    _patch_provider(monkeypatch, _FakeProvider({"chips": ["hi there"]}))
+    out = _run(dm_assist.assist(_MatchDb(doc), "aaa", "bbb", []))
+    assert out["mode"] == "opener"
+    # Opener mode never judges safety (no 'Them' messages yet).
+    assert out["safety"] == {"level": "none", "reason": "", "flags": []}
+
+
+def test_normal_flirting_stays_none(monkeypatch):
+    # Even an enthusiastic, warm reply must NOT surface a safety note: the model
+    # returns level 'none', and we pass it through silently (low false positive).
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["haha same"],
+            "tip": "You're vibing — keep it light.",
+            "safety": {"level": "none", "reason": "", "flags": []},
+        },
+        messages=[{"from": "them", "text": "haha you're so cute, I love this"}],
+    )
+    assert out["safety"]["level"] == "none"
+    assert out["safety"]["reason"] == ""
+
+
+def test_love_bombing_surfaces_warning(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["that's a lot, let's slow down"],
+            "safety": {
+                "level": "warning",
+                "reason": "They're coming on really strong, really fast. "
+                "It's okay to slow things down.",
+                "flags": ["love_bombing"],
+            },
+        },
+        messages=[
+            {"from": "them", "text": "you're my soulmate, I've never felt this"},
+        ],
+    )
+    assert out["safety"]["level"] == "warning"
+    assert "love_bombing" in out["safety"]["flags"]
+    assert out["safety"]["reason"]
+
+
+def test_money_pressure_surfaces_warning(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["I'm not comfortable with that"],
+            "safety": {
+                "level": "warning",
+                "reason": "They keep asking for money — that's a common scam "
+                "pattern. Be careful.",
+                "flags": ["money_request"],
+            },
+        },
+        messages=[
+            {"from": "them", "text": "can you send me $300 in gift cards?"},
+        ],
+    )
+    assert out["safety"]["level"] == "warning"
+    assert out["safety"]["flags"] == ["money_request"]
+
+
+def test_rushing_to_meet_surfaces_caution(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["maybe once we've chatted more"],
+            "safety": {
+                "level": "caution",
+                "reason": "Heads up — they're pushing to meet really fast. "
+                "It's okay to take your time.",
+                "flags": ["rushing_to_meet"],
+            },
+        },
+    )
+    assert out["safety"]["level"] == "caution"
+
+
+def test_non_none_level_without_reason_is_downgraded(monkeypatch):
+    # A bare alarm with nothing to say protects no one — fail quiet to 'none'.
+    out = _coach_out(
+        monkeypatch,
+        {"chips": ["ok"], "safety": {"level": "warning", "flags": ["x"]}},
+    )
+    assert out["safety"] == {"level": "none", "reason": "", "flags": []}
+
+
+def test_unknown_safety_level_fails_quiet(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["ok"],
+            "safety": {"level": "DANGER", "reason": "boom", "flags": []},
+        },
+    )
+    assert out["safety"]["level"] == "none"
+
+
+def test_malformed_safety_block_fails_quiet(monkeypatch):
+    out = _coach_out(
+        monkeypatch, {"chips": ["ok"], "safety": "not-an-object"}
+    )
+    assert out["safety"] == {"level": "none", "reason": "", "flags": []}
+
+
+def test_safety_flags_are_capped_and_cleaned(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["ok"],
+            "safety": {
+                "level": "caution",
+                "reason": "A few things to watch.",
+                "flags": ["a", " b ", "", 5, "c", "d", "e", "f", "g"],
+            },
+        },
+    )
+    # Blanks/non-strings dropped, trimmed, capped at _MAX_FLAGS (6).
+    assert out["safety"]["flags"] == ["a", "b", "c", "d", "e", "f"]
+
+
+def test_safety_silent_on_generation_error(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {}}
+    _patch_provider(monkeypatch, _FakeProvider(boom=True))
+    out = _run(
+        dm_assist.assist(
+            _MatchDb(doc), "aaa", "bbb", [{"from": "them", "text": "hi"}]
+        )
+    )
+    assert out["safety"] == {"level": "none", "reason": "", "flags": []}
+
+
+def test_response_schema_requests_safety():
+    # The single Muse call also asks for the safety assessment (one call, not
+    # a separate round-trip).
+    props = dm_assist._RESPONSE_SCHEMA["properties"]
+    assert "safety" in props
+    assert props["safety"]["properties"]["level"]["enum"] == [
+        "none", "caution", "warning",
+    ]
 
 
 # --- endpoint ------------------------------------------------------------ #

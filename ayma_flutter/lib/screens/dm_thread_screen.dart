@@ -83,6 +83,10 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   /// tip re-surfaces (auto-updates); the same one stays hidden.
   String? _dismissedTip;
 
+  /// The exact safety-note text the user last dismissed. A later refresh
+  /// carrying a *different* heads-up re-surfaces it; the same one stays hidden.
+  String? _dismissedSafety;
+
   /// Debounce for the assist refetch, and the message signature that last
   /// triggered one — so we refetch only on an actual new sent/received
   /// message, not on every stream rebuild or keystroke.
@@ -204,6 +208,20 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   String? get _visibleTip =>
       (_assist.tip != null && _assist.tip != _dismissedTip)
           ? _assist.tip
+          : null;
+
+  /// Quietly dismiss the current safety note. It stays hidden until a
+  /// *different* heads-up arrives from a later refresh.
+  void _dismissSafety() =>
+      setState(() => _dismissedSafety = _assist.safety.reason);
+
+  /// The protective safety note to show right now, or null: the live note when
+  /// it's a genuine concern (>= caution) and the user hasn't dismissed that
+  /// exact text. Advisory only — it never affects sending.
+  DmSafety? get _visibleSafety =>
+      (_assist.safety.shouldSurface &&
+              _assist.safety.reason != _dismissedSafety)
+          ? _assist.safety
           : null;
 
   Future<void> _send() async {
@@ -467,7 +485,9 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               },
             ),
           ),
-          if (_assist.chips.isNotEmpty || _visibleTip != null)
+          if (_assist.chips.isNotEmpty ||
+              _visibleTip != null ||
+              _visibleSafety != null)
             CappedScroll(
               // Never let coaching take more than half the screen — past that
               // it scrolls inside the cap rather than squeezing out the list
@@ -476,6 +496,14 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // The safety heads-up is the highest-priority note — it sits
+                  // above the coaching chips/tip. Advisory only: it never
+                  // blocks typing or sending.
+                  if (_visibleSafety != null)
+                    _SafetyNote(
+                      safety: _visibleSafety!,
+                      onDismiss: _dismissSafety,
+                    ),
                   if (_assist.chips.isNotEmpty)
                     _SuggestionBar(
                       chips: _assist.chips,
@@ -779,6 +807,85 @@ class _SuggestionBar extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// A calm, protective safety heads-up (§6.9.1), visually distinct from the
+/// coaching tip: a shield glyph, a soft tinted card, and a short supportive
+/// line — never an alarmist red full-bleed banner. Shown only for a genuine
+/// concern (level caution/warning) and dismissible. It is advisory only and
+/// never blocks typing or sending; it never shames the user. `warning` reads a
+/// touch stronger than `caution` (a slightly firmer tint + a "Heads up" label),
+/// but both stay quiet and supportive.
+class _SafetyNote extends StatelessWidget {
+  const _SafetyNote({required this.safety, required this.onDismiss});
+  final DmSafety safety;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final isWarning = safety.level == 'warning';
+    // Lean on the theme's warning hue, but muted into a soft card — calm, not
+    // screaming. A warning is a little more present than a caution.
+    final tint = ac.warning.withValues(alpha: isWarning ? 0.12 : 0.08);
+    final line = ac.warning.withValues(alpha: isWarning ? 0.45 : 0.30);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        decoration: BoxDecoration(
+          color: tint,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: line, width: 1),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(
+                Icons.shield_outlined,
+                size: 18,
+                color: ac.warning,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Heads up from Ayma',
+                    style: AymaType.sans(
+                      size: 12,
+                      weight: FontWeight.w600,
+                      color: ac.fg,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    safety.reason,
+                    softWrap: true,
+                    style: AymaType.sans(size: 13, color: ac.fgDim),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: onDismiss,
+              iconSize: 15,
+              icon: const Icon(Icons.close),
+              color: ac.fgMute,
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Dismiss safety note',
+            ),
+          ],
+        ),
       ),
     );
   }

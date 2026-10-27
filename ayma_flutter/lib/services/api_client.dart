@@ -3098,15 +3098,22 @@ class MatchScoreResult {
 }
 
 /// Live DM coaching for a thread (§6.9), from `POST /dm/assist`: suggestion
-/// chips plus an optional one-line nudge. [mode] is `opener` for a brand-new
-/// thread or `coach` once the conversation is underway; the UI treats both the
-/// same way. An empty result (no chips, null tip) is the silent-degrade case.
+/// chips plus an optional one-line nudge, and a protective [safety] read on the
+/// other person (§6.9.1). [mode] is `opener` for a brand-new thread or `coach`
+/// once the conversation is underway; the UI treats both the same way. An empty
+/// result (no chips, null tip, `none` safety) is the silent-degrade case.
 class DmAssist {
-  const DmAssist({this.mode = 'opener', this.chips = const [], this.tip});
+  const DmAssist({
+    this.mode = 'opener',
+    this.chips = const [],
+    this.tip,
+    this.safety = DmSafety.none,
+  });
 
   final String mode; // opener | coach
   final List<String> chips; // up to 4
   final String? tip; // short nudge above the composer, or null
+  final DmSafety safety; // protective heads-up about the other person
 
   static const empty = DmAssist();
 
@@ -3122,6 +3129,46 @@ class DmAssist {
           .take(4)
           .toList(),
       tip: (rawTip == null || rawTip.isEmpty) ? null : rawTip,
+      safety: DmSafety.fromJson(m['safety']),
+    );
+  }
+}
+
+/// A calm, protective read on how the *other* person is behaving in a DM
+/// thread (§6.9.1). Advisory only — it never blocks sending. [level] is
+/// `none` (nothing concerning — stay silent), `caution` (a gentle heads-up), or
+/// `warning` (a clear concern). [reason] is a short supportive sentence written
+/// to the user; [flags] are short pattern tags. The UI surfaces a safety note
+/// only when [shouldSurface] (level is caution or warning). Parsing fails quiet:
+/// anything missing or malformed, or a non-`none` level without a reason,
+/// becomes a silent `none` so the app never shows an empty or invented alarm.
+class DmSafety {
+  const DmSafety({this.level = 'none', this.reason = '', this.flags = const []});
+
+  final String level; // none | caution | warning
+  final String reason; // short supportive heads-up, or '' when none
+  final List<String> flags; // short pattern tags
+
+  static const none = DmSafety();
+
+  /// Show the safety note only for a genuine concern (>= caution) that carries
+  /// something to say.
+  bool get shouldSurface => level != 'none' && reason.isNotEmpty;
+
+  factory DmSafety.fromJson(Object? raw) {
+    if (raw is! Map) return none;
+    final level = (raw['level'] as String?)?.trim().toLowerCase() ?? 'none';
+    if (level != 'caution' && level != 'warning') return none;
+    final reason = (raw['reason'] as String?)?.trim() ?? '';
+    if (reason.isEmpty) return none;
+    return DmSafety(
+      level: level,
+      reason: reason,
+      flags: ((raw['flags'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .take(6)
+          .toList(),
     );
   }
 }
