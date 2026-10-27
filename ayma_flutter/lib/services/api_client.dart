@@ -1064,6 +1064,28 @@ class ApiClient {
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /dev/test-upgrade` — DEV/TEST ONLY. Grant the chosen paid tier's
+  /// monthly credit pool to the caller WITHOUT a real purchase, exercising the
+  /// same server-side grant path a real entitlement uses (so it's a faithful
+  /// test of "credits per plan" in a build where RevenueCat is off). The server
+  /// gates it on its dev-view allowlist — a non-dev caller gets 403. [plan] is
+  /// `plus`, `pro` or `max`. Returns the refreshed usage view.
+  Future<UsageSummary> testUpgrade(String plan) async {
+    final r = await _http.post(
+      _uri('/dev/test-upgrade'),
+      headers: await _headers(),
+      body: jsonEncode({'plan': plan}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'test upgrade failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   /// `POST /usage/reset-real-money` — zero the Real money tab's "since last
   /// reset" tracker. A marker, not a wipe: the all-time dollar figure and the
   /// per-conversation history keep counting. Returns the refreshed usage view.

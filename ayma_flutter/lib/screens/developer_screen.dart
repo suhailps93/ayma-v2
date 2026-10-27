@@ -61,6 +61,9 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   bool _reloading = false;
   bool _resettingMoney = false;
 
+  /// The plan whose dev test-upgrade is in flight (`plus`/`pro`/`max`), or null.
+  String? _upgradingPlan;
+
   @override
   void dispose() {
     _password.dispose();
@@ -172,6 +175,42 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       _say("Couldn't reload credits ($e).", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _reloading = false);
+    }
+  }
+
+  /// DEV/TEST ONLY — simulate upgrading to [plan] (`plus`/`pro`/`max`) with no
+  /// real payment. The server grants that tier's monthly credit pool through
+  /// the same path a real entitlement uses; here we just refresh the balance
+  /// and plan from the returned usage view. Gated the same way as the rest of
+  /// this panel (dev unlock + the server's dev-view allowlist).
+  Future<void> _testUpgrade(String plan) async {
+    if (_upgradingPlan != null) return;
+    setState(() => _upgradingPlan = plan);
+    try {
+      final updated = await _api.testUpgrade(plan);
+      if (!mounted) return;
+      CreditsBalance.instance.remaining.value = updated.creditsRemaining;
+      setState(() {
+        _usage = Future.value(updated);
+      });
+      AymaSession.instance.voice.clearCappedError();
+      AymaSession.instance.store.clearCappedTurns();
+      _say(
+        'Test upgrade: ${updated.plan} plan — '
+        '${updated.creditsRemaining} credits (no payment).',
+        kind: AymaToastKind.success,
+      );
+    } on ApiException catch (e) {
+      _say(
+        e.statusCode == 403
+            ? 'Test upgrade is for dev-view accounts only.'
+            : "Couldn't apply the test upgrade (${e.statusCode}).",
+        kind: AymaToastKind.error,
+      );
+    } catch (e) {
+      _say("Couldn't apply the test upgrade ($e).", kind: AymaToastKind.error);
+    } finally {
+      if (mounted) setState(() => _upgradingPlan = null);
     }
   }
 
@@ -394,6 +433,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
             resetting: _resettingMoney,
             onReload: _reload,
             onReset: _resetMoneyTracker,
+            upgradingPlan: _upgradingPlan,
+            onTestUpgrade: _testUpgrade,
           );
         },
       ),
@@ -493,6 +534,8 @@ class _Spend extends StatelessWidget {
     required this.resetting,
     required this.onReload,
     required this.onReset,
+    required this.upgradingPlan,
+    required this.onTestUpgrade,
   });
 
   final UsageSummary usage;
@@ -500,6 +543,17 @@ class _Spend extends StatelessWidget {
   final bool resetting;
   final VoidCallback onReload;
   final VoidCallback onReset;
+
+  /// The plan whose dev test-upgrade is in flight, or null; disables the row.
+  final String? upgradingPlan;
+  final ValueChanged<String> onTestUpgrade;
+
+  /// The dev test-upgrade tiers (plan id -> button label).
+  static const _testPlans = [
+    ('plus', 'Plus'),
+    ('pro', 'Pro'),
+    ('max', 'Max'),
+  ];
 
   static const _moneyLabels = {
     'wiki': 'Wiki update',
@@ -622,6 +676,33 @@ class _Spend extends StatelessWidget {
           key: const ValueKey('dev-free-reload'),
           onPressed: reloading ? null : onReload,
           child: const Text('Free reload'),
+        ),
+        const SizedBox(height: 28),
+        const Eyebrow('Test upgrade'),
+        const SizedBox(height: 8),
+        Text(
+          'Simulate upgrading — no payment. Grants the plan’s monthly credit '
+          'pool through the real grant path so you can check credits per tier.',
+          style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (id, label) in _testPlans)
+              OutlinedButton(
+                key: ValueKey('dev-test-upgrade-$id'),
+                onPressed: upgradingPlan != null ? null : () => onTestUpgrade(id),
+                child: upgradingPlan == id
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(label),
+              ),
+          ],
         ),
         const SizedBox(height: 28),
         const Eyebrow('Per conversation'),

@@ -96,6 +96,7 @@ flowchart LR
   API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
   RC --> RCS -->|webhook /webhooks/revenuecat<br/>prod source of truth| API
   RC -->|POST /billing/sync on purchase/entitlement change<br/>grants pool; Test Store + resilience| API
+  App -.->|POST /dev/test-upgrade plan (require_dev)<br/>dev-only: grant tier pool via sync_entitlement, no payment| API
   API -.->|GET /v1/subscribers if sk_ key| RCS
   Err --> Sentry
   Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
@@ -224,6 +225,15 @@ flowchart LR
     intelligence beneath the portrait", so it is dev-only on purpose: the entry shows only while the panel is unlocked,
     **and** the route itself redirects to the main shell unless `DevPanelSession` is unlocked, so no normal-user path or
     stale deep link can reach it. It was formerly the third tab of the Story editor (removed — see §11.2a-story).
+  - *Test upgrade (dev, no payment)*: the unlocked panel also carries a **Test upgrade** row (Plus / Pro / Max),
+    shown only for accounts the server reports on its dev-view allowlist (same `is_dev` gate as real-money spend).
+    It calls `POST /dev/test-upgrade {plan}` (`require_dev`-gated — **403 for everyone else**), which builds a
+    synthetic entitlement for the tier and runs it through the exact `billing.sync_entitlement` grant path a real
+    RevenueCat purchase uses, so it grants the genuine per-plan monthly pool (Plus 700 / Pro 1,400 / Max 8,000
+    credits) and sets the plan tier — never a hardcoded number, never a payment. It exists so credits-per-upgrade
+    can be tested in a build where RevenueCat is off (the Test key native-kills in release, §11.2). It is a
+    free-credits cheat, so it is strictly dev-only and is **not** a revenue bypass for normal users. The real
+    Upgrade button and the "fail loudly on bad RevenueCat key" guardrail are untouched.
 - *Vendor spend*: `/admin` shows API-sourced spend (BigQuery billing export, LiveKit Analytics) and Muse-collected
   figures posted to `/admin/vendor-spend` (`vendor_catalog.json`), with stale/unavailable alerts.
 - *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
