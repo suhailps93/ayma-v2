@@ -71,12 +71,30 @@ class ApiClient {
     try {
       headers = await _headers().timeout(_bootstrapTokenTimeout);
     } on TimeoutException {
+      // A token refresh that never returns is almost always flaky DNS reaching
+      // Firebase — a network blip the splash retries. The splash's own overall
+      // startup watchdog guarantees this can never spin forever.
       throw ApiException('Network timed out preparing the request.');
     } on FirebaseAuthException catch (e) {
       if (e.code == 'network-request-failed') {
         throw ApiException('Network error: ${e.message ?? e.code}');
       }
+      // Any other auth error for a supposedly signed-in user (expired /
+      // invalid / revoked token, disabled user) means the restored session is
+      // unusable — not a network blip. The splash signs out and routes to
+      // sign-in rather than retrying forever.
+      throw AuthSessionException('Auth session rejected: ${e.code}');
+    } on ApiException {
+      // `_headers` own "Not signed in." (null token) — pass it through
+      // unchanged so the splash's 401 handling sends them to sign-in.
       rethrow;
+    } catch (e) {
+      // The Android keystore / decrypt failures that follow an Auto Backup
+      // restore onto a wiped keystore ("FirebearStorageCryptoHelper: Exception
+      // while decrypting bytes", PlatformException) surface here: the persisted
+      // credential can't be read, so the session is broken. Sign out and
+      // re-authenticate — never retry, never hang.
+      throw AuthSessionException('Auth token unreadable: $e');
     }
 
     final http.Response response;
@@ -4951,6 +4969,23 @@ class UpgradeRequiredException implements Exception {
 
   @override
   String toString() => 'UpgradeRequiredException($message)';
+}
+
+/// Thrown by [ApiClient.bootstrap] when the signed-in user's credential cannot
+/// be turned into an ID token for a reason that is NOT a transient network
+/// failure: an Android keystore / decrypt failure after an Auto Backup restore
+/// ("FirebearStorageCryptoHelper"), or a rejected / disabled / revoked user.
+/// The persisted session is unusable, so the splash signs the user out and
+/// routes to sign-in instead of retrying (§11.2). Distinct from [ApiException]
+/// precisely so a genuine network failure (which IS an [ApiException]) still
+/// retries and never discards a signed-in session.
+class AuthSessionException implements Exception {
+  AuthSessionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'AuthSessionException($message)';
 }
 
 class ApiException implements Exception {
