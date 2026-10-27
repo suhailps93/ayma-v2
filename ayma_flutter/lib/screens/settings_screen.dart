@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import 'accent_color_screen.dart';
 import 'biometric_consent_settings_screen.dart';
+import 'connect_agent_screen.dart';
 import 'delete_account_screen.dart';
 import 'developer_screen.dart';
 import 'plan_screen.dart';
@@ -291,6 +292,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(BiometricConsentSettingsScreen.path),
+          ),
+          ListTile(
+            key: const Key('settings_connect_agent'),
+            leading: Icon(Icons.hub_outlined, color: ac.fgMute),
+            title: Text('Connect an agent',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text(
+              'Let an outside AI assistant act for you in Ayma, with a code '
+              'you approve here.',
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            ),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(ConnectAgentScreen.path),
           ),
           Divider(color: ac.lineSoft),
           Padding(

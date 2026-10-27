@@ -26,6 +26,7 @@ import '../screens/matches_screen.dart';
 import '../screens/messages_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
+import '../screens/connect_agent_screen.dart';
 import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
 import '../screens/invite_friends_screen.dart';
@@ -296,6 +297,11 @@ final appRouter = GoRouter(
       path: GoogleAccountScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: GoogleAccountScreen()),
+    ),
+    GoRoute(
+      path: ConnectAgentScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: ConnectAgentScreen()),
     ),
     GoRoute(
       path: InstagramScreen.path,
