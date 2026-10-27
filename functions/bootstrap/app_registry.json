@@ -57,7 +57,8 @@
     {"route": "/settings/google-account", "reason": "Google account linking is hidden from the v1 UI"},
     {"route": "/settings/instagram", "reason": "Instagram is V2, behind the meta_integrations flag (default off)"},
     {"route": "/settings/developer", "reason": "hidden developer panel (tap the build stamp in Settings seven times)"},
-    {"route": "/settings/developer/feedback", "reason": "dev-only feedback triage view, reached from the hidden developer panel"}
+    {"route": "/settings/developer/feedback", "reason": "dev-only feedback triage view, reached from the hidden developer panel"},
+    {"route": "/settings/developer/ayma-notes", "reason": "dev-only Ayma's Notes view, reached from the hidden developer panel"}
   ],
   "settings": [
     {"key": "theme", "label": "Theme", "kind": "enum", "values": ["light", "dark", "system"], "aliases": ["dark mode", "light mode", "system theme", "match system", "night mode", "appearance mode"], "handler": "client", "client_command": {"light": "light_mode", "dark": "dark_mode", "system": "system_theme"}, "done": {"light": "Switched you to light mode.", "dark": "Switched you to dark mode.", "system": "Matched the app's theme to your system setting."}, "found_on": "settings"},
