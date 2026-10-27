@@ -206,6 +206,16 @@ bool _actionEnabled(WidgetTester tester) =>
     null;
 
 void main() {
+  test('freeCreditsResetLine counts down to the next 00:00 UTC', () {
+    final line = freeCreditsResetLine(DateTime.utc(2026, 10, 27, 17, 48));
+    expect(line, startsWith('Credits reset at '));
+    expect(line, endsWith('(in 6h 12m)'));
+    expect(
+      freeCreditsResetLine(DateTime.utc(2026, 10, 27, 23, 41)),
+      endsWith('(in 19m)'),
+    );
+  });
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     CreditsBalance.instance.remaining.value = null;
@@ -218,7 +228,8 @@ void main() {
     expect(find.text('FREE PLAN'), findsOneWidget);
     expect(find.text('58'), findsOneWidget);
     expect(find.text('credits left'), findsOneWidget);
-    expect(find.text('Daily credits refresh every day.'), findsOneWidget);
+    expect(find.textContaining('Credits reset at'), findsOneWidget);
+    expect(find.textContaining('Renews on'), findsNothing);
     expect(CreditsBalance.instance.remaining.value, 58);
 
     expect(find.text('RECOMMENDED'), findsOneWidget);
