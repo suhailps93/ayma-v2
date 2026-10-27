@@ -19,13 +19,16 @@ surface is explicitly flipped.
     `response_format`). On any failure it **falls back to Gemini** when
     `LLM_META_FALLBACK` is on (default), so a flip can never take a surface down.
 * **`get_llm_provider(surface)`** — returns the provider a surface is configured
-  for. Surfaces: `chat`, `matching`, `reports`, `practice`, `voice`, `dm_coach`.
+  for. Surfaces: `chat`, `matching`, `reports`, `practice`, `voice`, `dm_coach`,
+  `translate`.
 * **Per-surface flag `LLM_PROVIDER_<SURFACE>`** (`gemini` | `meta`), with
   `LLM_PROVIDER` as the default for any surface whose own var is unset. **All
-  default to `gemini` EXCEPT `dm_coach`, which defaults to `meta`** — the "Ayma
-  in your DMs" assistant (§6.9: opener chips + live coaching) runs on the
-  Muse/Meta brain by founder hackathon directive. It still inherits a global
-  `LLM_PROVIDER` override and the Gemini fallback.
+  default to `gemini` EXCEPT `dm_coach` and `translate`, which default to
+  `meta`** — the "Ayma in your DMs" assistant (§6.9: opener chips + live
+  coaching) and cross-language DM translation (§6.12: `POST /dm/translate` —
+  translate incoming/outgoing DM text) both run on the Muse/Meta brain by
+  founder hackathon directive. Each still inherits a global `LLM_PROVIDER`
+  override and the Gemini fallback.
 * Model ids live only in `config.py` (per `AGENTS.md`): `META_CHAT_MODEL`
   (`muse-spark-1.3`), `META_OPEN_WEIGHTS_MODEL`
   (`meta-models/muse-spark-open-1026`, the $10k open-weights target),

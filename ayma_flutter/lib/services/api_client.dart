@@ -727,6 +727,29 @@ class ApiClient {
     return DmAssist.fromJson(decoded);
   }
 
+  /// `POST /dm/translate` — cross-language DM translation (§6.12): translate
+  /// [text] into [targetLang] (a language code or name), returning the
+  /// translation plus the detected source language. [threadId] scopes the call
+  /// to a thread the caller is a participant of (pair-only, like every /dm
+  /// endpoint); [sourceLang] is an optional hint the model may override with
+  /// its own detection. A nicety that never blocks the thread — the backend
+  /// returns the original text on any model failure, so callers always get a
+  /// usable [DmTranslation].
+  Future<DmTranslation> dmTranslate({
+    required String threadId,
+    required String text,
+    required String targetLang,
+    String sourceLang = '',
+  }) async {
+    final decoded = await _sendJson('POST', '/dm/translate', {
+      'thread_id': threadId,
+      'text': text,
+      'target_lang': targetLang,
+      if (sourceLang.isNotEmpty) 'source_lang': sourceLang,
+    });
+    return DmTranslation.fromJson(decoded);
+  }
+
   /// `POST /wiki/reset` — wipe what Ayma has learned (`wiki_pages` /
   /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
   Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});
@@ -3241,6 +3264,26 @@ class DmSafety {
           .toList(),
     );
   }
+}
+
+/// One cross-language DM translation, from `POST /dm/translate` (§6.12).
+/// [translated] is the text rendered in the requested target language (or the
+/// original, unchanged, when the backend could not translate — translation
+/// never blocks the thread). [detectedSourceLang] is the language the original
+/// was written in, as detected by the model; empty when unknown. When
+/// [detectedSourceLang] equals the target (or [translated] equals the
+/// original) the message was already in the reader's language and needs no
+/// translation.
+class DmTranslation {
+  const DmTranslation({required this.translated, this.detectedSourceLang = ''});
+
+  final String translated;
+  final String detectedSourceLang;
+
+  factory DmTranslation.fromJson(Map<String, dynamic> m) => DmTranslation(
+        translated: (m['translated'] as String?)?.trim() ?? '',
+        detectedSourceLang: (m['detected_source_lang'] as String?)?.trim() ?? '',
+      );
 }
 
 /// Name + resolved photo URL for a user, from `POST /profiles/mini`.

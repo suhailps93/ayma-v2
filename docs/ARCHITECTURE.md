@@ -83,7 +83,7 @@ flowchart LR
   Agent -->|app_commands/pending| FS
   FS -->|app_commands| Cmd
   API -->|llm_route_json/vision/chat=inference| Gateway
-  API -->|DM assist /dm/assist §6.9 (dm_coach=meta default);<br/>other surfaces when flipped to meta| MetaAPI
+  API -->|DM assist /dm/assist §6.9 (dm_coach=meta default);<br/>DM translate /dm/translate §6.12 (translate=meta default);<br/>other surfaces when flipped to meta| MetaAPI
   API -->|web_search, research, embeddings,<br/>batch, TTS, image edit| Vertex
   API -->|deep dive discovery| VSearch
   API -->|og:image fetch| Web
@@ -120,6 +120,7 @@ flowchart LR
 |---|---|---|---|
 | JSON jobs (matching, wiki ingest, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
 | DM assist / icebreakers (§6.9) | **Meta Muse Spark** (`LLM_PROVIDER_DM_COACH=meta` default; Gemini fallback) | `llm_provider_dm_coach` | — when flipped to `gemini` it runs as a JSON job on the row above |
+| DM translate / cross-language (§6.12) | **Meta Muse Spark** (`LLM_PROVIDER_TRANSLATE=meta` default; Gemini fallback) | `llm_provider_translate` | — when flipped to `gemini` it runs as a JSON job on the first row |
 | Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference | `llm_route_vision` | media the gateway cannot take (HEIC, m4a, webm, ogg, aac) |
 | Text chat with tools | Inference | `llm_route_chat` | the `web_search` tool (grounded `research()` call); Maps grounding (`maps_grounding`) |
 | Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` | |
@@ -903,6 +904,36 @@ The same single `/dm/assist` Muse call that produces the coaching chips/tip **al
 10. **Backend: DM message ingestion** — new messages become `raw_turns` for both participants; images captioned, voice transcribed; feeds the standard wiki ingest pipeline with the `ai_only` default from §6.8.
 11. **Backend: block/report from DM** — writes `blocks/{uid}_{blockedUid}`; hides thread from blocker; blocks further messages from the blocked side.
 
+### 6.12 Cross-language DM (real-time translation, powered by Muse)
+
+Two people who speak different languages can still connect: an incoming message in a language other than the reader's preferred language is translatable (the translation shows inline while the original stays visible), and the reader can optionally have their own outgoing draft translated into the match's language before it sends. Built on the existing DM thread and the LLM-provider abstraction — no new brain, no new data layer.
+
+```mermaid
+flowchart LR
+  DM["DM thread UI<br/>dm_thread_screen.dart<br/>incoming bubble · outgoing draft"]
+  DM -->|"POST /dm/translate {text, target_lang, source_lang?}<br/>pair-only · 18+ (require_adult_uid)"| T["dm_translate.translate()<br/>get_llm_provider('translate')"]
+  T -->|"LLM_PROVIDER_TRANSLATE=meta (default)"| Muse["Meta Muse Spark<br/>(OpenAI-compatible Meta Model API)"]
+  T -.->|"on failure / translate=gemini"| Gem["Gemini (fallback)"]
+  T -->|"{translated, detected_source_lang}<br/>original always kept"| DM
+  T -->|"metered, cap-exempt"| Ledger["token_ledger (dm_translate)"]
+```
+
+
+**Endpoint:** `POST /dm/translate`
+`{"thread_id": "<sorted-pair id>", "text": "...", "target_lang": "<code|name>", "source_lang": "<optional hint>"}` → `{"translated": "...", "detected_source_lang": "<code|name>"}`.
+Detection and translation happen in one model call. When the detected source already equals the target, the model returns the text unchanged (no pointless round-trip). Module: `functions/bootstrap/dm_translate.py`; prompt: `functions/bootstrap/prompts/dm_translate.md`.
+
+**Provider:** routed through the LLM provider abstraction on the **`translate` surface** (`LLM_PROVIDER_TRANSLATE`, `config.llm_provider_translate`), which **defaults to `meta`** (Muse/Meta — the cross-language feature is "powered by Muse"), with the standard Gemini fallback (`llm_meta_fallback`). Metered under the `dm_translate` token-ledger feature key, **cap-exempt** (`enforce_cap=False`): translating what a match just said must never be gated on the reader's credit balance.
+
+**Resilience & privacy:** a nicety that NEVER blocks the thread — on any model failure `translate()` returns the original text with an empty `detected_source_lang`, so the client simply shows the original. Pair-only + 18+/consent, exactly as the other DM endpoints: `POST /dm/translate` requires `require_adult_uid` and verifies the caller is a participant of `thread_id` (so it can't be used as a general-purpose translation API). The user's own text is never silently altered — outgoing translation is opt-in and previewed before it sends; the incoming original is always kept visible.
+
+**Target language:** incoming messages translate INTO the reader's preferred language — the language set on the voice-engine switcher (`VoiceSelection.languageCode`, read best-effort from `GET /voice/engines`) if present, else the device locale (`PlatformDispatcher.locale`). Outgoing drafts translate INTO the match's language, learned from the `detected_source_lang` of an incoming message the reader has translated.
+
+**Client UI (`dm_thread_screen.dart`):**
+- **Incoming:** each incoming text bubble carries a subtle "Translate" affordance (`_TranslatableText`). Tapping it shows the translation beneath the original with a "translated from `lang`" label and a Show-original / Hide toggle; the original is always present. A per-thread **"Auto-translate their messages"** toggle (thread menu) translates incoming messages on arrival.
+- **Outgoing:** an opt-in **"Translate what I send"** toggle (thread menu, off by default) with a quiet one-line banner while on. On send it translates the draft into the match's language and shows a confirm sheet (the exact text that will be sent, plus the user's original) — nothing is sent until the user confirms, so the user's words are never silently changed.
+- **Graceful everywhere:** a failed/unavailable translation degrades to the original with no error-blocking.
+
 ---
 
 ## 7. Notifications & Push
@@ -1187,6 +1218,7 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /profile/share` | Share a profile into a DM thread | §6.11 |
 | `POST /dm/{threadId}/messages` | Send a DM message (text/photo/voice/shared_profile) | §6.8 |
 | `POST /date-sim` | AI Date Simulation: two personas converse → transcript + compatibility read | §18 |
+| `POST /dm/translate` | Translate a DM message/draft (cross-language DM); pair-only, 18+, cap-exempt | §6.12 |
 | `POST /media/upload` | Unified upload entry (`context`: profile/chat/dm), runs the §8.5 pipeline | §8.7 |
 | `POST /instagram/connect` | OAuth linking | §8.7 |
 | `POST /instagram/disconnect` | Unlink | §8.7 |

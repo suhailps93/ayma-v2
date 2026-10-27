@@ -750,6 +750,7 @@ class Config:
     llm_provider_practice: str
     llm_provider_voice: str
     llm_provider_dm_coach: str
+    llm_provider_translate: str
     """Per-surface provider switch, ``gemini`` | ``meta``. Each surface flips
     and rolls back independently via ``LLM_PROVIDER_<SURFACE>`` (e.g.
     ``LLM_PROVIDER_CHAT=meta``); ``LLM_PROVIDER`` sets the default for any
@@ -768,7 +769,17 @@ class Config:
     on an active one). Unlike the other surfaces it DEFAULTS to ``meta`` (Muse
     Spark) — founder directive for the hackathon that the DM assistant runs on
     the Meta brain. It still inherits a global ``LLM_PROVIDER`` override and the
-    Gemini fallback (``llm_meta_fallback``), so a flip can never take it down."""
+    Gemini fallback (``llm_meta_fallback``), so a flip can never take it down.
+
+    NOTE: ``llm_provider_translate`` is the switch for cross-language DM
+    translation (``dm_translate.py`` / ``POST /dm/translate``: translate an
+    incoming message into the reader's language, or the reader's draft into the
+    match's language). Like ``dm_coach`` it DEFAULTS to ``meta`` (Muse Spark) —
+    the hackathon's cross-language dating feature is "powered by Muse" — and
+    inherits the global ``LLM_PROVIDER`` override and the Gemini fallback, so a
+    flip can never take it down. Translation is a nicety that must never block a
+    thread: on any failure the client keeps the original text (see
+    ``docs/META_PROVIDER.md`` and ``docs/ARCHITECTURE.md`` §6.12)."""
 
     llm_provider_voice_main: str
     """Provider switch for the MAIN (normal, non-practice) Ayma voice call,
@@ -1058,6 +1069,11 @@ def _load() -> Config:
         # a global LLM_PROVIDER, still Gemini-fallback-guarded).
         llm_provider_dm_coach=os.getenv(
             "LLM_PROVIDER_DM_COACH", os.getenv("LLM_PROVIDER", "meta")
+        ).strip().lower(),
+        # Cross-language DM translation runs on Muse by default (same hackathon
+        # directive as dm_coach); still per-surface overridable + Gemini-guarded.
+        llm_provider_translate=os.getenv(
+            "LLM_PROVIDER_TRANSLATE", os.getenv("LLM_PROVIDER", "meta")
         ).strip().lower(),
         llm_meta_fallback=os.getenv("LLM_META_FALLBACK", "true").strip().lower()
         == "true",

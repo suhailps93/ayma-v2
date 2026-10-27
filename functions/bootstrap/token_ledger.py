@@ -132,6 +132,7 @@ FEATURE_PHOTO_MODERATION = "photo_moderation"  # profile/generated-photo safety 
 FEATURE_PHOTO_ATTRS = "photo_attrs"  # per-photo shot-type/attribute tagging (record-only)
 FEATURE_PHOTO_CAPTION = "photo_caption"  # private photo-log caption (record-only)
 FEATURE_DM_INGEST = "dm_ingest"  # DM voice transcription / photo caption for the wiki (record-only)
+FEATURE_DM_TRANSLATE = "dm_translate"  # cross-language DM translation (POST /dm/translate)
 FEATURE_PROFILE_MANUAL = "profile_manual"  # manual profile-edit diff classification
 FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (ai_assessment.py)
 FEATURE_PRACTICE = "practice"  # Practice Date — simulated-match roleplay, live coach + debrief
@@ -162,6 +163,7 @@ FEATURE_LABELS = {
     FEATURE_PHOTO_ATTRS: "Reading your photos",
     FEATURE_PHOTO_CAPTION: "Photo captions",
     FEATURE_DM_INGEST: "Message notes",
+    FEATURE_DM_TRANSLATE: "Message translation",
     FEATURE_PROFILE_MANUAL: "Profile edits",
     FEATURE_AI_NOTES: "Ayma's notes",
     FEATURE_PRACTICE: "Practice Date",

@@ -240,6 +240,23 @@ class DmService {
     }
   }
 
+  /// Cross-language DM translation (§6.12): translate [text] into [targetLang]
+  /// (a language code or name), scoped to this thread. Returns the translation
+  /// plus the detected source language. Never blocks the thread — the backend
+  /// returns the original text on any model failure.
+  Future<DmTranslation> translate(
+    String threadId,
+    String text,
+    String targetLang, {
+    String sourceLang = '',
+  }) =>
+      _api.dmTranslate(
+        threadId: threadId,
+        text: text,
+        targetLang: targetLang,
+        sourceLang: sourceLang,
+      );
+
   /// Block & report the other participant (§6.5); hides the thread for us.
   Future<void> block(String otherUid) => _api.block(otherUid);
 
