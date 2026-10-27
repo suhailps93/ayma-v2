@@ -247,9 +247,14 @@ class VoiceSessionController extends ChangeNotifier {
       _phase == VoiceSessionPhase.waking ||
       _phase == VoiceSessionPhase.live;
 
-  /// The controller with a session currently starting or live, if any. Used by
-  /// screens outside the chat shell (e.g. the voice-preview picker) to stop a
-  /// call before doing something that would talk over it.
+  /// The controller with a session currently starting or live, if any — the
+  /// process-wide registry that enforces the single-active-voice-session
+  /// invariant. [start] reads it to tear down any other live session before
+  /// connecting (see there); screens outside the chat shell (e.g. the
+  /// voice-preview picker) also read it to stop a call before doing something
+  /// that would talk over it. Set in [start], cleared in [stop], [_endForIdle]
+  /// and [dispose] (never on the error path, so a banner can explain a failed
+  /// start until the next start clears it).
   static VoiceSessionController? active;
 
   /// Begin a voice session. Safe to call when already active (no-op).
@@ -260,6 +265,23 @@ class VoiceSessionController extends ChangeNotifier {
   /// [VoiceSessionPhase.error].
   Future<void> start() async {
     if (isActive) return;
+    // Single-active-voice-session invariant (ARCHITECTURE.md §1.3): only ONE
+    // voice session may ever be live at a time, across every surface — the main
+    // Ayma call, a Practice Date call, the Ask-Ayma push-to-talk capture. Each
+    // is a separate controller with its OWN LiveKit room, so without this they
+    // can talk over each other (founder report 2026-10-26: a live main Ayma
+    // call + a Practice Date voice call both running, two personas speaking at
+    // once). This is the one mutual-exclusion point: before connecting, fully
+    // tear down whatever OTHER session is active — its own `stop()` disconnects
+    // its room, releases its mic, and flips it to idle, which clears its orb and
+    // (for the main call) its foreground call notification through the listeners
+    // already watching it. Awaited, so the old room is gone before this one
+    // publishes audio — never a window where both are live. `active` is the
+    // shared registry every voice surface writes on start.
+    final existing = active;
+    if (existing != null && !identical(existing, this) && existing.isActive) {
+      await existing.stop();
+    }
     _errorMessage = null;
     _endNotice = null;
     _cappedError = false;
