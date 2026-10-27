@@ -175,6 +175,7 @@ def test_coach_survives_a_zero_credit_user(monkeypatch):
         "mode": "coach",
         "chips": ["so where to from here?"],
         "tip": "keep going",
+        "safety": {"level": "none", "reason": "", "flags": []},
     }
 
 
