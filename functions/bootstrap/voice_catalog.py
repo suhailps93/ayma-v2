@@ -352,9 +352,25 @@ def _categorize_live(items: list[dict]) -> dict[str, list[str]] | None:
     return buckets if saw_type else None
 
 
+def _with_configured(ids: list[str], configured: str) -> list[str]:
+    """``ids`` with the model a call actually uses guaranteed present (first if
+    it was missing), so the picker can always show the real default selected."""
+    if configured and configured not in ids:
+        return [configured, *ids]
+    return ids
+
+
 def _sources() -> dict[str, object]:
     """Resolved component model ids by category: the live LiveKit catalog when
-    reachable, else the config fallback. Shared by the catalog + validators."""
+    reachable, else the config fallback. Shared by the catalog + validators.
+    The configured Meta-cascade STT/TTS are always included."""
+    src = _raw_sources()
+    src["stt"] = _with_configured(src["stt"], CONFIG.meta_cascade_stt_model)  # type: ignore[arg-type]
+    src["tts"] = _with_configured(src["tts"], CONFIG.meta_cascade_tts_model)  # type: ignore[arg-type]
+    return src
+
+
+def _raw_sources() -> dict[str, object]:
     items = _fetch_livekit_models()
     live = _categorize_live(items) if items else None
     if live and (live["llm"] or live["stt"] or live["tts"]):
@@ -578,13 +594,16 @@ def default_selection() -> dict[str, str]:
 
 
 def _default_from(sources: dict[str, object]) -> dict[str, str]:
-    stt = _first(sources["stt"])  # type: ignore[index]
-    tts = _first(sources["tts"])  # type: ignore[index]
     if CONFIG.llm_provider_voice_main == PROVIDER_META:
+        # Exactly what agent.py uses at call time for a user with no saved pick.
         return {
             "mode": MODE_CASCADE, "realtime_model_id": "",
-            "brain_id": BRAIN_META, "stt_id": stt, "tts_id": tts,
+            "brain_id": BRAIN_META,
+            "stt_id": CONFIG.meta_cascade_stt_model,
+            "tts_id": CONFIG.meta_cascade_tts_model,
         }
+    stt = _first(sources["stt"])  # type: ignore[index]
+    tts = _first(sources["tts"])  # type: ignore[index]
     return {
         "mode": MODE_REALTIME, "realtime_model_id": REALTIME_GEMINI,
         "brain_id": BRAIN_META, "stt_id": stt, "tts_id": tts,

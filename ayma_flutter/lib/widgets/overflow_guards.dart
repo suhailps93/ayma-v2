@@ -39,24 +39,32 @@ class CenteredScroll extends StatelessWidget {
 /// [child] at its natural height, but never taller than [maxHeight]: past
 /// that it scrolls inside the cap. For the fixed (non-scrolling) parts of a
 /// column, so together they can't add up to more than the column.
-/// [reverse] keeps the bottom in view (a composer's text field).
+/// [reverse] keeps the bottom in view (a composer's text field). With
+/// [scrollable] false the user can't drag it: past the cap the overflow is
+/// simply clipped (the anchored edge stays in view), never scrolled.
 class CappedScroll extends StatelessWidget {
   const CappedScroll({
     super.key,
     required this.maxHeight,
     this.reverse = false,
+    this.scrollable = true,
     required this.child,
   });
 
   final double maxHeight;
   final bool reverse;
+  final bool scrollable;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxHeight < 0 ? 0 : maxHeight),
-      child: SingleChildScrollView(reverse: reverse, child: child),
+      child: SingleChildScrollView(
+        reverse: reverse,
+        physics: scrollable ? null : const NeverScrollableScrollPhysics(),
+        child: child,
+      ),
     );
   }
 }
