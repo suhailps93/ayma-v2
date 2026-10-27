@@ -37,6 +37,7 @@ from pathlib import Path
 
 import practice_llm
 import public_profile
+import schema
 import token_ledger
 
 logger = logging.getLogger("ayma.practice_date")
@@ -136,6 +137,20 @@ class PersonaContext:
         return "\n".join(lines).strip()
 
 
+def ai_avatar_enabled(db, uid: str) -> bool:
+    """Whether ``uid`` allows an AI version of themselves (Settings > "AI
+    Avatar"). Defaults to True when unset; only an explicit ``False`` opts out."""
+    prof = (
+        db.collection("users")
+        .document(uid)
+        .collection("profile")
+        .document("main")
+        .get()
+        .to_dict()
+    ) or {}
+    return prof.get(schema.PF_AI_AVATAR) is not False
+
+
 def build_persona_context(
     db, viewer_uid: str, target_uid: str
 ) -> PersonaContext | None:
@@ -146,7 +161,10 @@ def build_persona_context(
     ``visibility == "public"`` at query level, and strips private/ai-only
     spans) and then copies out only the persona-appropriate fields. It reads
     nothing from any ``NEVER_LOAD`` category. Returns ``None`` when there is no
-    real, set-up, reachable profile to simulate (missing, deleted, or blocked)."""
+    real, set-up, reachable profile to simulate (missing, deleted, or blocked) or
+    when the target has opted out of an AI Avatar."""
+    if not ai_avatar_enabled(db, target_uid):
+        return None
     view = public_profile.build(db, viewer_uid, target_uid)
     if not view:
         return None

@@ -44,8 +44,11 @@ import practice_llm
 import token_ledger
 from auth import Caller, require_caller
 from db import get_db
+from billing import credits_for
+from config import CONFIG
 from practice_core import (
     PersonaContext,
+    ai_avatar_enabled,
     build_persona_context,
     build_self_persona_context,
 )
@@ -69,6 +72,52 @@ ROLE_THEM = "them"  # the match's persona
 MIN_MESSAGES = 2
 MAX_MESSAGES = 20
 DEFAULT_MESSAGES = 6
+
+# Cost-estimate assumptions (deliberately conservative: better to over- than
+# under-state). Per persona turn: ~2,500 input tokens of system prompt + persona
+# grounding, plus ~60 tokens for each prior transcript message, and ~150 output
+# tokens (a short chat line plus headroom for reasoning). The verdict call reads
+# ~1,500 tokens of prompt plus the whole transcript and writes ~300.
+_TURN_BASE_INPUT_TOKENS = 2500
+_TOKENS_PER_MESSAGE = 60
+_TURN_OUTPUT_TOKENS = 150
+_VERDICT_BASE_INPUT_TOKENS = 1500
+_VERDICT_OUTPUT_TOKENS = 300
+
+
+class AvatarOptOut(Exception):
+    """A party has opted out of an AI Avatar. ``who`` is ``"self"`` (the
+    triggering user) or ``"match"`` (the other person)."""
+
+    def __init__(self, who: str) -> None:
+        super().__init__(who)
+        self.who = who
+
+
+_OPT_OUT_MESSAGES = {
+    "self": "Turn on AI Avatar in Settings to use simulated dates.",
+    "match": "This person has opted out of AI simulations.",
+}
+
+
+def estimate_credits(message_count: int) -> int:
+    """Approximate credits a ``message_count``-message simulation will bill the
+    triggering user (both personas' turns + the verdict), from the same
+    pricing table and ``credits_per_usd`` the ledger uses."""
+    usd = 0.0
+    for i in range(message_count):
+        usd += token_ledger.cost_usd_for(
+            token_ledger.FEATURE_DATE_SIM,
+            _TURN_BASE_INPUT_TOKENS + i * _TOKENS_PER_MESSAGE,
+            _TURN_OUTPUT_TOKENS,
+        )
+    usd += token_ledger.cost_usd_for(
+        token_ledger.FEATURE_DATE_SIM,
+        _VERDICT_BASE_INPUT_TOKENS + message_count * _TOKENS_PER_MESSAGE,
+        _VERDICT_OUTPUT_TOKENS,
+    )
+    return max(1, credits_for(usd, CONFIG))
+
 
 _VERDICT_SCHEMA = {
     "type": "object",
@@ -170,10 +219,15 @@ async def run_simulation(
     their PUBLIC profile only, alternates up to ``max_messages`` turns (the user
     opens), moderates the result (advisory, never blocks — nothing is sent), and
     produces the compatibility read. Raises :class:`ValueError` when the match
-    has no simulatable public profile, and :class:`token_ledger.TokenCapExceeded`
+    has no simulatable public profile, :class:`AvatarOptOut` when either party
+    has opted out of an AI Avatar, and :class:`token_ledger.TokenCapExceeded`
     only when the user is out of credits before the first message is produced;
     running out mid-conversation returns the partial transcript with
     ``usage_capped`` set (and no further metered verdict call)."""
+    if not ai_avatar_enabled(db, uid):
+        raise AvatarOptOut("self")
+    if not ai_avatar_enabled(db, other_uid):
+        raise AvatarOptOut("match")
     self_ctx = build_self_persona_context(db, uid)
     if self_ctx is None:
         raise ValueError("no profile for the current user")
@@ -265,6 +319,20 @@ class DateSimRequest(BaseModel):
     max_messages: int = Field(DEFAULT_MESSAGES, ge=MIN_MESSAGES, le=MAX_MESSAGES)
 
 
+@router.get("/date-sim/estimate")
+async def date_sim_estimate(
+    _caller: Caller = Depends(require_caller),
+) -> dict[str, object]:
+    """Approximate credits for each allowed message count, so the setup screen
+    can warn about the cost before the run (both agents bill the caller)."""
+    return {
+        "credits_by_messages": {
+            str(n): estimate_credits(n)
+            for n in range(MIN_MESSAGES, MAX_MESSAGES + 1)
+        }
+    }
+
+
 @router.post("/date-sim", dependencies=[Depends(require_not_underage_uid)])
 async def date_sim(
     req: DateSimRequest, caller: Caller = Depends(require_caller)
@@ -288,6 +356,14 @@ async def date_sim(
         )
     except token_ledger.TokenCapExceeded as exc:
         raise HTTPException(status_code=402, detail="Out of credits.") from exc
+    except AvatarOptOut as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": f"ai_avatar_opt_out_{exc.who}",
+                "message": _OPT_OUT_MESSAGES[exc.who],
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=404, detail="No profile to simulate a date with."

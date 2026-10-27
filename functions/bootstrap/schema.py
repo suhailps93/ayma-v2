@@ -250,6 +250,9 @@ PF_PHOTOS = "photos"  # [{media_id, order}] — the public profile grid
 PF_HIDDEN_PHOTOS = "hidden_photos"
 PF_PHOTO_ATTRS = "photo_attrs"
 PF_PAUSED = "paused"
+# "AI Avatar" consent: absent/True = allowed; False = opted out of any AI
+# persona built from this user (date simulation, practice, MCP).
+PF_AI_AVATAR = "ai_avatar_enabled"
 PF_AYMA_VOICE = "ayma_voice_name"
 # Voice STACK preference (§13.9, voice_catalog). "" = deploy-time default.
 PF_AYMA_VOICE_MODE = "ayma_voice_mode"        # "realtime" | "cascade"

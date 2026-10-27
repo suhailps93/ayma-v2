@@ -57,6 +57,25 @@ class _DateSimScreenState extends State<DateSimScreen> {
   static const _min = 2;
   static const _max = 20;
 
+  /// Approximate credits by message count, fetched from the backend (derived
+  /// from the real token pricing). Empty until loaded or if unavailable.
+  Map<int, int> _estimate = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEstimate();
+  }
+
+  Future<void> _loadEstimate() async {
+    try {
+      final e = await _api.dateSimEstimate();
+      if (mounted) setState(() => _estimate = e);
+    } catch (_) {
+      // The warning still shows, without a number.
+    }
+  }
+
   Future<void> _run() async {
     setState(() {
       _phase = _Phase.running;
@@ -81,11 +100,13 @@ class _DateSimScreenState extends State<DateSimScreen> {
         _result = res;
         _phase = _Phase.done;
       });
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() {
           _phase = _Phase.setup;
-          _error = "Couldn't run the simulation. Please try again.";
+          _error = e is ApiException && e.statusCode == 403
+              ? e.message
+              : "Couldn't run the simulation. Please try again.";
         });
       }
     }
@@ -152,6 +173,8 @@ class _DateSimScreenState extends State<DateSimScreen> {
             textAlign: TextAlign.center,
             style: AymaType.sans(size: 13, color: ac.fgDim),
           ),
+          const SizedBox(height: 20),
+          _CreditWarning(count: _count, credits: _estimate[_count]),
           const SizedBox(height: 28),
           Text(
             'Messages to exchange',
@@ -261,6 +284,50 @@ class _DateSimScreenState extends State<DateSimScreen> {
 }
 
 /// The message-count control: − value + , clamped to [min]..[max].
+/// Prominent pre-run cost warning: both personas run on the user's credits.
+class _CreditWarning extends StatelessWidget {
+  const _CreditWarning({required this.count, this.credits});
+
+  final int count;
+
+  /// Approximate credits for [count] messages; null while unknown.
+  final int? credits;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      key: const Key('dateSimCreditWarning'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ac.error.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ac.error.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 22, color: ac.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              credits == null
+                  ? 'This uses a lot of credits. A simulated date runs $count '
+                      'AI messages plus a final compatibility read, and both '
+                      'agents are billed to you.'
+                  : 'This uses a lot of credits. A simulated date of $count AI '
+                      'messages will use roughly $credits credits (approx.), '
+                      'including a final compatibility read. Both agents are '
+                      'billed to you.',
+              style: AymaType.sans(size: 13, color: ac.fg, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CountStepper extends StatelessWidget {
   const _CountStepper({
     required this.value,

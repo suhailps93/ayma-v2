@@ -1668,8 +1668,32 @@ text}], score, score_label, summary, moderation, usage_capped}`. `max_messages`
 is clamped to `[2, 20]` (default 6). Metering: every persona turn and the
 verdict call go through `practice_llm` (the shared per-surface provider — Gemini
 today, Meta Muse Spark on a flag flip) and are charged to the user under
-`token_ledger.FEATURE_DATE_SIM` ("Date simulation"); the user-set cap bounds the
-real spend of two personas conversing. Out of credits → 402 before the first
+`token_ledger.FEATURE_DATE_SIM` ("Date simulation"); **both** personas' turns
+(USER and MATCH) and the verdict all bill the *triggering* user's uid, never the
+match's (`test_every_metered_call_bills_the_triggering_user`); the user-set cap
+bounds the real spend of two personas conversing. The setup screen shows a
+prominent warning (key `dateSimCreditWarning`) that the run uses a lot of
+credits, with an approximate number that updates live with the message-count
+stepper and a note that both agents are billed to the user; "Simulate a
+conversation" is the acknowledgement. The number comes from
+`GET /date-sim/estimate` (`credits_by_messages`), computed in
+`date_sim.estimate_credits` from conservative per-turn token assumptions (stated
+in the module) × (one turn per message + one verdict call), priced through
+`token_ledger.cost_usd_for` and `billing.credits_for` (`credits_per_usd`) — no
+inline prices or credit rates.
+
+**AI Avatar consent (opt-out).** Settings > Privacy > "AI Avatar" (default on)
+writes `ai_avatar_enabled` to `users/{uid}/profile/main` (client-writable in
+`firestore.rules`, like `paused`); `practice_core.ai_avatar_enabled(db, uid)`
+reads it, defaulting to True when unset (only an explicit `False` opts out).
+`run_simulation` checks it BEFORE any persona is built or model call is made:
+the caller opted out → 403 `ai_avatar_opt_out_self` ("Turn on AI Avatar in
+Settings to use simulated dates."); the match opted out → 403
+`ai_avatar_opt_out_match` ("This person has opted out of AI simulations."). The
+gate is also inside `practice_core.build_persona_context`, so Practice Date and
+the MCP/agent persona paths never build a persona of an opted-out user (they
+see "no profile"). The 18+ gate is unchanged. Follow-up: the user-facing
+privacy policy text (`docs/PRIVACY.md`) should mention the AI Avatar setting. Out of credits → 402 before the first
 message; running out mid-conversation returns the partial transcript with
 `usage_capped` set and skips the (metered) verdict. Cross-ref:
 `docs/PRACTICE_DATE.md`.

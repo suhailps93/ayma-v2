@@ -40,6 +40,13 @@ Map<String, dynamic> _result({
 ApiClient _api({Object? body, int status = 200}) => ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
       httpClient: MockClient((req) async {
+        if (req.url.path == '/date-sim/estimate') {
+          return _json({
+            'credits_by_messages': {
+              for (var n = 2; n <= 20; n++) '$n': n * 10,
+            },
+          });
+        }
         if (req.url.path == '/date-sim') {
           if (status != 200) return http.Response('no', status);
           return _json(body ?? _result());
@@ -69,6 +76,53 @@ void main() {
     expect(find.byKey(const Key('dateSimCountValue')), findsOneWidget);
     expect(find.byKey(const Key('dateSimSetupNote')), findsOneWidget);
     expect(find.text('6'), findsOneWidget); // sensible default
+  });
+
+  testWidgets('setup warns that both agents are billed and it uses many credits',
+      (tester) async {
+    await tester.pumpWidget(_wrap(DateSimScreen(uid: 'her', name: 'Dana', api: _api())));
+    await tester.pump();
+
+    final warning = find.byKey(const Key('dateSimCreditWarning'));
+    expect(warning, findsOneWidget);
+    expect(find.textContaining('uses a lot of credits'), findsOneWidget);
+    await tester.pump();
+    expect(find.textContaining('6 AI messages'), findsOneWidget);
+    expect(find.textContaining('roughly 60 credits'), findsOneWidget);
+    expect(find.textContaining('agents are billed to you'), findsOneWidget);
+    // Visible above the run button.
+    expect(tester.getTopLeft(warning).dy,
+        lessThan(tester.getTopLeft(find.byKey(const Key('dateSimRunButton'))).dy));
+
+    await tester.ensureVisible(find.byKey(const Key('dateSimCountIncrement')));
+    await tester.tap(find.byKey(const Key('dateSimCountIncrement')));
+    await tester.pump();
+    expect(find.textContaining('8 AI messages'), findsOneWidget);
+    expect(find.textContaining('roughly 80 credits'), findsOneWidget);
+  });
+
+  testWidgets('an AI Avatar opt-out (403) shows the server message',
+      (tester) async {
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/date-sim') {
+          return _json({
+            'detail': {
+              'code': 'ai_avatar_opt_out_match',
+              'message': 'This person has opted out of AI simulations.',
+            },
+          }, 403);
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    await tester.pumpWidget(_wrap(DateSimScreen(uid: 'her', name: 'Dana', api: api)));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('dateSimRunButton')));
+    await _settle(tester);
+    expect(find.text('This person has opted out of AI simulations.'),
+        findsOneWidget);
   });
 
   testWidgets('the message-count stepper increments and decrements',

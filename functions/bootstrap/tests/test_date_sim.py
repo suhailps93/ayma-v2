@@ -134,6 +134,81 @@ def test_date_sim_prompt_has_disclosure_filter_for_both_personas():
     assert "never" in prompt
 
 
+# --- billing: both personas + verdict bill the triggering user ------------- #
+def test_every_metered_call_bills_the_triggering_user():
+    db = _seeded_db()
+    billed: list[tuple[str, str]] = []
+
+    async def fake_text(system, message, uid, feature, session_id):
+        billed.append(("text", uid))
+        return "a friendly line"
+
+    async def fake_json(system, contents, schema, uid, feature):
+        billed.append(("json", uid))
+        return {"score": 50, "score_label": "ok", "summary": "fine"}
+
+    practice_llm.set_override(text=fake_text, json=fake_json)
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4))
+    finally:
+        practice_llm.clear_override()
+    # 4 persona turns (2 USER + 2 MATCH) + 1 verdict, all on the viewer's uid.
+    assert [kind for kind, _ in billed] == ["text"] * 4 + ["json"]
+    assert {uid for _, uid in billed} == {VIEWER}
+
+
+# --- AI Avatar opt-out ----------------------------------------------------- #
+def _opt_out(db, uid):
+    db.collection("users").document(uid).collection("profile").document(
+        "main"
+    ).set({"ai_avatar_enabled": False}, merge=True)
+
+
+def _run_blocked(db) -> tuple[str, list]:
+    calls: list = []
+
+    async def fake_text(system, message, uid, feature, session_id):
+        calls.append(uid)
+        return "hi"
+
+    async def fake_json(system, contents, schema, uid, feature):
+        calls.append(uid)
+        return {}
+
+    practice_llm.set_override(text=fake_text, json=fake_json)
+    try:
+        with pytest.raises(date_sim.AvatarOptOut) as exc:
+            asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4))
+    finally:
+        practice_llm.clear_override()
+    return exc.value.who, calls
+
+
+def test_opted_out_match_blocks_the_sim_and_builds_no_persona():
+    db = _seeded_db()
+    _opt_out(db, MAYA)
+    who, calls = _run_blocked(db)
+    assert who == "match" and calls == []
+    assert practice_core.build_persona_context(db, VIEWER, MAYA) is None
+
+
+def test_opted_out_caller_cannot_run_the_sim():
+    db = _seeded_db()
+    _opt_out(db, VIEWER)
+    who, calls = _run_blocked(db)
+    assert who == "self" and calls == []
+
+
+def test_ai_avatar_defaults_on_when_unset():
+    assert practice_core.ai_avatar_enabled(FakeDb(), "anyone") is True
+
+
+# --- cost estimate --------------------------------------------------------- #
+def test_estimate_grows_with_message_count():
+    assert date_sim.estimate_credits(2) >= 1
+    assert date_sim.estimate_credits(20) > date_sim.estimate_credits(2)
+
+
 # --- the engine: bounded transcript + score + summary ---------------------- #
 def test_sim_returns_bounded_transcript_and_verdict():
     db = _seeded_db()

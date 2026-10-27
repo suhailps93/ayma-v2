@@ -22,6 +22,9 @@ class _FakeProfiles extends ProfileService {
   final List<bool> pausedWrites = [];
 
   @override
+  Stream<bool> watchAiAvatar() => Stream.value(true);
+
+  @override
   Stream<bool> watchPaused() => Stream.value(paused);
 
   @override
