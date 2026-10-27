@@ -207,6 +207,16 @@ async def test_generate_json_maps_schema_and_parses(schema, payload):
 
 
 @pytest.mark.asyncio
+async def test_generate_json_strips_whitespace_in_keys(_no_ledger):
+    raw = '{"strengths ": ["a"], "quick_facts": {" age": 3}, "rows": [{"k ": 1}]}'
+    client = _FakeClient([_FakeResponse(_FakeMessage(content=raw))])
+    out = await MetaProvider(client=client).generate_json(
+        "c", "s", uid="u1", feature="face_report",
+    )
+    assert out == {"strengths": ["a"], "quick_facts": {"age": 3}, "rows": [{"k": 1}]}
+
+
+@pytest.mark.asyncio
 async def test_generate_json_records_usage(monkeypatch, _no_ledger):
     client = _FakeClient([_FakeResponse(_FakeMessage(content='{"ok": 1}'))])
     out = await MetaProvider(client=client).generate_json(

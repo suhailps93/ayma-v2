@@ -77,17 +77,16 @@ for.
 (`body_report.py`, `face_report.py`); Practice Date consumes
 `get_llm_provider("practice")` through `practice_llm.py`.
 
-**Currently flipped (deployed):** `practice` (text) → Meta
-(`LLM_PROVIDER_PRACTICE=meta`, `LLM_META_FALLBACK=true`), on revision
-`ayma-api-00208-qkg`. `chat`, `matching`, `reports`, and `voice` remain on
-Gemini.
+**Currently flipped (deploy script):** `practice`, `chat`, `matching` and
+`reports` → Meta (`LLM_PROVIDER_*=meta`, `LLM_META_FALLBACK=true`). `voice`
+remains on Gemini.
 
 **Deliberate hybrids (documented, not gaps):**
 - Meta has no embedding model, so matching's candidate retrieval stays on the
   Gemini 3072-d embedding index; only the LLM scoring pass can run on Muse Spark.
-- `reports` stays on Gemini because Muse Spark occasionally emits a JSON key with
-  a trailing space (`"strengths "`) — harmless for conversational surfaces, a
-  parser risk for strict schemas. Honest limitation, not hidden.
+- Muse Spark occasionally emits a JSON key with a trailing space
+  (`"strengths "`); `MetaProvider.generate_json` strips key whitespace, and a
+  live check (5 match + 20 report calls) returned schema-valid JSON every time.
 - Chat web-search / URL grounding stays Gemini-only (Meta has no Google
   grounding); a chat surface on Meta simply answers without live grounding.
 
@@ -99,8 +98,8 @@ fixed matching pairs + report prompts through both providers:
 - **Both providers passed all four fixtures.**
 - **Muse Spark was faster on every case** — e.g. match **1.5s vs Gemini 7.1s**;
   report **1.8s vs 4.2s**.
-- The one quirk (trailing-space JSON key on the reports schema) is why reports
-  stays on Gemini for now.
+- The one quirk (trailing-space JSON key on the reports schema) is now handled
+  by key normalisation in `MetaProvider`.
 
 (These are the figures recorded in `docs/META_PROVIDER.md` from that run. A fresh
 `--live` run to reconfirm exact seconds is `TODO(verify)`.)
