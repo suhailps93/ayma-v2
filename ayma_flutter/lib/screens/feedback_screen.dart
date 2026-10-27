@@ -1,7 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/api_client.dart';
 import '../services/chat_service.dart';
@@ -10,10 +12,11 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 
-/// Product feedback — bugs and feature requests (§15). This is a separate
-/// bucket from conversational feedback: Ayma never sees it; the team triages it
-/// by hand. Screenshots are optional and upload to the user's own `uploads/`
-/// tree before submit.
+/// Product feedback — bugs and feature requests (§15). Lands in the unified
+/// `feedback` collection as `source: 'settings_form'` (the in-chat feedback
+/// catcher lands there as `'chat_card'`), triaged together in the Developer →
+/// Feedback admin view. Ayma never reads product rows. Screenshots are optional
+/// and upload to the user's own `uploads/` tree before submit.
 class FeedbackScreen extends StatefulWidget {
   const FeedbackScreen({super.key, this.api, this.chatService, this.picker});
 
@@ -55,6 +58,13 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     } catch (_) {/* ignore — user can still submit text */}
   }
 
+  String get _platform {
+    if (kIsWeb) return 'web';
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isIOS) return 'ios';
+    return Platform.operatingSystem;
+  }
+
   Future<void> _submit() async {
     final text = _text.text.trim();
     if (text.isEmpty || _sending) return;
@@ -65,10 +75,24 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
         final up = await _chat.uploadImage(f, prefix: 'feedback');
         paths.add(up.storagePath);
       }
-      await _api.submitProductFeedback(
-        kind: _kind,
-        text: text,
-        imagePaths: paths,
+      // No title field in this form — derive a short one from the first line.
+      final firstLine = text.split('\n').first.trim();
+      final title = firstLine.length > 80
+          ? '${firstLine.substring(0, 77)}…'
+          : firstLine;
+      var version = '';
+      try {
+        version = (await PackageInfo.fromPlatform()).version;
+      } catch (_) {/* best-effort */}
+      await _api.submitFeedbackCard(
+        kind: _kind == 'bug' ? 'bug' : 'feature',
+        title: title,
+        body: text,
+        screenshotPaths: paths,
+        screen: 'settings/feedback',
+        appVersion: version,
+        platform: _platform,
+        source: 'settings_form',
       );
       if (!mounted) return;
       AymaToast.show(context, 'Thanks — sent to the team.',
@@ -107,7 +131,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
           SegmentedButton<String>(
             segments: const [
               ButtonSegment(value: 'bug', label: Text('Bug')),
-              ButtonSegment(value: 'idea', label: Text('Idea')),
+              ButtonSegment(value: 'feature', label: Text('Feature')),
             ],
             selected: {_kind},
             onSelectionChanged: (s) => setState(() => _kind = s.first),

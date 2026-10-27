@@ -29,6 +29,7 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
+import '../widgets/feedback_draft_card.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/markdown_text.dart';
@@ -883,6 +884,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         tools: result.toolsUsed,
         capped: result.usageCapped,
         imageUrl: result.imageUrl,
+        feedbackKind: result.feedbackCard?.kind ?? '',
+        feedbackTitle: result.feedbackCard?.title ?? '',
+        feedbackBody: result.feedbackCard?.body ?? '',
       );
       if (result.usageCapped) {
         if (_canQueue && rec.queueable) {
@@ -1972,6 +1976,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         tools: result.toolsUsed,
         capped: result.usageCapped,
         imageUrl: result.imageUrl,
+        feedbackKind: result.feedbackCard?.kind ?? '',
+        feedbackTitle: result.feedbackCard?.title ?? '',
+        feedbackBody: result.feedbackCard?.body ?? '',
       );
       if (result.usageCapped && _canQueue && !skipUserTurn) {
         _holdForCredits(
@@ -3052,6 +3059,17 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   kind: reportKind,
                   reportId: reportId,
                   subjectImage: turn.subjectImage ?? '',
+                  api: widget.api,
+                ),
+              ),
+            if (turn.feedbackKind.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FeedbackDraftCard(
+                  key: ValueKey('feedback-${turn.feedbackTitle}-${turn.text.hashCode}'),
+                  kind: turn.feedbackKind,
+                  title: turn.feedbackTitle,
+                  body: turn.feedbackBody,
                   api: widget.api,
                 ),
               ),

@@ -48,6 +48,7 @@ import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/plan_screen.dart';
 import '../screens/developer_screen.dart';
+import '../screens/admin_feedback_screen.dart';
 import '../screens/trial_paywall_screen.dart';
 import '../services/revenuecat_service.dart';
 import '../screens/voice_preference_screen.dart';
@@ -335,6 +336,11 @@ final appRouter = GoRouter(
       path: DeveloperScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: DeveloperScreen()),
+    ),
+    GoRoute(
+      path: AdminFeedbackScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: AdminFeedbackScreen()),
     ),
     GoRoute(
       path: FeedbackScreen.path,

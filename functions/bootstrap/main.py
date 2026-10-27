@@ -1048,6 +1048,12 @@ class _ChatCtx:
     # chat turn (§ /chat, /chat/stream) and the durable transcript
     # (``_finalize_chat``) learn an edited/generated photo was made this turn.
     photo_edit_result: dict = field(default_factory=dict)
+    # The same pattern for the ``submit_feedback`` tool (skills/submit_feedback.py):
+    # the drafted ``{kind, title, body}`` lands here and the reply carries it to
+    # the client as ``feedback_card`` so the editable confirmation card can
+    # render. NOTHING is persisted until the user taps Send (``POST
+    # /feedback/submit``) — this sink is the whole no-write-until-confirm path.
+    feedback_draft: dict = field(default_factory=dict)
 
 
 async def _prepare_chat(
@@ -1604,6 +1610,7 @@ async def chat(
             "reply": reply.text,
             "tools_used": reply.tools_used,
             "image_url": ctx.photo_edit_result.get("image_url", ""),
+            "feedback_card": ctx.feedback_draft or None,
         }
 
     task = _spawn_turn(_turn(), key=key)
@@ -1673,6 +1680,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
             # uses, so the reply's image_url / transcript attach below
             # work unchanged for a generated image.
             image_result=ctx.photo_edit_result,
+            feedback_result=ctx.feedback_draft,
         ),
         image=ctx.image or ctx.photo_image,
         uid=ctx.uid,
@@ -1818,6 +1826,7 @@ async def chat_stream(
                                 if ctx.appearance_finding_id else None
                             ),
                             image_result=ctx.photo_edit_result,
+                            feedback_result=ctx.feedback_draft,
                         ),
                             image=ctx.image or ctx.photo_image,
                             uid=ctx.uid,
@@ -1832,11 +1841,13 @@ async def chat_stream(
                                 "image_url": ctx.photo_edit_result.get(
                                     "image_url", ""
                                 ),
+                                "feedback_card": ctx.feedback_draft or None,
                             }
                             result = {
                                 "reply": reply_text,
                                 "tools_used": tools_used,
                                 "image_url": ev["image_url"],
+                                "feedback_card": ev["feedback_card"],
                             }
                         queue.put_nowait(ev)
             except token_ledger.TokenCapExceeded:
@@ -4957,32 +4968,94 @@ async def submit_feedback(
     return {"ok": fid is not None, "id": fid}
 
 
-class ProductFeedbackRequest(BaseModel):
-    kind: Literal["bug", "idea"] = "bug"
-    text: str = Field(min_length=1, max_length=4000)
-    image_paths: list[str] = Field(default_factory=list, max_length=6)
+class FeedbackSubmissionRequest(BaseModel):
+    kind: Literal["feature", "bug"] = "feature"
+    title: str = Field(default="", max_length=120)
+    body: str = Field(min_length=1, max_length=4000)
+    screenshot_paths: list[str] = Field(default_factory=list, max_length=6)
+    screen: str = Field(default="", max_length=128)
     app_version: str = Field(default="", max_length=64)
+    platform: str = Field(default="", max_length=32)
+    source: Literal["chat_card", "settings_form"] = "chat_card"
 
 
-@app.post("/product-feedback")
-async def submit_product_feedback(
-    req: ProductFeedbackRequest, uid: str = Depends(require_uid)
+@app.post("/feedback/submit")
+async def submit_feedback_submission(
+    req: FeedbackSubmissionRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
-    """Bug reports and feature requests from the Profile screen (§15). Ayma
-    never reads this bucket — the dev team triages it by hand. Screenshots must
-    already be uploaded under the caller's ``uploads/`` tree."""
-    for p in req.image_paths:
+    """Persist one product-feedback row (bug / feature request) to the unified
+    ``feedback`` collection — the in-chat feedback catcher's confirmation card
+    (``source="chat_card"``) and the Settings "Send feedback" form
+    (``source="settings_form"``) both land here (§15). Nothing is written until
+    the user confirms; Ayma never reads these rows. Screenshots must already be
+    uploaded under the caller's own ``uploads/`` tree (access-controlled — the
+    admin view resolves them to short-lived signed URLs)."""
+    for p in req.screenshot_paths:
         if p and not p.startswith(f"uploads/{uid}/"):
             raise HTTPException(
                 status_code=403,
-                detail="image_paths must be under the caller's uploads/ tree.",
+                detail="screenshot_paths must be under the caller's uploads/ tree.",
             )
     fid = await asyncio.to_thread(
-        feedback_ops.record_product,
-        get_db(), uid, req.kind, req.text, req.image_paths,
+        feedback_ops.record_submission,
+        get_db(), uid, req.kind, req.title, req.body,
+        source=req.source,
+        screenshot_paths=req.screenshot_paths,
+        screen=req.screen,
         app_version=req.app_version,
+        platform=req.platform,
     )
     return {"ok": fid is not None, "id": fid}
+
+
+@app.get("/admin/feedback")
+async def admin_list_feedback(
+    limit: int = 100, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """Product-feedback triage list for the in-app Developer → Feedback view
+    (§15). Gated by the dev-view allowlist (``require_dev``) — the same gate the
+    Developer panel's privileged data uses — so a normal user can never read
+    other people's feedback. Returns both sources (``chat_card`` +
+    ``settings_form``) newest first."""
+    limit = max(1, min(limit, 300))
+    rows = await asyncio.to_thread(
+        feedback_ops.list_submissions, get_db(), limit=limit
+    )
+    return {"feedback": rows}
+
+
+class FeedbackStatusRequest(BaseModel):
+    status: Literal["new", "triaged", "done"]
+
+
+@app.post("/admin/feedback/{fid}")
+async def admin_set_feedback_status(
+    fid: str, req: FeedbackStatusRequest, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """Set a product-feedback row's triage status (§15). Dev-allowlist gated;
+    refuses to touch a conversational-conduct row."""
+    ok = await asyncio.to_thread(
+        feedback_ops.set_submission_status, get_db(), fid, req.status
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such feedback row.")
+    return {"ok": True, "id": fid, "status": req.status}
+
+
+@app.get("/admin/feedback/media")
+async def admin_feedback_media(
+    path: str, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """Resolve a feedback screenshot's Storage path to a viewable URL for the
+    Developer → Feedback view (§15). Dev-allowlist gated, and restricted to the
+    ``uploads/`` tree so it can only ever surface a user-submitted screenshot,
+    never arbitrary Storage. Reuses the app's own photo-URL scheme."""
+    from public_profile import _photo_url
+
+    if not path or not path.startswith("uploads/"):
+        raise HTTPException(status_code=400, detail="bad screenshot path.")
+    url = await asyncio.to_thread(_photo_url, path)
+    return {"path": path, "url": url}
 
 
 @app.get("/voice/presets")

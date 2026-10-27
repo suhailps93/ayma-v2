@@ -44,6 +44,30 @@ def test_record_feedback_tool_writes_to_the_feedback_bucket(monkeypatch):
     assert seen["quote"] == "you asked that"
 
 
+def test_submit_feedback_is_text_only_not_voice():
+    # Available to text chat (declarations) but never in the voice registry.
+    decls = {d["name"] for d in skills.session_tool_declarations()}
+    assert "submit_feedback" in decls
+    assert "submit_feedback" not in {s.name for s in skills.all_skills()}
+
+
+def test_submit_feedback_tool_drafts_a_card_and_never_persists(monkeypatch):
+    # A write would blow up — the tool must only populate the sink.
+    def _boom(*a, **k):  # pragma: no cover - asserts it's never called
+        raise AssertionError("submit_feedback must not write Firestore")
+
+    monkeypatch.setattr(feedback_ops, "record_submission", _boom)
+    sink: dict = {}
+    fns = skills.make_session_tool_fns(object(), "u9", feedback_result=sink)
+    out = fns["submit_feedback"]("bug", "Orb flickers", "it flickers on messages")
+    assert "review" in out.lower() and "send" in out.lower()
+    assert sink == {
+        "kind": "bug",
+        "title": "Orb flickers",
+        "body": "it flickers on messages",
+    }
+
+
 def test_set_user_steering_tool_appends_a_rule(monkeypatch):
     seen = {}
     monkeypatch.setattr(

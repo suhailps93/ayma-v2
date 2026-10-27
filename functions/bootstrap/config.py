@@ -478,8 +478,8 @@ class Config:
     """Rate limit for ``POST /credits/topup`` (§10.4)."""
 
     rate_feedback: str
-    """Rate limit for ``POST /feedback`` and ``POST /product-feedback``
-    (§10.4, §15)."""
+    """Rate limit for ``POST /feedback`` (conduct) and ``POST /feedback/submit``
+    (the product feedback catcher) (§10.4, §15)."""
 
     instagram_app_id: str
     """Meta/Instagram OAuth client id (non-secret). The app *secret* is read

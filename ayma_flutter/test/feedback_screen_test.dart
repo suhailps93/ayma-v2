@@ -8,9 +8,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
-  testWidgets('submits a bug report to /product-feedback', (tester) async {
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    PackageInfo.setMockInitialValues(
+      appName: 'Ayma',
+      packageName: 'com.ayma.ayma_flutter',
+      version: '1.30.0',
+      buildNumber: '1',
+      buildSignature: '',
+    );
+  });
+
+  testWidgets('submits a bug report to the unified /feedback/submit',
+      (tester) async {
     tester.view.physicalSize = const Size(1100, 2200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -19,7 +32,7 @@ void main() {
     final api = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
       httpClient: MockClient((req) async {
-        if (req.url.path == '/product-feedback') {
+        if (req.url.path == '/feedback/submit') {
           sent = jsonDecode(req.body) as Map<String, dynamic>;
           return http.Response(jsonEncode({'ok': true, 'id': 'p-1'}), 200);
         }
@@ -46,11 +59,14 @@ void main() {
 
     expect(sent, isNotNull);
     expect(sent!['kind'], 'bug');
-    expect(sent!['text'], 'the orb flickers on messages');
-    expect(sent!['image_paths'], isEmpty);
+    expect(sent!['body'], 'the orb flickers on messages');
+    expect(sent!['title'], 'the orb flickers on messages');
+    expect(sent!['source'], 'settings_form');
+    expect(sent!['screenshot_paths'], isEmpty);
   });
 
-  testWidgets('switching to Idea changes the submitted kind', (tester) async {
+  testWidgets('switching to Feature changes the submitted kind',
+      (tester) async {
     tester.view.physicalSize = const Size(1100, 2200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -70,12 +86,13 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Idea'));
+    await tester.tap(find.text('Feature'));
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'add a dark orb option');
     await tester.tap(find.text('Send'));
     await tester.pumpAndSettle();
 
-    expect(sent!['kind'], 'idea');
+    expect(sent!['kind'], 'feature');
+    expect(sent!['source'], 'settings_form');
   });
 }
