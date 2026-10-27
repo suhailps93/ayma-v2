@@ -14,13 +14,16 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 - Fail-visible "Show AI notes" toggle fix: the dev_panel toggle now surfaces a clear error and keeps the switch on the true state when the `/dev/flags` write doesn't take (was a silent false-success).
 - Version bump `1.30.0+2216`; dependency pin `sse-starlette==3.0.3` (so `mcp==2.3.0` coexists with `fastapi==0.115.6`). Tests green (flutter 1072 incl. layout matrix; backend 2433, bar the known `test_vendor_spend` date-flake).
 
-**PENDING — in-flight on separate branches, NOT yet merged (later pass):**
-- `voice-engine-switcher` — Dev Brain/STT/TTS + Cascade/Realtime engine picker, sourced from the LiveKit catalog.
-- `voice-notif-gating` — voice-call notification gating (deferred per the integration instruction; still being built).
-- `fix-launcher-icon` — black launcher-icon background.
-- `fix-splash-timeout` — startup timeout + retry.
+## Integration 2217 (meta-hackathon, 2026-10-26) — final pass
 
-**Deploy coupling for 2216:** deploy backend (ayma-api + ayma-agent) and install the 2216 APK together — the app uses new endpoints. `ayma-api` is temporarily `min-instances=1` for testing; revert to `0` when idle, but set `1` again before the **Nov 4** demo.
+**DONE (merged into `meta-hackathon` on top of 2216, built APK 2217, NOT deployed, NOT pushed):**
+- `voice-notif-gating` — voice-call notification + central orb glow now gate on `VoiceSessionController.isListening` (phase==live); the mic foreground service / call notification is delayed until Ayma is actually listening (not at connecting/waking).
+- `fix-launcher-icon` — opaque full-bleed pink round launcher icon PNGs (fixes the black box in Android search); `tool/build_icon_variants.py` updated.
+- `voice-engine-switcher` — Dev Brain/STT/TTS + Cascade/Realtime per-user voice picker sourced from the LiveKit Inference catalog (`GET /voice/engines` + `POST /voice/preference`, `voice_catalog.py`); agent reads the per-user pref at the next call; OpenAI Realtime exposed only behind `VOICE_OPENAI_REALTIME` + a mounted `OPENAI_API_KEY`. Merged with the main-voice Meta cascade: default stays Meta cascade when `LLM_PROVIDER_VOICE_MAIN=meta` and Gemini Live otherwise; per-user pref overrides per user only.
+- `fix-splash-timeout` — startup token/bootstrap deadlines + auto-retry with backoff + branded Retry UI; `connectivity_plus` promoted to a direct dependency; splash never signs out a signed-in user on a network blip.
+- Version bump `1.30.0+2217`.
+
+**Deploy coupling for 2217:** deploy backend (ayma-api + ayma-agent) and install the 2217 APK together — the app uses new endpoints. Both services change: ayma-api gains `/voice/engines` + `/voice/preference` (needs the full image rebuild already carrying mcp/sse-starlette); ayma-agent needs the voice-engine-switcher `agent.py`/`voice_catalog.py`/`requirements-agent.txt` (`livekit-plugins-openai`). `ayma-api` is temporarily `min-instances=1` for testing; revert to `0` when idle, but set `1` again before the **Nov 4** demo.
 
 ## 0. PRIORITY (founder, 2026-10-25): app-side testing and changes come first. Backend/vendor/admin work waits behind them.
 
