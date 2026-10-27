@@ -8,6 +8,7 @@ import '../services/meta_integrations.dart';
 import '../services/app_context.dart';
 import '../services/screen_capture.dart';
 import '../services/biometric_consent.dart';
+import '../services/dev_panel_session.dart';
 import '../screens/biometric_consent_screen.dart';
 import '../screens/biometric_consent_settings_screen.dart';
 import '../screens/biometric_info_screen.dart';
@@ -352,6 +353,18 @@ final appRouter = GoRouter(
       path: DeveloperScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: DeveloperScreen()),
+    ),
+    GoRoute(
+      // "Ayma's Notes" — the full analytical picture ("the intelligence
+      // beneath the portrait"). Dev-only on purpose: it is reached only from
+      // the unlocked Developer panel, and this redirect bounces anyone who
+      // tries to deep-link it while the panel is locked, so no normal-user
+      // path (and no stale link) can surface the analysis layer (§11.2).
+      path: AymaNotesScreen.path,
+      redirect: (context, state) =>
+          DevPanelSession.instance.unlocked.value ? null : MainShellScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: AymaNotesScreen()),
     ),
     GoRoute(
       path: AdminFeedbackScreen.path,

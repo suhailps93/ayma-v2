@@ -221,6 +221,10 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         session: DevPanelSession.instance..unlock('layout'),
       ),
     ),
+    // The dev-only "Ayma's Notes" page (pumped directly — the appRouter
+    // redirect that gates it on an unlocked DevPanelSession is bypassed here,
+    // same as any other target).
+    AymaNotesScreen.path: () => shell(AymaNotesScreen(api: api, myUid: 'me')),
     FeedbackScreen.path: () => shell(FeedbackScreen(api: api)),
     AdminFeedbackScreen.path: () => shell(AdminFeedbackScreen(api: api)),
     SettingsScreen.path: () => shell(
