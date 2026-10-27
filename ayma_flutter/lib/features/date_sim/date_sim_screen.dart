@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_client.dart';
+import '../../services/date_sim_service.dart';
 import '../../theme.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/out_of_credits.dart';
@@ -11,9 +15,11 @@ import 'taste_match_card.dart';
 
 /// AI Date Simulation (hackathon flagship) — watch your AI and theirs feel each
 /// other out before you message them. The user sets how many messages the two
-/// personas exchange, runs it, then sees the (clearly-labelled "simulated, not
-/// sent") transcript plus a compatibility read: a 0–100 score and a short
-/// "how it went" summary, with a "Message them for real" CTA.
+/// personas exchange and runs it; the (clearly-labelled "simulated, not sent")
+/// transcript then appears live, message by message, as the backend writes it
+/// to Firestore, followed by a compatibility read: a 0–100 score and a short
+/// "how it went" summary, with a "Message them for real" CTA. A failed run
+/// shows an inline error under the partial transcript.
 /// Under the read, a [TasteMatchCard] (Qloo taste overlap + date ideas).
 ///
 /// Reuses the shared [ChatBubble] so the simulated chat reads like a real one,
@@ -26,6 +32,8 @@ class DateSimScreen extends StatefulWidget {
     this.name = '',
     this.threadId,
     this.api,
+    this.service,
+    this.simId,
   });
 
   static const path = '/date-sim/:uid';
@@ -41,22 +49,33 @@ class DateSimScreen extends StatefulWidget {
   final String? threadId;
 
   final ApiClient? api;
+  final DateSimService? service;
+
+  /// Reopen an existing simulation (already running or finished) and watch it,
+  /// instead of starting at the setup form. No new run is started.
+  final String? simId;
 
   @override
   State<DateSimScreen> createState() => _DateSimScreenState();
 }
 
-enum _Phase { setup, running, done }
+enum _Phase { setup, live }
 
 class _DateSimScreenState extends State<DateSimScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
+  late final DateSimService _service = widget.service ?? DateSimService();
+  final ScrollController _scroll = ScrollController();
 
   _Phase _phase = _Phase.setup;
   String? _error;
   int _count = 6;
-  DateSimResult? _result;
 
-  /// The Qloo taste match, fetched once when the simulation result arrives.
+  DateSimDoc? _sim;
+  List<DateSimMessage> _messages = const [];
+  StreamSubscription<DateSimDoc?>? _simSub;
+  StreamSubscription<List<DateSimMessage>>? _msgSub;
+
+  /// The Qloo taste match, fetched once when the simulation completes.
   Future<TasteMatchLoad>? _taste;
 
   static const _min = 2;
@@ -70,6 +89,19 @@ class _DateSimScreenState extends State<DateSimScreen> {
   void initState() {
     super.initState();
     _loadEstimate();
+    final existing = widget.simId;
+    if (existing != null) {
+      _phase = _Phase.live;
+      _listen(existing);
+    }
+  }
+
+  @override
+  void dispose() {
+    _simSub?.cancel();
+    _msgSub?.cancel();
+    _scroll.dispose();
+    super.dispose();
   }
 
   Future<void> _loadEstimate() async {
@@ -81,41 +113,111 @@ class _DateSimScreenState extends State<DateSimScreen> {
     }
   }
 
-  Future<void> _run() async {
+  static String _newSimId() {
+    final r = Random.secure();
+    return List.generate(
+      16,
+      (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+  }
+
+  void _stopListening() {
+    unawaited(_simSub?.cancel());
+    unawaited(_msgSub?.cancel());
+    _simSub = null;
+    _msgSub = null;
+  }
+
+  /// Back to the setup form with [message] (or the out-of-credits sheet).
+  Future<void> _abort(String? message, {bool outOfCredits = false}) async {
+    _stopListening();
+    if (!mounted) return;
     setState(() {
-      _phase = _Phase.running;
-      _error = null;
+      _phase = _Phase.setup;
+      _error = message;
+      _sim = null;
+      _messages = const [];
     });
+    if (outOfCredits) await showOutOfCreditsSheet(context);
+  }
+
+  /// Starts listening to the sim's Firestore docs FIRST, then fires the POST
+  /// that makes the backend generate into them: the transcript renders as it
+  /// arrives and the UI never depends on the POST response.
+  Future<void> _run() async {
+    final simId = _newSimId();
+    _stopListening();
+    setState(() {
+      _phase = _Phase.live;
+      _error = null;
+      _sim = null;
+      _messages = const [];
+      _taste = null;
+    });
+    _simSub = _service.watchSim(simId).listen(_onSim, onError: _onListenError);
+    _msgSub = _service
+        .watchMessages(simId)
+        .listen(_onMessages, onError: _onListenError);
     try {
-      final res = await _api.dateSim(widget.uid, _count);
+      await _api.dateSim(simId, widget.uid, _count);
+    } on ApiException catch (e) {
       if (!mounted) return;
-      if (res == null) {
-        setState(() {
-          _phase = _Phase.setup;
-          _error = 'There is no profile to simulate a date with.';
-        });
-        return;
+      switch (e.statusCode) {
+        case 402:
+          await _abort(null, outOfCredits: true);
+        case 403:
+          await _abort(e.message);
+        case 404:
+          await _abort('There is no profile to simulate a date with.');
+        default:
+          if (_sim == null) await _abort(_genericError);
       }
-      if (res.usageCapped && res.messages.isEmpty) {
-        setState(() => _phase = _Phase.setup);
-        await showOutOfCreditsSheet(context);
-        return;
-      }
-      setState(() {
-        _result = res;
-        _taste = loadTasteMatch(_api, widget.uid);
-        _phase = _Phase.done;
-      });
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _phase = _Phase.setup;
-          _error = e is ApiException && e.statusCode == 403
-              ? e.message
-              : "Couldn't run the simulation. Please try again.";
-        });
-      }
+    } catch (_) {
+      // Transport failure: if the backend already started, the doc stream still
+      // reports the real outcome; otherwise nothing is running.
+      if (mounted && _sim == null) await _abort(_genericError);
     }
+  }
+
+  void _listen(String simId) {
+    _simSub = _service.watchSim(simId).listen(_onSim, onError: _onListenError);
+    _msgSub = _service
+        .watchMessages(simId)
+        .listen(_onMessages, onError: _onListenError);
+  }
+
+  static const _genericError = "Couldn't run the simulation. Please try again.";
+
+  void _onListenError(Object _) {
+    if (mounted && _sim == null) _abort(_genericError);
+  }
+
+  void _onSim(DateSimDoc? sim) {
+    if (!mounted || sim == null) return;
+    final finished =
+        sim.status == DateSimStatus.done && _sim?.status != DateSimStatus.done;
+    setState(() {
+      _sim = sim;
+      if (finished) _taste = loadTasteMatch(_api, widget.uid);
+    });
+    _scrollToEnd();
+  }
+
+  void _onMessages(List<DateSimMessage> messages) {
+    if (!mounted) return;
+    setState(() => _messages = messages);
+    _scrollToEnd();
+  }
+
+  void _scrollToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   void _messageForReal() {
@@ -128,7 +230,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
   }
 
   String get _name =>
-      _result?.persona.name.isNotEmpty == true ? _result!.persona.name : widget.name;
+      _sim?.persona.name.isNotEmpty == true ? _sim!.persona.name : widget.name;
 
   @override
   Widget build(BuildContext context) {
@@ -148,8 +250,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
         top: false,
         child: switch (_phase) {
           _Phase.setup => _setup(ac),
-          _Phase.running => _running(ac),
-          _Phase.done => _done(ac),
+          _Phase.live => _live(ac),
         },
       ),
     );
@@ -168,7 +269,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
             _name.isEmpty
                 ? 'Watch your AI and theirs feel each other out before you message.'
                 : 'Watch your AI and $_name’s feel each other out before you '
-                    'message them.',
+                      'message them.',
             textAlign: TextAlign.center,
             style: AymaType.sans(size: 16, color: ac.fg, height: 1.4),
           ),
@@ -185,7 +286,10 @@ class _DateSimScreenState extends State<DateSimScreen> {
           Text(
             'Messages to exchange',
             style: AymaType.sans(
-                size: 14, weight: FontWeight.w600, color: ac.fgDim),
+              size: 14,
+              weight: FontWeight.w600,
+              color: ac.fgDim,
+            ),
           ),
           const SizedBox(height: 12),
           _CountStepper(
@@ -219,76 +323,172 @@ class _DateSimScreenState extends State<DateSimScreen> {
     );
   }
 
-  Widget _running(AymaTokens ac) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 18),
-          Text(
-            _name.isEmpty
-                ? 'Your AIs are talking…'
-                : 'You and $_name’s AI are talking…',
-            style: AymaType.sans(size: 15, color: ac.fgDim),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- done: banner + transcript + compatibility read + CTA --------------- //
-  Widget _done(AymaTokens ac) {
-    final res = _result!;
+  // --- live: banner + transcript as it streams + read + CTA -------------- //
+  Widget _live(AymaTokens ac) {
+    final sim = _sim;
+    final status = sim?.status ?? DateSimStatus.running;
+    final running = status == DateSimStatus.running;
+    final finished = !running;
+    final youTurn = _messages.length.isEven;
+    final who = youTurn
+        ? 'Your AI'
+        : (_name.isEmpty ? 'Their AI' : '$_name’s AI');
     return ChromeColumn(
       header: [
         _SimBanner(
-          text: res.banner.isNotEmpty
-              ? res.banner
-              : 'Simulated — not sent to '
-                  '${_name.isEmpty ? 'them' : _name}.',
+          text: (sim?.banner.isNotEmpty ?? false)
+              ? sim!.banner
+              : 'Simulated — not sent to ${_name.isEmpty ? 'them' : _name}.',
         ),
       ],
       body: ListView(
         key: const Key('dateSimTranscript'),
+        controller: _scroll,
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
         children: [
-          for (final m in res.messages)
+          for (final m in _messages)
             ChatBubble(
               mine: m.fromYou,
               copyText: m.text,
-              flagged: res.moderationFlagged,
+              flagged: sim?.moderationFlagged ?? false,
               child: Text(
                 m.text,
                 style: AymaType.message(color: m.fromYou ? ac.onAccent : ac.fg),
               ),
             ),
-          const SizedBox(height: 20),
-          _Verdict(score: res.score, label: res.scoreLabel, summary: res.summary),
-          if (_taste != null) ...[
-            const SizedBox(height: 16),
-            TasteMatchCard(load: _taste!),
+          if (running)
+            _TypingIndicator(
+              label: _messages.isEmpty && sim == null
+                  ? 'Starting the conversation…'
+                  : '$who is typing…',
+              alignEnd: youTurn,
+            ),
+          if (status == DateSimStatus.error) ...[
+            const SizedBox(height: 12),
+            _InlineError(
+              message: (sim?.errorMessage.isNotEmpty ?? false)
+                  ? sim!.errorMessage
+                  : _genericError,
+              partial: _messages.isNotEmpty,
+            ),
+          ],
+          if (status == DateSimStatus.done) ...[
+            if (sim!.usageCapped) ...[
+              const SizedBox(height: 12),
+              const _InlineError(
+                message:
+                    'You ran out of credits, so the conversation was '
+                    'cut short.',
+                partial: false,
+              ),
+            ],
+            if (sim.hasVerdict) ...[
+              const SizedBox(height: 20),
+              _Verdict(
+                score: sim.score,
+                label: sim.scoreLabel,
+                summary: sim.summary,
+              ),
+            ],
+            if (_taste != null) ...[
+              const SizedBox(height: 16),
+              TasteMatchCard(load: _taste!),
+            ],
           ],
         ],
       ),
       footer: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: FilledButton.icon(
-            key: const Key('dateSimMessageForRealButton'),
-            onPressed: _messageForReal,
-            style: FilledButton.styleFrom(
-              backgroundColor: ac.accent,
-              foregroundColor: ac.onAccent,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-            icon: const Icon(Icons.send_rounded, size: 18),
-            label: Text(
-              _name.isEmpty ? 'Message them for real' : 'Message $_name for real',
+        if (finished)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: FilledButton.icon(
+              key: const Key('dateSimMessageForRealButton'),
+              onPressed: _messageForReal,
+              style: FilledButton.styleFrom(
+                backgroundColor: ac.accent,
+                foregroundColor: ac.onAccent,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              icon: const Icon(Icons.send_rounded, size: 18),
+              label: Text(
+                _name.isEmpty
+                    ? 'Message them for real'
+                    : 'Message $_name for real',
+              ),
             ),
           ),
-        ),
       ],
+    );
+  }
+}
+
+/// The `name is typing` row, shown only between turns while the run is live.
+class _TypingIndicator extends StatelessWidget {
+  const _TypingIndicator({required this.label, required this.alignEnd});
+
+  final String label;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      key: const Key('dateSimTyping'),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: alignEnd
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2, color: ac.fgDim),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(label, style: AymaType.sans(size: 13, color: ac.fgDim)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Inline failure notice shown under the (possibly partial) transcript.
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message, required this.partial});
+
+  final String message;
+  final bool partial;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      key: const Key('dateSimRunError'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ac.error.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ac.error.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, size: 20, color: ac.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              partial
+                  ? '$message The conversation so far is shown above.'
+                  : message,
+              style: AymaType.sans(size: 13.5, color: ac.fg, height: 1.4),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -323,12 +523,12 @@ class _CreditWarning extends StatelessWidget {
             child: Text(
               credits == null
                   ? 'This uses a lot of credits. A simulated date runs $count '
-                      'AI messages plus a final compatibility read, and both '
-                      'agents are billed to you.'
+                        'AI messages plus a final compatibility read, and both '
+                        'agents are billed to you.'
                   : 'This uses a lot of credits. A simulated date of $count AI '
-                      'messages will use roughly $credits credits (approx.), '
-                      'including a final compatibility read. Both agents are '
-                      'billed to you.',
+                        'messages will use roughly $credits credits (approx.), '
+                        'including a final compatibility read. Both agents are '
+                        'billed to you.',
               style: AymaType.sans(size: 13, color: ac.fg, height: 1.4),
             ),
           ),
@@ -361,8 +561,9 @@ class _CountStepper extends StatelessWidget {
       children: [
         IconButton.filledTonal(
           key: const Key('dateSimCountDecrement'),
-          onPressed:
-              value > min ? () => onChanged((value - _step).clamp(min, max)) : null,
+          onPressed: value > min
+              ? () => onChanged((value - _step).clamp(min, max))
+              : null,
           icon: const Icon(Icons.remove),
         ),
         Container(
@@ -371,13 +572,18 @@ class _CountStepper extends StatelessWidget {
           child: Text(
             '$value',
             key: const Key('dateSimCountValue'),
-            style: AymaType.sans(size: 22, weight: FontWeight.w700, color: ac.fg),
+            style: AymaType.sans(
+              size: 22,
+              weight: FontWeight.w700,
+              color: ac.fg,
+            ),
           ),
         ),
         IconButton.filledTonal(
           key: const Key('dateSimCountIncrement'),
-          onPressed:
-              value < max ? () => onChanged((value + _step).clamp(min, max)) : null,
+          onPressed: value < max
+              ? () => onChanged((value + _step).clamp(min, max))
+              : null,
           icon: const Icon(Icons.add),
         ),
       ],
@@ -388,7 +594,11 @@ class _CountStepper extends StatelessWidget {
 /// The compatibility read shown under the transcript: a prominent 0–100 score
 /// with its label, and the "how it went" summary.
 class _Verdict extends StatelessWidget {
-  const _Verdict({required this.score, required this.label, required this.summary});
+  const _Verdict({
+    required this.score,
+    required this.label,
+    required this.summary,
+  });
 
   final int score;
   final String label;
@@ -416,13 +626,18 @@ class _Verdict extends StatelessWidget {
               Text(
                 '$score',
                 style: AymaType.sans(
-                    size: 40, weight: FontWeight.w800, color: ac.accent),
+                  size: 40,
+                  weight: FontWeight.w800,
+                  color: ac.accent,
+                ),
               ),
               const SizedBox(width: 4),
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
-                child: Text('/100',
-                    style: AymaType.sans(size: 16, color: ac.fgDim)),
+                child: Text(
+                  '/100',
+                  style: AymaType.sans(size: 16, color: ac.fgDim),
+                ),
               ),
               const Spacer(),
               if (label.isNotEmpty)
@@ -431,7 +646,10 @@ class _Verdict extends StatelessWidget {
                     label,
                     textAlign: TextAlign.end,
                     style: AymaType.sans(
-                        size: 15, weight: FontWeight.w600, color: ac.fg),
+                      size: 15,
+                      weight: FontWeight.w600,
+                      color: ac.fg,
+                    ),
                   ),
                 ),
             ],

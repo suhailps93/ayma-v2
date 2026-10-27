@@ -315,3 +315,94 @@ def test_out_of_credits_midway_returns_partial_transcript():
 
 def test_date_sim_has_a_credit_label():
     assert token_ledger.FEATURE_DATE_SIM in token_ledger.FEATURE_LABELS
+
+
+# --- live streaming to Firestore ------------------------------------------- #
+def _sim_docs(db, sim_id):
+    ref = db.collection("users").document(VIEWER).collection("date_sims").document(sim_id)
+    msgs = sorted(
+        (s.to_dict() for s in ref.collection("messages").stream()),
+        key=lambda m: m["seq"],
+    )
+    return ref.get().to_dict(), msgs
+
+
+def test_each_turn_is_written_the_moment_it_is_produced():
+    db = _seeded_db()
+    seen: list[int] = []
+
+    async def fake_text(system, message, uid, feature, session_id):
+        # Before generating turn N, exactly N messages must already be stored.
+        _, msgs = _sim_docs(db, "sim_stream_1")
+        seen.append(len(msgs))
+        return "a friendly line"
+
+    async def fake_json(system, contents, schema, uid, feature):
+        return {"score": 61, "score_label": "ok", "summary": "fine"}
+
+    practice_llm.set_override(text=fake_text, json=fake_json)
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_stream_1"))
+    finally:
+        practice_llm.clear_override()
+    assert seen == [0, 1, 2, 3]
+    parent, msgs = _sim_docs(db, "sim_stream_1")
+    assert parent["status"] == "done"
+    assert parent["verdict"]["score"] == 61
+    assert parent["estimate"] == date_sim.estimate_credits(4)
+    assert [m["speaker"] for m in msgs] == ["you", "them", "you", "them"]
+
+
+def test_failure_marks_error_and_keeps_partial_transcript():
+    db = _seeded_db()
+    calls = {"n": 0}
+
+    async def flaky(system, message, uid, feature, session_id):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("boom")
+        return "a friendly line"
+
+    practice_llm.set_override(text=flaky)
+    try:
+        with pytest.raises(RuntimeError):
+            asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 6, "sim_err_001"))
+    finally:
+        practice_llm.clear_override()
+    parent, msgs = _sim_docs(db, "sim_err_001")
+    assert parent["status"] == "error"
+    assert parent["error"]["code"] == "failed"
+    assert len(msgs) == 2
+
+
+def test_a_hung_turn_times_out_instead_of_hanging(monkeypatch):
+    db = _seeded_db()
+    monkeypatch.setattr(date_sim, "TURN_TIMEOUT_S", 0.05)
+
+    async def hang(system, message, uid, feature, session_id):
+        await asyncio.sleep(5)
+        return "never"
+
+    practice_llm.set_override(text=hang)
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_hang_01"))
+    finally:
+        practice_llm.clear_override()
+    parent, _ = _sim_docs(db, "sim_hang_01")
+    assert parent["status"] == "error" and parent["error"]["code"] == "timeout"
+
+
+def test_opt_out_writes_no_sim_doc():
+    db = _seeded_db()
+    _opt_out(db, MAYA)
+    _run_blocked(db)
+    assert not db.collection("users").document(VIEWER).collection(
+        "date_sims"
+    ).document("any").get().exists
+
+
+def test_sim_id_is_validated_against_path_tricks():
+    assert not date_sim._SIM_ID_RE.match("../other")
+    assert not date_sim._SIM_ID_RE.match("a/b/c/d/e/f/g/h")
+    assert date_sim._SIM_ID_RE.match("abcDEF12_-34")

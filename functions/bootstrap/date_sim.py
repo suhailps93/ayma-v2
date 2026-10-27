@@ -33,7 +33,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -72,6 +75,20 @@ ROLE_THEM = "them"  # the match's persona
 MIN_MESSAGES = 2
 MAX_MESSAGES = 20
 DEFAULT_MESSAGES = 6
+
+# Hang guards: no single model call, and no whole run, may exceed these (Cloud
+# Run's request timeout is 300s; leave headroom to write the final status).
+TURN_TIMEOUT_S = 40.0
+RUN_DEADLINE_S = 240.0
+
+STATUS_RUNNING = "running"
+STATUS_DONE = "done"
+STATUS_ERROR = "error"
+
+# Client-chosen sim id (so the client can start listening before the POST
+# returns). Strictly validated: it becomes a Firestore doc id under the CALLER's
+# own uid, so it can never address another user's data.
+_SIM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 # Cost-estimate assumptions (deliberately conservative: better to over- than
 # under-state). Per persona turn: ~2,500 input tokens of system prompt + persona
@@ -210,17 +227,37 @@ async def _verdict(
     }
 
 
+def _sims(db, uid: str):
+    return db.collection("users").document(uid).collection("date_sims")
+
+
+async def _write(fn, *args, **kwargs) -> None:
+    await asyncio.to_thread(fn, *args, **kwargs)
+
+
 async def run_simulation(
-    db, uid: str, other_uid: str, max_messages: int
+    db, uid: str, other_uid: str, max_messages: int, sim_id: str | None = None
 ) -> dict:
-    """Run the two-persona conversation and return the transcript + verdict.
+    """Run the two-persona conversation, streaming it to Firestore, and return
+    the transcript + verdict.
 
     Grounds the user's persona in their FULL own context and the match's in
     their PUBLIC profile only, alternates up to ``max_messages`` turns (the user
     opens), moderates the result (advisory, never blocks — nothing is sent), and
-    produces the compatibility read. Raises :class:`ValueError` when the match
-    has no simulatable public profile, :class:`AvatarOptOut` when either party
-    has opted out of an AI Avatar, and :class:`token_ledger.TokenCapExceeded`
+    produces the compatibility read.
+
+    Live streaming: once both personas are built, a parent doc
+    ``users/{uid}/date_sims/{sim_id}`` is created (``status: running``) and each
+    turn is written to its ``messages/{seq}`` subcollection the moment it is
+    produced; the verdict + ``status: done`` land at the end, or ``status:
+    error`` with a reason (partial transcript kept) on any failure. The client
+    reads ONLY these docs (owner-read rules, Admin-SDK writes) and never needs
+    the POST response. Each turn is bounded by ``TURN_TIMEOUT_S`` and the whole
+    run by ``RUN_DEADLINE_S`` so it can never hang.
+
+    Raises :class:`ValueError` when the match has no simulatable public profile,
+    :class:`AvatarOptOut` when either party has opted out of an AI Avatar (both
+    before anything is written), and :class:`token_ledger.TokenCapExceeded`
     only when the user is out of credits before the first message is produced;
     running out mid-conversation returns the partial transcript with
     ``usage_capped`` set (and no further metered verdict call)."""
@@ -239,71 +276,139 @@ async def run_simulation(
     other_name = match_ctx.name
     session_id = f"datesim_{uuid.uuid4().hex}"
     cap = max(MIN_MESSAGES, min(MAX_MESSAGES, int(max_messages)))
+    persona = {
+        "name": match_ctx.name,
+        "age": match_ctx.age,
+        "location": match_ctx.location,
+        "photo_count": match_ctx.photo_count,
+        "photo_url": match_ctx.photo_url,
+    }
+    banner = f"Simulated — not sent to {match_ctx.name}."
+
+    sim_id = sim_id or uuid.uuid4().hex
+    sim_ref = _sims(db, uid).document(sim_id)
+    await _write(
+        sim_ref.set,
+        {
+            "status": STATUS_RUNNING,
+            "other_uid": other_uid,
+            "max_messages": cap,
+            "estimate": estimate_credits(cap),
+            "persona": persona,
+            "banner": banner,
+            "created_at": datetime.now(timezone.utc),
+        },
+    )
 
     transcript: list[dict] = []
     turns: list[dict] = []
     usage_capped = False
-    for i in range(cap):
-        role = ROLE_YOU if i % 2 == 0 else ROLE_THEM
-        if role == ROLE_YOU:
-            ctx, speaker, other = self_ctx, self_name, other_name
-        else:
-            ctx, speaker, other = match_ctx, other_name, self_name
-        system, message = compose_sim_prompt(ctx, speaker, other, turns, role)
-        try:
-            text = await practice_llm.generate_text(
-                system,
-                message,
-                uid=uid,
-                feature=token_ledger.FEATURE_DATE_SIM,
-                session_id=session_id,
-            )
-        except token_ledger.TokenCapExceeded:
-            if not transcript:
-                raise
-            usage_capped = True
-            break
-        text = text.strip()
-        if not text:
-            break
-        turns.append({"role": role, "text": text})
-        transcript.append({"from": role, "text": text})
+    deadline = time.monotonic() + RUN_DEADLINE_S
 
-    # Advisory moderation over the whole generated conversation — same DM
-    # policy: annotate, never block (nothing is sent to anyone).
-    moderation = await dm_moderation.moderate(
-        "\n".join(t["text"] for t in transcript)
-    )
-
-    verdict: dict = {"score": 0, "score_label": "", "summary": ""}
-    if transcript and not usage_capped:
+    async def _fail(code: str, reason: str) -> None:
         try:
-            verdict = await _verdict(
-                self_name, other_name, transcript, uid=uid
+            await _write(
+                sim_ref.update,
+                {"status": STATUS_ERROR, "error": {"code": code, "message": reason}},
             )
-        except token_ledger.TokenCapExceeded:
-            usage_capped = True
-        except Exception:  # noqa: BLE001 - a verdict failure keeps the transcript
-            logger.warning("date-sim verdict failed", exc_info=True)
+        except Exception:  # noqa: BLE001 - best effort; the original error wins
+            logger.warning("date-sim could not record failure", exc_info=True)
+
+    try:
+        for i in range(cap):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            role = ROLE_YOU if i % 2 == 0 else ROLE_THEM
+            if role == ROLE_YOU:
+                ctx, speaker, other = self_ctx, self_name, other_name
+            else:
+                ctx, speaker, other = match_ctx, other_name, self_name
+            system, message = compose_sim_prompt(ctx, speaker, other, turns, role)
+            try:
+                text = await asyncio.wait_for(
+                    practice_llm.generate_text(
+                        system,
+                        message,
+                        uid=uid,
+                        feature=token_ledger.FEATURE_DATE_SIM,
+                        session_id=session_id,
+                    ),
+                    timeout=min(TURN_TIMEOUT_S, remaining),
+                )
+            except token_ledger.TokenCapExceeded:
+                if not transcript:
+                    raise
+                usage_capped = True
+                break
+            text = text.strip()
+            if not text:
+                break
+            turns.append({"role": role, "text": text})
+            transcript.append({"from": role, "text": text})
+            await _write(
+                sim_ref.collection("messages").document(f"{i:03d}").set,
+                {
+                    "seq": i,
+                    "speaker": role,
+                    "text": text,
+                    "at": datetime.now(timezone.utc),
+                },
+            )
+
+        # Advisory moderation over the whole generated conversation — same DM
+        # policy: annotate, never block (nothing is sent to anyone).
+        moderation = await dm_moderation.moderate(
+            "\n".join(t["text"] for t in transcript)
+        )
+
+        verdict: dict = {"score": 0, "score_label": "", "summary": ""}
+        if transcript and not usage_capped:
+            try:
+                verdict = await asyncio.wait_for(
+                    _verdict(self_name, other_name, transcript, uid=uid),
+                    timeout=max(1.0, min(TURN_TIMEOUT_S, deadline - time.monotonic())),
+                )
+            except token_ledger.TokenCapExceeded:
+                usage_capped = True
+            except Exception:  # noqa: BLE001 - a verdict failure keeps the transcript
+                logger.warning("date-sim verdict failed", exc_info=True)
+
+        mod = {
+            "flagged": bool(moderation.get("flagged")),
+            "categories": list(moderation.get("categories") or []),
+        }
+        await _write(
+            sim_ref.update,
+            {
+                "status": STATUS_DONE,
+                "verdict": verdict,
+                "moderation": mod,
+                "usage_capped": usage_capped,
+                "finished_at": datetime.now(timezone.utc),
+            },
+        )
+    except token_ledger.TokenCapExceeded:
+        await _fail("out_of_credits", "Out of credits.")
+        raise
+    except asyncio.TimeoutError:
+        await _fail("timeout", "The simulation took too long and was stopped.")
+        raise
+    except Exception:
+        logger.warning("date-sim failed", exc_info=True)
+        await _fail("failed", "The simulation failed.")
+        raise
 
     return {
         "simulation": True,
-        "persona": {
-            "name": match_ctx.name,
-            "age": match_ctx.age,
-            "location": match_ctx.location,
-            "photo_count": match_ctx.photo_count,
-            "photo_url": match_ctx.photo_url,
-        },
-        "banner": f"Simulated — not sent to {match_ctx.name}.",
+        "sim_id": sim_id,
+        "persona": persona,
+        "banner": banner,
         "transcript": transcript,
         "score": verdict["score"],
         "score_label": verdict["score_label"],
         "summary": verdict["summary"],
-        "moderation": {
-            "flagged": bool(moderation.get("flagged")),
-            "categories": list(moderation.get("categories") or []),
-        },
+        "moderation": mod,
         "usage_capped": usage_capped,
     }
 
@@ -317,6 +422,7 @@ router = APIRouter(tags=["date_sim"])
 class DateSimRequest(BaseModel):
     other_uid: str = Field(..., min_length=1, max_length=128)
     max_messages: int = Field(DEFAULT_MESSAGES, ge=MIN_MESSAGES, le=MAX_MESSAGES)
+    sim_id: str | None = Field(None, max_length=64)
 
 
 @router.get("/date-sim/estimate")
@@ -340,9 +446,10 @@ async def date_sim(
     """Run an AI date simulation against ``other_uid``'s public profile.
 
     Two personas (the caller's — grounded in their full own context — and the
-    match's — public-profile-only) hold a bounded conversation; returns the
-    transcript, a 0–100 compatibility score, a label and a short summary.
-    Nothing is sent to the other user."""
+    match's — public-profile-only) hold a bounded conversation. The transcript
+    streams to ``users/{uid}/date_sims/{sim_id}`` (owner-readable) as it is
+    generated; the client listens there and does not depend on this response,
+    which just reports the final status. Nothing is sent to the other user."""
     db = get_db()
     # Out of credits → 402 before spending anything (mirrors Practice Date).
     try:
@@ -350,10 +457,19 @@ async def date_sim(
     except token_ledger.TokenCapExceeded as exc:
         raise HTTPException(status_code=402, detail="Out of credits.") from exc
 
+    sim_id = req.sim_id
+    if sim_id is not None and not _SIM_ID_RE.match(sim_id):
+        raise HTTPException(status_code=422, detail="Invalid sim_id.")
+    if sim_id is not None:
+        existing = await asyncio.to_thread(_sims(db, caller.uid).document(sim_id).get)
+        if existing.exists:
+            raise HTTPException(status_code=409, detail="sim_id already used.")
+
     try:
-        return await run_simulation(
-            db, caller.uid, req.other_uid.strip(), req.max_messages
+        out = await run_simulation(
+            db, caller.uid, req.other_uid.strip(), req.max_messages, sim_id
         )
+        return {"sim_id": out["sim_id"], "status": STATUS_DONE}
     except token_ledger.TokenCapExceeded as exc:
         raise HTTPException(status_code=402, detail="Out of credits.") from exc
     except AvatarOptOut as exc:

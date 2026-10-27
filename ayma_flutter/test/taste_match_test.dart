@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/date_sim_service.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,18 +16,6 @@ http.Response _json(Object body, [int status = 200]) => http.Response(
       status,
       headers: const {'content-type': 'application/json; charset=utf-8'},
     );
-
-const _sim = {
-  'persona': {'name': 'Maya'},
-  'banner': 'Simulated — not sent to Maya.',
-  'transcript': [
-    {'from': 'you', 'text': 'hey!'},
-    {'from': 'them', 'text': 'hi there'},
-  ],
-  'score': 70,
-  'score_label': 'Worth a shot',
-  'summary': 'A promising start.',
-};
 
 Map<String, dynamic> _taste({String source = 'qloo'}) => {
       'source': source,
@@ -56,8 +46,6 @@ ApiClient _api(http.Response Function() taste) => ApiClient(
         switch (req.url.path) {
           case '/date-sim/estimate':
             return _json({'credits_by_messages': {'6': 60}});
-          case '/date-sim':
-            return _json(_sim);
           case '/taste/pair':
             expect(jsonDecode(req.body), {'other_uid': 'her'});
             return taste();
@@ -66,13 +54,43 @@ ApiClient _api(http.Response Function() taste) => ApiClient(
       }),
     );
 
+/// A finished simulation, already streamed into Firestore, reopened by id.
 Future<void> _runSim(WidgetTester tester, ApiClient api) async {
+  final auth = MockFirebaseAuth(signedIn: true);
+  final fs = FakeFirebaseFirestore();
+  final sim = fs
+      .collection('users')
+      .doc(auth.currentUser!.uid)
+      .collection('date_sims')
+      .doc('sim1');
+  await sim.set({
+    'status': 'done',
+    'persona': {'name': 'Maya'},
+    'banner': 'Simulated — not sent to Maya.',
+    'verdict': {
+      'score': 70,
+      'score_label': 'Worth a shot',
+      'summary': 'A promising start.',
+    },
+  });
+  await sim
+      .collection('messages')
+      .doc('000')
+      .set({'seq': 0, 'speaker': 'you', 'text': 'hey!'});
+  await sim
+      .collection('messages')
+      .doc('001')
+      .set({'seq': 1, 'speaker': 'them', 'text': 'hi there'});
   await tester.pumpWidget(MaterialApp(
     theme: AymaTheme.dark,
-    home: DateSimScreen(uid: 'her', name: 'Maya', api: api),
+    home: DateSimScreen(
+      uid: 'her',
+      name: 'Maya',
+      api: api,
+      simId: 'sim1',
+      service: DateSimService(auth: auth, firestore: fs),
+    ),
   ));
-  await tester.pump();
-  await tester.tap(find.byKey(const Key('dateSimRunButton')));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   await tester.pump(const Duration(milliseconds: 400));
