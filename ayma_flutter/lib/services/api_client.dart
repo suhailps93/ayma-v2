@@ -1403,6 +1403,19 @@ class ApiClient {
     return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
   }
 
+  /// `GET /voice/engines` — the selectable voice STACK (§13.9): modes, realtime
+  /// models, and cascade brains/STT/TTS (sourced live from LiveKit Inference,
+  /// config fallback otherwise), plus the user's current selection.
+  Future<VoiceCatalog> voiceEngines() async {
+    final m = await _getJson('/voice/engines');
+    return VoiceCatalog.fromMap(m);
+  }
+
+  /// `POST /voice/preference` — persist the user's voice stack (§13.9). Takes
+  /// effect on the next voice call.
+  Future<void> saveVoicePreference(VoiceSelection sel) =>
+      _postJsonOk('/voice/preference', sel.toMap());
+
   /// `GET /media/photos` — the current profile-photo grid (§8.3). Returns the
   /// list of `{media_id, order}` maps, order ascending.
   Future<List<Map<String, dynamic>>> listPhotos() async {
@@ -4364,6 +4377,230 @@ class VoicePresets {
 
   /// The effective voice selection: the user's choice, or the default.
   String get effective => current.isNotEmpty ? current : defaultName;
+}
+
+// --- Voice ENGINE catalog (§13.9) ---------------------------------------
+// The developer "Voice engine" control + the user-facing "Ayma's voice"
+// screen read this from `GET /voice/engines`. Parsers tolerate missing fields.
+
+/// One selectable voice (a realtime model's or a TTS provider's).
+class CatalogVoice {
+  const CatalogVoice({
+    required this.id,
+    required this.label,
+    this.description = '',
+    this.gender = '',
+  });
+  final String id;
+  final String label;
+  final String description;
+  final String gender;
+
+  factory CatalogVoice.fromMap(Map m) => CatalogVoice(
+        id: m['id'] as String? ?? '',
+        label: (m['label'] as String?)?.isNotEmpty == true
+            ? m['label'] as String
+            : (m['id'] as String? ?? ''),
+        description: m['description'] as String? ?? '',
+        gender: m['gender'] as String? ?? '',
+      );
+}
+
+/// A language/accent option (empty code = plain English default).
+class CatalogLanguage {
+  const CatalogLanguage({required this.code, required this.label});
+  final String code;
+  final String label;
+  factory CatalogLanguage.fromMap(Map m) => CatalogLanguage(
+        code: m['code'] as String? ?? '',
+        label: m['label'] as String? ?? (m['code'] as String? ?? ''),
+      );
+}
+
+/// A realtime model (Gemini Live, OpenAI Realtime, …) with its own voices.
+class RealtimeModel {
+  const RealtimeModel({
+    required this.id,
+    required this.label,
+    this.provider = '',
+    this.available = true,
+    this.requiresSecret = '',
+    this.voices = const [],
+    this.languages = const [],
+  });
+  final String id;
+  final String label;
+  final String provider;
+  final bool available;
+  final String requiresSecret;
+  final List<CatalogVoice> voices;
+  final List<CatalogLanguage> languages;
+
+  factory RealtimeModel.fromMap(Map m) => RealtimeModel(
+        id: m['id'] as String? ?? '',
+        label: m['label'] as String? ?? (m['id'] as String? ?? ''),
+        provider: m['provider'] as String? ?? '',
+        available: m['available'] as bool? ?? true,
+        requiresSecret: m['requires_secret'] as String? ?? '',
+        voices: ((m['voices'] as List?) ?? const [])
+            .map((e) => CatalogVoice.fromMap(e as Map))
+            .toList(),
+        languages: ((m['languages'] as List?) ?? const [])
+            .map((e) => CatalogLanguage.fromMap(e as Map))
+            .toList(),
+      );
+}
+
+/// A cascade component (brain/STT/TTS). TTS carries its voices + languages.
+class VoiceComponent {
+  const VoiceComponent({
+    required this.id,
+    required this.label,
+    this.provider = '',
+    this.available = true,
+    this.requiresSecret = '',
+    this.voices = const [],
+    this.languages = const [],
+  });
+  final String id;
+  final String label;
+  final String provider;
+  final bool available;
+  final String requiresSecret;
+  final List<CatalogVoice> voices;
+  final List<CatalogLanguage> languages;
+
+  factory VoiceComponent.fromMap(Map m) => VoiceComponent(
+        id: m['id'] as String? ?? '',
+        label: m['label'] as String? ?? (m['id'] as String? ?? ''),
+        provider: m['provider'] as String? ?? '',
+        available: m['available'] as bool? ?? true,
+        requiresSecret: m['requires_secret'] as String? ?? '',
+        voices: ((m['voices'] as List?) ?? const [])
+            .map((e) => CatalogVoice.fromMap(e as Map))
+            .toList(),
+        languages: ((m['languages'] as List?) ?? const [])
+            .map((e) => CatalogLanguage.fromMap(e as Map))
+            .toList(),
+      );
+}
+
+/// The user's current/selected voice stack.
+class VoiceSelection {
+  const VoiceSelection({
+    required this.mode,
+    this.realtimeModelId = '',
+    this.brainId = '',
+    this.sttId = '',
+    this.ttsId = '',
+    this.voiceId = '',
+    this.languageCode = '',
+  });
+  final String mode; // 'realtime' | 'cascade'
+  final String realtimeModelId;
+  final String brainId;
+  final String sttId;
+  final String ttsId;
+  final String voiceId;
+  final String languageCode;
+
+  factory VoiceSelection.fromMap(Map m) => VoiceSelection(
+        mode: m['mode'] as String? ?? 'realtime',
+        realtimeModelId: m['realtime_model_id'] as String? ?? '',
+        brainId: m['brain_id'] as String? ?? '',
+        sttId: m['stt_id'] as String? ?? '',
+        ttsId: m['tts_id'] as String? ?? '',
+        voiceId: m['voice_id'] as String? ?? '',
+        languageCode: m['language_code'] as String? ?? '',
+      );
+
+  Map<String, dynamic> toMap() => {
+        'mode': mode,
+        'realtime_model_id': realtimeModelId,
+        'brain_id': brainId,
+        'stt_id': sttId,
+        'tts_id': ttsId,
+        'voice_id': voiceId,
+        'language_code': languageCode,
+      };
+
+  VoiceSelection copyWith({
+    String? mode,
+    String? realtimeModelId,
+    String? brainId,
+    String? sttId,
+    String? ttsId,
+    String? voiceId,
+    String? languageCode,
+  }) =>
+      VoiceSelection(
+        mode: mode ?? this.mode,
+        realtimeModelId: realtimeModelId ?? this.realtimeModelId,
+        brainId: brainId ?? this.brainId,
+        sttId: sttId ?? this.sttId,
+        ttsId: ttsId ?? this.ttsId,
+        voiceId: voiceId ?? this.voiceId,
+        languageCode: languageCode ?? this.languageCode,
+      );
+}
+
+/// The full `/voice/engines` catalog.
+class VoiceCatalog {
+  const VoiceCatalog({
+    this.modes = const ['realtime', 'cascade'],
+    this.source = '',
+    this.realtimeModels = const [],
+    this.brains = const [],
+    this.stt = const [],
+    this.tts = const [],
+    required this.current,
+    required this.defaultSelection,
+  });
+  final List<String> modes;
+  final String source; // 'livekit' | 'fallback'
+  final List<RealtimeModel> realtimeModels;
+  final List<VoiceComponent> brains;
+  final List<VoiceComponent> stt;
+  final List<VoiceComponent> tts;
+  final VoiceSelection current;
+  final VoiceSelection defaultSelection;
+
+  factory VoiceCatalog.fromMap(Map<String, dynamic> m) => VoiceCatalog(
+        modes: ((m['modes'] as List?) ?? const ['realtime', 'cascade'])
+            .map((e) => e.toString())
+            .toList(),
+        source: m['source'] as String? ?? '',
+        realtimeModels: ((m['realtime_models'] as List?) ?? const [])
+            .map((e) => RealtimeModel.fromMap(e as Map))
+            .toList(),
+        brains: ((m['brains'] as List?) ?? const [])
+            .map((e) => VoiceComponent.fromMap(e as Map))
+            .toList(),
+        stt: ((m['stt'] as List?) ?? const [])
+            .map((e) => VoiceComponent.fromMap(e as Map))
+            .toList(),
+        tts: ((m['tts'] as List?) ?? const [])
+            .map((e) => VoiceComponent.fromMap(e as Map))
+            .toList(),
+        current: VoiceSelection.fromMap(
+            (m['current'] as Map?) ?? const {'mode': 'realtime'}),
+        defaultSelection: VoiceSelection.fromMap(
+            (m['default'] as Map?) ?? const {'mode': 'realtime'}),
+      );
+
+  RealtimeModel? realtimeById(String id) {
+    for (final r in realtimeModels) {
+      if (r.id == id) return r;
+    }
+    return null;
+  }
+
+  VoiceComponent? ttsById(String id) {
+    for (final t in tts) {
+      if (t.id == id) return t;
+    }
+    return null;
+  }
 }
 
 // --- Your Story editor models -------------------------------------------

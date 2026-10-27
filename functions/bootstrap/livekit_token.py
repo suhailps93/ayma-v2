@@ -79,6 +79,12 @@ def build_room_seed(
     practice: bool = False,
     persona_name: str = "",
     target_uid: str = "",
+    voice_mode: str = "",
+    realtime_model_id: str = "",
+    brain_id: str = "",
+    stt_id: str = "",
+    tts_id: str = "",
+    tts_voice: str = "",
 ) -> str:
     """JSON the agent worker reads from room metadata: the caller's system
     prompt + recent-turns window (§1.4, §1.5), the ids it needs to persist the
@@ -103,6 +109,16 @@ def build_room_seed(
             "session_id": session_id,
             "voice_name": voice_name,
             "voice_language": voice_language,
+            # Per-user MAIN-voice STACK selection (§13.9). Empty ``voice_mode`` =
+            # use the deploy-time CONFIG.llm_provider_voice_main default; set it
+            # ("realtime"/"cascade") and the component ids override it for this
+            # call only (``agent._run_session``).
+            "voice_mode": voice_mode,
+            "realtime_model_id": realtime_model_id,
+            "brain_id": brain_id,
+            "stt_id": stt_id,
+            "tts_id": tts_id,
+            "tts_voice": tts_voice,
             "greeting_instructions": greeting_instructions,
             "practice": practice,
             "persona_name": persona_name,

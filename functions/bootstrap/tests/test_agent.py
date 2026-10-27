@@ -2454,6 +2454,8 @@ def _install_fake_cascade_plugins(monkeypatch):
     monkeypatch.setattr(inference, "STT", _FakeSTT)
     monkeypatch.setattr(inference, "TTS", _FakeTTS)
     monkeypatch.setattr(inference, "VAD", _FakeVAD)
+    # The inference-route brain (§13.9) builds via inference.LLM; capture it too.
+    monkeypatch.setattr(inference, "LLM", _FakeLLM)
     monkeypatch.setattr(agent, "AgentSession", _FakeSession)
     return captured
 
@@ -2655,10 +2657,13 @@ def test_relay_cascade_usage_meters_llm_turns(monkeypatch):
 # --- MAIN voice provider switch (LLM_PROVIDER_VOICE_MAIN, default gemini) --- #
 
 
-def _drive_main_run_session(monkeypatch, provider, *, build_raises=False):
+def _drive_main_run_session(
+    monkeypatch, provider, *, build_raises=False, seed=None
+):
     """Drive ``_run_session`` for a normal (non-practice) call with the MAIN
     voice flag set to ``provider``, stubbing the shared setup + both path
-    builders so the test observes only which stack the flag selects."""
+    builders so the test observes only which stack is selected. ``seed`` lets a
+    test drive a per-user voice-stack selection (§13.9) instead of the flag."""
     import config
     import llm_routing
     import token_ledger
@@ -2666,7 +2671,8 @@ def _drive_main_run_session(monkeypatch, provider, *, build_raises=False):
     monkeypatch.setenv("LLM_PROVIDER_VOICE_MAIN", provider)
     monkeypatch.setattr(agent, "CONFIG", config._load())
 
-    seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
+    if seed is None:
+        seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
 
     async def _fake_seed(_ctx):
         return seed
@@ -2689,13 +2695,14 @@ def _drive_main_run_session(monkeypatch, provider, *, build_raises=False):
 
     calls: dict = {}
 
-    def _build_cascade(*_a, **_k):
+    def _build_cascade(*a, **_k):
         calls["built"] = True
+        calls["cascade_args"] = a
         if build_raises:
             raise RuntimeError("META_API_KEY is not set")
         return "CASCADE_SESSION"
 
-    monkeypatch.setattr(agent, "build_meta_cascade_session", _build_cascade)
+    monkeypatch.setattr(agent, "build_cascade_session", _build_cascade)
     monkeypatch.setattr(
         agent, "_arm_main_cascade_fallback",
         lambda *a, **k: calls.__setitem__("armed", True),
@@ -2797,6 +2804,63 @@ def test_start_main_cascade_session_meters_and_opens(monkeypatch):
     assert used["model"] == CONFIG.meta_chat_model
     assert used["cap"] is True
     assert used["opened"] is True
+
+
+def test_voice_stack_seed_cascade_overrides_default_flag(monkeypatch):
+    """A per-user cascade selection (§13.9) builds the cascade with the user's
+    component ids even though the deploy default (gemini) would be realtime."""
+    seed = agent.RoomSeed(
+        system_prompt="sys", uid="u1", session_id="s1",
+        voice_mode="cascade", brain_id="google/gemini-3.7-flash",
+        stt_id="deepgram/nova-3", tts_id="cartesia/sonic-3", tts_voice="Olivia",
+    )
+    calls = _drive_main_run_session(monkeypatch, "gemini", seed=seed)
+    assert calls["started"] == "cascade"
+    # build_cascade_session(brain, stt, tts, tts_voice, voice_language)
+    assert calls["cascade_args"][:4] == (
+        "google/gemini-3.7-flash", "deepgram/nova-3", "cartesia/sonic-3", "Olivia",
+    )
+
+
+def test_voice_stack_seed_realtime_openai_inert_falls_back(monkeypatch):
+    """Selecting OpenAI Realtime while it's inert (flag off / no key) falls back
+    to Gemini Live — a selection can never take the main voice down."""
+    seed = agent.RoomSeed(
+        system_prompt="sys", uid="u1", session_id="s1",
+        voice_mode="realtime", realtime_model_id="openai-realtime",
+    )
+    calls = _drive_main_run_session(monkeypatch, "gemini", seed=seed)
+    assert calls["started"] == "gemini"
+    assert "built" not in calls
+
+
+def test_build_openai_realtime_model_inert_without_flag_or_key(monkeypatch):
+    import config
+
+    monkeypatch.delenv("VOICE_OPENAI_REALTIME", raising=False)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    assert agent.build_openai_realtime_model("echo") is None  # flag off
+
+    monkeypatch.setenv("VOICE_OPENAI_REALTIME", "true")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    assert agent.build_openai_realtime_model("echo") is None  # key missing
+
+
+def test_build_cascade_session_inference_brain_needs_no_meta_key(monkeypatch):
+    """An inference-route brain builds via inference.LLM with no META_API_KEY —
+    so the Gemini/LiveKit brains work on the project's LiveKit credits alone."""
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    agent.build_cascade_session(
+        "google/gemini-3.7-flash", "deepgram/nova-3", "inworld/inworld-tts-1",
+    )
+    # LLM leg is the inference model id, with no Meta base_url/key.
+    assert captured["llm"]["model"] == "google/gemini-3.7-flash"
+    assert "base_url" not in captured["llm"]
+    assert "api_key" not in captured["llm"]
+    assert captured["stt"]["model"] == "deepgram/nova-3"
+    assert captured["tts"]["model"] == "inworld/inworld-tts-1"
 
 
 def test_main_cascade_runtime_error_falls_back_to_gemini(monkeypatch):

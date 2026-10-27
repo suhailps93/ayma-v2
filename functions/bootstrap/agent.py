@@ -260,8 +260,12 @@ def _turn_detection_config() -> types.RealtimeInputConfig | None:
     return types.RealtimeInputConfig(automatic_activity_detection=aad)
 
 
-def build_inference_realtime_model(voice: str):
+def build_inference_realtime_model(voice: str, model: str | None = None):
     """Gemini Live through LiveKit Inference (``VOICE_PROVIDER=inference``).
+
+    ``model`` overrides ``CONFIG.inference_live_model`` so a per-user realtime
+    selection (§13.9, a non-Gemini/non-OpenAI realtime model from the live
+    LiveKit catalog) runs on the same gateway path.
 
     ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
     gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
@@ -295,7 +299,7 @@ def build_inference_realtime_model(voice: str):
     if silence is not None:
         vad["silence_duration_ms"] = silence
     return realtime_cls(
-        model=CONFIG.inference_live_model,
+        model=model or CONFIG.inference_live_model,
         voice=voice,
         turn_detection=ServerVad(**vad),
     )
@@ -446,58 +450,81 @@ def build_realtime_model(
     return RealtimeModel(**kwargs)
 
 
-def build_meta_cascade_session(
-    voice_name: str | None = None,
-    voice_language: str | None = None,
-) -> AgentSession:
-    """Practice-voice Meta cascade (hackathon "runs on Meta"), behind
-    ``LLM_PROVIDER_VOICE=meta`` — the default voice path stays Gemini Live.
+def _build_cascade_brain(brain_id: str):
+    """Build the cascade LLM leg for ``brain_id`` (§13.9). Two routes:
 
-    A LiveKit pipeline (cascade) ``AgentSession`` instead of a speech-to-speech
-    ``RealtimeModel``:
+    * ``meta`` — Meta Muse Spark via ``livekit-plugins-openai`` pointed at the
+      OpenAI-compatible Meta Model API (``CONFIG.meta_api_base_url`` +
+      ``META_API_KEY``). Muse Spark is reasoning-only, so ``reasoning_effort`` is
+      pinned to ``CONFIG.meta_reasoning_effort`` (``minimal``) — without it
+      replies come back empty.
+    * ``inference`` — any LiveKit-Inference-hosted LLM (``inference.LLM``),
+      LiveKit-credit covered, no extra key.
 
-    * **STT** — ``CONFIG.meta_cascade_stt_model`` through the LiveKit Inference
-      gateway (``inference.STT``), authed with the worker's
-      ``LIVEKIT_API_KEY``/``SECRET`` (LiveKit-credit covered), run with the VAD
-      below. Meta's ``muse-voice-transcribe-1.0`` is listed in its model catalog
-      but serves no working OpenAI-compatible REST STT (every transcription path
-      404s; only a WebSocket ``/v1/realtime`` exists), so the STT leg runs on
-      Inference while the LLM leg stays Meta. The model id is config, never
-      hardcoded here.
-    * **LLM** — Meta Muse Spark ``muse-spark-1.3`` (``CONFIG.meta_chat_model``)
-      via ``livekit-plugins-openai`` pointed at the OpenAI-compatible Meta Model
-      API (``CONFIG.meta_api_base_url`` + the ``META_API_KEY`` secret). Muse
-      Spark is reasoning-only, so ``reasoning_effort`` is pinned to
-      ``CONFIG.meta_reasoning_effort`` (``minimal``) — without it replies come
-      back empty.
-    * **TTS** — ``CONFIG.meta_cascade_tts_model`` (Inworld by default) through the
-      same LiveKit Inference gateway (``inference.TTS``). The vendor is config,
-      never hardcoded here.
-    * **VAD** — bundled Silero (``inference.VAD``), run locally in the worker to
-      segment turns (the cascade has no server-side turn detection).
+    Model ids come from ``voice_catalog.brain_route`` (which reads ``config.py``),
+    never hardcoded here. Raises ``RuntimeError`` when the brain, its key or its
+    plugin is missing, so :func:`build_cascade_session`'s caller falls back to
+    Gemini Live and a selection can never take the main voice down."""
+    import voice_catalog
 
-    Raises ``RuntimeError`` if ``META_API_KEY`` or ``livekit-plugins-openai`` is
-    missing, so the caller falls back to Gemini Live and a flip can never take
-    voice down. ``voice_language`` biases the STT language when given;
-    ``voice_name`` (a Gemini voice preset) does not map to the TTS vendor's own
-    voices, so the configured TTS voice governs.
-    """
-    api_key = os.getenv("META_API_KEY", "")
-    if not api_key:
-        raise RuntimeError(
-            "META_API_KEY is not set — cannot run the Meta voice cascade "
-            "(see docs/META_PROVIDER.md)"
+    route_model = voice_catalog.brain_route(brain_id)
+    if route_model is None:
+        raise RuntimeError(f"unknown cascade brain {brain_id!r}")
+    route, model = route_model
+    if route == voice_catalog.ROUTE_META:
+        api_key = os.getenv("META_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(
+                "META_API_KEY is not set — cannot run the Meta cascade brain "
+                "(see docs/META_PROVIDER.md)"
+            )
+        try:
+            from livekit.plugins import openai as lk_openai
+        except ModuleNotFoundError as exc:  # pragma: no cover - dep in requirements
+            raise RuntimeError(
+                "livekit-plugins-openai is required for the Meta cascade brain"
+            ) from exc
+        return lk_openai.LLM(
+            model=model,
+            base_url=CONFIG.meta_api_base_url,
+            api_key=api_key,
+            temperature=0.9,
+            reasoning_effort=CONFIG.meta_reasoning_effort,
         )
-    try:
-        from livekit.plugins import openai as lk_openai
-    except ModuleNotFoundError as exc:  # pragma: no cover - dep in requirements
-        raise RuntimeError(
-            "livekit-plugins-openai is required for the Meta voice cascade"
-        ) from exc
     from livekit.agents import inference
 
-    base_url = CONFIG.meta_api_base_url
-    stt_kwargs: dict[str, object] = {"model": CONFIG.meta_cascade_stt_model}
+    return inference.LLM(model=model)
+
+
+def build_cascade_session(
+    brain_id: str,
+    stt_id: str,
+    tts_id: str,
+    tts_voice: str | None = None,
+    voice_language: str | None = None,
+) -> AgentSession:
+    """A LiveKit pipeline (cascade) ``AgentSession`` — STT + brain(LLM) + TTS +
+    VAD — with each component independently selected (§13.9), instead of a single
+    speech-to-speech ``RealtimeModel``:
+
+    * **STT** — ``stt_id`` through the LiveKit Inference gateway
+      (``inference.STT``), LiveKit-credit covered. ``voice_language`` biases its
+      language when given.
+    * **brain (LLM)** — :func:`_build_cascade_brain` for ``brain_id``.
+    * **TTS** — ``tts_id`` through the same gateway (``inference.TTS``);
+      ``tts_voice`` (else ``CONFIG.meta_cascade_tts_voice``, else the vendor
+      default) picks the voice.
+    * **VAD** — bundled Silero (``inference.VAD``), local turn segmentation (the
+      cascade has no server-side turn detection).
+
+    Raises ``RuntimeError`` (missing key/plugin/model) so the caller falls back
+    to Gemini Live. Model ids come from the catalog/config, never hardcoded."""
+    # Brain first: its key/plugin checks fail fast (before any Inference call),
+    # so an unavailable brain cleanly falls the caller back to Gemini Live.
+    brain = _build_cascade_brain(brain_id)
+    from livekit.agents import inference
+
+    stt_kwargs: dict[str, object] = {"model": stt_id}
     if voice_language:
         lang = voices.bcp47_hint(voice_language)
         if lang:
@@ -505,21 +532,62 @@ def build_meta_cascade_session(
             # full BCP-47 region tag.
             stt_kwargs["language"] = lang.split("-")[0]
     stt = inference.STT(**stt_kwargs)
-    meta_llm = lk_openai.LLM(
-        model=CONFIG.meta_chat_model,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=0.9,
-        # Muse Spark is reasoning-only; the API floor is "minimal". The plugin
-        # forwards this onto every chat completion — omitting it returns empty.
-        reasoning_effort=CONFIG.meta_reasoning_effort,
-    )
-    tts_kwargs: dict[str, object] = {"model": CONFIG.meta_cascade_tts_model}
-    if CONFIG.meta_cascade_tts_voice:
-        tts_kwargs["voice"] = CONFIG.meta_cascade_tts_voice
+    tts_kwargs: dict[str, object] = {"model": tts_id}
+    chosen_tts_voice = (tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    if chosen_tts_voice:
+        tts_kwargs["voice"] = chosen_tts_voice
     tts = inference.TTS(**tts_kwargs)
     vad = inference.VAD(model=CONFIG.meta_cascade_vad_model)
-    return AgentSession(stt=stt, llm=meta_llm, tts=tts, vad=vad, allow_interruptions=True)
+    return AgentSession(stt=stt, llm=brain, tts=tts, vad=vad, allow_interruptions=True)
+
+
+def build_meta_cascade_session(
+    voice_name: str | None = None,
+    voice_language: str | None = None,
+    tts_voice: str | None = None,
+) -> AgentSession:
+    """The default Meta cascade (Deliverable A / Practice Date voice): Muse Spark
+    brain + ``CONFIG.meta_cascade_stt_model`` STT + ``CONFIG.meta_cascade_tts_model``
+    TTS. A thin wrapper over :func:`build_cascade_session` kept for the practice
+    path; the voice-engine picker calls ``build_cascade_session`` directly with
+    per-user component ids. ``voice_name`` (a Gemini preset) is unused here."""
+    import voice_catalog
+
+    return build_cascade_session(
+        voice_catalog.BRAIN_META,
+        CONFIG.meta_cascade_stt_model,
+        CONFIG.meta_cascade_tts_model,
+        tts_voice,
+        voice_language,
+    )
+
+
+def build_openai_realtime_model(voice: str | None = None):
+    """OpenAI Realtime speech-to-speech model for REALTIME mode (§13.9), or
+    ``None`` when inert — the flag ``voice_openai_realtime_enabled`` is off, the
+    ``OPENAI_API_KEY`` secret is missing, or ``livekit-plugins-openai`` is
+    absent. ``None`` makes the caller fall back to Gemini Live, so selecting
+    OpenAI Realtime before the secret exists can never take the main voice down.
+    The model id is ``CONFIG.openai_realtime_model`` (config, per AGENTS.md)."""
+    if not CONFIG.voice_openai_realtime_enabled:
+        return None
+    key = os.getenv("OPENAI_API_KEY", "")
+    if not key:
+        logger.warning(
+            "OpenAI Realtime is enabled but OPENAI_API_KEY is unset — the "
+            "founder must add the secret (see docs/FEATURE_FLAGS.md)"
+        )
+        return None
+    try:
+        from livekit.plugins import openai as lk_openai
+    except ModuleNotFoundError:  # pragma: no cover - dep in requirements
+        logger.warning("livekit-plugins-openai is required for OpenAI Realtime")
+        return None
+    kwargs: dict[str, object] = {"model": CONFIG.openai_realtime_model, "api_key": key}
+    v = (voice or "").strip()
+    if v:
+        kwargs["voice"] = v
+    return lk_openai.realtime.RealtimeModel(**kwargs)
 
 
 def relay_cascade_usage(
@@ -1194,6 +1262,18 @@ class RoomSeed:
     seed_turns: list[Turn] = field(default_factory=list)
     voice_name: str = ""
     voice_language: str = ""
+    # Per-user MAIN-voice STACK selection (§13.9), resolved in
+    # ``main._voice_engine_seed`` from the saved preference. ``voice_mode`` empty
+    # → use the deploy-time ``CONFIG.llm_provider_voice_main`` default (unchanged
+    # behaviour). "realtime" → ``realtime_model_id``; "cascade" → ``brain_id`` /
+    # ``stt_id`` / ``tts_id``. ``tts_voice`` is the chosen non-Gemini-preset voice
+    # id (cascade TTS or OpenAI realtime; "" = the provider default).
+    voice_mode: str = ""
+    realtime_model_id: str = ""
+    brain_id: str = ""
+    stt_id: str = ""
+    tts_id: str = ""
+    tts_voice: str = ""
     # When set, the agent speaks first with these instructions (the pre-sign-in
     # "welcome" room). Empty for a normal session where the caller opens.
     greeting_instructions: str = ""
@@ -1370,6 +1450,12 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         seed_turns=turns,
         voice_name=str(seed.get("voice_name", "")),
         voice_language=str(seed.get("voice_language", "")),
+        voice_mode=str(seed.get("voice_mode", "")),
+        realtime_model_id=str(seed.get("realtime_model_id", "")),
+        brain_id=str(seed.get("brain_id", "")),
+        stt_id=str(seed.get("stt_id", "")),
+        tts_id=str(seed.get("tts_id", "")),
+        tts_voice=str(seed.get("tts_voice", "")),
         greeting_instructions=str(seed.get("greeting_instructions", "")),
         practice=bool(seed.get("practice", False)),
         persona_name=str(seed.get("persona_name", "")),
@@ -1892,33 +1978,49 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     ctx.add_shutdown_callback(flush.run)
     keepalive.hold_for(flush.run)
 
-    # MAIN voice provider switch (hackathon Deliverable A) — default ``gemini``,
-    # so the normal call runs the LOCKED Gemini Live ``RealtimeModel`` exactly as
-    # today and behaviour is unchanged until the flag is flipped. With
-    # ``LLM_PROVIDER_VOICE_MAIN=meta`` the main call is built as the Meta cascade
-    # (:func:`build_meta_cascade_session`), intentionally bypassing the locked
-    # Gemini Live voice for Muse Spark. Two fallbacks keep a flip from ever
-    # taking the main voice down: a cascade that can't be *built* (no
-    # ``META_API_KEY``, missing plugin) falls through to Gemini Live right here,
-    # and a built cascade that dies at *runtime* switches to a fresh Gemini Live
-    # session on the same room (:func:`_arm_main_cascade_fallback`). Both paths
-    # share the one ``flush``/``window`` so memory persistence is never doubled.
+    # MAIN voice STACK selection (§13.9). The user's saved ``voice_mode`` wins
+    # over the deploy-time default; empty keeps exactly today's behaviour
+    # (``CONFIG.llm_provider_voice_main``: ``meta`` → cascade, else Gemini Live).
+    #
+    #  * CASCADE → STT + brain(LLM) + TTS as selected
+    #    (:func:`build_cascade_session`). Two fallbacks keep it from ever taking
+    #    the main voice down: a cascade that can't be *built* (no key, missing
+    #    plugin) falls through to Gemini Live here, and one that dies at *runtime*
+    #    switches to a fresh Gemini Live session on the same room
+    #    (:func:`_arm_main_cascade_fallback`).
+    #  * REALTIME → one native-audio model: Gemini Live (the LOCKED model, the
+    #    default) or OpenAI Realtime (:func:`build_openai_realtime_model`, inert
+    #    without the flag + ``OPENAI_API_KEY`` — falls back to Gemini Live).
+    # Every path shares the one ``flush``/``window`` so memory is never doubled.
     from llm_provider import PROVIDER_META
+    import voice_catalog
 
-    if CONFIG.llm_provider_voice_main == PROVIDER_META:
+    mode = seed.voice_mode
+    if not mode:
+        mode = (
+            voice_catalog.MODE_CASCADE
+            if CONFIG.llm_provider_voice_main == PROVIDER_META
+            else voice_catalog.MODE_REALTIME
+        )
+
+    if mode == voice_catalog.MODE_CASCADE:
+        brain_id = seed.brain_id or voice_catalog.BRAIN_META
+        stt_id = seed.stt_id or CONFIG.meta_cascade_stt_model
+        tts_id = seed.tts_id or CONFIG.meta_cascade_tts_model
         try:
-            session = build_meta_cascade_session(seed.voice_name, seed.voice_language)
+            session = build_cascade_session(
+                brain_id, stt_id, tts_id, seed.tts_voice, seed.voice_language
+            )
         except Exception as exc:  # noqa: BLE001 - never take the main voice down
             logger.warning(
-                "Meta MAIN voice cascade unavailable (%s: %s) — falling back to "
-                "Gemini Live", type(exc).__name__, exc,
+                "cascade voice unavailable (%s: %s) — falling back to Gemini Live",
+                type(exc).__name__, exc,
             )
             capture_exception(exc)
         else:
             logger.info(
-                "main-voice Meta cascade uid=%s session=%s stt=%s llm=%s tts=%s",
-                seed.uid, seed.session_id or "?", CONFIG.meta_cascade_stt_model,
-                CONFIG.meta_chat_model, CONFIG.meta_cascade_tts_model,
+                "main-voice cascade uid=%s session=%s brain=%s stt=%s tts=%s",
+                seed.uid, seed.session_id or "?", brain_id, stt_id, tts_id,
             )
             _arm_main_cascade_fallback(
                 ctx, seed, session,
@@ -1927,6 +2029,48 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
             )
             await _start_main_cascade_session(
                 ctx, seed, session, flush=flush, window=window,
+            )
+            return
+    elif seed.realtime_model_id == voice_catalog.REALTIME_OPENAI:
+        realtime = build_openai_realtime_model(seed.tts_voice)
+        if realtime is not None:
+            logger.info(
+                "main-voice OpenAI Realtime uid=%s session=%s model=%s",
+                seed.uid, seed.session_id or "?", CONFIG.openai_realtime_model,
+            )
+            await _start_main_gemini_session(
+                ctx, seed,
+                flush=flush, window=window, route=route,
+                use_inference=use_inference, voice_provider=voice_provider,
+                llm=realtime, enable_hot_swap=False,
+            )
+            return
+        logger.warning(
+            "OpenAI Realtime selected but unavailable (flag/OPENAI_API_KEY) — "
+            "falling back to Gemini Live",
+        )
+    elif seed.realtime_model_id and seed.realtime_model_id != voice_catalog.REALTIME_GEMINI:
+        # A non-canonical realtime model from the live LiveKit catalog — run it
+        # on the Inference gateway. Any failure falls back to Gemini Live below.
+        try:
+            realtime = build_inference_realtime_model(
+                seed.tts_voice or seed.voice_name, model=seed.realtime_model_id
+            )
+        except Exception as exc:  # noqa: BLE001 - never take the main voice down
+            logger.warning(
+                "inference realtime %s unavailable (%s) — falling back to "
+                "Gemini Live", seed.realtime_model_id, exc,
+            )
+        else:
+            logger.info(
+                "main-voice inference realtime uid=%s session=%s model=%s",
+                seed.uid, seed.session_id or "?", seed.realtime_model_id,
+            )
+            await _start_main_gemini_session(
+                ctx, seed,
+                flush=flush, window=window, route=route,
+                use_inference=use_inference, voice_provider=voice_provider,
+                llm=realtime, enable_hot_swap=False,
             )
             return
 
@@ -1962,16 +2106,24 @@ async def _start_main_gemini_session(
     route: str,
     use_inference: bool,
     voice_provider: str,
+    llm: object | None = None,
+    enable_hot_swap: bool = True,
 ) -> None:
-    """Build and start the normal (default) Ayma voice call on Gemini Live.
+    """Build and start the normal (default) Ayma voice call on a native-audio
+    realtime model.
 
-    This is the unchanged main-voice path, also reused as the Meta-cascade
-    runtime fallback (:func:`_arm_main_cascade_fallback`) — it reuses the caller's
-    ``flush``/``window`` so a fallback never double-persists the conversation."""
+    Default: Gemini Live (the LOCKED model) — the unchanged main-voice path, also
+    reused as the cascade runtime fallback (:func:`_arm_main_cascade_fallback`),
+    reusing the caller's ``flush``/``window`` so a fallback never double-persists.
+    ``llm`` overrides the model (OpenAI Realtime, §13.9); ``enable_hot_swap``
+    False disables the mid-call Gemini voice swap (``VoiceSwapper``), which only
+    rebuilds Gemini Live, so a non-Gemini realtime model keeps the right voice."""
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
     session = AgentSession(
-        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
+        llm=llm or build_realtime_model(
+            seed.voice_name, seed.voice_language, route=route
+        ),
         allow_interruptions=True,
     )
     relay_transcripts(ctx, session, collector=window)
@@ -1993,28 +2145,37 @@ async def _start_main_gemini_session(
         ),
     )
     watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
-    swapper = VoiceSwapper(
-        session,
-        system_prompt=seed.system_prompt,
-        route=route,
-        voice_name=seed.voice_name,
-        voice_language=seed.voice_language,
-        session_id=seed.session_id,
-        provider=voice_provider,
-        is_muted=lambda: mute.muted,
+    # Mid-call voice hot-swap (``VoiceSwapper``) only rebuilds Gemini Live, so it
+    # is wired only on the Gemini path; a non-Gemini realtime model
+    # (``enable_hot_swap=False``) just saves the preference for the next call.
+    swapper = (
+        VoiceSwapper(
+            session,
+            system_prompt=seed.system_prompt,
+            route=route,
+            voice_name=seed.voice_name,
+            voice_language=seed.voice_language,
+            session_id=seed.session_id,
+            provider=voice_provider,
+            is_muted=lambda: mute.muted,
+        )
+        if enable_hot_swap
+        else None
     )
     tools = _session_tools(
         ctx,
         seed.uid,
         on_activity=watchdog.touch if watchdog else None,
-        on_voice_change=swapper.request,
+        on_voice_change=swapper.request if swapper else None,
         guard=misheard_fragment_guard(
-            window, len(window), lambda: swapper.language
+            window, len(window),
+            (lambda: swapper.language) if swapper else (lambda: seed.voice_language),
         ),
         session_id=seed.session_id,
         window=window,
     )
-    swapper.tools = tools
+    if swapper:
+        swapper.tools = tools
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx

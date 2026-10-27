@@ -239,6 +239,38 @@ Roll back by removing the var (or `LLM_PROVIDER_VOICE_MAIN=gemini`) and restarti
 Applies to the next main voice call. Same billing gate as Practice — a live Meta
 voice call bills the card until the credit posts.
 
+### Per-user voice ENGINE switcher (§13.9)
+
+`LLM_PROVIDER_VOICE_MAIN` is the deploy-time default. On top of it, each user can
+switch their own voice **stack** from developer settings via `GET /voice/engines`
++ `POST /voice/preference` (`voice_catalog.py`, ARCHITECTURE §13.9):
+
+* **Mode** `realtime` (Gemini Live, or OpenAI Realtime behind `VOICE_OPENAI_REALTIME`
+  + `OPENAI_API_KEY`) or `cascade` (brain + STT + TTS, mixable).
+* The cascade generalizes `build_meta_cascade_session` into
+  `agent.build_cascade_session(brain, stt, tts, voice, language)`: the **brain** is
+  either Meta Muse Spark (`route=meta`, direct Meta API) or any LiveKit-Inference
+  LLM (`route=inference`, no key); **STT** and **TTS** are any LiveKit Inference
+  models. `build_meta_cascade_session` is kept as a thin wrapper for the Practice
+  path.
+* **Catalog source.** The cascade dropdowns are fetched **live** from the LiveKit
+  Inference catalog — the gateway's OpenAI-compatible `GET /v1/models`, each model
+  TYPE-tagged (STT/TTS/LLM/realtime/TD/INT) — so whatever the project's credits
+  activate (Fish Audio, AssemblyAI, Rime, Gradium, Deepgram, Inworld, Cartesia…)
+  appears automatically. On fetch failure it falls back to the config lists
+  (`VOICE_CASCADE_*_MODELS`), marked `source:"fallback"`. Per-TTS **voice** lists
+  are not in `/v1/models`, so they come from the documented fallback
+  `voice_catalog._TTS_FALLBACK_VOICES` (clearly marked, overridable by
+  `VOICE_TTS_VOICES_<PROVIDER>`) — **verify each vendor's voice ids against its own
+  docs**; a wrong id only triggers a mid-call fallback to Gemini Live.
+* **Meta is never a realtime option** (no realtime audio API) — only a cascade
+  brain. OpenAI Realtime needs its own `OPENAI_API_KEY` secret (founder-added);
+  until then it is listed but inert and falls back to Gemini Live.
+
+The LOCKED Gemini model ids are never edited — the selection only chooses
+provider/model/voice/language. Every non-default path falls back to Gemini Live on
+a build/runtime error, so a per-user switch can never take the main voice down.
+
 ## Embeddings stay on Gemini (deliberate hybrid)
 
 Meta has **no embedding model**, and Ayma's matching uses a 3072-d Gemini

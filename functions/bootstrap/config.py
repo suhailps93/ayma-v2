@@ -765,6 +765,49 @@ class Config:
     flip can never take a surface down. ``LLM_META_FALLBACK=false`` to disable
     (e.g. in an eval that must measure Meta on its own)."""
 
+    # --- Voice ENGINE picker (§13.9, docs/META_PROVIDER.md) ---------------- #
+    # The per-user voice stack (dev-settings "Voice engine"): a CASCADE
+    # (brain/STT/TTS, independently selectable) or an all-in-one REALTIME model.
+    # Every model id below lives here per AGENTS.md; ``voice_catalog.py`` only
+    # assembles them into the catalog (labels, voices, availability).
+
+    openai_realtime_model: str
+    """OpenAI Realtime (speech-to-speech) model id for the voice-engine picker's
+    REALTIME mode (``livekit-plugins-openai`` ``openai.realtime.RealtimeModel``).
+    INERT until both ``voice_openai_realtime_enabled`` is set AND an
+    ``OPENAI_API_KEY`` secret is mounted on the agent (Secret Manager) — the
+    agent falls back to Gemini Live otherwise, so selecting it can never take
+    voice down. Override with ``OPENAI_REALTIME_MODEL``."""
+
+    voice_openai_realtime_enabled: bool
+    """Flag that EXPOSES OpenAI Realtime as a selectable realtime model in the
+    catalog. Default False (present but hidden/disabled in the UI until the
+    founder enables it and adds the ``OPENAI_API_KEY`` secret). ``gemini`` needs
+    no key and is always available. ``VOICE_OPENAI_REALTIME=true`` to enable."""
+
+    voice_cascade_stt_models: tuple[str, ...]
+    """Selectable STT model ids for CASCADE mode, LiveKit Inference
+    ``provider/model`` form (credit-covered, no key). The id IS the model string.
+    ``VOICE_CASCADE_STT_MODELS`` (CSV) overrides; extend by adding ids."""
+
+    voice_cascade_tts_models: tuple[str, ...]
+    """Selectable TTS model ids for CASCADE mode, LiveKit Inference
+    ``provider/model`` form. Voices per provider come from ``voice_catalog``
+    (LiveKit catalog when it ships one, else a documented fallback).
+    ``VOICE_CASCADE_TTS_MODELS`` (CSV) overrides; extend by adding ids."""
+
+    voice_cascade_llm_models: tuple[str, ...]
+    """FALLBACK brain (LLM) model ids for CASCADE mode when the live LiveKit
+    inference catalog can't be fetched. LiveKit Inference ``provider/model``
+    form; the live catalog (``voice_catalog``, type=LLM) supersedes these.
+    ``VOICE_CASCADE_LLM_MODELS`` (CSV)."""
+
+    voice_cascade_extra_brains: tuple[str, ...]
+    """Optional extra CASCADE brains beyond the two built-ins (Meta Muse Spark,
+    Gemini via Inference), each ``id|route|model`` where route is ``meta`` |
+    ``inference`` and ``model`` is the model id (config, per AGENTS.md).
+    ``VOICE_CASCADE_EXTRA_BRAINS`` (CSV) — empty by default."""
+
 
 def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
     raw = os.getenv(name, default)
@@ -966,6 +1009,25 @@ def _load() -> Config:
         ).strip().lower(),
         llm_meta_fallback=os.getenv("LLM_META_FALLBACK", "true").strip().lower()
         == "true",
+        # Voice ENGINE picker (§13.9).
+        openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime"),
+        voice_openai_realtime_enabled=os.getenv(
+            "VOICE_OPENAI_REALTIME", "false"
+        ).strip().lower() == "true",
+        voice_cascade_stt_models=_csv(
+            "VOICE_CASCADE_STT_MODELS",
+            "deepgram/nova-3,assemblyai/universal-streaming",
+        ),
+        voice_cascade_tts_models=_csv(
+            "VOICE_CASCADE_TTS_MODELS",
+            "inworld/inworld-tts-1,cartesia/sonic-3,rime/mistv3",
+        ),
+        voice_cascade_llm_models=_csv(
+            "VOICE_CASCADE_LLM_MODELS",
+            "google/gemini-3.8-flash,google/gemini-3.7-flash,"
+            "google/gemini-3.5-flash-lite",
+        ),
+        voice_cascade_extra_brains=_csv("VOICE_CASCADE_EXTRA_BRAINS", ""),
         dm_viewing_window_seconds=int(
             os.getenv("DM_VIEWING_WINDOW_SECONDS", "25")
         ),

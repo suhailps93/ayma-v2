@@ -50,6 +50,19 @@ Separate from the Gemini transport switches above, the **vendor** switch is the 
 
 `LLM_PROVIDER_DM_COACH` is the vendor switch for the **"Ayma in your DMs" assistant** (`dm_assist.py`, `POST /dm/assist` — opener chips on an empty thread + suggested next lines and a coaching tip on an active one, §6.9). Unlike every other surface it **defaults to `meta`** (Muse Spark via the Meta Model API) — a standing founder directive that the DM assistant runs on the Meta brain for the hackathon, so no env var is needed to get Meta here. It still inherits a global `LLM_PROVIDER` override and keeps the Gemini fallback (`LLM_META_FALLBACK`, default on), so a Meta hiccup degrades to Gemini and never blocks a thread; set `LLM_PROVIDER_DM_COACH=gemini` to pin it back to Gemini. Metered under the `icebreakers` token-ledger feature. Detail: `docs/META_PROVIDER.md` and `docs/ARCHITECTURE.md` §6.9.
 
+### Per-user voice engine switcher (§13.9)
+
+Beyond the deploy-time `LLM_PROVIDER_VOICE_MAIN` flag above, each user's voice **stack** is switchable per user from developer settings (and voice/accent from the "Ayma's voice" screen) via `GET /voice/engines` + `POST /voice/preference` (`voice_catalog.py`). `voice_mode=realtime|cascade` plus the chosen realtime model or brain/STT/TTS is stored on the user's profile and read by the agent at the next call (`main._voice_engine_seed` → room seed → `agent._run_session`); it overrides the deploy default for that user only, empty = the deploy default. The cascade dropdowns are populated **live** from the LiveKit Inference catalog (`GET /v1/models`, categorized by TYPE), so providers the project's credits activate appear with no code change; config fallback (`VOICE_CASCADE_STT_MODELS`/`VOICE_CASCADE_TTS_MODELS`/`VOICE_CASCADE_LLM_MODELS`, `VOICE_CASCADE_EXTRA_BRAINS`) otherwise. Every non-default path falls back to Gemini Live on error, so a dev switch can never break a user's call.
+
+New env, all read via `config.py`:
+
+* `VOICE_OPENAI_REALTIME` (default `false`) — EXPOSES OpenAI Realtime as a selectable realtime model. It stays **inert** until both this flag is `true` **and** an `OPENAI_API_KEY` secret is mounted on `ayma-agent` (the founder must add that secret in Secret Manager; selecting OpenAI Realtime before then falls back to Gemini Live). `OPENAI_REALTIME_MODEL` (default `gpt-realtime`) sets the model id. Gemini Live needs no key.
+* `VOICE_CASCADE_STT_MODELS` / `VOICE_CASCADE_TTS_MODELS` / `VOICE_CASCADE_LLM_MODELS` (CSV) — the **fallback** cascade component lists used only when the live LiveKit catalog can't be fetched.
+* `VOICE_CASCADE_EXTRA_BRAINS` (CSV of `id|route|model`) — extra cascade brains beyond the built-in Meta Muse + LiveKit LLMs.
+* `VOICE_TTS_VOICES_<PROVIDER>` (CSV of `id` or `id|Label|gender`) — override a TTS provider's documented fallback voice list.
+
+Meta is **never** a realtime option (it serves no realtime audio API) — only a cascade brain. The LOCKED Gemini model ids are never edited; the selection only chooses provider/model/voice/language.
+
 ## Flip, inspect, roll back
 
 ```
@@ -66,7 +79,7 @@ Each write stores the previous flag values in the doc's `_history` (last 20), wh
 ## Requirements that come with these defaults
 
 * Voice on Inference needs `livekit-agents` >= 1.8: `requirements-agent.txt` (the only agent image) pins 1.8.9 and `openai>=3.19,<4`. On the Google path 1.8.9 would default 3.8-live tools to NON_BLOCKING, so `agent.py` pins `tool_behavior=BLOCKING` (Developer API path only; Vertex rejects the field).
-* The Meta voice cascade (`LLM_PROVIDER_VOICE=meta`) additionally needs `livekit-plugins-openai==1.8.9` (`requirements-agent.txt`) for its OpenAI-compatible Muse Spark LLM leg; STT, Inworld TTS and Silero VAD ride livekit-agents' built-in `inference` module, so no extra STT/TTS/VAD plugin. `META_API_KEY` and `LIVEKIT_API_KEY`/`SECRET` are already mounted on `ayma-agent`.
+* The Meta voice cascade (`LLM_PROVIDER_VOICE=meta`) additionally needs `livekit-plugins-openai==1.8.9` (`requirements-agent.txt`) for its OpenAI-compatible Muse Spark LLM leg; STT, Inworld TTS and Silero VAD ride livekit-agents' built-in `inference` module, so no extra STT/TTS/VAD plugin. `META_API_KEY` and `LIVEKIT_API_KEY`/`SECRET` are already mounted on `ayma-agent`. The same `livekit-plugins-openai` also serves the voice-engine switcher's OpenAI Realtime option (§13.9) once `OPENAI_API_KEY` is added. The live catalog fetch (`GET /voice/engines`) uses the `LIVEKIT_API_KEY`/`SECRET` already on the Main API.
 * Chat on Inference cannot ground on Google Search / Maps (the gateway has none): `web_search` runs as a function tool answered by a grounded Vertex call (unchanged). Maps grounding therefore only applies to chat turns that run on Vertex (Vertex route, or fallback).
 * Models: only the locked ids are used (`config.py`): `google/gemini-3.7-flash` for JSON/vision/chat, `google/gemini-3.8-live` for voice. No new model id was introduced.
 

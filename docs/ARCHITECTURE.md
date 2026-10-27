@@ -259,10 +259,11 @@ flowchart LR
   end
 
   subgraph Backend["Cloud Run"]
-    BS["/bootstrap<br/>LiveKit token + room URL, seeds agent context"]
+    BS["/bootstrap<br/>LiveKit token + room URL, seeds agent context<br/>+ per-user voice stack (§13.9)"]
+    VE["/voice/engines + /voice/preference<br/>voice-stack catalog (live LiveKit /v1/models) + per-user pref"]
     CH["/chat<br/>single text endpoint"]
     PT["/post-turn<br/>memory extraction"]
-    AG[LiveKit Agent Worker]
+    AG[LiveKit Agent Worker<br/>reads voice stack from room seed]
   end
 
   subgraph LK["LiveKit Cloud"]
@@ -270,12 +271,14 @@ flowchart LR
   end
 
   UI --> VS & TS
-  VS -->|1: fetch token + recent history| BS
+  UI -->|dev + Ayma's-voice screens| VE
+  VS -->|1: fetch token + recent history + voice stack| BS
   VS -->|2: WebRTC connect| Room
   Room <-->|realtime audio| AG
-  AG -->|Gemini Live (default; cascade build/runtime fallback)| Gemini[(Gemini Live API)]
-  AG -.->|Practice voice LLM_PROVIDER_VOICE=meta<br/>+ MAIN voice LLM_PROVIDER_VOICE_MAIN=meta:<br/>Muse Spark LLM only| Meta[(Meta Model API)]
-  AG -.->|cascade STT Deepgram + TTS Inworld + VAD Silero| LKInf[(LiveKit Inference gateway)]
+  VE -.->|GET /v1/models catalog (by type)| LKInf[(LiveKit Inference gateway)]
+  AG -->|Realtime: Gemini Live (default/fallback)<br/>or OpenAI Realtime (flag + OPENAI_API_KEY)| Gemini[(Gemini Live API)]
+  AG -.->|Cascade brain = Muse Spark| Meta[(Meta Model API)]
+  AG -.->|Cascade STT + TTS + VAD, inference LLM brains,<br/>catalog by type (§13.9)| LKInf
   AG -->|on turn complete| PT
   TS -->|typed messages + recent history| CH
   CH -->|on turn complete| PT
@@ -1305,10 +1308,11 @@ A behavioral instruction inside the base persona prompt: read the user's tone/en
 
 ### 13.3 Voice preference
 
-`ayma_voice_name` field on `users/{uid}/profile`, chosen from Gemini Live's built-in HD voice presets (gender-leaning, accent, tone vary by preset — a fixed set, not free-form synthesis). Two ways to set it:
+`ayma_voice_name` field on `users/{uid}/profile`, chosen from Gemini Live's built-in HD voice presets (gender-leaning, accent, tone vary by preset — a fixed set, not free-form synthesis). Set it three ways:
 
-- A settings-screen picker with preview.
-- The `set_voice_preference` agent tool (§13.6), callable in both voice and text sessions when the user asks mid-conversation — picks the named or closest matching preset and saves it. From a text chat it takes effect next voice call; in a live voice call the agent reconnects the Live session in the new voice right away (`VoiceSwapper`, `docs/agent.md`), and if the new session never speaks it restores the previous voice and says so.
+- The user-facing "Ayma's voice" settings screen — now catalog-driven (§13.9): it shows the voices + accent/languages for whichever **engine** is currently active, so it works on every engine (Gemini Live, the Meta cascade, …), not just Gemini.
+- The developer-settings "Voice engine" control (§13.9) — switches the whole voice stack (mode + model/brain/STT/TTS + voice + language).
+- The `set_voice_preference` agent tool (§13.6), callable in both voice and text sessions when the user asks mid-conversation — picks the named or closest matching Gemini preset and saves it. From a text chat it takes effect next voice call; in a live Gemini voice call the agent reconnects the Live session in the new voice right away (`VoiceSwapper`, `docs/agent.md`), and if the new session never speaks it restores the previous voice and says so.
 
 ### 13.4 System prompt storage
 
@@ -1351,6 +1355,19 @@ A new `functions/bootstrap/skills/` module holds every tool definition, register
 3. **Backend: skills module** — `functions/bootstrap/skills/` consolidating `add_followup_question`, the matching skill, and Explore's NL filter parser into one registered set, shared between the agent worker and `/chat`.
 4. **Backend: `set_voice_preference` tool** — new tool writing `ayma_voice_name` on `users/{uid}/profile`; `/bootstrap` reads it to configure the Gemini Live session's `voice_name`.
 5. **Client: voice preference settings screen** — picker with preview over Gemini Live's available voice presets.
+
+### 13.9 Voice engine switcher (per-user voice stack)
+
+The founder (dev settings) and, for voice/accent, every user can switch Ayma's **voice stack** per user — not just the Gemini preset. Two **modes**:
+
+- **Realtime** — one native-audio speech-to-speech model handles audio in + out. Options: **Gemini Live** (the LOCKED `CONFIG.gemini_live_model`, always available, no key) and **OpenAI Realtime** (`CONFIG.openai_realtime_model` via `livekit-plugins-openai`, exposed only behind the `VOICE_OPENAI_REALTIME` flag and inert until an `OPENAI_API_KEY` secret is mounted on the agent — selecting it before then falls back to Gemini Live). Meta serves no realtime audio API, so it is **never** a realtime option. The voice list comes from the chosen realtime model.
+- **Cascade** — three independently selectable, mixable components: **brain** (LLM), **STT**, **TTS** (`agent.build_cascade_session`). The brain is either Meta Muse Spark (direct Meta API, `META_API_KEY`) or any LiveKit-Inference-hosted LLM; STT/TTS are LiveKit Inference models. The voice list comes from the chosen TTS.
+
+**Catalog — `GET /voice/engines`** (`voice_catalog.py`, no LLM spend, cached ~5 min). The cascade's model lists are fetched **live** from the LiveKit Inference catalog: the gateway (`agent-gateway.livekit.cloud/v1`) is OpenAI-compatible and serves `GET /v1/models`, each model tagged with a TYPE (STT / TTS / LLM / realtime / TD / INT). `voice_catalog` fetches + categorizes it with the project's `LIVEKIT_API_KEY`/`SECRET`, so whatever the project's credits activate (Fish Audio, AssemblyAI, Rime, Gradium…) appears in the dropdowns with **no code change**. On any failure it falls back to the config lists (`CONFIG.voice_cascade_*_models`, response `source:"fallback"`). Merged on top of the live catalog: the direct Meta Muse brain and the two realtime models. Per-TTS voice lists aren't in `/v1/models`, so they come from a documented fallback (`voice_catalog._TTS_FALLBACK_VOICES`, overridable by `VOICE_TTS_VOICES_<PROVIDER>`) until LiveKit ships a voice-catalog API. Response shape: `{modes, source, realtime_models:[{id,label,provider,available,requires_secret,voices,languages}], brains:[{id,label,provider,route,available,requires_secret}], stt:[…], tts:[{…,voices,languages}], default, current}`.
+
+**Preference — `POST /voice/preference`** `{mode, realtime_model_id?, brain_id?, stt_id?, tts_id?, voice_id, language_code}`, validated against the catalog and stored on `users/{uid}/profile/main`: `ayma_voice_mode`, `ayma_realtime_model`, `ayma_cascade_brain`/`_stt`/`_tts`, and the voice in `ayma_voice_name` (a Gemini preset, so the hot-swap tool still works) or `ayma_tts_voice` (every other voice); `language_code` is stored as its human label in `ayma_voice_language`.
+
+**Agent — `agent._run_session`** reads the preference via the room seed (`main._voice_engine_seed` → `livekit_token.build_room_seed`). Empty `voice_mode` keeps today's deploy-time behaviour (`CONFIG.llm_provider_voice_main`). Cascade → `build_cascade_session(brain, stt, tts, voice, language)`; realtime → Gemini Live (`build_realtime_model`), OpenAI Realtime (`build_openai_realtime_model`, or Gemini Live when inert), or another inference realtime model. Every non-default path falls back to Gemini Live on a build or runtime error, so a dev switch can never break a user's call. The **LOCKED** Gemini model ids are never edited — the selection only chooses provider/model/voice/language. Flags: `docs/FEATURE_FLAGS.md`; detail: `docs/META_PROVIDER.md`.
 
 ---
 
