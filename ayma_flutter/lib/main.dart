@@ -83,7 +83,18 @@ Future<void> main() async {
     return true;
   };
 
-  await RevenueCatService.instance.init();
+  // Guarded like the other pre-`runApp` startup steps (§11.2): a release build
+  // produced by `scripts/build-apk.sh` carries the RevenueCat Test Store key but
+  // no production key, and `RevenueCatService.selectKey` deliberately *throws* in
+  // a non-debug build in that case (the Test Store key would otherwise native-
+  // kill a release). That throw escapes `init()` before its own try/catch, so an
+  // unguarded `await` here aborted `main()` before `runApp` — the app froze on
+  // the native splash orb (release-only; debug uses the test key and never
+  // throws). Catching it lets the app launch with purchases simply disabled.
+  await guardStartupStep(
+    'RevenueCatService.init',
+    () => RevenueCatService.instance.init(),
+  );
   // Sync plan credits on every entitlement change (purchase, renewal, restore,
   // expiry). A RevenueCat Test Store / sandbox purchase never sends the server
   // webhook, so without this the SDK would show Pro while the balance stayed
