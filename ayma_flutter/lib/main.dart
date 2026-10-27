@@ -58,7 +58,13 @@ Future<void> main() async {
     );
   }
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Every pre-first-frame network await is bounded so a flaky-DNS window can
+  // never stop `runApp` from running (§11.2). On a timeout we proceed anyway —
+  // the splash then handles connectivity and shows its retry/offline state.
+  await guardStartupStep(
+    'Firebase.initializeApp',
+    () => Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
+  );
 
   // Crash reporting (audit Task 3): report crashes to Crashlytics so a
   // regression is found from the dashboard, not by someone tailing
@@ -136,16 +142,58 @@ Future<void> main() async {
     runApp(const AymaApp());
     return;
   }
-  final sentryFlag = await SentryFlag.loadCached();
+  final sentryFlag = await SentryFlag.loadCached()
+      .timeout(const Duration(seconds: 5), onTimeout: () => const SentryFlag());
   unawaited(SentryFlag.refresh(FirebaseFirestore.instance));
   if (!sentryShouldRun(sentryFlag)) {
     runApp(const AymaApp());
     return;
   }
-  await SentryFlutter.init(
-    (options) => configureSentryOptions(options, sentryFlag),
-    appRunner: () => runApp(const AymaApp()),
-  );
+  // Sentry wraps `runApp` in its own error-capturing zone (`appRunner`). If
+  // `SentryFlutter.init` hangs reaching its ingest endpoint on a flaky network,
+  // `appRunner` — and so the first frame — would never run. Guard it: a one-shot
+  // launcher runs the app either when Sentry calls `appRunner` or when the init
+  // deadline passes, whichever is first, and never twice (§11.2).
+  var appStarted = false;
+  void launchApp() {
+    if (appStarted) return;
+    appStarted = true;
+    runApp(const AymaApp());
+  }
+
+  try {
+    await SentryFlutter.init(
+      (options) => configureSentryOptions(options, sentryFlag),
+      appRunner: launchApp,
+    ).timeout(const Duration(seconds: 8));
+  } on TimeoutException {
+    debugPrint('startup: SentryFlutter.init timed out; launching without it.');
+  } catch (e) {
+    debugPrint('startup: SentryFlutter.init failed ($e); launching anyway.');
+  }
+  launchApp();
+}
+
+/// Runs a pre-first-frame startup step under a hard deadline so a hung network
+/// call (e.g. flaky DNS during Firebase init) can never stop `runApp` from
+/// being reached (§11.2). On a timeout or error it logs and returns; whatever
+/// the step would have set up is simply absent, and the splash then surfaces
+/// the connectivity/retry state. [limit] is injectable so the test can prove a
+/// never-completing step still returns.
+@visibleForTesting
+Future<void> guardStartupStep(
+  String label,
+  Future<void> Function() step, {
+  Duration limit = const Duration(seconds: 8),
+}) async {
+  try {
+    await step().timeout(limit);
+  } on TimeoutException {
+    debugPrint('startup: "$label" timed out after '
+        '${limit.inSeconds}s; continuing to runApp.');
+  } catch (e) {
+    debugPrint('startup: "$label" failed ($e); continuing to runApp.');
+  }
 }
 
 /// Opens [path] on top of the current screen — but on a cold start (a tapped

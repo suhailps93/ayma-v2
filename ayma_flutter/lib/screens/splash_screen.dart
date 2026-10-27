@@ -37,6 +37,13 @@ class SplashScreen extends StatefulWidget {
   /// transient failures.
   static const maxStartupAttempts = 4;
 
+  /// Hard overall deadline for a startup cycle. However the per-call timeouts
+  /// and the backoff loop fall out (or are defeated — an await that never
+  /// completes, a plugin that never reports), the splash MUST show the Retry
+  /// affordance by now rather than an endless orb (§11.2). Public so the test
+  /// can assert the exact watchdog behaviour.
+  static const startupDeadline = Duration(seconds: 20);
+
   final ApiClient? apiClient;
   final FirebaseAuth? auth;
 
@@ -56,8 +63,10 @@ class _SplashScreenState extends State<SplashScreen> {
   String? _error;
   bool _retrying = false;
   bool _inFlight = false;
+  bool _deadlineExceeded = false;
   int _attempt = 0;
   Timer? _retryTimer;
+  Timer? _watchdog;
   StreamSubscription<List<ConnectivityResult>>? _connSub;
 
   @override
@@ -69,6 +78,7 @@ class _SplashScreenState extends State<SplashScreen> {
     AppContext.instance.set(screen: 'splash');
     if (widget.apiClient != null) {
       _watchConnectivity();
+      _startWatchdog();
       WidgetsBinding.instance.addPostFrameCallback((_) => _resolve());
     }
   }
@@ -76,8 +86,27 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void dispose() {
     _retryTimer?.cancel();
+    _watchdog?.cancel();
     _connSub?.cancel();
     super.dispose();
+  }
+
+  /// The belt-and-braces guarantee that startup can never hang on the orb: if
+  /// nothing has navigated away from the splash within [SplashScreen
+  /// .startupDeadline], force the branded Retry state. A successful bootstrap
+  /// (or a route to sign-in) disposes this screen, which cancels the timer, so
+  /// this only ever fires when the app is genuinely stuck.
+  void _startWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = Timer(SplashScreen.startupDeadline, () {
+      if (!mounted) return;
+      _deadlineExceeded = true;
+      _retryTimer?.cancel();
+      setState(() {
+        _error = "Couldn't connect. Check your connection and try again.";
+        _retrying = false;
+      });
+    });
   }
 
   /// A restored connection while we're stalled (showing the error state or
@@ -93,7 +122,9 @@ class _SplashScreenState extends State<SplashScreen> {
               results.any((r) => r != ConnectivityResult.none);
           if (online && !_inFlight && (_error != null || _retrying)) {
             _attempt = 0;
+            _deadlineExceeded = false;
             _retryTimer?.cancel();
+            _startWatchdog();
             _resolve();
           }
         },
@@ -141,6 +172,21 @@ class _SplashScreenState extends State<SplashScreen> {
                     ? BiometricConsentScreen.path
                     : entryRouteFor(result.sessionMode),
       );
+    } on AuthSessionException catch (e) {
+      // The restored auth session is unusable (keystore / decrypt failure after
+      // an Auto Backup restore, or a rejected / disabled user) — NOT a network
+      // blip, so retrying can only loop forever. Clear the broken session and
+      // send the user through sign-in, which overwrites the bad persisted auth.
+      debugPrint('splash: broken auth session, signing out — ${e.message}');
+      try {
+        await (widget.auth ?? FirebaseAuth.instance).signOut();
+      } catch (_) {
+        // Even if sign-out itself fails, still route to sign-in: the sign-in
+        // flow re-authenticates and replaces the unreadable persisted session.
+      }
+      if (!mounted) return;
+      context.go(SignInScreen.path);
+      return;
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 401 || e.statusCode == 403) {
@@ -174,6 +220,15 @@ class _SplashScreenState extends State<SplashScreen> {
 
   void _onTransientFailure(String message, {required bool retryable}) {
     _retryTimer?.cancel();
+    if (_deadlineExceeded) {
+      // The overall watchdog already surfaced the Retry state; a late-
+      // completing attempt must not flip it back to a reconnecting spinner.
+      setState(() {
+        _error = message;
+        _retrying = false;
+      });
+      return;
+    }
     if (retryable && _attempt < SplashScreen.maxStartupAttempts) {
       final delay = _backoff[(_attempt - 1).clamp(0, _backoff.length - 1)];
       setState(() {
@@ -194,6 +249,8 @@ class _SplashScreenState extends State<SplashScreen> {
   void _retryNow() {
     _retryTimer?.cancel();
     _attempt = 0;
+    _deadlineExceeded = false;
+    _startWatchdog();
     setState(() {
       _error = null;
       _retrying = true;
