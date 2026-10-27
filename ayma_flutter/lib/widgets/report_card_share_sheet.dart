@@ -74,6 +74,10 @@ class _ReportCardShareSheetState extends State<ReportCardShareSheet> {
         caption: widget.caption,
       );
       if (mounted) navigator.pop();
+    } on ShareTargetNotInstalled catch (e) {
+      // Keep the sheet open so the user can pick another option (e.g. More…).
+      kind = AymaToastKind.error;
+      message = "${e.appLabel} isn't installed.";
     } on PlatformException catch (e) {
       kind = AymaToastKind.error;
       message = e.code == 'PERMISSION'
