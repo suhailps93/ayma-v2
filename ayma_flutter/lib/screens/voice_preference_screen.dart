@@ -5,12 +5,13 @@ import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/voice_engine_control.dart';
 
-/// Pick the voice Ayma speaks with (§13.3, §13.9). The voices + accent/language
-/// come from the **same cloud catalog** (`GET /voice/engines`) as the developer
-/// "Voice engine" control, for whichever engine is currently active — so it
-/// works on every engine (Gemini Live, the Meta cascade, …), not just Gemini.
-/// The engine/stack itself is chosen in developer settings; here the user only
-/// picks the voice and accent. A change takes effect from the next voice call.
+/// Ayma's voice settings (§13.3, §13.9). This is the user-facing home of the
+/// full voice stack control: mode (Cascade / Realtime), brain (LLM),
+/// speech-to-text, text-to-speech, voice, and language & accent — all from the
+/// **cloud catalog** (`GET /voice/engines`), live, so new providers appear with
+/// no client change. It replaced the old Gemini-preset-only voice picker and is
+/// reachable from the normal Ayma settings menu (no longer developer-gated).
+/// A change takes effect from the next voice call.
 class VoicePreferenceScreen extends StatelessWidget {
   const VoicePreferenceScreen({super.key, this.api});
 
@@ -31,15 +32,13 @@ class VoicePreferenceScreen extends StatelessWidget {
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
           Text(
-            'Choose how Ayma sounds. A new voice starts at your next voice '
-            'call. She still follows you if you switch languages mid-chat.',
+            'Switch Ayma’s voice stack — how she thinks, listens and speaks. '
+            'A change takes effect on your next voice call. She still follows '
+            'you if you switch languages mid-chat.',
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
           const SizedBox(height: 16),
-          VoiceEngineControl(
-            api: api ?? ApiClient(),
-            fullStack: false,
-          ),
+          VoiceEngineControl(api: api ?? ApiClient()),
         ],
       ),
     );

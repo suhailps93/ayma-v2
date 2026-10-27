@@ -9,10 +9,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-/// The user-facing "Ayma's voice" screen now reads the SAME cloud catalog as
-/// the developer control, so it works on every engine — here the active engine
-/// is the Meta cascade, whose Inworld voices the screen must show (it was
-/// Gemini-preset-only before).
+/// The user-facing "Ayma's voice" screen is now the full voice-stack control
+/// (mode / brain / STT / TTS / voice / language), moved out of the developer
+/// panel — it reads the cloud catalog so it works on every engine. Here the
+/// active engine is the Meta cascade, whose Inworld voices the screen must show
+/// (it was Gemini-preset-only before).
 Map<String, dynamic> _cascadeCatalog() => {
       'modes': ['realtime', 'cascade'],
       'source': 'livekit',
@@ -82,7 +83,7 @@ ApiClient _api() {
 }
 
 void main() {
-  testWidgets('shows the active engine\'s voices from the catalog (cascade)',
+  testWidgets('shows the full voice stack + active engine voices (cascade)',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
@@ -93,8 +94,12 @@ void main() {
     expect(find.text('Ayma’s voice'), findsOneWidget);
     // The cascade TTS voice is shown — not a hardcoded Gemini preset.
     expect(find.text('Ashley — bright'), findsOneWidget);
-    // In the user-facing (non-fullStack) screen there is no MODE/brain picker.
-    expect(find.text('Cascade (brain + STT + TTS)'), findsNothing);
+    // The full stack is now exposed to the user from Ayma settings: the MODE
+    // picker (collapsed to the active cascade mode) and the cascade components.
+    expect(find.text('Cascade (brain + STT + TTS)'), findsOneWidget);
+    expect(find.text('BRAIN (LLM)'), findsOneWidget);
+    expect(find.text('SPEECH-TO-TEXT'), findsOneWidget);
+    expect(find.text('TEXT-TO-SPEECH'), findsOneWidget);
     expect(find.byKey(const ValueKey('voice-engine-save')), findsOneWidget);
   });
 }
