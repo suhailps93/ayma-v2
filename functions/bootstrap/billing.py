@@ -501,3 +501,32 @@ def credits_for(usd: float, cfg: Config) -> int:
     """USD (internal) -> whole client-facing credits, rounded up so a positive
     balance never displays as 0."""
     return max(0, math.ceil(usd * max(1, cfg.credits_per_usd) - 1e-6))
+
+
+# --- dev-only test upgrade (no real billing) ---------------------------------
+#
+# A dev/founder control (``POST /dev/test-upgrade``, ``require_dev``-gated) builds
+# a synthetic active entitlement for a chosen tier and runs it through the exact
+# :func:`sync_entitlement` grant path a real purchase/entitlement uses, so the
+# monthly pool it grants is the genuine per-plan pool — never a hardcoded number
+# and never a payment. It is a free-credits cheat, so the endpoint refuses every
+# non-dev caller; nothing here changes real RevenueCat/purchase logic.
+
+
+def dev_plan_entitlement(
+    plan: str, now: datetime | None = None, days: int = 30
+) -> dict:
+    """Build a synthetic active entitlement ``{product_id, expires, is_trial}``
+    for paid ``plan`` ("plus" | "pro" | "max"), as a dev test-upgrade feeds to
+    :func:`sync_entitlement`. ``expires`` is ``days`` ahead of ``now`` so each
+    call lands in a newer period than the last (a re-grant, not a no-op). Never
+    a trial. Raises :class:`ValueError` for an unknown plan."""
+    tier = PLAN_TIERS.get(plan)
+    if tier is None:
+        raise ValueError(f"unknown plan: {plan!r}")
+    now = now or datetime.now(timezone.utc)
+    return {
+        "product_id": tier.product_id,
+        "expires": now + timedelta(days=days),
+        "is_trial": False,
+    }

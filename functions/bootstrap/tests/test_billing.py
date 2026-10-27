@@ -964,3 +964,55 @@ def test_sync_endpoint_rest_error_is_502(db, monkeypatch):
 
     monkeypatch.setattr(billing, "fetch_active_entitlement", _boom)
     assert c.post("/billing/sync", json={}, headers=headers).status_code == 502
+
+
+# --- dev-only test upgrade (no real billing) ---------------------------------
+
+@pytest.mark.parametrize("plan,credits", [
+    ("plus", 700),
+    ("pro", 1400),
+    ("max", 8000),
+])
+def test_dev_test_upgrade_grants_the_tier_pool(db, monkeypatch, plan, credits):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    r = c.post("/dev/test-upgrade", json={"plan": plan}, headers=headers)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["sync_status"] == f"synced_{plan}"
+    assert j["plan"] == plan
+    assert j["credits"]["remaining"] == credits
+    # No dollar/payment fields leak to the client.
+    assert "$" not in repr(j)
+
+
+def test_dev_test_upgrade_rejects_non_dev(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=False)
+    r = c.post("/dev/test-upgrade", json={"plan": "pro"}, headers=headers)
+    assert r.status_code == 403
+    # Nothing was granted — the account is still free.
+    assert token_ledger.credits("u1")["plan"] == "free"
+
+
+def test_dev_test_upgrade_requires_auth(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    assert c.post("/dev/test-upgrade", json={"plan": "pro"}).status_code in (401, 403)
+
+
+def test_dev_test_upgrade_rejects_unknown_plan(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    r = c.post("/dev/test-upgrade", json={"plan": "free"}, headers=headers)
+    assert r.status_code == 400
+    assert token_ledger.credits("u1")["plan"] == "free"
+
+
+def test_dev_test_upgrade_can_switch_tiers(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    assert c.post("/dev/test-upgrade", json={"plan": "plus"},
+                  headers=headers).json()["credits"]["remaining"] == 700
+    # Switching tier refreshes the pool to the new plan (not additive).
+    j = c.post("/dev/test-upgrade", json={"plan": "max"}, headers=headers).json()
+    assert j["plan"] == "max" and j["credits"]["remaining"] == 8000

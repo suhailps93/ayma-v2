@@ -75,6 +75,7 @@ void main() {
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
     expect(find.byKey(const ValueKey('dev-panel-switch')), findsNothing);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsNothing);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-pro')), findsNothing);
   });
 
   testWidgets('correct password unlocks and shows the contents', (
@@ -175,6 +176,7 @@ void main() {
     expect(find.byKey(const ValueKey('dev-spend-unavailable')), findsOneWidget);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
     expect(find.textContaining('spent for real'), findsNothing);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-pro')), findsNothing);
   });
 
   testWidgets('the AI-notes toggle sends the stored password to the server', (
@@ -338,5 +340,50 @@ void main() {
     expect(resets, 1);
     expect(find.text('\$0.00'), findsOneWidget);
     expect(find.text('Since your reset on Sep 26.'), findsOneWidget);
+  });
+
+  testWidgets('unlocked + dev view: all three test-upgrade tiers show', (
+    tester,
+  ) async {
+    DevPanelSession.instance.unlock('pw');
+    await _pump(
+      tester,
+      DeveloperScreen(
+        auth: MockFirebaseAuth(signedIn: true),
+        api: _usageApi(_usage()),
+      ),
+    );
+    expect(find.byKey(const ValueKey('dev-test-upgrade-plus')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-pro')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-max')), findsOneWidget);
+  });
+
+  testWidgets('tapping a tier calls /dev/test-upgrade and refreshes the balance',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    final posts = <Map<String, dynamic>>[];
+    final api = _api((req) async {
+      if (req.method == 'POST' && req.url.path == '/dev/test-upgrade') {
+        posts.add(jsonDecode(req.body) as Map<String, dynamic>);
+        return http.Response(
+          jsonEncode({..._usage(remaining: 1400), 'plan': 'pro'}),
+          200,
+        );
+      }
+      return http.Response(jsonEncode(_usage()), 200);
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
+    await tester.tap(find.byKey(const ValueKey('dev-test-upgrade-pro')));
+    await tester.pumpAndSettle();
+    expect(posts, [
+      {'plan': 'pro'},
+    ]);
+    expect(
+      find.textContaining('Test upgrade: pro plan — 1400 credits'),
+      findsOneWidget,
+    );
   });
 }

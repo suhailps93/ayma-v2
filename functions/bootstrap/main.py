@@ -58,7 +58,7 @@ from auth import (  # noqa: E402
     require_dev,
     require_uid_and_dev_flag,
 )
-from config import CONFIG  # noqa: E402
+from config import CONFIG, PLAN_TIERS  # noqa: E402
 import agent_wake  # noqa: E402
 import feature_flags  # noqa: E402
 import gemini  # noqa: E402
@@ -5018,6 +5018,45 @@ async def billing_sync(
         )
     except billing.UnknownUser as exc:
         raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    view = await asyncio.to_thread(token_ledger.usage, uid)
+    return {"sync_status": status_text, **view}
+
+
+class DevTestUpgradeRequest(BaseModel):
+    """Body of ``POST /dev/test-upgrade``: which paid tier to simulate."""
+
+    model_config = {"extra": "forbid"}
+
+    plan: str = Field(max_length=16)
+
+
+@app.post("/dev/test-upgrade")
+async def dev_test_upgrade(
+    body: DevTestUpgradeRequest, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """DEV/TEST ONLY — grant the chosen paid tier's monthly credit pool to the
+    caller WITHOUT a real purchase, so the credit-grant path can be exercised in
+    a build where RevenueCat is off (the Test key native-kills in release). It
+    builds a synthetic entitlement for ``plan`` ("plus" | "pro" | "max") and runs
+    it through the SAME ``billing.sync_entitlement`` logic a real entitlement
+    uses, so the pool granted is the genuine per-plan pool. ``require_dev``-gated
+    (dev-view allowlist) — a 403 for everyone else; this is a free-credits cheat,
+    never a revenue bypass. Credits-only, like the real path. Returns the
+    refreshed usage view plus ``sync_status``."""
+    if body.plan not in PLAN_TIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown plan: {body.plan!r}. Expected one of "
+            f"{sorted(PLAN_TIERS)}.",
+        )
+    entitlement = billing.dev_plan_entitlement(body.plan)
+    try:
+        status_text = await asyncio.to_thread(
+            billing.sync_entitlement, get_db(), uid, entitlement, CONFIG
+        )
+    except billing.UnknownUser as exc:
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    logger.info("dev test-upgrade uid=%s plan=%s -> %s", uid, body.plan, status_text)
     view = await asyncio.to_thread(token_ledger.usage, uid)
     return {"sync_status": status_text, **view}
 
