@@ -255,14 +255,22 @@ switch their own voice **stack** from developer settings via `GET /voice/engines
   path.
 * **Catalog source.** The cascade dropdowns are fetched **live** from the LiveKit
   Inference catalog — the gateway's OpenAI-compatible `GET /v1/models`, each model
-  TYPE-tagged (STT/TTS/LLM/realtime/TD/INT) — so whatever the project's credits
-  activate (Fish Audio, AssemblyAI, Rime, Gradium, Deepgram, Inworld, Cartesia…)
-  appears automatically. On fetch failure it falls back to the config lists
-  (`VOICE_CASCADE_*_MODELS`), marked `source:"fallback"`. Per-TTS **voice** lists
+  TYPE-tagged (STT/TTS/LLM/realtime/TD/INT) — when that catalog is populated. **It
+  is not for this project:** `GET /v1/models` returns an empty `{}` (verified
+  2026-10-27 with an InferenceGrants JWT — HTTP 200, body `{}`, every `?task=`
+  filter identical), so the live path yields nothing and the config FALLBACK
+  (`VOICE_CASCADE_*_MODELS`, `source:"fallback"`) is the **active** path today. The
+  fallback lists enumerate the providers the project has LiveKit startup credits
+  for — Inworld, Deepgram, Fish Audio (`fishaudio/s2.1-pro`), AssemblyAI, Rime
+  (`rime/coda`), Gradium (`gradium/default`), Google — with canonical model ids
+  from the LiveKit docs (`docs.livekit.io/agents/models`). Availability is honest
+  (`voice_catalog._availability`): a provider in `VOICE_CREDITED_PROVIDERS` shows
+  enabled; any other fallback entry (e.g. `cartesia`) shows **disabled** ("needs
+  LiveKit credits") rather than a silently-failing pick. Per-TTS **voice** lists
   are not in `/v1/models`, so they come from the documented fallback
-  `voice_catalog._TTS_FALLBACK_VOICES` (clearly marked, overridable by
-  `VOICE_TTS_VOICES_<PROVIDER>`) — **verify each vendor's voice ids against its own
-  docs**; a wrong id only triggers a mid-call fallback to Gemini Live.
+  `voice_catalog._TTS_FALLBACK_VOICES` — the LiveKit docs' per-provider sample
+  voices (overridable by `VOICE_TTS_VOICES_<PROVIDER>`); a wrong id only triggers a
+  mid-call fallback to Gemini Live.
 * **Meta is never a realtime option** (no realtime audio API) — only a cascade
   brain. OpenAI Realtime needs its own `OPENAI_API_KEY` secret (founder-added);
   until then it is listed but inert and falls back to Gemini Live.

@@ -20,17 +20,30 @@ Inference catalog: the gateway (``get_default_inference_url`` →
 ``GET /v1/models``, where each model carries a TYPE (STT / TTS / LLM / realtime /
 TD / INT). :func:`_sources` fetches and categorizes it with the project's
 ``LIVEKIT_API_KEY``/``SECRET`` (no LLM request, so it costs nothing), cached for
-``_CATALOG_TTL_SECONDS``, so whatever the project's credits activate (Fish Audio,
-AssemblyAI, Rime, Gradium…) shows up in the dropdowns with no code change. On any
-failure it falls back to the config lists (``CONFIG.voice_cascade_*_models``,
-``source="fallback"``). Merged in on top of the live catalog: the direct Meta
-Muse brain (not a LiveKit model — via the Meta API) and the two realtime models
-(Gemini Live, the LOCKED model; OpenAI Realtime, flag-gated).
+``_CATALOG_TTL_SECONDS``, so when the catalog is populated whatever the project's
+credits activate shows up in the dropdowns with no code change.
+
+**Known gap (verified 2026-10-27).** For THIS project ``GET /v1/models`` returns
+HTTP 200 with an empty body ``{}`` (an InferenceGrants JWT authenticates fine —
+it is simply not populated for our plan; no ``?task=`` filter changes it). So
+the live path yields nothing and :func:`_sources` uses the config FALLBACK lists
+(``CONFIG.voice_cascade_*_models``, ``source="fallback"``) — the active path in
+production today. Those lists enumerate the providers the project has LiveKit
+startup credits for, with canonical model ids from the LiveKit docs
+(docs.livekit.io/agents/models). On the fallback path availability is marked
+TRUTHFULLY (:func:`_availability`): a provider in ``CONFIG.voice_credited_providers``
+is enabled; any other (e.g. ``cartesia``) is shown disabled with a "needs LiveKit
+credits" note rather than a silently-failing pick. If LiveKit later populates
+``/v1/models``, the live path takes over automatically and everything it returns
+is enabled. Merged in on top either way: the direct Meta Muse brain (not a
+LiveKit model — via the Meta API) and the two realtime models (Gemini Live, the
+LOCKED model; OpenAI Realtime, flag-gated).
 
 Per-TTS *voice* lists are a separate concern — ``/v1/models`` lists models, not
 each model's voices — so they come from :func:`_livekit_tts_voices` (the live
 extension point, empty today) else the **documented** fallback in
-:data:`_TTS_FALLBACK_VOICES` (overridable by ``VOICE_TTS_VOICES_<PROVIDER>``).
+:data:`_TTS_FALLBACK_VOICES` (the LiveKit docs' per-provider sample voices;
+overridable by ``VOICE_TTS_VOICES_<PROVIDER>``).
 
 Model ids all live in ``config.py``/the live catalog per ``AGENTS.md``; this
 module holds only voice *ids*/labels and catalog metadata (routes, availability).
@@ -126,8 +139,14 @@ _OPENAI_REALTIME_VOICES = [
 # Keyed by the provider segment of the TTS model id ("inworld/inworld-tts-1" ->
 # "inworld"). The empty-id "" voice always means "the vendor's default voice"
 # and is always safe. Override with ``VOICE_TTS_VOICES_<PROVIDER>`` (CSV of
-# ``id`` or ``id|Label|gender``). Verify ids against each vendor's own voice
-# docs — a wrong id only triggers a mid-call fallback to Gemini Live.
+# ``id`` or ``id|Label|gender``). A wrong id only triggers a mid-call fallback
+# to Gemini Live.
+#
+# The non-default voice ids below are the DOCUMENTED LiveKit Inference sample
+# voices for each provider, lifted verbatim from docs.livekit.io/agents/models/
+# tts/<provider> (verified 2026-10-27) — not invented. At runtime the agent
+# builds the full descriptor ``<model>:<voice-id>`` (e.g.
+# ``fishaudio/s2.1-pro:bf322df2096a46f18c579d0baa36f41d``).
 _TTS_FALLBACK_VOICES: dict[str, list[Voice]] = {
     "inworld": [
         Voice(id="", label="Default (Ashley)", description="the vendor default voice"),
@@ -140,10 +159,44 @@ _TTS_FALLBACK_VOICES: dict[str, list[Voice]] = {
         Voice(id="Hades", label="Hades", description="deep, intense", gender="masculine"),
         Voice(id="Edward", label="Edward", description="crisp, confident", gender="masculine"),
     ],
-    "cartesia": [
+    # Fish Audio s2.1-pro sample voices (docs .../tts/fishaudio).
+    "fishaudio": [
         Voice(id="", label="Default voice", description="the vendor default voice"),
+        Voice(id="bf322df2096a46f18c579d0baa36f41d", label="Adrian",
+              description="friendly, casual American", gender="masculine"),
+        Voice(id="536d3a5e000945adb7038665781a4aca", label="Ethan",
+              description="a curious explainer", gender="masculine"),
+        Voice(id="9a9cf47702da476aa4629e2506d4a857", label="Hannah",
+              description="a conversational specialist", gender="feminine"),
+        Voice(id="79d0bd3e4e5444b18f7b6d89b5927bf1", label="Jordan",
+              description="a motivational speaker", gender="masculine"),
+        Voice(id="e3cd384158934cc9a01029cd7d278634", label="Laura",
+              description="a confident female narrator", gender="feminine"),
+        Voice(id="933563129e564b19a115bedd57b7406a", label="Sarah",
+              description="an engaged speaker", gender="feminine"),
+        Voice(id="b347db033a6549378b48d00acb0d06cd", label="Selene",
+              description="a meditative female voice", gender="feminine"),
     ],
+    # Rime sample voices (docs .../tts/inference/rime; names shared across
+    # rime/coda and rime/mistv3).
     "rime": [
+        Voice(id="", label="Default voice", description="the vendor default voice"),
+        Voice(id="astra", label="Astra",
+              description="chipper, upbeat American", gender="feminine"),
+        Voice(id="celeste", label="Celeste",
+              description="chill Gen-Z American", gender="feminine"),
+        Voice(id="luna", label="Luna",
+              description="chill but excitable American", gender="feminine"),
+    ],
+    # Gradium sample voices (docs .../tts/gradium; en-US flagships).
+    "gradium": [
+        Voice(id="", label="Default voice", description="the vendor default voice"),
+        Voice(id="4SZHfMpw-p46Ywgs", label="Harper",
+              description="en-US", gender="feminine"),
+        Voice(id="6MFfc37kq0sBjBjy", label="Sterling",
+              description="en-US", gender="masculine"),
+    ],
+    "cartesia": [
         Voice(id="", label="Default voice", description="the vendor default voice"),
     ],
     "elevenlabs": [
@@ -321,6 +374,25 @@ def _sources() -> dict[str, object]:
     }
 
 
+def _availability(provider: str, source: str) -> tuple[bool, str]:
+    """``(available, requires)`` for a cascade option, marked TRUTHFULLY.
+
+    A LIVE LiveKit catalog lists exactly what the project's credits have
+    enabled, so anything it returns is available. On the config FALLBACK path
+    (``/v1/models`` is empty for this project — see the module docstring) we
+    cannot query the project, so we trust only the providers known to carry
+    LiveKit Inference credits (``CONFIG.voice_credited_providers``). Any other
+    fallback option is returned ``available=False`` with a short note, so the UI
+    shows it disabled ("needs LiveKit credits") instead of offering a pick that
+    would silently fail mid-call. A bare id with no provider segment is left
+    available (nothing to check it against)."""
+    if source == "livekit":
+        return True, ""
+    if not provider or provider in CONFIG.voice_credited_providers:
+        return True, ""
+    return False, "LiveKit credits"
+
+
 # --- Catalog assembly -------------------------------------------------------
 def _realtime_voices_for(model_id: str) -> list[Voice]:
     provider = _provider_of(model_id) or model_id
@@ -410,15 +482,18 @@ def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
             "requires_secret": "META_API_KEY",
         }
     ]
+    src = str(sources["source"])
     for mid in sources["llm"]:  # type: ignore[index]
+        provider = _provider_of(mid)
+        available, requires = _availability(provider, src)
         out.append(
             {
                 "id": mid,
                 "label": mid,
-                "provider": _provider_of(mid),
+                "provider": provider,
                 "route": ROUTE_INFERENCE,
-                "available": True,
-                "requires_secret": "",
+                "available": available,
+                "requires_secret": requires,
             }
         )
     for entry in CONFIG.voice_cascade_extra_brains:
@@ -432,25 +507,35 @@ def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _stt(sources: dict[str, object]) -> list[dict[str, object]]:
-    return [
-        {"id": m, "label": m, "provider": _provider_of(m), "available": True}
-        for m in sources["stt"]  # type: ignore[index]
-    ]
+    src = str(sources["source"])
+    out: list[dict[str, object]] = []
+    for m in sources["stt"]:  # type: ignore[index]
+        provider = _provider_of(m)
+        available, requires = _availability(provider, src)
+        out.append({
+            "id": m, "label": m, "provider": provider,
+            "available": available, "requires_secret": requires,
+        })
+    return out
 
 
 def _tts(sources: dict[str, object]) -> list[dict[str, object]]:
     langs = _languages()
-    return [
-        {
+    src = str(sources["source"])
+    out: list[dict[str, object]] = []
+    for m in sources["tts"]:  # type: ignore[index]
+        provider = _provider_of(m)
+        available, requires = _availability(provider, src)
+        out.append({
             "id": m,
             "label": m,
-            "provider": _provider_of(m),
-            "available": True,
+            "provider": provider,
+            "available": available,
+            "requires_secret": requires,
             "voices": [v.to_dict() for v in _tts_voices(m)],
             "languages": langs,
-        }
-        for m in sources["tts"]  # type: ignore[index]
-    ]
+        })
+    return out
 
 
 def _build_catalog() -> dict[str, object]:
