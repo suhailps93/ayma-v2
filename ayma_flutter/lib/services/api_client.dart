@@ -662,24 +662,20 @@ class ApiClient {
     if (size > 0) 'size': size,
   });
 
-  /// `GET /dm/{threadId}/icebreakers` — suggested opener chips (§6.9). Empty
-  /// until a compatibility check has produced a `matches` doc for the pair.
-  Future<List<String>> dmIcebreakers(String threadId) async {
-    final r = await _http.get(
-      _uri('/dm/$threadId/icebreakers'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException(
-        'icebreakers failed.',
-        statusCode: r.statusCode,
-        body: r.body,
-      );
-    }
-    final decoded = jsonDecode(r.body) as Map<String, dynamic>;
-    return ((decoded['icebreakers'] as List?) ?? [])
-        .map((e) => e.toString())
-        .toList();
+  /// `POST /dm/assist` — live DM coaching (§6.9): up-to-4 suggestion chips that
+  /// refresh as the conversation grows, plus an optional one-line nudge.
+  /// [other] is the other participant's uid; [messages] is the recent thread
+  /// tail (up to the last 12, oldest-first, each `{from: me|them, text}`) and
+  /// may be empty for a brand-new thread (opener mode).
+  Future<DmAssist> dmAssist({
+    required String other,
+    required List<Map<String, String>> messages,
+  }) async {
+    final decoded = await _sendJson('POST', '/dm/assist', {
+      'other': other,
+      'messages': messages,
+    });
+    return DmAssist.fromJson(decoded);
   }
 
   /// `POST /wiki/reset` — wipe what Ayma has learned (`wiki_pages` /
@@ -2923,6 +2919,35 @@ class MatchScoreResult {
   final bool queued;
   final double? score;
   final String? matchId;
+}
+
+/// Live DM coaching for a thread (§6.9), from `POST /dm/assist`: suggestion
+/// chips plus an optional one-line nudge. [mode] is `opener` for a brand-new
+/// thread or `coach` once the conversation is underway; the UI treats both the
+/// same way. An empty result (no chips, null tip) is the silent-degrade case.
+class DmAssist {
+  const DmAssist({this.mode = 'opener', this.chips = const [], this.tip});
+
+  final String mode; // opener | coach
+  final List<String> chips; // up to 4
+  final String? tip; // short nudge above the composer, or null
+
+  static const empty = DmAssist();
+
+  factory DmAssist.fromJson(Map<String, dynamic> m) {
+    final rawTip = (m['tip'] as String?)?.trim();
+    return DmAssist(
+      mode: (m['mode'] as String?)?.trim().isNotEmpty == true
+          ? m['mode'] as String
+          : 'opener',
+      chips: ((m['chips'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .take(4)
+          .toList(),
+      tip: (rawTip == null || rawTip.isEmpty) ? null : rawTip,
+    );
+  }
 }
 
 /// Name + resolved photo URL for a user, from `POST /profiles/mini`.

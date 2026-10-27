@@ -436,6 +436,7 @@ class _Spend extends StatelessWidget {
     'summary': 'Conversation summary',
     'completeness': 'Profile completeness',
     'icebreakers': 'Icebreakers',
+    'dm_assist': 'DM coaching',
     'matching': 'Match scoring',
     'explore': 'Explore search',
     'reengage': 'Ayma checking in',

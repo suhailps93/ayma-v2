@@ -13,7 +13,6 @@ import 'package:ayma_flutter/widgets/chat_composer.dart'
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// A stub ApiClient whose `/profiles/mini` returns [profiles] keyed by uid.
 ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
@@ -29,15 +28,21 @@ ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
 }
 
 class _FakeDm extends DmService {
-  _FakeDm(this._msgs, {this.chips = const []})
-    : super(
+  _FakeDm(this._msgs, {DmAssist Function(List<DmMessage>)? assist})
+    : _assistFn = assist,
+      super(
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
       );
 
   final StreamController<List<DmMessage>> _msgs;
   final List<String> sent = [];
   final List<String> blocked = [];
-  final List<String> chips;
+
+  /// Produces the coaching response for a given message tail; null → empty.
+  final DmAssist Function(List<DmMessage>)? _assistFn;
+
+  /// The message tails the screen asked [assist] about, in order.
+  final List<List<DmMessage>> assistCalls = [];
   final List<File> uploaded = [];
   final List<({String type, String caption})> attachmentsSent = [];
 
@@ -45,7 +50,10 @@ class _FakeDm extends DmService {
   Stream<List<DmMessage>> watchMessages(String threadId) => _msgs.stream;
 
   @override
-  Future<List<String>> icebreakers(String threadId) async => chips;
+  Future<DmAssist> assist(String threadId, List<DmMessage> messages) async {
+    assistCalls.add(messages);
+    return _assistFn?.call(messages) ?? DmAssist.empty;
+  }
 
   @override
   Future<void> block(String otherUid) async => blocked.add(otherUid);
@@ -100,11 +108,6 @@ Finder _composerPadding() => find.byWidgetPredicate(
 );
 
 void main() {
-  // The icebreaker dismissal persists via shared_preferences (see
-  // `DmThreadScreen.icebreakersDismissedKey`) — give every test a clean,
-  // in-memory store.
-  setUp(() => SharedPreferences.setMockInitialValues({}));
-
   testWidgets(
     'the composer uses the shared Ayma-chat padding and adds no extra '
     'bottom safe-area inset (the nav bar below already pads that in)',
@@ -206,15 +209,23 @@ void main() {
   });
 
   testWidgets(
-    'the icebreaker close button hides the suggestions and the dismissal '
-    'survives rebuilding the screen — but only for that thread',
+    'opener-mode chips render on a brand-new (empty) thread, with no tip',
     (tester) async {
       tester.view.physicalSize = const Size(1200, 2600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(ctrl, chips: ['Ask about the dog park']);
+      final dm = _FakeDm(
+        ctrl,
+        // Opener for an empty tail; a coach reply only once messages exist.
+        assist: (msgs) => msgs.isEmpty
+            ? const DmAssist(
+                mode: 'opener',
+                chips: ['Ask about the dog park', 'What trail do you run?'],
+              )
+            : const DmAssist(mode: 'coach', chips: ['x'], tip: 'keep going'),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: DmThreadScreen(
@@ -228,52 +239,108 @@ void main() {
       ctrl.add(const []);
       await tester.pumpAndSettle();
 
+      // Opener chips show above the composer; no tip for an empty thread.
       expect(find.text('Things to talk about'), findsOneWidget);
-      await tester.tap(find.byTooltip('Hide suggestions'));
-      await tester.pumpAndSettle();
-      expect(find.text('Things to talk about'), findsNothing);
-      expect(find.text('Ask about the dog park'), findsNothing);
+      expect(find.text('Ask about the dog park'), findsOneWidget);
+      expect(find.byTooltip('Dismiss tip'), findsNothing);
+      // The first fetch was made with an empty tail.
+      expect(dm.assistCalls.first, isEmpty);
+    },
+  );
 
-      // A brand-new screen for the same thread (reopen / app restart): the
-      // service still offers chips, but the persisted dismissal wins. Tear the
-      // old tree down first — otherwise pumpWidget reuses the same State and
-      // initState (the dismissal read) never re-runs.
-      await tester.pumpWidget(const SizedBox());
-      final ctrl2 = StreamController<List<DmMessage>>.broadcast();
-      final dm2 = _FakeDm(ctrl2, chips: ['Ask about the dog park']);
+  testWidgets(
+    'coach-mode chips + tip render once messages exist, and the tip is '
+    'dismissible',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (msgs) => msgs.isEmpty
+            ? const DmAssist(mode: 'opener', chips: ['opener chip'])
+            : const DmAssist(
+                mode: 'coach',
+                chips: ['Ask what she liked about it'],
+                tip: 'She just opened up — match her energy.',
+              ),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: DmThreadScreen(
             threadId: 'a__me',
-            dmService: dm2,
+            dmService: dm,
             apiClient: _api(),
           ),
         ),
       );
       await tester.pump();
-      ctrl2.add(const []);
-      await tester.pumpAndSettle();
-      expect(find.text('Things to talk about'), findsNothing);
 
-      // A different thread is untouched by that dismissal.
-      await tester.pumpWidget(const SizedBox());
-      final ctrl3 = StreamController<List<DmMessage>>.broadcast();
-      final dm3 = _FakeDm(ctrl3, chips: ['Ask about the dog park']);
-      await tester.pumpWidget(
-        MaterialApp(
-          home: DmThreadScreen(
-            threadId: 'b__me',
-            dmService: dm3,
-            apiClient: _api(),
-          ),
+      ctrl.add([
+        DmMessage(
+          id: 'm1',
+          senderUid: 'a',
+          type: 'text',
+          body: 'hey!',
+          createdAt: DateTime.now(),
         ),
-      );
-      await tester.pump();
-      ctrl3.add(const []);
+      ]);
+      await tester.pump(); // deliver the message
+      // The refresh is debounced ~1.5s — advance past it so the coach reply
+      // lands, then settle the resulting rebuild.
+      await tester.pump(const Duration(milliseconds: 1600));
       await tester.pumpAndSettle();
-      expect(find.text('Things to talk about'), findsOneWidget);
+
+      expect(find.text('Ask what she liked about it'), findsOneWidget);
+      expect(
+        find.text('She just opened up — match her energy.'),
+        findsOneWidget,
+      );
+
+      // The tip is dismissible and stays gone until a different tip arrives.
+      await tester.tap(find.byTooltip('Dismiss tip'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('She just opened up — match her energy.'),
+        findsNothing,
+      );
+      // Chips are unaffected by dismissing the tip.
+      expect(find.text('Ask what she liked about it'), findsOneWidget);
     },
   );
+
+  testWidgets('the tip row is hidden entirely when the tip is null', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(
+      ctrl,
+      // Coach chips but no tip — the tip row must not appear.
+      assist: (msgs) =>
+          const DmAssist(mode: 'coach', chips: ['a chip'], tip: null),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(
+          threadId: 'a__me',
+          dmService: dm,
+          apiClient: _api(),
+        ),
+      ),
+    );
+    await tester.pump();
+    ctrl.add(const []);
+    await tester.pumpAndSettle();
+
+    expect(find.text('a chip'), findsOneWidget);
+    expect(find.byTooltip('Dismiss tip'), findsNothing);
+  });
 
   testWidgets(
     'a shared_report message renders as an in-app card (no raw link, '
@@ -501,7 +568,11 @@ void main() {
       addTearDown(tester.view.reset);
 
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(ctrl, chips: ['What trail do you run?']);
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) =>
+            const DmAssist(mode: 'opener', chips: ['What trail do you run?']),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: DmThreadScreen(

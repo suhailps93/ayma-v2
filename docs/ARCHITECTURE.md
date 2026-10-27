@@ -667,7 +667,7 @@ flowchart LR
   P1 -->|cron stage 2, small top-K| P2
   P2 --> Match["matches/{matchId}<br/>score · user_explanation{uidA,uidB} · ai_explanation · trust_flags · status"]
   Match --> Explore
-  Match --> Cards[Match cards / icebreakers — Piece 6]
+  Match --> Cards[Match cards / DM coaching §6.9 — Piece 6]
   Match -.->|score + ai_explanation; else has_match_score:false| Ayma[Ayma chat context — §5.6]
   P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
@@ -761,9 +761,16 @@ From Explore or a match card, a "share" action lets the user pick an existing or
 
 Every DM message becomes a `raw_turns` entry for **both** participants (§2.2). Photos get the vision-captioning step, voice notes get transcribed (§2.3) — both become text the standard ingest pipeline can process. Wiki content derived from DM images/voice defaults to `visibility: ai_only`: Ayma's understanding feeds her private analysis (matching, consistency-checking) but doesn't surface in the user's own private-wiki view, since the user already has the raw content in their DM thread. Face-embedding (§2.5) still runs on DM images regardless of visibility tier.
 
-### 6.9 Icebreaker prompts
+### 6.9 "Ayma in your DMs" coaching
 
-Suggested chips above the DM compose box, generated from that pair's `matches/{matchId}.ai_explanation`/`user_explanation` (§5.4) — no separate generation step. No chips show until a compatibility check has produced a `matches` doc for that pair.
+A live coach above the DM compose box, from `POST /dm/assist`:
+
+- **Request** — `{"other": "<other-uid>", "messages": [{"from": "me"|"them", "text": "..."}, ...]}`. The client sends the recent thread tail (up to the last 12 messages, oldest-first; empty for a brand-new thread). Typed, body-less messages (a bare photo, a voice note, a shared card) ride along as short placeholders (`[photo]`, `[voice message]`, …) so the back-and-forth stays intact without leaking a raw storage path.
+- **Response** — `{"mode": "opener"|"coach", "chips": ["...", up to 4], "tip": "<short nudge>"|null}`. `opener` is the brand-new-thread case (no messages yet); `coach` is once the conversation is underway. The client treats both the same way.
+- **Chips** — up to 4 suggestion chips above the composer; tapping one drops its text into the composer for editing (it is not auto-sent). They stay as common ground to keep talking about, not one-shot openers.
+- **Tip** — an optional one-line nudge rendered just above the composer (small, muted, with a small Ayma glyph). Dismissible; a later refresh carrying a *different* tip re-surfaces it. Hidden entirely when `tip` is null.
+
+Client behaviour (`dm_thread_screen.dart`): fetched on thread open and re-fetched (debounced ~1.5s) whenever an actual message is sent or received — never on keystrokes. The coaching region is capped at half the viewport and scrolls past that (`overflow_guards.CappedScroll`) so it never pushes the composer off-screen. Loading/empty/failure degrade silently — coaching never blocks typing or sending.
 
 ### 6.10 Storage map
 
@@ -784,7 +791,7 @@ Suggested chips above the DM compose box, generated from that pair's `matches/{m
 6. **Client: Explore feed UI** — cards per §6.4; like/pass/report actions per §6.5; tap opens full profile.
 7. **Backend: like/pass handling** — like updates `matches/{matchId}.status` toward `mutual_interest`; pass writes a seen/passed marker.
 8. **Backend: profile share endpoint** — attaches a `shared_profile` message into a chosen/new `dm_threads/{threadId}`.
-9. **Client: DM thread UI** — message list, compose box (text/photo/voice/shared_profile), icebreaker chips per §6.9.
+9. **Client: DM thread UI** — message list, compose box (text/photo/voice/shared_profile), live "Ayma in your DMs" coaching (refreshing suggestion chips + a one-line tip) per §6.9.
 10. **Backend: DM message ingestion** — new messages become `raw_turns` for both participants; images captioned, voice transcribed; feeds the standard wiki ingest pipeline with the `ai_only` default from §6.8.
 11. **Backend: block/report from DM** — writes `blocks/{uid}_{blockedUid}`; hides thread from blocker; blocks further messages from the blocked side.
 
@@ -1354,9 +1361,9 @@ Every screen the app needs, each item stating what it must have — mechanics re
 
 **Messages** — two sections: **New from Ayma** (unacted `matches/{matchId}` docs, accept/reject — "send a hello" / "not for me," per §5.7 `status` transitions) and **Conversations** (DM threads ordered by `last_message_at`, §6.6), unread state per thread.
 
-**Match detail** — score badge, `user_explanation` reasoning card (§5.4), icebreaker prompts once the user opens the resulting DM thread (§6.9), accept/reject action bar.
+**Match detail** — score badge, `user_explanation` reasoning card (§5.4), Ayma's DM coaching once the user opens the resulting DM thread (§6.9), accept/reject action bar.
 
-**DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, icebreaker chips above the composer (§6.9), share-profile action (§6.7), block/report (§6.5).
+**DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, live "Ayma in your DMs" coaching above the composer — refreshing suggestion chips + an optional one-line tip (§6.9), share-profile action (§6.7), block/report (§6.5).
 
 **Profile (own)** — Public/Private tab switcher over the wiki (§2.1), completeness meter on the public tab, four wiki section rows with tap-to-open detail editor: a single conversational, chat-based editor — no separate quick-edit form and no separate AI-correction dialog — writing `user_edits`/`user_hidden` and never `ai_body` (§2.1). Inline photo-carousel management (§8.3), Instagram connect action (§8.1), Connect Google action (§8.8).
 

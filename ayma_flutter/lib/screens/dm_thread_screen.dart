@@ -1,10 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
@@ -12,8 +12,10 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
@@ -32,8 +34,12 @@ const int _kContextMessages = 3;
 /// use the same message pipeline once a file is uploaded (Step 51 ingests them).
 /// Image / file attachments upload to `uploads/{uid}/dm/{threadId}/…` and send
 /// as `image` / `file` messages carrying the download URL + metadata.
-/// Icebreaker chips (§6.9) show above the composer while the thread is empty and
-/// a compatibility check has produced a `matches` doc for the pair.
+///
+/// "Ayma in your DMs" coaching (§6.9) lives above the composer: up-to-4
+/// suggestion chips (tap → drop into the composer) plus an optional one-line
+/// tip. Both come from `POST /dm/assist` and refresh (debounced) as the
+/// conversation grows, so they stay relevant instead of being one-shot
+/// openers. Any load failure degrades silently — never blocks typing/sending.
 class DmThreadScreen extends StatefulWidget {
   const DmThreadScreen({
     super.key,
@@ -45,14 +51,6 @@ class DmThreadScreen extends StatefulWidget {
   });
 
   static const path = '/dm';
-
-  /// The shared_preferences key remembering that this thread's icebreaker
-  /// suggestions were dismissed (the close button on `_IcebreakerBar`).
-  /// Icebreakers are fetched fresh from `GET /dm/{threadId}/icebreakers` on
-  /// every open and have no server-side per-user state, so the dismissal is
-  /// persisted client-side, keyed by thread.
-  static String icebreakersDismissedKey(String threadId) =>
-      'dm_icebreakers_dismissed_$threadId';
 
   final String threadId;
   final String title;
@@ -77,7 +75,23 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   File? _pending;
   String _pendingType = 'file'; // 'image' | 'file'
 
-  List<String> _icebreakers = const [];
+  /// Live DM coaching (chips + tip), refreshed from `POST /dm/assist` as the
+  /// conversation grows. Starts empty so nothing shows until the first fetch.
+  DmAssist _assist = DmAssist.empty;
+
+  /// The exact tip text the user last dismissed. A newly-fetched, different
+  /// tip re-surfaces (auto-updates); the same one stays hidden.
+  String? _dismissedTip;
+
+  /// Debounce for the assist refetch, and the message signature that last
+  /// triggered one — so we refetch only on an actual new sent/received
+  /// message, not on every stream rebuild or keystroke.
+  Timer? _assistDebounce;
+  String? _lastAssistSig;
+
+  /// The first assist load (thread open) fires immediately; later refreshes
+  /// are debounced so a burst of messages collapses into one call.
+  bool _assistLoadedOnce = false;
 
   /// The other person — name + photo + presence, so the header reads like a
   /// real conversation instead of "Conversation".
@@ -88,7 +102,6 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     super.initState();
     reassertScreenContext();
     _loadOther();
-    _loadIcebreakers();
     _dm.markThreadRead(widget.threadId);
   }
 
@@ -147,52 +160,51 @@ class _DmThreadScreenState extends State<DmThreadScreen>
 
   @override
   void dispose() {
+    _assistDebounce?.cancel();
     _composer.dispose();
     _composerFocus.dispose();
     super.dispose();
   }
 
-  Future<void> _loadIcebreakers() async {
-    if (await _icebreakersDismissed()) return;
+  /// Schedule an assist refetch for [msgs] if (and only if) the thread tail
+  /// actually changed since the last fetch — a new message sent or received,
+  /// not a mere rebuild. The first load (thread open) fires immediately; later
+  /// ones debounce ~1.5s so a burst collapses into a single call. Called from
+  /// the message [StreamBuilder]; scheduling a timer during build is safe (the
+  /// state change happens later, in [_fetchAssist]).
+  void _scheduleAssist(List<DmMessage> msgs) {
+    final sig = '${msgs.length}:${msgs.isNotEmpty ? msgs.last.id : ''}';
+    if (sig == _lastAssistSig) return;
+    _lastAssistSig = sig;
+    final immediate = !_assistLoadedOnce;
+    _assistLoadedOnce = true;
+    _assistDebounce?.cancel();
+    final snapshot = List<DmMessage>.unmodifiable(msgs);
+    _assistDebounce = Timer(
+      immediate ? Duration.zero : const Duration(milliseconds: 1500),
+      () => _fetchAssist(snapshot),
+    );
+  }
+
+  Future<void> _fetchAssist(List<DmMessage> msgs) async {
     try {
-      final chips = await _dm.icebreakers(widget.threadId);
-      if (mounted) setState(() => _icebreakers = chips);
+      final a = await _dm.assist(widget.threadId, msgs);
+      if (mounted) setState(() => _assist = a);
     } catch (_) {
-      // Icebreakers are a nicety — never surface a failure here.
+      // Coaching is a nicety — degrade silently, never block typing/sending.
     }
   }
 
-  /// Whether this thread's icebreakers were dismissed with the bar's close
-  /// button (see [DmThreadScreen.icebreakersDismissedKey]). Any prefs failure
-  /// reads as "not dismissed" — the suggestions showing again is the safe
-  /// side of that error, and the fetch itself has its own catch.
-  Future<bool> _icebreakersDismissed() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool(
-            DmThreadScreen.icebreakersDismissedKey(widget.threadId),
-          ) ??
-          false;
-    } catch (_) {
-      return false;
-    }
-  }
+  /// Quietly dismiss the current tip. It stays hidden until a *different* tip
+  /// arrives from a later refresh (then it auto-updates back into view).
+  void _dismissTip() => setState(() => _dismissedTip = _assist.tip);
 
-  /// The icebreaker bar's close button: hides the whole suggestion group for
-  /// this thread now, and remembers that persistently so it doesn't reappear
-  /// on reopening the thread or restarting the app.
-  Future<void> _dismissIcebreakers() async {
-    setState(() => _icebreakers = const []);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(
-        DmThreadScreen.icebreakersDismissedKey(widget.threadId),
-        true,
-      );
-    } catch (_) {
-      // Worst case the suggestions return next open — never surface this.
-    }
-  }
+  /// The tip to show right now, or null: the live tip unless the user dismissed
+  /// that exact text.
+  String? get _visibleTip =>
+      (_assist.tip != null && _assist.tip != _dismissedTip)
+          ? _assist.tip
+          : null;
 
   Future<void> _send() async {
     final text = _composer.text.trim();
@@ -380,7 +392,13 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           ),
         ],
       ),
-      body: Column(
+      // LayoutBuilder gives the coaching region a real height to cap against:
+      // in a Column its children get unbounded vertical space, so the chips +
+      // tip would otherwise push the composer off-screen in a short window
+      // (split-screen, landscape, text 2.0). Capped to a share of the viewport
+      // and scrolled past that, the composer always stays reachable.
+      body: LayoutBuilder(
+        builder: (context, constraints) => Column(
         children: [
           Expanded(
             child: StreamBuilder<List<DmMessage>>(
@@ -388,6 +406,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               builder: (context, snap) {
                 final msgs = snap.data ?? const <DmMessage>[];
                 _markReadIfIncoming(msgs);
+                // Refresh the coaching chips/tip as the conversation grows —
+                // debounced, and only on an actual message change (see
+                // `_scheduleAssist`). A transient stream error leaves the last
+                // suggestions in place rather than clearing them.
+                if (!snap.hasError) _scheduleAssist(msgs);
                 // A brand-new thread has no doc yet; the stream can be briefly
                 // empty or (transiently) error — never hang the screen on it.
                 if (msgs.isEmpty) {
@@ -444,17 +467,30 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               },
             ),
           ),
-          if (_icebreakers.isNotEmpty)
-            _IcebreakerBar(
-              chips: _icebreakers,
-              onClose: _dismissIcebreakers,
-              onTap: (text) {
-                _composer.text = text;
-                _composer.selection = TextSelection.collapsed(
-                  offset: _composer.text.length,
-                );
-                _composerFocus.requestFocus();
-              },
+          if (_assist.chips.isNotEmpty || _visibleTip != null)
+            CappedScroll(
+              // Never let coaching take more than half the screen — past that
+              // it scrolls inside the cap rather than squeezing out the list
+              // or the composer.
+              maxHeight: constraints.maxHeight * 0.5,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_assist.chips.isNotEmpty)
+                    _SuggestionBar(
+                      chips: _assist.chips,
+                      onTap: (text) {
+                        _composer.text = text;
+                        _composer.selection = TextSelection.collapsed(
+                          offset: _composer.text.length,
+                        );
+                        _composerFocus.requestFocus();
+                      },
+                    ),
+                  if (_visibleTip != null)
+                    _CoachTip(tip: _visibleTip!, onDismiss: _dismissTip),
+                ],
+              ),
             ),
           if (_pending != null)
             _PendingAttachment(
@@ -544,6 +580,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -689,18 +726,14 @@ class _PendingAttachment extends StatelessWidget {
   }
 }
 
-class _IcebreakerBar extends StatelessWidget {
-  const _IcebreakerBar({
-    required this.chips,
-    required this.onTap,
-    required this.onClose,
-  });
+/// Ayma's live suggestion chips above the composer (§6.9). Tap one to drop its
+/// text into the composer. The set refreshes as the conversation grows — these
+/// are common ground to keep talking about, not one-shot openers, so there's
+/// no manual dismiss; an empty set simply hides the bar.
+class _SuggestionBar extends StatelessWidget {
+  const _SuggestionBar({required this.chips, required this.onTap});
   final List<String> chips;
   final void Function(String) onTap;
-
-  /// Dismisses the whole suggestion group for this thread — persistently
-  /// (see `_DmThreadScreenState._dismissIcebreakers`).
-  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -715,61 +748,82 @@ class _IcebreakerBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Things to talk about',
-                  style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-                ),
-              ),
-              // Same small-X treatment as the Ayma chat's pinned-context chip
-              // (`_Composer`'s pageContextLabel row in chat_screen.dart).
-              IconButton(
-                onPressed: onClose,
-                iconSize: 16,
-                icon: const Icon(Icons.close),
-                color: ac.fgMute,
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Hide suggestions',
-              ),
-            ],
+          Text(
+            'Things to talk about',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
           const SizedBox(height: 6),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 168),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final c in chips)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: InkWell(
-                        onTap: () => onTap(c),
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: ac.bgCard,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: ac.lineSoft, width: 0.5),
-                          ),
-                          child: Text(
-                            c,
-                            softWrap: true,
-                            style: AymaType.sans(size: 13, color: ac.fg),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+          for (final c in chips)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: InkWell(
+                onTap: () => onTap(c),
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ac.bgCard,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: ac.lineSoft, width: 0.5),
+                  ),
+                  child: Text(
+                    c,
+                    softWrap: true,
+                    style: AymaType.sans(size: 13, color: ac.fg),
+                  ),
+                ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A quiet one-line coaching nudge from Ayma, just above the composer: a small
+/// Ayma glyph, muted text, and a small dismiss button. Shown only when the
+/// assist response carries a tip; kept deliberately low-key so it reads as a
+/// gentle aside, not an alert.
+class _CoachTip extends StatelessWidget {
+  const _CoachTip({required this.tip, required this.onDismiss});
+  final String tip;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: AymaOrb(size: 15, showGlow: false),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              tip,
+              softWrap: true,
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            ),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            iconSize: 15,
+            icon: const Icon(Icons.close),
+            color: ac.fgMute,
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Dismiss tip',
           ),
         ],
       ),
