@@ -180,16 +180,18 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
           Text(
-            'Let an outside AI assistant act for you in Ayma — read and update '
-            'your profile, see your matches, and read or send your messages. '
-            'The assistant does all the thinking; Ayma just carries it out, and '
-            'every action still runs the same safety checks.',
+            'Let an outside AI assistant — like Claude — act for you in Ayma. '
+            'It does all the thinking; Ayma is its hands and memory, and carries '
+            'out only what you allow. Every action still runs the same safety '
+            'checks as when you use Ayma yourself.',
             style: theme.textTheme.bodyMedium,
           ),
           if (_disabled) ...[
             const SizedBox(height: 16),
             _DisabledNote(),
           ],
+          const SizedBox(height: 20),
+          _CapabilitiesCard(),
           const SizedBox(height: 20),
           _InstructionsCard(
             mcpUrl: _mcpUrl,
@@ -300,6 +302,136 @@ class _PendingCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// "What your agent can do" — the plain-language capabilities a connected
+/// agent has, drawn directly from the real MCP tools (`docs/MCP_SERVER.md`):
+/// profile/story writes, match reads, DM reads + drafts/sends, and practice
+/// prep. Shown near the intro, above the code field — this is *what it does*,
+/// separate from the "How to connect" steps (*how to set it up*). Ends with
+/// the guardrails every action still runs through.
+class _CapabilitiesCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('What your agent can do', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 12),
+            const _Capability(
+              icon: Icons.edit_outlined,
+              title: 'Update your profile & story',
+              body: 'Write a sharper bio or story for you. Ayma saves exactly '
+                  'what your agent writes — nothing goes up until it clears '
+                  'moderation.',
+            ),
+            const _Capability(
+              icon: Icons.favorite_outline,
+              title: 'See and understand your matches',
+              body: 'Look through who you\'ve matched with, your scores, and '
+                  'what you have in common or where you differ.',
+            ),
+            const _Capability(
+              icon: Icons.chat_bubble_outline,
+              title: 'Read your conversations',
+              body: 'Go through your chats and draft replies — or send '
+                  'messages for you when you let it.',
+            ),
+            const _Capability(
+              icon: Icons.school_outlined,
+              title: 'Help you practice & prep',
+              body: 'Run practice conversations so you can rehearse before you '
+                  'reach out for real.',
+            ),
+            const SizedBox(height: 4),
+            _GuardrailsNote(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One capability line: a leading icon, a bold title, and a short plain
+/// description beneath. Wraps and scales with text size rather than clipping.
+class _Capability extends StatelessWidget {
+  const _Capability({
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, size: 20, color: theme.colorScheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(body, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The guardrails that bound every agent action, closing the capabilities
+/// card: same safety checks as the user, your data only, revoke anytime.
+class _GuardrailsNote extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.shield_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Every action runs the same checks you do — 18+, moderation and '
+              'consent. An agent only ever touches your own data, can never do '
+              'more than you could, and you can disconnect it anytime.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ],
       ),
     );
   }

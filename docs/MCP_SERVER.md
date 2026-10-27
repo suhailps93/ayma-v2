@@ -70,9 +70,30 @@ Files (all in `functions/bootstrap/`):
 
 Flutter: `lib/screens/connect_agent_screen.dart` (the "Connect an agent"
 approval + connected-agents management) and `lib/services/mcp_connect_service.dart`.
-The screen leads with a numbered **how-to-connect** block — add Ayma's MCP
-server (`{Env.apiBaseUrl}/mcp`, shown live and copyable, never hardcoded) in
-your assistant, start it, type the short code it shows, Review, Approve — plus a
+Near the intro, above the code field, a **"What your agent can do"** card spells
+out the real capabilities in plain language (one scannable line each, mapped to
+the tools in *Tools (contracts)* above):
+
+- **Update your profile & story** — write a sharper bio or story for you; Ayma
+  saves exactly what the agent writes, and nothing goes up until it clears
+  moderation (`update_profile`).
+- **See and understand your matches** — who you've matched with, scores, what
+  you share and where you differ (`list_matches` / `get_match`).
+- **Read your conversations** — go through your chats and draft replies, or send
+  messages for you when you allow it (`list_threads` / `get_thread` /
+  `send_message`).
+- **Help you practice & prep** — run practice conversations to rehearse before
+  reaching out for real (`get_persona_context`).
+
+The card closes with the **guardrails**: every action runs the same checks the
+user does (18+, moderation, consent), an agent only ever touches the user's own
+data and can never do more than the user could, and it can be disconnected
+anytime. These mirror the server-side gates in *Threat model* — the copy must
+not overpromise beyond what the tools actually allow.
+
+Below that, a numbered **how-to-connect** block — add Ayma's MCP server
+(`{Env.apiBaseUrl}/mcp`, shown live and copyable, never hardcoded) in your
+assistant, start it, type the short code it shows, Review, Approve — plus a
 **Learn more** sheet (the device flow, the access granted, and the 18+ /
 moderation / scope / "only approve a code you started yourself" safety notes).
 If the server reports the feature off (503), the screen shows an honest note
