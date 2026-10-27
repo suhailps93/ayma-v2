@@ -5,11 +5,12 @@ import '../services/api_client.dart';
 import '../services/orb_animation_settings.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
+import 'connect_agent_screen.dart';
 import 'voice_preference_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
 /// Ayma's settings: the voice she speaks with, how her orb animates, and the
-/// wiki reset (§14.2). Reached from the "Ayma" group on the Profile tab.
+/// wiki reset (§14.2), and connecting your own AI agent (MCP). Reached from the "Ayma" group on the Profile tab.
 class AymaSettingsScreen extends StatefulWidget {
   const AymaSettingsScreen({super.key, this.api, this.orbAnimationSettings});
 
@@ -89,6 +90,16 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(VoicePreferenceScreen.path),
+          ),
+          ListTile(
+            key: const Key('ayma_settings_connect_agent'),
+            leading: Icon(Icons.hub_outlined, color: ac.fgDim),
+            title: Text('Connect an agent (MCP)',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text('Let your own AI agent use Ayma',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(ConnectAgentScreen.path),
           ),
           Divider(color: ac.lineSoft),
           Padding(

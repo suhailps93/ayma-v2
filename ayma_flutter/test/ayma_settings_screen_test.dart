@@ -53,6 +53,31 @@ void main() {
     expect(find.text('VOICE SCREEN'), findsOneWidget);
   });
 
+  testWidgets('the Connect an agent (MCP) row opens the connect-agent screen',
+      (tester) async {
+    final router = GoRouter(
+      initialLocation: AymaSettingsScreen.path,
+      routes: [
+        GoRoute(
+          path: AymaSettingsScreen.path,
+          builder: (_, __) => AymaSettingsScreen(api: _api((_) {})),
+        ),
+        GoRoute(
+          path: '/settings/connect-agent',
+          builder: (_, __) => const Scaffold(body: Text('CONNECT SCREEN')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.light, routerConfig: router));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Let your own AI agent use Ayma'), findsOneWidget);
+    await tester.tap(find.text('Connect an agent (MCP)'));
+    await tester.pumpAndSettle();
+    expect(find.text('CONNECT SCREEN'), findsOneWidget);
+  });
+
   testWidgets('animation section renders both wing-flutter toggles, ON by '
       'default', (tester) async {
     final orbAnim = OrbAnimationSettings();
