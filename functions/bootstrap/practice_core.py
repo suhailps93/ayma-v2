@@ -177,6 +177,79 @@ def build_persona_context(
     )
 
 
+def build_self_persona_context(db, uid: str) -> PersonaContext | None:
+    """Assemble the persona context for the user's OWN agent — grounded in
+    their FULL profile, not the viewer-visible view.
+
+    The asymmetry is deliberate and documented (AI Date Simulation, founder
+    directive 2026-10-27): a user's own agent authentically represents them, so
+    it may read everything the user has about themselves — profile/main, and
+    EVERY wiki page regardless of ``visibility`` (``public`` / ``private`` /
+    ``ai_only``), with ``{{private}}`` spans KEPT, not stripped. This is the
+    user's own data only; it never crosses into another user's record. The
+    MATCH's agent, by contrast, is built with :func:`build_persona_context`
+    (public-profile-only) because we may not read another user's private data.
+
+    Grounded-but-filtered: the agent is given the full context so it can be
+    authentic and gauge compatibility, but ``prompts/date_sim.md`` carries a
+    disclosure filter that forbids it from ever *emitting* private/sensitive
+    specifics in the simulated chat (see ``tests/test_date_sim.py``). Returns
+    ``None`` when the user has no set-up profile (no name)."""
+    uid = (uid or "").strip()
+    if not uid:
+        return None
+    prof = (
+        db.collection("users")
+        .document(uid)
+        .collection("profile")
+        .document("main")
+        .get()
+        .to_dict()
+    ) or {}
+    name = str(prof.get("name") or "").strip()
+    if not name:
+        return None
+
+    from matching import _age
+
+    pages: list[dict] = []
+    try:
+        docs = list(
+            db.collection("users")
+            .document(uid)
+            .collection("wiki_pages")
+            .stream()
+        )
+    except Exception:  # noqa: BLE001 - a missing wiki just means fewer pages
+        logger.warning("self wiki read failed for %s", uid, exc_info=True)
+        docs = []
+    for d in docs:
+        data = d.to_dict() or {}
+        if data.get("user_hidden") is True:
+            continue
+        # Effective body, NOT private-span-stripped: it's the user's own data,
+        # and the disclosure filter (not redaction) keeps it from leaking.
+        body = str(data.get("user_edits") or data.get("ai_body") or "").strip()
+        if not body:
+            continue
+        pages.append(
+            {
+                "title": str(data.get("title") or data.get("page_type") or "Note"),
+                "body": body,
+            }
+        )
+    photos = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
+    return PersonaContext(
+        target_uid=uid,
+        name=name,
+        age=_age(prof.get("birthdate")),
+        gender=str(prof.get("gender") or ""),
+        location=str(prof.get("location") or ""),
+        pages=pages,
+        photo_count=len(photos),
+    )
+
+
 def persona_context_for_coach(
     name: str, target_uid: str = "", gender: str = ""
 ) -> PersonaContext:

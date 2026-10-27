@@ -35,6 +35,7 @@ import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
 import 'package:ayma_flutter/screens/privacy_screen.dart';
 import 'package:ayma_flutter/screens/profile_settings_screen.dart';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
+import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
 import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
 import 'package:ayma_flutter/features/practice_date/practice_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
@@ -164,6 +165,8 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         PracticeScreen(uid: 'her', name: 'Dana', api: api),
     PracticeDebriefScreen.path: () =>
         PracticeDebriefScreen(sessionId: 'p1', name: 'Dana', api: api),
+    DateSimScreen.path: () =>
+        DateSimScreen(uid: 'her', name: 'Dana', threadId: 'her__me', api: api),
     ExploreScreen.path: () => shell(
       ExploreScreen(apiClient: api, initialQuery: 'climbers in Denver'),
     ),

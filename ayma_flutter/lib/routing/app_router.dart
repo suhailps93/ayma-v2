@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/date_sim/date_sim_screen.dart';
 import '../features/practice_date/practice_debrief_screen.dart';
 import '../features/practice_date/practice_screen.dart';
 import '../services/api_client.dart';
@@ -251,6 +252,19 @@ final appRouter = GoRouter(
         uid: state.pathParameters['uid']!,
         name: state.extra is String ? state.extra as String : '',
       ),
+    ),
+    // AI Date Simulation (hackathon flagship): the two-persona conversation
+    // preview. Entered from a match's profile with their name + DM pair id.
+    GoRoute(
+      path: DateSimScreen.path,
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? const {};
+        return DateSimScreen(
+          uid: state.pathParameters['uid']!,
+          name: (extra['name'] as String?) ?? '',
+          threadId: extra['thread_id'] as String?,
+        );
+      },
     ),
     GoRoute(
       path: ExploreScreen.path,

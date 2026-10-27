@@ -135,6 +135,7 @@ FEATURE_DM_INGEST = "dm_ingest"  # DM voice transcription / photo caption for th
 FEATURE_PROFILE_MANUAL = "profile_manual"  # manual profile-edit diff classification
 FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (ai_assessment.py)
 FEATURE_PRACTICE = "practice"  # Practice Date — simulated-match roleplay, live coach + debrief
+FEATURE_DATE_SIM = "date_sim"  # AI Date Simulation — two personas converse, compatibility read
 
 # The one user-facing label per ledger feature key — the Plan page's "Where
 # your credits went" list shows these, never the raw key. Every FEATURE_*
@@ -164,6 +165,7 @@ FEATURE_LABELS = {
     FEATURE_PROFILE_MANUAL: "Profile edits",
     FEATURE_AI_NOTES: "Ayma's notes",
     FEATURE_PRACTICE: "Practice Date",
+    FEATURE_DATE_SIM: "Date simulation",
 }
 FEATURE_LABEL_FALLBACK = "Other"
 

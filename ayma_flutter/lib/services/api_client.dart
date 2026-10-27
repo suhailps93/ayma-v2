@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
+import '../features/date_sim/date_sim_models.dart';
 import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
@@ -1274,6 +1275,27 @@ class ApiClient {
           statusCode: r.statusCode, body: r.body);
     }
     return PracticeDebrief.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /date-sim` — run an AI date simulation against [otherUid]: two
+  /// personas (yours, grounded in your full own context; theirs, public-profile
+  /// only) hold a bounded conversation, returning the transcript plus a
+  /// compatibility score + summary. Nothing is sent to the other user. 404 →
+  /// null (no simulatable profile); HTTP 402 → an out-of-credits
+  /// [DateSimResult.capped].
+  Future<DateSimResult?> dateSim(String otherUid, int maxMessages) async {
+    final r = await _http.post(
+      _uri('/date-sim'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid, 'max_messages': maxMessages}),
+    );
+    if (r.statusCode == 402) return const DateSimResult.capped();
+    if (r.statusCode == 404) return null;
+    if (r.statusCode != 200) {
+      throw ApiException('Date simulation failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return DateSimResult.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
   /// `POST /profiles/mini` — name + resolved photo URL for a batch of users

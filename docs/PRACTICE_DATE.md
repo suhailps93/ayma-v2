@@ -246,3 +246,18 @@ The **coach** and **debrief** read a transcript where the real user is labelled 
 All three are 18+-gated (`require_not_underage_uid`) and authed
 (`require_caller`), metered under `token_ledger.FEATURE_PRACTICE`. Sessions live
 at `users/{uid}/practice_sessions/{session_id}` (Firestore only).
+
+## Related: AI Date Simulation (ai-date-sim)
+
+AI Date Simulation (hackathon flagship) reuses this feature's persona machinery
+to run a simulated first chat between TWO personas — the user's and a match's —
+then shows the user the transcript plus a 0–100 compatibility score and a short
+summary. Crucially it does **not** share this feature's grounding rule on both
+sides: the MATCH persona is still `build_persona_context` (public-only), but the
+USER persona is grounded in the user's **full own context**
+(`practice_core.build_self_persona_context` — profile + every wiki page,
+private spans kept), because a user's own agent authentically represents them.
+A **disclosure filter** in `prompts/date_sim.md` keeps both personas from
+*emitting* private/sensitive specifics even when grounded in full context
+(grounded-but-filtered). Full design, the endpoint and the privacy reasoning:
+`docs/ARCHITECTURE.md` §17. Engine: `functions/bootstrap/date_sim.py`.
