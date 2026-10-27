@@ -2,8 +2,13 @@
 
 Scores how much of the user's intent-routed question tree
 (:mod:`question_tree`) is answered — from the ``users/{uid}/questionnaire``
-store, from derivable ``profile/main`` fields, and, for the open-ended narrative
-nodes, from a single cached LLM pass over the user's wiki text.
+store, from derivable ``profile/main`` fields, and, for every node not covered
+by those, from a single cached LLM pass over the user's wiki text (the
+free-text "story"). That story pass marks a narrative node covered/partial and,
+for a structured node (enum/scale/...), marks it covered when the story states
+a concrete answer — so an answer the user gave in chat that ``wiki_ingest``
+folded into the story, but that was never written to the questionnaire store,
+still counts as answered and the question stops being re-asked.
 
 The result is persisted to ``users/{uid}/profile/main.completeness`` (a map) and
 surfaced by ``GET /completeness`` and ``GET /questionnaire``. :func:`recompute`
@@ -89,6 +94,14 @@ def _profile_derived_field(node_id: str, profile: dict) -> str | None:
     ):
         return None
     return field
+
+
+def _profile_answered(node_id: str, profile: dict) -> bool:
+    """True when a preboarding ``profile/main`` field currently answers
+    ``node_id`` — i.e. the node is both profile-derivable (see
+    :func:`_profile_derived_field`) and that field holds a non-blank value."""
+    field = _profile_derived_field(node_id, profile)
+    return bool(field) and not _blank(profile.get(field))
 
 _NARRATIVE_COVERAGE = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 
@@ -383,8 +396,9 @@ async def _run_narrative_llm(uid: str, wiki_text: str, topics: list[dict]) -> di
 
 
 async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, str]:
-    """``{node_id: "covered"|"partial"|"missing"}`` for the narrative nodes in
-    ``targets``. Cached on ``users/{uid}/completeness_cache/narrative`` keyed by
+    """``{node_id: "covered"|"partial"|"missing"}`` for the nodes in ``targets``
+    (narrative *and* structured) judged against the user's free-text story.
+    Cached on ``users/{uid}/completeness_cache/narrative`` keyed by
     a hash of the wiki text + the target id set, so an unchanged wiki never
     re-hits Gemini."""
     if not targets:
@@ -462,14 +476,23 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
         "nikah" if branch == "nikah" else branch
     )
 
-    narrative_targets = [
+    # Nodes whose answer may already live in the user's free-text story (the
+    # wiki) rather than in the structured questionnaire store: every open node
+    # not already answered by a preboarding profile field or a recorded
+    # questionnaire entry. Narrative nodes have always been judged this way;
+    # structured nodes (enum/scale/multi/bool) are included too — see the
+    # per-node branch below. The routing node is excluded: its branch is
+    # resolved separately (`_resolve_intent`) and set through its own skill, so
+    # a passing story mention must never silently "cover" it out of the intent
+    # gate.
+    story_targets = [
         n
         for n in nodes
-        if n["kind"] == "narrative"
-        and n["id"] not in _PROFILE_DERIVABLE
+        if n["id"] != _ROUTING_ID
         and n["id"] not in store
+        and not _profile_answered(n["id"], profile)
     ]
-    narr = await _narrative_status(db, uid, narrative_targets)
+    story = await _narrative_status(db, uid, story_targets)
 
     evaluated: list[dict] = []
     for n in nodes:
@@ -483,13 +506,27 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
             cov = 0.7 if raw_src == "inferred" else 1.0
             src = raw_src if raw_src in ("stated", "inferred") else "stated"
             val = entry.get("value")
-        elif n["kind"] == "narrative":
-            st = narr.get(nid, "missing")
-            cov = _NARRATIVE_COVERAGE.get(st, 0.0)
+        else:
+            # Answer not in the structured store — check the free-text story.
+            # Founder bug (2026-10): `wiki_ingest` reliably folds every chat
+            # answer into the story each turn, but `record_answer` (the only
+            # writer of the questionnaire store) fires only when the model
+            # remembers to call it. Scoring structured nodes against the store
+            # alone left a story-captured answer invisible here, so
+            # `next_questions` re-selected the same question forever ("it keeps
+            # updating the story but asks the same thing again and again"). A
+            # narrative node keeps its graded coverage (covered 1.0 /
+            # partial 0.5); a structured node needs a concrete answer, so only
+            # a `covered` story verdict satisfies it — a vague/partial mention
+            # leaves the exact value unknown and the question still worth
+            # asking.
+            st = story.get(nid, "missing")
+            if n["kind"] == "narrative":
+                cov = _NARRATIVE_COVERAGE.get(st, 0.0)
+            else:
+                cov = 1.0 if st == "covered" else 0.0
             src = "wiki" if cov > 0 else None
             val = None
-        else:
-            cov, src, val = 0.0, None, None
         evaluated.append(
             {
                 "node": n,

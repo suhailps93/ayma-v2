@@ -271,6 +271,79 @@ def test_narrative_pass_mapped_and_cached(monkeypatch):
     assert by_id["casual_hill_to_die_on_narrative"]["status"] == "partial"
 
 
+def test_story_captured_structured_answer_is_not_re_asked(monkeypatch):
+    """Founder bug (2026-10): Ayma asked the same onboarding question (e.g.
+    "how many kids") again and again even though the user answered and the
+    story updated. Root cause: `wiki_ingest` reliably folds every chat answer
+    into the free-text story each turn, but `record_answer` — the only writer
+    of the questionnaire store — fires only when the model remembers to call
+    it. Structured nodes (enum/scale/...) used to be scored against that store
+    alone, so a story-captured answer never marked them covered and
+    `next_questions` re-selected the same node forever. The story-coverage
+    pass now judges structured nodes too: a concrete (`covered`) story answer
+    satisfies the node (coverage 1.0 -> excluded from `next`), while a vague
+    (`partial`) mention does not, so a genuinely-unanswered node is still
+    asked."""
+    monkeypatch.setattr(
+        completeness.wiki_query, "read_wiki_context",
+        lambda db, uid, **k: "Has two children who live with them full time.",
+    )
+    _stub_narrative(monkeypatch, {
+        "existing_children": "covered",   # concrete answer stated in the story
+        "children_count": "partial",      # merely touched, no concrete count
+    })
+    db = FakeDb({
+        _profile_key(): {"relationship_intent": "Long-term", **_PREBOARD},
+    })
+
+    _, _, ev = _run(completeness._evaluate(db, "u1"))
+    by_id = {e["node"]["id"]: e for e in ev}
+
+    # existing_children is an enum, not in the questionnaire store and not a
+    # preboarding field — before the fix it stayed `missing` forever. A
+    # concrete story answer now satisfies it at full coverage, so `_next`
+    # (which only offers nodes with coverage < 1.0) cannot re-select it.
+    assert by_id["existing_children"]["node"]["kind"] == "enum"
+    assert by_id["existing_children"]["coverage"] == 1.0
+    assert by_id["existing_children"]["status"] == "covered"
+    assert by_id["existing_children"]["source"] == "wiki"
+
+    # a merely-partial story mention of a structured node does NOT satisfy it:
+    # the exact value is still unknown, so it stays open and askable.
+    assert by_id["children_count"]["coverage"] == 0.0
+    assert by_id["children_count"]["status"] == "missing"
+
+    res = _run(completeness.compute(db, "u1"))
+    next_ids = {n["id"] for n in res["next"]}
+    assert "existing_children" not in next_ids
+    # normal behaviour intact: still-unanswered nodes are still offered.
+    assert res["next"]
+
+
+def test_story_coverage_does_not_cover_the_routing_node(monkeypatch):
+    """The routing (`relationship_intent`) node is resolved separately and set
+    through its own skill, so a passing story mention must not silently mark it
+    covered and drop it out of the intent gate. With no intent recorded it
+    stays open and keeps leading `next`, even if the story pass would call it
+    `covered`."""
+    monkeypatch.setattr(
+        completeness.wiki_query, "read_wiki_context",
+        lambda db, uid, **k: "Mentioned wanting something long-term one day.",
+    )
+    _stub_narrative(monkeypatch, {"relationship_intent": "covered"})
+    db = FakeDb({_profile_key(): {}})
+
+    _, intent_set, ev = _run(completeness._evaluate(db, "u1"))
+    routing = next(e for e in ev if e["node"]["id"] == "relationship_intent")
+    assert intent_set is False
+    assert routing["coverage"] == 0.0
+    assert routing["source"] is None
+
+    res = _run(completeness.compute(db, "u1"))
+    assert res["intent_set"] is False
+    assert res["next"][0]["id"] == "relationship_intent"
+
+
 def test_narrative_pass_ignores_interactions_and_steering_churn(monkeypatch):
     """Root-caused against a real account (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2,
     2026-09-26): a session of pure small talk still triggered a wiki_ingest
