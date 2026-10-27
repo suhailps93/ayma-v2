@@ -47,6 +47,7 @@ flowchart LR
     API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
     Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping,<br/>kept up per call by a /keepalive request to itself<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
+    MCP["Ayma MCP server (/mcp, flag mcp_server, default OFF)<br/>bring-your-own-agent: profile/matches/DM/persona tools<br/>opaque per-user tokens (Firestore-validated, revocable)<br/>gates server-side: scope, 18+, moderation, no-PII, per-token rate limit<br/>NO Ayma LLM — the client's model does all reasoning"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
     Links["Link validation (web research)<br/>404 / soft-404 / grounding redirects dropped,<br/>Links vs Social profiles de-duplicated"]
@@ -68,6 +69,7 @@ flowchart LR
   Muse["Muse (browser agent)"]
   MetaAPI["Meta Model API — Muse Spark<br/>(OpenAI-compatible, Gemini fallback)"]
   Web[Public web pages<br/>robots.txt honoured, public IPs only]
+  ExtAgent["External MCP client (e.g. Claude)<br/>the client's own model = the BRAIN"]
 
   App -->|ID token| API
   App --> Firebase
@@ -104,6 +106,11 @@ flowchart LR
   Muse -->|POST /admin/vendor-spend| Admin
   Admin --> BQ
   Admin --> FS
+  ExtAgent -->|1. OAuth 2.1 device code<br/>/mcp/oauth/device_authorization + /token| MCP
+  App -->|2. user approves code in-app<br/>/mcp/connect/approve ID token| MCP
+  ExtAgent -->|3. MCP tools over streamable-HTTP<br/>Bearer per-user token, NO Ayma LLM| MCP
+  MCP -->|hands + memory: reads, gated writes| FS
+  MCP -.->|moderation classifier only<br/>DM send, cents, not billed to user| Vertex
 ```
 
 **Model routing (LiveKit Inference vs Vertex AI).** Model ids live only in `config.py`.
@@ -1494,4 +1501,25 @@ now steers user-facing bug/feature reports through `submit_feedback`.)
 
 ---
 
-*All 14 pieces are locked. This document is the complete northstar plan — a coding agent implements against it one Implementation step at a time. Revisit a section only if a decision genuinely changes.*
+## 16. Ayma MCP server (bring-your-own-agent)
+
+A streamable-HTTP MCP server mounted at `/mcp` on `ayma-api`, behind the
+`mcp_server` feature flag (default **OFF**). It lets an external MCP client
+(e.g. Claude) authorise as one Ayma user via the OAuth 2.1 Device Authorization
+Grant and then act on that user's behalf — the **client's own model does all the
+reasoning**; Ayma is only the hands + memory. Core constraint: **no exposed tool
+calls an Ayma chat/reasoning LLM** (zero Ayma LLM spend). Generation is the
+client's job; generated text arrives as an argument to a validated write.
+
+Modules: `mcp_server.py` (MCPServer + the auth-enforcing ASGI wrapper + the
+OAuth/approval routes), `mcp_oauth.py` (device-grant + opaque, revocable,
+Firestore-validated tokens — no signing key needed), `mcp_tools.py` (the tools,
+each re-enforcing scope + 18+ + moderation + no-PII + per-user scoping
+server-side). Flutter approval surface: `screens/connect_agent_screen.dart` +
+`services/mcp_connect_service.dart`. Observability meter: cost-free
+`token_ledger.record_mcp_tool_call` (never touches credits). **Full spec, tool
+contracts and the threat model: `docs/MCP_SERVER.md`.**
+
+---
+
+*All 14 pieces are locked (plus §15 in-app feedback and §16 the post-plan MCP server). This document is the complete northstar plan — a coding agent implements against it one Implementation step at a time. Revisit a section only if a decision genuinely changes.*

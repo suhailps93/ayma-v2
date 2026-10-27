@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/mcp_connect_service.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
@@ -275,6 +276,16 @@ ApiClient layoutApi() => ApiClient(
       headers: const {'content-type': 'application/json; charset=utf-8'},
     );
   }),
+  auth: kLayoutAuth,
+);
+
+/// A fake "Connect an agent" service: no network, no connected agents.
+McpConnectService layoutMcpConnect() => McpConnectService(
+  client: MockClient((request) async => http.Response(
+    '{"connections": []}',
+    200,
+    headers: const {'content-type': 'application/json; charset=utf-8'},
+  )),
   auth: kLayoutAuth,
 );
 

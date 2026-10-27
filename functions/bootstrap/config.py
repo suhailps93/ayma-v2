@@ -128,6 +128,22 @@ class Config:
     header (§14.3). From Secret Manager in deployment (§12.3); an unset value
     makes every ``/admin/*`` route refuse."""
 
+    mcp_server: bool
+    """Master switch for the Ayma MCP server (``docs/MCP_SERVER.md``). Default
+    OFF — merging the MCP code exposes nothing until this is flipped on (env
+    ``MCP_SERVER`` / the ``mcp_server`` feature flag). When off, every ``/mcp``
+    request answers 503. Needs no secret: MCP access tokens are opaque and
+    validated by a Firestore lookup, not signed."""
+
+    mcp_token_ttl_days: int
+    """Lifetime of an issued MCP access token in days (``MCP_TOKEN_TTL_DAYS``,
+    default 30). A token is revocable at any time regardless of this."""
+
+    rate_mcp: str
+    """Per-client rate limit on the whole ``/mcp`` surface (the OAuth endpoints
+    and the MCP endpoint). Per-token limiting is additionally enforced inside
+    the MCP auth wrapper. ``RATE_MCP``."""
+
     # ---------------------------------------------------------------- #
     # LOCKED MODELS — do not change any of the four model ids or their
     # three locations below without an explicit, written instruction from
@@ -806,6 +822,10 @@ def _load() -> Config:
         dev_view_uids=_csv("DEV_VIEW_UIDS", ""),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
         dev_panel_password=os.getenv("DEV_PANEL_PASSWORD", ""),
+        mcp_server=os.getenv("MCP_SERVER", "false").strip().lower()
+        in ("1", "true", "yes", "on"),
+        mcp_token_ttl_days=int(os.getenv("MCP_TOKEN_TTL_DAYS", "30")),
+        rate_mcp=os.getenv("RATE_MCP", "120/minute"),
         # LOCKED — see the "LOCKED MODELS" block in the Config dataclass.
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
         gemini_location=os.getenv("GEMINI_LOCATION", "global"),

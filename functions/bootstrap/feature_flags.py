@@ -104,6 +104,9 @@ REGISTRY: dict[str, Flag] = {
         Flag("dev_panel", "bool", None,
              "the app's hidden Developer panel and dev-facing AI annotations",
              default=True),
+        Flag("mcp_server", "bool", "mcp_server",
+             "Ayma MCP server (bring-your-own-agent). Default OFF — when off "
+             "every /mcp request answers 503. See docs/MCP_SERVER.md."),
     ]
 }
 

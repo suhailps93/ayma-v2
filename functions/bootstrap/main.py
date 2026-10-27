@@ -8,6 +8,7 @@ land in later steps per ``PLAN.md``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import sys
 from pathlib import Path
@@ -473,6 +474,28 @@ app.add_middleware(RateLimiter)
 import practice_date  # noqa: E402
 
 app.include_router(practice_date.router)
+
+# Ayma MCP server (bring-your-own-agent) — mounted at /mcp. The whole surface is
+# dark behind the `mcp_server` feature flag (default OFF): when off its auth
+# wrapper answers every request 503, so this mount exposes nothing until the
+# founder flips the flag. See docs/MCP_SERVER.md. Self-contained in mcp_server.py
+# /mcp_tools.py/mcp_oauth.py so it stays out of the way of parallel work here.
+import mcp_server  # noqa: E402
+
+app.mount(mcp_server.MOUNT_PATH, mcp_server.asgi_app)
+_mcp_lifespan_stack = contextlib.AsyncExitStack()
+
+
+@app.on_event("startup")
+async def _mcp_startup() -> None:
+    # A mounted sub-app's lifespan is not run by the parent, so start the MCP
+    # streamable-HTTP session manager here.
+    await _mcp_lifespan_stack.enter_async_context(mcp_server.lifespan())
+
+
+@app.on_event("shutdown")
+async def _mcp_shutdown() -> None:
+    await _mcp_lifespan_stack.aclose()
 
 
 @app.on_event("startup")
