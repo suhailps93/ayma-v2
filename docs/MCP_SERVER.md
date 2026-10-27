@@ -70,6 +70,14 @@ Files (all in `functions/bootstrap/`):
 
 Flutter: `lib/screens/connect_agent_screen.dart` (the "Connect an agent"
 approval + connected-agents management) and `lib/services/mcp_connect_service.dart`.
+The screen leads with a numbered **how-to-connect** block — add Ayma's MCP
+server (`{Env.apiBaseUrl}/mcp`, shown live and copyable, never hardcoded) in
+your assistant, start it, type the short code it shows, Review, Approve — plus a
+**Learn more** sheet (the device flow, the access granted, and the 18+ /
+moderation / scope / "only approve a code you started yourself" safety notes).
+If the server reports the feature off (503), the screen shows an honest note
+that a code can be entered but won't connect until the flag is on, rather than
+letting the attempt fail quietly.
 
 Mounting (in `main.py`, additive): `app.mount("/mcp", mcp_server.asgi_app)` plus
 a startup/shutdown that runs the streamable-HTTP session manager's lifespan (a

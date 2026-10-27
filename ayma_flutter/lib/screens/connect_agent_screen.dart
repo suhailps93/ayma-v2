@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../env.dart';
 import '../services/mcp_connect_service.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
@@ -27,9 +29,17 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
   late final McpConnectService _svc = widget.service ?? McpConnectService();
   final _codeController = TextEditingController();
 
+  /// Ayma's MCP endpoint, derived from the API base the rest of the app uses
+  /// (never hardcoded here) — this is what the user adds in their AI assistant.
+  final String _mcpUrl = '${Env.apiBaseUrl}/mcp';
+
   McpPending? _pending;
   bool _busy = false;
   bool _loadingConnections = true;
+  // Turns true if the server answers that the feature is off (`mcp_server`
+  // flag). Connecting then can't succeed, so we say so instead of letting a
+  // code fail quietly.
+  bool _disabled = false;
   List<McpConnection> _connections = const [];
 
   @override
@@ -52,7 +62,11 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
       setState(() => _connections = rows);
     } on McpConnectException catch (e) {
       if (!mounted) return;
-      if (!e.disabled) AymaToast.show(context, e.message, kind: AymaToastKind.error);
+      if (e.disabled) {
+        setState(() => _disabled = true);
+      } else {
+        AymaToast.show(context, e.message, kind: AymaToastKind.error);
+      }
     } catch (_) {
       // A missing connection list must never block approving a new one.
     } finally {
@@ -77,7 +91,9 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
       }
       setState(() => _pending = p);
     } on McpConnectException catch (e) {
-      if (mounted) AymaToast.show(context, e.message, kind: AymaToastKind.error);
+      if (!mounted) return;
+      if (e.disabled) setState(() => _disabled = true);
+      AymaToast.show(context, e.message, kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -94,7 +110,9 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
       setState(() => _pending = null);
       await _loadConnections();
     } on McpConnectException catch (e) {
-      if (mounted) AymaToast.show(context, e.message, kind: AymaToastKind.error);
+      if (!mounted) return;
+      if (e.disabled) setState(() => _disabled = true);
+      AymaToast.show(context, e.message, kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -133,6 +151,26 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
     }
   }
 
+  Future<void> _copyUrl() async {
+    try {
+      await Clipboard.setData(ClipboardData(text: _mcpUrl));
+      if (mounted) AymaToast.show(context, 'Copied', kind: AymaToastKind.success);
+    } catch (_) {
+      if (mounted) {
+        AymaToast.show(context, "Couldn't copy that.", kind: AymaToastKind.error);
+      }
+    }
+  }
+
+  void _showHelp() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _HelpSheet(mcpUrl: _mcpUrl, onCopyUrl: _copyUrl),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -147,6 +185,16 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
             'The assistant does all the thinking; Ayma just carries it out, and '
             'every action still runs the same safety checks.',
             style: theme.textTheme.bodyMedium,
+          ),
+          if (_disabled) ...[
+            const SizedBox(height: 16),
+            _DisabledNote(),
+          ],
+          const SizedBox(height: 20),
+          _InstructionsCard(
+            mcpUrl: _mcpUrl,
+            onCopyUrl: _copyUrl,
+            onLearnMore: _showHelp,
           ),
           const SizedBox(height: 20),
           TextField(
@@ -252,6 +300,246 @@ class _PendingCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The step-by-step "how to actually connect an agent" block, shown above the
+/// code field. Plain, scannable, and it carries the real MCP URL (copyable)
+/// plus a "Learn more" that opens [_HelpSheet].
+class _InstructionsCard extends StatelessWidget {
+  const _InstructionsCard({
+    required this.mcpUrl,
+    required this.onCopyUrl,
+    required this.onLearnMore,
+  });
+
+  final String mcpUrl;
+  final VoidCallback onCopyUrl;
+  final VoidCallback onLearnMore;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('How to connect', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 12),
+            _Step(
+              number: 1,
+              child: Text(
+                'In your AI assistant (like Claude), add Ayma as an MCP server:',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 32, top: 6, bottom: 4),
+              child: _UrlRow(url: mcpUrl, onCopy: onCopyUrl),
+            ),
+            _Step(
+              number: 2,
+              child: Text(
+                'Start it — your assistant will show you a short code.',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            _Step(
+              number: 3,
+              child: Text(
+                'Type that code below and tap Review.',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            _Step(
+              number: 4,
+              child: Text(
+                'Approve the connection. Your assistant can then act for you '
+                'in Ayma, within what you allow.',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton(
+                onPressed: onLearnMore,
+                child: const Text('Learn more'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One numbered line: the index in a small circle, then wrapping content.
+class _Step extends StatelessWidget {
+  const _Step({required this.number, required this.child});
+
+  final int number;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Container(
+              width: 22,
+              height: 22,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.secondaryContainer,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                '$number',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSecondaryContainer,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
+/// The MCP URL shown as selectable text with a copy button. Wraps instead of
+/// overflowing on a narrow screen.
+class _UrlRow extends StatelessWidget {
+  const _UrlRow({required this.url, required this.onCopy});
+
+  final String url;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: SelectableText(
+            url,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontFamily: 'monospace',
+              color: theme.colorScheme.primary,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Copy',
+          icon: const Icon(Icons.copy_rounded, size: 18),
+          onPressed: onCopy,
+        ),
+      ],
+    );
+  }
+}
+
+/// Honest note when the `mcp_server` flag is off: a code can be typed but can't
+/// connect yet. Shown only after the server tells us the feature is disabled.
+class _DisabledNote extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "Agent connections aren't switched on yet. You can enter a code, "
+              "but it won't connect until this feature is live.",
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The fuller "how this works" explanation, from `docs/MCP_SERVER.md`: the
+/// device flow, what access the agent gets, and the safety boundaries.
+class _HelpSheet extends StatelessWidget {
+  const _HelpSheet({required this.mcpUrl, required this.onCopyUrl});
+
+  final String mcpUrl;
+  final VoidCallback onCopyUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        children: [
+          Text('Connecting an agent', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 12),
+          Text(
+            'An agent is an outside AI assistant — like Claude — that you let '
+            'act for you in Ayma. It does the thinking; Ayma is its hands and '
+            'memory. Nothing connects until you approve it here, in the app '
+            'where you\'re already signed in.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 16),
+          Text('The steps', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            'Add Ayma as an MCP server in your assistant:',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 6),
+          _UrlRow(url: mcpUrl, onCopy: onCopyUrl),
+          const SizedBox(height: 6),
+          Text(
+            'Your assistant starts a one-time sign-in and shows you a short '
+            'code. You type that code on this screen and tap Review — Ayma '
+            'shows you which assistant is asking and exactly what it wants to '
+            'do. If it looks right, tap Approve. The code is single-use and '
+            'expires in about ten minutes.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 16),
+          Text('Staying safe', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            'Ayma is 18+. Every action an agent takes runs the same age, '
+            'moderation and privacy checks as you using the app yourself — it '
+            'can never do more than you could, and it only ever touches your '
+            'own data. You choose what access to grant, and you can disconnect '
+            'any agent at any time from this screen. Only approve a code you '
+            'started yourself.',
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
       ),
     );
   }
