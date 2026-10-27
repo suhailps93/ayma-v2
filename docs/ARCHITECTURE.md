@@ -1095,6 +1095,11 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /cron/match` | Scheduled matching pipeline | §5.3 |
 | `POST /cron/reengage` | Scheduled re-engagement job | §7.1 |
 | `POST /cron/purge-deleted` | Scheduled 30-day purge | §3.6 |
+| `POST /feedback` | One-tap / typed feedback about Ayma's conduct → `feedback` (`source: thumbs_down`) | §15 |
+| `POST /feedback/submit` | File a reviewed product-feedback card → `feedback` (`source: chat_card`/`settings_form`) | §15 |
+| `GET /admin/feedback` | Product-feedback triage list (dev-allowlist gated) | §15 |
+| `POST /admin/feedback/{id}` | Set a feedback row's triage status (dev-allowlist gated) | §15 |
+| `GET /admin/feedback/media` | Resolve a feedback screenshot path to a viewable URL (dev gated) | §15 |
 
 As built, the API also serves (see §0): `GET/POST /biometric-consent`, `POST /biometric-consent/withdraw`,
 `POST /age-gate/declare`, `PUT /profile/preferences` (partner age range, `distance_pref`), `POST/DELETE /voice/context`,
@@ -1420,6 +1425,72 @@ Every screen the app needs, each item stating what it must have — mechanics re
 2. **Backend: `paused` field** — add to `users/{uid}/profile` schema; wire into Explore (§6.1) and candidate sourcing (§5.1) exclusions.
 3. **Backend: `POST /wiki/reset`** — clears `wiki_pages`/`raw_turns` for the calling user, leaves account/profile/auth intact.
 4. **Client: screen scaffolding** — one screen per §14.3 entry, applying the token/component conventions from §14.1 throughout.
+
+---
+
+## 15. In-app feedback (F5)
+
+Two conceptually distinct streams, one Firestore collection. Every row lives in
+the top-level **`feedback/{id}`** collection, discriminated by a `source` field,
+written only via the Admin SDK (clients can't write it — see `firestore.rules`).
+
+- **Conversational feedback** (`source: ayma` | `thumbs_down`) — about Ayma's
+  own conduct. Written by her `record_feedback` tool and the one-tap thumbs-down
+  (`POST /feedback`). Fields: `category`, `note`, `quote`, `severity`. Feeds the
+  real-time per-user `steering` page and the nightly persona-evolution loop.
+- **Product feedback** (`source: chat_card` | `settings_form`) — bugs and
+  feature requests. Ayma never reads these. Two entry points, one destination:
+  - **Feedback catcher (chat card):** when the user asks for a feature or
+    reports something broken mid-chat, Ayma calls the text-only `submit_feedback`
+    tool. It does **not** persist — it populates a draft sink the `/chat` reply
+    carries to the client as `feedback_card` `{kind, title, body}`. The client
+    renders an editable confirmation card (kind chip, title, editable body,
+    Send / Edit / Not now, Add screenshot). **Nothing is filed until the user
+    taps Send**, which uploads any screenshot and calls `POST /feedback/submit`
+    with `source: chat_card`.
+  - **Settings "Send feedback" form** → the same `POST /feedback/submit` with
+    `source: settings_form`.
+
+### 15.1 `feedback` product-row schema
+
+`{ uid, source: chat_card|settings_form, kind: feature|bug, title, body,
+screenshot_url (first path, nullable), screenshot_paths: [uploads/{uid}/…],
+screen, app_version, platform, status: new|triaged|done, created_at }`.
+Screenshots are stored as access-controlled **Storage paths** under the
+caller's own `uploads/` tree (validated server-side), resolved to short-lived
+signed URLs only in the admin view — never a public URL in the doc.
+
+### 15.2 Endpoints
+
+- `POST /feedback/submit` (`require_uid`, no 18+ gate) — persist a product row.
+- `GET /admin/feedback` (`require_dev` allowlist) — triage list, both product
+  sources, newest first.
+- `POST /admin/feedback/{id}` (`require_dev`) — set `status`; refuses conduct rows.
+- `GET /admin/feedback/media?path=` (`require_dev`) — resolve a screenshot path.
+
+The admin view is the in-app **Developer → Feedback** screen
+(`/settings/developer/feedback`), reached from the hidden Developer panel and
+gated by the dev-view allowlist, so a normal user can never read others' feedback.
+
+### 15.3 Flow
+
+```mermaid
+flowchart LR
+  U[User in chat] -->|asks for a feature / reports a bug| G[Gemini + submit_feedback tool]
+  G -->|draft sink, no write| R[/chat reply: feedback_card/]
+  R --> C[Editable confirmation card]
+  SF[Settings: Send feedback form] --> P
+  C -->|Send only| P[POST /feedback/submit]
+  P -->|source: chat_card / settings_form| F[(feedback collection)]
+  C -->|Not now| X[dismissed, nothing written]
+  DEV[Developer → Feedback admin view] -->|GET /admin/feedback| F
+  DEV -->|POST /admin/feedback/id| F
+```
+
+(The legacy `product_feedback` collection is retired — nothing writes it; the
+Settings form now routes to `feedback` as `settings_form`. The `report_bug`
+tool and its `bug_reports` collection are unchanged and separate; the persona
+now steers user-facing bug/feature reports through `submit_feedback`.)
 
 ---
 

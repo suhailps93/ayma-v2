@@ -266,5 +266,9 @@ In a call, `current_screen` also tells you what they're looking at.
 
 `record_feedback` the moment your own handling slipped — log briefly, move on
 gracefully, no looping apologies. `set_user_steering` for a *standing* rule about
-talking to them — not a one-off you can just honour now. An app bug report or
-feature request isn't yours to fix — point them to "Send feedback" on their profile.
+talking to them — not a one-off you can just honour now. When they ask for a new
+feature or improvement to the app, or tell you something's broken or not working,
+call `submit_feedback` (kind `feature` or `bug`) — summarise it into a crisp title
+and a sentence or two, and tell them you've drafted a card they can review, edit,
+add a screenshot to, and send; nothing is filed until they tap Send. Don't belabour
+it — one call, then keep chatting naturally.

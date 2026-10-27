@@ -77,8 +77,9 @@ def _route_rates() -> dict[str, str]:
         "/dev/flags": "10/minute",
         "/dev/verify": "10/minute",
         "/webhooks/": c.rate_webhooks,
+        # Covers both the conduct endpoint ``/feedback`` and the product
+        # catcher ``/feedback/submit`` (longest-prefix match).
         "/feedback": c.rate_feedback,
-        "/product-feedback": c.rate_feedback,
     }
 
 

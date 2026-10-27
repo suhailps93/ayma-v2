@@ -1641,20 +1641,52 @@ class ApiClient {
     'session_id': sessionId,
   });
 
-  /// `POST /product-feedback` — a bug report or feature request from the
-  /// Profile screen (§15). `imagePaths` are storage paths already uploaded
-  /// under `uploads/{uid}/`.
-  Future<void> submitProductFeedback({
+  /// `POST /feedback/submit` — file a reviewed product-feedback card into the
+  /// unified `feedback` collection (§15). Used by the in-chat feedback catcher
+  /// (`source: 'chat_card'`) and the Settings "Send feedback" form
+  /// (`source: 'settings_form'`). `screenshotPaths` are storage paths already
+  /// uploaded under `uploads/{uid}/`. Nothing is filed until the user confirms.
+  Future<void> submitFeedbackCard({
     required String kind,
-    required String text,
-    List<String> imagePaths = const [],
+    required String title,
+    required String body,
+    List<String> screenshotPaths = const [],
+    String screen = '',
     String appVersion = '',
-  }) => _postJsonOk('/product-feedback', {
+    String platform = '',
+    String source = 'chat_card',
+  }) => _postJsonOk('/feedback/submit', {
     'kind': kind,
-    'text': text,
-    'image_paths': imagePaths,
+    'title': title,
+    'body': body,
+    'screenshot_paths': screenshotPaths,
+    'screen': screen,
     'app_version': appVersion,
+    'platform': platform,
+    'source': source,
   });
+
+  /// `GET /admin/feedback` — the product-feedback triage list for the in-app
+  /// Developer → Feedback view (§15). Dev-allowlist gated server-side.
+  Future<List<FeedbackRow>> adminListFeedback({int limit = 100}) async {
+    final m = await _getJson('/admin/feedback', {'limit': '$limit'});
+    return [
+      for (final r in (m['feedback'] as List? ?? const []))
+        FeedbackRow.fromMap(r as Map<String, dynamic>),
+    ];
+  }
+
+  /// `POST /admin/feedback/{id}` — set a feedback row's triage status
+  /// (`new` / `triaged` / `done`).
+  Future<void> adminSetFeedbackStatus(String id, String status) =>
+      _postJsonOk('/admin/feedback/$id', {'status': status});
+
+  /// `GET /admin/feedback/media` — a viewable URL for a feedback screenshot's
+  /// Storage path (dev-allowlist gated).
+  Future<String> adminFeedbackMediaUrl(String path) async {
+    final m = await _getJson('/admin/feedback/media', {'path': path});
+    return (m['url'] as String?) ?? '';
+  }
 
   /// `POST /notifications/token` — register/refresh this device's FCM token
   /// (§7.2, §7.9 step 2).
@@ -2537,6 +2569,7 @@ class ChatResult {
     this.usageCapped = false,
     this.toolsUsed = const [],
     this.imageUrl = '',
+    this.feedbackCard,
   });
 
   factory ChatResult.fromMap(Map<String, dynamic> m) => ChatResult(
@@ -2550,6 +2583,10 @@ class ChatResult {
         .map((e) => e.toString())
         .toList(),
     imageUrl: m['image_url'] as String? ?? '',
+    feedbackCard: m['feedback_card'] is Map
+        ? FeedbackCard.fromMap(
+            (m['feedback_card'] as Map).cast<String, dynamic>())
+        : null,
   );
 
   final String reply;
@@ -2569,6 +2606,84 @@ class ChatResult {
   /// A download URL for a photo Ayma generated this turn (the `edit_photo`
   /// tool, "Chat about it" photo flow) — empty for a plain text reply.
   final String imageUrl;
+
+  /// A feedback card Ayma drafted this turn (the `submit_feedback` tool) for
+  /// the user to review, edit and send — null for a normal turn. Nothing is
+  /// filed until the user taps Send on the card.
+  final FeedbackCard? feedbackCard;
+}
+
+/// A product-feedback card Ayma drafted mid-chat (the `submit_feedback` tool).
+/// It is NOT yet filed — the user reviews/edits it and sends it themselves
+/// (`POST /feedback/submit`). See [FeedbackDraftCard].
+class FeedbackCard {
+  const FeedbackCard({
+    required this.kind,
+    required this.title,
+    required this.body,
+  });
+
+  factory FeedbackCard.fromMap(Map<String, dynamic> m) => FeedbackCard(
+        kind: (m['kind'] as String?) ?? 'feature',
+        title: (m['title'] as String?) ?? '',
+        body: (m['body'] as String?) ?? '',
+      );
+
+  /// `'feature'` or `'bug'`.
+  final String kind;
+  final String title;
+  final String body;
+}
+
+/// One triaged product-feedback row for the Developer → Feedback admin view
+/// (`GET /admin/feedback`). [screenshotPaths] are `uploads/{uid}/…` Storage
+/// paths the client resolves to view.
+class FeedbackRow {
+  const FeedbackRow({
+    required this.id,
+    required this.uid,
+    required this.source,
+    required this.kind,
+    required this.title,
+    required this.body,
+    required this.screenshotPaths,
+    required this.screen,
+    required this.appVersion,
+    required this.platform,
+    required this.status,
+    required this.createdAt,
+  });
+
+  factory FeedbackRow.fromMap(Map<String, dynamic> m) => FeedbackRow(
+        id: (m['id'] as String?) ?? '',
+        uid: (m['uid'] as String?) ?? '',
+        source: (m['source'] as String?) ?? '',
+        kind: (m['kind'] as String?) ?? '',
+        title: (m['title'] as String?) ?? '',
+        body: (m['body'] as String?) ?? '',
+        screenshotPaths: [
+          for (final p in (m['screenshot_paths'] as List? ?? const []))
+            p.toString(),
+        ],
+        screen: (m['screen'] as String?) ?? '',
+        appVersion: (m['app_version'] as String?) ?? '',
+        platform: (m['platform'] as String?) ?? '',
+        status: (m['status'] as String?) ?? 'new',
+        createdAt: DateTime.tryParse((m['created_at'] as String?) ?? ''),
+      );
+
+  final String id;
+  final String uid;
+  final String source;
+  final String kind;
+  final String title;
+  final String body;
+  final List<String> screenshotPaths;
+  final String screen;
+  final String appVersion;
+  final String platform;
+  final String status;
+  final DateTime? createdAt;
 }
 
 /// One frame of [ApiClient.chatStream].

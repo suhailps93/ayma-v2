@@ -223,6 +223,32 @@ Object? _bodyFor(String path) {
       ],
     };
   }
+  if (path == '/admin/feedback') {
+    return {
+      'feedback': [
+        for (var i = 0; i < 4; i++)
+          {
+            'id': 'f$i',
+            'uid': 'a-very-long-user-identifier-$i',
+            'source': i.isEven ? 'chat_card' : 'settings_form',
+            'kind': i.isEven ? 'bug' : 'feature',
+            'title': 'A long feedback title that should wrap on narrow $i',
+            'body': kLongText,
+            'screenshot_paths': i.isEven
+                ? ['uploads/a/feedback_$i.png']
+                : const <String>[],
+            'screen': 'messages',
+            'app_version': '1.30.0',
+            'platform': 'android',
+            'status': ['new', 'triaged', 'done'][i % 3],
+            'created_at': '2026-10-2${i}T10:00:00Z',
+          },
+      ],
+    };
+  }
+  if (path == '/admin/feedback/media') {
+    return {'path': 'uploads/a/feedback_0.png', 'url': ''};
+  }
   if (path == '/usage') {
     return {
       'total': 33000,

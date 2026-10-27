@@ -11,6 +11,7 @@ import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/complete_profile_screen.dart';
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/screens/delete_account_screen.dart';
+import 'package:ayma_flutter/screens/admin_feedback_screen.dart';
 import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/screens/explore_screen.dart';
@@ -210,6 +211,7 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
       ),
     ),
     FeedbackScreen.path: () => shell(FeedbackScreen(api: api)),
+    AdminFeedbackScreen.path: () => shell(AdminFeedbackScreen(api: api)),
     SettingsScreen.path: () => shell(
       SettingsScreen(
         controller: ThemeController(),

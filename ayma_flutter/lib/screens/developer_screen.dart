@@ -14,6 +14,7 @@ import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
+import 'admin_feedback_screen.dart';
 import 'plan_screen.dart';
 import 'release_notes_screen.dart';
 
@@ -372,6 +373,19 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
             onReset: _resetMoneyTracker,
           );
         },
+      ),
+      const SizedBox(height: 36),
+      const Eyebrow('Feedback'),
+      const SizedBox(height: 8),
+      ListTile(
+        key: const ValueKey('dev-feedback-triage'),
+        contentPadding: EdgeInsets.zero,
+        title: Text('Triage feedback',
+            style: AymaType.sans(size: 15, color: ac.fg)),
+        subtitle: Text('Bugs and feature requests from chat and Settings.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+        trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+        onTap: () => context.push(AdminFeedbackScreen.path),
       ),
       const SizedBox(height: 36),
       const Eyebrow('Release notes'),

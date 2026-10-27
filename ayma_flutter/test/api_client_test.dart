@@ -471,7 +471,8 @@ void main() {
     });
   });
 
-  test('submitProductFeedback() POSTs /product-feedback with paths', () async {
+  test('submitFeedbackCard() POSTs /feedback/submit with the full payload',
+      () async {
     late http.Request captured;
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -481,18 +482,79 @@ void main() {
       }),
     );
 
-    await client.submitProductFeedback(
+    await client.submitFeedbackCard(
       kind: 'bug',
-      text: 'orb flickers',
-      imagePaths: const ['uploads/me/feedback_1.png'],
+      title: 'Orb flickers',
+      body: 'orb flickers on messages',
+      screenshotPaths: const ['uploads/me/feedback_1.png'],
+      screen: 'messages',
+      appVersion: '1.30.0',
+      platform: 'android',
+      source: 'chat_card',
     );
-    expect(captured.url.path, '/product-feedback');
+    expect(captured.url.path, '/feedback/submit');
     expect(jsonDecode(captured.body), {
       'kind': 'bug',
-      'text': 'orb flickers',
-      'image_paths': ['uploads/me/feedback_1.png'],
-      'app_version': '',
+      'title': 'Orb flickers',
+      'body': 'orb flickers on messages',
+      'screenshot_paths': ['uploads/me/feedback_1.png'],
+      'screen': 'messages',
+      'app_version': '1.30.0',
+      'platform': 'android',
+      'source': 'chat_card',
     });
+  });
+
+  test('adminListFeedback() GETs /admin/feedback and parses rows', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        expect(req.url.path, '/admin/feedback');
+        return http.Response(
+          jsonEncode({
+            'feedback': [
+              {
+                'id': 'f1',
+                'uid': 'u1',
+                'source': 'settings_form',
+                'kind': 'feature',
+                'title': 'Dark map',
+                'body': 'a dark explore map',
+                'screenshot_paths': ['uploads/u1/feedback_1.png'],
+                'screen': 'settings/feedback',
+                'app_version': '1.30.0',
+                'platform': 'ios',
+                'status': 'triaged',
+                'created_at': '2026-10-20T10:00:00Z',
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final rows = await client.adminListFeedback();
+    expect(rows, hasLength(1));
+    expect(rows.single.title, 'Dark map');
+    expect(rows.single.source, 'settings_form');
+    expect(rows.single.status, 'triaged');
+    expect(rows.single.screenshotPaths, ['uploads/u1/feedback_1.png']);
+  });
+
+  test('adminSetFeedbackStatus() POSTs the new status', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(jsonEncode({'ok': true}), 200);
+      }),
+    );
+
+    await client.adminSetFeedbackStatus('f1', 'done');
+    expect(captured.url.path, '/admin/feedback/f1');
+    expect(jsonDecode(captured.body), {'status': 'done'});
   });
 
   test('usage() parses the derived credit balance',

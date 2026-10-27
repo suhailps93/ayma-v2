@@ -33,10 +33,8 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Known test noise: Flutter `chat_scroll_to_bottom` "message arrives mid-drag" fails; two `test_backfill_ops` tests are order-dependent (pass alone).
 - Muse (Astro) queue, read the reports when they arrive: LiveKit credits wording + Billing page; Firebase startup program; credits survey; AI-lab credits; Apple account status + Small Business Program; move all vendor billing to the Mercury card; Cloudflare routing of justabot.info/s/* and assetlinks to ayma-api; reviewer login into Play App access; Muse scheduled-tasks question; AWS account + Activate credits application (Bedrock Claude). LiveKit startups email sent to startups@livekit.com; no reply yet.
 - After the next deploy, ask the founder to retest voice on LiveKit (all-features-on defaults to inference for everyone).
+- Feedback catcher (branch `feedback-catcher`, off `meta-hackathon`): in-chat `submit_feedback` tool → editable confirmation card (nothing filed until Send) → `POST /feedback/submit` → unified `feedback` collection (`source: chat_card`). The Settings "Send feedback" form now routes to the SAME endpoint (`source: settings_form`); the old `/product-feedback` endpoint/collection write path is removed. Triage in-app at Developer → Feedback (`GET /admin/feedback`, dev-allowlist gated). Screenshots stored as access-controlled `uploads/{uid}/` paths, signed only in the admin view. No new feature flag. Needs on-device verification of the chat card + admin view; pre-existing `test_vendor_spend` staleness failure is unrelated.
 
-<<<<<<< HEAD
-## 4. Facts to keep straight
-=======
 ## 3b. WAVE 1 DEPLOYED (2026-10-25, from `all-features-on` @ 5019528, not main)
 - Merged: fix-prefs-theme-explore, fix-inference-voice-context, admin-stale-alert, restore-color-gradient (conflicts in app_command_service/app_control resolved to the restore-color-gradient accent tool; fix-prefs duplicate tests updated). Not included: plan-page-design.
 - Live: ayma-api-00195-985 (prev 00194-7ft), ayma-agent-00101-6qf (prev 00100-gj5), Hosting (delete-account, child-safety, privacy), Firestore rules (already identical, no change). /health 200, justabot.info/delete-account.html 200. No flags/models/config/llm_routing touched.

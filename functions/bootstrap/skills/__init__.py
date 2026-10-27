@@ -36,6 +36,7 @@ from . import (
     report_bug,
     set_profile_field,
     set_voice_preference,
+    submit_feedback,
     user_steering,
 )
 from tool_labels import outcome_label
@@ -94,6 +95,13 @@ from . import edit_profile_section, photo_edit, story_edit, deep_dive_edit, appe
 # would only let the model claim to send images it can't.
 _TEXT_ONLY_REGISTRY: list[Skill] = [generate_image.SKILL]
 
+# Text-only like ``generate_image``, but delivered through its OWN sink
+# (``main._ChatCtx.feedback_draft`` → the reply's ``feedback_card``) rather
+# than the photo sink: ``submit_feedback`` drafts a confirmation card the user
+# reviews and sends. Voice has no surface to show/edit a card, so it is never
+# in the voice tool set (``_REGISTRY``).
+_FEEDBACK_REGISTRY: list[Skill] = [submit_feedback.SKILL]
+
 # Only exposed when the chat is opened from the Your Story editor (§ Your Story).
 _STORY_REGISTRY: list[Skill] = list(story_edit.SKILLS)
 _STORY_NAMES = {s.name for s in _STORY_REGISTRY}
@@ -133,7 +141,7 @@ def session_tool_declarations(
     ``appearance=True`` adds the Appearance-report correct/clear tools."""
     reg = (
         list(_REGISTRY) + _recall_skills() + _TEXT_ONLY_REGISTRY
-        + app_control.COMMAND_SKILLS
+        + _FEEDBACK_REGISTRY + app_control.COMMAND_SKILLS
     )
     if story:
         reg += _STORY_REGISTRY
@@ -160,6 +168,7 @@ def make_session_tool_fns(
     deep_dive_ctx: dict | None = None,
     appearance_ctx: dict | None = None,
     image_result: dict | None = None,
+    feedback_result: dict | None = None,
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
@@ -185,8 +194,11 @@ def make_session_tool_fns(
     mutable ``main._ChatCtx.photo_edit_result`` sink ``photo_ctx["result"]``
     carries) binds the text-only ``generate_image`` tool's delivery — the
     generated image's ``image_path``/``image_url`` land there for the caller
-    to attach to the reply, exactly like ``edit_photo``'s. Every other skill
-    binds on ``(db, uid)`` alone.
+    to attach to the reply, exactly like ``edit_photo``'s; ``feedback_result``
+    (``main._ChatCtx.feedback_draft``) binds the text-only ``submit_feedback``
+    tool's delivery — the drafted ``{kind, title, body}`` lands there for the
+    reply to carry to the client as ``feedback_card`` (nothing is persisted).
+    Every other skill binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in (_REGISTRY + _recall_skills()):
@@ -204,6 +216,11 @@ def make_session_tool_fns(
             out[s.name] = s.bind(db, uid)
     for s in _TEXT_ONLY_REGISTRY:
         out[s.name] = s.bind(db, uid, result=image_result)
+    for s in _FEEDBACK_REGISTRY:
+        # Its own sink (``feedback_result``), not the photo one — a drafted
+        # feedback card is delivered to the client via the reply's
+        # ``feedback_card`` field; nothing is persisted here.
+        out[s.name] = s.bind(db, uid, result=feedback_result)
     for s in app_control.COMMAND_SKILLS:
         # account_action checks the confirmation against the user's own
         # latest message, so it needs this turn's transcript window.
