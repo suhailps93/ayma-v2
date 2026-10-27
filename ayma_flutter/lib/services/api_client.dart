@@ -30,6 +30,15 @@ class ApiClient {
   final Duration chatStreamConnectTimeout;
   final Duration chatStreamIdleTimeout;
 
+  /// Startup deadlines (§11.2). The splash's `/bootstrap` is the first network
+  /// the app does, so it gets explicit timeouts: a transient DNS/connectivity
+  /// blip must surface as a connection-class [ApiException] the splash can
+  /// retry, never an endless spinner. [_bootstrapTokenTimeout] caps the
+  /// Firebase ID-token refresh (a silent network call that can otherwise hang
+  /// forever); [_bootstrapPostTimeout] caps the POST itself.
+  static const _bootstrapTokenTimeout = Duration(seconds: 12);
+  static const _bootstrapPostTimeout = Duration(seconds: 15);
+
   final http.Client _http;
   final FirebaseAuth _auth;
 
@@ -53,18 +62,39 @@ class ApiClient {
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
   }) async {
+    // Refresh the ID token under a deadline. A hang here (flaky DNS reaching
+    // Firebase) or a network-level Firebase failure is transient, so it
+    // surfaces as a connection-class ApiException (no statusCode) the splash
+    // retries — never a stale-token 401 that would wrongly bounce a signed-in
+    // user to sign-in.
+    final Map<String, String> headers;
+    try {
+      headers = await _headers().timeout(_bootstrapTokenTimeout);
+    } on TimeoutException {
+      throw ApiException('Network timed out preparing the request.');
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'network-request-failed') {
+        throw ApiException('Network error: ${e.message ?? e.code}');
+      }
+      rethrow;
+    }
+
     final http.Response response;
     try {
-      response = await _http.post(
-        _uri('/bootstrap'),
-        headers: await _headers(),
-        body: jsonEncode({
-          'session_id': sessionId,
-          'recent_turns': recentTurns,
-        }),
-      );
+      response = await _http
+          .post(
+            _uri('/bootstrap'),
+            headers: headers,
+            body: jsonEncode({
+              'session_id': sessionId,
+              'recent_turns': recentTurns,
+            }),
+          )
+          .timeout(_bootstrapPostTimeout);
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
+    } on TimeoutException {
+      throw ApiException('Network timed out reaching Ayma.');
     }
 
     if (response.statusCode != 200) {

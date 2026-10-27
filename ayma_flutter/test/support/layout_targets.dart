@@ -98,6 +98,15 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
   Widget shell(Widget child) => NavBarShell(child: child);
   return {
     SplashScreen.path: () => SplashScreen(apiClient: api, auth: kLayoutAuth),
+    // The splash's distinct "couldn't connect" state (startup retries spent),
+    // pumped directly so the matrix holds its message + Retry to every size,
+    // scale and direction. Not an appRouter path — a synthetic target.
+    'splash (connection error)': () => Scaffold(
+      body: SplashErrorView(
+        message: "Couldn't connect. Check your connection and try again.",
+        onRetry: () {},
+      ),
+    ),
     UnderageScreen.path: () => UnderageScreen(signOut: () async {}),
     SignInScreen.path: () => SignInScreen(
       auth: AuthService(auth: kLayoutAuth, profileService: profiles),
