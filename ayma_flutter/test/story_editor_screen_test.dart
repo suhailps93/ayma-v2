@@ -373,7 +373,46 @@ Future<void> _pumpWithRouter(WidgetTester tester, _FakeApi api) async {
   await tester.pumpAndSettle();
 }
 
+/// The standalone, dev-only Ayma's Notes page (same fakes as the Story pump).
+Future<void> _pumpNotes(WidgetTester tester, _FakeApi api) async {
+  tester.view.physicalSize = const Size(1200, 3000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  final router = GoRouter(
+    initialLocation: '/notes',
+    routes: [
+      GoRoute(
+        path: '/notes',
+        builder: (_, __) => AymaNotesScreen(api: api, myUid: 'u1'),
+      ),
+      GoRoute(
+        path: '/appearance/:id',
+        builder: (_, state) => Scaffold(body: Text('APPEARANCE ${state.pathParameters['id']}')),
+      ),
+      GoRoute(
+        path: '/deep-dive/:id',
+        builder: (_, state) => Scaffold(body: Text('DEEP DIVE ${state.pathParameters['id']}')),
+      ),
+    ],
+  );
+  await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  testWidgets(
+      'the Story screen has neither the Public view nor the Ayma\'s notes tab',
+      (tester) async {
+    final api = _FakeApi();
+    await _pumpWithRouter(tester, api);
+
+    expect(find.text('Public view'), findsNothing);
+    expect(find.text("Ayma's notes"), findsNothing);
+    expect(find.text("Ayma's Notes"), findsNothing);
+    // The private Story content is shown directly, with no tab bar above it.
+    expect(find.textContaining('Your Story'), findsOneWidget);
+  });
+
 
   List<StorySection> appearance({String visibility = 'private', String? reportId = 'current',
       bool edited = false, String? body}) => [
@@ -383,64 +422,64 @@ void main() {
           visibility: visibility, isSkill: true, reportId: reportId, userEdited: edited),
   ];
 
-  for (final notes in [false, true]) {
-    testWidgets('Appearance groups three pages and one link notes=$notes', (tester) async {
-      final rows = appearance(edited: true);
-      final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
-      await _pumpWithRouter(tester, api);
-      if (notes) {
-        await tester.tap(find.text("Ayma's notes"));
-        await tester.pumpAndSettle();
-      }
-      for (final label in ['FACE', 'PHYSIQUE', 'PROFILE']) {
-        expect(find.text(label), findsOneWidget);
-      }
-      expect(find.textContaining('Second paragraph kept in full.'), findsNWidgets(3));
-      expect(find.text('VIEW FULL REPORT'), findsOneWidget);
-      await tester.tap(find.text('VIEW FULL REPORT'));
-      await tester.pumpAndSettle();
-      expect(find.text('APPEARANCE current'), findsOneWidget);
-    });
-  }
+  testWidgets('Story: Appearance groups three pages behind one report link', (tester) async {
+    final rows = appearance(edited: true);
+    final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
+    await _pumpWithRouter(tester, api);
+    for (final label in ['FACE', 'PHYSIQUE', 'PROFILE']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    expect(find.textContaining('Second paragraph kept in full.'), findsNWidgets(3));
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+    await tester.tap(find.text('VIEW FULL REPORT'));
+    await tester.pumpAndSettle();
+    expect(find.text('APPEARANCE current'), findsOneWidget);
+  });
+
+  testWidgets("Ayma's Notes: Appearance groups three pages behind one report link",
+      (tester) async {
+    final rows = appearance(edited: true);
+    final api = _FakeApi()..aiSections = rows;
+    await _pumpNotes(tester, api);
+    for (final label in ['FACE', 'PHYSIQUE', 'PROFILE']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+    await tester.tap(find.text('VIEW FULL REPORT'));
+    await tester.pumpAndSettle();
+    expect(find.text('APPEARANCE current'), findsOneWidget);
+  });
 
   for (final visibility in ['private', 'ai', 'ai_only', 'unknown']) {
-    testWidgets('Appearance $visibility stays out of Public view', (tester) async {
+    testWidgets('Story shows only the private Appearance ($visibility)', (tester) async {
       final rows = appearance(visibility: visibility);
       final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
       await _pumpWithRouter(tester, api);
-      if (visibility != 'private') expect(find.text('FACE'), findsNothing);
-      await tester.tap(find.text('Public view'));
-      await tester.pumpAndSettle();
-      expect(find.text('FACE'), findsNothing);
-      expect(find.text('VIEW FULL REPORT'), findsNothing);
-      await tester.tap(find.text("Ayma's notes"));
-      await tester.pumpAndSettle();
-      expect(find.text('FACE'), findsOneWidget);
+      if (visibility == 'private') {
+        // Private is the only visibility that surfaces on the Story.
+        expect(find.text('FACE'), findsOneWidget);
+        expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+      } else {
+        // AI-only appearance never surfaces on the Story — it lives only in
+        // the dev-only Ayma's Notes.
+        expect(find.text('FACE'), findsNothing);
+        expect(find.text('VIEW FULL REPORT'), findsNothing);
+      }
     });
   }
 
-  testWidgets('Public Appearance has no owner report or provenance actions', (tester) async {
-    final api = _FakeApi()..data = StoryData(sections: appearance(visibility: 'public'));
-    await _pumpWithRouter(tester, api);
-    await tester.tap(find.text('Public view'));
-    await tester.pumpAndSettle();
+  testWidgets("Ayma's Notes shows the Appearance card regardless of visibility",
+      (tester) async {
+    final rows = appearance(visibility: 'ai');
+    final api = _FakeApi()..aiSections = rows;
+    await _pumpNotes(tester, api);
     expect(find.text('FACE'), findsOneWidget);
-    expect(find.text('VIEW FULL REPORT'), findsNothing);
-    expect(find.text('Why Ayma believes this'), findsNothing);
-    expect(find.text('Run it'), findsNothing);
+    // In Ayma's Notes the card carries its visibility tag.
+    expect(find.text('AI ONLY'), findsOneWidget);
   });
 
-  testWidgets('Public Appearance hides a card containing private passages', (tester) async {
-    final api = _FakeApi()..data = StoryData(sections: appearance(
-        visibility: 'public', body: '{{private}}Secret score{{/private}}'));
-    await _pumpWithRouter(tester, api);
-    await tester.tap(find.text('Public view'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Secret score'), findsNothing);
-    expect(find.text('FACE'), findsNothing);
-  });
-
-  testWidgets('Mixed visibility Appearance stays private and finds a later report id', (tester) async {
+  testWidgets('Story: mixed-visibility Appearance stays private and finds a later report id',
+      (tester) async {
     final rows = [
       appearance(visibility: 'public', reportId: ' ').first,
       appearance()[1],
@@ -449,46 +488,62 @@ void main() {
     final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
     await _pumpWithRouter(tester, api);
     expect(find.text('VIEW FULL REPORT'), findsOneWidget);
-    await tester.tap(find.text('Public view'));
-    await tester.pumpAndSettle();
-    expect(find.text('FACE'), findsNothing);
-    await tester.tap(find.text("Ayma's notes"));
-    await tester.pumpAndSettle();
+  });
+
+  testWidgets("Ayma's Notes: mixed-visibility Appearance shows the PRIVATE tag",
+      (tester) async {
+    final rows = [
+      appearance(visibility: 'public', reportId: ' ').first,
+      appearance()[1],
+      appearance(visibility: 'public')[2],
+    ];
+    final api = _FakeApi()..aiSections = rows;
+    await _pumpNotes(tester, api);
     expect(find.text('PRIVATE'), findsOneWidget);
     await tester.tap(find.text('VIEW FULL REPORT'));
     await tester.pumpAndSettle();
     expect(find.text('APPEARANCE current'), findsOneWidget);
   });
 
-  testWidgets('Run it refreshes both views with a single in-flight request', (tester) async {
+  testWidgets('Story: Run it refreshes the Appearance card in place', (tester) async {
     final rows = appearance(reportId: null);
     final pending = Completer<AppearanceReportResult>();
     final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows
       ..runAppearance = () => pending.future;
     await _pumpWithRouter(tester, api);
-    await tester.tap(find.text("Ayma's notes"));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Run it'));
     await tester.pump();
     expect(find.text('Run it'), findsNothing);
     expect(api.calls.where((c) => c == 'run_appearance'), hasLength(1));
     api.data = StoryData(sections: appearance());
-    api.aiSections = appearance();
     pending.complete(const AppearanceReportResult(usageCapped: false, reportId: 'current', report: null));
-    await tester.pumpAndSettle();
-    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
-    await tester.tap(find.text('Story'));
     await tester.pumpAndSettle();
     expect(find.text('VIEW FULL REPORT'), findsOneWidget);
   });
 
-  for (final failure in ['run', 'refresh', 'credits']) {
-    testWidgets('Appearance handles $failure and restores Run it', (tester) async {
+  testWidgets("Ayma's Notes: Run it refreshes the Appearance card in place",
+      (tester) async {
+    final rows = appearance(reportId: null);
+    final pending = Completer<AppearanceReportResult>();
+    final api = _FakeApi()..aiSections = rows
+      ..runAppearance = () => pending.future;
+    await _pumpNotes(tester, api);
+    await tester.tap(find.text('Run it'));
+    await tester.pump();
+    expect(find.text('Run it'), findsNothing);
+    expect(api.calls.where((c) => c == 'run_appearance'), hasLength(1));
+    api.aiSections = appearance();
+    pending.complete(const AppearanceReportResult(usageCapped: false, reportId: 'current', report: null));
+    await tester.pumpAndSettle();
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+  });
+
+  for (final failure in ['run', 'credits']) {
+    testWidgets('Story: Appearance handles $failure and restores Run it', (tester) async {
       final rows = appearance(reportId: null, body: '');
       final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
       api.runAppearance = () async {
         if (failure == 'run') throw StateError('failed');
-        if (failure == 'refresh') api.failNotes = true;
         return AppearanceReportResult(usageCapped: failure == 'credits', reportId: '', report: null);
       };
       await _pumpWithRouter(tester, api);
@@ -499,6 +554,23 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets("Ayma's Notes: a failed refresh after Run it restores Run it",
+      (tester) async {
+    final rows = appearance(reportId: null, body: '');
+    final api = _FakeApi()..aiSections = rows;
+    api.runAppearance = () async {
+      // The post-run notes refresh throws — the card must recover, not crash.
+      api.failNotes = true;
+      return const AppearanceReportResult(usageCapped: false, reportId: '', report: null);
+    };
+    await _pumpNotes(tester, api);
+    await tester.tap(find.text('Run it'));
+    await tester.pumpAndSettle();
+    expect(find.text('Run it'), findsOneWidget);
+    expect(find.text("Couldn't run that — try again."), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
       'Story tab: narrative wiki pages render via the shared Living Report '
@@ -519,19 +591,6 @@ void main() {
     expect(
         find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')),
         findsOneWidget);
-  });
-
-  testWidgets('Public view tab fetches story_public and shows only public sections',
-      (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.text('Public view'));
-    await tester.pumpAndSettle();
-
-    expect(api.calls, contains('get_report:story_public:u1'));
-    expect(find.textContaining('I lead the analytics team'), findsOneWidget);
-    expect(find.textContaining('Close with my sister'), findsNothing);
   });
 
   testWidgets(
@@ -651,7 +710,7 @@ void main() {
   });
 
   testWidgets(
-      "Ayma's Notes tab: narrative wiki pages render via story_ai_notes, "
+      "Ayma's Notes: narrative wiki pages render via story_ai_notes, "
       'with no invented per-passage confidence figure', (tester) async {
     final api = _FakeApi()
       ..aiSections = const [
@@ -660,10 +719,7 @@ void main() {
           body: 'Family matters most to me.', visibility: 'private',
         ),
       ];
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.text("Ayma's notes"));
-    await tester.pumpAndSettle();
+    await _pumpNotes(tester, api);
 
     expect(api.calls, contains('get_report:story_ai_notes:u1'));
     expect(find.text('VALUES'), findsOneWidget);
@@ -827,28 +883,11 @@ void main() {
     expect(chat.photoSource, 'profile');
   });
 
-  testWidgets('Public view only shows profile photos — no chat/web/deleted groups',
-      (tester) async {
+  testWidgets("Ayma's Notes shows every group, including deleted", (tester) async {
     final api = _FakeApi()..photos = mixedSourcePhotos();
     silenceImageLoadErrors();
 
-    await _pumpWithRouter(tester, api);
-    await tester.tap(find.text('Public view'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
-    expect(find.textContaining('FROM CHAT & SKILLS'), findsNothing);
-    expect(find.textContaining('FOUND ON THE INTERNET'), findsNothing);
-    expect(find.textContaining('DELETED BY YOU'), findsNothing);
-  });
-
-  testWidgets("Ayma's notes shows every group, including deleted", (tester) async {
-    final api = _FakeApi()..photos = mixedSourcePhotos();
-    silenceImageLoadErrors();
-
-    await _pumpWithRouter(tester, api);
-    await tester.tap(find.text("Ayma's notes"));
-    await tester.pumpAndSettle();
+    await _pumpNotes(tester, api);
 
     expect(find.text('Photos'), findsOneWidget);
     expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);

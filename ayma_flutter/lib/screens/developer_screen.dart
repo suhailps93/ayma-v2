@@ -18,6 +18,7 @@ import '../widgets/voice_engine_control.dart';
 import 'admin_feedback_screen.dart';
 import 'plan_screen.dart';
 import 'release_notes_screen.dart';
+import 'story_editor_screen.dart';
 
 /// The hidden Developer panel, opened by tapping the version row in User
 /// settings seven times (or long-pressing it). Opening it shows ONLY a
@@ -395,6 +396,21 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
             onReset: _resetMoneyTracker,
           );
         },
+      ),
+      const SizedBox(height: 36),
+      const Eyebrow("Ayma's notes"),
+      const SizedBox(height: 8),
+      ListTile(
+        key: const ValueKey('dev-ayma-notes'),
+        contentPadding: EdgeInsets.zero,
+        title: Text("Ayma's notes",
+            style: AymaType.sans(size: 15, color: ac.fg)),
+        subtitle: Text(
+            'The intelligence beneath the portrait — observed, unconfirmed '
+            'analysis. Dev-only.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+        trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+        onTap: () => context.push(AymaNotesScreen.path),
       ),
       const SizedBox(height: 36),
       const Eyebrow('Feedback'),

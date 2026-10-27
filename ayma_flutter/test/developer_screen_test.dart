@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/developer_screen.dart';
+import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
@@ -9,6 +10,7 @@ import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -75,6 +77,47 @@ void main() {
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
     expect(find.byKey(const ValueKey('dev-panel-switch')), findsNothing);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsNothing);
+    // The dev-only "Ayma's notes" entry is gated behind the unlock too — a
+    // locked panel never exposes the analysis layer's entry point.
+    expect(find.byKey(const ValueKey('dev-ayma-notes')), findsNothing);
+  });
+
+  testWidgets("unlocked: the Ayma's notes entry opens the dev-only notes page",
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    final api = _usageApi(_usage());
+    final router = GoRouter(
+      initialLocation: '/dev',
+      routes: [
+        GoRoute(
+          path: '/dev',
+          builder: (_, __) => DeveloperScreen(
+            auth: MockFirebaseAuth(signedIn: true),
+            api: api,
+          ),
+        ),
+        // The real route is dev-gated in `app_router.dart`; here a sentinel
+        // proves the entry pushes exactly AymaNotesScreen.path.
+        GoRoute(
+          path: AymaNotesScreen.path,
+          builder: (_, __) => const Scaffold(body: Text('AYMA NOTES PAGE')),
+        ),
+      ],
+    );
+    tester.view.physicalSize = const Size(900, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp.router(routerConfig: router, theme: AymaTheme.light),
+    );
+    await tester.pumpAndSettle();
+
+    final entry = find.byKey(const ValueKey('dev-ayma-notes'));
+    expect(entry, findsOneWidget);
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(find.text('AYMA NOTES PAGE'), findsOneWidget);
   });
 
   testWidgets('correct password unlocks and shows the contents', (

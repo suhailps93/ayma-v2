@@ -22,21 +22,25 @@ import '../widgets/ayma_back_button.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
 ///
-/// The narrative passages themselves (title, prose body, visibility) are now
+/// The narrative passages themselves (title, prose body, visibility) are
 /// rendered through the ONE shared [LivingReportView] renderer (§ generic
 /// reports), embedded here — `shrinkWrap`/`showTitle: false` — alongside
 /// content the block model doesn't (yet) represent: cover stats, the photo
 /// gallery, the merged Appearance card, "Beyond our conversations" (web
-/// findings), and the Career & Education timeline. See this file's own
-/// top-of-class comment history / the founder's Living-Report-migration
-/// report for exactly what's covered by blocks today and what's still
-/// bespoke chrome.
+/// findings), and the Career & Education timeline.
 ///
-/// Three tabs: Story (`story_private` — everything, colour-neutral —
-/// visibility is now an interactive toolbar state, not a permanent badge),
-/// Public view (`story_public` — only public statements, previewing what a
-/// match would see), and Ayma's Notes (`story_ai_notes` — the full, more
-/// analytical picture, including anything still AI-only).
+/// **Single surface now** (`story_private` — everything, colour-neutral;
+/// visibility is an interactive toolbar state, not a permanent badge). The two
+/// former tabs are gone:
+/// - **Public view** was removed — it duplicated the dedicated
+///   [MyPublicProfileScreen] ("My public profile"), which renders the same
+///   `story_public` Living Report and is the single surface that previews what
+///   a match would see.
+/// - **Ayma's Notes** (`story_ai_notes` — the full, analytical picture, "the
+///   intelligence beneath the portrait") moved OFF this screen into the
+///   standalone [AymaNotesScreen], reachable ONLY from the password-gated
+///   Developer panel (§11.2). It exposes observed/unconfirmed analysis, so it
+///   is dev-only on purpose — no normal-user path reaches it.
 ///
 /// See the GUARDRAIL in `living_report_view.dart`'s own file doc: the
 /// bespoke content listed above (cover stats, photo gallery, merged
@@ -63,100 +67,35 @@ class StoryEditorScreen extends StatefulWidget {
   State<StoryEditorScreen> createState() => _StoryEditorScreenState();
 }
 
-class _StoryEditorScreenState extends State<StoryEditorScreen>
-    with ScreenContextReasserter<StoryEditorScreen> {
-  late final ApiClient _api = widget.api ?? ApiClient();
+/// Shared photo / provenance / web-findings chrome used by both the Story
+/// screen and the standalone [AymaNotesScreen]. The two render different
+/// section sets, but both reach for the exact same photo-detail sheet, "Why
+/// Ayma believes this" provenance sheet and lazily-loaded web-findings digest
+/// — so those live here once rather than drifting apart in two copies.
+mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
+  ApiClient get _notesApi;
 
-  String? _liveUid() {
-    try {
-      return FirebaseAuth.instance.currentUser?.uid;
-    } catch (_) {
-      // No Firebase app configured — never crash the whole screen over it.
-      return null;
-    }
-  }
-
-  String get _uid => widget.myUid ?? _liveUid() ?? '';
-
-  /// Bumped whenever chrome outside the Living Report changes in a way that
-  /// might also affect the report's own content (e.g. an Appearance report
-  /// run updates `physical_attributes`, which the Appearance view's own
-  /// Attributes section reads, and which feeds the "AI notes" physical-
-  /// profile wiki section too) — folded into the widget's key so it's
-  /// recreated (and so refetches) rather than silently going stale.
-  int _reportGen = 0;
-
-  // 'private' = Story | 'public' = Public view | 'ai' = Ayma's notes. Kept as
-  // the same three values the backend/API already used ("Everything" is just
-  // relabelled "Story" on screen) rather than inventing a parallel enum.
-  String _view = 'private';
-  bool _loading = true;
-  String? _error;
-  List<StorySection> _sections = const [];
-  List<StorySection> _aiSections = const [];
   List<AiNotePhoto> _photos = const [];
-
-  CareerTimeline? _careerTimeline;
   DeepDiveReport? _webFindingsReport;
   String? _webFindingsLoadedFor;
 
-  @override
-  void initState() {
-    super.initState();
-    reassertScreenContext();
-    _load();
-    unawaited(_loadCareerTimeline());
-  }
-
-  @override
-  void reassertScreenContext() => AppContext.instance.set(screen: 'story');
-
-  StorySection? _section(String id) {
-    for (final s in _sections) {
-      if (s.pageId == id) return s;
-    }
-    return null;
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final data = await _api.storyGet();
-      if (!mounted) return;
-      setState(() {
-        _sections = data.sections;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Could not load your story ($e).';
-        _loading = false;
-      });
-    }
-    unawaited(_loadAiNotes());
-    unawaited(_loadPhotos());
-  }
-
-  Future<void> _loadAiNotes() async {
-    try {
-      final sections = await _api.storyAiNotes();
-      if (mounted) setState(() => _aiSections = sections);
-    } catch (e) {
-      debugPrint('[story] storyAiNotes failed: $e');
-    }
-  }
+  /// Non-deleted photos — the count the cover stats and the mosaic teaser
+  /// both use ("Everything" Ayma actually holds, minus what the user removed).
+  List<AiNotePhoto> get _livePhotos =>
+      _photos.where((p) => !p.deleted).toList();
 
   Future<void> _loadPhotos() async {
     try {
-      final notes = await _api.aiNotes();
+      final notes = await _notesApi.aiNotes();
       if (mounted) setState(() => _photos = notes.photos);
     } catch (e) {
       debugPrint('[story] aiNotes (photos) failed: $e');
     }
+  }
+
+  void _toast(String m, {AymaToastKind kind = AymaToastKind.info}) {
+    if (!mounted) return;
+    AymaToast.show(context, m, kind: kind);
   }
 
   // --- photos ---------------------------------------------------------
@@ -175,13 +114,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   }
 
   Future<void> _hidePhoto(AiNotePhoto p) async {
-    await _api.photoHide(p.url, source: p.source);
+    await _notesApi.photoHide(p.url, source: p.source);
     await _loadPhotos();
     _toast('Removed that photo', kind: AymaToastKind.success);
   }
 
   Future<void> _publishPhoto(AiNotePhoto p) async {
-    await _api.photoPublish(p.url, source: p.source);
+    await _notesApi.photoPublish(p.url, source: p.source);
     await _loadPhotos();
     _toast('Added to your public profile', kind: AymaToastKind.success);
   }
@@ -199,211 +138,39 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       ),
       builder: (ctx) => FractionallySizedBox(
         heightFactor: 0.92,
-        child: ChatScreen(apiClient: _api, photoUrl: p.url, photoSource: p.source),
+        child: ChatScreen(
+            apiClient: _notesApi, photoUrl: p.url, photoSource: p.source),
       ),
     );
     if (mounted) await _loadPhotos();
   }
 
-  Future<void> _loadCareerTimeline() async {
-    try {
-      final t = await _api.careerTimeline();
-      if (mounted) setState(() => _careerTimeline = t);
-    } catch (e) {
-      debugPrint('[story] career timeline failed: $e');
-    }
-  }
-
   Future<void> _loadWebFindingsReport(String reportId) async {
-    // Guards against a request storm: `_content()` calls this on every build
+    // Guards against a request storm: the build calls this on every build
     // while a web-findings section is visible, so it must be a strict
     // once-per-id fetch, not just an in-flight guard.
     if (reportId.isEmpty || _webFindingsLoadedFor == reportId) return;
     _webFindingsLoadedFor = reportId;
     try {
-      final r = await _api.deepDiveReport(reportId);
+      final r = await _notesApi.deepDiveReport(reportId);
       if (mounted) setState(() => _webFindingsReport = r);
     } catch (e) {
       debugPrint('[story] web-findings report failed: $e');
     }
   }
 
-  /// Re-fetch the section list after a skill runs / a report finishes.
-  Future<void> _refreshStorySections() async {
-    final data = await _api.storyGet();
-    final notes = await _api.storyAiNotes();
-    if (!mounted) return;
-    setState(() {
-      _sections = data.sections;
-      _aiSections = notes;
-      _reportGen++;
-    });
-  }
-
-  List<StorySection> get _narrativeSections => _sections
-      .where((s) => !_reportLinkedPageIds.contains(s.pageId))
-      .toList();
-
-  List<StorySection> get _visibleAiSections => _aiSections;
-
-  /// Non-deleted photos — the count the cover stats and the mosaic teaser
-  /// both use ("Everything" Ayma actually holds, minus what the user removed).
-  List<AiNotePhoto> get _livePhotos =>
-      _photos.where((p) => !p.deleted).toList();
-
-  StorySection? get _webFindingsSection {
-    for (final s in _sections) {
-      if (s.pageId == 'web-findings') return s;
-    }
-    return null;
-  }
-
-  /// Same lookup against `_aiSections` — Ayma's Notes tab shows its own web
-  /// findings interlude too (§ Living Report migration: previously an inline
-  /// skill-card special-case inside the now-removed `_AiNoteSection`; now the
-  /// same bespoke `_WebFindingsInterlude` every tab uses).
-  StorySection? get _webFindingsAiSection {
-    for (final s in _aiSections) {
-      if (s.pageId == 'web-findings') return s;
-    }
-    return null;
-  }
-
-  /// Opens the Ask Ayma overlay for a career-timeline entry (the ONE
-  /// remaining caller — § Living Report migration: ordinary narrative
-  /// passages now go through [LivingReportView]'s own block tap-to-correct
-  /// instead of this raw `pageId`/`timelineEntryId`-scoped path, which the
-  /// generic report model doesn't represent at all — see `AskAymaContext`'s
-  /// own doc on `timelineEntryId` mapping to `story_timeline_entry_id`, a
-  /// field with no block-model equivalent). Re-syncs the affected page in
-  /// place afterwards and — when the edit actually changed its text — shows
-  /// a "Changed to" toast; the same `/chat` (+ `story_edit` tools) pipeline
-  /// every other Ayma conversation uses, no parallel rewrite system.
-  Future<void> _openAskAyma({
-    required String pageId,
-    String timelineEntryId = '',
-    String timelineEntryLabel = '',
-    String sectionTitle = '',
-  }) async {
-    var lastBody = _section(pageId)?.editableBody ?? '';
-
-    Future<void> refresh() async {
-      try {
-        final data = await _api.storyGet();
-        if (!mounted) return;
-        setState(() => _sections = data.sections);
-        StorySection? updated;
-        for (final s in data.sections) {
-          if (s.pageId == pageId) updated = s;
-        }
-        if (updated != null) {
-          final range = changedRange(lastBody, updated.editableBody);
-          lastBody = updated.editableBody;
-          if (range != null) {
-            final start = range.$1.clamp(0, updated.editableBody.length);
-            final end = range.$2.clamp(0, updated.editableBody.length);
-            final changedText = updated.editableBody.substring(start, end).replaceAll(RegExp(r'\{\{/?(?:private|ai_only)\}\}'), '').trim();
-            if (changedText.isNotEmpty) {
-              _toast('Changed to "$changedText"',
-                  kind: AymaToastKind.success);
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('[story] post-chat refresh failed: $e');
-      }
-      unawaited(_loadCareerTimeline());
-    }
-
-    await showAskAymaOverlay(
-      context,
-      api: _api,
-      ctx: AskAymaContext(
-        pageId: pageId,
-        sectionTitle: sectionTitle,
-        timelineEntryId: timelineEntryId,
-        timelineEntryLabel: timelineEntryLabel,
-        quoteTitle: 'Selected text',
-        quoteText: timelineEntryLabel,
-      ),
-      onExchange: () => unawaited(refresh()),
-    );
-    await refresh();
-    unawaited(_loadAiNotes());
-  }
-
-  void _onTapTimelineEntry(TimelineEntry e) {
-    final bits = [
-      e.org,
-      if (e.titleOrDegree.isNotEmpty) e.titleOrDegree,
-      if (e.dateRange.isNotEmpty) e.dateRange,
-    ];
-    unawaited(_openAskAyma(
-      pageId: 'career',
-      timelineEntryId: e.id,
-      timelineEntryLabel: bits.join(' — '),
-      sectionTitle: 'Career & Education',
-    ));
-  }
-
-  Future<void> _addLinkedin() async {
-    final controller = TextEditingController();
+  Widget _sectionDivider() {
     final ac = context.ac;
-    final url = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        backgroundColor: ac.bg,
-        title: Text('Add your LinkedIn', style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Ayma will read this page directly to help build your career "
-              'timeline — nothing is scraped or shared.',
-              style: AymaType.sans(size: 13, color: ac.fgMute),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                hintText: 'https://www.linkedin.com/in/…',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 26),
+      child: Divider(height: 0.5, color: ac.lineSoft),
     );
-    if (url == null || url.isEmpty || !mounted) return;
-    try {
-      await _api.setLinkedinUrl(url);
-      _toast('Saved — building your timeline…', kind: AymaToastKind.success);
-      final refreshed = await _api.refreshCareerTimeline();
-      if (mounted) setState(() => _careerTimeline = refreshed);
-    } on ApiException catch (e) {
-      _toast(e.statusCode == 400
-          ? "That doesn't look like a LinkedIn URL."
-          : 'Failed ($e)', kind: AymaToastKind.error);
-    } catch (e) {
-      _toast('Failed ($e)', kind: AymaToastKind.error);
-    }
   }
 
   Future<void> _showProvenance(StorySection s) async {
     final SectionProvenance prov;
     try {
-      prov = await _api.storyProvenance(s.pageId);
+      prov = await _notesApi.storyProvenance(s.pageId);
     } catch (e) {
       _toast('Could not load ($e)', kind: AymaToastKind.error);
       return;
@@ -475,14 +242,243 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       ),
       builder: (ctx) => FractionallySizedBox(
         heightFactor: 0.92,
-        child: ChatScreen(apiClient: _api, targetTimestamp: src.date),
+        child: ChatScreen(apiClient: _notesApi, targetTimestamp: src.date),
       ),
     );
   }
+}
 
-  void _toast(String m, {AymaToastKind kind = AymaToastKind.info}) {
+class _StoryEditorScreenState extends State<StoryEditorScreen>
+    with
+        ScreenContextReasserter<StoryEditorScreen>,
+        _StoryNotesCommon<StoryEditorScreen> {
+  late final ApiClient _api = widget.api ?? ApiClient();
+
+  @override
+  ApiClient get _notesApi => _api;
+
+  String? _liveUid() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      // No Firebase app configured — never crash the whole screen over it.
+      return null;
+    }
+  }
+
+  String get _uid => widget.myUid ?? _liveUid() ?? '';
+
+  /// Bumped whenever chrome outside the Living Report changes in a way that
+  /// might also affect the report's own content (e.g. an Appearance report
+  /// run updates `physical_attributes`, which the Appearance view's own
+  /// Attributes section reads) — folded into the widget's key so it's
+  /// recreated (and so refetches) rather than silently going stale.
+  int _reportGen = 0;
+
+  bool _loading = true;
+  String? _error;
+  List<StorySection> _sections = const [];
+
+  CareerTimeline? _careerTimeline;
+
+  @override
+  void initState() {
+    super.initState();
+    reassertScreenContext();
+    _load();
+    unawaited(_loadCareerTimeline());
+  }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(screen: 'story');
+
+  StorySection? _section(String id) {
+    for (final s in _sections) {
+      if (s.pageId == id) return s;
+    }
+    return null;
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final data = await _api.storyGet();
+      if (!mounted) return;
+      setState(() {
+        _sections = data.sections;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not load your story ($e).';
+        _loading = false;
+      });
+    }
+    unawaited(_loadPhotos());
+  }
+
+  Future<void> _loadCareerTimeline() async {
+    try {
+      final t = await _api.careerTimeline();
+      if (mounted) setState(() => _careerTimeline = t);
+    } catch (e) {
+      debugPrint('[story] career timeline failed: $e');
+    }
+  }
+
+  /// Re-fetch the section list after a skill runs / a report finishes.
+  Future<void> _refreshStorySections() async {
+    final data = await _api.storyGet();
     if (!mounted) return;
-    AymaToast.show(context, m, kind: kind);
+    setState(() {
+      _sections = data.sections;
+      _reportGen++;
+    });
+  }
+
+  List<StorySection> get _narrativeSections => _sections
+      .where((s) => !_reportLinkedPageIds.contains(s.pageId))
+      .toList();
+
+  StorySection? get _webFindingsSection {
+    for (final s in _sections) {
+      if (s.pageId == 'web-findings') return s;
+    }
+    return null;
+  }
+
+  /// Opens the Ask Ayma overlay for a career-timeline entry (the ONE
+  /// remaining caller — § Living Report migration: ordinary narrative
+  /// passages now go through [LivingReportView]'s own block tap-to-correct
+  /// instead of this raw `pageId`/`timelineEntryId`-scoped path, which the
+  /// generic report model doesn't represent at all — see `AskAymaContext`'s
+  /// own doc on `timelineEntryId` mapping to `story_timeline_entry_id`, a
+  /// field with no block-model equivalent). Re-syncs the affected page in
+  /// place afterwards and — when the edit actually changed its text — shows
+  /// a "Changed to" toast; the same `/chat` (+ `story_edit` tools) pipeline
+  /// every other Ayma conversation uses, no parallel rewrite system.
+  Future<void> _openAskAyma({
+    required String pageId,
+    String timelineEntryId = '',
+    String timelineEntryLabel = '',
+    String sectionTitle = '',
+  }) async {
+    var lastBody = _section(pageId)?.editableBody ?? '';
+
+    Future<void> refresh() async {
+      try {
+        final data = await _api.storyGet();
+        if (!mounted) return;
+        setState(() => _sections = data.sections);
+        StorySection? updated;
+        for (final s in data.sections) {
+          if (s.pageId == pageId) updated = s;
+        }
+        if (updated != null) {
+          final range = changedRange(lastBody, updated.editableBody);
+          lastBody = updated.editableBody;
+          if (range != null) {
+            final start = range.$1.clamp(0, updated.editableBody.length);
+            final end = range.$2.clamp(0, updated.editableBody.length);
+            final changedText = updated.editableBody.substring(start, end).replaceAll(RegExp(r'\{\{/?(?:private|ai_only)\}\}'), '').trim();
+            if (changedText.isNotEmpty) {
+              _toast('Changed to "$changedText"',
+                  kind: AymaToastKind.success);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[story] post-chat refresh failed: $e');
+      }
+      unawaited(_loadCareerTimeline());
+    }
+
+    await showAskAymaOverlay(
+      context,
+      api: _api,
+      ctx: AskAymaContext(
+        pageId: pageId,
+        sectionTitle: sectionTitle,
+        timelineEntryId: timelineEntryId,
+        timelineEntryLabel: timelineEntryLabel,
+        quoteTitle: 'Selected text',
+        quoteText: timelineEntryLabel,
+      ),
+      onExchange: () => unawaited(refresh()),
+    );
+    await refresh();
+  }
+
+  void _onTapTimelineEntry(TimelineEntry e) {
+    final bits = [
+      e.org,
+      if (e.titleOrDegree.isNotEmpty) e.titleOrDegree,
+      if (e.dateRange.isNotEmpty) e.dateRange,
+    ];
+    unawaited(_openAskAyma(
+      pageId: 'career',
+      timelineEntryId: e.id,
+      timelineEntryLabel: bits.join(' — '),
+      sectionTitle: 'Career & Education',
+    ));
+  }
+
+  Future<void> _addLinkedin() async {
+    final controller = TextEditingController();
+    final ac = context.ac;
+    final url = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        backgroundColor: ac.bg,
+        title: Text('Add your LinkedIn', style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Ayma will read this page directly to help build your career "
+              'timeline — nothing is scraped or shared.',
+              style: AymaType.sans(size: 13, color: ac.fgMute),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                hintText: 'https://www.linkedin.com/in/…',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (url == null || url.isEmpty || !mounted) return;
+    try {
+      await _api.setLinkedinUrl(url);
+      _toast('Saved — building your timeline…', kind: AymaToastKind.success);
+      final refreshed = await _api.refreshCareerTimeline();
+      if (mounted) setState(() => _careerTimeline = refreshed);
+    } on ApiException catch (e) {
+      _toast(e.statusCode == 400
+          ? "That doesn't look like a LinkedIn URL."
+          : 'Failed ($e)', kind: AymaToastKind.error);
+    } catch (e) {
+      _toast('Failed ($e)', kind: AymaToastKind.error);
+    }
   }
 
   // --- build ----------------------------------------------------
@@ -494,25 +490,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       backgroundColor: ac.bg,
       appBar: AppBar(
         leading: const AymaBackButton(),
-        
         backgroundColor: ac.bg,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         foregroundColor: ac.fg,
         title: const SizedBox.shrink(),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-            child: _StoryTabBar(
-              view: _view,
-              onChanged: (v) => setState(() => _view = v),
-            ),
-          ),
-          Expanded(child: _content()),
-        ],
-      ),
+      body: _content(),
     );
   }
 
@@ -532,69 +516,49 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       );
     }
 
-    if (_view == 'ai') return _buildAiNotes();
+    final rows = _narrativeSections;
+    final photos = _livePhotos;
+    final photoGroupsForView =
+        photoGroups.where((g) => g.$1 != 'deleted').toList();
 
-    final publicView = _view == 'public';
-    final rows = publicView
-        ? _narrativeSections.where((s) => s.visibility == 'public').toList()
-        : _narrativeSections;
-    // Public view: only profile-sourced photos — no chat/web ("private")
-    // photos and never a deleted group. Story view: every non-deleted photo,
-    // any source, but still never deleted (deleted only ever shows in Ayma's
-    // notes — see `_buildAiNotes`).
-    final photos = publicView
-        ? _photos.where((p) => p.source == 'profile' && !p.deleted).toList()
-        : _livePhotos;
-    final photoGroupsForView = publicView
-        ? photoGroups.where((g) => g.$1 == 'profile').toList()
-        : photoGroups.where((g) => g.$1 != 'deleted').toList();
-
-    // The merged face/body/physical-profile card belongs in the Story tab
-    // like any other private/public content — hidden in Public view unless
-    // every source page is explicitly public and has no private passages.
-    // The owner-only full report and provenance stay out of Public view.
+    // The merged face/body/physical-profile card belongs in the Story like
+    // any other private content. The owner-only full report and provenance
+    // stay visible here; AI-only appearance never surfaces on the Story (it
+    // lives only in Ayma's Notes).
     final appearanceMerge = _mergeAppearance(_sections);
-    final showAppearance = appearanceMerge != null &&
-        appearanceMerge.visibility != 'ai' &&
-        (!publicView || (appearanceMerge.visibility == 'public' &&
-            !appearanceMerge.parts.any((p) => p.section.body.contains('{{private}}'))));
+    final showAppearance =
+        appearanceMerge != null && appearanceMerge.visibility != 'ai';
 
     if (rows.isEmpty && photos.isEmpty && !showAppearance) {
       return CenteredScroll(
         padding: const EdgeInsets.symmetric(horizontal: 40),
         child: Text(
-          publicView
-              ? 'Nothing is public yet — tap a sentence anywhere in your '
-                  'story and choose "Make public".'
-              : "Once you and Ayma have talked a little, your story takes "
-                  'shape here.',
+          "Once you and Ayma have talked a little, your story takes "
+              'shape here.',
           textAlign: TextAlign.center,
           style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
         ),
       );
     }
 
-    final anyAiUpdate = !publicView && _sections.any((s) => s.aiUpdatedSinceUser);
-    final webFindings = publicView ? null : _webFindingsSection;
+    final anyAiUpdate = _sections.any((s) => s.aiUpdatedSinceUser);
+    final webFindings = _webFindingsSection;
     if (webFindings != null && webFindings.reportId != null) {
       unawaited(_loadWebFindingsReport(webFindings.reportId!));
     }
-    final showCareer = !publicView && _showCareer;
-    final reportType = publicView ? 'story_public' : 'story_private';
+    final showCareer = _showCareer;
 
     var num = 0;
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 4, 24, 48),
       children: [
         _StoryCover(
-          title: publicView ? 'Public view' : 'Your Story',
-          subtitle: publicView
-              ? 'What potential matches will see about you.'
-              : 'A living portrait, written by Ayma.',
-          heroPhotoUrl: publicView ? null : _heroPhotoUrl(),
+          title: 'Your Story',
+          subtitle: 'A living portrait, written by Ayma.',
+          heroPhotoUrl: _heroPhotoUrl(),
           topicCount: rows.where((s) => s.body.trim().isNotEmpty).length,
           photoCount: photos.length,
-          webFindsCount: publicView ? null : _webFindingsReport?.facts.length,
+          webFindsCount: _webFindingsReport?.facts.length,
           showLearningBanner: anyAiUpdate,
         ),
         if (photos.isNotEmpty) ...[
@@ -616,8 +580,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         // per-sentence drag-select -> "Edit with Ayma" mechanism.
         if (rows.isNotEmpty) ...[
           LivingReportView(
-            key: ValueKey('$reportType:$_reportGen'),
-            reportType: reportType,
+            key: ValueKey('story_private:$_reportGen'),
+            reportType: 'story_private',
             reportId: _uid,
             apiClient: _api,
             shrinkWrap: true,
@@ -634,7 +598,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           () { num++; return const SizedBox.shrink(); }(),
           _AppearanceCard(
             number: num,
-            publicView: publicView,
             merge: appearanceMerge,
             api: _api,
             onReportUpdated: _refreshStorySections,
@@ -661,14 +624,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       if (p.source == 'profile' && !p.deleted) return p.url;
     }
     return null;
-  }
-
-  Widget _sectionDivider() {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 26),
-      child: Divider(height: 0.5, color: ac.lineSoft),
-    );
   }
 
   /// Whether the standalone Career & Education section (below) has anything
@@ -715,10 +670,136 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       ],
     );
   }
+}
 
-  Widget _buildAiNotes() {
+/// Ayma's Notes — "the intelligence beneath the portrait": the full, more
+/// analytical picture (`story_ai_notes`), including observed data Ayma hasn't
+/// confirmed with the user and the deleted-photos group.
+///
+/// This exposes the analysis layer, so it is **dev-only**: reachable only from
+/// the password-gated Developer panel (§11.2), never from any normal-user
+/// surface. The route itself also redirects away unless [DevPanelSession] is
+/// unlocked (see `app_router.dart`), so a deep link can't reach it either.
+///
+/// Was previously the third tab on [StoryEditorScreen]; the body is unchanged,
+/// only lifted into its own Scaffold + route.
+class AymaNotesScreen extends StatefulWidget {
+  const AymaNotesScreen({super.key, this.api, this.myUid});
+
+  static const path = '/settings/developer/ayma-notes';
+
+  final ApiClient? api;
+
+  /// Injectable for tests; production reads the signed-in Firebase uid.
+  final String? myUid;
+
+  @override
+  State<AymaNotesScreen> createState() => _AymaNotesScreenState();
+}
+
+class _AymaNotesScreenState extends State<AymaNotesScreen>
+    with _StoryNotesCommon<AymaNotesScreen> {
+  late final ApiClient _api = widget.api ?? ApiClient();
+
+  @override
+  ApiClient get _notesApi => _api;
+
+  String? _liveUid() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String get _uid => widget.myUid ?? _liveUid() ?? '';
+
+  int _reportGen = 0;
+  bool _loading = true;
+  String? _error;
+  List<StorySection> _aiSections = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final sections = await _api.storyAiNotes();
+      if (!mounted) return;
+      setState(() {
+        _aiSections = sections;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = "Could not load Ayma's notes ($e).";
+        _loading = false;
+      });
+    }
+    unawaited(_loadPhotos());
+  }
+
+  /// Re-fetch the AI-notes sections after an appearance report finishes.
+  Future<void> _refreshAiNotes() async {
+    final sections = await _api.storyAiNotes();
+    if (!mounted) return;
+    setState(() {
+      _aiSections = sections;
+      _reportGen++;
+    });
+  }
+
+  /// Ayma's Notes shows its own web-findings interlude (lookup against
+  /// `_aiSections`, the same bespoke `_WebFindingsInterlude` the Story uses).
+  StorySection? get _webFindingsAiSection {
+    for (final s in _aiSections) {
+      if (s.pageId == 'web-findings') return s;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final ac = context.ac;
-    final rows = _visibleAiSections;
+    return Scaffold(
+      backgroundColor: ac.bg,
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        backgroundColor: ac.bg,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: ac.fg,
+        title: const SizedBox.shrink(),
+      ),
+      body: _content(),
+    );
+  }
+
+  Widget _content() {
+    final ac = context.ac;
+    if (_loading) return const _StorySkeleton();
+    if (_error != null) {
+      return CenteredScroll(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(_error!,
+              textAlign: TextAlign.center,
+              style: AymaType.sans(size: 14, color: AymaColors.error)),
+          const SizedBox(height: 12),
+          FilledButton(onPressed: _load, child: const Text('Retry')),
+        ]),
+      );
+    }
+
+    final rows = _aiSections;
     final hasPhotos = _photos.isNotEmpty;
     // Collapse the face/body/physical-profile trio into a single merged card
     // — one card, not three, for what is genuinely one report. Same for
@@ -758,8 +839,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           style: AymaType.sans(size: 14, color: ac.fgMute).copyWith(height: 1.5),
         ),
         const SizedBox(height: 28),
-        // The only tab that ever shows the "deleted by you" group — every
-        // group, deleted included, so the user can see (and if they want,
+        // The only surface that ever shows the "deleted by you" group — every
+        // group, deleted included, so the dev can see (and if they want,
         // resurrect the context around) anything Ayma still remembers.
         if (hasPhotos) ...[
           Text('Photos', style: AymaType.serif(size: 19, color: ac.fg)),
@@ -782,7 +863,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           _AppearanceCard(
             merge: appearanceMerge,
             api: _api,
-            onReportUpdated: _refreshStorySections,
+            onReportUpdated: _refreshAiNotes,
             onInfo: () => _showProvenance(appearanceMerge.provenanceSection),
           ),
           if (webFindings != null) _sectionDivider(),
@@ -851,60 +932,6 @@ class _ProvenanceSourceRow extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: row,
-    );
-  }
-}
-
-// --- tab bar -----------------------------------------------------------
-
-class _StoryTabBar extends StatelessWidget {
-  const _StoryTabBar({required this.view, required this.onChanged});
-  final String view;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    Widget seg(String value, String label) {
-      final on = view == value;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onChanged(value),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            decoration: BoxDecoration(
-              color: on ? ac.accent : Colors.transparent,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AymaType.sans(
-                size: 12.5,
-                weight: FontWeight.w600,
-                color: on ? ac.onAccent : ac.fgDim,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
-      ),
-      child: Row(children: [
-        seg('private', 'Story'),
-        seg('public', 'Public view'),
-        seg('ai', "Ayma's notes"),
-      ]),
     );
   }
 }
@@ -1017,12 +1044,11 @@ class _Stat extends StatelessWidget {
 // separate "view all photos" screen — see the removed `story_photos_screen
 // .dart`). `photoGroups`/`displayGroup`/`PhotoGallery`/`PhotoDetailSheet`/
 // `PhotoViewer` are shared from `widgets/photo_gallery.dart`. Which groups
-// render is decided by the caller (`_content()` / `_buildAiNotes()`) per
-// tab: Story shows profile/chat/web (never deleted), Public view shows only
-// profile, and Ayma's notes is the only tab that ever shows the deleted
-// group.
+// render is decided by the caller (`_content()`): the Story shows
+// profile/chat/web (never deleted); Ayma's Notes is the only surface that
+// ever shows the deleted group.
 
-/// The numbered "01 PHOTOS" section used in the Story / Public view document.
+/// The numbered "01 PHOTOS" section used in the Story document.
 class _PhotosSection extends StatelessWidget {
   const _PhotosSection({
     required this.number,
@@ -1062,7 +1088,7 @@ class _PhotosSection extends StatelessWidget {
 
 /// The grouped thumbnail grids themselves — one labeled header + [PhotoGallery]
 /// per non-empty group, in [groups] order. Shared between the numbered Story
-/// document section above and Ayma's notes' own (unnumbered) Photos block.
+/// document section above and Ayma's Notes' own (unnumbered) Photos block.
 class _PhotoGroupsList extends StatelessWidget {
   const _PhotoGroupsList({
     required this.photos,
@@ -1110,7 +1136,7 @@ class _WebFindingsInterlude extends StatelessWidget {
   });
 
   /// Null in Ayma's Notes (§ `_AppearanceCard`'s own `number` doc: the same
-  /// numbered-eyebrow-vs-plain-header split, for the same reason — Story's
+  /// numbered-eyebrow-vs-plain-header split, for the same reason — the Story's
   /// numbered document convention doesn't apply there).
   final int? number;
   final _SkillTeaser teaser;
@@ -1247,8 +1273,8 @@ class _AppearancePart {
 }
 
 /// The merged view of the appearance trio, built from whichever of the three
-/// pages are present in a given section list (`_sections` for the Story tab,
-/// `_aiSections` for Ayma's notes — the two never mix). Null when none of the
+/// pages are present in a given section list (`_sections` for the Story,
+/// `_aiSections` for Ayma's Notes — the two never mix). Null when none of the
 /// three pages are present at all.
 class _AppearanceMerge {
   const _AppearanceMerge({
@@ -1268,7 +1294,7 @@ class _AppearanceMerge {
   final String? reportId;
 
   /// Most restrictive of the present pages' visibility: `ai` (AI-only, not
-  /// even in the Story tab) is more restrictive than `private`, which is
+  /// even in the Story) is more restrictive than `private`, which is
   /// more restrictive than `public`. Defensive — the three should normally
   /// agree — never a crash, never a guess towards `public`.
   final String visibility;
@@ -1422,9 +1448,9 @@ _SkillTeaser _extractSkillTeaser(String pageId, String body) {
 /// The merged Appearance card — face-analysis + body-analysis +
 /// physical-profile collapsed into one visual unit, since all three share the
 /// exact same underlying report (see `appearance.py`). One widget, driven by
-/// [_AppearanceMerge], used both inline in the Story tab (numbered, like
+/// [_AppearanceMerge], used both inline in the Story (numbered, like
 /// `_WebFindingsInterlude`) and in Ayma's Notes (title + visibility tag, like
-/// `_AiNoteSection`) — so the two tabs can never drift apart on what "the"
+/// `_AiNoteSection`) — so the two surfaces can never drift apart on what "the"
 /// appearance report looks like.
 class _AppearanceCard extends StatefulWidget {
   const _AppearanceCard({
@@ -1433,16 +1459,14 @@ class _AppearanceCard extends StatefulWidget {
     required this.onReportUpdated,
     required this.onInfo,
     this.number,
-    this.publicView = false,
   });
 
-  final bool publicView;
   final _AppearanceMerge merge;
   final ApiClient api;
   final Future<void> Function() onReportUpdated;
   final VoidCallback onInfo;
 
-  /// Non-null in the Story tab: render the same numbered, colour-neutral
+  /// Non-null in the Story: render the same numbered, colour-neutral
   /// header every other narrative section uses there (Your Story
   /// deliberately doesn't badge visibility inline — see the file docstring).
   /// Null in Ayma's Notes: render the title + visibility-tag header every
@@ -1524,9 +1548,7 @@ class _AppearanceCardState extends State<_AppearanceCard> {
             }),
           ],
           const SizedBox(height: 12),
-          if (widget.publicView)
-            const SizedBox.shrink()
-          else if (hasReport)
+          if (hasReport)
             InkWell(
               // Any of the three page ids resolves to the same `/appearance/{id}`
               // path — `_skillReportPath` only special-cases `web-findings`.
@@ -1571,7 +1593,7 @@ class _AppearanceCardState extends State<_AppearanceCard> {
           const SizedBox(height: 14),
           reportBox,
           const SizedBox(height: 10),
-          if (!widget.publicView) footnote,
+          footnote,
         ],
       );
     }
