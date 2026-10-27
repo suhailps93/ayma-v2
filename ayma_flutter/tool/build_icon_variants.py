@@ -1,10 +1,18 @@
 """Derives per-platform launcher-icon sources from assets/icon/ayma_sol_icon.png
 (the orb on a transparent 1024 canvas, written by generate_app_icon_test.dart).
 
-Run from ayma_flutter/ before `dart run flutter_launcher_icons`:
-  python3 tool/build_icon_variants.py
+Regeneration order (run from ayma_flutter/):
+  flutter test tool/generate_app_icon_test.dart   # renders ayma_sol_icon.png
+  python3 tool/build_icon_variants.py              # writes the per-platform sources
+  dart run flutter_launcher_icons                  # generates every mipmap/drawable
+  python3 tool/build_icon_variants.py              # re-stamp the OPAQUE round icons
+
+The final re-run is required: flutter_launcher_icons regenerates
+ic_launcher_round.png as a circle crop with transparent corners, which Android
+search / app-drawer tiles render as a black box behind the orb. This script
+overwrites those round rasters with the opaque, full-bleed brand art.
 """
-from PIL import Image, ImageDraw
+from PIL import Image
 
 SRC = 'assets/icon/ayma_sol_icon.png'
 OUT = 'assets/icon/'
@@ -61,13 +69,15 @@ ios.convert('RGB').save(OUT + 'ayma_orb_ios.png')
 ios.convert('RGB').save(OUT + 'ayma_orb_android_legacy.png')
 
 # Android round icon (manifest roundIcon + mipmap-anydpi-v26/ic_launcher_round.xml
-# for adaptive launchers): the opaque art cropped to a circle, per density.
+# for adaptive launchers). Rendered OPAQUE and full-bleed — identical art to the
+# legacy square icon — and deliberately NOT circle-cropped. A circle crop leaves
+# transparent corners, and Android's app-drawer / search tiles draw this raster
+# inside a rounded SQUARE without applying their own circular mask, so those
+# corners showed as a black box behind the orb. Opaque brand art means no surface
+# can paint black. API 26+ launchers ignore this raster and mask the adaptive
+# icon (ic_launcher_round.xml, pink background) above it instead.
 RES = 'android/app/src/main/res/'
-mask = Image.new('L', (N * 4, N * 4), 0)
-ImageDraw.Draw(mask).ellipse((0, 0, N * 4 - 1, N * 4 - 1), fill=255)
-mask = mask.resize((N, N), Image.LANCZOS)
-round_icon = ios.copy()
-round_icon.putalpha(mask)
+round_icon = ios.convert('RGB')
 for density, size in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
     round_icon.resize((size, size), Image.LANCZOS).save(
         RES + 'mipmap-' + density + '/ic_launcher_round.png')
