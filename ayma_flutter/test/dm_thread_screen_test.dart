@@ -311,6 +311,68 @@ void main() {
     },
   );
 
+  testWidgets(
+    'with the keyboard open the coach tip stays visible directly above the '
+    'composer, not clipped behind the keyboard',
+    (tester) async {
+      // A short window with a tall keyboard, so the coaching region (several
+      // chips + a tip) is taller than its cap and must scroll inside it.
+      const double screenH = 700, keyboard = 400;
+      tester.view.physicalSize = const Size(400, screenH);
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.padding = const FakeViewPadding(bottom: 0);
+      tester.view.viewInsets = const FakeViewPadding(bottom: keyboard);
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: [
+            'Ask what she liked most about the trip',
+            'Share the playlist you mentioned',
+            'Suggest the coffee place downtown',
+            'Ask how the half-marathon training is going',
+          ],
+          tip: "You're sending a lot in a row — give them space to reply first.",
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      final tip = find.byTooltip('Dismiss tip');
+      expect(tip, findsOneWidget);
+
+      // The keyboard occupies the bottom [keyboard] px; the tip must sit above
+      // that line — i.e. it is not hidden behind the keyboard.
+      final tipRect = tester.getRect(tip);
+      expect(tipRect.bottom, lessThanOrEqualTo(screenH - keyboard),
+          reason: 'the tip must render above the keyboard, not behind it');
+      expect(tipRect.top, greaterThanOrEqualTo(0.0));
+
+      // …and it is pinned directly above the composer (the chips, not the tip,
+      // are what scrolls off when space is tight).
+      final composerTop = tester.getTopLeft(_composerPadding()).dy;
+      expect(tipRect.bottom, lessThanOrEqualTo(composerTop));
+
+      // Dismiss still works with the keyboard up.
+      await tester.tap(tip);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Dismiss tip'), findsNothing);
+    },
+  );
+
   testWidgets('the tip row is hidden entirely when the tip is null', (
     tester,
   ) async {

@@ -473,6 +473,15 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               // it scrolls inside the cap rather than squeezing out the list
               // or the composer.
               maxHeight: constraints.maxHeight * 0.5,
+              // Pin the BOTTOM of the coaching region in view. The tip is the
+              // last child and the one the founder most wants visible; without
+              // this the region is top-aligned, so once the keyboard shrinks
+              // the cap the tip scrolls off below the fold ("hidden behind the
+              // keyboard"). Bottom-anchored, the tip sits directly above the
+              // composer — which already rides above the keyboard inset — and
+              // the chips scroll off the top instead. No effect when the
+              // content fits (the scroll view is then just its content tall).
+              reverse: true,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
