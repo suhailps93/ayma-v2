@@ -46,6 +46,9 @@ class _FakeVoice extends VoiceSessionController {
       _phase == VoiceSessionPhase.waking ||
       _phase == VoiceSessionPhase.live;
 
+  @override
+  bool get isListening => _phase == VoiceSessionPhase.live;
+
   /// Mirrors the real `start()` -> `bootstrap()` -> `_fail()` sequence: the
   /// UI sees `connecting` first (a real notifyListeners + rebuild), then
   /// lands on the capped `error` phase — not a single static jump straight

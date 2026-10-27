@@ -247,6 +247,17 @@ class VoiceSessionController extends ChangeNotifier {
       _phase == VoiceSessionPhase.waking ||
       _phase == VoiceSessionPhase.live;
 
+  /// The single source of truth for "Ayma is genuinely listening": the agent
+  /// has joined the room and reached the live state (the one-shot `agentReady`
+  /// latch promoted `waking` -> `live` in [_onAgentReady]), NOT merely that a
+  /// call is being set up. Both the OS call surface ([CallBackgroundService] —
+  /// the Android ongoing-call notification / iOS CallKit call) and the central
+  /// voice orb's live/"connected" treatment ([AymaOrb.voiceLive]) gate on this
+  /// one getter so they can never disagree or light up during
+  /// connecting/waking, matching the composer's own `connecting` vs
+  /// `listening` distinction.
+  bool get isListening => _phase == VoiceSessionPhase.live;
+
   /// The controller with a session currently starting or live, if any. Used by
   /// screens outside the chat shell (e.g. the voice-preview picker) to stop a
   /// call before doing something that would talk over it.

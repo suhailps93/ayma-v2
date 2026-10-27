@@ -137,6 +137,57 @@ void main() {
     });
   });
 
+  group('the call notification is gated on the listening state', () {
+    test('no call notification while connecting/waking; it appears only once '
+        'Ayma is genuinely listening', () async {
+      final transport = FakeVoiceTransport();
+      final gateway = _FakeGateway(granted: true);
+      final voice = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+        callPermissions: CallPermissions(gateway: gateway),
+      );
+      // Start the call but DO NOT mark the agent ready — the controller
+      // settles in `waking` (room connected, mic published, agent still
+      // cold-starting), exactly the window the founder saw the call
+      // notification appear in.
+      await voice.start();
+      expect(voice.phase, VoiceSessionPhase.waking);
+
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+
+      final service = CallBackgroundService(
+        voice,
+        permissions: CallPermissions(gateway: gateway),
+        debugSupportedOverride: true,
+      )..start();
+      await Future<void>.delayed(Duration.zero);
+
+      // Connecting/waking: the mic foreground service and its notification
+      // must NOT be up yet — nothing was posted to the OS.
+      expect(service.debugUiActive, isFalse);
+      expect(calls, isEmpty);
+
+      // The agent joins — now, and only now, the call surface appears.
+      transport.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(voice.phase, VoiceSessionPhase.live);
+      expect(service.debugUiActive, isTrue);
+      expect(calls, hasLength(1));
+      expect(calls.single.method, 'start');
+
+      service.dispose();
+      await voice.stop();
+    });
+  });
+
   group('backgrounding', () {
     test('missing the notification permission stops the call with an '
         'explanation instead of silently killing it', () async {

@@ -58,6 +58,9 @@ class _FakeVoice extends VoiceSessionController {
       _fakePhase == VoiceSessionPhase.waking ||
       _fakePhase == VoiceSessionPhase.live;
 
+  @override
+  bool get isListening => _fakePhase == VoiceSessionPhase.live;
+
   void setPhase(VoiceSessionPhase phase) {
     _fakePhase = phase;
     notifyListeners();
