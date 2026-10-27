@@ -166,7 +166,10 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                     size: 200,
                     state: orbState,
                     amplitudeListenable: amplitude,
-                    voiceLive: true,
+                    // "Connected" glow only once the simulation is genuinely
+                    // live (listening), never during connecting/waking —
+                    // same single source of truth as everywhere else.
+                    voiceLive: _voice.isListening,
                   )
                 : SizedBox(
                     width: 200,
@@ -199,7 +202,9 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                               size: 44,
                               state: orbState,
                               amplitudeListenable: amplitude,
-                              voiceLive: true,
+                              // See the full-size orb above — glow gates on the
+                              // live (listening) state, not connecting/waking.
+                              voiceLive: _voice.isListening,
                             ),
                           ),
                         ),

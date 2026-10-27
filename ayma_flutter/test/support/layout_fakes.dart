@@ -260,6 +260,9 @@ class LayoutFakeVoice extends VoiceSessionController {
   bool get isActive => quiet;
 
   @override
+  bool get isListening => quiet;
+
+  @override
   bool get aymaQuiet => quiet;
 }
 

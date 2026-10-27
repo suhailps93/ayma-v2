@@ -23,6 +23,9 @@ class _FakeVoice extends VoiceSessionController {
   @override
   bool get isActive => true;
 
+  @override
+  bool get isListening => true;
+
   // Ayma "speaking" must never animate the orb while she is quiet.
   @override
   bool get agentSpeaking => true;

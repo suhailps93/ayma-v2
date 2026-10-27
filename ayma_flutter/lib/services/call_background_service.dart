@@ -26,17 +26,43 @@ import 'voice_session_controller.dart';
 ///   `UNUserNotificationCenter`); the trade-off is every call surfaces in the
 ///   Phone app's Recents list — see CallKitManager's doc comment.
 ///
-/// Started the moment the call goes live, kept running for the whole call —
-/// **never** started only on backgrounding. Android requires a
-/// `foregroundServiceType="microphone"` service to already be running (in an
-/// "eligible state") *before* the app leaves the foreground; starting one
-/// reactively, after `AppLifecycleState.paused` already fired, is exactly the
-/// case Android rejects with an uncaught `SecurityException` that crashes the
-/// whole app (confirmed on-device via `adb logcat -b crash`, 2026-09-13 —
-/// "Ayma keeps stopping" every time a call was backgrounded). Real call/VoIP
-/// apps show this notification the whole time a call is up, foreground or
-/// not, which is normal Android UX and trivially satisfies the eligibility
-/// rule, so that's what this does now.
+/// Started the moment Ayma is genuinely **listening** ([VoiceSessionController
+/// .isListening] — the agent has joined and reached the `live` state), NOT
+/// while the call is still `connecting`/`waking`, and kept running for the
+/// rest of the call — **never** started only on backgrounding.
+///
+/// **Why gate on listening, and the Android microphone-FGS constraint.**
+/// This service's notification is backed by a mandatory
+/// `foregroundServiceType="microphone"` foreground service — on Android there
+/// is no such thing as a silent FGS: `startForeground()` *requires* a
+/// notification, so a running mic FGS always has a user-visible notification.
+/// The founder's report was that the full ongoing-**call** notification
+/// ("Ayma • Voice call" with Hang Up / Mute pills) appeared the instant a call
+/// began connecting, long before Ayma could actually hear anything. The fix
+/// here is to **delay starting the FGS (and therefore its notification) until
+/// the listening state** — the connect/wake window shows no call notification
+/// at all (the task's preferred outcome), and the OS surface appears exactly
+/// when Ayma starts listening, the same signal the in-app composer and orb
+/// already gate on.
+///
+/// Delaying is safe because a microphone FGS is only needed to keep mic
+/// capture alive once the app is **backgrounded**: a foreground app records
+/// audio freely without any FGS. Connecting/waking almost always completes
+/// while the user is watching the connecting orb (foreground), so the FGS
+/// starts in an "eligible state" at the listening moment just as it used to at
+/// connect. Android requires a mic FGS to already be running before the app
+/// leaves the foreground; starting one reactively after
+/// `AppLifecycleState.paused` is the case Android rejects with an uncaught
+/// `SecurityException` that crashes the whole app (confirmed on-device via
+/// `adb logcat -b crash`, 2026-09-13 — "Ayma keeps stopping"). That crash
+/// path is independently guarded: `CallForegroundService.onStartCommand`
+/// wraps `startForeground()` in try/catch and tears the service down
+/// gracefully instead of crashing. The one edge this trades for the cleaner
+/// UX: if the user backgrounds the app *during* the connect/wake window and
+/// the agent only reaches listening while still backgrounded, the FGS cannot
+/// start then — no conversation is lost (the agent had not joined yet) and the
+/// user simply refocuses the app; a missing notification is a far smaller
+/// failure than losing the whole app mid-call.
 ///
 /// Both native sides talk back over the same `ayma/call_ui` method channel:
 /// this class only ever reflects [VoiceSessionController]'s state onto the
@@ -119,9 +145,12 @@ class CallBackgroundService {
     _channel.setMethodCallHandler(_onNativeCall);
     _voiceListener = _onVoiceChanged;
     _voice.addListener(_voiceListener!);
-    // Cover attaching to an already-live call (e.g. a hot restart mid-call)
-    // — the edge-triggered listener above only fires on a *future* change.
-    if (_voice.isActive) unawaited(_startUi());
+    // Cover attaching to an already-listening call (e.g. a hot restart
+    // mid-call, or the shared shell acquiring the service after the call is
+    // live) — the edge-triggered listener above only fires on a *future*
+    // change. Gated on `isListening`, not `isActive`: a service attached
+    // while the call is still connecting/waking must wait for listening too.
+    if (_voice.isListening) unawaited(_startUi());
   }
 
   void dispose() {
@@ -136,10 +165,14 @@ class CallBackgroundService {
     unawaited(_stopUi());
   }
 
-  /// The call started, ended (from either side), or muted while the OS
-  /// surface is up — keep it honest without waiting for the next tick.
+  /// Ayma reached (or left) the listening state, or the call muted while the
+  /// OS surface is up — keep it honest without waiting for the next tick.
+  /// Gating on [VoiceSessionController.isListening] (not `isActive`) is what
+  /// holds the call notification back through connecting/waking: the surface
+  /// only appears once Ayma is genuinely listening, and tears down the moment
+  /// the call leaves `live` (ended, failed, or idle-timed-out).
   void _onVoiceChanged() {
-    if (!_voice.isActive) {
+    if (!_voice.isListening) {
       if (_uiActive) unawaited(_stopUi());
       return;
     }
@@ -151,7 +184,7 @@ class CallBackgroundService {
   }
 
   Future<void> _startUi() async {
-    if (!_voice.isActive || _uiActive) return;
+    if (!_voice.isListening || _uiActive) return;
 
     final granted = await _permissions.ensureBackgroundCallPermission();
     if (!granted) {

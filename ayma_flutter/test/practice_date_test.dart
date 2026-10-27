@@ -36,6 +36,9 @@ class _FakePracticeVoice extends VoiceSessionController {
       _p == VoiceSessionPhase.live;
 
   @override
+  bool get isListening => _p == VoiceSessionPhase.live;
+
+  @override
   bool get agentSpeaking => false;
 
   @override

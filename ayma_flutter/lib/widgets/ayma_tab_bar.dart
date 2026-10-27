@@ -238,7 +238,12 @@ class AymaTabBar extends StatelessWidget {
                 size: orbBox,
                 state: _orbState,
                 amplitudeListenable: _orbAmplitude,
-                voiceLive: voice?.isActive ?? false,
+                // The "connected" glow lights up only once Ayma is genuinely
+                // listening (same single source of truth as the call
+                // notification), never during connecting/waking — the orb
+                // stays in its `thinking` connecting visual (see [_orbState])
+                // until the live state, then switches.
+                voiceLive: voice?.isListening ?? false,
                 // Scopes the user's "Wing flutter in nav bar"
                 // setting to exactly these orbs — see
                 // `OrbAnimationSettings`.

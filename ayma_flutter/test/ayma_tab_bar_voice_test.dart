@@ -34,6 +34,9 @@ class _FakeVoice extends VoiceSessionController {
       _fakePhase == VoiceSessionPhase.waking ||
       _fakePhase == VoiceSessionPhase.live;
 
+  @override
+  bool get isListening => _fakePhase == VoiceSessionPhase.live;
+
   void setPhase(VoiceSessionPhase phase) {
     _fakePhase = phase;
     notifyListeners();
@@ -76,18 +79,28 @@ void main() {
     expect(orb.amplitudeListenable, isNull);
   });
 
-  testWidgets('connecting/waking maps to thinking, with voiceLive already on', (
+  testWidgets(
+    'connecting/waking maps to thinking, with the live/"connected" glow still '
+    'OFF until Ayma is genuinely listening', (
     tester,
   ) async {
     final voice = _FakeVoice()..setPhase(VoiceSessionPhase.connecting);
     await tester.pumpWidget(_host(voice));
     await tester.pump();
     expect(_orb(tester).state, AymaOrbState.thinking);
-    expect(_orb(tester).voiceLive, isTrue);
+    // The orb stays in its connecting visual — the "connected" glow must not
+    // light up before the agent has joined and reached the listening state.
+    expect(_orb(tester).voiceLive, isFalse);
 
     voice.setPhase(VoiceSessionPhase.waking);
     await tester.pump();
     expect(_orb(tester).state, AymaOrbState.thinking);
+    expect(_orb(tester).voiceLive, isFalse);
+
+    // The agent joins — now, and only now, the glow switches on.
+    voice.setPhase(VoiceSessionPhase.live);
+    await tester.pump();
+    expect(_orb(tester).state, AymaOrbState.listening);
     expect(_orb(tester).voiceLive, isTrue);
   });
 
