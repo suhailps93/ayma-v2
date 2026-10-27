@@ -404,6 +404,188 @@ void main() {
     expect(find.byTooltip('Dismiss tip'), findsNothing);
   });
 
+  // --- safety red-flag coach (§6.9.1) ------------------------------------ //
+
+  testWidgets(
+    'a safety note renders at warning (distinct from the coach tip) and is '
+    'dismissible, without affecting the chips or tip',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (msgs) => const DmAssist(
+          mode: 'coach',
+          chips: ['let\'s slow down'],
+          tip: 'Trust your gut here.',
+          safety: DmSafety(
+            level: 'warning',
+            reason: 'They keep asking for money — that\'s a common scam '
+                'pattern. Be careful.',
+            flags: ['money_request'],
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      // The protective heads-up shows, visually distinct from the coach tip:
+      // its own shield glyph + label + its own dismiss tooltip.
+      expect(find.text('Heads up from Ayma'), findsOneWidget);
+      expect(find.byIcon(Icons.shield_outlined), findsOneWidget);
+      expect(
+        find.textContaining('common scam pattern'),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('Dismiss safety note'), findsOneWidget);
+      // The normal coach tip + chips coexist (safety is an additional note).
+      expect(find.text('Trust your gut here.'), findsOneWidget);
+      expect(find.byTooltip('Dismiss tip'), findsOneWidget);
+      expect(find.text('let\'s slow down'), findsOneWidget);
+
+      // Dismissing the safety note hides only it — chips + tip remain.
+      await tester.tap(find.byTooltip('Dismiss safety note'));
+      await tester.pumpAndSettle();
+      expect(find.text('Heads up from Ayma'), findsNothing);
+      expect(find.textContaining('common scam pattern'), findsNothing);
+      expect(find.text('Trust your gut here.'), findsOneWidget);
+      expect(find.text('let\'s slow down'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a safety note renders at caution too',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: ['x'],
+          safety: DmSafety(
+            level: 'caution',
+            reason: 'Heads up — they\'re pushing to meet really fast. It\'s '
+                'okay to take your time.',
+            flags: ['rushing_to_meet'],
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Heads up from Ayma'), findsOneWidget);
+      expect(find.textContaining('take your time'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'no safety note at level none (the common, false-positive-free case)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        // Normal flirting: chips + tip, but safety stays silent (none).
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: ['haha same'],
+          tip: 'You\'re vibing — keep it light.',
+          safety: DmSafety.none,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Heads up from Ayma'), findsNothing);
+      expect(find.byIcon(Icons.shield_outlined), findsNothing);
+      expect(find.byTooltip('Dismiss safety note'), findsNothing);
+      // The normal coaching is unaffected.
+      expect(find.text('You\'re vibing — keep it light.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a safety note never blocks sending (advisory only)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: ['x'],
+          safety: DmSafety(
+            level: 'warning',
+            reason: 'Be careful here.',
+            flags: ['money_request'],
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+      expect(find.text('Heads up from Ayma'), findsOneWidget);
+
+      // Typing + sending still works with the note on screen.
+      await tester.enterText(find.byType(TextField), 'I am not comfortable');
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pumpAndSettle();
+      expect(dm.sent, contains('I am not comfortable'));
+    },
+  );
+
   testWidgets(
     'a shared_report message renders as an in-app card (no raw link, '
     'placeholder on image error) and opens the report natively',

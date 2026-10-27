@@ -14,13 +14,23 @@ There is no separate generation pipeline: everything is derived on demand. If no
 compatibility check has ever run for the pair there is no ``matches`` doc and
 opener mode yields no chips; coach mode can still work from the messages alone.
 
+Alongside the coaching, the SAME model call also returns a protective **safety
+assessment** of the OTHER person's behaviour (``safety: {level, reason, flags}``
+— §6.9.1): a calm, supportive heads-up for the user when the match shows
+genuinely concerning patterns (love-bombing, pushing to meet/off-platform,
+money/scam pressure, personal-info requests, coercion, hostility, catfish
+signals). It is advisory only — it never blocks sending — and tuned for a LOW
+false-positive rate: normal flirting is never a red flag, and anything unsure
+stays silent (``level: "none"``).
+
 Routed through the LLM provider abstraction on the ``dm_coach`` surface, which
 defaults to the Meta/Muse brain (``config.llm_provider_dm_coach``). DM assist is
 a nicety and must NEVER block the thread: it is exempt from the credit CAP
 (``enforce_cap=False``, like the Practice coach) so a zero-credit user still
 gets openers/coaching rather than a silently-empty bar, and on any generation
-failure it returns the appropriate mode with empty chips and a null tip. The
-spend is still metered under the ``icebreakers`` feature key.
+failure it returns the appropriate mode with empty chips, a null tip, and a
+silent (``none``) safety assessment. The spend is still metered under the
+``icebreakers`` feature key.
 """
 
 from __future__ import annotations
@@ -39,18 +49,38 @@ _PROMPT_PATH = Path(__file__).with_name("prompts") / "dm_coach.md"
 _MAX_CHIPS = 4
 # Server-side cap on the recent-thread tail the client sends (API contract).
 _MAX_MESSAGES = 12
+# Cap on the safety ``flags`` tags we pass through (keeps the response small).
+_MAX_FLAGS = 6
 
 MODE_OPENER = "opener"
 MODE_COACH = "coach"
+
+# Safety levels, lowest → highest. ``none`` is silent (no heads-up shown).
+SAFETY_LEVELS = ("none", "caution", "warning")
 
 _RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "chips": {"type": "array", "items": {"type": "string"}},
         "tip": {"type": "string"},
+        "safety": {
+            "type": "object",
+            "properties": {
+                "level": {"type": "string", "enum": list(SAFETY_LEVELS)},
+                "reason": {"type": "string"},
+                "flags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["level"],
+        },
     },
     "required": ["chips"],
 }
+
+
+def _silent_safety() -> dict[str, object]:
+    """A fresh, silent (``none``) safety assessment — the fail-quiet default a
+    safety feature must fall back to on anything missing or malformed."""
+    return {"level": "none", "reason": "", "flags": []}
 
 
 @lru_cache(maxsize=1)
@@ -102,14 +132,50 @@ def _clean_tip(result: object) -> str | None:
     return None
 
 
+def _clean_safety(result: object) -> dict[str, object]:
+    """Normalise the model's safety assessment into ``{level, reason, flags}``.
+
+    Fails quiet: anything missing, malformed, or an unknown level becomes a
+    silent ``none`` — a safety feature must never invent a warning, and a
+    non-``none`` level with no supporting ``reason`` is unusable, so it is
+    downgraded to ``none`` too (guards against a bare, unexplained alarm)."""
+    safety = result.get("safety") if isinstance(result, dict) else None
+    if not isinstance(safety, dict):
+        return _silent_safety()
+
+    level = safety.get("level")
+    level = level.strip().lower() if isinstance(level, str) else ""
+    if level not in SAFETY_LEVELS:
+        return _silent_safety()
+
+    reason = safety.get("reason")
+    reason = reason.strip() if isinstance(reason, str) else ""
+
+    raw_flags = safety.get("flags")
+    flags: list[str] = []
+    if isinstance(raw_flags, list):
+        for f in raw_flags:
+            if isinstance(f, str) and f.strip():
+                flags.append(f.strip())
+
+    if level == "none":
+        return _silent_safety()
+    if not reason:
+        # A heads-up with nothing to say protects no one — stay silent.
+        return _silent_safety()
+    return {"level": level, "reason": reason, "flags": flags[:_MAX_FLAGS]}
+
+
 async def assist(
     db, uid: str, other: str, messages: list[dict] | None = None
 ) -> dict[str, object]:
-    """Opener chips (empty thread) or coaching chips + tip (live thread).
+    """Opener chips (empty thread) or coaching chips + tip (live thread), plus a
+    protective safety assessment of the other person (§6.9.1).
 
-    Returns ``{"mode", "chips", "tip"}``. Never raises and never blocks the
-    thread: on any generation failure it returns the appropriate mode with no
-    chips and a null tip.
+    Returns ``{"mode", "chips", "tip", "safety"}`` where ``safety`` is
+    ``{"level", "reason", "flags"}``. Never raises and never blocks the thread:
+    on any generation failure it returns the appropriate mode with no chips, a
+    null tip, and a silent (``none``) safety assessment.
     """
     messages = [m for m in (messages or []) if isinstance(m, dict)]
     coach = any(str(m.get("text", "")).strip() for m in messages)
@@ -119,7 +185,10 @@ async def assist(
 
     if not coach and not (ai_expl or mine):
         # Opener with nothing to ground on — preserve the old "no chips" result.
-        return {"mode": MODE_OPENER, "chips": [], "tip": None}
+        return {
+            "mode": MODE_OPENER, "chips": [], "tip": None,
+            "safety": _silent_safety(),
+        }
 
     if coach:
         contents = (
@@ -160,7 +229,17 @@ async def assist(
         logger.exception(
             "dm assist generation failed for %s", sorted_pair_key(uid, other)
         )
-        return {"mode": mode, "chips": [], "tip": None}
+        return {
+            "mode": mode, "chips": [], "tip": None, "safety": _silent_safety(),
+        }
 
     tip = _clean_tip(result) if coach else None
-    return {"mode": mode, "chips": _clean_chips(result), "tip": tip}
+    # Safety is only meaningful once the other person has said something;
+    # opener mode has no 'Them' messages to judge, so it is always silent.
+    safety = _clean_safety(result) if coach else _silent_safety()
+    return {
+        "mode": mode,
+        "chips": _clean_chips(result),
+        "tip": tip,
+        "safety": safety,
+    }
