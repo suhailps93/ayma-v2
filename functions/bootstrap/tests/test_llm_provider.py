@@ -99,11 +99,12 @@ def _with_flags(monkeypatch, **flags):
 
 
 def test_default_is_gemini_for_every_surface(monkeypatch):
-    # Defaults as loaded: gemini everywhere EXCEPT dm_coach, which the founder
-    # directed onto the Meta/Muse brain for the hackathon (default ``meta``).
+    # Defaults as loaded: gemini everywhere EXCEPT dm_coach and translate,
+    # which the founder directed onto the Meta/Muse brain for the hackathon
+    # (cross-language DM translation is "powered by Muse"; both default ``meta``).
     for surface in llm_provider.SURFACES:
         provider = get_llm_provider(surface)
-        if surface == "dm_coach":
+        if surface in ("dm_coach", "translate"):
             assert isinstance(provider, MetaProvider)
         else:
             assert isinstance(provider, GeminiProvider)

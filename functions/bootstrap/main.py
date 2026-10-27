@@ -105,6 +105,7 @@ import dm_moderation  # noqa: E402
 import dm_ops  # noqa: E402
 import dm_schema  # noqa: E402
 import dm_assist  # noqa: E402
+import dm_translate  # noqa: E402
 import notifications_ops  # noqa: E402
 import notifications_triggers  # noqa: E402
 import schema  # noqa: E402
@@ -3630,6 +3631,46 @@ async def dm_assist_endpoint(
         raise HTTPException(status_code=400, detail="Not a valid thread.")
     messages = [{"from": m.from_, "text": m.text} for m in req.messages]
     return await dm_assist.assist(get_db(), uid, req.other, messages)
+
+
+class DmTranslateRequest(BaseModel):
+    # The thread whose message/draft is being translated — used only to verify
+    # the caller is a participant (pair-only, like every other /dm endpoint).
+    thread_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=dm_translate.MAX_TEXT_CHARS)
+    # Language code or name to translate INTO (the reader's preferred language
+    # for an incoming message, or the match's language for an outgoing draft).
+    target_lang: str = Field(min_length=1, max_length=32)
+    # Optional hint for the source language; the model detects the real one.
+    source_lang: str = Field(default="", max_length=32)
+
+
+@app.post("/dm/translate")
+async def dm_translate_endpoint(
+    req: DmTranslateRequest, uid: str = Depends(require_adult_uid)
+) -> dict[str, str]:
+    """Cross-language DM translation (§6.12). Translates ``text`` into
+    ``target_lang`` and reports the detected source language, so two people who
+    speak different languages can connect: an incoming message shown in the
+    reader's language (original kept), or the reader's draft rendered in the
+    match's language before sending.
+
+    Pair-only + 18+/consent: the caller must be an adult participant of
+    ``thread_id``. A nicety that never blocks the thread — on any model failure
+    the original text comes back with an empty ``detected_source_lang`` so the
+    client simply shows the original."""
+    from pair_key import uids_from_pair_key
+
+    try:
+        a, b = uids_from_pair_key(req.thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if uid not in (a, b):
+        raise HTTPException(status_code=403, detail="Not your thread.")
+
+    return await dm_translate.translate(
+        req.text, req.target_lang, req.source_lang or None, uid=uid
+    )
 
 
 class ProfileShareRequest(BaseModel):

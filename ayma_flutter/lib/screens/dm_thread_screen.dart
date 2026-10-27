@@ -97,12 +97,57 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   /// real conversation instead of "Conversation".
   MiniProfile? _other;
 
+  /// Cross-language DM translation (§6.12). [_preferredLang] is the language
+  /// incoming messages are translated INTO — the user's saved voice-engine
+  /// language if they have one, else the device locale. [_otherLang] is the
+  /// match's language, learned from the detected source of a message we've
+  /// translated; it's the target for an outgoing "translate before sending".
+  /// [_autoTranslate] auto-translates incoming messages for this thread;
+  /// [_translateOutgoing] is the opt-in "send in their language" control.
+  String _preferredLang = '';
+  String _otherLang = '';
+  bool _autoTranslate = false;
+  bool _translateOutgoing = false;
+
   @override
   void initState() {
     super.initState();
     reassertScreenContext();
     _loadOther();
+    _preferredLang = _deviceLanguage();
+    _loadPreferredLang();
     _dm.markThreadRead(widget.threadId);
+  }
+
+  /// The device's language tag ("en-US"), the fallback target for incoming
+  /// translation when the user has set no preferred language.
+  String _deviceLanguage() {
+    try {
+      return WidgetsBinding.instance.platformDispatcher.locale.toLanguageTag();
+    } catch (_) {
+      return 'en';
+    }
+  }
+
+  /// Best-effort: prefer the user's saved voice-engine language over the device
+  /// locale as the translation target (the voice switcher is where they pick a
+  /// language). Never blocks the thread — any failure keeps the device locale.
+  Future<void> _loadPreferredLang() async {
+    try {
+      final cat = await _api.voiceEngines();
+      final code = cat.current.languageCode.trim();
+      if (code.isNotEmpty && mounted) setState(() => _preferredLang = code);
+    } catch (_) {
+      // Keep the device-locale default — translation is a nicety, never blocks.
+    }
+  }
+
+  /// Remember the match's language the first time we detect it from a message
+  /// we translated, so "translate before sending" knows the outgoing target.
+  void _onOtherLangDetected(String lang) {
+    final l = lang.trim();
+    if (l.isEmpty || l == _otherLang) return;
+    setState(() => _otherLang = l);
   }
 
   /// Id of the newest incoming message already marked read, so a rebuild
@@ -212,6 +257,16 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     if (_sending) return;
     if (pending == null && text.isEmpty) return;
 
+    // Opt-in outgoing translation (§6.12), plain text only: translate the draft
+    // into the match's language and show exactly what will be sent before it
+    // goes — never silently alter the user's words.
+    String outgoing = text;
+    if (_translateOutgoing && pending == null && text.isNotEmpty) {
+      final confirmed = await _confirmOutgoingTranslation(text);
+      if (confirmed == null) return; // cancelled / unavailable — keep the draft
+      outgoing = confirmed;
+    }
+
     setState(() => _sending = true);
     try {
       if (pending != null) {
@@ -226,7 +281,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           caption: text,
         );
       } else {
-        await _dm.sendText(widget.threadId, text);
+        await _dm.sendText(widget.threadId, outgoing);
       }
       _composer.clear();
       if (mounted) setState(() => _pending = null);
@@ -239,6 +294,102 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  /// For opt-in outgoing translation: returns the text to actually send — the
+  /// translation (after the user confirms the preview), or the original when
+  /// it's already in the match's language — or null to abort (the user
+  /// cancelled, we don't know the match's language yet, or translation failed).
+  Future<String?> _confirmOutgoingTranslation(String text) async {
+    if (_otherLang.isEmpty) {
+      AymaToast.show(
+        context,
+        'Translate one of their messages first so Ayma knows their language.',
+      );
+      return null;
+    }
+    DmTranslation tr;
+    try {
+      tr = await _dm.translate(widget.threadId, text, _otherLang);
+    } catch (_) {
+      if (mounted) {
+        AymaToast.show(
+          context,
+          "Couldn't translate — your message wasn't sent.",
+          kind: AymaToastKind.error,
+        );
+      }
+      return null;
+    }
+    if (!mounted) return null;
+    final translated = tr.translated.trim();
+    if (translated.isEmpty || translated == text) {
+      // Already in their language (or nothing to change): send as typed.
+      return text;
+    }
+    final ok = await _showOutgoingPreview(original: text, translated: translated);
+    return ok == true ? translated : null;
+  }
+
+  /// A confirm sheet showing exactly what will be sent (the translation) with
+  /// the user's original kept visible, so an outgoing translation is never a
+  /// silent change to their words. Returns true to send the translation.
+  Future<bool?> _showOutgoingPreview({
+    required String original,
+    required String translated,
+  }) {
+    final ac = context.ac;
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Send in their language?',
+                style: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.fg),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                "You'll send",
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              const SizedBox(height: 4),
+              Text(translated, style: AymaType.message(color: ac.fg)),
+              const SizedBox(height: 10),
+              Text(
+                'Your original',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                original,
+                style: AymaType.sans(size: 14, soft: true, color: ac.fgDim),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Send'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _askAyma() {
@@ -381,13 +532,35 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             onSelected: (v) {
               if (v == 'block') _blockAndReport();
               if (v == 'ask_ayma') _askAyma();
+              if (v == 'auto_translate') {
+                setState(() => _autoTranslate = !_autoTranslate);
+              }
+              if (v == 'translate_outgoing') {
+                setState(() => _translateOutgoing = !_translateOutgoing);
+              }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(
+            itemBuilder: (_) => [
+              const PopupMenuItem(
                 value: 'ask_ayma',
                 child: Text('Share this chat with Ayma'),
               ),
-              PopupMenuItem(value: 'block', child: Text('Block & report')),
+              // Cross-language DM (§6.12): auto-translate incoming messages into
+              // your language, and opt in to translating what you send into
+              // theirs (with a preview before it goes).
+              CheckedPopupMenuItem(
+                value: 'auto_translate',
+                checked: _autoTranslate,
+                child: const Text('Auto-translate their messages'),
+              ),
+              CheckedPopupMenuItem(
+                value: 'translate_outgoing',
+                checked: _translateOutgoing,
+                child: const Text('Translate what I send'),
+              ),
+              const PopupMenuItem(
+                value: 'block',
+                child: Text('Block & report'),
+              ),
             ],
           ),
         ],
@@ -451,7 +624,22 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                   itemCount: msgs.length,
                   itemBuilder: (context, i) {
                     final m = msgs[msgs.length - 1 - i];
-                    final bubble = _Bubble(message: m, mine: m.senderUid == me);
+                    final mine = m.senderUid == me;
+                    final bubble = _Bubble(
+                      message: m,
+                      mine: mine,
+                      // Incoming text bubbles get the translate affordance;
+                      // auto-translate kicks in when the thread toggle is on.
+                      translate: mine
+                          ? null
+                          : (text) => _dm.translate(
+                                widget.threadId,
+                                text,
+                                _preferredLang,
+                              ),
+                      autoTranslate: _autoTranslate,
+                      onDetected: _onOtherLangDetected,
+                    );
                     return FadeSlideIn(
                       key: ValueKey(m.id),
                       delay: staggerDelay(i),
@@ -498,6 +686,27 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               isImage: _pendingType == 'image',
               busy: _sending,
               onRemove: _sending ? null : () => setState(() => _pending = null),
+            ),
+          // When "Translate what I send" is on, a quiet one-line banner so it's
+          // never a surprise that an outgoing message will be translated
+          // (§6.12). The actual translation is still previewed before it sends.
+          if (_translateOutgoing)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
+              child: Row(
+                children: [
+                  Icon(Icons.translate, size: 14, color: ac.accent),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Ayma will translate your message to their language — '
+                      "you'll see it before it sends.",
+                      style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                    ),
+                  ),
+                ],
+              ),
             ),
           // No SafeArea here, deliberately: this screen is always wrapped in
           // `NavBarShell`, whose `AymaTabBar` below already consumes the
@@ -832,9 +1041,23 @@ class _CoachTip extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.mine});
+  const _Bubble({
+    required this.message,
+    required this.mine,
+    this.translate,
+    this.autoTranslate = false,
+    this.onDetected,
+  });
   final DmMessage message;
   final bool mine;
+
+  /// Translate this bubble's text into the reader's language (incoming text
+  /// bubbles only; null disables the affordance). [autoTranslate] runs it on
+  /// first display; [onDetected] reports the detected source language up so an
+  /// outgoing translation knows the match's language.
+  final Future<DmTranslation> Function(String text)? translate;
+  final bool autoTranslate;
+  final void Function(String lang)? onDetected;
 
   @override
   Widget build(BuildContext context) {
@@ -855,6 +1078,21 @@ class _Bubble extends StatelessWidget {
     } else if (message.hasFile) {
       tight = false;
       content = _file(context, ac);
+    } else if (!mine &&
+        message.type == 'text' &&
+        message.body.trim().isNotEmpty &&
+        translate != null) {
+      // Incoming text in a (possibly) different language: show the original
+      // with a subtle Translate affordance (§6.12).
+      tight = false;
+      content = _TranslatableText(
+        key: ValueKey('tr-${message.id}'),
+        text: message.body,
+        ink: _ink(ac),
+        translate: translate!,
+        autoTranslate: autoTranslate,
+        onDetected: onDetected,
+      );
     } else {
       tight = false;
       final label = switch (message.type) {
@@ -1001,6 +1239,185 @@ class _Bubble extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Incoming message text with a subtle "Translate" affordance (§6.12). The
+/// original is always shown; tapping Translate (or the thread's auto-translate
+/// toggle) renders the translation beneath it with a "translated from `lang`"
+/// label and a toggle to hide it again. Any failure degrades to just the
+/// original — translation never blocks reading the message.
+class _TranslatableText extends StatefulWidget {
+  const _TranslatableText({
+    super.key,
+    required this.text,
+    required this.ink,
+    required this.translate,
+    required this.autoTranslate,
+    this.onDetected,
+  });
+
+  final String text;
+  final Color ink;
+  final Future<DmTranslation> Function(String text) translate;
+  final bool autoTranslate;
+  final void Function(String lang)? onDetected;
+
+  @override
+  State<_TranslatableText> createState() => _TranslatableTextState();
+}
+
+class _TranslatableTextState extends State<_TranslatableText> {
+  DmTranslation? _tr;
+  bool _loading = false;
+  bool _failed = false;
+  bool _manual = false; // the user tapped Translate (vs auto-translate)
+  bool _show = true; // show the translation block (toggle to hide)
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoTranslate) _run(manual: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TranslatableText old) {
+    super.didUpdateWidget(old);
+    // The thread's auto-translate toggle flipped on after this bubble appeared.
+    if (widget.autoTranslate &&
+        !old.autoTranslate &&
+        _tr == null &&
+        !_loading) {
+      _run(manual: false);
+    }
+  }
+
+  Future<void> _run({required bool manual}) async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _failed = false;
+      if (manual) _manual = true;
+    });
+    try {
+      final tr = await widget.translate(widget.text);
+      if (!mounted) return;
+      if (tr.detectedSourceLang.isNotEmpty) {
+        widget.onDetected?.call(tr.detectedSourceLang);
+      }
+      setState(() {
+        _tr = tr;
+        _loading = false;
+        _show = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _failed = true;
+      });
+    }
+  }
+
+  bool get _isTranslated {
+    final t = _tr;
+    return t != null &&
+        t.translated.trim().isNotEmpty &&
+        t.translated.trim() != widget.text.trim();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final muted = AymaType.sans(size: 12, soft: true, color: ac.fgMute);
+
+    final rows = <Widget>[
+      // The original is always present and accessible.
+      Text(widget.text, style: AymaType.message(color: widget.ink)),
+    ];
+
+    if (_loading) {
+      rows.add(Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 1.6),
+            ),
+            const SizedBox(width: 6),
+            Flexible(child: Text('Translating…', style: muted)),
+          ],
+        ),
+      ));
+    } else if (_isTranslated) {
+      final from = _tr!.detectedSourceLang;
+      if (_show) {
+        rows.add(Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            _tr!.translated,
+            style: AymaType.message(color: widget.ink),
+          ),
+        ));
+        rows.add(_affordance(
+          label: from.isEmpty
+              ? 'translated · Show original'
+              : 'translated from $from · Show original',
+          muted: muted,
+          onTap: () => setState(() => _show = false),
+        ));
+      } else {
+        rows.add(_affordance(
+          label: 'Show translation',
+          muted: muted,
+          onTap: () => setState(() => _show = true),
+        ));
+      }
+    } else if (_tr != null) {
+      // Translated, but the message was already in the reader's language.
+      if (_manual) {
+        rows.add(Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('Already in your language', style: muted),
+        ));
+      }
+    } else if (_failed) {
+      rows.add(_affordance(
+        label: "Couldn't translate · Try again",
+        muted: muted,
+        onTap: () => _run(manual: true),
+      ));
+    } else {
+      rows.add(_affordance(
+        label: 'Translate',
+        muted: muted,
+        onTap: () => _run(manual: true),
+      ));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: rows,
+    );
+  }
+
+  Widget _affordance({
+    required String label,
+    required TextStyle muted,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 2),
+        child: Text(label, style: muted),
+      ),
     );
   }
 }
