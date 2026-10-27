@@ -36,10 +36,14 @@ face-embedding model used everywhere else in the app for identity checks
 (``media_embed.embed_image_bytes``), and compared against the user's own
 reference photo embedding(s)
 (``deep_dive_images.reference_embeddings_for``). Only a confident
-``classify_face_match(...) == "self"`` that also clears
-``deep_dive_images._has_detectable_face`` (rules out a coincidentally
-high-similarity non-face image) gets staged; an uncertain or non-matching
-result is discarded outright, never shown to the user at all. When the user
+``classify_face_match(...) == "self"`` — scored against the deliberately
+*stricter* ``CONFIG.web_photo_facematch_threshold`` (default 0.65, higher
+than the shared 0.55 used elsewhere, because a whole-image match on a
+stranger's look-alike thumbnail is exactly this path's failure mode) — that
+also clears ``deep_dive_images._has_detectable_face`` (rules out a
+coincidentally high-similarity non-face image) gets staged; an uncertain or
+non-matching result is discarded outright, never shown to the user at all.
+When the user
 has no usable reference embedding yet (nothing uploaded/verified early in
 onboarding), :func:`scan` skips staging entirely rather than guessing — see
 :func:`scan`'s docstring.
@@ -72,6 +76,8 @@ import hashlib
 import logging
 import urllib.parse
 from datetime import datetime, timezone
+
+from config import CONFIG
 
 logger = logging.getLogger("ayma.reverseimagesearch")
 
@@ -202,7 +208,11 @@ def _candidates_from_detection(detection) -> list[dict]:
 
 
 async def _face_matches_user(
-    uid: str, image_url: str, *, refs: list[list[float]]
+    uid: str,
+    image_url: str,
+    *,
+    refs: list[list[float]],
+    threshold: float,
 ) -> bool:
     """Whether a web-found candidate image at ``image_url`` is confidently the
     same person as ``uid`` — the gate a Web Detection hit must clear before
@@ -212,8 +222,11 @@ async def _face_matches_user(
     with the shared multimodal face-embedding model → cosine-classify against
     the user's own reference embedding(s) → Gemini-vision "is there really a
     face here" gate) so "same person" means the same thing everywhere in the
-    app, instead of a second, drifted definition living here. Fails closed:
-    any fetch, embed, or model failure — or a "not_self"/"unknown"
+    app, instead of a second, drifted definition living here. ``threshold`` is
+    the cosine cutoff the classification uses — the caller passes the
+    precision-leaning ``CONFIG.web_photo_facematch_threshold`` so this path is
+    stricter than the shared default (§ the config field's docstring). Fails
+    closed: any fetch, embed, or model failure — or a "not_self"/"unknown"
     classification — means "not verified", never "staged anyway".
     """
     import deep_dive_images
@@ -229,7 +242,10 @@ async def _face_matches_user(
         embedding = media_embed.embed_image_bytes(img, mime)
     except Exception:  # noqa: BLE001
         return False
-    if deep_dive_images.classify_face_match(embedding, refs) != "self":
+    if (
+        deep_dive_images.classify_face_match(embedding, refs, threshold=threshold)
+        != "self"
+    ):
         return False
     return await deep_dive_images._has_detectable_face(img, mime, uid=uid)
 
@@ -317,7 +333,12 @@ async def scan(
             try:
                 if getattr(ref.get(), "exists", False):
                     continue  # already staged (or already decided) — skip
-                if not await _face_matches_user(uid, c["image_url"], refs=refs):
+                if not await _face_matches_user(
+                    uid,
+                    c["image_url"],
+                    refs=refs,
+                    threshold=CONFIG.web_photo_facematch_threshold,
+                ):
                     # Vision thinks the pixels/composition are related, but
                     # it's not confidently this user's face — discard, never
                     # stage (founder decision: a wrong-person photo must
