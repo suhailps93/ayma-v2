@@ -1122,6 +1122,19 @@ class _Actions extends StatelessWidget {
           ),
           icon: Icon(Icons.model_training_outlined, color: accent),
         ),
+        const SizedBox(height: 16),
+        // AI Date Simulation (hackathon flagship): watch your AI and theirs
+        // feel each other out before messaging — a preview conversation plus a
+        // compatibility read. Nothing is sent to this person.
+        _RailButton(
+          key: const Key('profileDateSimButton'),
+          active: false,
+          onPressed: () => context.push(
+            '/date-sim/${p.uid}',
+            extra: {'name': p.name, 'thread_id': p.threadId},
+          ),
+          icon: Icon(Icons.auto_awesome_outlined, color: accent),
+        ),
       ],
     );
   }

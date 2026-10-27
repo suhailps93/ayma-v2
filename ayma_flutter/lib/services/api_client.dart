@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
+import '../features/date_sim/date_sim_models.dart';
 import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
@@ -1296,6 +1297,53 @@ class ApiClient {
           statusCode: r.statusCode, body: r.body);
     }
     return PracticeDebrief.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /date-sim` — run an AI date simulation against [otherUid]: two
+  /// personas (yours, grounded in your full own context; theirs, public-profile
+  /// only) hold a bounded conversation, returning the transcript plus a
+  /// compatibility score + summary. Nothing is sent to the other user. 404 →
+  /// null (no simulatable profile); HTTP 402 → an out-of-credits
+  /// [DateSimResult.capped].
+  Future<DateSimResult?> dateSim(String otherUid, int maxMessages) async {
+    final r = await _http.post(
+      _uri('/date-sim'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid, 'max_messages': maxMessages}),
+    );
+    if (r.statusCode == 402) return const DateSimResult.capped();
+    if (r.statusCode == 404) return null;
+    if (r.statusCode == 403) {
+      throw ApiException(_dateSimOptOutMessage(r.body),
+          statusCode: 403, body: r.body);
+    }
+    if (r.statusCode != 200) {
+      throw ApiException('Date simulation failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return DateSimResult.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// The AI-Avatar opt-out message from a 403 `/date-sim` body
+  /// (`{"detail": {"code", "message"}}`).
+  static String _dateSimOptOutMessage(String body) {
+    try {
+      final detail = (jsonDecode(body) as Map<String, dynamic>)['detail'];
+      final message = detail is Map ? detail['message'] : null;
+      if (message is String && message.isNotEmpty) return message;
+    } catch (_) {}
+    return 'Date simulation isn’t available for this profile.';
+  }
+
+  /// `GET /date-sim/estimate` — approximate credits per message count (both
+  /// agents are billed to the user). Empty when unavailable.
+  Future<Map<int, int>> dateSimEstimate() async {
+    final r = await _http.get(_uri('/date-sim/estimate'),
+        headers: await _headers());
+    if (r.statusCode != 200) return const {};
+    final raw = (jsonDecode(r.body) as Map<String, dynamic>)['credits_by_messages']
+        as Map<String, dynamic>;
+    return {for (final e in raw.entries) int.parse(e.key): (e.value as num).toInt()};
   }
 
   /// `POST /profiles/mini` — name + resolved photo URL for a batch of users

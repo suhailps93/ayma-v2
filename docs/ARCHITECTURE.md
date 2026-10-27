@@ -1186,6 +1186,7 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /block` | Used from both Explore and DM | §5.10/§6.11 |
 | `POST /profile/share` | Share a profile into a DM thread | §6.11 |
 | `POST /dm/{threadId}/messages` | Send a DM message (text/photo/voice/shared_profile) | §6.8 |
+| `POST /date-sim` | AI Date Simulation: two personas converse → transcript + compatibility read | §18 |
 | `POST /media/upload` | Unified upload entry (`context`: profile/chat/dm), runs the §8.5 pipeline | §8.7 |
 | `POST /instagram/connect` | OAuth linking | §8.7 |
 | `POST /instagram/disconnect` | Unlink | §8.7 |
@@ -1715,4 +1716,101 @@ the free daily-allowance change.
 
 ---
 
-*All 14 pieces are locked (plus §15 in-app feedback, §16 the post-plan MCP server, and §17 the billing & credits ledger). This document is the complete northstar plan — a coding agent implements against it one Implementation step at a time. Revisit a section only if a decision genuinely changes.*
+## 18. AI Date Simulation (ai-date-sim)
+
+**What it is (hackathon flagship, agents theme).** "Watch your AI and theirs
+feel each other out before you message them." On a match's / Explore profile, a
+**Simulate a conversation** entry runs a simulated first chat between TWO AI
+personas — the current user's and the match's — each grounded in that person's
+real profile, bounded by a user-set message cap. The user then sees the
+transcript (clearly labelled *Simulated — not sent to <name>*) plus a
+compatibility read: a **0–100 score**, a short label, and a "how it went"
+summary, with a **Message them for real** CTA. Nothing is ever sent to the
+other user — it is a one-sided, server-side preview.
+
+**Reuse, not reinvention.** It generalises the Practice Date persona machinery
+(`practice_core.py`) from "simulate one persona replying to the user" to "run
+two personas back-and-forth". Files: engine + HTTP in
+`functions/bootstrap/date_sim.py`; the user-side full-context builder
+`practice_core.build_self_persona_context`; prompts
+`prompts/date_sim.md` (the two-persona framing + disclosure filter) and
+`prompts/date_sim_verdict.md` (the scored read); Flutter in
+`ayma_flutter/lib/features/date_sim/` (`date_sim_screen.dart`,
+`date_sim_models.dart`), entry button in `screens/public_profile_screen.dart`,
+route in `routing/app_router.dart`, client method in `services/api_client.dart`.
+Tests: `functions/bootstrap/tests/test_date_sim.py`,
+`ayma_flutter/test/date_sim_test.dart`, and a layout-matrix entry.
+
+**The two-persona engine.**
+
+```mermaid
+flowchart LR
+  subgraph grounding["Grounding (asymmetric by design)"]
+    U["User's FULL own context<br/>(profile + ALL wiki pages,<br/>private spans kept)<br/>build_self_persona_context"]
+    M["Match's PUBLIC profile only<br/>(public_profile.build,<br/>never-load filtered)<br/>build_persona_context"]
+  end
+  U --> P1["USER persona<br/>(prompts/date_sim.md)"]
+  M --> P2["MATCH persona<br/>(prompts/date_sim.md)"]
+  P1 & P2 --> LOOP["N-turn alternation on Muse<br/>(practice_llm → LLMProvider,<br/>metered FEATURE_DATE_SIM,<br/>capped at max_messages)"]
+  LOOP --> MOD["Advisory moderation<br/>(dm_moderation, never blocks)"]
+  MOD --> V["Verdict call<br/>(date_sim_verdict.md →<br/>score 0-100 + label + summary)"]
+  V --> OUT["{transcript, score, score_label,<br/>summary} — shown to the user,<br/>never sent to the match"]
+```
+
+**Grounding asymmetry + the disclosure filter (privacy).** The USER's persona
+reads the user's FULL own context — profile plus every wiki page regardless of
+`visibility` (`public`/`private`/`ai_only`), private spans **kept** — because a
+user's own agent authentically represents them, and it is the user's own data.
+The MATCH's persona uses ONLY the viewer-visible public profile
+(`public_profile.build`, the same never-load-filtered boundary Practice Date
+uses), because another user's private data may never be read. Both personas run
+under `prompts/date_sim.md`, whose **disclosure filter** forbids either from
+*emitting* private/sensitive specifics (exact address/precise location,
+contact info, finances, health/trauma, private-journal or AI-notes
+observations, other people) — grounded-but-filtered: the agent uses the context
+to be authentic and gauge compatibility, it does not overshare it. A test seeds
+a private needle into the user's full context and asserts the simulated
+transcript never emits it (`test_private_needle_is_grounded_but_never_emitted`),
+while confirming the needle IS in the user's grounding and NOT in the match's.
+In the future mutual-live version each side will get its own user's full
+context; for now this is one-sided.
+
+**Endpoint.** `POST /date-sim {other_uid, max_messages}` (18+-gated like
+Practice Date) → `{simulation, persona, banner, transcript:[{from:"you"|"them",
+text}], score, score_label, summary, moderation, usage_capped}`. `max_messages`
+is clamped to `[2, 20]` (default 6). Metering: every persona turn and the
+verdict call go through `practice_llm` (the shared per-surface provider — Gemini
+today, Meta Muse Spark on a flag flip) and are charged to the user under
+`token_ledger.FEATURE_DATE_SIM` ("Date simulation"); **both** personas' turns
+(USER and MATCH) and the verdict all bill the *triggering* user's uid, never the
+match's (`test_every_metered_call_bills_the_triggering_user`); the user-set cap
+bounds the real spend of two personas conversing. The setup screen shows a
+prominent warning (key `dateSimCreditWarning`) that the run uses a lot of
+credits, with an approximate number that updates live with the message-count
+stepper and a note that both agents are billed to the user; "Simulate a
+conversation" is the acknowledgement. The number comes from
+`GET /date-sim/estimate` (`credits_by_messages`), computed in
+`date_sim.estimate_credits` from conservative per-turn token assumptions (stated
+in the module) × (one turn per message + one verdict call), priced through
+`token_ledger.cost_usd_for` and `billing.credits_for` (`credits_per_usd`) — no
+inline prices or credit rates.
+
+**AI Avatar consent (opt-out).** Settings > Privacy > "AI Avatar" (default on)
+writes `ai_avatar_enabled` to `users/{uid}/profile/main` (client-writable in
+`firestore.rules`, like `paused`); `practice_core.ai_avatar_enabled(db, uid)`
+reads it, defaulting to True when unset (only an explicit `False` opts out).
+`run_simulation` checks it BEFORE any persona is built or model call is made:
+the caller opted out → 403 `ai_avatar_opt_out_self` ("Turn on AI Avatar in
+Settings to use simulated dates."); the match opted out → 403
+`ai_avatar_opt_out_match` ("This person has opted out of AI simulations."). The
+gate is also inside `practice_core.build_persona_context`, so Practice Date and
+the MCP/agent persona paths never build a persona of an opted-out user (they
+see "no profile"). The 18+ gate is unchanged. Follow-up: the user-facing
+privacy policy text (`docs/PRIVACY.md`) should mention the AI Avatar setting. Out of credits → 402 before the first
+message; running out mid-conversation returns the partial transcript with
+`usage_capped` set and skips the (metered) verdict. Cross-ref:
+`docs/PRACTICE_DATE.md`.
+
+---
+
+*All 14 pieces are locked (plus §15 in-app feedback, §16 the post-plan MCP server, §17 the billing & credits ledger, and §18 AI Date Simulation). This document is the complete northstar plan — a coding agent implements against it one Implementation step at a time. Revisit a section only if a decision genuinely changes.*

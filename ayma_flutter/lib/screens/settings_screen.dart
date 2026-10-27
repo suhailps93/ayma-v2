@@ -248,6 +248,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Divider(color: ac.lineSoft),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Privacy',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          StreamBuilder<bool>(
+            stream: _profiles.watchAiAvatar(),
+            builder: (context, snap) => SwitchListTile(
+              key: const Key('settings_ai_avatar'),
+              title: Text('AI Avatar',
+                  style: AymaType.sans(size: 15, color: ac.fg)),
+              subtitle: Text(
+                'Allow an AI version of me. Ayma builds an AI agent from your '
+                'profile for simulated dates and agent features. Turn off to '
+                'opt out: you can’t run simulated dates, and no one can '
+                'simulate one with you.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              value: snap.data ?? true,
+              onChanged: (v) => _profiles.setAiAvatar(v),
+            ),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Text('Verification',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),

@@ -511,6 +511,14 @@ import practice_date  # noqa: E402
 
 app.include_router(practice_date.router)
 
+# AI Date Simulation (hackathon flagship) — two personas (the user's full own
+# context + the match's public-only profile) hold a bounded conversation,
+# returning a transcript + compatibility read. Its own module for the same
+# clean-lift reason as Practice Date, which it reuses.
+import date_sim  # noqa: E402
+
+app.include_router(date_sim.router)
+
 # Ayma MCP server (bring-your-own-agent) — mounted at /mcp. The whole surface is
 # dark behind the `mcp_server` feature flag (default OFF): when off its auth
 # wrapper answers every request 503, so this mount exposes nothing until the

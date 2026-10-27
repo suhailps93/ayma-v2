@@ -68,7 +68,7 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly([
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
-               'paused', 'ayma_voice_name', 'ayma_voice_language',
+               'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
                'updated_at', 'onboarding_started'
              ])
           && isAdultBirthdate(request.resource.data);
@@ -76,7 +76,7 @@ service cloud.firestore {
           && changed([
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
-               'paused', 'ayma_voice_name', 'ayma_voice_language',
+               'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
                'updated_at', 'onboarding_started'
              ])
           && isAdultBirthdate(request.resource.data);

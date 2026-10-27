@@ -180,6 +180,23 @@ class ProfileService {
     );
   }
 
+  /// Whether an AI version of the user may be built (date simulation and other
+  /// agent features). On unless the user explicitly opted out.
+  Stream<bool> watchAiAvatar() => _profileDoc
+      .snapshots()
+      .map((s) => s.data()?['ai_avatar_enabled'] != false);
+
+  /// Opt in or out of having an AI version of me ("AI Avatar").
+  Future<void> setAiAvatar(bool enabled) {
+    return _profileDoc.set(
+      {
+        'ai_avatar_enabled': enabled,
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
   /// Sets `ayma_voice_name` (§13.3). Takes effect from the next voice session.
   Future<void> setVoicePreference(String presetName) {
     return _profileDoc.set(
