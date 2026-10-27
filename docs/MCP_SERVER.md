@@ -42,7 +42,7 @@ External MCP client (Claude)          Ayma app (Flutter)
         ▼                                      │
   device_code + short user_code               │
         │                                      │ 2. user opens
-        │   (client shows user_code)           │    Profile → Connect an agent,
+        │   (client shows user_code)           │    Ayma’s settings → Connect an agent,
         │                                      │    types the code, approves
         │                                      ▼
         │                         POST /mcp/connect/approve  (Firebase ID token)
@@ -236,4 +236,4 @@ python3 scripts/mcp_demo.py --base-url http://localhost:8080 \
 Adding it to an MCP client (e.g. Claude) as a connector: point the client at
 `https://<ayma-api-host>/mcp`. The client discovers the authorization server via
 the protected-resource metadata and runs the device flow; the user approves the
-`user_code` in the Ayma app (Profile → Connect an agent).
+`user_code` in the Ayma app (Profile → Ayma’s settings → Connect an agent (MCP)).
