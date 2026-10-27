@@ -77,6 +77,25 @@ def _bucket():
     return storage.bucket(CONFIG.storage_bucket)
 
 
+def _caller_first_name(db, uid: str) -> str:
+    """The caller's own first name from their ``profile/main`` ``name``, for the
+    voice persona prompt (so the simulated match knows who is calling and never
+    asks). Best-effort: returns ``""`` when there's no readable name."""
+    try:
+        snap = (
+            db.collection("users")
+            .document(uid)
+            .collection("profile")
+            .document("main")
+            .get()
+        )
+        full = str((snap.to_dict() or {}).get("name") or "").strip()
+        return full.split()[0] if full else ""
+    except Exception:  # noqa: BLE001 - name is best-effort, never blocks voice
+        logger.warning("practice voice: caller name lookup failed", exc_info=True)
+        return ""
+
+
 async def require_not_underage_uid(uid: str = Depends(require_uid)) -> str:
     """18+ gate for Practice Date (same contract as main's gate): refuses
     minors, lets a not-yet-birthdated onboarding user through. Defined locally
@@ -265,18 +284,24 @@ async def practice_voice_start(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     # Wake the scale-to-zero agent in parallel with room creation (same as
-    # /bootstrap), then seed the persona prompt onto the room metadata.
+    # /bootstrap), then seed the persona prompt onto the room metadata. The
+    # persona answers a live phone CALL from the caller, so the prompt is built
+    # with the voice framing and the caller's first name (so the match never
+    # asks who's calling), and the persona's gender rides along so the worker
+    # picks a gender-matched TTS voice.
+    user_name = _caller_first_name(db, caller.uid)
     background.add_task(agent_wake.wake_agent)
     try:
         await seed_room_context(
             room,
             build_room_seed(
-                compose_persona_prompt(ctx),
+                compose_persona_prompt(ctx, voice=True, user_name=user_name),
                 [],
                 caller.uid,
                 session_id,
                 practice=True,
                 persona_name=ctx.name,
+                persona_gender=ctx.gender,
                 target_uid=target_uid,
             ),
         )

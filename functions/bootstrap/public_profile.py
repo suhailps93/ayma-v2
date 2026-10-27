@@ -242,6 +242,7 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "blocked": blocked,
         "name": name,
         "age": _age(prof.get("birthdate")),
+        "gender": str(prof.get("gender") or ""),
         "location": str(prof.get("location") or ""),
         # Real presence only — see `_is_online`'s docstring.
         "online": _is_online(db, other_uid),

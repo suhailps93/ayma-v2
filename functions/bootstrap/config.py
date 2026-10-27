@@ -715,6 +715,18 @@ class Config:
     """Optional voice preset for ``meta_cascade_tts_model`` (empty = the vendor
     default voice). Override with ``META_CASCADE_TTS_VOICE``."""
 
+    meta_cascade_tts_voice_female: str
+    """Gender-matched TTS voice preset for the cascade when it simulates a
+    FEMALE Practice Date persona (``agent.build_meta_cascade_session``). The
+    vendor's own voice id lives here, never hardcoded in ``agent.py``; empty
+    (the default) falls back to ``meta_cascade_tts_voice``. Override with
+    ``META_CASCADE_TTS_VOICE_FEMALE``."""
+
+    meta_cascade_tts_voice_male: str
+    """Gender-matched TTS voice preset for the cascade when it simulates a MALE
+    Practice Date persona. Empty (the default) falls back to
+    ``meta_cascade_tts_voice``. Override with ``META_CASCADE_TTS_VOICE_MALE``."""
+
     meta_cascade_vad_model: str
     """VAD model that segments speech for the Meta cascade (the cascade has no
     server-side turn detection, unlike Gemini Live). Bundled Silero via
@@ -1014,6 +1026,10 @@ def _load() -> Config:
             "META_CASCADE_TTS_MODEL", "inworld/inworld-tts-1"
         ),
         meta_cascade_tts_voice=os.getenv("META_CASCADE_TTS_VOICE", ""),
+        meta_cascade_tts_voice_female=os.getenv(
+            "META_CASCADE_TTS_VOICE_FEMALE", ""
+        ),
+        meta_cascade_tts_voice_male=os.getenv("META_CASCADE_TTS_VOICE_MALE", ""),
         meta_cascade_vad_model=os.getenv("META_CASCADE_VAD_MODEL", "silero"),
         meta_reasoning_effort=os.getenv("META_REASONING_EFFORT", "minimal"),
         llm_provider_chat=os.getenv(

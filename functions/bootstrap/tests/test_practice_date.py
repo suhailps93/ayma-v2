@@ -222,6 +222,117 @@ def test_coach_hint_never_raises_on_llm_failure():
         practice_llm.clear_override()
 
 
+# --- gender-matched voice + pronouns + voice-call framing ------------------- #
+def test_persona_context_carries_gender_and_shows_in_prompt():
+    """The persona's (viewer-visible) gender rides on the context and appears in
+    the prompt block so the match stays consistent about who they are and the
+    worker can pick a gender-matched voice."""
+    ctx = practice_date.build_persona_context(_seeded_db(), VIEWER, MAYA)
+    assert ctx is not None
+    assert ctx.gender == "woman"
+    assert "Gender: woman" in ctx.to_prompt_block()
+
+
+def test_voice_for_gender_picks_a_gender_matched_preset():
+    import voices
+
+    female = voices.voice_for_gender("woman")
+    male = voices.voice_for_gender("man")
+    # Each maps to a real catalog preset, and to the matching lean.
+    assert female in voices.VOICE_PRESETS and "feminine" in voices.VOICE_PRESETS[female]
+    assert male in voices.VOICE_PRESETS and "masculine" in voices.VOICE_PRESETS[male]
+    assert female != male
+    # Aliases resolve the same way; unknown/non-binary/blank → "" (caller uses
+    # its own default voice — never a wrong-gender guess).
+    assert voices.voice_for_gender("female") == female
+    assert voices.voice_for_gender("Male") == male
+    assert voices.voice_for_gender("non-binary") == ""
+    assert voices.voice_for_gender("") == ""
+    assert voices.voice_for_gender(None) == ""
+
+
+def test_pronouns_for_gender_never_defaults_to_him():
+    assert practice_core.pronouns_for_gender("woman") == "she/her"
+    assert practice_core.pronouns_for_gender("man") == "he/him"
+    # The founder bug: unknown/non-binary must be they/them, NOT he/him.
+    assert practice_core.pronouns_for_gender("non-binary") == "they/them"
+    assert practice_core.pronouns_for_gender("") == "they/them"
+    assert practice_core.pronouns_for_gender(None) == "they/them"
+
+
+def test_voice_persona_prompt_is_a_phone_call_knows_caller_and_is_not_texting():
+    """The voice persona prompt frames a LIVE phone call from the named caller,
+    tells the match it already knows who's calling (never ask the name), and
+    bans texting phrasing. The text path (voice=False) carries none of it."""
+    ctx = practice_date.build_persona_context(_seeded_db(), VIEWER, MAYA)
+    voice_prompt = practice_date.compose_persona_prompt(
+        ctx, voice=True, user_name="Sam"
+    )
+    lowered = voice_prompt.lower()
+    assert "voice call" in lowered or "phone call" in lowered
+    assert "Sam" in voice_prompt  # the caller's first name is injected
+    assert "never ask who it is" in lowered or "never ask" in lowered
+    assert "do not use texting" in lowered or "not a text chat" in lowered
+    assert "no emoji" in lowered
+    # The text path is unchanged — no voice-call framing leaks into it.
+    text_prompt = practice_date.compose_persona_prompt(ctx)
+    assert "phone call" not in text_prompt.lower()
+    assert "Sam" not in text_prompt
+
+
+def test_voice_persona_prompt_falls_back_when_user_name_missing():
+    ctx = practice_date.build_persona_context(_seeded_db(), VIEWER, MAYA)
+    prompt = practice_date.compose_persona_prompt(ctx, voice=True, user_name="")
+    # No raw token leaks, and a sensible stand-in is used instead of a blank.
+    assert "{{USER_NAME}}" not in prompt
+    assert "the person you matched with" in prompt.lower()
+
+
+def test_coach_context_uses_personas_pronouns_not_him():
+    """The coach hint is composed with the persona's pronouns, so a she/her
+    persona is never framed as "him" (founder bug 2026-10-27)."""
+    seen = {}
+
+    async def capture(system, contents, schema, uid, feature):
+        seen["system"] = system
+        seen["contents"] = contents
+        return {"hint": "nice, keep it light"}
+
+    ctx = practice_core.persona_context_for_coach("Dillu", target_uid=MAYA, gender="woman")
+    turns = [{"role": practice_core.ROLE_USER, "text": "hey!"}]
+    practice_llm.set_override(json=capture)
+    try:
+        asyncio.run(practice_date.coach_hint(ctx, turns, uid=VIEWER))
+    finally:
+        practice_llm.clear_override()
+    assert "she/her" in seen["contents"]
+    # The wrong-gender framing the bug produced must not be present.
+    assert "him" not in seen["contents"].lower()
+    assert "he/him" not in seen["contents"]
+    # The coach PROMPT itself instructs pronoun-faithfulness.
+    assert "pronouns" in practice_date.compose_coach_prompt().lower()
+
+
+def test_coach_context_defaults_to_they_them_when_gender_unknown():
+    seen = {}
+
+    async def capture(system, contents, schema, uid, feature):
+        seen["contents"] = contents
+        return {"hint": ""}
+
+    ctx = practice_core.persona_context_for_coach("Alex", target_uid=MAYA, gender="")
+    practice_llm.set_override(json=capture)
+    try:
+        asyncio.run(
+            practice_date.coach_hint(
+                ctx, [{"role": practice_core.ROLE_USER, "text": "hi"}], uid=VIEWER
+            )
+        )
+    finally:
+        practice_llm.clear_override()
+    assert "they/them" in seen["contents"]
+
+
 # --- provider seam (consumes the shared per-surface provider) --------------- #
 def test_practice_surface_defaults_to_gemini():
     from llm_provider import GeminiProvider, get_llm_provider
