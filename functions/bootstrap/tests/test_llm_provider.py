@@ -99,9 +99,14 @@ def _with_flags(monkeypatch, **flags):
 
 
 def test_default_is_gemini_for_every_surface(monkeypatch):
-    # Defaults as loaded (all gemini) — production behaviour unchanged.
+    # Defaults as loaded: gemini everywhere EXCEPT dm_coach, which the founder
+    # directed onto the Meta/Muse brain for the hackathon (default ``meta``).
     for surface in llm_provider.SURFACES:
-        assert isinstance(get_llm_provider(surface), GeminiProvider)
+        provider = get_llm_provider(surface)
+        if surface == "dm_coach":
+            assert isinstance(provider, MetaProvider)
+        else:
+            assert isinstance(provider, GeminiProvider)
 
 
 def test_per_surface_flip_is_independent(monkeypatch):

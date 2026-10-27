@@ -45,7 +45,7 @@ PROVIDER_GEMINI = "gemini"
 PROVIDER_META = "meta"
 
 # The surfaces that can flip independently (``config.llm_provider_<surface>``).
-SURFACES = ("chat", "matching", "reports", "practice", "voice")
+SURFACES = ("chat", "matching", "reports", "practice", "voice", "dm_coach")
 
 
 class LLMProvider(ABC):
@@ -473,6 +473,7 @@ _SURFACE_FLAG = {
     "reports": lambda: CONFIG.llm_provider_reports,
     "practice": lambda: CONFIG.llm_provider_practice,
     "voice": lambda: CONFIG.llm_provider_voice,
+    "dm_coach": lambda: CONFIG.llm_provider_dm_coach,
 }
 
 
