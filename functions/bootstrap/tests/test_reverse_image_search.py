@@ -244,6 +244,71 @@ def test_scan_skips_entirely_without_a_reference_photo(monkeypatch):
     assert calls["n"] == 0  # never even ran Vision — nothing to verify against
 
 
+def _stub_facematch_pipeline(monkeypatch, *, candidate_emb, ref):
+    """Wire scan's real face-match gate end to end (``classify_face_match``
+    runs for real, so the configured threshold actually decides) against one
+    discovered candidate. ``candidate_emb`` is the stranger/self embedding the
+    web photo embeds to; ``ref`` is the user's reference embedding."""
+    monkeypatch.setattr(
+        skill_reports, "primary_profile_photo_path", lambda _db, _uid: "p.jpg"
+    )
+    monkeypatch.setattr(
+        media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for", lambda _db, _uid: [ref]
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda _b, _m: candidate_emb
+    )
+
+    async def _face(*_a, **_k):
+        return True
+
+    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+    detection = _detection(similar=[_img("https://cdn.example/lookalike.jpg")])
+    monkeypatch.setattr(ris, "_web_detect", lambda _b: detection)
+
+
+def test_scan_drops_a_borderline_match_below_the_configured_threshold(monkeypatch):
+    """The founder's bug: a stranger's look-alike thumbnail whose whole-image
+    cosine (~0.60) clears the loose shared 0.55 but is below the stricter,
+    precision-leaning web-research threshold must be dropped, not staged."""
+    db = _FakeDb()
+    # cosine([0.6, 0.8], [1.0, 0.0]) == 0.6 — above 0.55, below 0.65.
+    _stub_facematch_pipeline(
+        monkeypatch, candidate_emb=[0.6, 0.8], ref=[1.0, 0.0]
+    )
+    monkeypatch.setattr(
+        ris, "CONFIG", SimpleNamespace(web_photo_facematch_threshold=0.65)
+    )
+
+    created = _run(ris.scan(db, "u1"))
+    assert created == []
+    cid = ris._candidate_id("https://cdn.example/lookalike.jpg")
+    assert ("users", "u1", "web_photo_candidates", cid) not in db.data
+
+
+def test_scan_stages_the_same_match_when_the_threshold_is_lowered(monkeypatch):
+    """Mirror of the above — proving the threshold is what decides: the exact
+    same 0.60-similarity candidate is staged once the configured cutoff drops
+    to 0.55. Confirms the gate is driven by the config value, not hardcoded."""
+    db = _FakeDb()
+    _stub_facematch_pipeline(
+        monkeypatch, candidate_emb=[0.6, 0.8], ref=[1.0, 0.0]
+    )
+    monkeypatch.setattr(
+        ris, "CONFIG", SimpleNamespace(web_photo_facematch_threshold=0.55)
+    )
+
+    created = _run(ris.scan(db, "u1"))
+    assert len(created) == 1
+    assert created[0]["image_url"] == "https://cdn.example/lookalike.jpg"
+
+
 # --- _face_matches_user -------------------------------------------------
 
 
@@ -264,7 +329,9 @@ def test_face_matches_user_true_when_verified_and_a_real_face(monkeypatch):
     monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
 
     ok = _run(
-        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+        ris._face_matches_user(
+            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+        )
     )
     assert ok is True
 
@@ -281,7 +348,9 @@ def test_face_matches_user_false_when_not_the_same_person(monkeypatch):
     )
 
     ok = _run(
-        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+        ris._face_matches_user(
+            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+        )
     )
     assert ok is False
 
@@ -298,7 +367,9 @@ def test_face_matches_user_false_when_uncertain(monkeypatch):
     )
 
     ok = _run(
-        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+        ris._face_matches_user(
+            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+        )
     )
     assert ok is False
 
@@ -310,7 +381,9 @@ def test_face_matches_user_false_on_fetch_failure(monkeypatch):
     monkeypatch.setattr(deep_dive_images, "_fetch_image", _boom)
 
     ok = _run(
-        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+        ris._face_matches_user(
+            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+        )
     )
     assert ok is False
 
@@ -326,7 +399,9 @@ def test_face_matches_user_false_on_embed_failure(monkeypatch):
     monkeypatch.setattr(media_embed, "embed_image_bytes", _boom)
 
     ok = _run(
-        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+        ris._face_matches_user(
+            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+        )
     )
     assert ok is False
 
@@ -353,7 +428,9 @@ def test_face_matches_user_false_when_similarity_high_but_no_real_face(
     monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
 
     ok = _run(
-        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+        ris._face_matches_user(
+            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+        )
     )
     assert ok is False
 

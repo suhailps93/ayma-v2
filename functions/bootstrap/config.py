@@ -272,6 +272,19 @@ class Config:
     Same ``AGENTS.md`` rule — model strings live only here. LOCKED to
     ``gemini-embedding-2`` (3072-d, Vertex ``global``)."""
 
+    web_photo_facematch_threshold: float
+    """Cosine-similarity cutoff the web-research / reverse-image-search
+    face-match gate (``reverse_image_search.scan`` →
+    ``deep_dive_images.classify_face_match``) must clear before a web-found
+    photo is staged as a "Photos to confirm" candidate. Deliberately
+    *stricter* than the shared ``deep_dive_images._VERIFY_THRESHOLD`` (0.55)
+    used elsewhere: reverse-image Web Detection candidates are whole-image
+    multimodal embeddings of strangers' photos (YouTube thumbnails, news
+    stills, etc.) that merely look visually similar, so this path has a
+    materially higher misidentification risk and must err toward precision —
+    better to miss a real photo than ever surface a stranger against the user.
+    ``WEB_PHOTO_FACEMATCH_THRESHOLD``; default 0.65."""
+
     gemini_image_edit_model: str
     """Gemini image-editing model id for the ``edit_photo`` tool (the "Chat
     about it" photo flow — see the "LOCKED MODELS" block above). Same
@@ -833,6 +846,9 @@ def _load() -> Config:
         ),
         image_embedding_model=os.getenv(
             "IMAGE_EMBEDDING_MODEL", "gemini-embedding-2"
+        ),
+        web_photo_facematch_threshold=float(
+            os.getenv("WEB_PHOTO_FACEMATCH_THRESHOLD", "0.65")
         ),
         gemini_image_edit_model=os.getenv(
             "GEMINI_IMAGE_EDIT_MODEL", "gemini-2.5-flash-image"

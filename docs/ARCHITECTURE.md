@@ -147,6 +147,23 @@ flowchart LR
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
   goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
   verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
+- *Web-research photo discovery → "Photos to confirm" (`reverse_image_search.py`)*: a separate path from the
+  name-based deep dive. Cloud Vision **Web Detection** runs over the member's *own* photo to find where that image
+  (or a visually similar one) appears on the open web — an image-similarity search, not a face-identity match, so
+  its results routinely include *different people entirely* (YouTube thumbnails, TikTok/news stills with a similar
+  pose or background). Nothing is ever auto-written to the "about me" report; each hit is staged as a **pending
+  candidate** under `users/{uid}/web_photo_candidates/{id}` that the user explicitly confirms/rejects
+  (`confirm_candidate`/`reject_candidate`, surfaced via `GET /web-search/photos/candidates`). **Face-match gate
+  (`scan` → `_face_matches_user`):** before a candidate is *ever* staged it must clear the same embedding pipeline
+  used everywhere else — fetch → `media_embed.embed_image_bytes` (Vertex `gemini-embedding-2`) → cosine
+  `classify_face_match` against the user's reference embedding(s) (`reference_embeddings_for`: the verified selfie
+  embedding, else the profile-photo embeddings; consent-gated via `biometric_consent`) → `_has_detectable_face`.
+  The cutoff is **`CONFIG.web_photo_facematch_threshold`** (`WEB_PHOTO_FACEMATCH_THRESHOLD`, default **0.65**),
+  deliberately stricter than the shared 0.55 used by the name-based dive — this whole-image path's failure mode is
+  a stranger's look-alike thumbnail scoring just over a loose bar, so it errs toward precision (miss a real photo
+  rather than surface a stranger). A non-match, no-face, or below-threshold hit is discarded, never shown. When
+  the user has **no usable reference embedding yet** (no verified selfie / no embedded profile face, or no
+  biometric consent), `scan` no-ops and stages nothing at all — identity can't be verified, so nothing is surfaced.
 - *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
   scores with verdicts; up to 4 strengths; the real Ayma orb logo asset `assets/icon/ayma_orb_ios.png` in its header
   and footer, decoded up-front so it is in the captured frame) from the report's own blocks, and shares it as a PNG
@@ -430,6 +447,19 @@ The agent has an `add_followup_question` tool, available in both voice (LiveKit 
 ### 2.5 Face memory
 
 Gemini Embedding 2 (multimodal) embeds each reference photo — profile photos and chat-shared images — once, at upload/share time. The vector is stored on the corresponding `user_media` Firestore doc. New images are checked against a user's known-face embeddings via Firestore's native `findNearest` (COSINE distance) — no separate vector database. An LLM vision pairwise comparison is the fallback only for borderline similarity scores, not the default path.
+
+**Web-research face-match gate.** The reverse-image "Photos to confirm" flow (`reverse_image_search.py`, feature bullet above) reuses this same embedding + reference set, but behind a stricter, precision-leaning cutoff — a Cloud Vision Web Detection hit (a *visually similar* image, often a stranger) is embedded and compared to the user's reference face, and only a confident same-person match that also shows a real face is ever staged as a pending candidate. No reference embedding (or no consent) ⇒ nothing is staged.
+
+```mermaid
+flowchart LR
+  OwnPhoto["User's own photo"] --> WD["Cloud Vision<br/>Web Detection"]
+  WD --> Cand["Candidate image<br/>(may be a stranger)"]
+  Cand --> Gate{{"Face-match gate<br/>embed → classify_face_match ≥ CONFIG.web_photo_facematch_threshold (0.65)<br/>AND _has_detectable_face"}}
+  Ref["Reference face embedding<br/>(verified selfie, else profile photos; consent-gated)"] --> Gate
+  Gate -->|match| Confirm["web_photo_candidates (pending)<br/>→ user confirms/rejects"]
+  Gate -->|no match / no face / below threshold| Drop["Discarded<br/>(never stored or shown)"]
+  NoRef["No reference embedding / no consent"] -.->|scan no-ops| Drop
+```
 
 ### 2.6 Matching (wiki-to-wiki)
 
