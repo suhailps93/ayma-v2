@@ -78,6 +78,7 @@ def build_room_seed(
     greeting_instructions: str = "",
     practice: bool = False,
     persona_name: str = "",
+    persona_gender: str = "",
     target_uid: str = "",
 ) -> str:
     """JSON the agent worker reads from room metadata: the caller's system
@@ -89,8 +90,9 @@ def build_room_seed(
     room: ``system_prompt`` is then the persona prompt
     (``practice_date.compose_persona_prompt``) and the agent runs the practice
     path (no Ayma tools, no memory flush/wiki ingest, a side-channel live
-    coach) instead of a normal Ayma call. ``persona_name`` / ``target_uid`` let
-    the agent drive the live coach and persist the practice transcript for the
+    coach) instead of a normal Ayma call. ``persona_name`` / ``persona_gender`` /
+    ``target_uid`` let the agent drive the live coach (with the right pronouns),
+    pick a gender-matched TTS voice, and persist the practice transcript for the
     debrief, WITHOUT ever re-reading the target's profile (the persona prompt
     already carries only the viewer-visible, never-load-filtered facts)."""
     return json.dumps(
@@ -106,6 +108,7 @@ def build_room_seed(
             "greeting_instructions": greeting_instructions,
             "practice": practice,
             "persona_name": persona_name,
+            "persona_gender": persona_gender,
             "target_uid": target_uid,
         }
     )

@@ -26,6 +26,43 @@ VOICE_PRESETS: dict[str, str] = {
 }
 
 
+# Gender -> default built-in voice preset, used by Practice Date voice so a
+# simulated match sounds like their profile gender (female persona -> a
+# feminine-leaning voice, male -> masculine). The chosen presets are members of
+# ``VOICE_PRESETS`` above (asserted below), so this never introduces a voice id
+# that isn't in the catalog. Non-binary / unknown gender falls through to the
+# session default (``CONFIG.gemini_live_voice``) — see :func:`voice_for_gender`.
+_GENDER_VOICE: dict[str, str] = {"female": "Aoede", "male": "Charon"}
+
+_FEMALE_GENDER_WORDS = frozenset(
+    {"female", "woman", "women", "f", "girl", "lady", "she", "her", "feminine"}
+)
+_MALE_GENDER_WORDS = frozenset(
+    {"male", "man", "men", "m", "guy", "boy", "he", "him", "masculine"}
+)
+
+assert all(v in VOICE_PRESETS for v in _GENDER_VOICE.values()), (
+    "gender->voice mapping must only name presets defined in VOICE_PRESETS"
+)
+
+
+def voice_for_gender(gender: str | None) -> str:
+    """Built-in voice preset matching a persona's ``gender`` for Practice Date.
+
+    ``female``/``woman`` → a feminine-leaning preset, ``male``/``man`` → a
+    masculine one. Returns ``""`` for non-binary, other, blank or unrecognised
+    gender so the caller falls back to its own default voice
+    (``CONFIG.gemini_live_voice``) — never a wrong-gender guess."""
+    g = (gender or "").strip().lower()
+    if not g:
+        return ""
+    if g in _FEMALE_GENDER_WORDS:
+        return _GENDER_VOICE["female"]
+    if g in _MALE_GENDER_WORDS:
+        return _GENDER_VOICE["male"]
+    return ""
+
+
 def voice_names() -> list[str]:
     return list(VOICE_PRESETS)
 

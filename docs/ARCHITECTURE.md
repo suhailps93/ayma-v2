@@ -235,7 +235,7 @@ Voice runs over **LiveKit Cloud** (managed, Build → Ship tier) as the WebRTC b
 
 Text and voice are separate transports. Text is a stateless REST call and never opens a LiveKit room.
 
-Voice stack (hackathon Deliverable A): both the **MAIN** Ayma call (`agent._run_session`) and the **Practice Date** call (`agent._run_practice_session`) run the LOCKED Gemini Live `RealtimeModel` by default and can instead run a Meta **cascade** (LiveKit Inference STT + Meta Muse Spark LLM + Inworld TTS + Silero VAD, `agent.build_meta_cascade_session`) behind their own independent env flags — `LLM_PROVIDER_VOICE_MAIN` for the main call, `LLM_PROVIDER_VOICE` for practice — each defaulting to `gemini` so behaviour is unchanged until flipped. A build failure or a mid-call cascade error falls back to Gemini Live on the same room, so a flip can never take voice down. Detail: `docs/META_PROVIDER.md` → "Voice cascade"; flags: `docs/FEATURE_FLAGS.md`.
+Voice stack (hackathon Deliverable A): both the **MAIN** Ayma call (`agent._run_session`) and the **Practice Date** call (`agent._run_practice_session`) run the LOCKED Gemini Live `RealtimeModel` by default and can instead run a Meta **cascade** (LiveKit Inference STT + Meta Muse Spark LLM + Inworld TTS + Silero VAD, `agent.build_meta_cascade_session`) behind their own independent env flags — `LLM_PROVIDER_VOICE_MAIN` for the main call, `LLM_PROVIDER_VOICE` for practice — each defaulting to `gemini` so behaviour is unchanged until flipped. A build failure or a mid-call cascade error falls back to Gemini Live on the same room, so a flip can never take voice down. Detail: `docs/META_PROVIDER.md` → "Voice cascade"; flags: `docs/FEATURE_FLAGS.md`. Practice voice is **gender-matched**: a simulated persona speaks in a voice matching its profile gender (Gemini preset via `voices.voice_for_gender`, or the Inworld `config.meta_cascade_tts_voice_female`/`_male` on the cascade; non-binary/unknown → the default voice). The practice persona prompt is also composed with a **live-voice-call framing** (`prompts/practice_persona_voice.md`) and the caller's first name, so the match answers a phone call from a known caller rather than acting like a chatbot or texting; and the live coach is given the persona's pronouns so it never mis-genders the match. Detail: `docs/PRACTICE_DATE.md` → "Voice realism".
 
 ### 1.2 Component architecture
 
@@ -1239,6 +1239,8 @@ A behavioral instruction inside the base persona prompt: read the user's tone/en
 
 - A settings-screen picker with preview.
 - The `set_voice_preference` agent tool (§13.6), callable in both voice and text sessions when the user asks mid-conversation — picks the named or closest matching preset and saves it. From a text chat it takes effect next voice call; in a live voice call the agent reconnects the Live session in the new voice right away (`VoiceSwapper`, `docs/agent.md`), and if the new session never speaks it restores the previous voice and says so.
+
+`voices.voice_for_gender(gender)` maps a gender to a gender-matched preset (feminine/masculine lean); **Practice Date** voice uses it so a simulated persona sounds like its profile gender regardless of the caller's own `ayma_voice_name` (see `docs/PRACTICE_DATE.md` → "Voice realism"). Non-binary/unknown returns `""`, falling back to the session default — never a wrong-gender guess.
 
 ### 13.4 System prompt storage
 

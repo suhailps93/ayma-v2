@@ -2318,12 +2318,14 @@ def test_read_room_seed_parses_practice_flag_and_persona():
             "recent_turns": [],
             "practice": True,
             "persona_name": "Maya",
+            "persona_gender": "woman",
             "target_uid": "demo_practice_maya",
         }
     )
     seed = agent._read_room_seed(_FakeCtx(raw))
     assert seed.practice is True
     assert seed.persona_name == "Maya"
+    assert seed.persona_gender == "woman"
     assert seed.target_uid == "demo_practice_maya"
 
     normal = agent._read_room_seed(
@@ -2331,6 +2333,7 @@ def test_read_room_seed_parses_practice_flag_and_persona():
     )
     assert normal.practice is False
     assert normal.persona_name == "" and normal.target_uid == ""
+    assert normal.persona_gender == ""
 
 
 def test_relay_practice_coach_publishes_a_side_hint_and_persists_turns(monkeypatch):
@@ -2391,6 +2394,7 @@ def test_relay_practice_coach_publishes_a_side_hint_and_persists_turns(monkeypat
                 uid="viewer_uid",
                 session_id=session_id,
                 persona_name="Maya",
+                persona_gender="woman",
                 target_uid="demo_practice_maya",
             )
             handlers["user_input_transcribed"](_UserEv())
@@ -2508,6 +2512,73 @@ def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
     monkeypatch.setattr(agent, "CONFIG", config._load())
     agent.build_meta_cascade_session()
     assert captured["tts"]["voice"] == "Ashley"
+
+
+def test_meta_cascade_picks_the_gender_matched_tts_voice(monkeypatch):
+    """A Practice Date persona's gender selects the matching Inworld voice from
+    config (never a voice id hardcoded in agent.py); the MAIN path (no gender)
+    and an unset gender voice both fall back to the configured default."""
+    import config
+
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Default")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE_FEMALE", "Olivia")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE_MALE", "Mark")
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    agent.build_meta_cascade_session(gender="woman")
+    assert captured["tts"]["voice"] == "Olivia"
+    agent.build_meta_cascade_session(gender="man")
+    assert captured["tts"]["voice"] == "Mark"
+    # Non-binary / unknown and the MAIN path (no gender) → the default voice.
+    agent.build_meta_cascade_session(gender="non-binary")
+    assert captured["tts"]["voice"] == "Default"
+    agent.build_meta_cascade_session()
+    assert captured["tts"]["voice"] == "Default"
+
+
+def test_meta_cascade_gender_voice_falls_back_when_unconfigured(monkeypatch):
+    """When no gender-specific voice is configured, gender matching falls back
+    safely to the configured default voice rather than an invented id."""
+    import config
+
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Default")
+    monkeypatch.delenv("META_CASCADE_TTS_VOICE_FEMALE", raising=False)
+    monkeypatch.delenv("META_CASCADE_TTS_VOICE_MALE", raising=False)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    agent.build_meta_cascade_session(gender="woman")
+    assert captured["tts"]["voice"] == "Default"
+
+
+def test_practice_gemini_session_uses_a_gender_matched_voice(monkeypatch):
+    """The default (Gemini Live) practice path speaks in a voice matching the
+    persona's gender; unknown gender falls back to the user's preference."""
+    import voices
+
+    captured = {}
+
+    def _fake_build_realtime_model(voice_name=None, voice_language=None, route=None):
+        captured["voice_name"] = voice_name
+        return object()
+
+    monkeypatch.setattr(agent, "build_realtime_model", _fake_build_realtime_model)
+    monkeypatch.setattr(agent, "AgentSession", lambda **kw: kw)
+    monkeypatch.setattr(agent.llm_routing, "route_for", lambda *a, **k: "gemini")
+
+    female_seed = agent.RoomSeed(system_prompt="P", persona_gender="woman", practice=True)
+    agent._build_practice_gemini_session(female_seed)
+    assert captured["voice_name"] == voices.voice_for_gender("woman")
+
+    # Unknown gender → fall back to the user's own saved preference.
+    unknown_seed = agent.RoomSeed(
+        system_prompt="P", persona_gender="", voice_name="Kore", practice=True
+    )
+    agent._build_practice_gemini_session(unknown_seed)
+    assert captured["voice_name"] == "Kore"
 
 
 class _FakePracticeSession:

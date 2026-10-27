@@ -43,10 +43,15 @@ logger = logging.getLogger("ayma.practice_date")
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 _PERSONA_PROMPT_PATH = _PROMPT_DIR / "practice_persona.md"
+# Voice-call framing appended to the persona prompt ONLY on the voice path: the
+# persona is answering a live phone call from the user, not texting (see
+# :func:`compose_persona_prompt`). The text path never loads this.
+_PERSONA_VOICE_PROMPT_PATH = _PROMPT_DIR / "practice_persona_voice.md"
 _COACH_PROMPT_PATH = _PROMPT_DIR / "practice_coach.md"
 _DEBRIEF_PROMPT_PATH = _PROMPT_DIR / "practice_debrief.md"
 
 _PERSONA_TOKEN = "{{PERSONA}}"
+_USER_NAME_TOKEN = "{{USER_NAME}}"
 
 PRACTICE_SESSIONS_COLLECTION = "practice_sessions"
 _MAX_TURNS = 100  # hard ceiling on stored turns per practice session
@@ -99,6 +104,12 @@ class PersonaContext:
     name: str
     age: int | None
     location: str
+    # The match's profile gender ("woman"/"man"/"non-binary"/free text, or "").
+    # Viewer-visible (shown on the profile card) — no privacy concern. Drives
+    # the gender-matched TTS voice for the voice call (agent.py) and the coach's
+    # pronouns (:func:`pronouns_for_gender`), and is surfaced in the persona
+    # prompt so the simulated match stays consistent about who they are.
+    gender: str = ""
     pages: list[dict] = field(default_factory=list)  # [{title, body}]
     photo_count: int = 0
     # The match's PRIMARY public photo URL (first of the viewer-visible grid),
@@ -111,6 +122,8 @@ class PersonaContext:
         lines = [f"Name: {self.name}"]
         if self.age:
             lines.append(f"Age: {self.age}")
+        if self.gender:
+            lines.append(f"Gender: {self.gender}")
         if self.location:
             lines.append(f"Lives in (city only): {self.location}")
         if self.photo_count:
@@ -156,6 +169,7 @@ def build_persona_context(
         target_uid=target_uid,
         name=name,
         age=view.get("age"),
+        gender=str(view.get("gender") or ""),
         location=str(view.get("location") or ""),
         pages=pages,
         photo_count=len(photos),
@@ -163,24 +177,54 @@ def build_persona_context(
     )
 
 
-def persona_context_for_coach(name: str, target_uid: str = "") -> PersonaContext:
-    """A name-only persona context for the VOICE live coach (hackathon B).
+def persona_context_for_coach(
+    name: str, target_uid: str = "", gender: str = ""
+) -> PersonaContext:
+    """A name+gender-only persona context for the VOICE live coach (hackathon B).
 
     The voice agent worker drives the live coach as the user speaks, but it
     must never re-read the target's profile — the privacy boundary is crossed
     exactly once, server-side, when :func:`build_persona_context` composes the
     seeded persona prompt. The coach only ever needs the match's (public)
-    display name plus the running transcript, so the worker rebuilds this
-    minimal context from the ``persona_name`` the seed already carries rather
-    than loading anything new. Nothing here can hold a ``NEVER_LOAD`` value."""
+    display name and gender (both viewer-visible) plus the running transcript,
+    so the worker rebuilds this minimal context from the ``persona_name`` /
+    ``persona_gender`` the seed already carries rather than loading anything
+    new. ``gender`` lets the coach use the right pronouns (founder bug
+    2026-10-27: a she/her persona was coached as "him"). Nothing here can hold a
+    ``NEVER_LOAD`` value."""
     return PersonaContext(
         target_uid=target_uid,
         name=str(name or "").strip(),
         age=None,
+        gender=str(gender or "").strip(),
         location="",
         pages=[],
         photo_count=0,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Pronouns (coach + prompts)
+# --------------------------------------------------------------------------- #
+_FEMALE_GENDER_WORDS = frozenset(
+    {"female", "woman", "women", "f", "girl", "lady", "she", "her", "feminine"}
+)
+_MALE_GENDER_WORDS = frozenset(
+    {"male", "man", "men", "m", "guy", "boy", "he", "him", "masculine"}
+)
+
+
+def pronouns_for_gender(gender: str | None) -> str:
+    """The subject/object pronoun pair for a persona's ``gender``: ``"she/her"``,
+    ``"he/him"``, or ``"they/them"`` when gender is non-binary, other, blank or
+    unrecognised. Never defaults to "he/him" (founder bug 2026-10-27: a she/her
+    persona was coached as "him")."""
+    g = (gender or "").strip().lower()
+    if g in _FEMALE_GENDER_WORDS:
+        return "she/her"
+    if g in _MALE_GENDER_WORDS:
+        return "he/him"
+    return "they/them"
 
 
 # --------------------------------------------------------------------------- #
@@ -207,11 +251,29 @@ def _format_transcript(turns: list[dict], match_name: str = "") -> str:
     return "\n".join(out)
 
 
-def compose_persona_prompt(ctx: PersonaContext, turns: list[dict] | None = None) -> str:
+def compose_persona_prompt(
+    ctx: PersonaContext,
+    turns: list[dict] | None = None,
+    *,
+    voice: bool = False,
+    user_name: str = "",
+) -> str:
     """The persona system prompt: the roleplay template with the whitelisted
     persona block injected, plus the conversation-so-far from the match's point
-    of view. Used by text practice and seeded into a practice voice room."""
+    of view. Used by text practice and seeded into a practice voice room.
+
+    ``voice=True`` appends the live-voice-call framing (``practice_persona_voice``):
+    the persona is answering a phone call from the user — speaking, not texting —
+    and already knows who is calling because they matched, so it must never ask
+    the user's name or greet them as a stranger. ``user_name`` (the caller's
+    first name) is injected into that block so the match knows who they picked up
+    the phone to. The text path passes neither and is unchanged."""
     base = _read(_PERSONA_PROMPT_PATH).replace(_PERSONA_TOKEN, ctx.to_prompt_block())
+    if voice:
+        caller = (user_name or "").strip() or "the person you matched with"
+        base += "\n\n" + _read(_PERSONA_VOICE_PROMPT_PATH).replace(
+            _USER_NAME_TOKEN, caller
+        )
     if turns:
         convo = []
         for t in turns:
@@ -262,9 +324,11 @@ async def coach_hint(
     raises — a coach failure must not break the practice turn."""
     try:
         convo = _format_transcript(turns, ctx.name)
+        pronouns = pronouns_for_gender(ctx.gender)
         result = await practice_llm.generate_structured(
             compose_coach_prompt(),
-            f"The match is {ctx.name}. Conversation so far:\n{convo}",
+            f"The match is {ctx.name} ({pronouns}). Refer to the match with "
+            f"{pronouns} pronouns. Conversation so far:\n{convo}",
             _COACH_SCHEMA,
             uid=uid,
             feature=token_ledger.FEATURE_PRACTICE,

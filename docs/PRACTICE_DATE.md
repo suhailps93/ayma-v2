@@ -148,7 +148,10 @@ the existing LiveKit pipeline seeded with `compose_persona_prompt(ctx)`:
   `build_persona_context` / `compose_persona_prompt` the text path uses (the
   privacy boundary is crossed exactly once, here), creates a practice session,
   mints a LiveKit token, and seeds the room metadata with
-  `build_room_seed(persona_prompt, …, practice=True, persona_name, target_uid)`.
+  `build_room_seed(persona_prompt, …, practice=True, persona_name, persona_gender, target_uid)`.
+  The persona prompt is composed with `voice=True` and the **caller's first
+  name**, so it frames a live phone call from a known caller (see below); the
+  **persona gender** rides along so the worker picks a gender-matched voice.
 - The agent worker gates strictly on that `practice` flag
   (`agent._run_session` → `_run_practice_session`): it runs the persona with
   **no Ayma tools**, **no `SessionFlush`** (a simulation never touches the
@@ -159,8 +162,37 @@ the existing LiveKit pipeline seeded with `compose_persona_prompt(ctx)`:
   the nudge on the `practice_coach` data-channel topic — an out-of-character
   side hint to the user, not spoken by the persona. Each turn is appended to the
   practice session store so `POST /practice/debrief` works unchanged after the
-  call. The coach context is rebuilt from the persona *name* alone
+  call. The coach context is rebuilt from the persona *name + gender* alone
   (`persona_context_for_coach`); the worker never re-reads the target's profile.
+
+### Voice realism: gender-matched voice, call framing, coach pronouns
+
+Three fixes make the simulated match sound and behave like a real person
+answering a phone call (founder reports, Oct 2026):
+
+- **Gender-matched TTS voice.** The match speaks in a voice matching their
+  profile gender — a female persona gets a feminine-leaning voice, a male
+  persona a masculine one. On the default **Gemini Live** path the voice is a
+  built-in preset chosen by `voices.voice_for_gender(gender)` (feminine: Aoede…;
+  masculine: Charon…); on the **Meta cascade** path it is the Inworld voice
+  `agent._cascade_tts_voice_for_gender` reads from `config.meta_cascade_tts_voice_female`
+  / `_male` (env `META_CASCADE_TTS_VOICE_FEMALE` / `_MALE`). Non-binary / unknown
+  gender falls back safely to the session default voice — never a wrong-gender
+  guess, and no voice id is hardcoded outside `voices.py` / `config.py`.
+- **Live-voice-call framing (not a chatbot, not texting).** On the voice path the
+  persona prompt appends `prompts/practice_persona_voice.md`: the match is
+  *answering a live phone call* from `{{USER_NAME}}` (the caller's first name),
+  already knows who is calling because they matched — so it **never asks the
+  user's name**, never greets them as a stranger, and never uses texting phrasing
+  (no "thanks for your message", no emoji, no stage directions). It speaks
+  conversationally, like on the phone. The text practice path is unchanged (it
+  keeps the message/DM framing). The greeting (`practice_greeting.md`) reinforces
+  the same on pick-up.
+- **Coach pronouns.** The live coach is given the persona's pronouns
+  (`practice_core.pronouns_for_gender` → `she/her` / `he/him` / `they/them`, and
+  the coach prompt instructs faithfulness), so a she/her match is never coached
+  as "him". `they/them` is used only when gender is genuinely unknown — never a
+  "him" default. This applies to **both text and voice** practice coaching.
 
 ## Provider seam — what flips to Meta later
 
@@ -184,7 +216,9 @@ LiveKit pipeline (cascade) `AgentSession` via `agent.build_meta_cascade_session`
   config `meta_cascade_stt_model`). Meta's `muse-voice-transcribe-1.0` is listed
   but serves no working REST STT (every endpoint 404s), so STT runs on Inference;
 - **TTS** Inworld via the LiveKit Inference gateway (`inference.TTS`, config
-  `meta_cascade_tts_model`/`_voice`; Rime/Fish are config A/B alternatives);
+  `meta_cascade_tts_model`/`_voice`; Rime/Fish are config A/B alternatives). The
+  TTS voice is **gender-matched** to the persona via
+  `meta_cascade_tts_voice_female`/`_male` (falls back to `_voice` when unset);
 - **VAD** bundled Silero (`inference.VAD`) to segment turns.
 
 The simulated match greets first on both paths (`prompts/practice_greeting.md`).

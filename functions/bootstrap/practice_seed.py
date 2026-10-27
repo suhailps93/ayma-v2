@@ -23,6 +23,7 @@ DEMO_PROFILES: list[dict] = [
         "uid": "demo_practice_maya",
         "profile": {
             "name": "Maya",
+            "gender": "woman",
             "birthdate": "1995-07-14",
             "location": "San Francisco",  # coarse city only (viewer-visible)
             # --- NEVER-LOAD: present on the record, never in the public view ---
@@ -99,6 +100,7 @@ DEMO_PROFILES: list[dict] = [
         "uid": "demo_practice_leo",
         "profile": {
             "name": "Leo",
+            "gender": "man",
             "birthdate": "1990-02-03",
             "location": "Oakland",
             "home_address": "88 Grand Ave, Oakland",
@@ -162,6 +164,7 @@ DEMO_PROFILES: list[dict] = [
         "uid": "demo_practice_aisha",
         "profile": {
             "name": "Aisha",
+            "gender": "woman",
             "birthdate": "1998-11-21",
             "location": "Berkeley",
             "home_address": "1500 Shattuck Ave, Berkeley",
@@ -224,6 +227,7 @@ DEMO_PROFILES: list[dict] = [
         "uid": "demo_practice_noah",
         "profile": {
             "name": "Noah",
+            "gender": "man",
             "birthdate": "1993-05-09",
             "location": "San Jose",
             "home_address": "27 Alameda, San Jose",

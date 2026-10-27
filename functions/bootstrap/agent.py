@@ -446,9 +446,25 @@ def build_realtime_model(
     return RealtimeModel(**kwargs)
 
 
+def _cascade_tts_voice_for_gender(gender: str | None) -> str:
+    """The cascade (Inworld) TTS voice preset for a persona ``gender``: the
+    gender-matched config voice when set, else the configured default
+    (``CONFIG.meta_cascade_tts_voice``). The vendor voice ids live in
+    ``config.py`` (AGENTS.md: no voice ids in ``agent.py``); an unset gender
+    voice falls back safely so a flip can never pick a broken voice."""
+    g = (gender or "").strip().lower()
+    if g in voices._FEMALE_GENDER_WORDS and CONFIG.meta_cascade_tts_voice_female:
+        return CONFIG.meta_cascade_tts_voice_female
+    if g in voices._MALE_GENDER_WORDS and CONFIG.meta_cascade_tts_voice_male:
+        return CONFIG.meta_cascade_tts_voice_male
+    return CONFIG.meta_cascade_tts_voice
+
+
 def build_meta_cascade_session(
     voice_name: str | None = None,
     voice_language: str | None = None,
+    *,
+    gender: str | None = None,
 ) -> AgentSession:
     """Practice-voice Meta cascade (hackathon "runs on Meta"), behind
     ``LLM_PROVIDER_VOICE=meta`` — the default voice path stays Gemini Live.
@@ -480,7 +496,10 @@ def build_meta_cascade_session(
     missing, so the caller falls back to Gemini Live and a flip can never take
     voice down. ``voice_language`` biases the STT language when given;
     ``voice_name`` (a Gemini voice preset) does not map to the TTS vendor's own
-    voices, so the configured TTS voice governs.
+    voices, so the TTS voice is chosen from ``gender`` for a Practice Date
+    persona (``_cascade_tts_voice_for_gender`` — female/male config voice, else
+    the configured default). The MAIN voice path passes no ``gender`` and keeps
+    the configured default voice.
     """
     api_key = os.getenv("META_API_KEY", "")
     if not api_key:
@@ -515,8 +534,9 @@ def build_meta_cascade_session(
         reasoning_effort=CONFIG.meta_reasoning_effort,
     )
     tts_kwargs: dict[str, object] = {"model": CONFIG.meta_cascade_tts_model}
-    if CONFIG.meta_cascade_tts_voice:
-        tts_kwargs["voice"] = CONFIG.meta_cascade_tts_voice
+    tts_voice = _cascade_tts_voice_for_gender(gender)
+    if tts_voice:
+        tts_kwargs["voice"] = tts_voice
     tts = inference.TTS(**tts_kwargs)
     vad = inference.VAD(model=CONFIG.meta_cascade_vad_model)
     return AgentSession(stt=stt, llm=meta_llm, tts=tts, vad=vad, allow_interruptions=True)
@@ -1205,6 +1225,10 @@ class RoomSeed:
     # ever re-reading the target's profile.
     practice: bool = False
     persona_name: str = ""
+    # The simulated match's profile gender ("woman"/"man"/"non-binary"/…). Drives
+    # the gender-matched practice TTS voice and the live coach's pronouns; empty
+    # falls back to the session default voice and they/them.
+    persona_gender: str = ""
     target_uid: str = ""
 
 
@@ -1373,6 +1397,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         greeting_instructions=str(seed.get("greeting_instructions", "")),
         practice=bool(seed.get("practice", False)),
         persona_name=str(seed.get("persona_name", "")),
+        persona_gender=str(seed.get("persona_gender", "")),
         target_uid=str(seed.get("target_uid", "")),
     )
 
@@ -2164,6 +2189,7 @@ def relay_practice_coach(
     uid: str,
     session_id: str,
     persona_name: str,
+    persona_gender: str,
     target_uid: str,
 ) -> None:
     """Practice Date voice live coach (hackathon B).
@@ -2176,15 +2202,19 @@ def relay_practice_coach(
     (``POST /practice/debrief``) has the transcript.
 
     Reuses ``practice_date.coach_hint`` (best-effort, never raises). The coach
-    context is rebuilt from ``persona_name`` alone via
+    context is rebuilt from ``persona_name`` / ``persona_gender`` alone via
     ``persona_context_for_coach`` — the worker never re-reads the target's
-    profile, so no never-load data path is opened here. Imports ``practice_core``
+    profile, so no never-load data path is opened here. The gender is carried so
+    the coach refers to the match with the right pronouns (founder bug
+    2026-10-27: a she/her persona was coached as "him"). Imports ``practice_core``
     (not ``practice_date``) because the agent worker's runtime carries no
     fastapi — the core holds the practice primitives with no web-stack deps."""
     import practice_core
 
     db = get_db()
-    coach_ctx = practice_core.persona_context_for_coach(persona_name, target_uid)
+    coach_ctx = practice_core.persona_context_for_coach(
+        persona_name, target_uid, persona_gender
+    )
     turns: list[dict] = []
 
     def _persist(turn: dict) -> None:
@@ -2261,7 +2291,7 @@ async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
     if CONFIG.llm_provider_voice == PROVIDER_META:
         try:
             session = build_meta_cascade_session(
-                seed.voice_name, seed.voice_language
+                seed.voice_name, seed.voice_language, gender=seed.persona_gender
             )
         except Exception as exc:  # noqa: BLE001 - never take practice voice down
             logger.warning(
@@ -2290,11 +2320,18 @@ async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
 def _build_practice_gemini_session(seed: RoomSeed) -> tuple[AgentSession, bool]:
     """Build the Gemini Live practice ``AgentSession`` — the default voice path
     and the Meta-cascade fallback. Returns the session and whether it routes
-    through LiveKit Inference (so usage is metered against the right provider)."""
+    through LiveKit Inference (so usage is metered against the right provider).
+
+    The simulated match speaks in a voice matching their profile gender: a
+    female persona gets a feminine-leaning preset, male a masculine one
+    (``voices.voice_for_gender``). Non-binary / unknown gender returns ``""`` and
+    falls back to the user's own ``voice_name`` preference, then the configured
+    default (``build_realtime_model``) — never a wrong-gender guess."""
     route = llm_routing.route_for("voice", uid=seed.uid)
     use_inference = route == "inference"
+    voice = voices.voice_for_gender(seed.persona_gender) or seed.voice_name
     session = AgentSession(
-        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
+        llm=build_realtime_model(voice, seed.voice_language, route=route),
         allow_interruptions=True,
     )
     return session, use_inference
@@ -2328,6 +2365,7 @@ async def _start_practice_session(
         uid=seed.uid,
         session_id=seed.session_id,
         persona_name=seed.persona_name,
+        persona_gender=seed.persona_gender,
         target_uid=seed.target_uid,
     )
     # No tools, no chat_ctx: the persona only knows the whitelisted facts the
