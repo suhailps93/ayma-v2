@@ -1704,7 +1704,7 @@ The free plan grants, per `config.py`:
   paid plan lapses.
 - **A daily allowance of `FREE_DAILY_ALLOWANCE_USD = $1.00` = 100 credits/day**
   (raised from $0.25/25 credits on 2026-10-27 — see below). This is the
-  "Daily credits refresh every day" pool the Plan screen promises, and it
+  "Credits reset at <local time> (in Xh Ym)" line the Plan screen shows (client-computed from 00:00 UTC; paid plans show "Renews on <date>" from `period_end`), and it
   applies **regardless of whether the start grant was unlocked or blocked** —
   a blocked/duplicate account still gets the daily pool.
 

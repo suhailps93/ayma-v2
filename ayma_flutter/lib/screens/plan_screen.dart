@@ -39,6 +39,22 @@ String subscriptionDate(DateTime t) {
   return '${_months[d.month - 1]} ${d.day}, ${d.year}';
 }
 
+/// Free-plan reset line: the daily allowance resets at 00:00 UTC with no
+/// rollover; shown as the user's local clock time plus a countdown, e.g.
+/// "Credits reset at 5:00 PM (in 6h 12m)".
+String freeCreditsResetLine(DateTime now) {
+  final u = now.toUtc();
+  final next = DateTime.utc(u.year, u.month, u.day + 1);
+  final left = next.difference(u);
+  final d = next.toLocal();
+  final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+  final m = d.minute.toString().padLeft(2, '0');
+  final clock = '$h:$m ${d.hour < 12 ? 'AM' : 'PM'}';
+  final mins = left.inMinutes;
+  final eta = mins < 60 ? '${mins}m' : '${mins ~/ 60}h ${mins % 60}m';
+  return 'Credits reset at $clock (in $eta)';
+}
+
 /// "Oct 25, 6:20 PM" — the local start of a credit-history period.
 String periodStart(DateTime t) {
   final d = t.toLocal();
@@ -487,7 +503,7 @@ class _Hero extends StatelessWidget {
     final u = data.usage;
     final end = s.expiresAt;
     final status = !s.isSubscribed
-        ? 'Daily credits refresh every day.'
+        ? freeCreditsResetLine(DateTime.now())
         : end == null
         ? null
         : s.isTrial
