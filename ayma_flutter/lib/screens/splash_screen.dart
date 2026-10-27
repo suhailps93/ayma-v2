@@ -10,6 +10,7 @@ import '../routing/entry.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
+import '../services/dev_panel_session.dart';
 import '../services/feature_tour_store.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/overflow_guards.dart';
@@ -149,11 +150,20 @@ class _SplashScreenState extends State<SplashScreen> {
     // (returning) user, so it can't trap them or bypass the session_mode /
     // age / consent gates below. Once dismissed (seen flag set), it routes
     // back here and the normal flow runs.
-    if ((user == null || user.isAnonymous) && !featureTourStoreGlobal.seen) {
+    //
+    // Dev-only relaxation: when the Developer panel is unlocked this session,
+    // a signed-in dev also gets the tour while the seen flag is clear — so
+    // "Reset & preview feature tour" followed by a relaunch previews it even
+    // for a signed-in account. For normal (non-dev) users the gate is
+    // unchanged (anonymous-only), so returning users are never trapped and
+    // production behaviour is untouched.
+    final anonymousLanding = user == null || user.isAnonymous;
+    final devPreview = DevPanelSession.instance.unlocked.value;
+    if ((anonymousLanding || devPreview) && !featureTourStoreGlobal.seen) {
       if (mounted) context.go(FeatureTourScreen.path);
       return;
     }
-    if (user == null || user.isAnonymous) {
+    if (anonymousLanding) {
       _inFlight = false;
       if (mounted) context.go(SignInScreen.path);
       return;

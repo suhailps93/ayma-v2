@@ -5,6 +5,7 @@ import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
+import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -13,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> _usage({
   bool isDev = true,
@@ -55,6 +57,7 @@ Future<void> _pump(WidgetTester tester, Widget page) async {
 
 void main() {
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     DevPanelFlag.instance.enabled.value = true;
     DevPanelSession.instance.lock();
   });
@@ -166,6 +169,10 @@ void main() {
     expect(find.text('u1'), findsOneWidget);
     expect(find.text('\$1.08'), findsOneWidget);
     expect(find.text('Voice call · 6 turns'), findsOneWidget);
+    // The voice-stack control moved to user-facing Ayma settings; the dev panel
+    // no longer carries it.
+    expect(find.text('Voice engine'), findsNothing);
+    expect(find.byKey(const ValueKey('voice-engine-control')), findsNothing);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsOneWidget);
     expect(find.byKey(const ValueKey('dev-panel-switch')), findsOneWidget);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsOneWidget);
@@ -428,5 +435,48 @@ void main() {
       find.textContaining('Test upgrade: pro plan — 1400 credits'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('reset & preview feature tour clears the flag and opens /tour', (
+    tester,
+  ) async {
+    DevPanelSession.instance.unlock('pw');
+    // A broken SharedPreferences read keeps the default; mark it seen first so
+    // the reset's clearing is observable.
+    await featureTourStoreGlobal.markSeen();
+    addTearDown(featureTourStoreGlobal.reset);
+    final router = GoRouter(
+      initialLocation: DeveloperScreen.path,
+      routes: [
+        GoRoute(
+          path: DeveloperScreen.path,
+          builder: (_, __) => DeveloperScreen(
+            auth: MockFirebaseAuth(signedIn: true),
+            api: _usageApi(_usage()),
+          ),
+        ),
+        GoRoute(
+          path: '/tour',
+          builder: (_, __) => const Scaffold(body: Text('screen:tour')),
+        ),
+      ],
+    );
+    tester.view.physicalSize = const Size(900, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp.router(theme: AymaTheme.light, routerConfig: router),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('dev-reset-feature-tour')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('dev-reset-feature-tour')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('screen:tour'), findsOneWidget);
+    expect(featureTourStoreGlobal.seen, isFalse);
   });
 }
