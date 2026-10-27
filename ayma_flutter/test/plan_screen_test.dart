@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/plan_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/credits_balance.dart';
+import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
 import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -167,6 +168,21 @@ ApiClient _api({
   });
   return ApiClient(httpClient: mock, auth: MockFirebaseAuth(signedIn: true));
 }
+
+/// A minimal `/usage`-shaped body for the dev test-upgrade tests, with an
+/// explicit `is_dev` so the Plan screen's dev gate can be exercised.
+String _usageJson({
+  required int remaining,
+  required String plan,
+  required bool isDev,
+}) => jsonEncode({
+  'total': 33000,
+  'features': {'chat': 30000},
+  'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': remaining},
+  'plan': plan,
+  'tokens_per_credit': 1000,
+  'is_dev': isDev,
+});
 
 Future<void> _pump(WidgetTester tester, Widget page) async {
   tester.view.physicalSize = const Size(900, 2600);
@@ -501,6 +517,81 @@ void main() {
     );
     expect(reason.data, 'Subscriptions are not available in this build.');
     expect(find.byKey(const ValueKey('plan-action-retry')), findsNothing);
+  });
+
+  testWidgets('dev + unlocked: the real Upgrade button grants via '
+      'test-upgrade with no payment, even with the store off', (tester) async {
+    final paths = <String>[];
+    String? upgradedPlan;
+    // The server reflects the grant on the next /usage, so once the upgrade
+    // lands the mock returns the Pro plan and its pool.
+    var upgraded = false;
+    final api = ApiClient(
+      httpClient: MockClient((req) async {
+        paths.add('${req.method} ${req.url.path}');
+        if (req.url.path == '/dev/test-upgrade') {
+          upgradedPlan =
+              (jsonDecode(req.body) as Map<String, dynamic>)['plan'] as String?;
+          upgraded = true;
+          return http.Response(
+            _usageJson(remaining: 1400, plan: 'pro', isDev: true),
+            200,
+          );
+        }
+        return http.Response(
+          _usageJson(
+            remaining: upgraded ? 1400 : 58,
+            plan: upgraded ? 'pro' : 'free',
+            isDev: true,
+          ),
+          200,
+        );
+      }),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+    DevPanelSession.instance.unlock('pw');
+    addTearDown(() => DevPanelSession.instance.lock());
+
+    // Store off, but an unlocked dev can drive the real Upgrade button.
+    await _pump(tester, PlanScreen(service: _FakeRc(on: false), api: api));
+    expect(_actionLabel(tester), 'Upgrade to Pro');
+    expect(_actionEnabled(tester), isTrue);
+    expect(find.byKey(const ValueKey('plan-action-unavailable')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('plan-primary-action')));
+    await tester.pumpAndSettle();
+    expect(upgradedPlan, 'pro');
+    expect(paths, contains('POST /dev/test-upgrade'));
+    expect(CreditsBalance.instance.remaining.value, 1400);
+    expect(find.textContaining('Test upgrade: Pro'), findsOneWidget);
+  });
+
+  testWidgets('non-dev: the Upgrade button stays disabled with the store off, '
+      'even with the panel unlocked (no free-credits backdoor)', (tester) async {
+    final paths = <String>[];
+    final api = ApiClient(
+      httpClient: MockClient((req) async {
+        paths.add(req.url.path);
+        return http.Response(
+          _usageJson(remaining: 58, plan: 'free', isDev: false),
+          200,
+        );
+      }),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+    // Unlocked, but the account is NOT on the server's dev-view allowlist.
+    DevPanelSession.instance.unlock('pw');
+    addTearDown(() => DevPanelSession.instance.lock());
+
+    await _pump(tester, PlanScreen(service: _FakeRc(on: false), api: api));
+    expect(_actionEnabled(tester), isFalse);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('plan-action-unavailable')))
+          .data,
+      'Subscriptions are not available in this build.',
+    );
+    expect(paths, isNot(contains('/dev/test-upgrade')));
   });
 
   testWidgets('offering failure: CTA disabled with the store reason, and '

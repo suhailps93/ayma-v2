@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import '../services/credits_balance.dart';
+import '../services/dev_panel_session.dart';
 import '../services/revenuecat_service.dart';
 import '../services/subscription_status.dart';
 import '../theme.dart';
@@ -242,6 +243,45 @@ class _PlanScreenState extends State<PlanScreen> {
     }
   }
 
+  /// True only for a developer testing from this screen: the account is on the
+  /// server's dev-view allowlist ([UsageSummary.isDev]) AND the Developer panel
+  /// is unlocked this session ([DevPanelSession]). The same gate the dev panel's
+  /// Test upgrade uses. For everyone else this is false, so the real purchase
+  /// path (and its disabled state when the store is off) is untouched — never a
+  /// free-credits backdoor.
+  bool _devUpgrade(_PlanData d) =>
+      (d.usage?.isDev ?? false) && DevPanelSession.instance.unlocked.value;
+
+  /// DEV/TEST ONLY — grant [p]'s monthly credit pool with no real payment via
+  /// `POST /dev/test-upgrade` (the same path as the dev panel's Test upgrade),
+  /// then refresh the balance and plan. Only reachable when [_devUpgrade] holds;
+  /// the server re-checks the dev-view allowlist and returns 403 otherwise.
+  Future<void> _devTestUpgrade(PlanOption p) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final updated = await _api.testUpgrade(p.name.toLowerCase());
+      CreditsBalance.instance.remaining.value = updated.creditsRemaining;
+      if (mounted) _reload();
+      _say(
+        'Test upgrade: ${p.name} — ${updated.creditsRemaining} credits '
+        '(no payment).',
+        kind: AymaToastKind.success,
+      );
+    } on ApiException catch (e) {
+      _say(
+        e.statusCode == 403
+            ? 'Test upgrade is for dev-view accounts only.'
+            : "Couldn't apply the test upgrade (${e.statusCode}).",
+        kind: AymaToastKind.error,
+      );
+    } catch (e) {
+      _say("Couldn't apply the test upgrade ($e).", kind: AymaToastKind.error);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   PlanOption _selectedPlan(_PlanData d) {
     final id =
         _selected ??
@@ -297,9 +337,20 @@ class _PlanScreenState extends State<PlanScreen> {
         .firstOrNull
         ?.credits;
     final isUpgrade = currentCredits == null || p.credits > currentCredits;
+    final label = isUpgrade ? 'Upgrade to ${p.name}' : 'Switch to ${p.name}';
+    // Developers test the real upgrade button without a payment (even when the
+    // store is off, as in release): route to the dev test-upgrade path. For
+    // everyone else the normal purchase path and its disabled state stand.
+    if (_devUpgrade(d)) {
+      return (
+        label: label,
+        unavailable: null,
+        onPressed: _busy ? null : () => _devTestUpgrade(p),
+      );
+    }
     final unavailable = _unavailable(p);
     return (
-      label: isUpgrade ? 'Upgrade to ${p.name}' : 'Switch to ${p.name}',
+      label: label,
       unavailable: unavailable,
       onPressed: unavailable == null && !_busy
           ? () => _run(

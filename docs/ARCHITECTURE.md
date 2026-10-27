@@ -232,8 +232,15 @@ flowchart LR
     RevenueCat purchase uses, so it grants the genuine per-plan monthly pool (Plus 700 / Pro 1,400 / Max 8,000
     credits) and sets the plan tier — never a hardcoded number, never a payment. It exists so credits-per-upgrade
     can be tested in a build where RevenueCat is off (the Test key native-kills in release, §11.2). It is a
-    free-credits cheat, so it is strictly dev-only and is **not** a revenue bypass for normal users. The real
-    Upgrade button and the "fail loudly on bad RevenueCat key" guardrail are untouched.
+    free-credits cheat, so it is strictly dev-only and is **not** a revenue bypass for normal users. The
+    "fail loudly on bad RevenueCat key" guardrail is untouched.
+  - *Plan-screen Upgrade for devs*: on the Plan page (`/profile/plan`, `plan_screen.dart`), the "Upgrade to <plan>"
+    button routes to this same `POST /dev/test-upgrade` path — with no payment — **only** when the caller is on the
+    server's dev-view allowlist (`UsageSummary.isDev`) **and** the Developer panel is unlocked this session
+    (`DevPanelSession`), the exact gate the dev-panel control uses. For everyone else the real purchase path and its
+    disabled state ("Subscriptions are not available in this build.") are untouched, and the server re-checks
+    `require_dev` (403 otherwise) — never a free-credits backdoor. This lets a developer exercise credits-per-upgrade
+    from the real subscription screen in a release build where RevenueCat is off.
 - *Vendor spend*: `/admin` shows API-sourced spend (BigQuery billing export, LiveKit Analytics) and Muse-collected
   figures posted to `/admin/vendor-spend` (`vendor_catalog.json`), with stale/unavailable alerts.
 - *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
