@@ -7,6 +7,10 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 ## 0. PRIORITY (founder, 2026-10-25): app-side testing and changes come first. Backend/vendor/admin work waits behind them.
 
 ## 1. Pending founder question (one at a time, top first)
+0. (from Muse, 2026-10-27) Agent Dates positioning — one wording conflict to settle before the Nov 3 submission freeze. Two lines are live across the docs (demo script, write-up, one-pager, POSITIONING.md) and point opposite ways; one must govern all of them:
+   - Founder framing: "your digital self dates first; you meet when it matters" — the sim decides who's worth showing up for.
+   - Muse's softer guardrail (added unilaterally): "sims inform, never decide."
+   Which governs? Align every document to the answer.
 1. AI-lab startup credits (Anthropic, OpenAI...): wait for Muse report, then decide.
 2. Play Console fixes still open: Data safety, content rating (set to 18+ only), Advertising ID declaration, Child safety standards, privacy policy URL, deletion URL https://justabot.info/delete-account.html.
 3. Founder-only items: assetlinks SHA-256 (SHARE_ASSETLINKS_SHA256), IP assignment to the LLC, Cloud Identity, back up ~/.ayma-keys/, Play identity/phone verification, Apple Team ID (have Muse read it).
