@@ -4071,17 +4071,50 @@ class AppearanceCoverage {
   final bool hasFittedBodyPhoto;
 }
 
-/// One grid photo eligible for an Appearance axis — its `user_media` id and a
-/// directly-loadable thumbnail URL. Returned by `GET /appearance/eligibility`.
+/// One grid photo eligible for an Appearance axis — its `user_media` id, a
+/// directly-loadable thumbnail URL, and the per-photo people/shot signals the
+/// pre-run sheet uses to decide its pre-check. Returned by
+/// `GET /appearance/eligibility`.
 class EligiblePhoto {
-  const EligiblePhoto({required this.mediaId, required this.url});
+  const EligiblePhoto({
+    required this.mediaId,
+    required this.url,
+    this.personCount = 0,
+    this.multiPerson = false,
+    this.showsFace = false,
+    this.showsBody = false,
+    this.autoSelect = true,
+  });
 
   final String mediaId;
   final String url;
 
+  /// Coarse people count from the server: 1 = solo shot of the user, 2 = a
+  /// group (two or more people), 0 = unknown / untagged.
+  final int personCount;
+
+  /// True when the photo has more than one person — such a photo is never
+  /// pre-checked (analysis needs solo shots of the user).
+  final bool multiPerson;
+
+  final bool showsFace;
+  final bool showsBody;
+
+  /// Whether the sheet should PRE-CHECK this photo for its axis. Server-driven
+  /// (`person_count == 1` and the photo actually shows that axis). Photos the
+  /// user adds in-sheet default to `true`. The user can still toggle any photo.
+  final bool autoSelect;
+
   factory EligiblePhoto.fromMap(Map<String, dynamic> m) => EligiblePhoto(
         mediaId: m['media_id'] as String? ?? '',
         url: m['url'] as String? ?? '',
+        personCount: (m['person_count'] as num?)?.toInt() ?? 0,
+        multiPerson: m['multi_person'] == true,
+        showsFace: m['shows_face'] == true,
+        showsBody: m['shows_body'] == true,
+        // Default true so a payload without the field (older server) keeps the
+        // old "all pre-checked" behaviour; the server now sends it explicitly.
+        autoSelect: m['auto_select'] as bool? ?? true,
       );
 }
 

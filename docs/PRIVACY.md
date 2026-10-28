@@ -215,6 +215,14 @@ anywhere). Making an analysis photo public is always a **separate, deliberate**
 action you take in your profile's photo editor. The analysis itself is stored
 privately to your account.
 
+_2026-10-28:_ The analysis sheet now **pre-selects only solo photos of you** —
+a photo with **more than one person** is never auto-checked for face or body
+analysis (a photo is only auto-selected when it is a single-person shot that
+actually shows that part of you). This keeps the analysis to photos of **you**
+and avoids analysing other people who appear in a group shot. You can still
+manually choose any photo, but nothing that shows other people is checked for
+you by default.
+
 ### Advertising partners (once ads launch)
 
 **When ads launch, advertising partners and ad networks may receive

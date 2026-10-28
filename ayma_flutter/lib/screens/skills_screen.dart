@@ -420,21 +420,29 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
     }
   }
 
-  /// Fold a fresh eligibility read in: default every pooled grid photo to
-  /// selected, but keep any photo the user had already deselected this session
-  /// so a re-read doesn't silently re-check their choices. Privately-added
-  /// photos (keyed by storage path) are preserved untouched — only grid
-  /// `media_id`s are rebuilt here.
+  /// Fold a fresh eligibility read in: default each pooled grid photo to
+  /// selected ONLY when the server marked it `autoSelect` for that axis — a
+  /// solo shot of the user that actually shows that axis (§ founder 2026-10-28:
+  /// a multi-person photo must never be pre-checked, and a face-only photo must
+  /// not be pre-checked into Body). A surfaced-but-not-auto-selected photo
+  /// still renders; the user can tap to include it. Any photo the user had
+  /// already deselected this session stays deselected so a re-read doesn't
+  /// silently re-check it. Privately-added photos (keyed by storage path) are
+  /// preserved untouched — only grid `media_id`s are rebuilt here.
   void _applyEligibility(AppearanceEligibility e) {
-    final faceIds = {for (final p in e.face) p.mediaId};
-    final bodyIds = {for (final p in e.body) p.mediaId};
-    final faceDeselected = {
+    // First load (_elig == null): pre-check the server-chosen defaults only.
+    // A re-read preserves exactly what the user currently has selected among
+    // surfaced grid photos, so neither a deselected auto photo nor a manually
+    // selected non-auto photo is silently flipped.
+    final faceIds = {
       for (final p in e.face)
-        if (_elig != null && !_faceSel.contains(p.mediaId)) p.mediaId,
+        if (_elig == null ? p.autoSelect : _faceSel.contains(p.mediaId))
+          p.mediaId,
     };
-    final bodyDeselected = {
+    final bodyIds = {
       for (final p in e.body)
-        if (_elig != null && !_bodySel.contains(p.mediaId)) p.mediaId,
+        if (_elig == null ? p.autoSelect : _bodySel.contains(p.mediaId))
+          p.mediaId,
     };
     // Added-photo selections are keyed by storage path, not grid media_id, so
     // preserve them across the grid rebuild.
@@ -448,11 +456,11 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
     };
     _faceSel
       ..clear()
-      ..addAll(faceIds.difference(faceDeselected))
+      ..addAll(faceIds)
       ..addAll(faceAddedSel);
     _bodySel
       ..clear()
-      ..addAll(bodyIds.difference(bodyDeselected))
+      ..addAll(bodyIds)
       ..addAll(bodyAddedSel);
     _elig = e;
     _loading = false;

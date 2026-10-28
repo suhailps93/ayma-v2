@@ -215,8 +215,16 @@ flowchart LR
   **Face analysis** and **Body analysis**. Every grid photo is surfaced (not only the shot-type-tagged ones): a photo
   clearly for one axis (`usable_for_face` / `usable_for_body`) shows only there, while an untagged, freshly-added, or
   ambiguous photo shows in **both** groups so the user can pick (§ founder 2026-10-28). `has_face_photo`/`has_body_photo`
-  stay the honest coverage signal (a real usable-for-axis photo exists) and feed the add-a-photo nudges. In the sheet
-  every pooled photo starts **selected**; tapping a thumbnail toggles whether it feeds that axis — selection is local to
+  stay the honest coverage signal (a real usable-for-axis photo exists) and feed the add-a-photo nudges. Each eligibility
+  entry also carries per-photo signals — `person_count` (1 = solo, 2 = a group of ≥2, 0 = untagged/unknown, derived from
+  the existing `shot_type: group` vision tag, no new per-photo call), `multi_person`, `shows_face`, `shows_body`, and a
+  per-axis `auto_select`. **Auto-select / pre-check rule (§ founder 2026-10-28 screenshot fix)**: a photo is pre-checked
+  for an axis **only** when it is a **solo** shot of the user (`person_count == 1`) **and** actually shows that axis — a
+  single clear face for Face (`shows_face`), the user's body for Body (`shows_body`). A **multi-person** photo is
+  **never** auto-selected in either axis (analysis needs solo shots of the user; not analysing photos of other people is
+  also privacy-positive), a face-only/no-body photo is never pre-checked into Body, and an untagged/ambiguous photo is
+  surfaced but never pre-checked (defensive: can't verify solo + correct type). In the sheet a photo starts selected iff
+  its `auto_select` is true; tapping a thumbnail toggles whether it feeds that axis — selection is local to
   the sheet and **never navigates** (a tap only select/deselects; only the explicit **Add photo** tile, now present on
   **both** groups whether empty or not, opens the picker). *Privacy (§ founder 2026-10-28 fix)*: **Add photo** no longer
   routes to the public-profile photo editor (which published to the grid). It now picks image(s) and uploads them

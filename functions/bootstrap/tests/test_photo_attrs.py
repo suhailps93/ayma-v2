@@ -268,6 +268,96 @@ def test_eligibility_surfaces_untagged_photos_in_both_buckets(monkeypatch):
     assert out["has_body_photo"] is False  # no real usable body photo exists
 
 
+def _elig_by_id(out, axis):
+    return {e["media_id"]: e for e in out[axis]}
+
+
+def test_eligibility_auto_select_rules_by_shot_type(monkeypatch):
+    # § founder 2026-10-28 screenshot bug. Photos:
+    #   solo_face      -> single clear face, no body  (shot_type face)
+    #   solo_body      -> one body visible, no clear face (shot_type full_body)
+    #   solo_full      -> one person, face + body (shot_type full_body, uf+ub)
+    #   couple_face    -> two people, a face/couple close-up (shot_type group)
+    #   untagged       -> no attributes yet
+    monkeypatch.setattr(
+        photo_attrs,
+        "_grid_media_ids",
+        lambda prof: ["solo_face", "solo_body", "solo_full", "couple_face", "untagged"],
+    )
+    import public_profile
+
+    monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    docs = {
+        ("users", "u1", "profile", "main"): {"photos": [{"media_id": "solo_face"}]},
+        ("users", "u1", "user_media", "solo_face"): {
+            "storage_path": "p1.jpg",
+            "attributes": {
+                "shot_type": "face",
+                "usable_for_face": True,
+                "usable_for_body": False,
+            },
+        },
+        ("users", "u1", "user_media", "solo_body"): {
+            "storage_path": "p2.jpg",
+            "attributes": {
+                "shot_type": "full_body",
+                "usable_for_face": False,
+                "usable_for_body": True,
+            },
+        },
+        ("users", "u1", "user_media", "solo_full"): {
+            "storage_path": "p3.jpg",
+            "attributes": {
+                "shot_type": "full_body",
+                "usable_for_face": True,
+                "usable_for_body": True,
+            },
+        },
+        ("users", "u1", "user_media", "couple_face"): {
+            "storage_path": "p4.jpg",
+            "attributes": {
+                "shot_type": "group",
+                "usable_for_face": False,
+                "usable_for_body": False,
+            },
+        },
+        ("users", "u1", "user_media", "untagged"): {"storage_path": "p5.jpg"},
+    }
+    out = photo_attrs.eligibility(_Db(docs), "u1")
+    face = _elig_by_id(out, "face")
+    body = _elig_by_id(out, "body")
+
+    # Bug 1: a multi-person photo is NEVER auto-selected, in either axis — even
+    # though it is still surfaced in both buckets so the user could pick it.
+    assert "couple_face" in face and "couple_face" in body
+    assert face["couple_face"]["multi_person"] is True
+    assert face["couple_face"]["person_count"] == 2
+    assert face["couple_face"]["auto_select"] is False
+    assert body["couple_face"]["auto_select"] is False
+
+    # Bug 2: a face-only / no-body photo is not even surfaced for body, and a
+    # body-only / no-face photo is not surfaced for face.
+    assert "solo_face" not in body
+    assert "solo_body" not in face
+
+    # Solo body -> auto-selected into Body; solo face -> auto-selected into Face.
+    assert body["solo_body"]["auto_select"] is True
+    assert body["solo_body"]["person_count"] == 1
+    assert face["solo_face"]["auto_select"] is True
+    assert face["solo_face"]["person_count"] == 1
+
+    # A solo full shot (face + body) is auto-selected for both axes.
+    assert face["solo_full"]["auto_select"] is True
+    assert body["solo_full"]["auto_select"] is True
+
+    # Defensive: an untagged photo is surfaced (both buckets) but never
+    # pre-checked, since we can't verify it is solo + the right type.
+    assert "untagged" in face and "untagged" in body
+    assert face["untagged"]["auto_select"] is False
+    assert body["untagged"]["auto_select"] is False
+    assert face["untagged"]["person_count"] == 0
+
+
 # --- resync_usable_for_body -------------------------------------------------
 
 

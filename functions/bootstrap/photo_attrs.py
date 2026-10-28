@@ -219,10 +219,26 @@ def eligibility(db, uid: str) -> dict:
     """Per-photo face/body eligibility for the Appearance pre-run sheet.
 
     Returns ``{"face": [...], "body": [...], "has_face_photo",
-    "has_body_photo"}`` where each list holds ``{"media_id", "url"}`` for every
-    current grid photo eligible for that axis (``usable_for_face`` /
-    ``usable_for_body``), in grid order — so the client can show the two groups
-    as thumbnails before a run and let the user pick which photos feed each.
+    "has_body_photo"}`` where each list holds, for every current grid photo
+    eligible for that axis, a map of::
+
+        {"media_id", "url", "person_count", "multi_person",
+         "shows_face", "shows_body", "auto_select"}
+
+    in grid order — so the client can show the two groups as thumbnails before a
+    run and let the user pick which photos feed each.
+
+    ``auto_select`` is the per-axis default the sheet pre-checks (§ founder
+    2026-10-28 screenshot fix): a photo is auto-selected for an axis ONLY when
+    it is a solo shot of the user (``person_count == 1``, i.e. not a ``group``
+    photo) AND it actually shows that axis — a single clear face for Face
+    (``shows_face``) or the user's body for Body (``shows_body``). A multi-person
+    photo is NEVER auto-selected (analysis needs solo shots of the user, and not
+    analysing a photo of other people is privacy-positive); a face-only crop is
+    never auto-selected into Body, nor a body-only shot into Face. The user may
+    still manually check any surfaced photo — ``auto_select`` only controls the
+    pre-check. Defensive: an untagged / ambiguous photo (``person_count`` 0,
+    ``shows_* == False``) is surfaced but never pre-checked.
 
     The same shot-type tags :func:`coverage` reads; a photo can appear in both
     groups (a full-body shot with a clear face) or neither (a group photo). The
@@ -271,9 +287,22 @@ def eligibility(db, uid: str) -> dict:
             url = None
         if not url:
             continue
-        entry = {"media_id": mid, "url": url}
         uf = bool(attrs.get("usable_for_face"))
         ub = bool(attrs.get("usable_for_body"))
+        # Per-photo people signal. The vision pass (prompts/photo_attributes.md)
+        # already tags `shot_type: group` for "more than one person in frame";
+        # no cheaper per-photo face-count signal exists (face embeddings are one
+        # vector per image), so reuse that tag rather than a new vision call.
+        # `person_count` is coarse on purpose — 1 for a single-person shot type,
+        # 2 for a group ("≥ 2"), 0 when the shot type is unknown / untagged.
+        st = str(attrs.get(SHOT_TYPE_FIELD) or "").strip().lower()
+        multi_person = st == "group"
+        if st in ("face", "upper_body", "full_body"):
+            person_count = 1
+        elif multi_person:
+            person_count = 2
+        else:
+            person_count = 0  # unknown / untagged -> safer defaults below
         # has_* stay the honest coverage signal (a real usable-for-axis photo
         # exists), feeding the add-a-photo nudges elsewhere.
         if uf:
@@ -289,10 +318,26 @@ def eligibility(db, uid: str) -> dict:
         # face. The user's explicit pick is honoured by :func:`appearance._pick`
         # regardless of the tag, so a freshly-added, not-yet-tagged photo is
         # still analysable.
+        #
+        # `auto_select` is the per-axis pre-check default the sheet obeys
+        # (§ founder 2026-10-28 screenshot bug): only a SOLO photo of the user
+        # that actually shows that axis is pre-checked. A multi-person photo is
+        # never auto-selected (analysis needs solo shots; not analysing other
+        # people is also privacy-positive); a face-only/no-body or body-only/no-
+        # face photo is surfaced in the other bucket but not pre-checked there.
+        solo = person_count == 1
+        base = {
+            "media_id": mid,
+            "url": url,
+            "person_count": person_count,
+            "multi_person": multi_person,
+            "shows_face": uf,
+            "shows_body": ub,
+        }
         if uf or not ub:
-            out["face"].append(entry)
+            out["face"].append({**base, "auto_select": solo and uf})
         if ub or not uf:
-            out["body"].append(entry)
+            out["body"].append({**base, "auto_select": solo and ub})
     return out
 
 
