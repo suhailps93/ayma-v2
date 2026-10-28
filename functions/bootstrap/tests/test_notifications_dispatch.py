@@ -15,6 +15,10 @@ class _Doc:
         self._s = store
         self._k = key
 
+    @property
+    def id(self):
+        return self._k[-1]
+
     def get(self):
         data = self._s.get(self._k)
         outer = self
@@ -105,8 +109,8 @@ def test_writes_doc_and_pushes_with_truncated_preview(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         nd, "_deliver",
-        lambda tokens, title, body, dl: seen.update(
-            tokens=tokens, body=body, dl=dl) or _Resp(),
+        lambda tokens, title, body, dl, notif_id="": seen.update(
+            tokens=tokens, body=body, dl=dl, notif_id=notif_id) or _Resp(),
     )
 
     res = _run(nd.dispatch(db, "u1", "dm_message", body=long,
@@ -117,6 +121,12 @@ def test_writes_doc_and_pushes_with_truncated_preview(monkeypatch):
     assert doc["type"] == "dm_message" and doc["read"] is False
     assert len(doc["body"]) == CONFIG.push_preview_len and doc["body"].endswith("…")
     assert seen["tokens"] == ["tok-a", "tok-b"]
+    # The push carries the centre doc id so a tap can mark that exact in-app
+    # notification read and keep the bell/OS badge in sync (§7.6).
+    notif_keys = [
+        k[-1] for k in db.store if k[:3] == ("users", "u1", "notifications")
+    ]
+    assert seen["notif_id"] and seen["notif_id"] in notif_keys
     assert db.store[("users", "u1")]["last_push_at"] == "TS"
     assert "actor_uid" not in doc  # only written when given
 
@@ -215,16 +225,18 @@ def test_push_only_sends_without_centre_doc_cooldown_or_last_push(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         nd, "_deliver",
-        lambda tokens, title, body, dl: seen.update(
-            tokens=tokens, title=title, body=body, dl=dl) or _Resp(),
+        lambda tokens, title, body, dl, notif_id="": seen.update(
+            tokens=tokens, title=title, body=body, dl=dl,
+            notif_id=notif_id) or _Resp(),
     )
 
     res = _run(nd.push_only(db, "u1", "ayma_reply", body="hello  there",
                             deep_link="chat"))
 
     assert res == {"muted": False, "pushed": True}
+    # push_only writes no centre doc, so there is no notif_id to carry.
     assert seen == {"tokens": ["tok-a"], "title": "Ayma",
-                    "body": "hello there", "dl": "chat"}
+                    "body": "hello there", "dl": "chat", "notif_id": ""}
     assert _notif_docs(db, "u1") == []
     assert db.store[("users", "u1")]["last_push_at"] == recent
 
@@ -282,8 +294,12 @@ def test_push_data_sends_data_only_bypasses_cooldown(monkeypatch):
 
     assert res["pushed"] is True
     assert seen["title"] == "Dillu" and seen["body"] == "Photo"
+    notif_id = next(
+        k[-1] for k in db.store if k[:3] == ("users", "u1", "notifications")
+    )
     assert seen["data"] == {
-        "type": "dm", "thread_id": "t", "title": "Dillu", "body": "Photo"}
+        "type": "dm", "thread_id": "t", "title": "Dillu", "body": "Photo",
+        "notif_id": notif_id}
     assert db.store[("users", "u1")]["last_push_at"] == recent
 
 

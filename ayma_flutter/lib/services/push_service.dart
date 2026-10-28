@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'api_client.dart';
+import 'notification_service.dart';
 
 /// The slice of Firebase Cloud Messaging [PushService] needs — pulled behind an
 /// interface so the service is unit-testable without the plugin.
@@ -142,11 +143,28 @@ class PushService {
   /// tests; they default to the real router and [deepLinkToRoute].
   ///
   /// Best-effort like [syncToken] — a failure here never blocks the app.
+  ///
+  /// Opening the app from a notification tap also marks the in-app
+  /// notification it points at as read and resyncs the bell/OS badge, so the
+  /// shade and the app stay in sync (§7.6). [markRead] is injectable for
+  /// tests and defaults to [NotificationService.markReadForTap]; it runs for
+  /// both the cold-start tap and taps while running, on Android and iOS.
   Future<void> listenForTaps({
     required void Function(String path) navigate,
     required String Function(String deepLink) resolveRoute,
+    Future<void> Function(Map<String, dynamic> data)? markRead,
   }) async {
+    final markReadFor = markRead ??
+        (Map<String, dynamic> data) async {
+          try {
+            await NotificationService().markReadForTap(data);
+          } catch (e) {
+            debugPrint('PushService tap mark-read failed: $e');
+          }
+        };
+
     void route(Map<String, dynamic> data) {
+      unawaited(markReadFor(data));
       var link = data['deep_link'] as String?;
       if (link == null || link.isEmpty) {
         // A DM push always names its thread; if the deep link was lost, the

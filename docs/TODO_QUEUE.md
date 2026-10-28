@@ -20,6 +20,11 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 - **Low-context warning** (`dateSimLowContextWarning`) before a sim, from `GET /date-sim/estimate?other_uid=`'s `readiness` block; uses the server `message` when present. Informs, does not block.
 - Version `1.30.0+2228`. Tests: flutter 1135 (incl. layout matrix) green; backend green bar the known `test_vendor_spend` date-flake.
 
+## Notification read-sync on tap (meta-hackathon, 2026-10-28) — DONE [[todo-notif-read-sync-on-tap]]
+- Founder bug: tapping an OS notification (Android or iOS) opened the app to the item but left the in-app notification + bell badge ("1") unread. Now the tap marks the matching in-app notification read and resyncs the bell / OS app-icon badge, platform-agnostic, for both cold-start (`getInitialMessage`) and warm (`onMessageOpenedApp`) paths.
+- Push payloads carry the centre doc id as `notif_id` (`notifications_dispatch`); client `NotificationService.markReadForTap` marks that exact doc (legacy `deep_link`-only pushes fall back to the most-recent matching unread, no over-clear); DMs (no centre doc) clear nothing in the bell. OS app-icon badge synced over a new `ayma/badge` channel (`AppBadge`): iOS `applicationIconBadgeNumber`; Android launcher dot follows active notifications.
+- **No APK / no versionCode bump** (stays 2229; consolidation build/deploy follows). Tests: `push_service_test.dart` +2, new `notification_tap_read_test.dart` +5, backend `test_notifications_dispatch.py` updated — Flutter + layout matrix green, backend notification suites green. Docs: ARCHITECTURE §7.6, HACKATHON_STATUS. Deploy (later): ayma-api so pushes carry `notif_id`; client ships in next APK.
+
 ## Integration 2217 (meta-hackathon, 2026-10-26) — final pass
 
 **DONE (merged into `meta-hackathon` on top of 2216, built APK 2217, NOT deployed, NOT pushed):**

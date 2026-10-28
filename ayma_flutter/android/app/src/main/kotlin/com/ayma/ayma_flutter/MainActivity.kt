@@ -37,6 +37,7 @@ class MainActivity : FlutterActivity() {
         const val MEDIA_SAVE_CHANNEL = "ayma/media_save"
         const val SHARE_CHANNEL = "ayma/share"
         const val PUSH_CHANNEL = "ayma/push"
+        const val BADGE_CHANNEL = "ayma/badge"
 
         /**
          * Notification channel for FCM `notification`-payload pushes the system
@@ -154,6 +155,32 @@ class MainActivity : FlutterActivity() {
                     "initialDeepLink" -> result.success(takeDeepLink(intent))
                     else -> result.notImplemented()
                 }
+            }
+        }
+
+        // App-icon badge sync (§7.6). The in-app bell's unread count is mirrored
+        // here on every tap-driven mark-read so the OS badge matches the app.
+        // Android has no portable numeric app-icon badge API (it is launcher-
+        // specific and needs a badge library); the launcher's unread dot tracks
+        // active shade notifications, which auto-cancel when the user taps one.
+        // When the count drops to 0 we clear any notifications still in our
+        // default channel so a stale entry doesn't keep the dot lit. The call is
+        // acknowledged on both platforms so the shared Dart path stays uniform.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            BADGE_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setBadge" -> {
+                    val count = call.argument<Int>("count") ?: 0
+                    if (count <= 0) {
+                        val manager = getSystemService(Context.NOTIFICATION_SERVICE)
+                            as NotificationManager
+                        manager.cancel(DEFAULT_CHANNEL_ID.hashCode())
+                    }
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
         }
 

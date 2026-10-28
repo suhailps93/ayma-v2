@@ -1021,6 +1021,13 @@ DM pushes are never batched (time-sensitive, sent individually, suppressed only 
 
 Each notification's `deep_link` encodes a screen + id (`dm_thread/{threadId}`, `profile/{uid}`, `chat` for an Ayma check-in, `profile_suggestions` → the "Public profile updates" review screen `/profile/me/updates`). Tapping a push or a notification-center row navigates directly there via the client router.
 
+**Read-sync on tap.** Tapping an OS system notification (from the shade/notification bar) also marks the matching in-app notification read so Android/iOS and the app stay in sync — otherwise the bell badge stayed stuck (founder report 2026-10-28: "1" lingering after the item was opened from a notification). Every push to a notification-center entry carries that entry's doc id as `notif_id` in its FCM `data` payload (`notifications_dispatch._deliver` / the data-only `push_data`). On tap (`PushService.listenForTaps` → `NotificationService.markReadForTap`, both the cold-start `getInitialMessage`/`initialTapData` path **and** the warm `onMessageOpenedApp` path, identical on Android and iOS):
+- `notif_id` present → mark that exact centre doc read.
+- legacy push (pre-`notif_id`) → fall back to the single most-recent unread centre notification whose `deep_link` matches the tapped push's target — never every notification sharing that target (don't over-clear).
+- DM pushes carry `type: "dm"` and write no centre doc (they surface only as the Messages-tab badge, never the bell), so a DM tap clears nothing in the bell.
+
+After marking read, the OS app-icon badge is resynced to the fresh bell unread count over the `ayma/badge` platform channel (`AppBadge`): iOS sets `applicationIconBadgeNumber` / `UNUserNotificationCenter.setBadgeCount`; Android has no portable numeric icon-badge API (launcher-specific), so its launcher dot tracks active shade notifications (which auto-cancel on tap) and the channel clears a lingering default-channel entry when the count hits 0. All best-effort — a failure never blocks the tap or navigation.
+
 ### 7.7 Preferences
 
 `users/{uid}/notification_prefs` — one bool per category (`dm_message`, `mutual_match`, `new_scored_match`, `ayma_checkin`, `skill_result`, `ayma_reply`, `profile_suggestions`), default `true`. Checked before sending a push **and** before writing the notification-center doc, so a muted category doesn't clutter the list either. Editable from a settings screen.

@@ -142,6 +142,7 @@ Future<void> main() async {
       deepLink,
       myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
     ),
+    markRead: _markTappedNotificationRead,
   ));
   // Instagram / Facebook are deferred to V2: hidden unless the cached
   // `meta_integrations` flag says otherwise (refreshed for the next launch).
@@ -213,6 +214,27 @@ Future<void> guardStartupStep(
 /// notification launched the app) the splash screen is still resolving the
 /// session and will `go()` to the entry route, wiping anything pushed before
 /// it. So wait until the router has left the splash, then push.
+/// Marks the in-app notification a tapped push points at as read and resyncs
+/// the bell / OS app-icon badge (§7.6). On a cold start from a notification,
+/// `currentUser` can still be null while Firebase restores the persisted
+/// session (same race `syncToken` avoids), so wait for the first signed-in
+/// emission before touching the owner-scoped notifications collection. The
+/// warm (`onMessageOpenedApp`) path already has a user and marks immediately.
+/// Best-effort — never blocks the tap's navigation.
+Future<void> _markTappedNotificationRead(Map<String, dynamic> data) async {
+  try {
+    if (FirebaseAuth.instance.currentUser == null) {
+      await FirebaseAuth.instance
+          .authStateChanges()
+          .firstWhere((u) => u != null)
+          .timeout(const Duration(seconds: 10));
+    }
+    await NotificationService().markReadForTap(data);
+  } catch (e) {
+    debugPrint('tap notification mark-read failed: $e');
+  }
+}
+
 Future<void> _pushWhenPastSplash(String path) async {
   final provider = appRouter.routeInformationProvider;
   bool onSplash() => provider.value.uri.path == SplashScreen.path;

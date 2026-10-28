@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'app_badge.dart';
 import 'pair_key.dart';
 
 /// Notification categories (§7.3, §7.7) — must match
@@ -87,12 +88,15 @@ class AppNotification {
 /// (owner-scoped rules) and writes read-state / preference toggles directly —
 /// same client-write pattern as the structured profile doc.
 class NotificationService {
-  NotificationService({FirebaseAuth? auth, FirebaseFirestore? firestore})
+  NotificationService(
+      {FirebaseAuth? auth, FirebaseFirestore? firestore, AppBadge? badge})
       : _auth = auth ?? FirebaseAuth.instance,
-        _fsOverride = firestore;
+        _fsOverride = firestore,
+        _badge = badge ?? const AppBadge();
 
   final FirebaseAuth _auth;
   final FirebaseFirestore? _fsOverride;
+  final AppBadge _badge;
 
   FirebaseFirestore get _db => _fsOverride ?? FirebaseFirestore.instance;
 
@@ -137,6 +141,63 @@ class NotificationService {
 
   Future<void> markRead(String id) =>
       _col.doc(id).set({'read': true}, SetOptions(merge: true));
+
+  /// One-shot of the bell's unread count — same unread/dismissed/DM filter as
+  /// [watchUnreadCount], read once (not a live stream). Used to resync the OS
+  /// app-icon badge after a tap marks something read.
+  Future<int> currentUnreadCount() async {
+    final snap = await _col.where('read', isEqualTo: false).get();
+    return snap.docs
+        .map(AppNotification.fromDoc)
+        .where((n) => !n.dismissed && n.type != _dmType)
+        .length;
+  }
+
+  /// Push the current bell unread count to the OS app-icon badge so Android's
+  /// and iOS's icon badges stay in sync with the in-app bell (§7.6).
+  Future<void> syncBadge() async {
+    try {
+      await _badge.set(await currentUnreadCount());
+    } catch (_) {
+      // Best-effort — AppBadge already swallows platform errors; a Firestore
+      // read failure here must never surface from a tap handler.
+    }
+  }
+
+  /// Mark the in-app notification a tapped push points at as read, then resync
+  /// the OS app-icon badge (§7.6). Fires for both cold-start and warm taps on
+  /// Android and iOS — the FCM tap payload is the same on both platforms.
+  ///
+  /// `notif_id` (set by the backend) names the exact centre doc, so only that
+  /// one is marked. Older pushes that predate it carry only `deep_link`; those
+  /// fall back to the single most-recent unread notification with that target
+  /// — never every notification sharing it (don't over-clear). DMs never
+  /// appear in the centre/bell (filtered by [_dmType]); their read state is
+  /// the DM thread's own, so a DM tap only resyncs the badge.
+  Future<void> markReadForTap(Map<String, dynamic> data) async {
+    if (data['type'] == 'dm') {
+      await syncBadge();
+      return;
+    }
+    final notifId = (data['notif_id'] as String?)?.trim() ?? '';
+    if (notifId.isNotEmpty) {
+      await markRead(notifId);
+    } else {
+      final link = (data['deep_link'] as String?)?.trim() ?? '';
+      if (link.isNotEmpty) {
+        final snap = await _col.where('read', isEqualTo: false).get();
+        final matches = snap.docs
+            .map(AppNotification.fromDoc)
+            .where((n) =>
+                !n.dismissed && n.type != _dmType && n.deepLink == link)
+            .toList()
+          ..sort((a, b) => (b.createdAt ?? DateTime(0))
+              .compareTo(a.createdAt ?? DateTime(0)));
+        if (matches.isNotEmpty) await markRead(matches.first.id);
+      }
+    }
+    await syncBadge();
+  }
 
   /// Mark a set of notifications read in one batch — used when a grouped DM
   /// row is opened (all of that sender's unread messages at once).

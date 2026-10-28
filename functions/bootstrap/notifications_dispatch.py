@@ -50,12 +50,23 @@ def _in_cooldown(last, now: datetime) -> bool:
     return (now - last) < timedelta(seconds=CONFIG.push_cooldown_seconds)
 
 
-def _deliver(tokens: list[str], title: str, body: str, deep_link: str):
-    """Send one multicast push. Split out so tests patch here, not the SDK."""
+def _deliver(
+    tokens: list[str], title: str, body: str, deep_link: str, notif_id: str = ""
+):
+    """Send one multicast push. Split out so tests patch here, not the SDK.
+
+    ``notif_id`` — the notification-centre doc id this push mirrors, carried in
+    the data payload so a tap can mark that exact in-app notification read and
+    keep the bell/OS badge in sync with the shade (§7.6)."""
+    data = {}
+    if deep_link:
+        data["deep_link"] = deep_link
+    if notif_id:
+        data["notif_id"] = notif_id
     msg = messaging.MulticastMessage(
         tokens=tokens,
         notification=messaging.Notification(title=title, body=body),
-        data={"deep_link": deep_link} if deep_link else {},
+        data=data,
         # High priority so a closed/idle device is woken promptly (Android
         # otherwise batches normal-priority pushes in Doze); the APNs
         # equivalent is priority 10 + an audible alert. The channel id pins
@@ -105,10 +116,11 @@ def _dead_token(exc: Exception | None) -> bool:
 
 
 def _push(db, uid: str, user_ref, tokens: list[str], title: str,
-          body: str, deep_link: str, push_data: dict | None = None) -> bool:
+          body: str, deep_link: str, push_data: dict | None = None,
+          notif_id: str = "") -> bool:
     try:
         if push_data is None:
-            resp = _deliver(tokens, title, body, deep_link)
+            resp = _deliver(tokens, title, body, deep_link, notif_id)
         else:
             resp = _deliver_data(tokens, title, body, push_data)
     except Exception:  # noqa: BLE001
@@ -224,7 +236,9 @@ async def dispatch(
     centre = db.collection("users").document(uid).collection(
         NOTIFICATIONS_COLLECTION
     )
-    (centre.document(dedup_id) if dedup_id else centre.document()).set(record)
+    doc_ref = centre.document(dedup_id) if dedup_id else centre.document()
+    doc_ref.set(record)
+    notif_id = doc_ref.id
 
     user_ref = db.collection("users").document(uid)
     data = user_ref.get().to_dict() or {}
@@ -242,11 +256,13 @@ async def dispatch(
         text = push_body or preview
         pushed = _push(
             db, uid, user_ref, tokens, title, text, deep_link,
-            {**push_data, "title": title, "body": text},
+            {**push_data, "title": title, "body": text, "notif_id": notif_id},
         )
         return {"muted": False, "doc": True, "pushed": pushed}
 
-    pushed = _push(db, uid, user_ref, tokens, title, preview, deep_link)
+    pushed = _push(
+        db, uid, user_ref, tokens, title, preview, deep_link, notif_id=notif_id
+    )
     if pushed:
         user_ref.set(
             {LAST_PUSH_AT_FIELD: firestore.SERVER_TIMESTAMP}, merge=True

@@ -191,4 +191,42 @@ void main() {
       expect(routed, isEmpty);
     });
   });
+
+  group('tap marks the in-app notification read', () {
+    test('a cold-start tap marks the carried notification read', () async {
+      final fcm = _FakeFcm(initialTap: {
+        'deep_link': 'match_request/a__bob',
+        'notif_id': 'n-1',
+      });
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final marked = <Map<String, dynamic>>[];
+
+      await svc.listenForTaps(
+        navigate: (_) {},
+        resolveRoute: (l) => l,
+        markRead: (data) async => marked.add(data),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(marked, hasLength(1));
+      expect(marked.single['notif_id'], 'n-1');
+    });
+
+    test('a warm tap (onMessageOpenedApp) also marks it read', () async {
+      final fcm = _FakeFcm();
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final marked = <Map<String, dynamic>>[];
+
+      await svc.listenForTaps(
+        navigate: (_) {},
+        resolveRoute: (l) => l,
+        markRead: (data) async => marked.add(data),
+      );
+      fcm.tap({'deep_link': 'matches', 'notif_id': 'n-2'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(marked, hasLength(1));
+      expect(marked.single['notif_id'], 'n-2');
+    });
+  });
 }
