@@ -142,3 +142,11 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Decision: send the LiveKit startups email draft (credits appear to be working — may be moot)?
 - Decision: have Muse check whether the 1-yr-free Scale (startup program) should cover the $112.84 Scale subscription charge.
 - Good/closed: IP assignment + Operating Agreement signed (Oct 20). LiveKit credits ARE absorbing Gemini (Inference/Realtime lines $0.00).
+
+## POSITIONING WORDING — FOUNDER DECISION NEEDED (added 2026-10-27; must be resolved before the Nov 3 submission freeze)
+- Conflict: the committed docs carry two opposing lines about Agent Dates:
+  - (a) Founder framing (demo script / write-up): the sim decides who's worth showing up for — "your digital self dates first; you meet when it matters."
+  - (b) Guardrail Astro added without founder sign-off (`docs/POSITIONING.md`): "sims inform, never decide" + privacy phrasing "built from what its person shares."
+- Founder picks which governs. Do NOT resolve this without him and do NOT edit the positioning docs until he does.
+- Once decided: align `docs/DEMO_VIDEO_SCRIPT.md`, `docs/SUBMISSION_WRITEUP.md`, `docs/SUBMISSION_ONE_PAGER.md` and `docs/POSITIONING.md` to the chosen wording everywhere.
+- Ownership (per the founder): technical questions for the founder are raised by Claude (via this queue / HACKATHON_STATUS); Astro handles PM-side items.
