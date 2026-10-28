@@ -685,7 +685,19 @@ def route_ai_update(page_id: str, cur: dict, payload: dict) -> dict:
     (it is Ayma's memory), but the text visitors see only changes when the
     user approves: the current public text is frozen as ``user_edits`` and the
     rewrite becomes a ``pending_proposal``. Pages with nothing public yet
-    (first write, private, hidden) are written straight through."""
+    (first write, private, hidden) are written straight through.
+
+    One exception comes first: the propose/Apply-Dismiss flow is only for
+    Ayma's OWN discovered edits. When the user themselves just edited this
+    section in place (``story.save_section``/``remove_section`` stamped the
+    one-shot ``suppress_next_proposal`` flag), their change applies directly and
+    is done — it is never re-proposed as a pending card (founder bug
+    2026-10-28). Honor it once, consume the flag, and drop any stale proposal."""
+    if cur.get(story.F_SUPPRESS_PROPOSAL):
+        out = {story.F_SUPPRESS_PROPOSAL: False}
+        if cur.get(F_PROPOSAL):
+            out[F_PROPOSAL] = None
+        return out
     if (
         payload.get("visibility") != story.VIS_PUBLIC
         or cur.get("visibility") != story.VIS_PUBLIC

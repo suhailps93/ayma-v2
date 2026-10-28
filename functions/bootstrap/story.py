@@ -59,6 +59,15 @@ F_USER_UPDATED_AT = "user_updated_at"
 F_AI_BODY_UPDATED_AT = "ai_body_updated_at"
 F_PAGE_TYPE = "page_type"
 F_TITLE = "title"
+# A one-shot flag a DIRECT user edit (save_section / remove_section) stamps on
+# the page so the very next ingest's ``profile_manual.route_ai_update`` does NOT
+# re-propose the user's own change as a pending "Public profile updates"
+# Apply/Dismiss card — a user-requested edit applies in place and is done
+# (founder bug 2026-10-28). route_ai_update consumes (clears) it. The proposal
+# field itself is ``profile_manual.F_PROPOSAL``; its name is mirrored here only
+# so a direct edit can clear a now-stale pending card at edit time.
+F_SUPPRESS_PROPOSAL = "suppress_next_proposal"
+F_PENDING_PROPOSAL = "pending_proposal"
 
 VIS_PUBLIC = "public"
 VIS_PRIVATE = "private"
@@ -771,6 +780,11 @@ def save_section(
     payload = {
         F_USER_EDITS: (body or "").strip(),
         F_USER_UPDATED_AT: _server_ts(),
+        # This is a direct user edit: it applies in place and is done. Suppress
+        # the next ingest's re-proposal of it, and drop any now-stale pending
+        # card for this page (its before/after no longer match the live text).
+        F_SUPPRESS_PROPOSAL: True,
+        F_PENDING_PROPOSAL: None,
     }
     if visibility in (VIS_PUBLIC, VIS_PRIVATE):
         payload[F_VISIBILITY] = visibility
@@ -945,6 +959,9 @@ def remove_section(db, uid: str, page_id: str) -> dict:
             F_USER_EDITS: "",
             F_VISIBILITY: VIS_AI_ONLY,
             F_USER_UPDATED_AT: _server_ts(),
+            # A user-requested removal is a direct edit too: clear any stale
+            # pending public-profile card for this now-hidden page.
+            F_PENDING_PROPOSAL: None,
         },
         merge=True,
     )

@@ -511,10 +511,11 @@ def _story_edit_redirect(action: dict) -> str:
         )
     return (
         "That's a story EDIT, not a page to open — do NOT navigate to the Story "
-        "editor or open any passage popup. Call edit_story_entry with the section "
-        "they mean and the new wording (ask them for the new wording if you don't "
-        "have it yet); it rewrites the section directly and you confirm from its "
-        "result."
+        "editor or open any passage popup. Call edit_story_entry with the section, "
+        "find_text (the one line they mean, quoted or closely paraphrased) and "
+        "new_text (the corrected wording for ONLY that line — ask them for it if "
+        "you don't have it yet). It changes just that one line in place, never the "
+        "whole section, and you confirm the precise before -> after from its result."
     )
 
 
