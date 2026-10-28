@@ -49,6 +49,79 @@ SURFACES = (
     "chat", "matching", "reports", "practice", "voice", "dm_coach", "translate",
 )
 
+# --- Capability map (single source of truth) ------------------------------ #
+#
+# The unified Brain (§13.10) is ONE user-selectable LLM vendor driving ALL text
+# surfaces, with an automatic per-capability fallback to Gemini. A "brain" is a
+# provider VENDOR (``gemini`` | ``meta``), not a model id. Each capability a
+# surface needs is checked against the chosen brain's set here; if the brain
+# lacks it, the call resolves to Gemini instead (``get_user_brain_provider``).
+# This is the one place the per-brain capabilities are declared.
+
+CAP_TEXT = "text"      # plain text generation / collected reply
+CAP_JSON = "json"      # structured / JSON-schema output (generate_json)
+CAP_VISION = "vision"  # genuinely reads attached image content
+CAP_WEB = "web"        # live web / URL reading (Gemini url_context grounding)
+CAP_TOOLS = "tools"    # function/tool calling in a chat turn
+
+ALL_CAPABILITIES = (CAP_TEXT, CAP_JSON, CAP_VISION, CAP_WEB, CAP_TOOLS)
+
+# Per-brain capabilities. Gemini is fully multimodal + grounded. Meta/Muse Spark
+# does text, JSON (matching/reports/chat already use it via generate_json) and
+# tool-calling, but NOT vision (text/reasoning-only — it would hallucinate a
+# read off an image it never processed) and NOT web (no Google-Search / URL
+# grounding on the Meta API). Verified against the working Meta paths in
+# ``MetaProvider`` (generate_json, _meta_reply_events with tools). Web → Gemini
+# and vision → Gemini are therefore forced for every brain here except Gemini.
+BRAIN_CAPABILITIES: dict[str, frozenset[str]] = {
+    PROVIDER_GEMINI: frozenset(
+        {CAP_TEXT, CAP_JSON, CAP_VISION, CAP_WEB, CAP_TOOLS}
+    ),
+    PROVIDER_META: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
+}
+
+# User-facing Brain catalog for the "Ayma's models" screen: id (vendor) → short
+# label + description. Ids are vendor names (``PROVIDER_*``), never model ids
+# (model ids stay in ``config.py``). ``available`` is always True here — both
+# vendors are wired — but the field is kept so the Flutter contract matches the
+# voice catalog's ``available``/``requires_secret`` shape.
+BRAINS: dict[str, dict[str, object]] = {
+    PROVIDER_GEMINI: {
+        "id": PROVIDER_GEMINI,
+        "label": "Gemini",
+        "description": "Google Gemini — reads images, does live web research, "
+        "and uses tools. The most capable all-round brain.",
+        "available": True,
+    },
+    PROVIDER_META: {
+        "id": PROVIDER_META,
+        "label": "Meta Muse Spark",
+        "description": "Meta's Muse Spark — fast reasoning for chat, matching "
+        "and coaching. Image reading and web research fall back to Gemini.",
+        "available": True,
+    },
+}
+
+
+def brain_capabilities(brain: str) -> frozenset[str]:
+    """Capabilities of ``brain`` (a provider vendor). Unknown → Gemini's set, so
+    a typo is treated as the fully-capable default rather than crashing."""
+    return BRAIN_CAPABILITIES.get(
+        (brain or "").strip().lower(), BRAIN_CAPABILITIES[PROVIDER_GEMINI]
+    )
+
+
+def available_brains() -> list[dict[str, object]]:
+    """The Brain catalog for ``GET /brain/preference``: each brain plus the
+    capabilities it has (so the UI can describe the Gemini fallback). Gemini
+    first, then Meta — the order they appear in the dropdown."""
+    out: list[dict[str, object]] = []
+    for bid in (PROVIDER_GEMINI, PROVIDER_META):
+        entry = dict(BRAINS[bid])
+        entry["capabilities"] = sorted(BRAIN_CAPABILITIES[bid])
+        out.append(entry)
+    return out
+
 
 class LLMProvider(ABC):
     """One LLM vendor behind a stable, surface-agnostic interface.
@@ -62,11 +135,19 @@ class LLMProvider(ABC):
 
     name: str
 
-    #: Whether this provider genuinely processes attached image content. A
-    #: text/reasoning-only vendor (e.g. Muse Spark) leaves this ``False`` so a
-    #: vision-dependent call site can route around it (:func:`get_vision_provider`)
-    #: rather than get a hallucinated read off an image the model never saw.
-    supports_vision: bool = False
+    #: The capabilities this provider genuinely has, from :data:`BRAIN_CAPABILITIES`
+    #: (the single source of truth). Used by :func:`get_user_brain_provider` to
+    #: route a capability the chosen brain lacks (web, vision) to Gemini instead.
+    capabilities: frozenset[str] = frozenset()
+
+    @property
+    def supports_vision(self) -> bool:
+        """Whether this provider genuinely processes attached image content. A
+        text/reasoning-only vendor (e.g. Muse Spark) is ``False`` so a
+        vision-dependent call site routes around it (:func:`get_vision_provider`)
+        rather than get a hallucinated read off an image the model never saw.
+        Derived from :attr:`capabilities` so vision lives in one map."""
+        return CAP_VISION in self.capabilities
 
     @abstractmethod
     async def generate_json(
@@ -120,7 +201,8 @@ class GeminiProvider(LLMProvider):
     """Delegates straight to ``gemini.py`` — the production default."""
 
     name = PROVIDER_GEMINI
-    supports_vision = True  # Gemini is multimodal — it genuinely reads images.
+    #: Gemini is multimodal + grounded: every capability (incl. vision + web).
+    capabilities = BRAIN_CAPABILITIES[PROVIDER_GEMINI]
 
     async def generate_json(self, *args, **kwargs) -> object:
         return await gemini.generate_json(*args, **kwargs)
@@ -231,6 +313,9 @@ class MetaProvider(LLMProvider):
     """
 
     name = PROVIDER_META
+    #: Muse Spark does text, JSON and tool-calling; NOT vision, NOT web — those
+    #: resolve to Gemini (:func:`get_user_brain_provider`, :func:`get_vision_provider`).
+    capabilities = BRAIN_CAPABILITIES[PROVIDER_META]
 
     def __init__(
         self,
@@ -550,3 +635,80 @@ def get_vision_provider(surface: str) -> LLMProvider:
         surface, provider.name,
     )
     return _gemini_singleton()
+
+
+# --- Unified Brain (§13.10) ----------------------------------------------- #
+
+
+def _provider_for_name(name: str) -> LLMProvider:
+    """A provider instance for a vendor name (``gemini`` | ``meta``). ``meta``
+    carries the Gemini fallback when ``llm_meta_fallback`` is on; anything else
+    is the Gemini default."""
+    if (name or "").strip().lower() == PROVIDER_META:
+        fallback = _gemini_singleton() if CONFIG.llm_meta_fallback else None
+        return MetaProvider(fallback=fallback)
+    return _gemini_singleton()
+
+
+def read_brain_pref(uid: str | None) -> str:
+    """The user's saved unified-Brain vendor (``ayma_brain_model`` on
+    ``users/{uid}/profile/main``), lower-cased, or ``""`` when unset / unreadable
+    / no uid. Best-effort: a read failure returns ``""`` (→ the env-flag default),
+    never raises, so brain resolution can't take a surface down. Factored out so
+    tests can monkeypatch it instead of standing up Firestore."""
+    if not uid:
+        return ""
+    try:
+        import schema
+        from db import get_db
+
+        snap = schema.profile_doc(get_db(), uid).get()
+        return str((snap.to_dict() or {}).get(schema.PF_AYMA_BRAIN_MODEL, "")).strip().lower()
+    except Exception:  # noqa: BLE001 - best-effort; fall back to env default
+        logger.exception("could not read ayma_brain_model for %s", uid)
+        return ""
+
+
+def get_user_brain_provider(
+    uid: str | None, surface: str, *, needs: str | None = None
+) -> LLMProvider:
+    """The provider for ``surface`` honouring the user's unified **Brain** choice
+    (§13.10), with a per-capability fallback to Gemini.
+
+    Resolution:
+
+    * The user's saved ``ayma_brain_model`` picks the brain; with none saved the
+      per-surface env flag (:func:`get_llm_provider`) is the default — production
+      is unchanged until a user actually chooses a brain.
+    * If ``needs`` is given and the chosen brain does NOT have that capability
+      (see :data:`BRAIN_CAPABILITIES`), the call resolves to **Gemini** instead.
+      So ``needs="web"`` and ``needs="vision"`` always land on Gemini (Muse has
+      neither), while ``text``/``json``/``tools`` stay on the chosen brain.
+
+    One brain drives every text surface; a capability the brain lacks is never
+    silently dropped — it is routed to Gemini, consistent with
+    :func:`get_vision_provider`."""
+    if surface not in _SURFACE_FLAG:
+        raise ValueError(
+            f"unknown LLM surface {surface!r}; expected one of {SURFACES}"
+        )
+    if needs is not None and needs not in ALL_CAPABILITIES:
+        raise ValueError(
+            f"unknown capability {needs!r}; expected one of {ALL_CAPABILITIES}"
+        )
+
+    chosen = read_brain_pref(uid)
+    if chosen in BRAIN_CAPABILITIES:
+        provider = _provider_for_name(chosen)
+    else:
+        # No saved brain (or an unknown value) → the surface's env-flag default.
+        provider = get_llm_provider(surface)
+
+    if needs is not None and needs not in provider.capabilities:
+        if provider.name != PROVIDER_GEMINI:
+            logger.info(
+                "brain %s lacks %r for surface %s — using Gemini for this call",
+                provider.name, needs, surface,
+            )
+        return _gemini_singleton()
+    return provider

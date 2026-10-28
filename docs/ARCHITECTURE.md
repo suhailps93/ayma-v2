@@ -232,8 +232,15 @@ flowchart LR
   (`supports_vision`), else **Gemini**. A text/reasoning-only provider (Muse Spark, `supports_vision=False`) would
   otherwise silently return a plausible but *hallucinated* read off a photo it never processed — and, returning valid
   JSON, never trip the on-error Gemini fallback. This capability-aware route lives in code (not an env flag), so a
-  surface flipped to Meta keeps truthful photo analysis, matching the unified-brain capability map (vision → Gemini).
-  `physical_attributes` already calls Gemini directly for its vision pass.
+  surface flipped to Meta keeps truthful photo analysis, matching the unified-brain capability map (vision → Gemini,
+  §13.10). `physical_attributes` already calls Gemini directly for its vision pass.
+- *Unified Brain (§13.10)*: `get_vision_provider` is one slice of a general capability-aware route. The per-surface
+  `LLM_PROVIDER_*` flags are superseded, as the **user-facing** control, by a single per-user **Brain**
+  (`ayma_brain_model`, `gemini` | `meta`) that drives every text surface (chat, matching, DM coach, translation).
+  `llm_provider.get_user_brain_provider(uid, surface, needs=<capability>)` picks the user's brain when it has the needed
+  capability (`text`/`json`/`tools`), else **Gemini** (so `web` and `vision` always resolve to Gemini — Muse has
+  neither). The `LLM_PROVIDER_*` flags remain only as the deploy-time default when a user hasn't chosen a brain. See
+  §13.10 for the capability map, resolver and `/brain/preference` API.
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
   the report-card share sheet); the orb chat sheet grows to full screen **as one continuous surface** instead of
   dismissing itself and pushing a new chat route — see *Ayma chat sheet: one growing surface* below.
@@ -332,6 +339,7 @@ flowchart LR
   subgraph Backend["Cloud Run"]
     BS["/bootstrap<br/>LiveKit token + room URL, seeds agent context<br/>+ per-user voice stack (§13.9)"]
     VE["/voice/engines + /voice/preference<br/>voice-stack catalog (live LiveKit /v1/models) + per-user pref"]
+    BR["/brain/preference<br/>unified Brain pref — one LLM for all text surfaces (§13.10)"]
     CH["/chat<br/>single text endpoint"]
     PT["/post-turn<br/>memory extraction"]
     AG[LiveKit Agent Worker<br/>reads voice stack from room seed]
@@ -342,7 +350,8 @@ flowchart LR
   end
 
   UI --> VS & TS
-  UI -->|dev + Ayma's-voice screens| VE
+  UI -->|Ayma's-models screen| VE
+  UI -->|Ayma's-models screen: Brain section| BR
   VS -->|1: fetch token + recent history + voice stack| BS
   VS -->|2: WebRTC connect| Room
   Room <-->|realtime audio| AG
@@ -352,6 +361,9 @@ flowchart LR
   AG -.->|Cascade STT + TTS + VAD, inference LLM brains,<br/>catalog by type (§13.9)| LKInf
   AG -->|on turn complete| PT
   TS -->|typed messages + recent history| CH
+  CH -->|unified Brain: text/json/tools → chosen brain| BrainSel{{"get_user_brain_provider<br/>capability-aware (§13.10)"}}
+  BrainSel -.->|brain = Meta| Meta
+  BrainSel -->|brain = Gemini, or web/vision needed| Gemini
   CH -->|on turn complete| PT
   VS --> TR
   TS --> TR
@@ -1556,6 +1568,27 @@ Both parts are cascade-scoped: Gemini Live / OpenAI Realtime leave `opener_chat_
 **Agent — `agent._run_session`** reads the preference via the room seed (`main._voice_engine_seed` → `livekit_token.build_room_seed`). Empty `voice_mode` keeps today's deploy-time behaviour (`CONFIG.llm_provider_voice_main`). Cascade → `build_cascade_session(brain, stt, tts, voice, language)`; realtime → Gemini Live (`build_realtime_model`), OpenAI Realtime (`build_openai_realtime_model`, or Gemini Live when inert), or another inference realtime model. Every non-default path falls back to Gemini Live on a build or runtime error, so a voice-stack switch can never break a user's call. The **LOCKED** Gemini model ids are never edited — the selection only chooses provider/model/voice/language. Flags: `docs/FEATURE_FLAGS.md`; detail: `docs/META_PROVIDER.md`.
 
 **Stack-aware voice vocabulary (the agent's *knowledge* of its own voice).** The agent must answer "what voices do you have" / "which voice are you on", and switch voices, for the stack it is **actually** running — not the Gemini Live presets. At the start of each session (`_start_main_cascade_session` / `_start_main_gemini_session`, i.e. after any build-time fallback has already resolved what is really running) the agent computes `voice_catalog.runtime_voices(mode, realtime_model_id|tts_id, current_voice_id)` → `{provider, voices, current, hot_swap}`, reading the voice ids from the single source of truth (`_TTS_FALLBACK_VOICES` for cascade TTS, `_realtime_voices_for` for realtime — never duplicated). Two injections follow: (1) a stack-aware instruction block (`prompt.voice_vocab_directive` from `prompts/voice_vocab.md` + the live/next-call rule files) is appended to the session instructions, stating the real **current** voice (e.g. *Hannah* on a `fishaudio/s2.1-pro` cascade, an *Aoede*/preset on Gemini Live) and the voices the active stack can use; (2) `set_voice_preference` is bound stack-aware — on Gemini Live via `bind_live` (mid-call hot-swap within the presets, `VoiceSwapper`), on a cascade / non-Gemini realtime via `bind_stack`, which resolves the request **within the active provider's voices** (`voice_catalog.resolve_voice`), saves it to `ayma_tts_voice` for the **next** call (mid-call hot-swap is Gemini-Live-only), and whose tool description lists that provider's voices instead of the presets. If a cascade falls back to Gemini Live (build or runtime), the Gemini path recomputes the vocabulary, so it then correctly reflects Gemini. (The text `/chat` `set_voice_preference` has no live session, so it keeps its preset-default resolution; the live-call surface is where this bug was reported and fixed.)
+
+### 13.10 Unified Brain selector (per-user LLM for all text surfaces)
+
+One user-selectable **Brain** drives **all text surfaces** — chat, matching, DM coaching (`dm_assist`), cross-language translation (`dm_translate`) — replacing the per-surface `LLM_PROVIDER_*` flags as the *user-facing* control (those flags remain only as the deploy-time **default** when a user hasn't chosen). A "brain" is an LLM **vendor** (`gemini` | `meta`), never a model id (the locked Gemini/Meta model ids stay in `config.py`). Founder spec 2026-10-28.
+
+**Capability map (one source of truth, `llm_provider.BRAIN_CAPABILITIES`).** Each brain declares the capabilities it genuinely has — `text`, `json`, `vision`, `web` (live URL/Google-Search grounding), `tools`:
+
+| Brain | text | json | tools | vision | web |
+|-------|------|------|-------|--------|-----|
+| **Gemini** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Meta / Muse Spark** | ✓ | ✓ | ✓ | ✗ | ✗ |
+
+Muse Spark does text, structured JSON (matching/reports/chat already use it via `generate_json`) and tool-calling, but is text/reasoning-only — no image reading and no web grounding on the Meta API. `GeminiProvider.capabilities` / `MetaProvider.capabilities` read from this one map, and `supports_vision` is **derived** from it (so vision lives in exactly one place, feeding `get_vision_provider` too).
+
+**Resolver — `llm_provider.get_user_brain_provider(uid, surface, *, needs=<capability>)`.** Reads the user's saved brain (`ayma_brain_model` on `users/{uid}/profile/main`, via `read_brain_pref` — best-effort, a read failure → `""`). With a saved brain it uses that brain; with none it falls back to the surface's env flag (`get_llm_provider(surface)`), so production is unchanged until a user actually picks one. If `needs` is a capability the chosen brain lacks, the call resolves to **Gemini** instead — so **web → always Gemini** and **vision → always Gemini** (Muse has neither), while `text`/`json`/`tools` stay on the chosen brain. A capability is never silently dropped; it is routed to Gemini, consistent with `get_vision_provider`.
+
+**Wiring.** Each text call site passes the capability it needs: chat (`main._generate_chat_reply` + the streaming turn) uses `needs="vision"` when the turn carries an image else `needs="tools"`; matching (`matching_skill._run_llm`), DM coach (`dm_assist`) and translation (`dm_translate`) use `needs="json"`. Appearance **reports** (`face_report`/`body_report`) keep routing through `get_vision_provider("reports")` (vision → Gemini, §9) and **deep-dive/web research** (`deep_dive.py`) stays Gemini-only (web) — both already land on Gemini, matching the capability map. The **voice** stack (§13.9) is a separate, unchanged preference.
+
+**Preference API.** `GET /brain/preference` → `{brains:[{id,label,description,available,capabilities}], current, default}` (`current` = the saved choice or `""`; `default` = `config.brain_default`, the hackathon default `meta` the UI pre-selects). `POST /brain/preference {brain}` validates against `llm_provider.BRAINS` and stores `ayma_brain_model`. Hackathon default brain = **Muse Spark** (`AYMA_BRAIN_DEFAULT`, founder "default to Muse" rule) — with the web/vision → Gemini fallbacks above, so the Muse default never drops image analysis or web reading.
+
+**Client.** A **Brain** section at the TOP of the "Ayma's models" screen (`voice_preference_screen.dart`), above the unchanged Voice section: a dropdown of available brains (`brain_selector_control.dart`, `GET`/`POST /brain/preference`) with a short description of each (stating the Gemini fallback). Flags: `docs/FEATURE_FLAGS.md`; detail: `docs/META_PROVIDER.md`.
 
 ---
 

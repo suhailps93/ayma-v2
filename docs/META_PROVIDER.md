@@ -48,15 +48,21 @@ surface is explicitly flipped.
   comparison. Dry-run (no key) shows the exact request each side would send;
   live mode runs both once the key exists.
 
+## Unified Brain (§13.10) — one per-user LLM for all text surfaces
+
+The per-surface flags below are now the **deploy-time default**; the **user-facing** choice is a single per-user **Brain** (`ayma_brain_model`, `gemini` | `meta`) that drives every text surface. The text call sites resolve through `llm_provider.get_user_brain_provider(uid, surface, needs=<capability>)` instead of `get_llm_provider(surface)` directly: the user's brain when it has the needed capability, else Gemini. Capabilities per brain are the single source of truth in `llm_provider.BRAIN_CAPABILITIES` — **Gemini**: text/json/vision/web/tools; **Meta/Muse Spark**: text/json/tools (no vision, no web). So `web` and `vision` always resolve to Gemini (consistent with `get_vision_provider` and the Gemini-only deep-dive). API: `GET`/`POST /brain/preference`; default `AYMA_BRAIN_DEFAULT=meta`. Full detail: `docs/ARCHITECTURE.md` §13.10, `docs/FEATURE_FLAGS.md`.
+
 ## Wired surfaces
 
-| Surface | Call site routed through `get_llm_provider(...)` |
+| Surface | Call site (unified-Brain resolver `get_user_brain_provider`, capability shown) |
 |---|---|
-| chat | `main.py` `_generate_chat_reply` (non-streaming) and the streaming `generate_reply_events` turn |
-| matching | `matching_skill._run_llm` |
-| reports | `body_report.py`, `face_report.py` |
-| practice | not a call site yet — the Practice Date agent consumes `get_llm_provider("practice")` directly |
-| dm_coach | `dm_assist.assist` (the `POST /dm/assist` endpoint) — opener chips + live DM coaching (§6.9). **Defaults to `meta`.** |
+| chat | `main.py` `_generate_chat_reply` (non-streaming) and the streaming `generate_reply_events` turn — `needs="vision"` with an image else `needs="tools"` |
+| matching | `matching_skill._run_llm` — `needs="json"` |
+| reports | `body_report.py`, `face_report.py` — vision, so routed via `get_vision_provider("reports")` (always Gemini) |
+| dm_coach | `dm_assist.assist` (`POST /dm/assist`) — `needs="json"`; opener chips + live DM coaching (§6.9). Deploy default `meta`. |
+| translate | `dm_translate.translate` (`POST /dm/translate`) — `needs="json"`; deploy default `meta`. |
+| deep-dive / web research | `deep_dive.py` — web (`url_context`), stays Gemini-only |
+| practice | not a text call site here — the Practice Date agent consumes `get_llm_provider("practice")` directly (voice/roleplay) |
 
 ## How to flip a surface to Meta
 

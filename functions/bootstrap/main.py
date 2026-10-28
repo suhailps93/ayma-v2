@@ -62,7 +62,7 @@ from config import CONFIG, PLAN_TIERS  # noqa: E402
 import agent_wake  # noqa: E402
 import feature_flags  # noqa: E402
 import gemini  # noqa: E402
-from llm_provider import get_llm_provider  # noqa: E402
+from llm_provider import get_user_brain_provider  # noqa: E402
 import billing  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -1730,9 +1730,12 @@ async def chat(
 
 
 async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
-    """The non-streaming chat call for one prepared turn (chat surface →
-    Gemini by default, Meta when ``LLM_PROVIDER_CHAT=meta``)."""
-    return await get_llm_provider("chat").generate_reply(
+    """The non-streaming chat call for one prepared turn, routed through the
+    user's unified **Brain** (§13.10): the chosen brain for a text/tools turn,
+    but Gemini whenever the turn carries an image (vision → Gemini, since Muse
+    can't read images — it would otherwise hallucinate the photo)."""
+    needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+    return await get_user_brain_provider(ctx.uid, "chat", needs=needs).generate_reply(
         req.message,
         system_prompt=ctx.system_prompt,
         tool_declarations=session_tool_declarations(
@@ -1881,7 +1884,12 @@ async def chat_stream(
         try:
             try:
                 async with asyncio.timeout(_CHAT_TURN_TIMEOUT_SECONDS):
-                    async for ev in get_llm_provider("chat").generate_reply_events(
+                    # Unified Brain (§13.10): the user's brain for a text/tools
+                    # turn; Gemini when an image is attached (vision → Gemini).
+                    _needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+                    async for ev in get_user_brain_provider(
+                        ctx.uid, "chat", needs=_needs
+                    ).generate_reply_events(
                         req.message,
                         system_prompt=ctx.system_prompt,
                         tool_declarations=session_tool_declarations(
@@ -5372,6 +5380,66 @@ async def set_voice_preference_endpoint(
             "accent": body.accent.strip()[:200],
         },
     }
+
+
+@app.get("/brain/preference")
+async def get_brain_preference(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The unified **Brain** catalog + the user's current choice (§13.10). The
+    brain is ONE vendor (`gemini` | `meta`) that drives ALL text surfaces (chat,
+    matching, DM coach, translation), with a per-capability fallback to Gemini
+    (web + vision are always Gemini). Shape:
+    ``{brains:[{id,label,description,available,capabilities}], current, default}``
+    — ``current`` is the saved ``ayma_brain_model`` ("" when unset) and
+    ``default`` is the hackathon default (``config.brain_default``) the UI
+    pre-selects when nothing is saved. No LLM spend."""
+    import llm_provider
+
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        current = str((snap.to_dict() or {}).get(schema.PF_AYMA_BRAIN_MODEL, "")).strip().lower()
+    except Exception:  # noqa: BLE001 - never block the settings screen on a read
+        logger.exception("could not read ayma_brain_model for %s", uid)
+        current = ""
+    if current not in llm_provider.BRAINS:
+        current = ""
+    default = CONFIG.brain_default if CONFIG.brain_default in llm_provider.BRAINS else "gemini"
+    return {
+        "brains": llm_provider.available_brains(),
+        "current": current,
+        "default": default,
+    }
+
+
+class BrainPreferenceBody(BaseModel):
+    brain: str = Field(min_length=1, max_length=32)
+
+
+@app.post("/brain/preference")
+async def set_brain_preference(
+    body: BrainPreferenceBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist the user's unified **Brain** on ``users/{uid}/profile/main``
+    (``ayma_brain_model``, §13.10). It drives every text surface from the next
+    call; web/vision stay on Gemini regardless (capability map). Only a known
+    brain vendor is accepted."""
+    import llm_provider
+    from firebase_admin import firestore
+
+    brain = body.brain.strip().lower()
+    if brain not in llm_provider.BRAINS:
+        raise HTTPException(status_code=422, detail="Unknown brain.")
+    try:
+        schema.profile_doc(get_db(), uid).set(
+            {
+                schema.PF_AYMA_BRAIN_MODEL: brain,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not save ayma_brain_model for %s", uid)
+        raise HTTPException(status_code=502, detail="Could not save preference.") from exc
+    return {"ok": True, "current": brain}
 
 
 @app.get("/voice/preview/{voice_name}")

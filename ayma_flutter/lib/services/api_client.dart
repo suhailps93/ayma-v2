@@ -1594,6 +1594,19 @@ class ApiClient {
   Future<void> saveVoicePreference(VoiceSelection sel) =>
       _postJsonOk('/voice/preference', sel.toMap());
 
+  /// `GET /brain/preference` — the unified **Brain** catalog + the user's
+  /// current choice (§13.10): the ONE LLM that drives every text surface, with
+  /// web/vision always on Gemini.
+  Future<BrainCatalog> brainPreference() async {
+    final m = await _getJson('/brain/preference');
+    return BrainCatalog.fromMap(m);
+  }
+
+  /// `POST /brain/preference` — persist the user's unified Brain (§13.10). Takes
+  /// effect on the next text turn.
+  Future<void> saveBrainPreference(String brain) =>
+      _postJsonOk('/brain/preference', {'brain': brain});
+
   /// `GET /media/photos` — the current profile-photo grid (§8.3). Returns the
   /// list of `{media_id, order}` maps, order ascending.
   Future<List<Map<String, dynamic>>> listPhotos() async {
@@ -4866,6 +4879,67 @@ class VoiceCatalog {
     }
     return null;
   }
+}
+
+// --- Unified Brain (§13.10) ---------------------------------------------
+
+/// One selectable **Brain** (an LLM vendor) from `GET /brain/preference`.
+class BrainOption {
+  const BrainOption({
+    required this.id,
+    required this.label,
+    this.description = '',
+    this.available = true,
+    this.capabilities = const [],
+  });
+
+  final String id; // 'gemini' | 'meta'
+  final String label;
+  final String description;
+  final bool available;
+  final List<String> capabilities; // 'text','json','vision','web','tools'
+
+  factory BrainOption.fromMap(Map m) => BrainOption(
+        id: m['id'] as String? ?? '',
+        label: m['label'] as String? ?? '',
+        description: m['description'] as String? ?? '',
+        available: m['available'] as bool? ?? true,
+        capabilities: ((m['capabilities'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+}
+
+/// The `/brain/preference` payload: the Brain list, the saved choice (empty when
+/// unset), and the default the UI pre-selects when nothing is saved.
+class BrainCatalog {
+  const BrainCatalog({
+    this.brains = const [],
+    this.current = '',
+    this.defaultBrain = '',
+  });
+
+  final List<BrainOption> brains;
+  final String current; // '' when unset
+  final String defaultBrain;
+
+  /// The id the dropdown should show: the saved choice if any, else the default,
+  /// else the first available brain (never null when the list is non-empty).
+  String get effectiveId {
+    if (current.isNotEmpty && brains.any((b) => b.id == current)) return current;
+    if (defaultBrain.isNotEmpty && brains.any((b) => b.id == defaultBrain)) {
+      return defaultBrain;
+    }
+    return brains.isNotEmpty ? brains.first.id : '';
+  }
+
+  factory BrainCatalog.fromMap(Map<String, dynamic> m) => BrainCatalog(
+        brains: ((m['brains'] as List?) ?? const [])
+            .map((e) => BrainOption.fromMap(e as Map))
+            .toList(),
+        current: m['current'] as String? ?? '',
+        defaultBrain: m['default'] as String? ?? '',
+      );
 }
 
 // --- Your Story editor models -------------------------------------------

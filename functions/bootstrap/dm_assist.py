@@ -211,7 +211,9 @@ async def assist(
         )
 
     try:
-        provider = llm_provider.get_llm_provider("dm_coach")
+        # Unified Brain (§13.10): the user's chosen brain drives DM coaching
+        # (JSON openers/tips); Muse Spark has json, so it is honoured, else Gemini.
+        provider = llm_provider.get_user_brain_provider(uid, "dm_coach", needs="json")
         result = await provider.generate_json(
             contents,
             system_prompt=_load_prompt(),

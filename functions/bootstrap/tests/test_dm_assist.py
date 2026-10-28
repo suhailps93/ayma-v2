@@ -66,8 +66,11 @@ class _FakeProvider:
 
 
 def _patch_provider(monkeypatch, provider):
+    # DM coaching now resolves through the unified-brain resolver (§13.10).
     monkeypatch.setattr(
-        dm_assist.llm_provider, "get_llm_provider", lambda surface: provider
+        dm_assist.llm_provider,
+        "get_user_brain_provider",
+        lambda uid, surface, *, needs=None: provider,
     )
     return provider
 

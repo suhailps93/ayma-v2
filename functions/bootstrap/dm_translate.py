@@ -90,7 +90,10 @@ async def translate(
     )
 
     try:
-        provider = llm_provider.get_llm_provider("translate")
+        # Unified Brain (§13.10): the reader's chosen brain drives translation
+        # (JSON); Muse Spark has json, so it is honoured, else Gemini. ``uid`` may
+        # be None here (→ the env-flag default), which the resolver handles.
+        provider = llm_provider.get_user_brain_provider(uid, "translate", needs="json")
         result = await provider.generate_json(
             contents,
             system_prompt=_load_prompt(),

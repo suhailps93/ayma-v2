@@ -187,6 +187,32 @@ Object? _bodyFor(String path) {
       ],
     };
   }
+  if (path == '/brain/preference') {
+    return {
+      'brains': [
+        {
+          'id': 'gemini',
+          'label': 'Gemini',
+          'description':
+              'Google Gemini — reads images, does live web research, and uses '
+                  'tools. The most capable all-round brain.',
+          'available': true,
+          'capabilities': ['text', 'json', 'vision', 'web', 'tools'],
+        },
+        {
+          'id': 'meta',
+          'label': 'Meta Muse Spark',
+          'description':
+              'Meta’s Muse Spark — fast reasoning for chat, matching and '
+                  'coaching. Image reading and web research fall back to Gemini.',
+          'available': true,
+          'capabilities': ['text', 'json', 'tools'],
+        },
+      ],
+      'current': '',
+      'default': 'meta',
+    };
+  }
   if (path == '/voice/engines') {
     final gemVoices = [
       for (final n in ['Aoede', 'Kore', 'Puck', 'Charon'])

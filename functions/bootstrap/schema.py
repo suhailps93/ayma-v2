@@ -267,6 +267,14 @@ PF_AYMA_CASCADE_TTS = "ayma_cascade_tts"        # cascade TTS model id
 # realtime voice). Gemini-preset realtime voices use PF_AYMA_VOICE instead.
 # "" = the provider's default voice.
 PF_AYMA_TTS_VOICE = "ayma_tts_voice"
+# Unified Brain preference (§13.10): the ONE user-selectable LLM vendor that
+# drives ALL text surfaces (chat, matching, DM coach, translation), with a
+# per-capability fallback to Gemini (web/vision always Gemini). ``gemini`` |
+# ``meta`` (vendor name, not a model id). "" / absent = fall back to the
+# per-surface ``LLM_PROVIDER_*`` env default (``config.brain_default`` is shown
+# pre-selected in the UI). This is the TEXT brain; the voice stack above is a
+# separate, unchanged preference. Read/written by ``/brain/preference``.
+PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
 # The user's own LinkedIn profile URL, given with their consent (§ Your Story
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.

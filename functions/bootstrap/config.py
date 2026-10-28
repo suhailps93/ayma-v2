@@ -859,6 +859,18 @@ class Config:
     flip can never take a surface down. ``LLM_META_FALLBACK=false`` to disable
     (e.g. in an eval that must measure Meta on its own)."""
 
+    brain_default: str
+    """The unified **Brain** shown pre-selected on the "Ayma's models" screen
+    and used as the fallback brain for the text surfaces when a user has NOT
+    saved an ``ayma_brain_model`` preference, ``gemini`` | ``meta`` (vendor
+    name, not a model id). Default ``meta`` — the hackathon runs on Muse Spark
+    by default (founder "default everything to Muse" rule). A brain that lacks a
+    needed capability (web, vision) is still resolved to Gemini per the
+    capability map in ``llm_provider`` — so the Muse default never silently
+    drops web reading or image analysis. Override with ``AYMA_BRAIN_DEFAULT``.
+    This selects a VENDOR only; the locked Gemini/Meta model ids above are never
+    changed. See ``docs/ARCHITECTURE.md`` §13.10 and ``docs/META_PROVIDER.md``."""
+
     # --- Voice ENGINE picker (§13.9, docs/META_PROVIDER.md) ---------------- #
     # The per-user voice stack (dev-settings "Voice engine"): a CASCADE
     # (brain/STT/TTS, independently selectable) or an all-in-one REALTIME model.
@@ -1173,6 +1185,11 @@ def _load() -> Config:
         ).strip().lower(),
         llm_meta_fallback=os.getenv("LLM_META_FALLBACK", "true").strip().lower()
         == "true",
+        # Unified Brain default (§13.10): the brain used for the text surfaces
+        # when a user hasn't picked one, and shown pre-selected in the UI.
+        # Hackathon default = Muse (``meta``); capability gaps still route to
+        # Gemini (web/vision) via the llm_provider capability map.
+        brain_default=os.getenv("AYMA_BRAIN_DEFAULT", "meta").strip().lower(),
         # Voice ENGINE picker (§13.9).
         openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime"),
         voice_openai_realtime_enabled=os.getenv(

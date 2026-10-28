@@ -355,3 +355,153 @@ async def test_meta_without_key_raises_clear_error(monkeypatch):
     monkeypatch.delenv("META_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="META_API_KEY"):
         await MetaProvider().generate_json("c", "s", uid=None, feature="matching")
+
+
+# --- unified Brain: capability map + resolver (§13.10) -------------------- #
+
+from llm_provider import (  # noqa: E402
+    CAP_JSON,
+    CAP_TEXT,
+    CAP_TOOLS,
+    CAP_VISION,
+    CAP_WEB,
+    PROVIDER_GEMINI,
+    PROVIDER_META,
+    available_brains,
+    brain_capabilities,
+    get_user_brain_provider,
+)
+
+
+def test_capability_map_gemini_has_everything():
+    caps = brain_capabilities(PROVIDER_GEMINI)
+    assert caps == {CAP_TEXT, CAP_JSON, CAP_VISION, CAP_WEB, CAP_TOOLS}
+    # And the provider instance exposes the same set.
+    assert GeminiProvider().capabilities == caps
+
+
+def test_capability_map_meta_is_text_json_tools_only():
+    caps = brain_capabilities(PROVIDER_META)
+    assert caps == {CAP_TEXT, CAP_JSON, CAP_TOOLS}
+    # The accurate map: Muse Spark does text/json/tools but NOT vision/web.
+    assert CAP_VISION not in caps and CAP_WEB not in caps
+    assert MetaProvider().capabilities == caps
+    # ``supports_vision`` is derived from the one map.
+    assert MetaProvider().supports_vision is False
+    assert GeminiProvider().supports_vision is True
+
+
+def test_capability_map_unknown_brain_defaults_to_gemini():
+    assert brain_capabilities("banana") == brain_capabilities(PROVIDER_GEMINI)
+
+
+def test_available_brains_shape():
+    brains = available_brains()
+    assert [b["id"] for b in brains] == [PROVIDER_GEMINI, PROVIDER_META]
+    for b in brains:
+        assert b["label"] and b["description"] and b["available"] is True
+        assert set(b["capabilities"]) == brain_capabilities(b["id"])
+
+
+def _brain(monkeypatch, value):
+    """Pretend the user saved ``value`` as ``ayma_brain_model`` (no Firestore)."""
+    monkeypatch.setattr(llm_provider, "read_brain_pref", lambda uid: value)
+
+
+def test_resolver_uses_users_brain_when_capable(monkeypatch):
+    # User picked Meta; a json surface it supports → Meta honoured.
+    _with_flags(monkeypatch, llm_meta_fallback=True)
+    _brain(monkeypatch, PROVIDER_META)
+    assert isinstance(
+        get_user_brain_provider("u1", "matching", needs=CAP_JSON), MetaProvider
+    )
+    # text/tools likewise stay on the chosen brain.
+    assert isinstance(
+        get_user_brain_provider("u1", "chat", needs=CAP_TOOLS), MetaProvider
+    )
+
+
+def test_resolver_web_always_gemini(monkeypatch):
+    _brain(monkeypatch, PROVIDER_META)
+    assert isinstance(
+        get_user_brain_provider("u1", "chat", needs=CAP_WEB), GeminiProvider
+    )
+
+
+def test_resolver_vision_always_gemini(monkeypatch):
+    _brain(monkeypatch, PROVIDER_META)
+    assert isinstance(
+        get_user_brain_provider("u1", "chat", needs=CAP_VISION), GeminiProvider
+    )
+    # And when the user's brain IS Gemini, vision stays Gemini too.
+    _brain(monkeypatch, PROVIDER_GEMINI)
+    assert isinstance(
+        get_user_brain_provider("u1", "chat", needs=CAP_VISION), GeminiProvider
+    )
+
+
+def test_resolver_gemini_brain_keeps_gemini(monkeypatch):
+    _brain(monkeypatch, PROVIDER_GEMINI)
+    for cap in (CAP_TEXT, CAP_JSON, CAP_TOOLS, CAP_WEB, CAP_VISION):
+        assert isinstance(
+            get_user_brain_provider("u1", "chat", needs=cap), GeminiProvider
+        )
+
+
+def test_resolver_unset_falls_back_to_env_flag(monkeypatch):
+    # No saved brain → the per-surface env flag decides (production default).
+    _brain(monkeypatch, "")
+    _with_flags(monkeypatch, llm_provider_chat="gemini", llm_provider_matching="meta",
+                llm_meta_fallback=True)
+    assert isinstance(
+        get_user_brain_provider("u1", "chat", needs=CAP_TOOLS), GeminiProvider
+    )
+    assert isinstance(
+        get_user_brain_provider("u1", "matching", needs=CAP_JSON), MetaProvider
+    )
+    # A capability the env-flag brain lacks still routes to Gemini.
+    assert isinstance(
+        get_user_brain_provider("u1", "matching", needs=CAP_WEB), GeminiProvider
+    )
+
+
+def test_resolver_unknown_brain_value_falls_back_to_env_flag(monkeypatch):
+    _brain(monkeypatch, "banana")
+    _with_flags(monkeypatch, llm_provider_chat="meta", llm_meta_fallback=True)
+    assert isinstance(
+        get_user_brain_provider("u1", "chat", needs=CAP_TOOLS), MetaProvider
+    )
+
+
+def test_resolver_none_uid_uses_env_flag(monkeypatch):
+    # No uid (e.g. an anonymous translate caller) → env flag default, no crash.
+    monkeypatch.setattr(llm_provider, "read_brain_pref", llm_provider.read_brain_pref)
+    _with_flags(monkeypatch, llm_provider_translate="meta", llm_meta_fallback=True)
+    assert isinstance(
+        get_user_brain_provider(None, "translate", needs=CAP_JSON), MetaProvider
+    )
+
+
+def test_resolver_no_needs_returns_chosen_brain(monkeypatch):
+    _brain(monkeypatch, PROVIDER_META)
+    _with_flags(monkeypatch, llm_meta_fallback=True)
+    assert isinstance(
+        get_user_brain_provider("u1", "chat"), MetaProvider
+    )
+
+
+def test_resolver_rejects_unknown_surface(monkeypatch):
+    _brain(monkeypatch, PROVIDER_META)
+    with pytest.raises(ValueError):
+        get_user_brain_provider("u1", "nope", needs=CAP_JSON)
+
+
+def test_resolver_rejects_unknown_capability(monkeypatch):
+    _brain(monkeypatch, PROVIDER_META)
+    with pytest.raises(ValueError):
+        get_user_brain_provider("u1", "chat", needs="telepathy")
+
+
+def test_read_brain_pref_none_uid_is_empty():
+    assert llm_provider.read_brain_pref(None) == ""
+    assert llm_provider.read_brain_pref("") == ""

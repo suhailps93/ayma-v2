@@ -175,7 +175,14 @@ navigates) and Add photo on both groups; My-public-profile "Edit manually" is a
 pencil icon; voice-engine dropdowns hide unavailable providers; face/body
 report image calls route through `get_vision_provider` (vision-less reports
 surface → Gemini). Follow-up:
-- **Unified-brain capability map.** `llm_provider.supports_vision` +
-  `get_vision_provider` is the first slice of the capability-aware route
-  (vision → Gemini). Fold it into the planned unified-brain capability map so
-  other capability-gated routes (not just vision) resolve the same way.
+- **Unified-brain capability map. [[todo-unified-brain-selector]] DONE
+  (2026-10-28, branch `meta-hackathon`).** `llm_provider.supports_vision` +
+  `get_vision_provider` (the first slice: vision → Gemini) is now folded into a
+  full per-brain capability map (`llm_provider.BRAIN_CAPABILITIES`: Gemini =
+  all; Meta/Muse = text/json/tools, no vision/web) with `supports_vision`
+  derived from it. A single per-user **Brain** (`ayma_brain_model`, `gemini` |
+  `meta`) drives every text surface (chat, matching, DM coach, translate) via
+  `get_user_brain_provider(uid, surface, needs=…)` — the user's brain when it
+  has the needed capability, else Gemini (web/vision always Gemini). UI: Brain
+  section atop "Ayma's models"; API `GET`/`POST /brain/preference`; default
+  `AYMA_BRAIN_DEFAULT=meta`. See ARCHITECTURE §13.10 + the HACKATHON_STATUS line.
