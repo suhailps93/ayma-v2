@@ -409,6 +409,19 @@ def _availability(provider: str, source: str) -> tuple[bool, str]:
     return False, "LiveKit credits"
 
 
+def provider_supports_accent(provider: str) -> bool:
+    """Whether ``provider`` honours a free-text ACCENT instruction
+    (``ayma_voice_accent``) at session boot — the ONE source of truth for the
+    per-provider capability (§13.9). The instruction-driven native-audio realtime
+    models (``gemini``, ``openai``) take the accent in their style/instruction
+    text; cascade TTS providers here ship only fixed voices and ignore it. Driven
+    by ``CONFIG.voice_accent_capable_providers`` so a style-controllable TTS can
+    be marked capable with no code change. Accent routing in ``agent.py`` and the
+    "switch models to change accent" message in ``set_voice_preference`` both read
+    this, so they can never disagree."""
+    return (provider or "").strip().lower() in CONFIG.voice_accent_capable_providers
+
+
 # --- Catalog assembly -------------------------------------------------------
 def _realtime_voices_for(model_id: str) -> list[Voice]:
     provider = _provider_of(model_id) or model_id
@@ -428,6 +441,7 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
             "provider": PROVIDER_GEMINI,
             "available": True,
             "requires_secret": "",
+            "supports_accent": provider_supports_accent(PROVIDER_GEMINI),
             "voices": [v.to_dict() for v in _gemini_voices()],
             "languages": langs,
         }
@@ -443,6 +457,7 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
                 "provider": "openai",
                 "available": True,
                 "requires_secret": "OPENAI_API_KEY",
+                "supports_accent": provider_supports_accent("openai"),
                 "voices": [v.to_dict() for v in _OPENAI_REALTIME_VOICES],
                 "languages": langs,
             }
@@ -460,6 +475,7 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
                 "provider": prov,
                 "available": True,
                 "requires_secret": "",
+                "supports_accent": provider_supports_accent(prov),
                 "voices": [v.to_dict() for v in _realtime_voices_for(mid)],
                 "languages": langs,
             }
@@ -548,6 +564,7 @@ def _tts(sources: dict[str, object]) -> list[dict[str, object]]:
             "provider": provider,
             "available": available,
             "requires_secret": requires,
+            "supports_accent": provider_supports_accent(provider),
             "voices": [v.to_dict() for v in _tts_voices(m)],
             "languages": langs,
         })
@@ -678,12 +695,17 @@ class RuntimeVoices:
     TTS provider segment like ``fishaudio``); ``voices`` are its selectable
     voices; ``current`` is the voice the session is running (``None`` only when
     the set is empty); ``hot_swap`` is True only on Gemini Live realtime, the one
-    stack that can change voice mid-call."""
+    stack that can change voice mid-call; ``supports_accent`` is True only when
+    the active provider honours a free-text ACCENT instruction
+    (``provider_supports_accent``) — the agent routes ``ayma_voice_accent`` to
+    this session only then, and ``set_voice_preference`` reads it to tell the user
+    when this model cannot change accent (§13.9)."""
 
     provider: str
     voices: tuple[Voice, ...]
     current: Voice | None
     hot_swap: bool
+    supports_accent: bool
 
 
 def _match_current(voice_list: list[Voice], voice_id: str) -> Voice | None:
@@ -733,7 +755,33 @@ def runtime_voices(
         voices=tuple(voice_list),
         current=_match_current(voice_list, current_voice_id),
         hot_swap=hot_swap,
+        supports_accent=provider_supports_accent(provider),
     )
+
+
+def accent_supported(prof: dict) -> bool:
+    """Whether the stack a user's SAVED preference (``prof`` = their
+    ``profile/main`` dict) resolves to honours a free-text accent. Used by the
+    text-chat ``set_voice_preference`` path, where there is no live session to
+    read the active provider from: the next voice call uses the saved stack, so
+    its capability is the honest answer. Mirrors the ``/voice/engines`` default
+    resolution — empty fields fall back to the catalog default — and funnels
+    through the one :func:`runtime_voices` resolver, so it can never disagree with
+    the agent's boot-time routing."""
+    import schema
+
+    default = default_selection()
+    mode = str(prof.get(schema.PF_AYMA_VOICE_MODE, "")).strip() or default["mode"]
+    if mode == MODE_REALTIME:
+        realtime_id = (
+            str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
+            or default["realtime_model_id"]
+        )
+        return runtime_voices(
+            mode=MODE_REALTIME, realtime_model_id=realtime_id
+        ).supports_accent
+    tts_id = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip() or default["tts_id"]
+    return runtime_voices(mode=MODE_CASCADE, tts_id=tts_id).supports_accent
 
 
 # Gender synonyms for resolving a free-text voice request within a provider set

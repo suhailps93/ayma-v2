@@ -65,8 +65,9 @@ New env, all read via `config.py`:
 * `VOICE_CREDITED_PROVIDERS` (CSV, lowercase; default `inworld,deepgram,fishaudio,assemblyai,rime,gradium,google`) — the provider segments the project has LiveKit Inference credits for. On the fallback path a cascade option whose provider is in this set is shown enabled; any other is shown disabled ("needs LiveKit credits"). Ignored when the live catalog is populated.
 * `VOICE_CASCADE_EXTRA_BRAINS` (CSV of `id|route|model`) — extra cascade brains beyond the built-in Meta Muse + LiveKit LLMs.
 * `VOICE_TTS_VOICES_<PROVIDER>` (CSV of `id` or `id|Label|gender`) — override a TTS provider's documented fallback voice list.
+* `VOICE_ACCENT_CAPABLE_PROVIDERS` (CSV, lowercase; default `gemini,openai`) — provider segments whose voice honours the free-text **Accent** field (`ayma_voice_accent`, the "Ayma's models" accent box) at session boot. The instruction-driven native-audio realtime models (Gemini Live, OpenAI Realtime) take the accent in their instruction/style text; the fixed-voice cascade TTS providers are **not** listed and ignore it gracefully. One source of truth for `voice_catalog.provider_supports_accent` — the agent routes the accent only to capable providers (`agent._accent_block` → `prompts/voice_accent.md`), each catalog entry exposes `supports_accent`, and `set_voice_preference` tells the user to switch to an accent-capable model when the active one cannot change accent. Add a style-controllable TTS here once it genuinely honours an accent description. Detail: `docs/META_PROVIDER.md`, ARCHITECTURE §13.9.
 
-Meta is **never** a realtime option (it serves no realtime audio API) — only a cascade brain. The LOCKED Gemini model ids are never edited; the selection only chooses provider/model/voice/language.
+Meta is **never** a realtime option (it serves no realtime audio API) — only a cascade brain. The LOCKED Gemini model ids are never edited; the selection only chooses provider/model/voice/language/accent.
 
 ## Flip, inspect, roll back
 

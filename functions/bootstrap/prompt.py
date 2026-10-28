@@ -50,6 +50,7 @@ _PRACTICE_GREETING_PATH = _DIR / "prompts" / "practice_greeting.md"
 _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
+_VOICE_ACCENT_PATH = _DIR / "prompts" / "voice_accent.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 _VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
 _VOICE_VOCAB_PATH = _DIR / "prompts" / "voice_vocab.md"
@@ -271,6 +272,19 @@ def voice_language_directive(preference: str) -> str:
     lever there."""
     return _VOICE_LANGUAGE_PATH.read_text(encoding="utf-8").strip().replace(
         "{language}", preference.strip() or "English"
+    )
+
+
+def voice_accent_directive(accent: str) -> str:
+    """The voice-call ACCENT section appended to the session instructions
+    (``prompts/voice_accent.md``), fed ONLY to an accent-capable provider at
+    session boot (Gemini Live / OpenAI Realtime — ``voice_catalog.
+    provider_supports_accent``). It tells the model to speak in the user's saved
+    ``ayma_voice_accent`` from the first word and hold it for the whole call, so
+    the voice never reverts to the provider's default accent. Callers must not
+    pass this to a fixed-voice provider (the agent routes it per capability)."""
+    return _VOICE_ACCENT_PATH.read_text(encoding="utf-8").strip().replace(
+        "{accent}", accent.strip()
     )
 
 

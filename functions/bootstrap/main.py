@@ -225,6 +225,25 @@ def _ayma_voice_language(uid: str) -> str:
         return ""
 
 
+def _ayma_voice_accent(uid: str) -> str:
+    """The user's dedicated ACCENT instruction — free text like "southern
+    American accent" or "Indian who's been in America a while", set on the
+    "Ayma's models" screen or by ``set_voice_preference``. Separate from
+    ``ayma_voice_language`` (WHICH language): this is HOW Ayma sounds. "" = the
+    provider's default accent. Only accent-capable providers honour it
+    (``voice_catalog.provider_supports_accent``)."""
+    try:
+        import voices
+
+        snap = schema.profile_doc(get_db(), uid).get()
+        return str(
+            (snap.to_dict() or {}).get(voices.PF_AYMA_VOICE_ACCENT, "")
+        ).strip()[:200]
+    except Exception:  # noqa: BLE001
+        logger.exception("could not read ayma_voice_accent for %s", uid)
+        return ""
+
+
 def _voice_engine_seed(uid: str) -> dict[str, str]:
     """Resolve the user's MAIN-voice stack preference (§13.9) into the seed the
     agent worker needs: the mode (``""`` = deploy default), the realtime model
@@ -241,6 +260,7 @@ def _voice_engine_seed(uid: str) -> dict[str, str]:
         "tts_id": "",
         "voice_name": _ayma_voice_name(uid),
         "voice_language": _ayma_voice_language(uid),
+        "voice_accent": _ayma_voice_accent(uid),
         "tts_voice": "",
     }
     try:
@@ -777,6 +797,7 @@ async def bootstrap(
                 build_room_seed(
                     system_prompt, turns, uid, session_id, voice_name,
                     voice_language=voice_language,
+                    voice_accent=engine_seed["voice_accent"],
                     voice_mode=engine_seed["voice_mode"],
                     realtime_model_id=engine_seed["realtime_model_id"],
                     brain_id=engine_seed["brain_id"],
@@ -5287,6 +5308,7 @@ async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
         voice_id = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip()
     lang_text = str(prof.get(_voices.PF_AYMA_VOICE_LANGUAGE, "")).strip()
     lang_code = (_voices.bcp47_hint(lang_text) or "") if lang_text else ""
+    accent_text = str(prof.get(_voices.PF_AYMA_VOICE_ACCENT, "")).strip()
     return {
         **cat,
         "current": {
@@ -5297,6 +5319,10 @@ async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
             "tts_id": tts_id,
             "voice_id": voice_id,
             "language_code": lang_code if voice_catalog.is_valid_language(lang_code) else "",
+            # Dedicated free-text ACCENT (§13.9), separate from the language
+            # selector above — HOW Ayma sounds, honoured only by accent-capable
+            # providers (each catalog entry carries ``supports_accent``).
+            "accent": accent_text,
         },
     }
 
@@ -5309,6 +5335,10 @@ class VoicePreferenceBody(BaseModel):
     tts_id: str = Field(default="", max_length=128)
     voice_id: str = Field(default="", max_length=128)
     language_code: str = Field(default="", max_length=32)
+    # Dedicated free-text ACCENT (§13.9) — HOW Ayma sounds, separate from the
+    # language selector. Honoured only by accent-capable providers; saved
+    # verbatim and routed at session boot (``agent._accent_block``).
+    accent: str = Field(default="", max_length=200)
 
 
 @app.post("/voice/preference")
@@ -5334,6 +5364,10 @@ async def set_voice_preference_endpoint(
     payload: dict[str, object] = {
         schema.PF_AYMA_VOICE_MODE: mode,
         _voices.PF_AYMA_VOICE_LANGUAGE: voice_catalog.language_label(body.language_code),
+        # Dedicated free-text ACCENT (§13.9), saved verbatim. It applies only on
+        # an accent-capable provider at the next call; a fixed-voice stack keeps
+        # the saved text but ignores it (``agent._accent_block``).
+        _voices.PF_AYMA_VOICE_ACCENT: body.accent.strip()[:200],
         "updated_at": firestore.SERVER_TIMESTAMP,
     }
     if mode == voice_catalog.MODE_REALTIME:
@@ -5383,6 +5417,7 @@ async def set_voice_preference_endpoint(
             "tts_id": body.tts_id.strip(),
             "voice_id": voice_id,
             "language_code": body.language_code,
+            "accent": body.accent.strip()[:200],
         },
     }
 

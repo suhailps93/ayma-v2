@@ -75,6 +75,7 @@ def build_room_seed(
     session_id: str,
     voice_name: str = "",
     voice_language: str = "",
+    voice_accent: str = "",
     greeting_instructions: str = "",
     practice: bool = False,
     persona_name: str = "",
@@ -111,6 +112,9 @@ def build_room_seed(
             "session_id": session_id,
             "voice_name": voice_name,
             "voice_language": voice_language,
+            # Dedicated free-text ACCENT (``ayma_voice_accent``, §13.9): fed to an
+            # accent-capable provider at session boot (``agent._accent_block``).
+            "voice_accent": voice_accent,
             # Per-user MAIN-voice STACK selection (§13.9). Empty ``voice_mode`` =
             # use the deploy-time CONFIG.llm_provider_voice_main default; set it
             # ("realtime"/"cascade") and the component ids override it for this

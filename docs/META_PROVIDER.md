@@ -277,6 +277,35 @@ ids stay in `config.py`/`voice_catalog._TTS_FALLBACK_VOICES` (AGENTS.md: none in
 `agent.py`). The text `/chat` `set_voice_preference` has no live session and keeps
 its preset-default resolution.
 
+**Free-text accent (`ayma_voice_accent`, founder 2026-10-27).** A dedicated
+free-text Accent field on "Ayma's models" (separate from the language selector)
+saves *how* Ayma sounds ("southern American accent", "California accent") to
+`ayma_voice_accent`. At session boot the agent routes it only to an
+**accent-capable** provider — `voice_catalog.provider_supports_accent`, the ONE
+source of truth, driven by `CONFIG.voice_accent_capable_providers` (`gemini,openai`
+by default: the instruction-driven native-audio realtime models). On those,
+`agent._accent_block` appends `prompt.voice_accent_directive`
+(`prompts/voice_accent.md`) to the session instructions so Gemini Live / OpenAI
+Realtime speak the accent from the first word and never revert; it is folded into
+the base prompt the Gemini hot-swapper reuses, so a mid-call voice swap keeps it.
+The Meta cascade's fixed-voice TTS providers report `supports_accent:false`, so the
+accent is **not** passed to them (ignored gracefully — no crash, no effect). When
+a user asks to change accent on such a model, `set_voice_preference` (new `accent`
+param) says this voice can't change its accent and to switch to an accent-capable
+model in "Ayma's models", and saves nothing; on an accent-capable model it persists
+the accent for the next session boot. `RuntimeVoices.supports_accent` carries the
+flag for `bind_stack`; the text `/chat` path gates on the saved stack
+(`voice_catalog.accent_supported`).
+
+**Cascade cold-start (fixed 2026-10-27).** A fresh Meta-cascade call used to answer
+a *trailing* user turn seeded from the previous conversation's persisted history —
+already handled — the moment it connected, before the caller spoke (Gemini Live
+does not). `agent._cascade_seed_chat_ctx` now drops any trailing run of user turns
+from the cascade's seeded `chat_ctx` at start (the whole seed is prior-session
+history; new turns arrive live via STT), so the cascade greets via the normal
+opener and waits for real input. All prior context is kept, the full window is
+still persisted, and the Gemini path is unchanged.
+
 **How to flip (MAIN voice to Meta):**
 
 ```

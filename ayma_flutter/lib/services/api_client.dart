@@ -4671,6 +4671,7 @@ class RealtimeModel {
     this.provider = '',
     this.available = true,
     this.requiresSecret = '',
+    this.supportsAccent = false,
     this.voices = const [],
     this.languages = const [],
   });
@@ -4679,6 +4680,9 @@ class RealtimeModel {
   final String provider;
   final bool available;
   final String requiresSecret;
+
+  /// Whether this model honours a free-text accent (§13.9).
+  final bool supportsAccent;
   final List<CatalogVoice> voices;
   final List<CatalogLanguage> languages;
 
@@ -4688,6 +4692,7 @@ class RealtimeModel {
         provider: m['provider'] as String? ?? '',
         available: m['available'] as bool? ?? true,
         requiresSecret: m['requires_secret'] as String? ?? '',
+        supportsAccent: m['supports_accent'] as bool? ?? false,
         voices: ((m['voices'] as List?) ?? const [])
             .map((e) => CatalogVoice.fromMap(e as Map))
             .toList(),
@@ -4705,6 +4710,7 @@ class VoiceComponent {
     this.provider = '',
     this.available = true,
     this.requiresSecret = '',
+    this.supportsAccent = false,
     this.voices = const [],
     this.languages = const [],
   });
@@ -4713,6 +4719,10 @@ class VoiceComponent {
   final String provider;
   final bool available;
   final String requiresSecret;
+
+  /// Whether this component's provider honours a free-text accent (TTS only;
+  /// §13.9). Fixed-voice cascade TTS providers report false.
+  final bool supportsAccent;
   final List<CatalogVoice> voices;
   final List<CatalogLanguage> languages;
 
@@ -4722,6 +4732,7 @@ class VoiceComponent {
         provider: m['provider'] as String? ?? '',
         available: m['available'] as bool? ?? true,
         requiresSecret: m['requires_secret'] as String? ?? '',
+        supportsAccent: m['supports_accent'] as bool? ?? false,
         voices: ((m['voices'] as List?) ?? const [])
             .map((e) => CatalogVoice.fromMap(e as Map))
             .toList(),
@@ -4741,6 +4752,7 @@ class VoiceSelection {
     this.ttsId = '',
     this.voiceId = '',
     this.languageCode = '',
+    this.accent = '',
   });
   final String mode; // 'realtime' | 'cascade'
   final String realtimeModelId;
@@ -4750,6 +4762,10 @@ class VoiceSelection {
   final String voiceId;
   final String languageCode;
 
+  /// Dedicated free-text ACCENT (§13.9) — HOW Ayma sounds, separate from the
+  /// language selector. Honoured only by accent-capable voice models.
+  final String accent;
+
   factory VoiceSelection.fromMap(Map m) => VoiceSelection(
         mode: m['mode'] as String? ?? 'realtime',
         realtimeModelId: m['realtime_model_id'] as String? ?? '',
@@ -4758,6 +4774,7 @@ class VoiceSelection {
         ttsId: m['tts_id'] as String? ?? '',
         voiceId: m['voice_id'] as String? ?? '',
         languageCode: m['language_code'] as String? ?? '',
+        accent: m['accent'] as String? ?? '',
       );
 
   Map<String, dynamic> toMap() => {
@@ -4768,6 +4785,7 @@ class VoiceSelection {
         'tts_id': ttsId,
         'voice_id': voiceId,
         'language_code': languageCode,
+        'accent': accent,
       };
 
   VoiceSelection copyWith({
@@ -4778,6 +4796,7 @@ class VoiceSelection {
     String? ttsId,
     String? voiceId,
     String? languageCode,
+    String? accent,
   }) =>
       VoiceSelection(
         mode: mode ?? this.mode,
@@ -4787,6 +4806,7 @@ class VoiceSelection {
         ttsId: ttsId ?? this.ttsId,
         voiceId: voiceId ?? this.voiceId,
         languageCode: languageCode ?? this.languageCode,
+        accent: accent ?? this.accent,
       );
 }
 

@@ -117,3 +117,108 @@ def test_bcp47_hint_maps_free_text_to_a_code():
     assert voices.bcp47_hint("en-AU") == "en-AU"  # already a tag
     assert voices.bcp47_hint("") is None
     assert voices.bcp47_hint("something unrecognisable") is None
+
+
+# --- dedicated free-text ACCENT + accent-switch messaging (§13.9) ------------
+import voice_catalog  # noqa: E402
+from skills import set_voice_preference as svp  # noqa: E402
+
+
+class _ProfChain(_Chain):
+    """``_Chain`` that also answers ``.get()`` with a fixed saved profile, for the
+    text-chat accent gate (which reads the saved stack)."""
+
+    def __init__(self, profile=None):
+        super().__init__()
+        self._profile = profile or {}
+
+    def get(self):
+        chain = self
+
+        class _Snap:
+            def to_dict(self):
+                return dict(chain._profile)
+
+        return _Snap()
+
+
+def _rv_gemini():
+    return voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_REALTIME,
+        realtime_model_id=voice_catalog.REALTIME_GEMINI,
+    )
+
+
+def _rv_fish():
+    return voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_CASCADE, tts_id="fishaudio/s2.1-pro",
+    )
+
+
+def test_accent_persists_on_an_accent_capable_live_model():
+    db = _Chain()
+    msg = svp.bind_live(db, "u1", lambda *_: (False, "ok"))(
+        accent="a southern American accent"
+    )
+    assert db.written[voices.PF_AYMA_VOICE_ACCENT] == "a southern American accent"
+    assert "southern American accent" in msg
+    assert "can't change its accent" not in msg
+
+
+def test_accent_switch_on_fixed_voice_stack_tells_user_to_switch_models():
+    db = _Chain()
+    msg = svp.bind_stack(db, "u1", _rv_fish())(accent="a California accent")
+    # Nothing saved — the model can't do it, so we don't pretend it worked.
+    assert voices.PF_AYMA_VOICE_ACCENT not in db.written
+    assert "can't change its accent" in msg
+    assert "Ayma" in msg  # points at the "Ayma's models" screen
+
+
+def test_accent_persists_on_an_accent_capable_cascade_when_configured(monkeypatch):
+    # If a cascade TTS provider is ever marked accent-capable, the accent saves.
+    import dataclasses
+    monkeypatch.setattr(voice_catalog, "CONFIG", dataclasses.replace(
+        voice_catalog.CONFIG,
+        voice_accent_capable_providers=("gemini", "openai", "fishaudio"),
+    ))
+    db = _Chain()
+    msg = svp.bind_stack(db, "u1", _rv_fish())(accent="a British accent")
+    assert db.written[voices.PF_AYMA_VOICE_ACCENT] == "a British accent"
+    assert "British accent" in msg
+
+
+def test_text_chat_accent_gated_by_saved_stack():
+    import schema
+    # Saved fixed-voice cascade -> not supported, nothing saved.
+    db = _ProfChain({
+        schema.PF_AYMA_VOICE_MODE: voice_catalog.MODE_CASCADE,
+        schema.PF_AYMA_CASCADE_TTS: "fishaudio/s2.1-pro",
+    })
+    msg = db and svp._bind(db, "u1")(accent="an internet accent")
+    assert voices.PF_AYMA_VOICE_ACCENT not in db.written
+    assert "can't change its accent" in msg
+    # Saved Gemini Live realtime -> supported, saved.
+    db2 = _ProfChain({
+        schema.PF_AYMA_VOICE_MODE: voice_catalog.MODE_REALTIME,
+        schema.PF_AYMA_REALTIME_MODEL: voice_catalog.REALTIME_GEMINI,
+    })
+    svp._bind(db2, "u1")(accent="an internet accent")
+    assert db2.written[voices.PF_AYMA_VOICE_ACCENT] == "an internet accent"
+
+
+def test_accent_and_voice_change_combine_in_one_reply():
+    db = _Chain()
+    msg = svp.bind_live(db, "u1", lambda *_: (False, "voice set"))(
+        request="a deeper voice", accent="a British accent"
+    )
+    assert "British accent" in msg and "voice set" in msg
+    assert db.written[voices.PF_AYMA_VOICE_ACCENT] == "a British accent"
+
+
+def test_language_param_unchanged_by_accent_work():
+    # The separate LANGUAGE field is untouched: it still saves verbatim and does
+    # not land in the accent field.
+    db = _Chain()
+    svp._bind(db, "u1")(accent_language="Malayalam mixed with English")
+    assert db.written[voices.PF_AYMA_VOICE_LANGUAGE] == "Malayalam mixed with English"
+    assert voices.PF_AYMA_VOICE_ACCENT not in db.written

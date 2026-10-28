@@ -3012,3 +3012,134 @@ def test_main_cascade_runtime_error_falls_back_to_gemini(monkeypatch):
 
     asyncio.run(_drive(CloseReason.ERROR))
     assert started == ["google_live"]
+
+
+# --- boot-time accent routing (§13.9) ----------------------------------------
+def _rv(mode, **kw):
+    import voice_catalog
+    return voice_catalog.runtime_voices(mode=mode, **kw)
+
+
+def test_accent_block_only_for_accent_capable_provider():
+    import voice_catalog
+    gemini = _rv(voice_catalog.MODE_REALTIME,
+                 realtime_model_id=voice_catalog.REALTIME_GEMINI)
+    block = agent._accent_block(gemini, "a southern American accent")
+    assert "southern American accent" in block  # routed into the instruction
+
+    fish = _rv(voice_catalog.MODE_CASCADE, tts_id="fishaudio/s2.1-pro")
+    # Fixed-voice cascade: accent is NOT routed (ignored gracefully, no effect).
+    assert agent._accent_block(fish, "a southern American accent") == ""
+    # Empty accent -> nothing, even on an accent-capable provider.
+    assert agent._accent_block(gemini, "") == ""
+
+
+def test_gemini_session_instructions_carry_accent_cascade_does_not(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_token_usage", "relay_cascade_usage", "watch_for_idle",
+                 "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+    async def _fake_open(*_a, **_k):
+        pass
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    monkeypatch.setattr(agent, "build_realtime_model", lambda *a, **k: object())
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    class _Sess:
+        def __init__(self):
+            self._h = {}
+
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    # Gemini realtime path (llm=None) with a saved accent -> accent in the prompt.
+    monkeypatch.setattr(agent, "AgentSession", lambda **k: _Sess())
+    seed = agent.RoomSeed(system_prompt="SYS", uid="u1", session_id="s1",
+                          voice_accent="a southern American accent")
+    asyncio.run(agent._start_main_gemini_session(
+        _practice_ctx(), seed, flush=_FakeFlush(), window=[], route="vertex",
+        use_inference=False, voice_provider="p"))
+    assert "a southern American accent" in captured["instructions"]
+
+    # Cascade (fishaudio TTS) with the same saved accent -> NOT in the prompt.
+    captured.clear()
+    seed_c = agent.RoomSeed(system_prompt="SYS", uid="u1", session_id="s1",
+                            voice_accent="a southern American accent",
+                            tts_id="fishaudio/s2.1-pro")
+    asyncio.run(agent._start_main_cascade_session(
+        _practice_ctx(), seed_c, _Sess(), flush=_FakeFlush(), window=[]))
+    assert "a southern American accent" not in captured["instructions"]
+
+
+# --- cascade must not act on a stale seeded user turn (founder bug 2026-10-27)-
+def _ctx_with(*turns):
+    from livekit.agents import llm
+    c = llm.ChatContext.empty()
+    for role, text in turns:
+        c.add_message(role=role, content=text)
+    return c
+
+
+def test_cascade_seed_chat_ctx_drops_trailing_user_turns():
+    ctx = _ctx_with(("user", "earlier"), ("assistant", "reply"),
+                    ("user", "stale tail"))
+    out = agent._cascade_seed_chat_ctx(ctx)
+    roles = [getattr(i, "role", None) for i in out.items]
+    assert roles == ["user", "assistant"]  # trailing stale user turn removed
+    # A context already ending in assistant is returned unchanged.
+    ok = _ctx_with(("user", "hi"), ("assistant", "yo"))
+    assert agent._cascade_seed_chat_ctx(ok) is ok
+    assert agent._cascade_seed_chat_ctx(None) is None
+
+
+def test_cascade_start_does_not_seed_a_trailing_stale_user_turn(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_cascade_usage", "watch_for_idle", "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+    opened: dict = {}
+
+    async def _fake_open(*_a, **_k):
+        opened["via_opener"] = True
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+
+    class _Sess:
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    seed = agent.RoomSeed(
+        system_prompt="SYS", uid="u1", session_id="s1",
+        chat_ctx=_ctx_with(("assistant", "prev reply"), ("user", "stale tail")),
+    )
+    asyncio.run(agent._start_main_cascade_session(
+        _practice_ctx(), seed, _Sess(), flush=_FakeFlush(), window=[]))
+    # The cascade is seeded WITHOUT the trailing stale user turn, so the pipeline
+    # cannot answer it on connect; the call opens via the normal opener instead.
+    seeded = captured["chat_ctx"]
+    assert [getattr(i, "role", None) for i in seeded.items] == ["assistant"]
+    assert opened.get("via_opener") is True

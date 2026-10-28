@@ -83,6 +83,7 @@ from prompt import (  # noqa: E402
     compose_system_prompt,
     load_practice_greeting,
     load_voice_opener,
+    voice_accent_directive,
     voice_swap_confirm,
     voice_swap_failed,
     voice_swap_note,
@@ -1277,6 +1278,12 @@ class RoomSeed:
     seed_turns: list[Turn] = field(default_factory=list)
     voice_name: str = ""
     voice_language: str = ""
+    # The user's dedicated free-text ACCENT (``ayma_voice_accent``, §13.9) — HOW
+    # Ayma should sound, separate from ``voice_language`` (WHICH language). Fed
+    # into the session instructions at boot ONLY on an accent-capable provider
+    # (``voice_catalog.provider_supports_accent``); fixed-voice providers ignore
+    # it. Empty = the provider's default accent.
+    voice_accent: str = ""
     # Per-user MAIN-voice STACK selection (§13.9), resolved in
     # ``main._voice_engine_seed`` from the saved preference. ``voice_mode`` empty
     # → use the deploy-time ``CONFIG.llm_provider_voice_main`` default (unchanged
@@ -1469,6 +1476,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         seed_turns=turns,
         voice_name=str(seed.get("voice_name", "")),
         voice_language=str(seed.get("voice_language", "")),
+        voice_accent=str(seed.get("voice_accent", "")),
         voice_mode=str(seed.get("voice_mode", "")),
         realtime_model_id=str(seed.get("realtime_model_id", "")),
         brain_id=str(seed.get("brain_id", "")),
@@ -2150,6 +2158,53 @@ def _voice_vocab(
     return rv, directive
 
 
+def _accent_block(rv, accent: str) -> str:
+    """The boot-time ACCENT instruction for this session, or ``""`` (§13.9).
+
+    Routed ONLY to an accent-capable provider (``rv.supports_accent`` — Gemini
+    Live / OpenAI Realtime): the saved ``ayma_voice_accent`` becomes a style
+    instruction so the voice speaks that way from the first word and never
+    reverts to the provider's default accent. A fixed-voice provider (every
+    cascade TTS here) gets ``""`` and ignores the accent gracefully — nothing is
+    passed to it, so there is no crash and no wrong-accent effect."""
+    accent = (accent or "").strip()
+    if not accent or rv is None or not rv.supports_accent:
+        return ""
+    return voice_accent_directive(accent)
+
+
+def _compose_instructions(system_prompt: str, accent_block: str, vocab: str) -> str:
+    """The session instructions: the composed system prompt, then the boot-time
+    accent block (when the provider supports accent), then the stack-aware voice
+    vocabulary — skipping any empty part."""
+    return "\n\n".join(p for p in (system_prompt, accent_block, vocab) if p)
+
+
+def _cascade_seed_chat_ctx(chat_ctx):
+    """The seeded history for a MAIN cascade session, with any trailing run of
+    USER turns dropped (founder bug, 2026-10-27).
+
+    At session start the whole seeded ``chat_ctx`` is prior-session history
+    (``/bootstrap``'s ``recent_turns``) — every genuinely new turn arrives live
+    through STT, never through the seed. On the Meta cascade, a trailing
+    *unanswered* user message left in the model's context makes the pipeline
+    answer that STALE turn (or fire a tool on it) the instant the call connects,
+    before the caller says anything — the exact bug reported. Gemini Live does
+    not (its realtime context only replies on server-side turn detection), so its
+    path keeps the full history unchanged. Dropping only the trailing user
+    message(s) for the cascade leaves all prior context intact (and the full
+    window is still persisted / summarised), so the cascade now greets via the
+    normal opener and waits for real input instead of acting on history."""
+    if chat_ctx is None:
+        return None
+    items = list(chat_ctx.items)
+    while items and getattr(items[-1], "role", None) == "user":
+        items.pop()
+    if len(items) == len(chat_ctx.items):
+        return chat_ctx
+    return llm.ChatContext(items)
+
+
 async def _start_main_gemini_session(
     ctx: JobContext,
     seed: RoomSeed,
@@ -2220,7 +2275,15 @@ async def _start_main_gemini_session(
         realtime_model_id=realtime_model_id,
         current_voice_id=current_voice_id,
     )
-    _instructions = f"{seed.system_prompt}\n\n{vocab}"
+    # Boot-time accent (§13.9): fed into the instructions only on an accent-capable
+    # realtime provider (Gemini Live / OpenAI Realtime). Folded into the base
+    # prompt the hot-swapper reuses too, so a mid-call voice swap keeps the accent
+    # instead of rebuilding without it.
+    accent_block = _accent_block(rv, seed.voice_accent)
+    base_prompt = (
+        f"{seed.system_prompt}\n\n{accent_block}" if accent_block else seed.system_prompt
+    )
+    _instructions = _compose_instructions(seed.system_prompt, accent_block, vocab)
     # Mid-call voice hot-swap (``VoiceSwapper``) only rebuilds Gemini Live, so it
     # is wired only on the Gemini path; a non-Gemini realtime model
     # (``enable_hot_swap=False``) just saves the preference for the next call,
@@ -2228,7 +2291,7 @@ async def _start_main_gemini_session(
     swapper = (
         VoiceSwapper(
             session,
-            system_prompt=seed.system_prompt,
+            system_prompt=base_prompt,
             route=route,
             voice_name=seed.voice_name,
             voice_language=seed.voice_language,
@@ -2317,6 +2380,11 @@ async def _start_main_cascade_session(
         tts_id=tts_id,
         current_voice_id=current_voice_id,
     )
+    # Boot-time accent (§13.9): on the cascade this is normally "" — the TTS
+    # providers here ship fixed voices (``rv.supports_accent`` False), so the
+    # accent is not routed to them and the voice is unaffected. Honoured only if
+    # a cascade TTS is ever marked accent-capable in config.
+    accent_block = _accent_block(rv, seed.voice_accent)
     tools = _session_tools(
         ctx,
         seed.uid,
@@ -2329,10 +2397,15 @@ async def _start_main_cascade_session(
         window=window,
     )
     agent_kwargs: dict = {
-        "instructions": f"{seed.system_prompt}\n\n{vocab}", "tools": tools
+        "instructions": _compose_instructions(seed.system_prompt, accent_block, vocab),
+        "tools": tools,
     }
-    if seed.chat_ctx is not None:
-        agent_kwargs["chat_ctx"] = seed.chat_ctx
+    # A trailing stale user turn in the seeded history is dropped here so the
+    # cascade greets/waits (like Gemini Live) instead of immediately answering a
+    # message from the previous conversation (founder bug, 2026-10-27).
+    cascade_ctx = _cascade_seed_chat_ctx(seed.chat_ctx)
+    if cascade_ctx is not None:
+        agent_kwargs["chat_ctx"] = cascade_ctx
     agent = Agent(**agent_kwargs)
     await session.start(
         agent=agent,

@@ -21,6 +21,7 @@ Map<String, dynamic> _catalog() => {
           'provider': 'gemini',
           'available': true,
           'requires_secret': '',
+          'supports_accent': true,
           'voices': [
             {'id': 'Aoede', 'label': 'Aoede', 'description': 'warm'},
             {'id': 'Charon', 'label': 'Charon', 'description': 'deep'},
@@ -57,6 +58,7 @@ Map<String, dynamic> _catalog() => {
           'label': 'inworld/inworld-tts-1',
           'provider': 'inworld',
           'available': true,
+          'supports_accent': false,
           'voices': [
             {'id': '', 'label': 'Default voice'},
             {'id': 'Ashley', 'label': 'Ashley', 'description': 'bright'},
@@ -82,6 +84,7 @@ Map<String, dynamic> _catalog() => {
         'tts_id': 'inworld/inworld-tts-1',
         'voice_id': 'Aoede',
         'language_code': '',
+        'accent': '',
       },
     };
 
@@ -160,5 +163,39 @@ void main() {
     await tester.tap(find.byType(DropdownButton<String>).at(1)); // realtime model
     await tester.pumpAndSettle();
     expect(find.text('OpenAI Realtime (needs OPENAI_API_KEY)'), findsWidgets);
+  });
+
+  testWidgets('the free-text accent is typed and posted to /voice/preference',
+      (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    // Gemini Live is active and accent-capable: the supportive note shows.
+    expect(find.textContaining('from the first word'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('voice-accent-field')),
+      'a southern American accent',
+    );
+    await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
+    await tester.pumpAndSettle();
+
+    expect(_posted, hasLength(1));
+    expect(_posted.first['accent'], 'a southern American accent');
+  });
+
+  testWidgets('a fixed-voice cascade TTS shows the switch-models accent note',
+      (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    // Switch to cascade (inworld TTS = fixed voices, no accent).
+    await tester.tap(find.byType(DropdownButton<String>).first); // mode
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('one fixed accent'), findsOneWidget);
+    expect(find.byKey(const ValueKey('voice-accent-field')), findsOneWidget);
   });
 }

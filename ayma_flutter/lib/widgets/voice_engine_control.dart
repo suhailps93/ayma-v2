@@ -41,10 +41,20 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   String? _error;
   bool _saving = false;
 
+  // Free-text ACCENT field (§13.9). Its own controller so typing keeps the
+  // caret; the selection's `accent` is the source of truth on save.
+  final TextEditingController _accentCtrl = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _accentCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -54,10 +64,21 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       setState(() {
         _cat = cat;
         _sel = _normalize(cat, cat.current);
+        _accentCtrl.text = _sel!.accent;
       });
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
+  }
+
+  /// Whether the active component (realtime model, or the cascade TTS) honours a
+  /// free-text accent (§13.9). Drives the accent field's helper note.
+  bool _activeSupportsAccent() {
+    final cat = _cat!, sel = _sel!;
+    if (sel.mode == 'realtime') {
+      return cat.realtimeById(sel.realtimeModelId)?.supportsAccent ?? false;
+    }
+    return cat.ttsById(sel.ttsId)?.supportsAccent ?? false;
   }
 
   /// Fill any missing component ids from the catalog defaults so the dropdowns
@@ -278,7 +299,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
               : (v) => setState(() => _sel = sel.copyWith(voiceId: v)),
         ),
         const SizedBox(height: 12),
-        _label(ac, 'LANGUAGE & ACCENT'),
+        _label(ac, 'LANGUAGE'),
         _dropdown<String>(
           ac,
           value: langs.any((l) => l.code == sel.languageCode)
@@ -291,6 +312,57 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           onChanged: langs.isEmpty
               ? null
               : (v) => setState(() => _sel = sel.copyWith(languageCode: v ?? '')),
+        ),
+        const SizedBox(height: 12),
+        _accentField(ac, sel),
+      ],
+    );
+  }
+
+  /// A dedicated free-text ACCENT box (§13.9): the user types HOW Ayma should
+  /// sound ("southern American accent", "California accent"). Saved as
+  /// `ayma_voice_accent` and used by accent-capable models at the start of every
+  /// call so the accent never reverts to the default. No fixed height — the
+  /// field sizes to its content inside the scrolling list, so it stays matrix-
+  /// safe at text scale 2.0 / with the keyboard up.
+  Widget _accentField(AymaTokens ac, VoiceSelection sel) {
+    final supported = _activeSupportsAccent();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label(ac, 'ACCENT'),
+        TextField(
+          key: const ValueKey('voice-accent-field'),
+          controller: _accentCtrl,
+          enabled: !_saving,
+          minLines: 1,
+          maxLines: 2,
+          maxLength: 200,
+          textInputAction: TextInputAction.done,
+          onChanged: (v) => _sel = sel.copyWith(accent: v),
+          style: AymaType.sans(size: 15, color: ac.fg),
+          decoration: InputDecoration(
+            isDense: true,
+            counterText: '',
+            hintText: 'e.g. southern American accent',
+            hintStyle: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: ac.lineSoft),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: ac.lineSoft),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          supported
+              ? 'Ayma speaks with this accent from the first word of every call.'
+              : 'This model speaks one fixed accent — pick an accent-capable '
+                  'model (like Gemini Live) above to use a custom accent.',
+          style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
       ],
     );

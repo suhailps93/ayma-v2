@@ -105,6 +105,25 @@ LANGUAGE_EXAMPLES = (
     "Australian English",
 )
 
+# The user's saved ACCENT instruction — a dedicated free-text field, separate
+# from the language selector (``ayma_voice_language``) above: HOW Ayma should
+# sound, not WHICH language she speaks. "southern American accent", "California
+# accent", "internet accent", "Indian who's been in America a while". Lives in
+# ``ayma_voice_accent`` on ``profile/main``, set on the "Ayma's models" screen
+# or by ``set_voice_preference``. It is handed to accent-capable providers at
+# session boot (Gemini Live / OpenAI Realtime, via the instruction/style text);
+# providers that ship only fixed voices ignore it (``voice_catalog.
+# provider_supports_accent``). Empty = the provider's default accent.
+PF_AYMA_VOICE_ACCENT = "ayma_voice_accent"
+
+# Placeholder / helper examples for the accent text field.
+ACCENT_EXAMPLES = (
+    "southern American accent",
+    "California accent",
+    "British accent",
+    "Indian who's been in America a while",
+)
+
 _BCP47 = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 
 

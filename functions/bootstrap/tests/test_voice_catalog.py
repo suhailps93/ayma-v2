@@ -189,3 +189,46 @@ def test_configured_models_added_when_missing_from_live(monkeypatch):
     cat = vc.catalog()
     assert "deepgram/nova-3" in [s["id"] for s in cat["stt"]]
     assert "inworld/inworld-tts-1" in [t["id"] for t in cat["tts"]]
+
+
+# --- accent capability (§13.9) ----------------------------------------------
+def test_provider_supports_accent_only_for_instruction_driven_realtime():
+    # Instruction-driven native-audio realtime providers honour a free-text
+    # accent; the fixed-voice cascade TTS providers (and the bare default) do not.
+    assert vc.provider_supports_accent("gemini") is True
+    assert vc.provider_supports_accent("openai") is True
+    assert vc.provider_supports_accent("OpenAI") is True  # case-insensitive
+    for p in ("fishaudio", "inworld", "rime", "gradium", "cartesia", ""):
+        assert vc.provider_supports_accent(p) is False
+
+
+def test_catalog_entries_carry_supports_accent():
+    cat = vc.catalog()
+    gemini = next(m for m in cat["realtime_models"] if m["id"] == vc.REALTIME_GEMINI)
+    assert gemini["supports_accent"] is True
+    # Every cascade TTS (fixed voices) advertises supports_accent False.
+    assert cat["tts"], "expected at least one TTS in the fallback catalog"
+    assert all(t["supports_accent"] is False for t in cat["tts"])
+
+
+def test_runtime_voices_supports_accent_matches_provider():
+    rt = vc.runtime_voices(mode=vc.MODE_REALTIME, realtime_model_id=vc.REALTIME_GEMINI)
+    assert rt.provider == "gemini" and rt.supports_accent is True
+    casc = vc.runtime_voices(mode=vc.MODE_CASCADE, tts_id="fishaudio/s2.1-pro")
+    assert casc.provider == "fishaudio" and casc.supports_accent is False
+
+
+def test_accent_supported_resolves_saved_stack(monkeypatch):
+    import schema
+    # A saved cascade (fixed-voice) stack does not support accent...
+    cascade_prof = {
+        schema.PF_AYMA_VOICE_MODE: vc.MODE_CASCADE,
+        schema.PF_AYMA_CASCADE_TTS: "fishaudio/s2.1-pro",
+    }
+    assert vc.accent_supported(cascade_prof) is False
+    # ...a saved Gemini Live realtime stack does.
+    realtime_prof = {
+        schema.PF_AYMA_VOICE_MODE: vc.MODE_REALTIME,
+        schema.PF_AYMA_REALTIME_MODEL: vc.REALTIME_GEMINI,
+    }
+    assert vc.accent_supported(realtime_prof) is True

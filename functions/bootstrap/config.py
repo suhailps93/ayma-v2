@@ -920,6 +920,19 @@ class Config:
     ``deepgram``, ``fishaudio``, ``assemblyai``, ``rime``, ``gradium``,
     ``google``). ``VOICE_CREDITED_PROVIDERS`` (CSV, lowercase) overrides."""
 
+    voice_accent_capable_providers: tuple[str, ...]
+    """Provider segments whose voice honours a free-text ACCENT instruction
+    (``ayma_voice_accent``) at session boot. The instruction-driven native-audio
+    realtime models take an accent in their style/instruction text, so ``gemini``
+    and ``openai`` are accent-capable by default. Cascade TTS providers here ship
+    only fixed voices, so they are NOT listed and ignore the accent gracefully;
+    add one (e.g. a style-controllable TTS) here when it genuinely honours an
+    accent description. The single source of truth for
+    ``voice_catalog.provider_supports_accent``, which the agent uses to route
+    the accent only to capable providers and ``set_voice_preference`` uses to
+    tell the user when a model cannot change accent (§13.9). Lowercase.
+    ``VOICE_ACCENT_CAPABLE_PROVIDERS`` (CSV, lowercase) overrides."""
+
 
 def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
     raw = os.getenv(name, default)
@@ -1189,6 +1202,11 @@ def _load() -> Config:
         voice_credited_providers=_csv(
             "VOICE_CREDITED_PROVIDERS",
             "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google",
+            lower=True,
+        ),
+        voice_accent_capable_providers=_csv(
+            "VOICE_ACCENT_CAPABLE_PROVIDERS",
+            "gemini,openai",
             lower=True,
         ),
         dm_viewing_window_seconds=int(
