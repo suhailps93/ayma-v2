@@ -203,6 +203,18 @@ facial/physique analyses, your voice transcripts, or your web-search summary
 unless you have deliberately added that content to your public profile or a
 message.
 
+#### Appearance analysis photos stay private
+
+When you run the **Appearance** analysis (your face and physique report), the
+photos you pick or add for that run are used for **the analysis only**. Adding
+a photo in the analysis sheet uploads it to your own **private** storage and
+feeds it into that one analysis — it does **not** publish the photo to your
+public profile, your photo grid, or any collection other people can see, and
+selecting a photo in that sheet only chooses it for the run (it never posts it
+anywhere). Making an analysis photo public is always a **separate, deliberate**
+action you take in your profile's photo editor. The analysis itself is stored
+privately to your account.
+
 ### Advertising partners (once ads launch)
 
 **When ads launch, advertising partners and ad networks may receive

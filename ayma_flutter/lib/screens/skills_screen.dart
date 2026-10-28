@@ -1,14 +1,19 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
+import '../services/chat_service.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
-import 'my_public_profile_screen.dart';
+import '../widgets/ayma_toast.dart';
 import 'main_shell_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -18,11 +23,12 @@ import '../widgets/ayma_back_button.dart';
 /// physique analysis). The run screen the Profile tab's "Search the web
 /// about me" and "Appearance" rows open when there's no report yet.
 ///
-/// Pressing a skill hands off to the Ayma chat (via [ChatInbox]) and runs there
-/// — no blocking spinner on this screen. For the Appearance skill the
-/// photo-source choice ("use what I have" / "add photos") and a coverage line
-/// (do we have a face photo / a body photo?) are resolved *here*, before
-/// the hand-off, so the chat runs the skill straight away.
+/// The web-search skill hands off to the Ayma chat (via [ChatInbox]) and runs
+/// there. The Appearance skill instead opens a pre-run sheet (Face/Body photo
+/// groups, per-group skip, a private Add-photo tile), then runs the analysis
+/// directly and opens the resulting report in-place — it does NOT open the chat
+/// (§ founder 2026-10-28). Photos added in the sheet are uploaded privately and
+/// folded into that run only; they are never added to the public profile grid.
 class SkillsScreen extends StatefulWidget {
   const SkillsScreen({
     super.key,
@@ -234,49 +240,140 @@ class _AppearanceChoice {
     required this.wantBody,
     this.faceMediaIds,
     this.bodyMediaIds,
+    this.imagePaths = const [],
   });
 
   final bool wantFace;
   final bool wantBody;
   final List<String>? faceMediaIds;
   final List<String>? bodyMediaIds;
+
+  /// Privately-uploaded photos added in the sheet for this run only (storage
+  /// paths under `uploads/{uid}/`). Folded into the vision pass as
+  /// `image_paths` — they are NEVER added to the public profile grid (§ founder
+  /// 2026-10-28 privacy fix).
+  final List<String> imagePaths;
 }
 
 /// Show the Appearance pre-run sheet (the Face/Body photo groups) and, if the
-/// user taps Run, hand a fully-specified [ChatKickoff.appearance] to the Ayma
-/// chat and navigate to the shell. Shared by the Skills-screen Appearance
-/// action and the Appearance report screen's Re-run, so both entry points show
-/// the same grouping and skip/add-photo choices. Never hard-blocks: a skipped
-/// or empty group simply doesn't run.
+/// user taps Run, actually POST the appearance run with the chosen photos and
+/// open the resulting report in-place — it does NOT open the chat (§ founder
+/// 2026-10-28: "Run analysis" must run the analysis and show the report, not
+/// pin a card in chat). Shared by the Skills-screen Appearance action and the
+/// Appearance report screen's Re-run, so both entry points show the same
+/// grouping and skip/add-photo choices. Never hard-blocks: a skipped or empty
+/// group simply doesn't run.
 Future<void> runAppearanceFromPreRunSheet(
-    BuildContext context, ApiClient api) async {
+    BuildContext context, ApiClient api, {
+  ChatService? chatService,
+  Future<List<File>> Function()? pickImages,
+}) async {
   final choice = await showModalBottomSheet<_AppearanceChoice>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => AppearancePreRunSheet(api: api),
+    builder: (_) => AppearancePreRunSheet(
+      api: api,
+      chatService: chatService,
+      pickImages: pickImages,
+    ),
   );
   if (choice == null || !context.mounted) return;
-  ChatInbox.instance.push(ChatKickoff.appearance(
-    wantFace: choice.wantFace,
-    wantBody: choice.wantBody,
-    faceMediaIds: choice.wantFace ? choice.faceMediaIds : null,
-    bodyMediaIds: choice.wantBody ? choice.bodyMediaIds : null,
+  // Both axes skipped / empty: nothing to run. (The Run button is still live,
+  // so guard here rather than silently POSTing an empty run.)
+  if (!choice.wantFace && !choice.wantBody) {
+    AymaToast.show(context, 'Nothing selected to analyse.');
+    return;
+  }
+  // A blocking progress dialog while the run builds the report; dismissed on
+  // success (we navigate to the report) or on failure (we toast).
+  final nav = Navigator.of(context, rootNavigator: true);
+  unawaited(showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const _RunningDialog(),
   ));
-  if (context.mounted) context.go(MainShellScreen.path);
+  try {
+    final result = await api.runAppearanceReport(
+      wantFace: choice.wantFace,
+      wantBody: choice.wantBody,
+      faceMediaIds: choice.wantFace ? choice.faceMediaIds : null,
+      bodyMediaIds: choice.wantBody ? choice.bodyMediaIds : null,
+      imagePaths: choice.imagePaths,
+    );
+    if (nav.canPop()) nav.pop();
+    if (!context.mounted) return;
+    // `report_hub.resolve_owner` maps an appearance id to the caller's own uid,
+    // so `current` always opens the just-produced report; the concrete id is
+    // used when present.
+    final id = result.reportId.isNotEmpty ? result.reportId : 'current';
+    context.push('/appearance/$id');
+  } catch (_) {
+    if (nav.canPop()) nav.pop();
+    if (context.mounted) {
+      AymaToast.show(
+        context,
+        "Couldn't run the analysis. Please try again.",
+        kind: AymaToastKind.error,
+      );
+    }
+  }
+}
+
+/// The blocking "running your analysis" dialog shown while the appearance run
+/// POSTs and builds the report.
+class _RunningDialog extends StatelessWidget {
+  const _RunningDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Dialog(
+      backgroundColor: ac.bgElev,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const AymaOrb(size: 44, state: AymaOrbState.thinking),
+            const SizedBox(height: 16),
+            Text(
+              'Running your analysis…',
+              style: AymaType.sans(size: 14, color: ac.fg),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// The pre-run sheet for the Appearance skill: the current grid photos grouped
 /// into "Face analysis" and "Body analysis" as thumbnails, each group with a
-/// skip toggle, and — for an empty group — a clear "add the missing kind"
-/// prompt that reuses the real add-photo flow (the inline photo carousel on
-/// My public profile, [MyPublicProfileScreen.editPhotosPath]). Running
-/// never forces a photo: a skipped or empty group simply doesn't run, and the
-/// report shows an add-photo prompt for it rather than a bogus 0-score section.
+/// skip toggle and an always-present "Add photo" tile. "Add photo" uploads the
+/// picked image(s) PRIVATELY — to the caller's own `uploads/{uid}/` tree, the
+/// same private channel chat attachments use — and folds them into THIS run
+/// only via `image_paths`. It NEVER adds the photo to the public profile grid
+/// or any public collection (§ founder 2026-10-28 privacy fix). Running never
+/// forces a photo: a skipped or empty group simply doesn't run, and the report
+/// shows an add-photo prompt for it rather than a bogus 0-score section.
 class AppearancePreRunSheet extends StatefulWidget {
-  const AppearancePreRunSheet({super.key, required this.api});
+  const AppearancePreRunSheet({
+    super.key,
+    required this.api,
+    this.chatService,
+    this.pickImages,
+  });
 
   final ApiClient api;
+
+  /// The private upload channel for added photos; injectable for tests.
+  /// Production uploads to `uploads/{uid}/` via [ChatService] (never the grid).
+  final ChatService? chatService;
+
+  /// Picks image files to add; injectable for tests. Production opens the OS
+  /// gallery picker. Returns the picked files (empty when the user cancels).
+  final Future<List<File>> Function()? pickImages;
 
   @override
   State<AppearancePreRunSheet> createState() => AppearancePreRunSheetState();
@@ -287,13 +384,25 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
   bool _loading = true;
   bool _skipFace = false;
   bool _skipBody = false;
+  bool _adding = false;
 
-  /// The photos currently selected for each axis (by `media_id`). Every photo
-  /// in a bucket starts selected; a tap on a tile toggles it — selection is a
+  late final ChatService _chat = widget.chatService ?? ChatService();
+
+  /// The photos currently selected for each axis. Grid photos are keyed by
+  /// `media_id`; privately-added photos are keyed by their `uploads/{uid}/…`
+  /// storage path (stored in [_faceAdded]/[_bodyAdded]). Every photo in a
+  /// bucket starts selected; a tap on a tile toggles it — selection is a
   /// local, in-sheet choice only and never navigates anywhere (§ founder
   /// 2026-10-28). A skipped section runs nothing regardless of its selection.
   final Set<String> _faceSel = <String>{};
   final Set<String> _bodySel = <String>{};
+
+  /// Photos the user added in THIS sheet, uploaded privately (not on the grid).
+  /// Represented as [EligiblePhoto] with `mediaId` = the private storage path,
+  /// so they render in the strip exactly like grid photos but are passed to the
+  /// run as `image_paths`, never as grid `media_id`s.
+  final List<EligiblePhoto> _faceAdded = <EligiblePhoto>[];
+  final List<EligiblePhoto> _bodyAdded = <EligiblePhoto>[];
 
   @override
   void initState() {
@@ -311,9 +420,11 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
     }
   }
 
-  /// Fold a fresh eligibility read in: default every pooled photo to selected,
-  /// but keep any photo the user had already deselected this session so a
-  /// re-read after adding a photo doesn't silently re-check their choices.
+  /// Fold a fresh eligibility read in: default every pooled grid photo to
+  /// selected, but keep any photo the user had already deselected this session
+  /// so a re-read doesn't silently re-check their choices. Privately-added
+  /// photos (keyed by storage path) are preserved untouched — only grid
+  /// `media_id`s are rebuilt here.
   void _applyEligibility(AppearanceEligibility e) {
     final faceIds = {for (final p in e.face) p.mediaId};
     final bodyIds = {for (final p in e.body) p.mediaId};
@@ -325,25 +436,79 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
       for (final p in e.body)
         if (_elig != null && !_bodySel.contains(p.mediaId)) p.mediaId,
     };
+    // Added-photo selections are keyed by storage path, not grid media_id, so
+    // preserve them across the grid rebuild.
+    final faceAddedSel = {
+      for (final p in _faceAdded)
+        if (_faceSel.contains(p.mediaId)) p.mediaId,
+    };
+    final bodyAddedSel = {
+      for (final p in _bodyAdded)
+        if (_bodySel.contains(p.mediaId)) p.mediaId,
+    };
     _faceSel
       ..clear()
-      ..addAll(faceIds.difference(faceDeselected));
+      ..addAll(faceIds.difference(faceDeselected))
+      ..addAll(faceAddedSel);
     _bodySel
       ..clear()
-      ..addAll(bodyIds.difference(bodyDeselected));
+      ..addAll(bodyIds.difference(bodyDeselected))
+      ..addAll(bodyAddedSel);
     _elig = e;
     _loading = false;
   }
 
-  Future<void> _addPhoto() async {
-    // Reuse the real add-photo flow: the inline photo carousel on My public
-    // profile, opened straight into its photo picker. On return, re-read
-    // eligibility so a freshly-added photo shows in both groups (the backend
-    // honours the user's pick even before it is shot-type classified).
-    await context.push(MyPublicProfileScreen.editPhotosPath);
+  /// Add a photo to [face] (true) or the Body group (false) PRIVATELY: pick
+  /// image(s), upload each to the caller's own `uploads/{uid}/` tree (the
+  /// private chat-attachment channel), and show them as pre-selected tiles in
+  /// the group. The upload NEVER touches the public profile grid or any public
+  /// collection — the photos ride the run as `image_paths` only (§ founder
+  /// 2026-10-28 privacy fix). This is the ONLY place the sheet opens a picker;
+  /// it does not navigate anywhere.
+  Future<void> _addPhoto({required bool face}) async {
+    if (_adding) return;
+    final List<File> files;
+    try {
+      files = await (widget.pickImages?.call() ?? _defaultPick());
+    } catch (_) {
+      return; // Picker unavailable / cancelled — nothing to do.
+    }
+    if (files.isEmpty || !mounted) return;
+    setState(() => _adding = true);
+    final added = <EligiblePhoto>[];
+    final failed = <Object>[];
+    for (final f in files) {
+      try {
+        final up = await _chat.uploadImage(f, prefix: 'appearance');
+        added.add(EligiblePhoto(mediaId: up.storagePath, url: up.downloadUrl));
+      } catch (e) {
+        failed.add(e);
+      }
+    }
     if (!mounted) return;
-    setState(() => _loading = true);
-    await _load();
+    setState(() {
+      final bucket = face ? _faceAdded : _bodyAdded;
+      final sel = face ? _faceSel : _bodySel;
+      for (final p in added) {
+        bucket.add(p);
+        sel.add(p.mediaId); // added photos start selected
+      }
+      _adding = false;
+    });
+    if (failed.isNotEmpty && mounted) {
+      AymaToast.show(
+        context,
+        failed.length == 1
+            ? "Couldn't add that photo."
+            : "Couldn't add ${failed.length} photos.",
+        kind: AymaToastKind.error,
+      );
+    }
+  }
+
+  Future<List<File>> _defaultPick() async {
+    final picked = await ImagePicker().pickMultiImage();
+    return [for (final x in picked) File(x.path)];
   }
 
   void _toggle(Set<String> sel, String mediaId) {
@@ -362,8 +527,21 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
       for (final p in e.body)
         if (_bodySel.contains(p.mediaId)) p.mediaId,
     ];
-    final faceRun = !_skipFace && faceIds.isNotEmpty;
-    final bodyRun = !_skipBody && bodyIds.isNotEmpty;
+    // Privately-added photos ride along as image_paths (never grid media_ids).
+    final faceAddedPaths = [
+      for (final p in _faceAdded)
+        if (_faceSel.contains(p.mediaId)) p.mediaId,
+    ];
+    final bodyAddedPaths = [
+      for (final p in _bodyAdded)
+        if (_bodySel.contains(p.mediaId)) p.mediaId,
+    ];
+    final faceRun = !_skipFace && (faceIds.isNotEmpty || faceAddedPaths.isNotEmpty);
+    final bodyRun = !_skipBody && (bodyIds.isNotEmpty || bodyAddedPaths.isNotEmpty);
+    final imagePaths = <String>{
+      if (faceRun) ...faceAddedPaths,
+      if (bodyRun) ...bodyAddedPaths,
+    }.toList();
     Navigator.pop(
       context,
       _AppearanceChoice(
@@ -371,6 +549,7 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
         wantBody: bodyRun,
         faceMediaIds: faceRun ? faceIds : null,
         bodyMediaIds: bodyRun ? bodyIds : null,
+        imagePaths: imagePaths,
       ),
     );
   }
@@ -408,25 +587,25 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
               _AxisGroup(
                 title: 'Face analysis',
                 icon: Icons.face_retouching_natural_outlined,
-                photos: e?.face ?? const [],
+                photos: [...?e?.face, ..._faceAdded],
                 selected: _faceSel,
                 skipped: _skipFace,
                 emptyPrompt: 'Add a photo that clearly shows your face.',
                 onToggleSkip: () => setState(() => _skipFace = !_skipFace),
                 onTogglePhoto: (id) => _toggle(_faceSel, id),
-                onAddPhoto: _addPhoto,
+                onAddPhoto: () => _addPhoto(face: true),
               ),
               const SizedBox(height: 16),
               _AxisGroup(
                 title: 'Body analysis',
                 icon: Icons.accessibility_new_outlined,
-                photos: e?.body ?? const [],
+                photos: [...?e?.body, ..._bodyAdded],
                 selected: _bodySel,
                 skipped: _skipBody,
                 emptyPrompt: 'Add a full-body photo for a body report.',
                 onToggleSkip: () => setState(() => _skipBody = !_skipBody),
                 onTogglePhoto: (id) => _toggle(_bodySel, id),
-                onAddPhoto: _addPhoto,
+                onAddPhoto: () => _addPhoto(face: false),
               ),
               const SizedBox(height: 20),
               SizedBox(

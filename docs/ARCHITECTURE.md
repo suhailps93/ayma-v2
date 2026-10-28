@@ -39,7 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, tap-to-deselect + Add photo both groups<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, tap-to-deselect + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid}, rides run as image_paths, never published<br/>Run analysis POSTs the run and opens the report in-place, not chat<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -218,8 +218,18 @@ flowchart LR
   stay the honest coverage signal (a real usable-for-axis photo exists) and feed the add-a-photo nudges. In the sheet
   every pooled photo starts **selected**; tapping a thumbnail toggles whether it feeds that axis — selection is local to
   the sheet and **never navigates** (a tap only select/deselects; only the explicit **Add photo** tile, now present on
-  **both** groups whether empty or not, opens the picker). The run (`POST /appearance/report`) accepts
-  `want_face`/`want_body` and optional `face_media_ids`/`body_media_ids` (the still-selected grid photos). The backend
+  **both** groups whether empty or not, opens the picker). *Privacy (§ founder 2026-10-28 fix)*: **Add photo** no longer
+  routes to the public-profile photo editor (which published to the grid). It now picks image(s) and uploads them
+  **privately** to the caller's own `uploads/{uid}/appearance_*` tree via `ChatService.uploadImage` — the same private
+  channel chat attachments use — and shows them as pre-selected tiles. Those added photos ride the run as `image_paths`
+  only (never grid `media_id`s), so they are **never** added to `profile/main.photos` or any public collection; the
+  backend folds `image_paths` into the vision pass as bytes and never writes them anywhere public (see
+  [PRIVACY.md](PRIVACY.md), "Appearance analysis photos"). The run (`POST /appearance/report`) accepts
+  `want_face`/`want_body`, optional `face_media_ids`/`body_media_ids` (the still-selected grid photos), and
+  `image_paths` (the privately-added photos). **"Run analysis" runs the analysis in-place, not in chat (§ founder
+  2026-10-28 fix)**: tapping it POSTs `/appearance/report` behind a blocking "Running your analysis…" dialog, then opens
+  the resulting `/appearance/{id}` report screen — it no longer pushes a `ChatKickoff.appearance` and navigates to the
+  chat shell. The backend
   honours the user's own pick via `appearance._pick` + `_bucket_eligible` — the *same* categorisation the sheet uses, so
   a freshly-added, not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is
   refused; an explicit selection never falls back to a chat attachment. `run_appearance` returns and persists a per-axis

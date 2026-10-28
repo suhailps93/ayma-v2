@@ -42,9 +42,18 @@ ApiClient _api({
   List<Map<String, dynamic>> history = const [],
   Map<String, dynamic>? mine,
   Map<String, dynamic>? usage,
+  void Function(Map<String, dynamic> body)? onAppearanceRun,
 }) {
   final mockHttp = MockClient((request) async {
     const jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
+    if (request.url.path == '/appearance/report') {
+      onAppearanceRun?.call(jsonDecode(request.body) as Map<String, dynamic>);
+      return http.Response(
+          jsonEncode(
+              {'report_id': 'rid', 'report': null, 'usage_capped': false}),
+          200,
+          headers: jsonUtf8);
+    }
     if (request.url.path == '/appearance/coverage') {
       return http.Response(
           jsonEncode(coverage ??
@@ -198,46 +207,58 @@ void main() {
   });
 
   testWidgets(
-      '"Run analysis" pushes an appearance kickoff with the chosen face photo, '
-      'body skipped (no eligible photo), and navigates to the shell',
+      '"Run analysis" POSTs the appearance run with the chosen face photo, '
+      'body skipped (no eligible photo), and opens the report in-place — NOT '
+      'the chat shell (§ founder 2026-10-28)',
       (tester) async {
     bigView(tester);
-    await tester.pumpWidget(_app());
+    Map<String, dynamic>? ran;
+    final api = _api(onAppearanceRun: (b) => ran = b);
+    await tester.pumpWidget(_app(api: api));
     await tester.pumpAndSettle();
 
     await openSheet(tester);
     await tester.tap(find.text('Run analysis'));
-    // Sheet dismisses and the router navigates to the shell.
+    // Sheet dismisses, the run POSTs behind the progress dialog, and the router
+    // opens the appearance report.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
-    final k = ChatInbox.instance.pending.value;
-    expect(k, isNotNull);
-    expect(k!.kind, 'appearance');
-    expect(k.wantFace, true); // an eligible face photo was chosen
-    expect(k.wantBody, false); // no eligible body photo -> not run
-    expect(k.faceMediaIds, ['m1']);
-    expect(k.bodyMediaIds, isNull);
-    expect(k.attachmentPaths, isEmpty);
-    expect(find.text('SHELL'), findsOneWidget);
+    // The run actually happened over HTTP with the chosen ids...
+    expect(ran, isNotNull);
+    expect(ran!['want_face'], true); // an eligible face photo was chosen
+    expect(ran!['want_body'], false); // no eligible body photo -> not run
+    expect(ran!['face_media_ids'], ['m1']);
+    expect(ran!.containsKey('body_media_ids'), false);
+    expect(ran!['image_paths'], isEmpty);
+    // ...and we opened the report in-place, never pushing a chat kickoff or
+    // landing on the chat shell.
+    expect(ChatInbox.instance.pending.value, isNull);
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.text('APPEARANCE rid'), findsOneWidget);
   });
 
   testWidgets(
       'tapping Skip on a group with photos excludes that axis from the run',
       (tester) async {
     bigView(tester);
+    Map<String, dynamic>? ran;
     // Both axes have an eligible photo this time.
-    final api = _api(eligibility: {
-      'face': [
-        {'media_id': 'm1', 'url': 'https://example.invalid/f.png'}
-      ],
-      'body': [
-        {'media_id': 'm2', 'url': 'https://example.invalid/b.png'}
-      ],
-      'has_face_photo': true,
-      'has_body_photo': true,
-    });
+    final api = _api(
+      eligibility: {
+        'face': [
+          {'media_id': 'm1', 'url': 'https://example.invalid/f.png'}
+        ],
+        'body': [
+          {'media_id': 'm2', 'url': 'https://example.invalid/b.png'}
+        ],
+        'has_face_photo': true,
+        'has_body_photo': true,
+      },
+      onAppearanceRun: (b) => ran = b,
+    );
     await tester.pumpWidget(_app(api: api));
     await tester.pumpAndSettle();
 
@@ -247,12 +268,14 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Run analysis'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
 
-    final k = ChatInbox.instance.pending.value;
-    expect(k!.wantFace, true);
-    expect(k.wantBody, false); // skipped
-    expect(k.faceMediaIds, ['m1']);
-    expect(k.bodyMediaIds, isNull);
+    expect(ran, isNotNull);
+    expect(ran!['want_face'], true);
+    expect(ran!['want_body'], false); // skipped
+    expect(ran!['face_media_ids'], ['m1']);
+    expect(ran!.containsKey('body_media_ids'), false);
   });
 
   testWidgets('a persistent credits row shows the balance and taps through to '
