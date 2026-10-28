@@ -176,9 +176,14 @@ answering a phone call (founder reports, Oct 2026):
   built-in preset chosen by `voices.voice_for_gender(gender)` (feminine: Aoede…;
   masculine: Charon…); on the **Meta cascade** path it is the Inworld voice
   `agent._cascade_tts_voice_for_gender` reads from `config.meta_cascade_tts_voice_female`
-  / `_male` (env `META_CASCADE_TTS_VOICE_FEMALE` / `_MALE`). Non-binary / unknown
-  gender falls back safely to the session default voice — never a wrong-gender
-  guess, and no voice id is hardcoded outside `voices.py` / `config.py`.
+  / `_male` (env `META_CASCADE_TTS_VOICE_FEMALE` / `_MALE`). These default to the
+  real Inworld voices **`Ashley`** (feminine) and **`Alex`** (masculine) so the
+  cascade path is gender-matched out of the box — before this, both defaulted to
+  empty and every persona fell back to the single vendor-default voice, so gender
+  was effectively ignored on the cascade. Non-binary / unknown gender (or an env
+  var explicitly blanked) falls back safely to the session default voice — never a
+  wrong-gender guess, and no voice id is hardcoded outside `voices.py` /
+  `config.py`.
 - **Live-voice-call framing (not a chatbot, not texting).** On the voice path the
   persona prompt appends `prompts/practice_persona_voice.md`: the match is
   *answering a live phone call* from `{{USER_NAME}}` (the caller's first name),
@@ -218,7 +223,8 @@ LiveKit pipeline (cascade) `AgentSession` via `agent.build_meta_cascade_session`
 - **TTS** Inworld via the LiveKit Inference gateway (`inference.TTS`, config
   `meta_cascade_tts_model`/`_voice`; Rime/Fish are config A/B alternatives). The
   TTS voice is **gender-matched** to the persona via
-  `meta_cascade_tts_voice_female`/`_male` (falls back to `_voice` when unset);
+  `meta_cascade_tts_voice_female`/`_male` (default Inworld `Ashley`/`Alex`; falls
+  back to `_voice` only when explicitly blanked);
 - **VAD** bundled Silero (`inference.VAD`) to segment turns.
 
 The simulated match greets first on both paths (`prompts/practice_greeting.md`).

@@ -721,13 +721,15 @@ class Config:
     meta_cascade_tts_voice_female: str
     """Gender-matched TTS voice preset for the cascade when it simulates a
     FEMALE Practice Date persona (``agent.build_meta_cascade_session``). The
-    vendor's own voice id lives here, never hardcoded in ``agent.py``; empty
-    (the default) falls back to ``meta_cascade_tts_voice``. Override with
+    vendor's own voice id lives here, never hardcoded in ``agent.py``; defaults
+    to the feminine Inworld voice ``Ashley`` so female personas sound female. If
+    set empty it falls back to ``meta_cascade_tts_voice``. Override with
     ``META_CASCADE_TTS_VOICE_FEMALE``."""
 
     meta_cascade_tts_voice_male: str
     """Gender-matched TTS voice preset for the cascade when it simulates a MALE
-    Practice Date persona. Empty (the default) falls back to
+    Practice Date persona. Defaults to the masculine Inworld voice ``Alex`` so
+    male personas sound male. If set empty it falls back to
     ``meta_cascade_tts_voice``. Override with ``META_CASCADE_TTS_VOICE_MALE``."""
 
     meta_cascade_vad_model: str
@@ -1052,9 +1054,11 @@ def _load() -> Config:
         ),
         meta_cascade_tts_voice=os.getenv("META_CASCADE_TTS_VOICE", ""),
         meta_cascade_tts_voice_female=os.getenv(
-            "META_CASCADE_TTS_VOICE_FEMALE", ""
+            "META_CASCADE_TTS_VOICE_FEMALE", "Ashley"
         ),
-        meta_cascade_tts_voice_male=os.getenv("META_CASCADE_TTS_VOICE_MALE", ""),
+        meta_cascade_tts_voice_male=os.getenv(
+            "META_CASCADE_TTS_VOICE_MALE", "Alex"
+        ),
         meta_cascade_vad_model=os.getenv("META_CASCADE_VAD_MODEL", "silero"),
         meta_reasoning_effort=os.getenv("META_REASONING_EFFORT", "minimal"),
         qloo_api_base_url=os.getenv(

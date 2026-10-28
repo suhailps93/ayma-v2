@@ -57,6 +57,8 @@ def test_meta_cascade_defaults(monkeypatch):
     for var in (
         "META_CASCADE_TTS_MODEL",
         "META_CASCADE_TTS_VOICE",
+        "META_CASCADE_TTS_VOICE_FEMALE",
+        "META_CASCADE_TTS_VOICE_MALE",
         "META_CASCADE_VAD_MODEL",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -64,6 +66,10 @@ def test_meta_cascade_defaults(monkeypatch):
     # TTS vendor + voice + VAD live in config so the flag can reach them.
     assert cfg.meta_cascade_tts_model == "inworld/inworld-tts-1"
     assert cfg.meta_cascade_tts_voice == ""
+    # Gender-matched cascade voices default to real Inworld voice ids so
+    # female personas sound female and male personas sound male.
+    assert cfg.meta_cascade_tts_voice_female == "Ashley"
+    assert cfg.meta_cascade_tts_voice_male == "Alex"
     assert cfg.meta_cascade_vad_model == "silero"
 
 

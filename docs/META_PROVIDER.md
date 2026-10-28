@@ -139,7 +139,7 @@ demo story, applied to practice voice first.
 |---|---|---|
 | STT | Deepgram Nova-3 (`config.meta_cascade_stt_model`, default `deepgram/nova-3`) | `livekit.agents.inference.STT` via the LiveKit **Inference gateway** (LiveKit-credit covered, authed with the worker's `LIVEKIT_API_KEY`/`SECRET`) |
 | LLM | Meta Muse Spark `muse-spark-1.3` (`config.meta_chat_model`) | `livekit-plugins-openai` `openai.LLM`, pointed at `config.meta_api_base_url` + the `META_API_KEY` secret, `reasoning_effort=config.meta_reasoning_effort` (`minimal` — Muse Spark is reasoning-only; omit it and replies come back empty) |
-| TTS | Inworld (`config.meta_cascade_tts_model`, default `inworld/inworld-tts-1`; `config.meta_cascade_tts_voice` optional) | `livekit.agents.inference.TTS` via the LiveKit **Inference gateway** |
+| TTS | Inworld (`config.meta_cascade_tts_model`, default `inworld/inworld-tts-1`; base `config.meta_cascade_tts_voice` optional, gender-matched `config.meta_cascade_tts_voice_female`/`_male` default to Inworld `Ashley`/`Alex`) | `livekit.agents.inference.TTS` via the LiveKit **Inference gateway** |
 | VAD | Silero (`config.meta_cascade_vad_model`, default `silero`) | `livekit.agents.inference.VAD` — bundled, runs locally in the worker (the cascade has no server-side turn detection) |
 
 **Why the STT leg is NOT Meta.** Meta's `muse-voice-transcribe-1.0` is listed in
@@ -156,6 +156,19 @@ while the **LLM leg stays Meta Muse Spark** — the "runs on Meta" story holds
 The TTS vendor is **config, not hardcoded** — Rime (`rime/…`) and Fish
 (`fishaudio/…`) are documented A/B alternatives reachable by setting
 `META_CASCADE_TTS_MODEL`/`_VOICE`; the STT model is likewise `META_CASCADE_STT_MODEL`.
+
+**Gender-matched TTS voice.** `agent._cascade_tts_voice_for_gender(persona_gender)`
+picks the Inworld voice for the persona's gender and passes it as the session's
+`tts_voice`: feminine personas get `config.meta_cascade_tts_voice_female` (env
+`META_CASCADE_TTS_VOICE_FEMALE`, default **`Ashley`**), masculine personas get
+`config.meta_cascade_tts_voice_male` (env `META_CASCADE_TTS_VOICE_MALE`, default
+**`Alex`**). Non-binary / unknown gender — or a gender voice explicitly blanked —
+falls back to the base `META_CASCADE_TTS_VOICE` (empty → the vendor default
+voice). The voice ids live only in `config.py` (AGENTS.md: never in `agent.py`).
+These defaults were previously empty, so every persona fell back to the single
+vendor-default voice and gender was effectively ignored on the cascade; they now
+default to `Ashley`/`Alex` so female personas sound female and male personas
+sound male without any env override.
 
 **Fallbacks — a flip can never take voice down.**
 - *Build* — if the cascade can't be built (no `META_API_KEY`,
