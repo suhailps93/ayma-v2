@@ -131,8 +131,20 @@ Where GDPR-style law applies, the legal bases are noted in plain terms.
   the other person's messages are never used to build your persona, and your
   messages are never used to build anyone else's. A persona is grounded only in
   your own data, and is built to reflect your style without disclosing your
-  private details. _Basis: performance of our contract; legitimate interest in
-  providing an authentic AI matchmaking product._
+  private details. To make this instant, we keep a single standing "AI avatar"
+  snapshot of your persona on our servers (built from **your own** profile,
+  your personal notes, and that sample of your own sent messages). **This
+  snapshot is stored on our servers only — it is never readable by other users
+  or by your own app, and it is used solely to run your avatar.** Before your
+  avatar ever speaks in a simulated chat, two safeguards keep your private
+  details in: a disclosure filter that forbids it from stating sensitive
+  specifics, and an automatic scrub that strips obvious contact details,
+  addresses and ID numbers out of the stored persona summary. You can turn your
+  AI avatar off at any time with the "AI Avatar" setting in Settings; if you do,
+  we stop maintaining the snapshot and delete it. The snapshot is deleted when you
+  delete your account, and cleared when you delete what Ayma knows about you.
+  _Basis: performance of our contract; legitimate interest in providing an
+  authentic AI matchmaking product._
 - **For safety and integrity** — review reports, investigate abuse, enforce
   the Terms, prevent fraud, and protect users.
   _Basis: legitimate interest in protecting users and the service; compliance

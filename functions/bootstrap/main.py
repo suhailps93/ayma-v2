@@ -6625,3 +6625,17 @@ async def cron_persona_evolution(window_days: int = persona_evolution.WINDOW_DAY
     gate passes), or holds it on ``/admin/persona-changes`` for review
     (critical, or the eval gate fails it)."""
     return await persona_evolution.run(get_db(), window_days=window_days)
+
+
+@app.post("/cron/persona-snapshot", dependencies=[Depends(require_cron)])
+async def cron_persona_snapshot(user_limit: int | None = None) -> dict:
+    """Background refresh of the persistent AI-avatar snapshots (§18, founder
+    directive 2026-10-27). Cloud Scheduler hits this periodically with the
+    ``X-Cron-Secret`` header. Walks up to ``user_limit`` users
+    (``PERSONA_SNAPSHOT_SWEEP_LIMIT``) and rebuilds each stale/missing avatar —
+    strictly rate-limited to at most one LLM rebuild per hour per user
+    (``PERSONA_SNAPSHOT_MIN_INTERVAL_SECONDS``) and skipped entirely when the
+    user's source content (profile + wiki + style exemplars) is unchanged."""
+    import persona_snapshot
+
+    return await persona_snapshot.run_sweep(get_db(), user_limit)

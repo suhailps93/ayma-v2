@@ -117,6 +117,15 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
+      // ---- persona/avatar: the persistent AI-avatar snapshot (§18) holds
+      //      the user's FULL private grounding (profile + ALL wiki incl.
+      //      {{private}} spans + their own sent DMs, distilled). It is written
+      //      and read ONLY by the backend (Admin SDK bypasses rules); a client
+      //      never needs it, so DENY all client read and write outright.
+      match /persona/{doc=**} {
+        allow read, write: if false;
+      }
+
       // ---- everything else backend-authored: owner may read, not write --
       match /raw_turns/{id}        { allow read: if isOwner(uid); }
       match /user_media/{id}       { allow read: if isOwner(uid); }

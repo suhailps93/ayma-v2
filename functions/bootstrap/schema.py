@@ -120,6 +120,7 @@ BODY_REPORTS = "body_reports"  # legacy, still read/written by /body-report
 DEEP_DIVES = "deep_dives"  # deep_dive.py — self dives + dives run on others
 DEEP_DIVE_RUNS = "deep_dive_runs"  # deep_dive.py — queued-search status per report
 OAUTH_TOKENS = "oauth_tokens"  # google_account.py import token
+PERSONA = "persona"  # persona_snapshot.py — the AI-avatar snapshot (doc "avatar")
 
 # --- archive manifests (account_ops.py, account_purge.py, knowledge_wipe.py,
 # admin_lookup.py) -----------------------------------------------------------
@@ -154,6 +155,7 @@ ACCOUNT_SUBCOLLECTIONS = (
     MATCH_CANDIDATES,
     LIKES,
     EXPLORE_PASSED,
+    PERSONA,
 )
 # One known two-level nesting: users/{uid}/wiki_pages/{pageId}/versions/{id}
 # (story.py SECTION_VERSIONS). A plain single-level subcollection copy misses
@@ -185,6 +187,7 @@ KNOWLEDGE_SUBCOLLECTIONS = (
     BODY_REPORTS,
     DEEP_DIVES,
     SKILL_RUNS,
+    PERSONA,
 )
 # KNOWLEDGE_FIELDS (small users/{uid} scalar/array fields the knowledge wipe
 # also resets) is defined further down, after FIELD_TRUST_FLAGS /

@@ -46,6 +46,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import dm_moderation
+import persona_snapshot
 import practice_llm
 import token_ledger
 from auth import Caller, require_caller
@@ -56,7 +57,6 @@ from practice_core import (
     PersonaContext,
     ai_avatar_enabled,
     build_persona_context,
-    build_self_persona_context,
 )
 from practice_date import require_not_underage_uid
 
@@ -268,10 +268,26 @@ async def run_simulation(
         raise AvatarOptOut("self")
     if not ai_avatar_enabled(db, other_uid):
         raise AvatarOptOut("match")
-    self_ctx = build_self_persona_context(db, uid)
+    # SELF: spawn from the standing avatar snapshot — instant, no live
+    # assembly (persona_snapshot). If one does not exist yet, seed it ONCE here,
+    # LLM-free (distill=False), and persist it; the background sweep later
+    # upgrades it with the distilled brief. The avatar is NEVER rebuilt with an
+    # LLM on this spawn hot path.
+    self_ctx = persona_snapshot.get_persona_snapshot(db, uid)
+    if self_ctx is None:
+        self_ctx = await persona_snapshot.build_persona_snapshot(
+            db, uid, distill=False
+        )
     if self_ctx is None:
         raise ValueError("no profile for the current user")
-    match_ctx = build_persona_context(db, uid, other_uid)
+    # MATCH: when the match has their own private-grounded avatar snapshot
+    # (AI Avatar is already confirmed on above), spawn THEIR snapshot — their
+    # own full-context, non-disclosure avatar. Otherwise fall back to the
+    # public-profile-only persona, because we may never read another user's
+    # private data to build one on their behalf.
+    match_ctx = persona_snapshot.get_persona_snapshot(db, other_uid)
+    if match_ctx is None:
+        match_ctx = build_persona_context(db, uid, other_uid)
     if match_ctx is None:
         raise ValueError("no simulatable profile for the match")
 
@@ -430,16 +446,33 @@ class DateSimRequest(BaseModel):
 
 @router.get("/date-sim/estimate")
 async def date_sim_estimate(
-    _caller: Caller = Depends(require_caller),
+    other_uid: str | None = None,
+    caller: Caller = Depends(require_caller),
 ) -> dict[str, object]:
     """Approximate credits for each allowed message count, so the setup screen
-    can warn about the cost before the run (both agents bill the caller)."""
-    return {
+    can warn about the cost before the run (both agents bill the caller).
+
+    When ``other_uid`` is supplied (the sim setup screen already knows who it is
+    about to simulate), also returns a ``readiness`` block for that match —
+    ``{name, readiness_score (0-100), low_context, message?}`` — so the UI can
+    warn when the match "doesn't have much context yet" before spending
+    credits. Omitted when the match has no simulatable profile / has opted out."""
+    out: dict[str, object] = {
         "credits_by_messages": {
             str(n): estimate_credits(n)
             for n in range(MIN_MESSAGES, MAX_MESSAGES + 1)
         }
     }
+    if other_uid and other_uid.strip():
+        readiness = await asyncio.to_thread(
+            persona_snapshot.preflight_readiness,
+            get_db(),
+            caller.uid,
+            other_uid.strip(),
+        )
+        if readiness is not None:
+            out["readiness"] = readiness
+    return out
 
 
 @router.post("/date-sim", dependencies=[Depends(require_not_underage_uid)])

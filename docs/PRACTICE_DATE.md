@@ -285,3 +285,48 @@ A **disclosure filter** in `prompts/date_sim.md` keeps both personas from
 but must never leak the exemplars' wording or any private specifics. Full
 design, the endpoint and the privacy reasoning: `docs/ARCHITECTURE.md` §18.
 Engine: `functions/bootstrap/date_sim.py`.
+
+## Persistent AI-avatar snapshot (how the avatar is now spawned)
+
+The AI avatar is **no longer assembled ad hoc at sim-spawn time.** Each opted-in
+user has one standing, server-only snapshot at `users/{uid}/persona/avatar`
+(`functions/bootstrap/persona_snapshot.py`) that date-sims spawn from instantly:
+
+- `build_self_persona_context` now *produces* the snapshot during a **background
+  refresh**, not on the sim hot path. The snapshot holds the full private
+  grounding + style exemplars, an LLM-distilled persona `brief` + story
+  highlights, `gender`, an avatar `readiness_score`, and `source_hash`/`stale`/
+  `version`/`updated_at`.
+- **Cost cap (strict):** source writes (profile edit, wiki/chat/voice ingest, DM
+  send) only flip `stale=true` via `mark_persona_stale` — no LLM. The LLM rebuild
+  runs ONLY in the `/cron/persona-snapshot` sweep, **at most once per hour per
+  user** (`CONFIG.persona_snapshot_min_interval_seconds`) and is **skipped when
+  `source_hash` is unchanged**.
+- **Spawn:** `run_simulation` reads the SELF snapshot (`get_persona_snapshot`;
+  seeded once, LLM-free, if missing). For the MATCH it spawns THEIR own
+  private-grounded snapshot when present, else falls back to the public-only
+  `build_persona_context`. One snapshot, both uses — AI↔AI today and human↔AI
+  voice later (a documented follow-up in `docs/TODO_QUEUE.md`).
+- **Server-only:** `firestore.rules` denies all client access to
+  `users/{uid}/persona/**`. Defence-in-depth: `redact_private_leaks` scrubs
+  obvious contact/address patterns out of the distilled brief before storage.
+
+### Avatar readiness score (0–100)
+
+`readiness_score = round(100 · (0.80·profile_completeness + 0.20·conversation_volume))`
+(weights LOCKED in `config.py`), recomputed on every rebuild.
+`profile_completeness` is the fraction of six signals filled — name, age,
+gender, location, ≥1 photo, and wiki pages vs
+`persona_readiness_wiki_page_target` (the last is fractional). `conversation_volume`
+is the count of the user's own captured texting-style exemplars vs
+`persona_readiness_conversation_target`, capped at 1.0 (a cheap proxy using the
+already-gathered sample; a true uncapped own-message count is a follow-up).
+`low_context = readiness_score < persona_readiness_low_context_threshold` (20).
+The sim preflight `GET /date-sim/estimate?other_uid=…` returns a `readiness`
+block `{name, readiness_score, low_context, message?}` for the match so the
+setup screen can warn before spending credits (copy: *"<name> doesn't have much
+context yet — a simulated chat with their AI won't be an accurate reflection of
+them."*). Config keys: `persona_snapshot_min_interval_seconds`,
+`persona_snapshot_sweep_limit`, `persona_readiness_profile_weight`,
+`persona_readiness_conversation_weight`, `persona_readiness_low_context_threshold`,
+`persona_readiness_wiki_page_target`, `persona_readiness_conversation_target`.

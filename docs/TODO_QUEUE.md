@@ -150,3 +150,11 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Founder picks which governs. Do NOT resolve this without him and do NOT edit the positioning docs until he does.
 - Once decided: align `docs/DEMO_VIDEO_SCRIPT.md`, `docs/SUBMISSION_WRITEUP.md`, `docs/SUBMISSION_ONE_PAGER.md` and `docs/POSITIONING.md` to the chosen wording everywhere.
 - Ownership (per the founder): technical questions for the founder are raised by Claude (via this queue / HACKATHON_STATUS); Astro handles PM-side items.
+
+## Persistent AI-avatar snapshot follow-ups (2026-10-27, branch `avatar-snapshot`)
+The standing snapshot (`users/{uid}/persona/avatar`, `persona_snapshot.py`) is built and wired for AI↔AI date sims. Remaining:
+- **Human↔AI voice reads the snapshot.** The voice/agent path (`agent.py`/`voices.py`/`voice_catalog.py`) was intentionally NOT touched (another agent owns the stack-aware voice vocabulary). Wire the voice persona to spawn from `get_persona_snapshot` (the distilled `brief` + grounding) so human↔AI uses the same standing avatar. Includes surfacing `readiness`/`low_context` at any human↔AI conversation-entry preflight (today only the date-sim `GET /date-sim/estimate?other_uid=` carries it).
+- **Accent in the snapshot.** The schema reserves voice/gender; spoken **accent** is not yet stored (no accent field exists on `profile/main`). Add it when the voice vocabulary work lands an accent field, then persist it on the snapshot.
+- **Flutter: low-context warning UI.** Backend returns `readiness.{readiness_score,low_context,message}` on the date-sim preflight; the "You & <name>" sim setup screen should show the warning copy when `low_context` is true (copy is server-provided in `message`).
+- **True conversation-volume count.** `conversation_volume` currently uses the already-gathered capped style-exemplar count (cheap, zero extra reads) as a proxy; it under-counts very chatty users (short-only, deduped, capped at 40). If needed, swap to a true uncapped own-message count across `dm_threads`.
+- **Deletion coverage audit (pre-existing).** `date_sims` and `practice_sessions` subcollections are not in `schema.ACCOUNT_SUBCOLLECTIONS` (persona IS, added here). Consider adding them so account deletion wipes them too.

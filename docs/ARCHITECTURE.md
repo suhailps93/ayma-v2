@@ -1230,6 +1230,7 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /cron/match` | Scheduled matching pipeline | §5.3 |
 | `POST /cron/reengage` | Scheduled re-engagement job | §7.1 |
 | `POST /cron/purge-deleted` | Scheduled 30-day purge | §3.6 |
+| `POST /cron/persona-snapshot` | Scheduled AI-avatar snapshot refresh (≤1/hour/user, only-on-change) | §18 |
 | `POST /feedback` | One-tap / typed feedback about Ayma's conduct → `feedback` (`source: thumbs_down`) | §15 |
 | `POST /feedback/submit` | File a reviewed product-feedback card → `feedback` (`source: chat_card`/`settings_form`) | §15 |
 | `GET /admin/feedback` | Product-feedback triage list (dev-allowlist gated) | §15 |
@@ -1769,8 +1770,12 @@ other user — it is a one-sided, server-side preview.
 **Reuse, not reinvention.** It generalises the Practice Date persona machinery
 (`practice_core.py`) from "simulate one persona replying to the user" to "run
 two personas back-and-forth". Files: engine + HTTP in
-`functions/bootstrap/date_sim.py`; the user-side full-context builder
-`practice_core.build_self_persona_context`; prompts
+`functions/bootstrap/date_sim.py`; the standing avatar-snapshot store +
+background refresh + readiness score in `functions/bootstrap/persona_snapshot.py`
+(the user-side full-context builder `practice_core.build_self_persona_context`
+now *produces* the snapshot during the background refresh rather than being
+called at sim-spawn time); the `/cron/persona-snapshot` sweep in `main.py`;
+prompts `prompts/persona_snapshot.md` (the distillation),
 `prompts/date_sim.md` (the two-persona framing + disclosure filter) and
 `prompts/date_sim_verdict.md` (the scored read); Flutter in
 `ayma_flutter/lib/features/date_sim/` (`date_sim_screen.dart`,
@@ -1860,6 +1865,60 @@ conversation" is the acknowledgement. The number comes from
 in the module) × (one turn per message + one verdict call), priced through
 `token_ledger.cost_usd_for` and `billing.credits_for` (`credits_per_usd`) — no
 inline prices or credit rates.
+
+**Persistent AI-avatar snapshot (founder directive 2026-10-27).** The avatar
+is no longer assembled ad hoc at sim-spawn time. Each opted-in user has one
+standing, server-only snapshot that sims spawn from instantly:
+
+```mermaid
+flowchart LR
+  subgraph writes["Source writes (cheap, NO LLM)"]
+    PE["Profile edit<br/>(profile_manual)"]
+    WI["Wiki / chat-turn / voice ingest<br/>(wiki_ingest.ingest)"]
+    DM["DM send<br/>(dm_ops.post_message)"]
+  end
+  PE & WI & DM -- "mark_persona_stale (stale=true)" --> SNAP[("users/{uid}/persona/avatar<br/>grounding + style exemplars + brief +<br/>story highlights + readiness_score +<br/>gender + source_hash + stale + version")]
+  CRON["/cron/persona-snapshot sweep<br/>(refresh_persona_if_due)"] -- "ai_avatar on · stale|missing ·<br/>age ≥ 1h · source_hash CHANGED" --> DISTILL["LLM distill (practice_llm,<br/>FEATURE_AVATAR) → brief + highlights<br/>→ redact_private_leaks scrub"]
+  DISTILL --> SNAP
+  SIM["date_sim.run_simulation"] -- "get_persona_snapshot (instant)" --> SNAP
+  SNAP -- "SELF: own snapshot (seed once, LLM-free, if missing)<br/>MATCH: their snapshot if present, else public-only" --> SIM
+```
+
+The snapshot doc `users/{uid}/persona/avatar` (`persona_snapshot.py`) holds the
+user's FULL private grounding (profile + ALL wiki incl. `{{private}}` spans +
+their own sent-DM style exemplars), the LLM-distilled persona `brief` +
+`story_highlights`, `gender` (drives the voice), the avatar `readiness_score`,
+plus `version` / `source_hash` / `stale` / `distilled` / `updated_at`. It is
+**server-only** — `firestore.rules` DENIES all client read/write to
+`users/{uid}/persona/**`. **Cost cap (strict):** source writes only flip
+`stale=true` (no LLM); the LLM rebuild runs ONLY in the background sweep, at
+most **once per hour per user** (`CONFIG.persona_snapshot_min_interval_seconds`)
+and is **skipped entirely when `source_hash` is unchanged** (an untouched user
+is never rebuilt). The avatar is never rebuilt with an LLM on the sim hot path:
+a missing self snapshot is seeded once, LLM-free, and the sweep upgrades it.
+**Spawn:** `run_simulation` reads the SELF snapshot (seeding once if missing);
+for the MATCH it spawns THEIR own private-grounded snapshot when they have one,
+else falls back to the public-only `build_persona_context`. The same snapshot is
+the single source for AI↔AI sims today and human↔AI voice later (that voice
+wiring is a documented follow-up — see `docs/TODO_QUEUE.md`). Defence-in-depth:
+`redact_private_leaks` scrubs obvious contact/address/SSN patterns out of the
+distilled brief before it is stored, on top of the `prompts/date_sim.md`
+disclosure filter.
+
+**Avatar readiness score (0–100).** Stored on the snapshot and recomputed on
+every rebuild (same ≤1/hour, only-on-change cadence):
+`readiness_score = round(100 · (0.80·profile_completeness + 0.20·conversation_volume))`,
+weights LOCKED in `config.py`. `profile_completeness` = fraction of six signals
+filled (name, age, gender, location, ≥1 photo, wiki pages vs
+`persona_readiness_wiki_page_target`); `conversation_volume` = the user's own
+captured texting-style exemplars vs `persona_readiness_conversation_target`
+(capped). `low_context = readiness_score < persona_readiness_low_context_threshold`
+(default 20). The sim preflight `GET /date-sim/estimate?other_uid=…` returns a
+`readiness` block `{name, readiness_score, low_context, message?}` for the match
+so the setup screen can warn ("<name> doesn't have much context yet — a
+simulated chat with their AI won't be an accurate reflection of them.") before
+spending credits. Prefers the match's stored snapshot score; with no snapshot it
+falls back to a PUBLIC-profile-only estimate (never reads the other user's DMs).
 
 **AI Avatar consent (opt-out).** Settings > Privacy > "AI Avatar" (default on)
 writes `ai_avatar_enabled` to `users/{uid}/profile/main` (client-writable in

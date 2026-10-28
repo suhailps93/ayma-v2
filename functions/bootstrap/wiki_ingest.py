@@ -366,6 +366,18 @@ async def ingest(
             await notify_profile_suggestions(db, uid, new_count)
     except Exception:  # noqa: BLE001
         logger.debug("profile-suggestions notify hook failed", exc_info=True)
+
+    # Persistent AI-avatar snapshot: this user's wiki/own-context just changed
+    # (chat-turn ingest, voice session, Google sync, backfill), so flag their
+    # standing avatar snapshot stale. Cheap, no LLM — the background sweep
+    # rebuilds it at most once an hour and only if the source actually changed.
+    if written:
+        try:
+            import persona_snapshot
+
+            persona_snapshot.mark_persona_stale(db, uid)
+        except Exception:  # noqa: BLE001 - the stale hook must never break ingest
+            logger.debug("persona stale hook failed", exc_info=True)
     return written
 
 

@@ -658,6 +658,49 @@ class Config:
     opening the conversation herself. ``0`` (or negative) disables the opener."""
 
     # ---------------------------------------------------------------- #
+    # PERSISTENT AI-AVATAR SNAPSHOT — founder directive 2026-10-27.
+    # ``persona_snapshot.py``: one standing snapshot per user at
+    # ``users/{uid}/persona/avatar`` that date-sims (and, as a follow-up,
+    # human<->AI voice) spawn from instantly. See docs/PRACTICE_DATE.md §Avatar
+    # snapshot. All caps/weights live here (no scattered magic numbers).
+    # ---------------------------------------------------------------- #
+    persona_snapshot_min_interval_seconds: int
+    """Minimum seconds between background LLM rebuilds of one user's avatar
+    snapshot — the strict cost cap (at most one rebuild per hour per user).
+    ``PERSONA_SNAPSHOT_MIN_INTERVAL_SECONDS``, default 3600."""
+
+    persona_snapshot_sweep_limit: int
+    """Max users the ``POST /cron/persona-snapshot`` sweep walks per tick.
+    ``PERSONA_SNAPSHOT_SWEEP_LIMIT``, default 50."""
+
+    # --- Avatar readiness score (0-100) stored on the snapshot doc ----------
+    # readiness = round(100 * (profile_weight * profile_completeness
+    #                          + conversation_weight * conversation_volume)),
+    # each sub-metric normalized to 0..1. Weights are LOCKED at 80/20.
+    persona_readiness_profile_weight: float
+    """Weight of profile completeness in the avatar readiness score. LOCKED at
+    0.80. ``PERSONA_READINESS_PROFILE_WEIGHT``."""
+
+    persona_readiness_conversation_weight: float
+    """Weight of conversation volume in the avatar readiness score. LOCKED at
+    0.20. ``PERSONA_READINESS_CONVERSATION_WEIGHT``."""
+
+    persona_readiness_low_context_threshold: int
+    """A snapshot is flagged ``low_context`` when ``readiness_score`` is below
+    this (the UI then warns the match "doesn't have much context yet").
+    ``PERSONA_READINESS_LOW_CONTEXT_THRESHOLD``, default 20."""
+
+    persona_readiness_wiki_page_target: int
+    """Number of wiki pages at which the wiki-presence signal of profile
+    completeness saturates (1.0). ``PERSONA_READINESS_WIKI_PAGE_TARGET``,
+    default 5."""
+
+    persona_readiness_conversation_target: int
+    """Number of the user's own captured texting-style exemplars at which
+    conversation volume saturates (1.0). ``PERSONA_READINESS_CONVERSATION_TARGET``,
+    default 20."""
+
+    # ---------------------------------------------------------------- #
     # META MODEL API — hackathon Deliverable A (NEW work, Oct 2026).
     # An OpenAI-compatible provider (Meta Muse Spark) selectable per
     # surface behind the ``LLM_PROVIDER_<SURFACE>`` flags below; Gemini
@@ -1034,6 +1077,28 @@ def _load() -> Config:
         rate_notifications=os.getenv("RATE_NOTIFICATIONS", "20/minute"),
         voice_opener_grace_seconds=float(
             os.getenv("VOICE_OPENER_GRACE_SECONDS", "1.5")
+        ),
+        # PERSISTENT AI-AVATAR SNAPSHOT (founder directive 2026-10-27).
+        persona_snapshot_min_interval_seconds=int(
+            os.getenv("PERSONA_SNAPSHOT_MIN_INTERVAL_SECONDS", "3600")
+        ),
+        persona_snapshot_sweep_limit=int(
+            os.getenv("PERSONA_SNAPSHOT_SWEEP_LIMIT", "50")
+        ),
+        persona_readiness_profile_weight=float(
+            os.getenv("PERSONA_READINESS_PROFILE_WEIGHT", "0.80")
+        ),
+        persona_readiness_conversation_weight=float(
+            os.getenv("PERSONA_READINESS_CONVERSATION_WEIGHT", "0.20")
+        ),
+        persona_readiness_low_context_threshold=int(
+            os.getenv("PERSONA_READINESS_LOW_CONTEXT_THRESHOLD", "20")
+        ),
+        persona_readiness_wiki_page_target=int(
+            os.getenv("PERSONA_READINESS_WIKI_PAGE_TARGET", "5")
+        ),
+        persona_readiness_conversation_target=int(
+            os.getenv("PERSONA_READINESS_CONVERSATION_TARGET", "20")
         ),
         # META MODEL API (hackathon Deliverable A) — see the block above.
         meta_api_base_url=os.getenv(

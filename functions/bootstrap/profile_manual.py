@@ -70,6 +70,19 @@ from wiki_schema import page_types
 
 logger = logging.getLogger("ayma.profile_manual")
 
+
+def _mark_avatar_stale(db, uid: str) -> None:
+    """Flag the user's standing AI-avatar snapshot stale after a manual
+    profile/wiki edit. Cheap (no LLM); the background sweep rebuilds it at most
+    once an hour and only if the source actually changed. Best-effort — a stale
+    hook must never break a profile write."""
+    try:
+        import persona_snapshot
+
+        persona_snapshot.mark_persona_stale(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.debug("persona stale hook failed", exc_info=True)
+
 _PROMPTS = Path(__file__).with_name("prompts")
 
 MAX_TEXT_CHARS = 12000
@@ -587,6 +600,7 @@ async def save_text(db, uid: str, text: str, base_version: str) -> dict:
             sec["new_title"],
             sec["create"],
         )
+    _mark_avatar_stale(db, uid)
     return {
         "ok": True,
         "changed": True,
@@ -817,6 +831,7 @@ def _write_decided(
     version_id = story._snapshot_section(
         db, uid, page_id, story.AUTHOR_AYMA, "update reviewed by you"
     )
+    _mark_avatar_stale(db, uid)
     return {"ok": True, "remaining": len(remaining), "head_version_id": version_id}
 
 
