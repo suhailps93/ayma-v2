@@ -80,13 +80,13 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child:
-                Text('Voice', style: AymaType.mono(size: 11, color: ac.fgMute)),
+                Text('Models', style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           ListTile(
             leading: Icon(Icons.record_voice_over_outlined, color: ac.fgDim),
-            title: Text('Ayma’s voice',
+            title: Text('Ayma’s models',
                 style: AymaType.sans(size: 15, color: ac.fg)),
-            subtitle: Text('Pick the voice she speaks with',
+            subtitle: Text('Pick her brain, voice & language',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(VoicePreferenceScreen.path),

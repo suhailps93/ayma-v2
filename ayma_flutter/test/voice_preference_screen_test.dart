@@ -91,7 +91,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ayma’s voice'), findsOneWidget);
+    expect(find.text('Ayma’s models'), findsOneWidget);
     // The cascade TTS voice is shown — not a hardcoded Gemini preset.
     expect(find.text('Ashley — bright'), findsOneWidget);
     // The full stack is now exposed to the user from Ayma settings: the MODE

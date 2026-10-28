@@ -25,14 +25,14 @@ class VoicePreferenceScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
-        title: const Text('Ayma’s voice'),
+        title: const Text('Ayma’s models'),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
           Text(
-            'Switch Ayma’s voice stack — how she thinks, listens and speaks. '
+            'Switch Ayma’s model stack — how she thinks, listens and speaks. '
             'A change takes effect on your next voice call. She still follows '
             'you if you switch languages mid-chat.',
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),

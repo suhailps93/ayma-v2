@@ -48,7 +48,7 @@ void main() {
         MaterialApp.router(theme: AymaTheme.light, routerConfig: router));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Ayma’s voice'));
+    await tester.tap(find.text('Ayma’s models'));
     await tester.pumpAndSettle();
     expect(find.text('VOICE SCREEN'), findsOneWidget);
   });
