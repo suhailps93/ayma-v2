@@ -29,13 +29,16 @@ def test_story_manage_tools_are_always_in_the_text_tool_set():
     assert {"edit_story_entry", "remove_story_entry"} <= base
 
 
-def test_story_manage_tools_are_not_in_the_voice_registry():
-    # all_skills() is exactly _REGISTRY — the shared voice/text base; the
-    # story-manage tools are text-only, so they must not be there.
+def test_story_manage_tools_are_in_the_voice_tool_set():
+    # They live outside _REGISTRY (so not in all_skills()), but are wired into
+    # the voice tool set so Ayma can edit/remove a story section on a call too
+    # (founder bug 2026-10-28: voice had no edit tool, only navigation).
     import skills
-    assert {"edit_story_entry", "remove_story_entry"} & {
-        s.name for s in skills.all_skills()
-    } == set()
+
+    livekit = pytest.importorskip("livekit.agents")  # noqa: F841 - voice venv only
+    tools = skills.make_livekit_tools(object(), "u1")
+    names = {t.info.name for t in tools}
+    assert {"edit_story_entry", "remove_story_entry"} <= names
 
 
 def test_edit_story_entry_rewrites_the_matched_section(monkeypatch):

@@ -104,12 +104,16 @@ _TEXT_ONLY_REGISTRY: list[Skill] = [generate_image.SKILL]
 # in the voice tool set (``_REGISTRY``).
 _FEEDBACK_REGISTRY: list[Skill] = [submit_feedback.SKILL]
 
-# Always in the TEXT tool set, never in voice (``_REGISTRY`` → ``make_livekit_
-# tools``): ``edit_story_entry`` / ``remove_story_entry`` let Ayma change or
-# soft-remove a section of the user's OWN story/wiki straight from an ordinary
-# chat (the editor-only passage tools below need a page + highlighted passage
-# in focus). Text-only, like ``generate_image`` — kept out of voice to leave
-# agent.py's tool set untouched; a story edit is a text-surface action.
+# In BOTH the text tool set and the voice tool set (``make_session_tool_fns``
+# and ``make_livekit_tools``): ``edit_story_entry`` / ``remove_story_entry``
+# let Ayma change or soft-remove a section of the user's OWN story/wiki
+# straight from an ordinary chat OR a voice call — no story editor, no "Ask
+# Ayma" passage popup (the editor-only passage tools below need a page +
+# highlighted passage in focus). Both bind on ``(db, uid)`` alone, so they can
+# only ever reach this authenticated user's own story. Voice had no edit tool
+# at all before, so Ayma could only navigate to the Story editor when asked to
+# change a line (founder bug 2026-10-28: "it shouldn't open that pop-up, it
+# should just update it directly").
 _STORY_MANAGE_REGISTRY: list[Skill] = list(story_manage.SKILLS)
 
 # Only exposed when the chat is opened from the Your Story editor (§ Your Story).
@@ -358,8 +362,11 @@ def make_livekit_tools(
     turns: Callable[[], list] | None = None,
 ) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
-    the voice-only ``current_screen`` tool (``skills.app_control``). The app
-    command tools it also carries are shared with the text tool set.
+    the always-on story edit/soft-remove tools (``_STORY_MANAGE_REGISTRY`` —
+    ``edit_story_entry`` / ``remove_story_entry``, bound on ``(db, uid)`` so
+    they only ever reach this caller's own story) and the voice-only
+    ``current_screen`` tool (``skills.app_control``). The app command tools it
+    also carries are shared with the text tool set.
 
     ``on_call``, when given, is invoked ``on_call("start", name, None)`` right
     before a tool call runs and ``on_call("end", name, label)`` right after it
@@ -390,7 +397,10 @@ def make_livekit_tools(
     from livekit.agents import function_tool
 
     tools = []
-    for s in (_REGISTRY + _recall_skills() + app_control.VOICE_SKILLS):
+    for s in (
+        _REGISTRY + _recall_skills() + _STORY_MANAGE_REGISTRY
+        + app_control.VOICE_SKILLS
+    ):
         description = s.declaration["description"]
         if s is set_voice_preference.SKILL and on_voice_change is not None:
             # Gemini Live: mid-call hot-swap within the Gemini presets (unchanged).

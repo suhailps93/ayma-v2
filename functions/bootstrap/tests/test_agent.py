@@ -639,9 +639,16 @@ def test_session_tools_come_from_the_shared_registry():
     assert agent._session_tools(_NullCtx(), "") == []  # no uid -> no tools
 
     tools = agent._session_tools(_NullCtx(), "u1")
-    # The shared text registry plus the voice-only screen-awareness tools.
-    assert len(tools) == len(skills.all_skills()) + len(app_control.VOICE_SKILLS)
+    # The shared text registry, the always-on story edit/remove tools, plus the
+    # voice-only screen-awareness tools.
+    assert len(tools) == (
+        len(skills.all_skills())
+        + len(skills._STORY_MANAGE_REGISTRY)
+        + len(app_control.VOICE_SKILLS)
+    )
     assert all(llm.is_function_tool(t) for t in tools)
+    # Ayma can edit/soft-remove the user's own story on a call, not only in text.
+    assert {"edit_story_entry", "remove_story_entry"} <= {t.info.name for t in tools}
 
 
 def test_voice_tools_include_recall_only_at_level_3(monkeypatch):

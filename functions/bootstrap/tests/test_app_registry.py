@@ -229,6 +229,39 @@ def test_rerun_appearance_resolves_to_the_run_tool():
         assert a and a["key"] == "rerun_appearance" and a["via"] == "run_appearance_report", words
 
 
+def test_story_edit_actions_resolve_uniquely_and_name_a_real_tool():
+    import skills
+
+    tools = {d["name"] for d in skills.session_tool_declarations()}
+    seen: dict[str, str] = {}
+    for a in app_registry.story_edit_actions():
+        assert a["via"] in tools, f"story_edit_action {a['key']} -> unknown tool {a['via']}"
+        for name in app_registry._names(a):
+            owner = seen.setdefault(name, a["key"])
+            assert owner == a["key"], f"'{name}' names both {owner} and {a['key']}"
+        assert app_registry.find_story_edit_action(a["key"])["key"] == a["key"]
+
+
+def test_story_edit_intent_routes_to_the_direct_tool_not_navigation():
+    # A change/reword request -> edit_story_entry; a remove request ->
+    # remove_story_entry. Never the Story page.
+    for words in ("change my story", "fix my story", "reword my story section",
+                  "edit my wiki"):
+        a = app_registry.find_story_edit_action(words)
+        assert a and a["via"] == "edit_story_entry", words
+    for words in ("remove from my story", "take that off my story",
+                  "delete my story section"):
+        a = app_registry.find_story_edit_action(words)
+        assert a and a["via"] == "remove_story_entry", words
+
+
+def test_bare_open_my_story_is_still_a_navigation_not_an_edit():
+    # Opening the story to look at it must NOT be captured as an edit intent.
+    for words in ("open my story", "my story", "show me my story", "go to my story"):
+        assert app_registry.find_story_edit_action(words) is None, words
+        assert app_registry.find_destination(words)["key"] == "story", words
+
+
 def test_profile_completeness_card_resolves_to_complete_profile():
     for words in ("profile completeness", "Your profile is 59% complete"):
         assert app_registry.find_destination(words)["key"] == "complete_profile"

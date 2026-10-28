@@ -497,9 +497,40 @@ async def _run_report_action(db, uid: str, report: dict) -> str:
     return _NOT_APPLIED
 
 
+def _story_edit_redirect(action: dict) -> str:
+    """The directive handed back when an open_screen request is really a story
+    edit/remove intent: do NOT navigate into the Story editor or its "Ask
+    Ayma" passage popup — call the direct tool, which changes the user's own
+    story straight from here (founder bug 2026-10-28)."""
+    if action.get("via") == "remove_story_entry":
+        return (
+            "That's a story REMOVAL, not a page to open — do NOT navigate to "
+            "the Story editor or open any passage popup. Call remove_story_entry "
+            "with the section they mean; it soft-removes it directly (reversible) "
+            "and you confirm from its result."
+        )
+    return (
+        "That's a story EDIT, not a page to open — do NOT navigate to the Story "
+        "editor or open any passage popup. Call edit_story_entry with the section "
+        "they mean and the new wording (ask them for the new wording if you don't "
+        "have it yet); it rewrites the section directly and you confirm from its "
+        "result."
+    )
+
+
 def _bind_open_screen(db, uid: str) -> Callable[..., str]:
     async def open_screen(screen: str = "") -> str:
         asked = screen.strip()
+        # A "change / fix / reword / remove / delete … my story" request edits
+        # the story in place via edit_story_entry / remove_story_entry — it must
+        # NOT navigate into the Story editor's "Ask Ayma" passage popup, even
+        # though its words also match the `story` destination (founder bug
+        # 2026-10-28: "it shouldn't open that pop-up, it should just update it
+        # directly"). Checked before find_destination so the direct edit wins; a
+        # bare "open my story" (an open) doesn't match and still navigates below.
+        story_edit = app_registry.find_story_edit_action(asked)
+        if story_edit:
+            return _story_edit_redirect(story_edit)
         # A re-run request ("rerun / regenerate / recalculate the appearance
         # report") must RUN the report, even though its words also match the
         # my_appearance destination — opening the old report is not re-running

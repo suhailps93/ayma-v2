@@ -1,6 +1,7 @@
-"""Story-manage tools — always in the TEXT chat tool set (never voice).
+"""Story-manage tools — always in BOTH the text chat and voice tool sets.
 
-These are the plain-chat counterparts to the Your Story *editor* tools in
+These are the plain-chat / live-call counterparts to the Your Story *editor*
+tools in
 ``story_edit.py``. The editor tools only exist when the chat is opened from the
 story screen with a specific page and highlighted passage in focus
 (``story=True``); in the ordinary chat Ayma had no way to act when someone said

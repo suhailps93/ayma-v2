@@ -51,6 +51,14 @@ def report_actions() -> list[dict]:
     return list(registry().get("report_actions") or [])
 
 
+def story_edit_actions() -> list[dict]:
+    """Direct story/wiki edit + soft-remove actions Ayma does herself. Not
+    pages: each ``via`` names the chat/voice tool that actually does it
+    (``edit_story_entry`` / ``remove_story_entry``), so a "change/remove X from
+    my story" request never navigates into the Story editor's passage popup."""
+    return list(registry().get("story_edit_actions") or [])
+
+
 def unavailable() -> list[dict]:
     return list(registry()["unavailable"])
 
@@ -133,6 +141,34 @@ def find_report_action(text: str) -> dict | None:
             return e
     best: tuple[int, dict] | None = None
     for e in report_actions():
+        for n in _names(e):
+            if len(n) < 4:
+                continue
+            if re.search(rf"\b{re.escape(n)}\b", want):
+                if best is None or len(n) > best[0]:
+                    best = (len(n), e)
+    return best[1] if best else None
+
+
+def find_story_edit_action(text: str) -> dict | None:
+    """The direct story-edit/remove action a "change / fix / reword / remove /
+    delete … my story" request names, or ``None``.
+
+    Matched strictly — like :func:`find_report_action` — by an exact name or a
+    full alias contained in the request, never the reverse. Every alias carries
+    its own edit/remove verb ("change my story", "remove from my story"), so a
+    bare "open my story" / "my story" (an *open*) never matches and still
+    navigates. The app-driving path uses the match to route to the direct tool
+    named in ``via`` instead of opening the Story editor's passage popup."""
+    want = normalise(text)
+    if not want:
+        return None
+    raw = text.strip().lower()
+    for e in story_edit_actions():
+        if raw == e["key"] or want in _names(e):
+            return e
+    best: tuple[int, dict] | None = None
+    for e in story_edit_actions():
         for n in _names(e):
             if len(n) < 4:
                 continue

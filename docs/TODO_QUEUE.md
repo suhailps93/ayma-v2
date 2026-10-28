@@ -31,6 +31,8 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 - Qloo is LIVE on ayma-api (`ayma-api-00221-wjd`, 2026-10-27): `QLOO_API_KEY` mounted, `/taste/demo/pair` serves `source: "qloo"`.
 - Astro: extract the public Qloo demo repo (files listed in `docs/QLOO_TASTE.md`), add licence, submit on Devpost with the `/taste/demo` URL.
 
+**DONE (meta-hackathon, 2026-10-28) — story edit direct, no passage popup [[todo-story-edit-direct-no-popup]]:** `edit_story_entry` / `remove_story_entry` (`skills/story_manage.py`) are now wired into the VOICE tool set too (`make_livekit_tools`), not just text, so Ayma can change/soft-remove a section of the user's own story on a call. A "change / fix / reword / remove / delete … my story" intent routes to the direct tool *before* `open_screen` can navigate (new `story_edit_actions` in `app_registry.json` + `find_story_edit_action`), so she edits in place instead of navigating into the Story editor's "Ask Ayma" passage popup (founder bug: "it shouldn't open that pop-up, it should just update it directly"). Persona + `prompts/voice_tool_use.md` + `open_screen` description strengthened. Own-story-only (bound on `(db, uid)`). Backend + agent change; needs ayma-api + ayma-agent deploy together, no APK change.
+
 ## 0. PRIORITY (founder, 2026-10-25): app-side testing and changes come first. Backend/vendor/admin work waits behind them.
 
 ## 1. Pending founder question (one at a time, top first)

@@ -384,6 +384,29 @@ def test_open_screen_rejects_an_unknown_screen():
     assert _PENDING not in db.store
 
 
+def test_open_screen_routes_a_story_edit_to_the_direct_tool_not_navigation():
+    # Founder bug 2026-10-28: a "change my story" request must edit in place via
+    # edit_story_entry, not navigate into the Story editor's passage popup.
+    db = _Db()
+    out = _run(app_control._bind_open_screen(db, "me")("change my story"))
+    assert "edit_story_entry" in out and "do NOT navigate" in out
+    assert _PENDING not in db.store  # nothing was queued — no navigation
+
+
+def test_open_screen_routes_a_story_removal_to_the_direct_tool_not_navigation():
+    db = _Db()
+    out = _run(app_control._bind_open_screen(db, "me")("remove that from my story"))
+    assert "remove_story_entry" in out and "do NOT navigate" in out
+    assert _PENDING not in db.store
+
+
+def test_open_screen_still_navigates_to_the_story_page_for_a_plain_open():
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("open my story"))
+    assert out.startswith("navigated: screen=story")
+    assert db.store[_PENDING]["path"] == "/profile/wiki"
+
+
 def test_search_explore_queues_the_query(monkeypatch):
     _fast_acks(monkeypatch, timeout=0.5)
     monkeypatch.setattr(app_control, "_RESULT_TIMEOUT_SECONDS", 0.05)
