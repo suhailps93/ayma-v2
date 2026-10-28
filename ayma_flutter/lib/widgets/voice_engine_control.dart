@@ -223,29 +223,32 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       AymaTokens ac, VoiceCatalog cat, VoiceSelection sel) {
     return [
       _label(ac, 'REALTIME MODEL'),
-      _dropdown<String>(
-        ac,
-        value: sel.realtimeModelId,
-        items: [
-          for (final m in cat.realtimeModels)
-            DropdownMenuItem(
-              value: m.id,
-              enabled: m.available,
-              child: Text(
-                m.available
-                    ? m.label
-                    : '${m.label} (needs ${m.requiresSecret})',
-                overflow: TextOverflow.ellipsis,
+      Builder(builder: (_) {
+        // Same rule as the cascade pickers: hide realtime models the user
+        // can't select rather than showing them disabled.
+        final shown = [for (final m in cat.realtimeModels) if (m.available) m];
+        return _dropdown<String>(
+          ac,
+          value: shown.any((m) => m.id == sel.realtimeModelId)
+              ? sel.realtimeModelId
+              : (shown.isNotEmpty ? shown.first.id : null),
+          items: [
+            for (final m in shown)
+              DropdownMenuItem(
+                value: m.id,
+                child: Text(m.label, overflow: TextOverflow.ellipsis),
               ),
-            ),
-        ],
-        onChanged: (v) {
-          setState(() {
-            _sel = sel.copyWith(realtimeModelId: v);
-            _reconcileVoice();
-          });
-        },
-      ),
+          ],
+          onChanged: shown.isEmpty
+              ? null
+              : (v) {
+                  setState(() {
+                    _sel = sel.copyWith(realtimeModelId: v);
+                    _reconcileVoice();
+                  });
+                },
+        );
+      }),
     ];
   }
 
@@ -370,23 +373,23 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
 
   Widget _componentDropdown(AymaTokens ac, List<VoiceComponent> items,
       String value, ValueChanged<String?> onChanged) {
+    // Only ever list providers the user can actually pick (§ founder
+    // 2026-10-28: "if it's not selectable why bother adding"). The catalog
+    // still reports the unavailable ones truthfully — they're just not shown.
+    final shown = [for (final c in items) if (c.available) c];
     return _dropdown<String>(
       ac,
-      value: items.any((c) => c.id == value)
+      value: shown.any((c) => c.id == value)
           ? value
-          : (items.isNotEmpty ? items.first.id : null),
+          : (shown.isNotEmpty ? shown.first.id : null),
       items: [
-        for (final c in items)
+        for (final c in shown)
           DropdownMenuItem(
             value: c.id,
-            enabled: c.available,
-            child: Text(
-              c.available ? c.label : '${c.label} (needs ${c.requiresSecret})',
-              overflow: TextOverflow.ellipsis,
-            ),
+            child: Text(c.label, overflow: TextOverflow.ellipsis),
           ),
       ],
-      onChanged: items.isEmpty ? null : onChanged,
+      onChanged: shown.isEmpty ? null : onChanged,
     );
   }
 

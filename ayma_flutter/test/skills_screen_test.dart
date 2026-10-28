@@ -186,11 +186,13 @@ void main() {
     expect(find.text('Face analysis'), findsOneWidget);
     expect(find.text('Body analysis'), findsOneWidget);
     expect(find.text('Run analysis'), findsOneWidget);
-    // The face group has an eligible photo (a thumbnail); the body group is
-    // empty, so it asks for the missing kind with an add-photo action.
+    // The empty body group still asks for the missing kind.
     expect(find.text('Add a full-body photo for a body report.'),
         findsOneWidget);
-    expect(find.text('Add photo'), findsOneWidget);
+    // An Add photo tile now sits in BOTH groups (§ founder ISSUE 3), labelled
+    // "Add", not just the empty one.
+    expect(find.text('Add'), findsNWidgets(2));
+    expect(find.byIcon(Icons.add_a_photo_outlined), findsNWidgets(2));
     // The old photo-source sheet is gone.
     expect(find.text('Use the photos I already have'), findsNothing);
   });

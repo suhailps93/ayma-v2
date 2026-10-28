@@ -39,7 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet groups photos into Face/Body<br/>via /appearance/eligibility, skip per axis]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, tap-to-deselect + Add photo both groups<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -211,15 +211,29 @@ flowchart LR
   (the Storage path) as the hide key, since the download url bears a rotatable token.
 - *Appearance pre-run photo grouping*: before a run/rerun the Skills-screen sheet (and the report screen's Re-run) call
   `GET /appearance/eligibility` (`photo_attrs.eligibility`) and show the current grid photos as two thumbnail groups —
-  **Face analysis** (`usable_for_face`) and **Body analysis** (`usable_for_body`), derived from the stored per-photo
-  `shot_type` tags, no new model id. A group with no eligible photo prompts to add the missing kind, reusing the real
-  add-photo flow (the inline photo carousel on My public profile); either group can be skipped. The run
-  (`POST /appearance/report`) accepts `want_face`/`want_body` and optional `face_media_ids`/`body_media_ids` (the chosen
-  grid photos, server-validated to the caller's own eligible photos — an explicit selection never falls back to a chat
-  attachment). `run_appearance` returns and persists a per-axis `category_status` (`ran` / `skipped` /
-  `no_eligible_photo`); a skipped or no-eligible axis stays "not available" (`needs_*_photo`) and is **never** scored,
-  so a body report with no real body photo can't produce a bogus low score. The report's Face/Body sections note the
-  photo(s) each used and show an add-photo prompt (worded by `category_status`) for an axis that didn't run.
+  **Face analysis** and **Body analysis**. Every grid photo is surfaced (not only the shot-type-tagged ones): a photo
+  clearly for one axis (`usable_for_face` / `usable_for_body`) shows only there, while an untagged, freshly-added, or
+  ambiguous photo shows in **both** groups so the user can pick (§ founder 2026-10-28). `has_face_photo`/`has_body_photo`
+  stay the honest coverage signal (a real usable-for-axis photo exists) and feed the add-a-photo nudges. In the sheet
+  every pooled photo starts **selected**; tapping a thumbnail toggles whether it feeds that axis — selection is local to
+  the sheet and **never navigates** (a tap only select/deselects; only the explicit **Add photo** tile, now present on
+  **both** groups whether empty or not, opens the picker). The run (`POST /appearance/report`) accepts
+  `want_face`/`want_body` and optional `face_media_ids`/`body_media_ids` (the still-selected grid photos). The backend
+  honours the user's own pick via `appearance._pick` + `_bucket_eligible` — the *same* categorisation the sheet uses, so
+  a freshly-added, not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is
+  refused; an explicit selection never falls back to a chat attachment. `run_appearance` returns and persists a per-axis
+  `category_status` (`ran` / `skipped` / `no_eligible_photo`). **A rerun never wipes the axis it didn't run**: when this
+  run only produced one axis (the other skipped, or wanted but with no eligible photo), the previously-produced section
+  is reused rather than regressed to `needs_*_photo` — so the unified face+body score, and the shareable report card
+  (which needs both scores), survive a one-axis rerun (§ founder 2026-10-28: "after Ayma reran I don't see the report
+  card anymore"). A genuinely-empty axis still stays "not available" and is **never** scored.
+- *Appearance report vision routing*: the face and body reports are vision-dependent, so their image call goes through
+  `llm_provider.get_vision_provider("reports")` — the configured `reports` provider only when it genuinely does vision
+  (`supports_vision`), else **Gemini**. A text/reasoning-only provider (Muse Spark, `supports_vision=False`) would
+  otherwise silently return a plausible but *hallucinated* read off a photo it never processed — and, returning valid
+  JSON, never trip the on-error Gemini fallback. This capability-aware route lives in code (not an env flag), so a
+  surface flipped to Meta keeps truthful photo analysis, matching the unified-brain capability map (vision → Gemini).
+  `physical_attributes` already calls Gemini directly for its vision pass.
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
   the report-card share sheet); the orb chat sheet grows to full screen **as one continuous surface** instead of
   dismissing itself and pushing a new chat route — see *Ayma chat sheet: one growing surface* below.

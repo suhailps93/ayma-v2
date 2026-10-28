@@ -23,7 +23,7 @@ import logging
 import gemini
 import report_blocks as rb
 import token_ledger
-from llm_provider import get_llm_provider
+from llm_provider import get_vision_provider
 
 logger = logging.getLogger("ayma.bodyreport")
 
@@ -164,7 +164,7 @@ async def run(
         raise ValueError("an image is required")
     mime_type = (mime_type or "image/jpeg").strip() or "image/jpeg"
 
-    report = await get_llm_provider("reports").generate_json(
+    report = await get_vision_provider("reports").generate_json(
         _INSTRUCTION,
         system_prompt=_SYSTEM,
         response_schema=_SCHEMA,

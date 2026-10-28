@@ -62,6 +62,12 @@ class LLMProvider(ABC):
 
     name: str
 
+    #: Whether this provider genuinely processes attached image content. A
+    #: text/reasoning-only vendor (e.g. Muse Spark) leaves this ``False`` so a
+    #: vision-dependent call site can route around it (:func:`get_vision_provider`)
+    #: rather than get a hallucinated read off an image the model never saw.
+    supports_vision: bool = False
+
     @abstractmethod
     async def generate_json(
         self,
@@ -114,6 +120,7 @@ class GeminiProvider(LLMProvider):
     """Delegates straight to ``gemini.py`` — the production default."""
 
     name = PROVIDER_GEMINI
+    supports_vision = True  # Gemini is multimodal — it genuinely reads images.
 
     async def generate_json(self, *args, **kwargs) -> object:
         return await gemini.generate_json(*args, **kwargs)
@@ -519,4 +526,27 @@ def get_llm_provider(surface: str) -> LLMProvider:
             "LLM_PROVIDER for %s is %r (not gemini|meta) — using gemini",
             surface, choice,
         )
+    return _gemini_singleton()
+
+
+def get_vision_provider(surface: str) -> LLMProvider:
+    """The provider for ``surface`` ONLY if it genuinely does vision, else
+    Gemini — the capability-aware route for an image/vision-dependent call.
+
+    A surface routed to a text/reasoning-only vendor (Muse Spark) would
+    otherwise *silently* return a plausible but hallucinated read off a photo
+    the model never actually processed — and, returning valid JSON, never
+    trip the on-error Gemini fallback. So any image call (the face/body
+    appearance reports) picks the configured provider only when
+    ``supports_vision`` is set, and falls back to Gemini otherwise. This lives
+    in code, not an env flag, so it survives a surface being flipped to Meta
+    and matches the unified-brain capability map (vision → Gemini)."""
+    provider = get_llm_provider(surface)
+    if provider.supports_vision:
+        return provider
+    logger.info(
+        "surface %s is routed to a vision-less provider (%s) — using Gemini "
+        "for this image call",
+        surface, provider.name,
+    )
     return _gemini_singleton()

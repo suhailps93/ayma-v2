@@ -331,9 +331,10 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         openStoredBodyReport(context, api: api, reportId: 'r1'),
     'face report sheet': (context) =>
         openStoredFaceReport(context, api: api, reportId: 'r1'),
-    // The Appearance pre-run sheet: the Face/Body photo groups (empty here, so
-    // the add-the-missing-kind prompts and the Run action show) must lay out
-    // cleanly at every size, scale and direction.
+    // The Appearance pre-run sheet: the Face/Body photo groups (populated via
+    // the fake eligibility, so the selectable thumbnails, the always-present
+    // Add photo tile, the skip toggles and the Run action all show) must lay
+    // out cleanly at every size, scale and direction.
     'appearance pre-run sheet': (context) => showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,

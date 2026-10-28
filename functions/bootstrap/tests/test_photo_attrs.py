@@ -243,6 +243,31 @@ def test_eligibility_empty_body_group_when_only_a_face_photo(monkeypatch):
     assert out["has_body_photo"] is False
 
 
+def test_eligibility_surfaces_untagged_photos_in_both_buckets(monkeypatch):
+    # § founder 2026-10-28: an untagged / ambiguous photo must not be hidden.
+    # It is surfaced in BOTH buckets so the user can pick, while has_* stay the
+    # honest coverage signal (no usable-for-axis photo really exists yet).
+    monkeypatch.setattr(photo_attrs, "_grid_media_ids", lambda prof: ["m1", "m2"])
+    import public_profile
+
+    monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    docs = {
+        ("users", "u1", "profile", "main"): {"photos": [{"media_id": "m1"}]},
+        # m1 untagged (no attributes yet), m2 a clear face-only shot.
+        ("users", "u1", "user_media", "m1"): {"storage_path": "p1.jpg"},
+        ("users", "u1", "user_media", "m2"): {
+            "storage_path": "p2.jpg",
+            "attributes": {"usable_for_face": True, "usable_for_body": False},
+        },
+    }
+    out = photo_attrs.eligibility(_Db(docs), "u1")
+    assert [e["media_id"] for e in out["face"]] == ["m1", "m2"]
+    # the untagged m1 shows for body too; the face-only m2 never does.
+    assert [e["media_id"] for e in out["body"]] == ["m1"]
+    assert out["has_face_photo"] is True  # m2 is a real usable face photo
+    assert out["has_body_photo"] is False  # no real usable body photo exists
+
+
 # --- resync_usable_for_body -------------------------------------------------
 
 

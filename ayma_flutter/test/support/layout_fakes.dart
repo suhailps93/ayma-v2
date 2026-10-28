@@ -151,6 +151,17 @@ Object? _bodyFor(String path) {
       'tip': kLongText,
     };
   }
+  if (path == '/appearance/eligibility') {
+    // Populated Face and Body buckets so the matrix covers the pre-run sheet's
+    // selectable thumbnails + the always-present Add photo tile (not just the
+    // empty-group prompts).
+    return {
+      'face': [for (var i = 0; i < 3; i++) {'media_id': 'f$i', 'url': 'https://cdn/f$i.jpg'}],
+      'body': [for (var i = 0; i < 3; i++) {'media_id': 'b$i', 'url': 'https://cdn/b$i.jpg'}],
+      'has_face_photo': true,
+      'has_body_photo': true,
+    };
+  }
   if (path == '/explore') {
     return {'cards': [for (var i = 0; i < 6; i++) _card(i)]};
   }

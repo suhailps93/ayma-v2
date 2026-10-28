@@ -288,6 +288,13 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
   bool _skipFace = false;
   bool _skipBody = false;
 
+  /// The photos currently selected for each axis (by `media_id`). Every photo
+  /// in a bucket starts selected; a tap on a tile toggles it — selection is a
+  /// local, in-sheet choice only and never navigates anywhere (§ founder
+  /// 2026-10-28). A skipped section runs nothing regardless of its selection.
+  final Set<String> _faceSel = <String>{};
+  final Set<String> _bodySel = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -297,38 +304,73 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
   Future<void> _load() async {
     try {
       final e = await widget.api.appearanceEligibility();
-      if (mounted) setState(() { _elig = e; _loading = false; });
+      if (mounted) setState(() => _applyEligibility(e));
     } catch (_) {
       // No groups on failure — the run still works (auto-pick server-side).
-      if (mounted) {
-        setState(() { _elig = const AppearanceEligibility(); _loading = false; });
-      }
+      if (mounted) setState(() => _applyEligibility(const AppearanceEligibility()));
     }
+  }
+
+  /// Fold a fresh eligibility read in: default every pooled photo to selected,
+  /// but keep any photo the user had already deselected this session so a
+  /// re-read after adding a photo doesn't silently re-check their choices.
+  void _applyEligibility(AppearanceEligibility e) {
+    final faceIds = {for (final p in e.face) p.mediaId};
+    final bodyIds = {for (final p in e.body) p.mediaId};
+    final faceDeselected = {
+      for (final p in e.face)
+        if (_elig != null && !_faceSel.contains(p.mediaId)) p.mediaId,
+    };
+    final bodyDeselected = {
+      for (final p in e.body)
+        if (_elig != null && !_bodySel.contains(p.mediaId)) p.mediaId,
+    };
+    _faceSel
+      ..clear()
+      ..addAll(faceIds.difference(faceDeselected));
+    _bodySel
+      ..clear()
+      ..addAll(bodyIds.difference(bodyDeselected));
+    _elig = e;
+    _loading = false;
   }
 
   Future<void> _addPhoto() async {
     // Reuse the real add-photo flow: the inline photo carousel on My public
     // profile, opened straight into its photo picker. On return, re-read
-    // eligibility so a freshly-added (and classified) photo shows in its group.
+    // eligibility so a freshly-added photo shows in both groups (the backend
+    // honours the user's pick even before it is shot-type classified).
     await context.push(MyPublicProfileScreen.editPhotosPath);
     if (!mounted) return;
     setState(() => _loading = true);
     await _load();
   }
 
+  void _toggle(Set<String> sel, String mediaId) {
+    setState(() {
+      if (!sel.remove(mediaId)) sel.add(mediaId);
+    });
+  }
+
   void _run() {
     final e = _elig ?? const AppearanceEligibility();
-    final faceRun = !_skipFace && e.face.isNotEmpty;
-    final bodyRun = !_skipBody && e.body.isNotEmpty;
+    final faceIds = [
+      for (final p in e.face)
+        if (_faceSel.contains(p.mediaId)) p.mediaId,
+    ];
+    final bodyIds = [
+      for (final p in e.body)
+        if (_bodySel.contains(p.mediaId)) p.mediaId,
+    ];
+    final faceRun = !_skipFace && faceIds.isNotEmpty;
+    final bodyRun = !_skipBody && bodyIds.isNotEmpty;
     Navigator.pop(
       context,
       _AppearanceChoice(
         wantFace: faceRun,
         wantBody: bodyRun,
-        faceMediaIds:
-            faceRun ? [for (final p in e.face) p.mediaId] : null,
-        bodyMediaIds:
-            bodyRun ? [for (final p in e.body) p.mediaId] : null,
+        faceMediaIds: faceRun ? faceIds : null,
+        bodyMediaIds: bodyRun ? bodyIds : null,
       ),
     );
   }
@@ -350,8 +392,8 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
             ),
             const SizedBox(height: 4),
             Text(
-              "Here's which of your photos I'll use. Skip a section, or add a "
-              'photo for one you want — never required.',
+              "Here are your photos, sorted into Face and Body. Tap one to "
+              'leave it out, add another, or skip a section — never required.',
               style: AymaType.sans(size: 12.5, soft: true, color: ac.fgMute),
             ),
             const SizedBox(height: 16),
@@ -367,9 +409,11 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
                 title: 'Face analysis',
                 icon: Icons.face_retouching_natural_outlined,
                 photos: e?.face ?? const [],
+                selected: _faceSel,
                 skipped: _skipFace,
                 emptyPrompt: 'Add a photo that clearly shows your face.',
                 onToggleSkip: () => setState(() => _skipFace = !_skipFace),
+                onTogglePhoto: (id) => _toggle(_faceSel, id),
                 onAddPhoto: _addPhoto,
               ),
               const SizedBox(height: 16),
@@ -377,9 +421,11 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
                 title: 'Body analysis',
                 icon: Icons.accessibility_new_outlined,
                 photos: e?.body ?? const [],
+                selected: _bodySel,
                 skipped: _skipBody,
                 emptyPrompt: 'Add a full-body photo for a body report.',
                 onToggleSkip: () => setState(() => _skipBody = !_skipBody),
+                onTogglePhoto: (id) => _toggle(_bodySel, id),
                 onAddPhoto: _addPhoto,
               ),
               const SizedBox(height: 20),
@@ -399,26 +445,33 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
   }
 }
 
-/// One axis group inside [AppearancePreRunSheet]: its eligible photos as a
-/// horizontal thumbnail strip (dimmed when skipped), a skip/include toggle when
-/// it has photos, or an add-photo prompt when it is empty.
+/// One axis group inside [AppearancePreRunSheet]: its photos as a horizontal
+/// strip of selectable thumbnails (dimmed when skipped), a skip/include toggle
+/// when it has photos, and an "Add photo" tile that is ALWAYS present (both
+/// axes, empty or not — § founder 2026-10-28). Tapping a thumbnail toggles
+/// whether it feeds this axis — it never navigates. Only the explicit
+/// "Add photo" tile opens the photo picker.
 class _AxisGroup extends StatelessWidget {
   const _AxisGroup({
     required this.title,
     required this.icon,
     required this.photos,
+    required this.selected,
     required this.skipped,
     required this.emptyPrompt,
     required this.onToggleSkip,
+    required this.onTogglePhoto,
     required this.onAddPhoto,
   });
 
   final String title;
   final IconData icon;
   final List<EligiblePhoto> photos;
+  final Set<String> selected;
   final bool skipped;
   final String emptyPrompt;
   final VoidCallback onToggleSkip;
+  final void Function(String mediaId) onTogglePhoto;
   final VoidCallback onAddPhoto;
 
   @override
@@ -455,46 +508,38 @@ class _AxisGroup extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          if (hasPhotos)
-            Opacity(
-              opacity: skipped ? 0.4 : 1.0,
-              child: SizedBox(
-                height: 64,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: photos.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (_, i) => ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: SizedBox(
-                      width: 64,
-                      height: 64,
-                      child: AymaPhoto(
-                        url: photos[i].url,
-                        fit: BoxFit.cover,
-                        displayWidth: 64,
-                      ),
-                    ),
-                  ),
-                ),
+          if (!hasPhotos)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                emptyPrompt,
+                style: AymaType.sans(size: 12.5, color: ac.fgDim),
               ),
-            )
-          else
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  emptyPrompt,
-                  style: AymaType.sans(size: 12.5, color: ac.fgDim),
-                ),
-                const SizedBox(height: 6),
-                TextButton.icon(
-                  onPressed: onAddPhoto,
-                  icon: const Icon(Icons.add_a_photo_outlined, size: 16),
-                  label: const Text('Add photo'),
-                ),
-              ],
             ),
+          Opacity(
+            opacity: skipped ? 0.4 : 1.0,
+            child: SizedBox(
+              height: 64,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: photos.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) {
+                  if (i == photos.length) {
+                    return _AddPhotoTile(onTap: onAddPhoto);
+                  }
+                  final p = photos[i];
+                  return _PhotoTile(
+                    url: p.url,
+                    isSelected: selected.contains(p.mediaId),
+                    // Selecting is disabled visually while skipped, but the tap
+                    // still toggles so the choice is ready if they un-skip.
+                    onTap: () => onTogglePhoto(p.mediaId),
+                  );
+                },
+              ),
+            ),
+          ),
           if (skipped && hasPhotos)
             Padding(
               padding: const EdgeInsets.only(top: 6),
@@ -504,6 +549,118 @@ class _AxisGroup extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// A selectable thumbnail in an [_AxisGroup]. A tap toggles [isSelected] via
+/// [onTap] — it NEVER navigates (§ founder 2026-10-28: tapping a photo in the
+/// analysis sheet must only select/deselect it). Deselected tiles dim and lose
+/// the check badge.
+class _PhotoTile extends StatelessWidget {
+  const _PhotoTile({
+    required this.url,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String url;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: isSelected ? 'Photo included — tap to leave out'
+          : 'Photo left out — tap to include',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: SizedBox(
+          width: 64,
+          height: 64,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Opacity(
+                  opacity: isSelected ? 1.0 : 0.45,
+                  child: AymaPhoto(
+                    url: url,
+                    fit: BoxFit.cover,
+                    displayWidth: 64,
+                  ),
+                ),
+              ),
+              if (isSelected)
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: ac.accent, width: 2),
+                  ),
+                ),
+              Positioned(
+                top: 3,
+                right: 3,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isSelected ? ac.accent : ac.bg.withValues(alpha: 0.7),
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(
+                    isSelected ? Icons.check : Icons.circle_outlined,
+                    size: 13,
+                    color: isSelected ? ac.onAccent : ac.fgMute,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The always-present "Add photo" tile at the end of an [_AxisGroup]'s strip:
+/// the ONLY element in the sheet that opens the photo picker.
+class _AddPhotoTile extends StatelessWidget {
+  const _AddPhotoTile({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Semantics(
+      button: true,
+      label: 'Add photo',
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: ac.lineSoft),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.add_a_photo_outlined, size: 18, color: ac.fgDim),
+              const SizedBox(height: 2),
+              Text('Add', style: AymaType.sans(size: 10, color: ac.fgMute)),
+            ],
+          ),
+        ),
       ),
     );
   }

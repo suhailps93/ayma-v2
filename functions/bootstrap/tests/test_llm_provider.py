@@ -22,6 +22,7 @@ from llm_provider import (
     MetaProvider,
     _response_format,
     get_llm_provider,
+    get_vision_provider,
 )
 
 
@@ -128,6 +129,27 @@ def test_per_surface_flip_is_independent(monkeypatch):
 def test_unknown_surface_raises():
     with pytest.raises(ValueError):
         get_llm_provider("nope")
+
+
+def test_provider_vision_capability_flags():
+    # Gemini genuinely reads images; Muse/Meta is text/reasoning-only.
+    assert GeminiProvider().supports_vision is True
+    assert MetaProvider().supports_vision is False
+
+
+def test_vision_provider_falls_back_to_gemini_when_surface_is_vision_less(monkeypatch):
+    # § founder 2026-10-28 (ISSUE 7): with the reports surface flipped to Meta
+    # (Muse Spark, vision-less), a vision call must still go to Gemini so the
+    # face/body appearance report truly analyses the photo instead of
+    # hallucinating a read off an image the model never processed.
+    _with_flags(monkeypatch, llm_provider_reports="meta", llm_meta_fallback=True)
+    assert isinstance(get_llm_provider("reports"), MetaProvider)  # chat path unchanged
+    assert isinstance(get_vision_provider("reports"), GeminiProvider)
+
+
+def test_vision_provider_keeps_a_vision_capable_surface(monkeypatch):
+    _with_flags(monkeypatch, llm_provider_reports="gemini")
+    assert isinstance(get_vision_provider("reports"), GeminiProvider)
 
 
 def test_unknown_flag_value_falls_back_to_gemini(monkeypatch):

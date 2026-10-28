@@ -272,12 +272,27 @@ def eligibility(db, uid: str) -> dict:
         if not url:
             continue
         entry = {"media_id": mid, "url": url}
-        if attrs.get("usable_for_face"):
-            out["face"].append(entry)
+        uf = bool(attrs.get("usable_for_face"))
+        ub = bool(attrs.get("usable_for_body"))
+        # has_* stay the honest coverage signal (a real usable-for-axis photo
+        # exists), feeding the add-a-photo nudges elsewhere.
+        if uf:
             out["has_face_photo"] = True
-        if attrs.get("usable_for_body"):
-            out["body"].append(entry)
+        if ub:
             out["has_body_photo"] = True
+        # Surface EVERY grid photo, auto-sorted into the two buckets so the
+        # pre-run sheet shows the whole set (§ founder 2026-10-28: a photo must
+        # not be hidden just because its shot-type tag is missing/ambiguous).
+        # A photo clearly for one axis shows only there; an untagged, group, or
+        # otherwise-ambiguous photo shows in BOTH so the user can pick. A
+        # face-only crop is never offered for body, nor a body-only shot for
+        # face. The user's explicit pick is honoured by :func:`appearance._pick`
+        # regardless of the tag, so a freshly-added, not-yet-tagged photo is
+        # still analysable.
+        if uf or not ub:
+            out["face"].append(entry)
+        if ub or not uf:
+            out["body"].append(entry)
     return out
 
 

@@ -155,14 +155,19 @@ void main() {
     expect(_posted.first['voice_id'], 'Aoede');
   });
 
-  testWidgets('an unavailable realtime model is labelled with its needed secret',
+  testWidgets('an unavailable realtime model is hidden, not shown disabled',
       (tester) async {
+    // § founder 2026-10-28 (ISSUE 6): "if it's not selectable why bother" —
+    // a model the user can't pick (no key) is filtered out of the dropdown
+    // entirely, while the available one still shows.
     await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byType(DropdownButton<String>).at(1)); // realtime model
     await tester.pumpAndSettle();
-    expect(find.text('OpenAI Realtime (needs OPENAI_API_KEY)'), findsWidgets);
+    expect(find.textContaining('OpenAI Realtime'), findsNothing);
+    expect(find.textContaining('needs OPENAI_API_KEY'), findsNothing);
+    expect(find.text('Gemini Live (native audio)'), findsWidgets);
   });
 
   testWidgets('the free-text accent is typed and posted to /voice/preference',

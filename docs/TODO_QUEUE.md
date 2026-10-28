@@ -158,3 +158,16 @@ The standing snapshot (`users/{uid}/persona/avatar`, `persona_snapshot.py`) is b
 - **Flutter: low-context warning UI.** Backend returns `readiness.{readiness_score,low_context,message}` on the date-sim preflight; the "You & <name>" sim setup screen should show the warning copy when `low_context` is true (copy is server-provided in `message`).
 - **True conversation-volume count.** `conversation_volume` currently uses the already-gathered capped style-exemplar count (cheap, zero extra reads) as a proxy; it under-counts very chatty users (short-only, deduped, capped at 40). If needed, swap to a true uncapped own-message count across `dm_threads`.
 - **Deletion coverage audit (pre-existing).** `date_sims` and `practice_sessions` subcollections are not in `schema.ACCOUNT_SUBCOLLECTIONS` (persona IS, added here). Consider adding them so account deletion wipes them too.
+
+## Appearance report flow fixes (2026-10-28, branch `meta-hackathon`)
+Shipped (see HACKATHON_STATUS dated line): rerun no longer wipes the untouched
+axis so the report card survives a one-axis rerun; the pre-run sheet surfaces
+ALL grid photos auto-sorted into Face/Body with tap-to-deselect (never
+navigates) and Add photo on both groups; My-public-profile "Edit manually" is a
+pencil icon; voice-engine dropdowns hide unavailable providers; face/body
+report image calls route through `get_vision_provider` (vision-less reports
+surface → Gemini). Follow-up:
+- **Unified-brain capability map.** `llm_provider.supports_vision` +
+  `get_vision_provider` is the first slice of the capability-aware route
+  (vision → Gemini). Fold it into the planned unified-brain capability map so
+  other capability-gated routes (not just vision) resolve the same way.

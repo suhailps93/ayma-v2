@@ -160,6 +160,19 @@ def _attributes_payload(pa_doc: dict | None) -> dict:
     }
 
 
+def _bucket_eligible(attrs: dict, flag: str) -> bool:
+    """Whether ``attrs`` lands a photo in the pre-run sheet's ``flag`` bucket —
+    the SAME auto-categorisation :func:`photo_attrs.eligibility` uses, so the
+    backend honours exactly the photos the sheet could have offered and no
+    others. A photo clearly for one axis (e.g. a face-only crop) is never
+    eligible for the other; an untagged/ambiguous photo is eligible for both,
+    so a freshly-added, not-yet-classified photo the user picked is still read.
+    """
+    uf = bool(attrs.get("usable_for_face"))
+    ub = bool(attrs.get("usable_for_body"))
+    return (uf or not ub) if flag == "usable_for_face" else (ub or not uf)
+
+
 def _pick(
     photos: list[dict],
     extra: list[tuple[bytes, str, str]],
@@ -167,21 +180,29 @@ def _pick(
     *,
     only_media_ids: set[str] | None = None,
 ):
-    """The first grid photo whose shot-type tag ``flag`` is set — restricted to
-    ``only_media_ids`` when the caller named an explicit selection — else the
-    first attached ``extra`` image (user-supplied, single-subject intent),
-    else ``None``. Returns ``(bytes, mime, storage_path)`` or ``None``.
+    """Pick the photo to feed this axis. Returns ``(bytes, mime, storage_path)``
+    or ``None``.
 
     When ``only_media_ids`` is given (an explicit, grid-based selection from the
-    pre-run sheet) the ``extra`` fallback is deliberately NOT taken: an explicit
-    selection names grid photos, and a chat attachment is never silently
-    substituted for one — the grid is the source of truth so a category with no
-    eligible *selected* photo resolves to "not available", never a bogus read
-    off some other photo."""
+    pre-run sheet) the first *selected* grid photo that is bucket-eligible for
+    the axis (:func:`_bucket_eligible`) is used — honouring the user's own pick,
+    including an untagged/freshly-added photo, while still refusing a photo
+    clearly meant for the other axis (§ founder 2026-10-28: all photos
+    selectable, the user's choice drives the read). The ``extra`` fallback is
+    deliberately NOT taken for an explicit selection: a chat attachment is never
+    silently substituted for a named grid photo — so a selection that matches
+    nothing eligible resolves to "not available", never a bogus read.
+
+    With no explicit selection (``only_media_ids is None`` — the chat/auto path)
+    the legacy behaviour stands: the first grid photo whose shot-type ``flag``
+    is set, else the first attached ``extra`` image, else ``None``."""
     for p in photos:
-        if only_media_ids is not None and p.get("media_id") not in only_media_ids:
+        attrs = p.get("attrs") or {}
+        if only_media_ids is not None:
+            if p.get("media_id") in only_media_ids and _bucket_eligible(attrs, flag):
+                return p["bytes"], p["mime"], p.get("path", "")
             continue
-        if (p.get("attrs") or {}).get(flag):
+        if attrs.get(flag):
             return p["bytes"], p["mime"], p.get("path", "")
     if only_media_ids is None and extra:
         return extra[0]
@@ -384,7 +405,28 @@ async def run_appearance(
                 skill_memory.save_body_analysis(db, uid, report)
                 skill_memory.promote(db, uid, "body_analysis")
 
-    category_status = _category_status(want_face, want_body, face, body)
+    # Preserve any axis this run did not freshly produce. A rerun that runs
+    # only one axis — the other skipped (``want_*=False``) or wanted but with
+    # no eligible photo — must NOT wipe the previously-produced section back to
+    # NEEDS_*: that drops the unified face+body score and makes the shareable
+    # report card vanish (§ founder 2026-10-28: "after Ayma reran I don't see
+    # the report card anymore"). Mirrors :func:`record_background_result`'s
+    # reuse; the previous doc is read once here.
+    prev_doc = _read_report_doc(db, uid)
+    if not _axis_ran(face) and _axis_ran(prev_doc.get("face")):
+        face = prev_doc["face"]
+    if not _axis_ran(body) and _axis_ran(prev_doc.get("body")):
+        body = prev_doc["body"]
+    if isinstance(attributes, dict) and attributes.get("status"):
+        prev_attrs = prev_doc.get("attributes")
+        if isinstance(prev_attrs, dict) and not prev_attrs.get("status"):
+            attributes = prev_attrs
+
+    # A reused real read displays as a produced section, not an add-photo
+    # prompt, so category_status is derived from the MERGED values.
+    category_status = _category_status(
+        want_face or _axis_ran(face), want_body or _axis_ran(body), face, body
+    )
     photo_count = len(photos) + len(extra)
     doc = _persist_report(
         db, uid,

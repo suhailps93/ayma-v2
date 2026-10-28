@@ -373,6 +373,62 @@ def test_explicit_selection_never_falls_back_to_a_chat_attachment(monkeypatch, _
     assert _mocks["body"] == 0
 
 
+def test_rerun_face_only_keeps_the_previous_body_so_the_card_survives(_mocks):
+    # § founder 2026-10-28 "after Ayma reran I don't see the report card": a
+    # first full run scores both axes; a rerun that only runs face (body
+    # skipped) must NOT wipe the body section back to needs_body_photo — the
+    # unified face+body score (and thus the shareable card) must survive.
+    db = FakeDb()
+    first = _run(appearance.run_appearance(db, "u1"))
+    assert first["score"] == {"value": 6.8, "basis": "face+body"}
+
+    rep = _run(appearance.run_appearance(db, "u1", want_body=False))
+    assert rep["face"]["overall_score"] == 7.1
+    assert rep["body"]["overall_score"] == 6.4  # reused, not wiped
+    assert rep["score"] == {"value": 6.8, "basis": "face+body"}
+    # the reused axis reads as a produced section, not an add-photo prompt.
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+    assert _mocks["body"] == 1  # body_report ran once (first run only)
+
+
+def test_rerun_keeps_previous_axis_when_wanted_but_no_eligible_photo(monkeypatch, _mocks):
+    # body wanted but nothing eligible feeds it on the rerun — still must keep
+    # the previously-produced body rather than regress it.
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": False,
+                       "shot_type": "face"}},
+        ],
+    )
+    rep = _run(appearance.run_appearance(db, "u1", want_body=True))
+    assert rep["body"]["overall_score"] == 6.4  # reused
+    assert rep["score"]["basis"] == "face+body"
+
+
+def test_explicit_selection_of_an_untagged_photo_is_honoured(monkeypatch, _mocks):
+    # § founder 2026-10-28: a freshly-added, not-yet-classified photo the user
+    # picked for an axis is still read — the user's choice drives the analysis.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"new", "mime": "image/jpeg", "path": "uploads/u1/new.jpg",
+             "media_id": "mnew", "attrs": {}},  # untagged
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mnew"], body_media_ids=["mnew"],
+    ))
+    assert rep["face"]["source_photos"] == ["uploads/u1/new.jpg"]
+    assert rep["body"]["source_photos"] == ["uploads/u1/new.jpg"]
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+
+
 def test_returns_none_and_records_skipped_without_photos(monkeypatch, _mocks):
     monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: [])
     db = FakeDb()

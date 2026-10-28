@@ -67,6 +67,40 @@ def test_run_rejects_empty_bytes():
         _run(face_report.run(b"", "image/jpeg", uid="u1"))
 
 
+def test_run_uses_gemini_vision_even_when_reports_flipped_to_meta(monkeypatch):
+    # § founder 2026-10-28 (ISSUE 7): the appearance report's image call must
+    # hit a vision-capable model. With the reports surface on Meta (Muse Spark,
+    # vision-less) the read must still go to Gemini, never to Meta — otherwise
+    # the score is hallucinated off a photo Muse never processed.
+    import dataclasses
+    import llm_provider
+
+    monkeypatch.setattr(
+        llm_provider, "CONFIG",
+        dataclasses.replace(
+            llm_provider.CONFIG,
+            llm_provider_reports="meta",
+            llm_meta_fallback=True,
+        ),
+    )
+    used = {"gemini": False}
+
+    async def _json(contents, system_prompt, response_schema=None, image=None, **kw):
+        used["gemini"] = True
+        assert image is not None and image[0] == b"jpegbytes"
+        return dict(_RAW)
+
+    async def _no_meta(*a, **k):
+        raise AssertionError("a vision call must never be routed to Meta/Muse")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    monkeypatch.setattr(llm_provider.MetaProvider, "generate_json", _no_meta)
+
+    r = _run(face_report.run(b"jpegbytes", "image/jpeg", uid="u1"))
+    assert used["gemini"] is True
+    assert r["usable"] is True
+
+
 def test_run_echoes_the_source_photo(_patch_json):
     r = _run(
         face_report.run(
