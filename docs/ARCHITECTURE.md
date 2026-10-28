@@ -1481,6 +1481,12 @@ A new `functions/bootstrap/skills/` module holds every tool definition, register
 - The matching skill (§5.4)
 - Explore's NL filter parser (§6.2)
 
+**Story/wiki write tools (what the chat agent can do to the user's own story):**
+
+- `remember` (`skills/remember.py`) — ADD: fold the live conversation into the user's wiki pages (`wiki_ingest.ingest`). Always-on, voice + text.
+- `edit_story_entry` / `remove_story_entry` (`skills/story_manage.py`) — EDIT and (soft-)REMOVE an existing story section straight from an **ordinary chat**, closing the old gap where Ayma could only append and would say she "can't do that directly". **Text-only, always-on** (`_STORY_MANAGE_REGISTRY`, never in `make_livekit_tools`, so voice/`agent.py` is untouched). Each resolves the section the user means by matching their words against the titles/types/bodies of *their own* `story.get_story` sections (scoped to the authenticated `uid` — can never reach another user). `edit_story_entry` rewrites the section body via `story.save_section` after first committing the prior wording to the section's version history (revertible); `remove_story_entry` calls `story.remove_section` — a **soft** remove via the shared `user_hidden` mechanism (hidden from the story + public profile, `ai_body` kept in Ayma's notes, pre-remove state snapshotted first), never a hard delete. Both return a confirmation string naming the section, and the persona (`persona.md`) tells Ayma she can now do this and to confirm every change.
+- `set_passage_privacy` / `edit_passage` / `remove_from_profile` / `set_section_privacy` / `edit_career_timeline_entry` / `delete_career_timeline_entry` (`skills/story_edit.py`) — the Your Story **editor**-scoped passage tools, exposed only when the chat is opened from the story screen with a page + highlighted passage in focus (`story=True`).
+
 ### 13.7 Storage map
 
 | What | Where |

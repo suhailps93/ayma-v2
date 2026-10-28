@@ -85,7 +85,7 @@ _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 _PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_intent"}
 
 
-from . import edit_profile_section, photo_edit, story_edit, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
+from . import edit_profile_section, photo_edit, story_edit, story_manage, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
 
 # Always in the TEXT tool set, never in voice: ``generate_image`` delivers its
 # image through the same mutable ``result`` sink ``edit_photo`` uses
@@ -101,6 +101,14 @@ _TEXT_ONLY_REGISTRY: list[Skill] = [generate_image.SKILL]
 # reviews and sends. Voice has no surface to show/edit a card, so it is never
 # in the voice tool set (``_REGISTRY``).
 _FEEDBACK_REGISTRY: list[Skill] = [submit_feedback.SKILL]
+
+# Always in the TEXT tool set, never in voice (``_REGISTRY`` → ``make_livekit_
+# tools``): ``edit_story_entry`` / ``remove_story_entry`` let Ayma change or
+# soft-remove a section of the user's OWN story/wiki straight from an ordinary
+# chat (the editor-only passage tools below need a page + highlighted passage
+# in focus). Text-only, like ``generate_image`` — kept out of voice to leave
+# agent.py's tool set untouched; a story edit is a text-surface action.
+_STORY_MANAGE_REGISTRY: list[Skill] = list(story_manage.SKILLS)
 
 # Only exposed when the chat is opened from the Your Story editor (§ Your Story).
 _STORY_REGISTRY: list[Skill] = list(story_edit.SKILLS)
@@ -141,7 +149,7 @@ def session_tool_declarations(
     ``appearance=True`` adds the Appearance-report correct/clear tools."""
     reg = (
         list(_REGISTRY) + _recall_skills() + _TEXT_ONLY_REGISTRY
-        + _FEEDBACK_REGISTRY + app_control.COMMAND_SKILLS
+        + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
     )
     if story:
         reg += _STORY_REGISTRY
@@ -221,6 +229,10 @@ def make_session_tool_fns(
         # feedback card is delivered to the client via the reply's
         # ``feedback_card`` field; nothing is persisted here.
         out[s.name] = s.bind(db, uid, result=feedback_result)
+    for s in _STORY_MANAGE_REGISTRY:
+        # Always-on story edit/soft-remove tools — bound on (db, uid) alone,
+        # so they can only ever reach this authenticated user's own story.
+        out[s.name] = s.bind(db, uid)
     for s in app_control.COMMAND_SKILLS:
         # account_action checks the confirmation against the user's own
         # latest message, so it needs this turn's transcript window.
