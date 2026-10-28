@@ -1,0 +1,11 @@
+name: appearance_report
+description: >
+  From the signed-in app, open the appearance report / analysis screen.
+goal: >
+  Starting from the Ayma main screen, find and open the appearance report
+  (also called the appearance analysis or "your look" report). It is typically
+  reached from the profile tab or a card/button mentioning "appearance",
+  "analysis", or "report". Open that report screen.
+success_condition: >
+  The appearance report / analysis screen with its results is visible on
+  screen.

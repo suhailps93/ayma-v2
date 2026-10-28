@@ -1,0 +1,19 @@
+name: login
+description: >
+  Sign in to Ayma using the Email sign-in flow with the seeded test account.
+goal: >
+  Sign in to the Ayma app using Email. If a welcome or onboarding screen is
+  shown, proceed to the sign-in options. Choose "Continue with email" (or the
+  email / sign-in-with-email option). Enter the email address
+  {test_email} into the email field, then enter the password into the password
+  field, then tap the button that submits the sign-in (e.g. "Sign in",
+  "Continue", or "Log in").
+success_condition: >
+  The app's main / home screen is visible and the login form is no longer on
+  screen (sign-in succeeded).
+# The password is never stored in this file. FROM_SECRET_MANAGER makes the
+# harness read it from Secret Manager (secret AYMA_TEST_ALEX_PASSWORD) or, if
+# that secret is absent, prompt for it interactively (never persisted).
+credentials:
+  test_email: test.alex@ayma-ai.web.app
+  test_password: FROM_SECRET_MANAGER

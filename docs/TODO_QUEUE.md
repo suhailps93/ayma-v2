@@ -189,3 +189,21 @@ surface → Gemini). Follow-up:
   has the needed capability, else Gemini (web/vision always Gemini). UI: Brain
   section atop "Ayma's models"; API `GET`/`POST /brain/preference`; default
   `AYMA_BRAIN_DEFAULT=meta`. See ARCHITECTURE §13.10 + the HACKATHON_STATUS line.
+
+## Argon emulator-testing harness (2026-10-28, branch `meta-hackathon`)
+Dev tool at `tools/argon_testing/` (Gemini Computer-Use → ADB → GIF/MD report).
+Built and verified up to the model boundary; see HACKATHON_STATUS dated line +
+`tools/argon_testing/README.md`. Follow-ups:
+- **Blocked on a working credential.** `GEMINI_ARGON_API_KEY` (project
+  `ayma-ai`) currently holds an `AQ.` API-key-format value whose bound service
+  account is deleted/disabled → 401 `ACCOUNT_STATE_INVALID`. To run Computer
+  Use live, add a Gemini Developer API key with an active service account and
+  Computer-Use preview access to that secret (no code change needed). Then run
+  one scenario end-to-end and commit the sample `.md` + `.gif` (`git add -f`).
+- **Seed the test-account password.** `login` needs `AYMA_TEST_ALEX_PASSWORD`
+  in Secret Manager (project `ayma-ai`); not present yet, so `login` prompts
+  interactively. Add the seeded `test.alex@ayma-ai.web.app` password there to
+  run it unattended.
+- **More device configs.** Boot Fold / small-screen AVDs (or `adb connect` a
+  remote device) and run each scenario per serial to build a cross-form-factor
+  report set.
