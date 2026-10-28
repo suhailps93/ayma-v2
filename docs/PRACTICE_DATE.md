@@ -262,8 +262,26 @@ summary. Crucially it does **not** share this feature's grounding rule on both
 sides: the MATCH persona is still `build_persona_context` (public-only), but the
 USER persona is grounded in the user's **full own context**
 (`practice_core.build_self_persona_context` — profile + every wiki page,
-private spans kept), because a user's own agent authentically represents them.
+private spans kept, **plus a capped sample of the user's own recent sent DM
+messages as texting-STYLE exemplars** so the agent sounds like how the user
+actually texts), because a user's own agent authentically represents them.
+
+**Texting-style exemplars (own messages only).** `build_self_persona_context`
+additionally reads a bounded set of the user's **own outgoing** DM messages
+(`_gather_self_style_exemplars`): only messages whose `sender_uid` is the user,
+`type == "text"`, short enough to show casual voice, deduped, newest-first, and
+hard-capped (`_SELF_STYLE_MAX_MESSAGES = 40`, `_SELF_STYLE_MAX_MSG_CHARS = 200`,
+`_SELF_STYLE_MAX_TOTAL_CHARS = 2000`; scan caps `_SELF_STYLE_THREAD_SCAN = 40`,
+`_SELF_STYLE_MSGS_PER_THREAD = 60`). The **other participant's** messages are
+another user's private content and are **never** ingested. Reads are
+defensive — a missing/unreadable thread just yields fewer exemplars. They land
+on `PersonaContext.style_exemplars` and render under a "How this user texts —
+STYLE ONLY" block; the MATCH persona (`build_persona_context`) never carries
+them and never reads any DM content.
+
 A **disclosure filter** in `prompts/date_sim.md` keeps both personas from
 *emitting* private/sensitive specifics even when grounded in full context
-(grounded-but-filtered). Full design, the endpoint and the privacy reasoning:
-`docs/ARCHITECTURE.md` §18. Engine: `functions/bootstrap/date_sim.py`.
+(grounded-but-filtered) — the agent mirrors the user's texting **style/voice**
+but must never leak the exemplars' wording or any private specifics. Full
+design, the endpoint and the privacy reasoning: `docs/ARCHITECTURE.md` §18.
+Engine: `functions/bootstrap/date_sim.py`.

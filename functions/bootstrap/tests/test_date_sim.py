@@ -124,6 +124,114 @@ def test_self_context_none_without_a_profile():
     assert practice_core.build_self_persona_context(FakeDb(), "ghost") is None
 
 
+# --- self-persona texting-style exemplars (own sent DMs only) -------------- #
+OTHER = "other_participant_uid"
+OWN_MESSAGE = "lol fair enough, same tbh"
+OTHER_MESSAGE = "OTHER_USER_SECRET_LINE_do_not_ingest"
+
+
+def _seed_dm_messages(db, *, own: int = 3):
+    """Seed one dm_thread between VIEWER and OTHER with ``own`` messages the
+    VIEWER sent plus messages OTHER sent. Message shape matches ``dm_ops``:
+    ``sender_uid`` / ``type`` / ``body`` / ``created_at``."""
+    thread = db.collection("dm_threads").document("viewer_other")
+    thread.set({"participants": [VIEWER, OTHER]})
+    msgs = thread.collection("messages")
+    ts = 0
+    for i in range(own):
+        ts += 1
+        msgs.document(f"own{i}").set(
+            {
+                "sender_uid": VIEWER,
+                "type": "text",
+                "body": f"{OWN_MESSAGE} ({i})",
+                "created_at": ts,
+            }
+        )
+    # Messages the OTHER user sent — must NEVER enter the self persona.
+    for i in range(3):
+        ts += 1
+        msgs.document(f"other{i}").set(
+            {
+                "sender_uid": OTHER,
+                "type": "text",
+                "body": f"{OTHER_MESSAGE} {i}",
+                "created_at": ts,
+            }
+        )
+    return thread
+
+
+def test_self_persona_includes_own_sent_messages_excludes_the_other_party():
+    db = _seeded_db()
+    _seed_dm_messages(db, own=3)
+    ctx = practice_core.build_self_persona_context(db, VIEWER)
+    assert ctx is not None
+
+    # The user's OWN sent messages are present as style exemplars...
+    assert ctx.style_exemplars
+    assert any(OWN_MESSAGE in ex for ex in ctx.style_exemplars)
+    block = ctx.to_prompt_block()
+    assert OWN_MESSAGE in block
+    assert "how this user texts" in block.lower()
+
+    # ...and the OTHER participant's messages are NEVER ingested (privacy).
+    assert all(OTHER_MESSAGE not in ex for ex in ctx.style_exemplars)
+    assert OTHER_MESSAGE not in block
+
+
+def test_self_persona_style_exemplars_respect_the_caps():
+    db = _seeded_db()
+    # Many own messages, each unique and short.
+    thread = db.collection("dm_threads").document("viewer_other")
+    thread.set({"participants": [VIEWER, OTHER]})
+    msgs = thread.collection("messages")
+    n = practice_core._SELF_STYLE_MAX_MESSAGES + 25
+    for i in range(n):
+        msgs.document(f"own{i}").set(
+            {
+                "sender_uid": VIEWER,
+                "type": "text",
+                "body": f"message number {i} here",
+                "created_at": i,
+            }
+        )
+    # One over-long message that must be skipped (exceeds the per-message cap).
+    msgs.document("toolong").set(
+        {
+            "sender_uid": VIEWER,
+            "type": "text",
+            "body": "x" * (practice_core._SELF_STYLE_MAX_MSG_CHARS + 50),
+            "created_at": n + 1,
+        }
+    )
+    ctx = practice_core.build_self_persona_context(db, VIEWER)
+    assert ctx is not None
+    assert len(ctx.style_exemplars) <= practice_core._SELF_STYLE_MAX_MESSAGES
+    assert sum(len(e) for e in ctx.style_exemplars) <= (
+        practice_core._SELF_STYLE_MAX_TOTAL_CHARS
+    )
+    assert all(len(e) <= practice_core._SELF_STYLE_MAX_MSG_CHARS for e in ctx.style_exemplars)
+
+
+def test_match_persona_never_carries_dm_style_exemplars():
+    """The MATCH path is untouched: no DM content, exemplars always empty."""
+    db = _seeded_db()
+    _seed_dm_messages(db, own=3)
+    match_ctx = practice_core.build_persona_context(db, VIEWER, MAYA)
+    assert match_ctx is not None
+    assert match_ctx.style_exemplars == []
+    assert OWN_MESSAGE not in match_ctx.to_prompt_block()
+
+
+def test_self_persona_style_survives_missing_dm_threads():
+    """No DM threads → simply no exemplars, never an error."""
+    db = _seeded_db()
+    ctx = practice_core.build_self_persona_context(db, VIEWER)
+    assert ctx is not None
+    assert ctx.style_exemplars == []
+
+
 # --- the prompt carries the disclosure filter ------------------------------ #
 def test_date_sim_prompt_has_disclosure_filter_for_both_personas():
     prompt = date_sim._read(date_sim._SIM_PROMPT_PATH).lower()

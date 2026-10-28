@@ -124,6 +124,15 @@ Where GDPR-style law applies, the legal bases are noted in plain terms.
 - **To suggest matches and rank compatibility.**
   _Basis: performance of our contract; legitimate interest in making the
   product work well._
+- **To make your own AI persona sound like you** — when you run features that
+  simulate a chat on your behalf (such as the AI date simulation), your persona
+  may be grounded in a small, recent sample of **your own sent messages** so it
+  matches your texting style. We only ever use **messages you yourself sent**;
+  the other person's messages are never used to build your persona, and your
+  messages are never used to build anyone else's. A persona is grounded only in
+  your own data, and is built to reflect your style without disclosing your
+  private details. _Basis: performance of our contract; legitimate interest in
+  providing an authentic AI matchmaking product._
 - **For safety and integrity** — review reports, investigate abuse, enforce
   the Terms, prevent fraud, and protect users.
   _Basis: legitimate interest in protecting users and the service; compliance

@@ -13,7 +13,10 @@ for both sides, generalised from "simulate one persona replying to the user" to
 
 * the USER's persona is grounded in their FULL own context
   (:func:`practice_core.build_self_persona_context` — profile + every wiki page,
-  private spans kept), because a user's own agent authentically represents them;
+  private spans kept, PLUS a capped sample of the user's OWN sent DM messages as
+  texting-STYLE exemplars so it sounds like how the user actually texts; only
+  the user's own messages, never the other participant's), because a user's own
+  agent authentically represents them;
 * the MATCH's persona is grounded ONLY in their viewer-visible PUBLIC profile
   (:func:`practice_core.build_persona_context` — the same privacy boundary
   Practice Date uses), because we may never read another user's private data.

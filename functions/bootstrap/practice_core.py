@@ -35,6 +35,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import dm_schema
 import practice_llm
 import public_profile
 import schema
@@ -56,6 +57,19 @@ _USER_NAME_TOKEN = "{{USER_NAME}}"
 
 PRACTICE_SESSIONS_COLLECTION = "practice_sessions"
 _MAX_TURNS = 100  # hard ceiling on stored turns per practice session
+
+# Self-persona texting-style exemplars (AI Date Simulation, founder directive
+# 2026-10-27): a CAPPED sample of the USER'S OWN recent, short sent DM messages,
+# read ONLY by :func:`build_self_persona_context` so the user's own agent can
+# mirror how they actually text. The caps bound tokens/credits; short messages
+# are preferred because they best show casual texting voice. The gatherer reads
+# ONLY messages this user sent (``sender_uid == uid``) — never the other
+# participant's content (hard privacy boundary).
+_SELF_STYLE_THREAD_SCAN = 40  # at most this many of the user's own DM threads
+_SELF_STYLE_MSGS_PER_THREAD = 60  # recent messages scanned per thread
+_SELF_STYLE_MAX_MESSAGES = 40  # exemplars kept
+_SELF_STYLE_MAX_MSG_CHARS = 200  # skip long messages — want quick, casual texts
+_SELF_STYLE_MAX_TOTAL_CHARS = 2000  # hard total-char cap across all exemplars
 
 # The categories that must NEVER be loaded into a persona context. This is the
 # documented contract the extraction test enforces; the enforcement itself is
@@ -112,6 +126,15 @@ class PersonaContext:
     # prompt so the simulated match stays consistent about who they are.
     gender: str = ""
     pages: list[dict] = field(default_factory=list)  # [{title, body}]
+    # Texting-STYLE exemplars: a capped sample of the user's OWN recent short
+    # sent DM messages, used ONLY by :func:`build_self_persona_context` so the
+    # user's own agent can sound like how they actually text. NEVER populated
+    # for the MATCH persona (:func:`build_persona_context` leaves it empty), and
+    # it never holds another user's message content — the gatherer reads only
+    # messages whose ``sender_uid`` is this user (see
+    # :func:`_gather_self_style_exemplars`). Style only; the disclosure filter in
+    # ``prompts/date_sim.md`` still forbids leaking any private specifics.
+    style_exemplars: list[str] = field(default_factory=list)
     photo_count: int = 0
     # The match's PRIMARY public photo URL (first of the viewer-visible grid),
     # or ``None`` when the profile has no photos. Photos are public, so this is
@@ -134,6 +157,17 @@ class PersonaContext:
             body = " ".join(str(p.get("body") or "").split())
             if body:
                 lines.append(f"\n[{title}]\n{body}")
+        if self.style_exemplars:
+            lines.append(
+                "\n[How this user texts — STYLE ONLY, do NOT repeat the wording"
+                " or facts]\nReal one-liners this user recently sent in their own"
+                " chats, given purely as examples of their voice and tone —"
+                " message length, punctuation, capitalisation, emoji and slang"
+                " habits. Mirror that STYLE when you write; never reuse these"
+                " exact words, and never treat them as facts to bring up:"
+            )
+            for ex in self.style_exemplars:
+                lines.append(f"- {ex}")
         return "\n".join(lines).strip()
 
 
@@ -195,18 +229,124 @@ def build_persona_context(
     )
 
 
+def _created_at_key(value) -> float:
+    """A sortable recency key for a message ``created_at``. Handles Firestore
+    datetimes (``.timestamp()``) and numeric values; anything else (a pending
+    server-timestamp sentinel, ``None``, a bad type) sorts oldest."""
+    try:
+        if hasattr(value, "timestamp"):
+            return float(value.timestamp())
+        if isinstance(value, (int, float)):
+            return float(value)
+    except Exception:  # noqa: BLE001 - a bad timestamp just sorts oldest
+        pass
+    return 0.0
+
+
+def _stream_thread_messages(thread_ref):
+    """Recent messages in one DM thread, newest first when the backend supports
+    ``order_by`` (real Firestore); falls back to an unordered capped read (the
+    test fake) — the caller re-sorts globally by ``created_at`` either way."""
+    coll = thread_ref.collection(dm_schema.DM_MESSAGES_COLLECTION)
+    try:
+        from firebase_admin import firestore  # lean-runtime safe (local import)
+
+        return list(
+            coll.order_by(
+                "created_at", direction=firestore.Query.DESCENDING
+            )
+            .limit(_SELF_STYLE_MSGS_PER_THREAD)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001 - no order_by/index → unordered fallback
+        return list(coll.limit(_SELF_STYLE_MSGS_PER_THREAD).stream())
+
+
+def _gather_self_style_exemplars(db, uid: str) -> list[str]:
+    """A capped sample of the user's OWN recent, short sent DM messages, as
+    texting-STYLE exemplars for the user's own agent (founder directive
+    2026-10-27).
+
+    HARD PRIVACY BOUNDARY: only messages this user sent are read — a message is
+    kept only when its ``sender_uid`` equals ``uid``. The other participant's
+    messages are that other user's private content and are NEVER included. This
+    is the user's own data only; it stays inside :func:`build_self_persona_context`
+    (the user's own agent) and never reaches the MATCH persona.
+
+    Fully defensive: a missing/unreadable thread or message collection just
+    yields fewer (or zero) exemplars — it never raises. Results are the most
+    recent messages first, deduped, each short (<= ``_SELF_STYLE_MAX_MSG_CHARS``),
+    capped to ``_SELF_STYLE_MAX_MESSAGES`` and ``_SELF_STYLE_MAX_TOTAL_CHARS``."""
+    uid = (uid or "").strip()
+    if not uid:
+        return []
+    try:
+        threads = list(
+            db.collection(dm_schema.DM_THREADS_COLLECTION)
+            .where("participants", "array_contains", uid)
+            .limit(_SELF_STYLE_THREAD_SCAN)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001 - no threads readable → no exemplars
+        logger.warning("self-style DM thread read failed for %s", uid, exc_info=True)
+        return []
+
+    collected: list[tuple[float, str]] = []
+    for t in threads:
+        try:
+            msgs = _stream_thread_messages(t.reference)
+        except Exception:  # noqa: BLE001 - skip an unreadable thread, keep going
+            logger.warning(
+                "self-style DM message read failed for %s", uid, exc_info=True
+            )
+            continue
+        for m in msgs:
+            data = m.to_dict() or {}
+            # Only this user's OWN outgoing text messages — never the other
+            # participant's (another user's private content).
+            if data.get("sender_uid") != uid:
+                continue
+            if str(data.get("type") or dm_schema.MESSAGE_TEXT) != dm_schema.MESSAGE_TEXT:
+                continue
+            body = " ".join(str(data.get("body") or "").split())
+            if not body or len(body) > _SELF_STYLE_MAX_MSG_CHARS:
+                continue
+            collected.append((_created_at_key(data.get("created_at")), body))
+
+    collected.sort(key=lambda it: it[0], reverse=True)  # most recent first
+    out: list[str] = []
+    seen: set[str] = set()
+    total = 0
+    for _, body in collected:
+        if len(out) >= _SELF_STYLE_MAX_MESSAGES:
+            break
+        key = body.lower()
+        if key in seen:
+            continue
+        if total + len(body) > _SELF_STYLE_MAX_TOTAL_CHARS:
+            continue
+        seen.add(key)
+        out.append(body)
+        total += len(body)
+    return out
+
+
 def build_self_persona_context(db, uid: str) -> PersonaContext | None:
     """Assemble the persona context for the user's OWN agent — grounded in
-    their FULL profile, not the viewer-visible view.
+    their FULL profile, every wiki page, AND how they actually text.
 
     The asymmetry is deliberate and documented (AI Date Simulation, founder
     directive 2026-10-27): a user's own agent authentically represents them, so
     it may read everything the user has about themselves — profile/main, and
     EVERY wiki page regardless of ``visibility`` (``public`` / ``private`` /
-    ``ai_only``), with ``{{private}}`` spans KEPT, not stripped. This is the
-    user's own data only; it never crosses into another user's record. The
-    MATCH's agent, by contrast, is built with :func:`build_persona_context`
-    (public-profile-only) because we may not read another user's private data.
+    ``ai_only``), with ``{{private}}`` spans KEPT, not stripped — plus a capped
+    sample of the user's OWN recent sent DM messages as texting-STYLE exemplars
+    (``_gather_self_style_exemplars``) so the agent sounds like how the user
+    really texts. This is the user's own data only; it never crosses into
+    another user's record — in particular the style exemplars are ONLY messages
+    this user sent (never the other participant's). The MATCH's agent, by
+    contrast, is built with :func:`build_persona_context` (public-profile-only,
+    and NEVER any DM content) because we may not read another user's data.
 
     Grounded-but-filtered: the agent is given the full context so it can be
     authentic and gauge compatibility, but ``prompts/date_sim.md`` carries a
@@ -264,6 +404,7 @@ def build_self_persona_context(db, uid: str) -> PersonaContext | None:
         gender=str(prof.get("gender") or ""),
         location=str(prof.get("location") or ""),
         pages=pages,
+        style_exemplars=_gather_self_style_exemplars(db, uid),
         photo_count=len(photos),
     )
 

@@ -1782,7 +1782,7 @@ Tests: `functions/bootstrap/tests/test_date_sim.py`,
 ```mermaid
 flowchart LR
   subgraph grounding["Grounding (asymmetric by design)"]
-    U["User's FULL own context<br/>(profile + ALL wiki pages,<br/>private spans kept)<br/>build_self_persona_context"]
+    U["User's FULL own context<br/>(profile + ALL wiki pages, private spans kept,<br/>+ user's OWN recent sent DMs as<br/>texting-STYLE exemplars, capped)<br/>build_self_persona_context"]
     M["Match's PUBLIC profile only<br/>(public_profile.build,<br/>never-load filtered)<br/>build_persona_context"]
   end
   U --> P1["USER persona<br/>(prompts/date_sim.md)"]
@@ -1797,16 +1797,28 @@ flowchart LR
 
 **Grounding asymmetry + the disclosure filter (privacy).** The USER's persona
 reads the user's FULL own context — profile plus every wiki page regardless of
-`visibility` (`public`/`private`/`ai_only`), private spans **kept** — because a
-user's own agent authentically represents them, and it is the user's own data.
-The MATCH's persona uses ONLY the viewer-visible public profile
-(`public_profile.build`, the same never-load-filtered boundary Practice Date
-uses), because another user's private data may never be read. Both personas run
+`visibility` (`public`/`private`/`ai_only`), private spans **kept**, **plus a
+capped sample of the user's OWN recent sent DM messages as texting-STYLE
+exemplars** (`_gather_self_style_exemplars`) so the agent sounds like how the
+user actually texts — because a user's own agent authentically represents them,
+and it is the user's own data. The style exemplars are read with a hard privacy
+boundary: **only** messages whose `sender_uid` is the user (own outgoing text,
+short, deduped, newest-first), capped to 40 messages / 200 chars each / 2000
+chars total; the **other participant's** messages are another user's private
+content and are **never** ingested, and reads are defensive (a missing thread
+just yields fewer exemplars). The MATCH's persona uses ONLY the viewer-visible
+public profile (`public_profile.build`, the same never-load-filtered boundary
+Practice Date uses) and reads **no DM content whatsoever** (its
+`style_exemplars` is always empty), because another user's private data may
+never be read. Both personas run
 under `prompts/date_sim.md`, whose **disclosure filter** forbids either from
 *emitting* private/sensitive specifics (exact address/precise location,
 contact info, finances, health/trauma, private-journal or AI-notes
 observations, other people) — grounded-but-filtered: the agent uses the context
-to be authentic and gauge compatibility, it does not overshare it. A test seeds
+to be authentic and gauge compatibility, it does not overshare it. For the
+texting-style exemplars specifically the agent mirrors the user's **voice/tone**
+(length, punctuation, emoji, slang) but must never reuse the exemplars' exact
+wording or surface them as facts. A test seeds
 a private needle into the user's full context and asserts the simulated
 transcript never emits it (`test_private_needle_is_grounded_but_never_emitted`),
 while confirming the needle IS in the user's grounding and NOT in the match's.
