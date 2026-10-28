@@ -96,6 +96,15 @@ _NOT_APPLIED = "The app did NOT apply that — tell the user it didn't work."
 # are listed with their reason under ``non_navigable`` in the registry.
 _SCREENS = tuple(d["key"] for d in app_registry.destinations())
 
+# The list the model actually reads to pick a destination. Bare keys left the
+# mapping under-determined over the Meta API (founder bug 2026-10-27: "open the
+# appearance report" went to Notifications, then Chat, before landing on
+# my_appearance), so each key carries its own label — "appearance report" now
+# has one unambiguous key to match (my_appearance), never a guess.
+_SCREEN_LINES = "; ".join(
+    f"{d['key']} ({d['label']})" for d in app_registry.destinations()
+)
+
 _PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 
 
@@ -381,6 +390,12 @@ def _not_a_page(asked: str) -> str:
     """The honest answer for a request that matches no destination (known
     unavailable things are answered before this): a pointer to the right tool
     when it's a setting/action, otherwise "doesn't exist" with the real list."""
+    report = app_registry.find_report_action(asked)
+    if report:
+        return (
+            f"'{asked}' runs a report, it isn't a page — use the {report['via']} "
+            f"tool to {report['label'][0].lower()}{report['label'][1:]}."
+        )
     act = app_registry.find_account_action(asked)
     if act:
         return (
@@ -713,6 +728,13 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
             return await _unavailable_reply(db, uid, gone)
         setting = app_registry.find_setting(a)
         if setting is None:
+            report = app_registry.find_report_action(a)
+            if report:
+                return (
+                    f"That re-runs a report — use the {report['via']} tool to "
+                    f"{report['label'][0].lower()}{report['label'][1:]}, not "
+                    "app_action."
+                )
             act = app_registry.find_account_action(a)
             if act and act["handler"] == "navigate_only":
                 return await _navigate_only(db, uid, act["destination"], act["say"])
@@ -1003,7 +1025,7 @@ _OPEN_SCREEN = {
     "name": "open_screen",
     "description": _prompt(
         "app_control_open_screen",
-        DESTINATIONS=", ".join(_SCREENS),
+        DESTINATIONS=_SCREEN_LINES,
     ),
     "parameters": {
         "type": "object",

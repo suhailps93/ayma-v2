@@ -184,6 +184,7 @@ async def dispatch(
     actor_uid: str = "",
     push_data: dict | None = None,
     push_body: str | None = None,
+    dedup_id: str = "",
 ) -> dict:
     """Run the pipeline for one (user, event). Returns a small status dict
     (``muted`` / ``doc`` / ``pushed`` / ``cooldown`` / ``no_tokens``).
@@ -191,6 +192,12 @@ async def dispatch(
     ``actor_uid`` — the other person the notification is about (the DM sender,
     the matched user). The notification centre groups by it and shows their
     face + name.
+
+    ``dedup_id`` — a stable centre-doc id for an event that must collapse to a
+    single rolling entry (public-profile-update suggestions), instead of the
+    default auto-id. Concurrent writers then land on one doc rather than
+    stacking duplicates, and a later fire overwrites it with the latest count
+    (resetting read/dismissed so the refreshed entry resurfaces).
 
     ``push_data`` — send the push as an Android data-only message carrying this
     payload (the app renders it, e.g. a per-sender conversation notification).
@@ -214,9 +221,10 @@ async def dispatch(
     }
     if actor_uid:
         record["actor_uid"] = actor_uid
-    db.collection("users").document(uid).collection(
+    centre = db.collection("users").document(uid).collection(
         NOTIFICATIONS_COLLECTION
-    ).document().set(record)
+    )
+    (centre.document(dedup_id) if dedup_id else centre.document()).set(record)
 
     user_ref = db.collection("users").document(uid)
     data = user_ref.get().to_dict() or {}

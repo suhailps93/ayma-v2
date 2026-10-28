@@ -155,7 +155,13 @@ flowchart LR
 - *Screen context*: the app posts the visible screen (and a capped `detail`, e.g. Explore's visible people) to
   `POST /voice/context`; the agent's `current_screen` tool reads it. `open_screen` / `app_action` /
   `account_action` queue commands at `users/{uid}/app_commands/pending`, resolved against
-  `functions/bootstrap/app_registry.json` (tests fail if a `GoRoute` is missing from it).
+  `functions/bootstrap/app_registry.json` (tests fail if a `GoRoute` is missing from it). `open_screen`'s
+  tool description lists every destination as `key (label)` (not bare keys) so the model maps the user's words
+  — "appearance report" → `my_appearance` — deterministically rather than guessing. The registry's
+  `report_actions` (e.g. `rerun_appearance` → the `run_appearance_report` tool, `rerun_web_research` → `deep_dive`)
+  turn "re-run / regenerate my report" into the tool that actually re-runs it; `app_action`/`open_screen`
+  redirect a report-action phrase to that tool instead of erroring. `run_appearance_report` is the chat/voice
+  counterpart of the Appearance screen's Recalculate button (`POST /appearance/report` → `appearance.run_appearance`).
 - *Deep-dive photo sources*: Custom Search image API (only when `IMAGE_SEARCH_API_KEY`/`_CSE_ID` are set),
   public profile pages from a grounded Gemini call plus Vertex AI Search (`deepdive_public_profiles`,
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
@@ -975,7 +981,7 @@ Each notification's `deep_link` encodes a screen + id (`dm_thread/{threadId}`, `
 
 `users/{uid}/notification_prefs` — one bool per category (`dm_message`, `mutual_match`, `new_scored_match`, `ayma_checkin`, `skill_result`, `ayma_reply`, `profile_suggestions`), default `true`. Checked before sending a push **and** before writing the notification-center doc, so a muted category doesn't clutter the list either. Editable from a settings screen.
 
-`profile_suggestions` fires when a wiki ingest pass creates **new** pending public-profile changes to review (`wiki_ingest.ingest` → `profile_manual.consume_new_suggestions` → `notifications_triggers.notify_profile_suggestions`). Deduped against the `profile_suggestions_notified` set on `users/{uid}` (content-stable keys of the pending changes): it fires once when the pending count goes 0→>0 or genuinely new items appear, not on every nightly run over an unchanged set, and the set resets when nothing is pending. Best-effort, inside ingest, so it inherits the request's 18+/consent gates and honours the §7.5 cooldown and the category mute.
+`profile_suggestions` fires when a wiki ingest pass creates **new** pending public-profile changes to review (`wiki_ingest.ingest` → `profile_manual.consume_new_suggestions` → `notifications_triggers.notify_profile_suggestions`). Deduped against the `profile_suggestions_notified` set on `users/{uid}` (content-stable keys of the pending changes): it fires once when the pending count goes 0→>0 or genuinely new items appear, not on every nightly run over an unchanged set, and the set resets when nothing is pending. To also collapse two ingest passes that finish at once (chat-turn + voice, say) — which previously stacked two identical "Ayma suggests 1 update…" rows — the centre doc is written with a **stable id** (`dispatch(..., dedup_id="profile_suggestions_pending")`): concurrent writers land on one doc and each later fire overwrites it with the current count (resetting `read`/`dismissed` so the refreshed entry resurfaces). Best-effort, inside ingest, so it inherits the request's 18+/consent gates and honours the §7.5 cooldown and the category mute.
 
 ### 7.8 Storage map
 

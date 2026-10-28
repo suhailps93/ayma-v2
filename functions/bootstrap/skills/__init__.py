@@ -34,6 +34,7 @@ from . import (
     record_feedback,
     remember,
     report_bug,
+    run_appearance_report,
     set_profile_field,
     set_voice_preference,
     submit_feedback,
@@ -68,6 +69,7 @@ _REGISTRY: list[Skill] = [
     face_report.SKILL,
     body_report.SKILL,
     physical_attributes.SKILL,
+    run_appearance_report.SKILL,
     *questionnaire.SKILLS,
     fact_source.SKILL,
 ]
@@ -212,7 +214,9 @@ def make_session_tool_fns(
     for s in (_REGISTRY + _recall_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
-        elif s.name in ("analyze_physical_attributes", "report_bug"):
+        elif s.name in (
+            "analyze_physical_attributes", "run_appearance_report", "report_bug"
+        ):
             out[s.name] = s.bind(db, uid, image_path=image_path)
         elif s.name in _DM_OUTREACH_NAMES:
             out[s.name] = s.bind(

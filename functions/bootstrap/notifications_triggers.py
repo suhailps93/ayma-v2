@@ -176,12 +176,21 @@ async def notify_skill_done(
         logger.exception("skill-done notification failed for %s", uid)
 
 
+# One stable centre-doc id for the public-profile-update entry, so two ingests
+# finishing at once (chat-turn + voice, say) can't stack two identical "Ayma
+# suggests 1 update…" rows (founder bug 2026-10-27): concurrent writers land
+# on this same doc, and each later fire overwrites it with the current count.
+_PROFILE_SUGGESTIONS_DEDUP_ID = "profile_suggestions_pending"
+
+
 async def notify_profile_suggestions(db, uid: str, count: int) -> None:
     """Tell the user Ayma has new pending updates for their PUBLIC profile to
     review. ``count`` is the number of changes currently awaiting a decision.
     Deep-links to the "Public profile updates" review screen. The caller
-    (``profile_manual.consume_new_suggestions``) dedupes, so this only fires
-    for a genuinely new pending set. Best-effort."""
+    (``profile_manual.consume_new_suggestions``) dedupes a re-run over an
+    unchanged set; this collapses to a single rolling centre entry via
+    ``dedup_id`` so a genuinely-new set never shows as two identical rows, and
+    the one entry always carries the current count. Best-effort."""
     if count <= 0:
         return
     plural = "" if count == 1 else "s"
@@ -194,6 +203,7 @@ async def notify_profile_suggestions(db, uid: str, count: int) -> None:
                 f"Ayma suggests {count} update{plural} to your public profile."
             ),
             deep_link="profile_suggestions",
+            dedup_id=_PROFILE_SUGGESTIONS_DEDUP_ID,
         )
     except Exception:  # noqa: BLE001
         logger.exception("profile-suggestions notification failed for %s", uid)

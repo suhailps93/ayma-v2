@@ -145,6 +145,20 @@ def test_profile_suggestions_deep_links_to_the_review_screen(_capture):
     assert _capture[0]["deep_link"] == "profile_suggestions"
 
 
+def test_profile_suggestions_collapse_to_one_rolling_entry(_capture):
+    # Founder bug 2026-10-27: two identical "Ayma suggests 1 update…" rows at
+    # once. Every fire carries the same stable centre-doc id, so concurrent
+    # writers land on one doc instead of stacking duplicates, and the latest
+    # count overwrites it.
+    _run(nt.notify_profile_suggestions(object(), "u1", 1))
+    _run(nt.notify_profile_suggestions(object(), "u1", 2))
+    ids = {c["dedup_id"] for c in _capture}
+    assert ids == {nt._PROFILE_SUGGESTIONS_DEDUP_ID}
+    assert _capture[-1]["fixed_preview"] == (
+        "Ayma suggests 2 updates to your public profile."
+    )
+
+
 def test_ayma_reply_pushes_a_clean_preview_to_the_chat(monkeypatch):
     seen = []
 

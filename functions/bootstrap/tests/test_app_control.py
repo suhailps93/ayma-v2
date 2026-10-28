@@ -673,6 +673,54 @@ def test_app_action_rejects_an_unknown_action():
     assert _PENDING not in db.store
 
 
+def test_app_action_rerun_report_points_to_the_run_tool():
+    # Founder bug 2026-10-27: "rerun the appearance report" hit app_action and
+    # died with "no such setting/key". Now it's recognised as a report action
+    # and the model is pointed at the tool that actually re-runs it.
+    db = _Db()
+    for phrase in ("rerun appearance report", "regenerate appearance report",
+                   "recalculate my appearance report"):
+        out = _run(app_control._bind_app_action(db, "me")(phrase))
+        assert "run_appearance_report" in out, phrase
+        assert "There is no" not in out  # not the old "no such setting" error
+    assert _PENDING not in db.store
+
+
+def test_run_appearance_report_skill_is_registered_and_triggers(monkeypatch):
+    # The chat/voice tool set must carry run_appearance_report, and calling it
+    # must actually drive appearance.run_appearance (the server re-run).
+    import token_ledger
+    from skills import run_appearance_report as rar
+
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    seen = {}
+
+    async def _fake_run(db, uid, **kw):
+        seen.update(uid=uid, kw=kw)
+        return {"id": "app-123"}
+
+    monkeypatch.setattr(rar.engine, "run_appearance", _fake_run)
+
+    fns = skills.make_session_tool_fns(_Db(), "me")
+    assert "run_appearance_report" in fns
+    out = _run(fns["run_appearance_report"]())
+    assert "[appearance:app-123]" in out
+    assert seen["uid"] == "me"
+    assert seen["kw"]["source"] == "chat_tool"
+
+
+def test_run_appearance_report_reports_out_of_credits(monkeypatch):
+    import token_ledger
+    from skills import run_appearance_report as rar
+
+    def _capped(uid):
+        raise token_ledger.TokenCapExceeded()
+
+    monkeypatch.setattr(token_ledger, "check", _capped)
+    out = _run(rar._bind(_Db(), "me")())
+    assert "out of credits" in out.lower()
+
+
 # --- accent colour ---------------------------------------------------------
 
 def test_app_action_accent_color_applies_a_brown_hex_exactly():

@@ -170,6 +170,35 @@ def test_no_tokens_writes_doc_only(monkeypatch):
     assert res == {"muted": False, "doc": True, "pushed": False, "no_tokens": True}
 
 
+def test_dedup_id_collapses_to_one_rolling_centre_doc(monkeypatch):
+    # Two fires with the same dedup_id land on one centre doc (the second
+    # overwrites the first with the latest count), where auto-ids would stack
+    # two rows — the public-profile-update duplicate-notification fix.
+    db = _Db({("users", "u1"): {}})
+    monkeypatch.setattr(nd, "_push", lambda *a, **k: False)
+    _run(nd.dispatch(db, "u1", "profile_suggestions",
+                     fixed_preview="Ayma suggests 1 update to your public profile.",
+                     dedup_id="profile_suggestions_pending"))
+    _run(nd.dispatch(db, "u1", "profile_suggestions",
+                     fixed_preview="Ayma suggests 2 updates to your public profile.",
+                     dedup_id="profile_suggestions_pending"))
+    docs = _notif_docs(db, "u1")
+    assert len(docs) == 1
+    assert docs[0]["body"] == "Ayma suggests 2 updates to your public profile."
+    assert docs[0]["read"] is False
+    # A stable id reuses one doc key, not an auto-generated one.
+    keys = [k for k in db.store if k[:3] == ("users", "u1", "notifications")]
+    assert keys == [("users", "u1", "notifications", "profile_suggestions_pending")]
+
+
+def test_without_dedup_id_two_fires_stack_two_docs(monkeypatch):
+    db = _Db({("users", "u1"): {}})
+    monkeypatch.setattr(nd, "_push", lambda *a, **k: False)
+    _run(nd.dispatch(db, "u1", "mutual_match", fixed_preview="a"))
+    _run(nd.dispatch(db, "u1", "mutual_match", fixed_preview="b"))
+    assert len(_notif_docs(db, "u1")) == 2
+
+
 def test_unknown_type_raises():
     with pytest.raises(ValueError):
         _run(nd.dispatch(_Db(), "u1", "bogus"))

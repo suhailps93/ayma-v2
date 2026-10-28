@@ -185,6 +185,50 @@ def test_ui_denial_allows_everything_else(label, ctype, route, dialog):
     assert app_registry.ui_denial(label, ctype, route, dialog) is None, label
 
 
+def test_appearance_report_destination_is_deterministic():
+    # Founder bug 2026-10-27: "open the appearance report" misrouted to
+    # Notifications then Chat. Every natural phrasing must land on exactly one
+    # key, my_appearance — never Notifications, Chat or anything else.
+    for words in (
+        "appearance report", "the appearance report", "my appearance",
+        "looks report", "my looks report", "report card", "my report card",
+        "face report", "body report", "share my appearance report",
+    ):
+        d = app_registry.find_destination(words)
+        assert d and d["key"] == "my_appearance", f"{words!r} -> {d}"
+
+
+def test_open_screen_description_lists_each_key_with_its_label():
+    # The model reads this; bare keys left "appearance report" under-determined.
+    from skills import app_control
+
+    desc = app_control._OPEN_SCREEN["description"]
+    for d in app_registry.destinations():
+        assert f"{d['key']} ({d['label']})" in desc, d["key"]
+
+
+def test_report_actions_resolve_uniquely_and_name_a_real_tool():
+    import skills
+
+    tools = {d["name"] for d in skills.session_tool_declarations()} | {
+        s.name for s in skills.app_control.VOICE_SKILLS
+    }
+    seen: dict[str, str] = {}
+    for a in app_registry.report_actions():
+        assert a["via"] in tools, f"report_action {a['key']} -> unknown tool {a['via']}"
+        for name in app_registry._names(a):
+            owner = seen.setdefault(name, a["key"])
+            assert owner == a["key"], f"'{name}' names both {owner} and {a['key']}"
+        assert app_registry.find_report_action(a["key"])["key"] == a["key"]
+
+
+def test_rerun_appearance_resolves_to_the_run_tool():
+    for words in ("rerun appearance report", "regenerate appearance report",
+                  "recalculate appearance report", "run my appearance report again"):
+        a = app_registry.find_report_action(words)
+        assert a and a["key"] == "rerun_appearance" and a["via"] == "run_appearance_report", words
+
+
 def test_profile_completeness_card_resolves_to_complete_profile():
     for words in ("profile completeness", "Your profile is 59% complete"):
         assert app_registry.find_destination(words)["key"] == "complete_profile"

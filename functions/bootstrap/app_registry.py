@@ -45,6 +45,12 @@ def account_actions() -> list[dict]:
     return list(registry()["account_actions"])
 
 
+def report_actions() -> list[dict]:
+    """Reports Ayma can run or re-run (Appearance, web research). Not pages or
+    settings: each ``via`` names the chat/voice tool that actually runs it."""
+    return list(registry().get("report_actions") or [])
+
+
 def unavailable() -> list[dict]:
     return list(registry()["unavailable"])
 
@@ -106,6 +112,13 @@ def find_setting(text: str) -> dict | None:
 
 def find_account_action(text: str) -> dict | None:
     return _lookup(account_actions(), text)
+
+
+def find_report_action(text: str) -> dict | None:
+    """The report-run action a 'rerun the appearance report' style request
+    names, or ``None`` — used to redirect app_action/open_screen to the tool
+    (``via``) that actually (re)runs the report."""
+    return _lookup(report_actions(), text)
 
 
 def find_unavailable(text: str, exact: bool = False) -> dict | None:
