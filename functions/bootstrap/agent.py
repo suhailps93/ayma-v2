@@ -86,6 +86,7 @@ from prompt import (  # noqa: E402
     voice_swap_confirm,
     voice_swap_failed,
     voice_swap_note,
+    voice_vocab_directive,
 )
 import skills  # noqa: E402
 import voices  # noqa: E402
@@ -1549,6 +1550,7 @@ def _session_tools(
     uid: str,
     on_activity: Callable[[], None] | None = None,
     on_voice_change: Callable[[str | None, str], tuple[bool, str]] | None = None,
+    voice_pref: object | None = None,
     guard: Callable[[], str | None] | None = None,
     session_id: str = "",
     window: list[Turn] | None = None,
@@ -1559,7 +1561,10 @@ def _session_tools(
     the text chat's status -> reply kicker already does. ``guard`` (see
     :func:`misheard_fragment_guard`) can refuse a call before it runs.
     ``session_id`` and ``window`` (the call's live turn list) let
-    ``send_dm_message`` keep its pending send and check the caller's own yes."""
+    ``send_dm_message`` keep its pending send and check the caller's own yes.
+    ``voice_pref`` (a ``voice_catalog.RuntimeVoices``) makes
+    ``set_voice_preference`` stack-aware on a cascade / non-Gemini realtime call
+    (the Gemini path uses ``on_voice_change`` instead)."""
     if not uid:
         return []
 
@@ -1570,7 +1575,7 @@ def _session_tools(
 
     return skills.make_livekit_tools(
         get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change,
-        guard=guard, session_id=session_id,
+        voice_pref=voice_pref, guard=guard, session_id=session_id,
         turns=(lambda: list(window)) if window is not None else None,
     )
 
@@ -2116,6 +2121,35 @@ async def _open_main_call(
         await maybe_open_conversation(session, seed, window=window)
 
 
+def _voice_vocab(
+    *,
+    mode: str,
+    realtime_model_id: str = "",
+    tts_id: str = "",
+    current_voice_id: str = "",
+):
+    """The running stack's voice vocabulary and the instruction block injected
+    so the agent reports the voices/current voice of the stack it is ACTUALLY
+    running, not the Gemini presets (§13.9). Returns ``(runtime_voices,
+    directive)``: the directive is appended to the session instructions, and
+    ``runtime_voices`` (``None`` on the Gemini hot-swap path, which keeps its
+    preset tool) makes ``set_voice_preference`` resolve within the active set."""
+    import voice_catalog
+
+    rv = voice_catalog.runtime_voices(
+        mode=mode,
+        realtime_model_id=realtime_model_id,
+        tts_id=tts_id,
+        current_voice_id=current_voice_id,
+    )
+    directive = voice_vocab_directive(
+        voice_catalog.current_label(rv),
+        voice_catalog.vocab_lines(rv),
+        rv.hot_swap,
+    )
+    return rv, directive
+
+
 async def _start_main_gemini_session(
     ctx: JobContext,
     seed: RoomSeed,
@@ -2164,9 +2198,33 @@ async def _start_main_gemini_session(
         ),
     )
     watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
+    # Stack-aware voice vocabulary (§13.9): ``llm is None`` is the Gemini Live
+    # realtime path (also the cascade build/runtime fallback — which is why the
+    # vocabulary correctly reflects Gemini then); any other ``llm`` is a
+    # non-Gemini realtime model whose voices are its own. The current voice is
+    # resolved exactly as the model builder picks it.
+    import voice_catalog
+
+    if llm is None:
+        realtime_model_id = voice_catalog.REALTIME_GEMINI
+        current_voice_id = (
+            seed.voice_name
+            if seed.voice_name and voices.is_valid_voice(seed.voice_name)
+            else CONFIG.gemini_live_voice
+        )
+    else:
+        realtime_model_id = seed.realtime_model_id
+        current_voice_id = seed.tts_voice or seed.voice_name
+    rv, vocab = _voice_vocab(
+        mode=voice_catalog.MODE_REALTIME,
+        realtime_model_id=realtime_model_id,
+        current_voice_id=current_voice_id,
+    )
+    _instructions = f"{seed.system_prompt}\n\n{vocab}"
     # Mid-call voice hot-swap (``VoiceSwapper``) only rebuilds Gemini Live, so it
     # is wired only on the Gemini path; a non-Gemini realtime model
-    # (``enable_hot_swap=False``) just saves the preference for the next call.
+    # (``enable_hot_swap=False``) just saves the preference for the next call,
+    # resolving it within that model's own voices (``voice_pref``).
     swapper = (
         VoiceSwapper(
             session,
@@ -2186,6 +2244,7 @@ async def _start_main_gemini_session(
         seed.uid,
         on_activity=watchdog.touch if watchdog else None,
         on_voice_change=swapper.request if swapper else None,
+        voice_pref=None if swapper else rv,
         guard=misheard_fragment_guard(
             window, len(window),
             (lambda: swapper.language) if swapper else (lambda: seed.voice_language),
@@ -2195,7 +2254,7 @@ async def _start_main_gemini_session(
     )
     if swapper:
         swapper.tools = tools
-    agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
+    agent_kwargs: dict = {"instructions": _instructions, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
     agent = Agent(**agent_kwargs)
@@ -2244,17 +2303,34 @@ async def _start_main_cascade_session(
         ),
     )
     watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
+    # Stack-aware voice vocabulary (§13.9): the active TTS provider's voices and
+    # the real current voice, resolved exactly as ``build_cascade_session``
+    # picked them (``seed.tts_voice`` else the configured default). This is what
+    # replaces the Gemini-preset knowledge on a cascade (e.g. fishaudio → list
+    # fishaudio voices, current = Hannah).
+    import voice_catalog
+
+    tts_id = seed.tts_id or CONFIG.meta_cascade_tts_model
+    current_voice_id = (seed.tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    rv, vocab = _voice_vocab(
+        mode=voice_catalog.MODE_CASCADE,
+        tts_id=tts_id,
+        current_voice_id=current_voice_id,
+    )
     tools = _session_tools(
         ctx,
         seed.uid,
         on_activity=watchdog.touch if watchdog else None,
+        voice_pref=rv,
         guard=misheard_fragment_guard(
             window, len(window), lambda: seed.voice_language
         ),
         session_id=seed.session_id,
         window=window,
     )
-    agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
+    agent_kwargs: dict = {
+        "instructions": f"{seed.system_prompt}\n\n{vocab}", "tools": tools
+    }
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
     agent = Agent(**agent_kwargs)

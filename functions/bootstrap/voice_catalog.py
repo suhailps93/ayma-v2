@@ -658,3 +658,162 @@ def language_label(code: str) -> str:
         if lang["code"] == code and lang["code"]:
             return lang["label"]
     return code
+
+
+# --- Stack-aware runtime voice vocabulary (§13.9) ---------------------------
+#
+# The voice agent (``agent.py``) must know the voices of the stack it is
+# ACTUALLY running, not the Gemini Live presets: on a cascade with a non-Gemini
+# TTS (e.g. ``fishaudio/s2.1-pro``) "what voices do you have" must list that
+# provider's voices and its real current voice, and ``set_voice_preference``
+# must switch only within that set. These helpers read from the one source of
+# truth above (``_tts_voices`` / ``_realtime_voices_for``) — no duplicated ids.
+
+
+@dataclass(frozen=True)
+class RuntimeVoices:
+    """The voice vocabulary of a running voice session.
+
+    ``provider`` is the active provider key (``gemini`` / ``openai`` / a cascade
+    TTS provider segment like ``fishaudio``); ``voices`` are its selectable
+    voices; ``current`` is the voice the session is running (``None`` only when
+    the set is empty); ``hot_swap`` is True only on Gemini Live realtime, the one
+    stack that can change voice mid-call."""
+
+    provider: str
+    voices: tuple[Voice, ...]
+    current: Voice | None
+    hot_swap: bool
+
+
+def _match_current(voice_list: list[Voice], voice_id: str) -> Voice | None:
+    vid = (voice_id or "").strip()
+    for v in voice_list:
+        if v.id == vid:
+            return v
+    if not vid:
+        for v in voice_list:
+            if v.id == "":
+                return v
+        return None
+    # A configured/override id not in the documented list — still the real
+    # current voice, so report it by id rather than claiming a different one.
+    return Voice(id=vid, label=vid)
+
+
+def runtime_voices(
+    *,
+    mode: str,
+    realtime_model_id: str = "",
+    tts_id: str = "",
+    current_voice_id: str = "",
+) -> RuntimeVoices:
+    """The :class:`RuntimeVoices` for the stack a voice session is running.
+
+    ``mode`` ``cascade`` → the TTS provider's voices (``tts_id`` selects them);
+    ``realtime`` → the realtime model's voices (``realtime_model_id`` empty means
+    Gemini Live). ``current_voice_id`` is the voice the session was actually
+    built with (already defaulted by the caller)."""
+    if mode == MODE_CASCADE:
+        voice_list = _tts_voices(tts_id)
+        provider = _provider_of(tts_id) or "default"
+        hot_swap = False
+    else:
+        model_id = realtime_model_id or REALTIME_GEMINI
+        voice_list = _realtime_voices_for(model_id)
+        if model_id == REALTIME_GEMINI or _provider_of(model_id).startswith("google"):
+            provider = "gemini"
+        elif model_id == REALTIME_OPENAI or _provider_of(model_id).startswith("openai"):
+            provider = "openai"
+        else:
+            provider = _provider_of(model_id) or model_id
+        hot_swap = model_id == REALTIME_GEMINI
+    return RuntimeVoices(
+        provider=provider,
+        voices=tuple(voice_list),
+        current=_match_current(voice_list, current_voice_id),
+        hot_swap=hot_swap,
+    )
+
+
+# Gender synonyms for resolving a free-text voice request within a provider set
+# (shared with ``voices`` but kept local so this stays the one resolver the
+# cascade/non-Gemini ``set_voice_preference`` path uses).
+_FEMININE_WORDS = ("female", "woman", "feminine", "girl", "lady", "she", "her")
+_MASCULINE_WORDS = ("male", "man", "masculine", "guy", "boy", "he", "him")
+
+
+# Words that must never, on their own, pick a voice via description overlap
+# (articles/fillers that appear in both requests and "an engaged speaker"-style
+# descriptions). "accent"/"voice"/"sound" are request nouns, not timbre words.
+_RESOLVE_STOPWORDS = frozenset(
+    {"a", "an", "the", "and", "or", "of", "to", "in", "with", "please", "can",
+     "you", "your", "me", "my", "i", "is", "it", "that", "this", "more", "bit",
+     "like", "sound", "sounds", "voice", "accent", "english", "american"}
+)
+
+
+def resolve_voice(request: str, voice_list, *, gender_only: bool = False) -> Voice | None:
+    """Closest match for a free-text voice request within ``voice_list`` (the
+    ACTIVE provider's set), or ``None`` when nothing matches / the set is empty.
+
+    Order: an exact label or id; a voice's label as a whole word in the text
+    ("use the Hannah voice"); a gendered descriptor → the first voice of that
+    gender; then a meaningful word shared with a voice's description ("deep",
+    "warm" — stopwords excluded). ``gender_only`` stops after the gender step
+    (for the accent/language field, where "a male voice … American English"
+    carries a gender but the rest is not a voice character). The bare ``""``
+    vendor-default sentinel is never returned — a match is always a concrete,
+    nameable voice."""
+    req = (request or "").strip().lower()
+    pickable = [v for v in voice_list if v.id]
+    if not req or not pickable:
+        return None
+    if not gender_only:
+        for v in pickable:
+            if req == v.label.lower() or req == v.id.lower():
+                return v
+        for v in pickable:
+            if re.search(rf"\b{re.escape(v.label.lower())}\b", req):
+                return v
+    want = ""
+    if any(re.search(rf"\b{w}\b", req) for w in _FEMININE_WORDS):
+        want = "feminine"
+    elif any(re.search(rf"\b{w}\b", req) for w in _MASCULINE_WORDS):
+        want = "masculine"
+    if want:
+        for v in pickable:
+            if v.gender == want:
+                return v
+    if gender_only:
+        return None
+    words = {w for w in re.findall(r"[a-z]+", req) if w not in _RESOLVE_STOPWORDS}
+    for v in pickable:
+        dwords = {
+            w for w in re.findall(r"[a-z]+", v.description.lower())
+            if w not in _RESOLVE_STOPWORDS
+        }
+        if words & dwords:
+            return v
+    return None
+
+
+def current_label(rv: RuntimeVoices) -> str:
+    """The human name of the running voice ("Hannah", "Aoede"), for the agent's
+    "which voice are you on" answer."""
+    if rv.current is None or not rv.current.label:
+        return "the default voice"
+    return rv.current.label
+
+
+def vocab_lines(rv: RuntimeVoices) -> str:
+    """A bulleted "- Label (description)" list of the stack's selectable voices
+    for the agent's "what voices do you have" answer. Falls back to a single
+    "default voice" line for a provider with no documented named voices."""
+    pickable = [v for v in rv.voices if v.id]
+    if not pickable:
+        return "- the provider's default voice"
+    return "\n".join(
+        f"- {v.label}" + (f" ({v.description})" if v.description else "")
+        for v in pickable
+    )

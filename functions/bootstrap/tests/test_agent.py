@@ -758,8 +758,8 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
     captured = {}
 
     def _fake_make_livekit_tools(
-        db, uid, *, on_call=None, on_voice_change=None, guard=None,
-        session_id="", turns=None,
+        db, uid, *, on_call=None, on_voice_change=None, voice_pref=None,
+        guard=None, session_id="", turns=None,
     ):
         captured["on_call"] = on_call
         captured["session_id"] = session_id

@@ -336,6 +336,7 @@ def make_livekit_tools(
     *,
     on_call: Callable[[str, str, str | None], None] | None = None,
     on_voice_change: set_voice_preference.VoiceChangeHook | None = None,
+    voice_pref: object | None = None,
     guard: Callable[[], str | None] | None = None,
     session_id: str = "",
     turns: Callable[[], list] | None = None,
@@ -352,7 +353,13 @@ def make_livekit_tools(
 
     ``on_voice_change``, when given, binds ``set_voice_preference`` through
     :func:`skills.set_voice_preference.bind_live` so a voice change is applied
-    to the running call (agent.py ``VoiceSwapper``) instead of "next call".
+    to the running call (agent.py ``VoiceSwapper``) instead of "next call" — the
+    Gemini-Live-only hot-swap path. ``voice_pref`` (a
+    ``voice_catalog.RuntimeVoices``), given on a cascade / non-Gemini-realtime
+    call instead, binds ``set_voice_preference`` through
+    :func:`skills.set_voice_preference.bind_stack` so the voice resolves within
+    the ACTIVE provider's voices (saved for the next call) and the tool's
+    description names those voices rather than the Gemini presets (§13.9).
 
     ``guard``, when given, runs before every tool call; a string it returns
     replaces the call (see :func:`_guarded`).
@@ -368,8 +375,15 @@ def make_livekit_tools(
 
     tools = []
     for s in (_REGISTRY + _recall_skills() + app_control.VOICE_SKILLS):
-        if on_voice_change is not None and s is set_voice_preference.SKILL:
+        description = s.declaration["description"]
+        if s is set_voice_preference.SKILL and on_voice_change is not None:
+            # Gemini Live: mid-call hot-swap within the Gemini presets (unchanged).
             fn = set_voice_preference.bind_live(db, uid, on_voice_change)
+        elif s is set_voice_preference.SKILL and voice_pref is not None:
+            # Cascade / non-Gemini realtime: switch within the active provider's
+            # voices, saved for the next call; name them in the description.
+            fn = set_voice_preference.bind_stack(db, uid, voice_pref)
+            description = set_voice_preference.stack_description(voice_pref)
         elif s.name in _DM_OUTREACH_NAMES:
             fn = s.bind(db, uid, session_id=session_id, turns=turns)
         else:
@@ -379,7 +393,5 @@ def make_livekit_tools(
         if guard is not None:
             # Outermost, so a refused call never shows a tool chip.
             fn = _guarded(fn, guard)
-        tools.append(
-            function_tool(fn, name=s.name, description=s.declaration["description"])
-        )
+        tools.append(function_tool(fn, name=s.name, description=description))
     return tools

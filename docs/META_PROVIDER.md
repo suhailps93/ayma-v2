@@ -252,11 +252,30 @@ cascade (`agent._start_main_cascade_session`):
 **Caveat — mid-call voice hot-swap.** `set_voice_preference` mid-call voice/accent
 switching is Gemini-Live-specific (`VoiceSwapper` reconnects a Gemini Live model),
 so on the cascade the main call does **not** hot-swap: the tool saves the
-preference for the **next** call instead of reconnecting (the configured
-`META_CASCADE_TTS_VOICE` governs the current call). Whether Muse Spark honours the
-app-driving function tools over the OpenAI-compatible API is unverified live and
-is the other open caveat; tools are wired either way and degrade to no-ops if the
-model does not call them.
+preference for the **next** call instead of reconnecting (the active
+`ayma_tts_voice`, else `META_CASCADE_TTS_VOICE`, governs the current call). Whether
+Muse Spark honours the app-driving function tools over the OpenAI-compatible API is
+unverified live and is the other open caveat; tools are wired either way and
+degrade to no-ops if the model does not call them.
+
+**Stack-aware voice vocabulary (fixed 2026-10-27).** The agent's *knowledge* of
+its voices used to be hardcoded to the Gemini Live presets: on a fishaudio
+cascade (brain = Muse Spark, TTS = `fishaudio/s2.1-pro`, voice = Hannah) asking
+"what voices do you have" wrongly listed the Gemini presets (Aoede/Kore/Puck…)
+and claimed "I'm on Puck". Now `agent._start_main_cascade_session` (and the
+realtime path) computes `voice_catalog.runtime_voices(...)` for the stack it is
+**actually** running and injects a stack-aware instruction block
+(`prompt.voice_vocab_directive`, `prompts/voice_vocab.md`): the real current
+voice (Hannah on that cascade) and the voices the active TTS provider offers.
+`set_voice_preference` on the cascade binds through
+`skills.set_voice_preference.bind_stack`, which resolves the request **within the
+active provider's voice set** (`voice_catalog.resolve_voice`), saves it to
+`ayma_tts_voice` for the next call, and whose tool description names those voices
+— never the Gemini presets. On a fallback to Gemini Live (build/runtime) the
+Gemini path recomputes the vocabulary, so it then correctly reflects Gemini. Voice
+ids stay in `config.py`/`voice_catalog._TTS_FALLBACK_VOICES` (AGENTS.md: none in
+`agent.py`). The text `/chat` `set_voice_preference` has no live session and keeps
+its preset-default resolution.
 
 **How to flip (MAIN voice to Meta):**
 

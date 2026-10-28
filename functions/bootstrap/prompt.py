@@ -52,6 +52,9 @@ _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 _VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
+_VOICE_VOCAB_PATH = _DIR / "prompts" / "voice_vocab.md"
+_VOICE_VOCAB_LIVE_PATH = _DIR / "prompts" / "voice_vocab_live.md"
+_VOICE_VOCAB_NEXT_CALL_PATH = _DIR / "prompts" / "voice_vocab_next_call.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
 _LESSONS_CONFIG_DOC = "ayma_persona"
@@ -235,6 +238,26 @@ def voice_swap_note(change: str) -> str:
     session after a mid-call voice switch (``prompts/voice_swap_note.md``)."""
     return _VOICE_SWAP_NOTE_PATH.read_text(encoding="utf-8").strip().replace(
         "{change}", change
+    )
+
+
+def voice_vocab_directive(current: str, voices: str, hot_swap: bool) -> str:
+    """The stack-aware voice-vocabulary section appended to a voice session's
+    instructions (``prompts/voice_vocab.md``): the voice the session is actually
+    running (``current``), the voices its active stack can use (``voices``, a
+    bulleted list), and whether a change can happen mid-call (``hot_swap``, true
+    only on Gemini Live) or only from the next call. This is what makes the agent
+    answer "what voices do you have" / "which are you on" for the ACTIVE stack
+    (e.g. a fishaudio cascade) instead of the Gemini Live presets (§13.9)."""
+    swap_rule = (
+        _VOICE_VOCAB_LIVE_PATH if hot_swap else _VOICE_VOCAB_NEXT_CALL_PATH
+    ).read_text(encoding="utf-8").strip()
+    return (
+        _VOICE_VOCAB_PATH.read_text(encoding="utf-8")
+        .strip()
+        .replace("{current}", current)
+        .replace("{voices}", voices)
+        .replace("{swap_rule}", swap_rule)
     )
 
 
