@@ -11,6 +11,7 @@ import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/report_progress.dart';
+import '../widgets/taste_match_card.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/share_report_sheet.dart';
 import '../theme.dart';
@@ -296,6 +297,17 @@ class _Report extends StatelessWidget {
           emptyMessage: "Nothing to show for this match yet.",
           shrinkWrap: true,
         ),
+        // "Taste match · powered by Qloo" — the shared-taste section between
+        // the two people (score + domain reads + date ideas), or its
+        // no-Taste-page empty state. Omitted entirely when the backend sent
+        // no taste section (`r.taste == null`). Reuses the same card the
+        // date-sim result uses; data is already resolved in the report
+        // payload, so it renders with no pending state.
+        if (r.taste != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: TasteMatchCard.resolved(r.taste!),
+          ),
       ],
     );
   }

@@ -37,7 +37,8 @@ import 'package:ayma_flutter/screens/profile_settings_screen.dart';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
 import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
 import 'package:ayma_flutter/services/date_sim_service.dart';
-import 'package:ayma_flutter/features/date_sim/taste_match_card.dart';
+import 'package:ayma_flutter/widgets/taste_match_card.dart';
+import 'package:ayma_flutter/widgets/taste_models.dart';
 import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
 import 'package:ayma_flutter/features/practice_date/practice_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
@@ -356,6 +357,29 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
             body: ListView(
               padding: const EdgeInsets.all(16),
               children: [TasteMatchCard(load: taste)],
+            ),
+          ),
+        ),
+      );
+    },
+    // The taste-match section's no-Taste-page empty state (long hint to wrap),
+    // as the match report / date-sim render it when one person has no public
+    // Taste page.
+    'taste match card (no taste)': (context) {
+      return Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                TasteMatchCard.resolved(
+                  const TasteMatchLoad.note(
+                    'Maya hasn\'t added a public Taste page yet — add one with '
+                    'lines like "Music: …", "Film: …", "Food: …" to see a '
+                    'taste match between the two of you.',
+                  ),
+                ),
+              ],
             ),
           ),
         ),

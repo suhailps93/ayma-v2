@@ -2024,11 +2024,20 @@ message; running out mid-conversation returns the partial transcript with
 ## 19. Taste match powered by Qloo (Qloo hackathon)
 
 Shared-taste score + taste-based date ideas for a pair, shown under the AI Date
-Simulation result (§18) and on a public judge page. Full detail:
-`docs/QLOO_TASTE.md`. Code: `functions/bootstrap/taste_match.py` (logic + HTTP),
+Simulation result (§18), as a labeled **"Taste match · powered by Qloo"**
+section in the match-compatibility report between two users (§5 / `GET
+/match/{id}` → `taste`), and on a public judge page. Full detail:
+`docs/QLOO_TASTE.md`. Code: `functions/bootstrap/taste_match.py` (logic + HTTP
++ `report_section`, the non-raising helper the match report embeds),
 `qloo_client.py` (live Qloo Insights API + offline fixture), `qloo_fixture.json`,
-`taste_demo.html`. Reads PUBLIC profile data only (both people). Live when
-`QLOO_API_KEY` is mounted; otherwise — or on any live failure — the fixture.
+`taste_demo.html`. Flutter: shared card `lib/widgets/taste_match_card.dart` +
+`taste_models.dart` (reused by the date-sim result and the match report).
+Reads PUBLIC profile data only (both people) — no private or cross-user private
+reads. Live when `QLOO_API_KEY` is mounted; otherwise — or on any live
+failure — the fixture. The match report degrades gracefully: when one or both
+people have no public Taste page it carries a `{"status": "no_taste"}` marker
+(the client shows an empty state); on any other failure the section is omitted,
+never erroring the report.
 
 ```mermaid
 flowchart LR
@@ -2040,7 +2049,7 @@ flowchart LR
   RES --> RJ["/v2/insights joint<br/>(A+B signals; places in A's city)"]
   RA & RB --> SC["overlap per domain → score,<br/>label, summary, shared"]
   RJ --> DI["date ideas<br/>(3 places + film + music)"]
-  SC & DI --> OUT["POST /taste/pair → app card<br/>GET /taste/demo/pair → judge page"]
+  SC & DI --> OUT["POST /taste/pair → date-sim card<br/>GET /match/{id}.taste → match report section<br/>GET /taste/demo/pair → judge page"]
   Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json)"]
 ```
 

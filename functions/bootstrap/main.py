@@ -6537,9 +6537,16 @@ async def match_report(
     def _photo(u: str) -> str:
         return story._photo_url_safe(_primary_profile_photo_path(u)) or ""
 
+    # "Taste match · powered by Qloo" — the shared-taste section between the
+    # two users, from both people's PUBLIC Taste pages only (§13 Qloo taste
+    # engine). None ⇒ the section is omitted; a {"status": "no_taste", …}
+    # marker ⇒ the client shows the empty state; never raises here.
+    taste = await taste_match.report_section(get_db(), uid, other)
+
     return {
         "match_id": match_id,
         "score": d.get("score"),
+        "taste": taste,
         "structured_score": d.get("structured_score"),
         "dimensions": d.get("dimensions") or [],
         "shared": d.get("shared") or [],

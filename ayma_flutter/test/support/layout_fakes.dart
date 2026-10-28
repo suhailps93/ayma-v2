@@ -74,6 +74,33 @@ Map<String, dynamic> _profile() => {
   'deep_dive_id': '',
 };
 
+/// A fully-populated "Taste match · powered by Qloo" payload (long strings so
+/// the matrix stresses wrapping). Served for `/taste/pair` and embedded as the
+/// match report's `taste` section.
+Map<String, dynamic> _tastePayload() => {
+  'source': 'fixture',
+  'a': {'name': 'Sam'},
+  'b': {'name': 'Maya'},
+  'score': 72,
+  'score_label': 'Strong overlap with a very long label to wrap',
+  'summary': kLongText,
+  'shared': [for (var i = 0; i < 6; i++) 'A long shared taste name $i'],
+  'domains': [
+    {'domain': 'music', 'score': 72},
+    {'domain': 'film', 'score': 64},
+    {'domain': 'dining', 'score': 81},
+  ],
+  'date_ideas': [
+    for (var i = 0; i < 3; i++)
+      {
+        'name': 'A very long venue name for the date idea $i',
+        'kind': 'dining',
+        'why': kLongText,
+        'address': i.isEven ? '1234 Some Very Long Street Name, City' : null,
+      },
+  ],
+};
+
 Map<String, dynamic> _report() => {
   'title': 'Report on $kLongName',
   'subject_name': kLongName,
@@ -288,10 +315,14 @@ Object? _bodyFor(String path) {
       },
     };
   }
+  if (path.startsWith('/match/')) {
+    // The match report carries the embedded "Taste match · powered by Qloo"
+    // section so the matrix exercises it on the match-report route.
+    return {..._report(), 'taste': {..._tastePayload(), 'status': 'ok'}};
+  }
   if (path.startsWith('/report/') ||
       path.startsWith('/deep-dive-report/') ||
       path.startsWith('/skills/report/') ||
-      path.startsWith('/match/') ||
       path.startsWith('/s/') ||
       path == '/appearance/report' ||
       path == '/body-report' ||
@@ -363,29 +394,7 @@ Object? _bodyFor(String path) {
     return {'path': 'uploads/a/feedback_0.png', 'url': ''};
   }
   if (path == '/taste/pair') {
-    return {
-      'source': 'fixture',
-      'a': {'name': 'Sam'},
-      'b': {'name': 'Maya'},
-      'score': 72,
-      'score_label': 'Strong overlap with a very long label to wrap',
-      'summary': kLongText,
-      'shared': [for (var i = 0; i < 6; i++) 'A long shared taste name $i'],
-      'domains': [
-        {'domain': 'music', 'score': 72},
-        {'domain': 'film', 'score': 64},
-        {'domain': 'dining', 'score': 81},
-      ],
-      'date_ideas': [
-        for (var i = 0; i < 3; i++)
-          {
-            'name': 'A very long venue name for the date idea $i',
-            'kind': 'dining',
-            'why': kLongText,
-            'address': i.isEven ? '1234 Some Very Long Street Name, City' : null,
-          },
-      ],
-    };
+    return _tastePayload();
   }
   if (path == '/usage') {
     return {

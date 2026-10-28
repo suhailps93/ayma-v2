@@ -216,3 +216,43 @@ def test_pair_endpoint_no_taste_is_404_with_code(db, monkeypatch):
 
 def test_pair_endpoint_requires_auth(db):
     assert client.post("/taste/pair", json={"other_uid": LEO}).status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Match-report taste section (GET /match/{id} → "taste")
+# --------------------------------------------------------------------------- #
+def test_report_section_ok_has_status_score_and_ideas(db):
+    section = asyncio.run(taste_match.report_section(db, MAYA, LEO))
+    assert section["status"] == "ok"
+    assert section["source"] == "fixture"
+    assert 0 <= section["score"] <= 100
+    assert {d["domain"] for d in section["domains"]} == {"music", "film", "dining"}
+    assert section["date_ideas"]
+
+
+def test_report_section_no_taste_degrades_without_error(db):
+    user = db.collection("users").document("fresh")
+    user.collection("profile").document("main").set(
+        {"name": "Sam", "birthdate": "1990-01-01"}
+    )
+    section = asyncio.run(taste_match.report_section(db, "fresh", LEO))
+    assert section["status"] == "no_taste"
+    assert "Sam" in section["message"]
+
+
+def test_match_report_endpoint_embeds_taste_section(db, monkeypatch):
+    import pair_key
+
+    key = pair_key.sorted_pair_key(MAYA, LEO)
+    db.collection("matches").document(key).set({"score": 0.8, "updated_at": "TS"})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda u: f"p/{u}")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda sp: f"https://cdn/{sp}")
+    monkeypatch.setattr(main, "_profile_full_name", lambda u: "Leo")
+
+    resp = client.get(f"/match/{key}", headers=_auth(monkeypatch, MAYA))
+    assert resp.status_code == 200
+    taste = resp.json()["taste"]
+    assert taste["status"] == "ok"
+    assert 0 <= taste["score"] <= 100
+    assert taste["date_ideas"]

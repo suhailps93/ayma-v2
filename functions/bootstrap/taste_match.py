@@ -289,6 +289,41 @@ def _no_taste_detail(exc: NoTaste) -> dict:
     return {"code": "no_taste", "message": NO_TASTE_MESSAGE.format(name=exc.name)}
 
 
+async def report_section(db, viewer_uid: str, other_uid: str) -> dict | None:
+    """The "Taste match · powered by Qloo" section for the match report between
+    the viewer and another matched user, from BOTH people's PUBLIC Taste pages
+    only (same engine as ``POST /taste/pair`` — no duplicated Qloo calls, no
+    private or cross-user private reads).
+
+    Returns the taste-match payload (``score`` / ``score_label`` / ``summary``
+    / ``shared`` / ``domains`` / ``date_ideas`` / ``source``) with
+    ``status: "ok"``; a ``{"status": "no_taste", "message": …}`` empty-state
+    marker when one or both people have no public Taste page; or ``None`` on
+    any unexpected failure, so the report renders without the section rather
+    than erroring. A live Qloo failure already falls back to the fixture inside
+    :func:`match`, so this never dark-fails on a transient vendor error."""
+    try:
+        a = taste_from_view(
+            await asyncio.to_thread(public_profile.build, db, viewer_uid, viewer_uid)
+        )
+        b = taste_from_view(
+            await asyncio.to_thread(public_profile.build, db, viewer_uid, other_uid)
+        )
+        result = await match(a, b)
+        result["status"] = "ok"
+        return result
+    except NoTaste as exc:
+        return {
+            "status": "no_taste",
+            "message": NO_TASTE_MESSAGE.format(name=exc.name),
+        }
+    except ValueError:
+        return None
+    except Exception:  # noqa: BLE001 — the report must render without this section
+        logger.warning("taste section for match report failed", exc_info=True)
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # HTTP API (mounted by main.py via app.include_router)
 # --------------------------------------------------------------------------- #

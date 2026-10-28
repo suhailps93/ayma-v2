@@ -12,7 +12,8 @@ import '../../widgets/chat_bubble.dart';
 import '../../widgets/out_of_credits.dart';
 import '../../widgets/overflow_guards.dart';
 import 'date_sim_models.dart';
-import 'taste_match_card.dart';
+import '../../widgets/taste_match_card.dart';
+import '../../widgets/taste_models.dart';
 
 /// AI Date Simulation (hackathon flagship) — watch your AI and theirs feel each
 /// other out before you message them. The user sets how many messages the two

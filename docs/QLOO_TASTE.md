@@ -65,6 +65,14 @@ Config (`config.py`): `QLOO_API_BASE_URL` (default
 
 - `POST /taste/pair {other_uid}` — signed in, 18+. Caller × other user, both
   from their PUBLIC views (`public_profile.build`; blocked/deleted → 404).
+  Shown as the "Taste match" card on the AI Date Simulation result.
+- `GET /match/{match_id}` → `taste` — the match-compatibility report between two
+  users embeds the SAME taste match as a labeled "Taste match · powered by Qloo"
+  section (`taste_match.report_section`, reusing the `/taste/pair` engine — no
+  duplicated Qloo calls). The `taste` value is the taste payload with
+  `status: "ok"`, a `{"status":"no_taste","message":…}` empty-state marker when
+  one/both lack a public Taste page, or `null` on any other failure (the report
+  never errors).
 - `GET /taste/demo` — public HTML judge page (`taste_demo.html`).
 - `GET /taste/demo/pair?a=&b=` — public; ONLY the four seeded demo ids
   (`maya|leo|aisha|noah`), anything else 404, so it can never read a real user.
@@ -84,5 +92,6 @@ to Qloo. Not credit-metered (Qloo hackathon key, no LLM call).
 
 `functions/bootstrap/taste_match.py`, `qloo_client.py`, `qloo_fixture.json`,
 `taste_demo.html`, `tests/test_taste_match.py`; the "Taste" pages in
-`practice_seed.py`; the router mount in `main.py`; Flutter card under
-`ayma_flutter/lib/features/date_sim/`.
+`practice_seed.py`; the router mount + `GET /match/{id}` embedding in `main.py`;
+Flutter shared card `ayma_flutter/lib/widgets/taste_match_card.dart` +
+`taste_models.dart` (reused by the date-sim result and the match report).

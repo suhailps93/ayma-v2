@@ -1,18 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../services/api_client.dart';
-import '../../theme.dart';
+import '../services/api_client.dart';
+import '../theme.dart';
 import 'taste_models.dart';
-
-/// The outcome of `POST /taste/pair`: either a [match], or a short [note] to
-/// show in its place (the no-Taste-page hint, or "unavailable").
-class TasteMatchLoad {
-  const TasteMatchLoad.match(TasteMatch this.match) : note = null;
-  const TasteMatchLoad.note(String this.note) : match = null;
-
-  final TasteMatch? match;
-  final String? note;
-}
 
 const _unavailable = 'Taste match unavailable right now.';
 
@@ -28,12 +18,18 @@ Future<TasteMatchLoad> loadTasteMatch(ApiClient api, String otherUid) async {
   }
 }
 
-/// "Taste match (powered by Qloo)" — shown under the date-sim compatibility
-/// read: the overlap score, the summary, shared tastes and date ideas. While
-/// [load] is pending it shows a muted "comparing" line; when it resolves to a
-/// note (no Taste page, or any failure) it shows that note instead.
+/// "Taste match · powered by Qloo" — the overlap score, summary, shared tastes
+/// and date ideas. Shown under the date-sim compatibility read and as a section
+/// in the match report. While [load] is pending it shows a muted "comparing"
+/// line; when it resolves to a note (no Taste page, or any failure) it shows
+/// that note instead.
 class TasteMatchCard extends StatelessWidget {
   const TasteMatchCard({super.key, required this.load});
+
+  /// For data already resolved (e.g. embedded in the match report payload):
+  /// renders immediately, no pending state.
+  TasteMatchCard.resolved(TasteMatchLoad value, {super.key})
+      : load = Future<TasteMatchLoad>.value(value);
 
   final Future<TasteMatchLoad> load;
 

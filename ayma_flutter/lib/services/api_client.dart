@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../env.dart';
 import '../features/date_sim/date_sim_models.dart';
-import '../features/date_sim/taste_models.dart';
+import '../widgets/taste_models.dart';
 import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
@@ -3430,6 +3430,7 @@ class MatchReport {
     this.confidenceNote = '',
     this.gateFailures = const [],
     this.method = '',
+    this.taste,
   });
 
   final String matchId;
@@ -3458,6 +3459,11 @@ class MatchReport {
 
   /// One-line note on how the score was built (structured vs. LLM).
   final String method;
+
+  /// "Taste match · powered by Qloo" section between the two people (Qloo
+  /// taste overlap + date ideas), or a no-Taste-page empty state. Null when
+  /// the backend omitted the section (unexpected failure / unavailable).
+  final TasteMatchLoad? taste;
 
   /// `high` / `medium` / `low`, from [scoreConfidence]. Empty when unknown.
   String get confidenceBand {
@@ -3499,6 +3505,7 @@ class MatchReport {
           )
           .toList(),
       method: m['method'] as String? ?? '',
+      taste: TasteMatchLoad.fromReportValue(m['taste']),
     );
   }
 }

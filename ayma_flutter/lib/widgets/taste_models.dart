@@ -1,5 +1,7 @@
-/// Models for the "Taste match (powered by Qloo)" card on the AI Date
-/// Simulation result — the data `POST /taste/pair` returns.
+/// Models for the "Taste match · powered by Qloo" card — the shared taste
+/// overlap between two people. Used both on the AI Date Simulation result
+/// (`POST /taste/pair`) and as a section embedded in the match report
+/// (`GET /match/{id}` → `taste`).
 library;
 
 /// One per-domain overlap read (music, film, dining), 0–100.
@@ -89,4 +91,31 @@ class NoTasteException implements Exception {
 
   @override
   String toString() => 'NoTasteException: $message';
+}
+
+/// The resolved outcome of a taste match: either a [match], or a short [note]
+/// to show in its place (the no-Taste-page hint, or an "unavailable" line).
+/// Used by [TasteMatchCard] on both the date-sim result and the match report.
+class TasteMatchLoad {
+  const TasteMatchLoad.match(TasteMatch this.match) : note = null;
+  const TasteMatchLoad.note(String this.note) : match = null;
+
+  final TasteMatch? match;
+  final String? note;
+
+  /// Builds the section from a match report's embedded `taste` value
+  /// (`GET /match/{id}` → `taste`): `null`/non-map ⇒ no section; a
+  /// `{"status": "no_taste", "message": …}` marker ⇒ the empty-state note;
+  /// otherwise the full taste match.
+  static TasteMatchLoad? fromReportValue(Object? v) {
+    if (v is! Map) return null;
+    final map = v.cast<String, dynamic>();
+    if (map['status'] == 'no_taste') {
+      final msg = map['message'];
+      return TasteMatchLoad.note(msg is String && msg.isNotEmpty
+          ? msg
+          : 'Add a public "Taste" page (e.g. "Music: …") to see a taste match.');
+    }
+    return TasteMatchLoad.match(TasteMatch.fromMap(map));
+  }
 }
