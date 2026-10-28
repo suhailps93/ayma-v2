@@ -21,10 +21,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 
 from config import CONFIG
@@ -39,6 +41,28 @@ ENTITY_TYPES = {
 }
 
 _FIXTURE_PATH = Path(__file__).parent / "qloo_fixture.json"
+
+# The hackathon key allows 10 requests/second; one taste match fires ~25, so
+# calls are paced process-wide below that, and a 429 is retried after the
+# one-second window resets.
+_RATE_PER_SECOND = 8
+_RETRIES_ON_429 = 2
+_rate_lock = threading.Lock()
+_recent_calls: deque[float] = deque()
+
+
+def _wait_for_slot() -> None:
+    """Block until a request fits in the rolling one-second window."""
+    while True:
+        with _rate_lock:
+            now = time.monotonic()
+            while _recent_calls and now - _recent_calls[0] >= 1.0:
+                _recent_calls.popleft()
+            if len(_recent_calls) < _RATE_PER_SECOND:
+                _recent_calls.append(now)
+                return
+            delay = 1.0 - (now - _recent_calls[0])
+        time.sleep(delay)
 
 
 class QlooError(Exception):
@@ -83,11 +107,19 @@ class LiveQlooClient:
         req = urllib.request.Request(
             url, headers={"X-Api-Key": self._key, "Accept": "application/json"}
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-            raise QlooError(f"Qloo {path} failed: {exc}") from exc
+        for attempt in range(_RETRIES_ON_429 + 1):
+            _wait_for_slot()
+            try:
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429 and attempt < _RETRIES_ON_429:
+                    time.sleep(1.0)
+                    continue
+                raise QlooError(f"Qloo {path} failed: {exc}") from exc
+            except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+                raise QlooError(f"Qloo {path} failed: {exc}") from exc
+        raise QlooError(f"Qloo {path} failed: rate limited")
 
     def search(self, name: str, entity_type: str) -> dict | None:
         data = self._get("/search", {"query": name, "types": entity_type, "take": 1})

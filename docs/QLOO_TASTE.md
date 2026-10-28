@@ -45,10 +45,21 @@ tags. Any live failure (timeout, auth, unexpected payload) falls back to the
 fixture for that request. Every response carries `source: "qloo" | "fixture"`;
 the web page and app card show a "sample data" chip on fixture.
 
+**Status: LIVE** since 2026-10-27 (ayma-api revision `ayma-api-00220-fc8`): the
+deployed service serves `source: "qloo"` from the hackathon Insights API.
+Verified demo pairs: maya×leo 25 (music 0, film 25, dining 50), aisha×noah 42
+(music 50, film 25, dining 50), maya×aisha 25 (music 50, film 12, dining 12);
+~6.5–7.5 s uncached (Insights calls take ~1–4 s each), then cached per pair.
+
+Rate limit: the hackathon key allows 10 requests/second (50,000/month) and one
+match makes ~25 calls, so `LiveQlooClient` paces calls process-wide at 8/s and
+retries a 429 up to twice after the one-second window resets.
+
 Config (`config.py`): `QLOO_API_BASE_URL` (default
 `https://hackathon.api.qloo.com`), `QLOO_TIMEOUT_SECONDS` (default 6). Secret:
-`QLOO_API_KEY` — mount in `scripts/deploy-api.sh` `SECRETS` once it exists in
-Secret Manager (not mounted yet: mounting a missing secret fails the deploy).
+`QLOO_API_KEY` — in Secret Manager (ayma-ai), mounted via `SECRETS` in
+`scripts/deploy-api.sh` (`--full`); the runtime service account has
+`secretAccessor` on it.
 
 ## API
 
