@@ -83,6 +83,7 @@ from prompt import (  # noqa: E402
     compose_system_prompt,
     load_practice_greeting,
     load_voice_opener,
+    load_voice_tool_use,
     voice_accent_directive,
     voice_swap_confirm,
     voice_swap_failed,
@@ -2114,19 +2115,30 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
 
 
 async def _open_main_call(
-    session: AgentSession, seed: RoomSeed, *, window: list[Turn]
+    session: AgentSession,
+    seed: RoomSeed,
+    *,
+    window: list[Turn],
+    opener_chat_ctx: NotGivenOr[object] = NOT_GIVEN,
 ) -> None:
     """Open a started main voice call the same way on both the Gemini Live and
     Meta cascade paths: a pre-sign-in "welcome" room has Ayma greet first; every
     other call lets Ayma open only if the caller stays silent
-    (:func:`maybe_open_conversation`)."""
+    (:func:`maybe_open_conversation`).
+
+    ``opener_chat_ctx`` is forwarded to the silent-caller opener so the cascade
+    can greet fresh without the previous conversation in the opener's generation
+    context (founder cold-start bug, 2026-10-28); NOT_GIVEN leaves the opener
+    unchanged for Gemini Live / every other path."""
     if seed.greeting_instructions:
         try:
             await session.generate_reply(instructions=seed.greeting_instructions)
         except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
             logger.exception("welcome greeting failed")
     else:
-        await maybe_open_conversation(session, seed, window=window)
+        await maybe_open_conversation(
+            session, seed, window=window, opener_chat_ctx=opener_chat_ctx
+        )
 
 
 def _voice_vocab(
@@ -2173,11 +2185,19 @@ def _accent_block(rv, accent: str) -> str:
     return voice_accent_directive(accent)
 
 
-def _compose_instructions(system_prompt: str, accent_block: str, vocab: str) -> str:
+def _compose_instructions(
+    system_prompt: str, accent_block: str, vocab: str, tool_use: str = ""
+) -> str:
     """The session instructions: the composed system prompt, then the boot-time
     accent block (when the provider supports accent), then the stack-aware voice
-    vocabulary — skipping any empty part."""
-    return "\n\n".join(p for p in (system_prompt, accent_block, vocab) if p)
+    vocabulary, then the voice tool-use directive — skipping any empty part.
+
+    ``tool_use`` (``prompts/voice_tool_use.md`` via :func:`load_voice_tool_use`)
+    is appended on the Meta cascade path to force call-before-confirm tool use;
+    left ``""`` on Gemini Live, whose instructions stay byte-identical."""
+    return "\n\n".join(
+        p for p in (system_prompt, accent_block, vocab, tool_use) if p
+    )
 
 
 def _cascade_seed_chat_ctx(chat_ctx):
@@ -2397,7 +2417,13 @@ async def _start_main_cascade_session(
         window=window,
     )
     agent_kwargs: dict = {
-        "instructions": _compose_instructions(seed.system_prompt, accent_block, vocab),
+        # The voice tool-use directive is appended HERE (cascade only): Meta Muse
+        # Spark's tool-calling is probabilistic in voice and would otherwise
+        # narrate an app action as done without ever firing the tool (founder
+        # voice bug, 2026-10-28). Gemini Live's instructions stay unchanged.
+        "instructions": _compose_instructions(
+            seed.system_prompt, accent_block, vocab, load_voice_tool_use()
+        ),
         "tools": tools,
     }
     # A trailing stale user turn in the seeded history is dropped here so the
@@ -2412,7 +2438,19 @@ async def _start_main_cascade_session(
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
-    await _open_main_call(session, seed, window=window)
+    # Cold-start opener fix (founder bug, 2026-10-28): fix #1 (above) only stops
+    # ``session.start`` from auto-answering a TRAILING stale user turn. The
+    # silent-caller opener (:func:`maybe_open_conversation`) still ran
+    # ``generate_reply`` against the agent's full seeded history, so the chat LLM
+    # treated the previous conversation's last exchange as something to continue
+    # and SPOKE a reply to the old message before the caller said anything. The
+    # opener here generates against a history-free context (the rolling summary
+    # still rides in the system prompt), so it is a fresh greeting with no prior
+    # turn to answer; the agent's own ``chat_ctx`` keeps the full window for every
+    # later real turn. Gemini Live is left NOT_GIVEN and is unchanged.
+    await _open_main_call(
+        session, seed, window=window, opener_chat_ctx=llm.ChatContext.empty()
+    )
 
 
 def _flush_on_non_error_close(flush: SessionFlush) -> Callable[[object], None]:
@@ -2741,6 +2779,7 @@ async def maybe_open_conversation(
     *,
     window: list[Turn],
     grace_seconds: float | None = None,
+    opener_chat_ctx: NotGivenOr[object] = NOT_GIVEN,
 ) -> bool:
     """Ayma speaks first on a normal call when the caller stays silent.
 
@@ -2752,7 +2791,16 @@ async def maybe_open_conversation(
     ``metrics_collected`` ledger relay). Returns True if the opener fired.
     Skipped for the welcome room (it has its own greeting), when the last
     seeded turn is the caller's (a resumed call mid-turn), or when the opener
-    is disabled by config. Runs at most once per session by construction."""
+    is disabled by config. Runs at most once per session by construction.
+
+    ``opener_chat_ctx`` (cascade cold-start fix, founder bug 2026-10-28) scopes
+    the history the opener's ``generate_reply`` generates against, WITHOUT
+    touching the agent's own ``chat_ctx`` (which keeps the full window for every
+    later real turn). The Meta cascade passes a history-free context here so the
+    opener is a fresh greeting and the chat LLM has no previous-conversation turn
+    to answer/continue the instant it opens; left NOT_GIVEN (Gemini Live / every
+    other path), the opener generates against the agent's full context exactly as
+    before, so that path is unchanged."""
     grace = (
         CONFIG.voice_opener_grace_seconds if grace_seconds is None else grace_seconds
     )
@@ -2780,8 +2828,11 @@ async def maybe_open_conversation(
         pass
     if user_started.is_set() or _has_new_turns(window, seeded):
         return False
+    reply_kwargs: dict = {"instructions": load_voice_opener()}
+    if opener_chat_ctx is not NOT_GIVEN:
+        reply_kwargs["chat_ctx"] = opener_chat_ctx
     try:
-        await session.generate_reply(instructions=load_voice_opener())
+        await session.generate_reply(**reply_kwargs)
     except Exception:  # noqa: BLE001 - a missed opener shouldn't kill the call
         logger.exception("voice opener failed")
         return False

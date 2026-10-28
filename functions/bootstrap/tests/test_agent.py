@@ -1982,13 +1982,18 @@ def test_end_call_out_of_credits_still_ends_the_call_if_the_flush_fails():
     assert shutdown_calls == ["out_of_credits"]
 
 
+_UNSET = object()
+
+
 class _OpenerSession(_FakeMuteSession):
     def __init__(self):
         super().__init__()
         self.replies = []
+        self.reply_chat_ctxs = []
 
-    async def generate_reply(self, instructions=None):
+    async def generate_reply(self, instructions=None, chat_ctx=_UNSET):
         self.replies.append(instructions)
+        self.reply_chat_ctxs.append(chat_ctx)
 
 
 class _StateEv:
@@ -2095,6 +2100,46 @@ def test_opener_disabled_by_zero_grace():
         )
 
     assert asyncio.run(go()) is False
+
+
+def test_opener_uses_agent_context_by_default():
+    """Gemini Live / default path: no opener_chat_ctx is passed, so the opener's
+    generate_reply is NOT given a chat_ctx and generates against the agent's own
+    full seeded history exactly as before (path unchanged)."""
+    import asyncio
+
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    assert len(s.replies) == 1 and s.replies[0]
+    # chat_ctx kwarg was never forwarded -> generate_reply falls back to the
+    # agent's full context, the pre-fix behaviour for Gemini Live.
+    assert s.reply_chat_ctxs == [_UNSET]
+
+
+def test_cascade_opener_generates_against_history_free_context():
+    """Cascade cold-start fix (founder bug 2026-10-28): when a history-free
+    opener_chat_ctx is supplied, the opener's generate_reply generates against
+    THAT context (no previous-conversation turns), so the chat LLM has no old
+    message to answer/continue when it opens the call."""
+    import asyncio
+    from livekit.agents import llm
+
+    s = _OpenerSession()
+    fresh = llm.ChatContext.empty()
+
+    async def go():
+        return await agent.maybe_open_conversation(
+            s, _opener_seed(), window=[], grace_seconds=0.05,
+            opener_chat_ctx=fresh,
+        )
+
+    assert asyncio.run(go()) is True
+    assert len(s.reply_chat_ctxs) == 1
+    passed = s.reply_chat_ctxs[0]
+    assert passed is fresh
+    # The opener generates with ZERO prior turns in context, so it cannot reply
+    # to the previous conversation's last message.
+    assert list(passed.items) == []
 
 
 def test_opener_swallows_generate_failure():
@@ -3143,3 +3188,83 @@ def test_cascade_start_does_not_seed_a_trailing_stale_user_turn(monkeypatch):
     seeded = captured["chat_ctx"]
     assert [getattr(i, "role", None) for i in seeded.items] == ["assistant"]
     assert opened.get("via_opener") is True
+
+
+def test_cascade_cold_start_opener_runs_against_history_free_context(monkeypatch):
+    """Founder cold-start bug, 2026-10-28 (path B — the opener).
+
+    The previous conversation ended with Ayma's reply, so the opener fires on a
+    silent caller. Before the fix the opener ran generate_reply against the
+    agent's FULL seeded history (which still held the caller's earlier message),
+    and the chat LLM spoke a reply to that old message. The fix hands the opener
+    a history-free chat_ctx, so it greets fresh with nothing to answer, while the
+    agent's own chat_ctx still carries the whole prior exchange for later turns."""
+    captured: dict = {}
+    monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_cascade_usage", "watch_for_idle", "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+    opener_calls: dict = {}
+
+    async def _fake_open(session, seed, *, window, opener_chat_ctx):
+        opener_calls["opener_chat_ctx"] = opener_chat_ctx
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+
+    class _Sess:
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    seed = agent.RoomSeed(
+        system_prompt="SYS", uid="u1", session_id="s1",
+        chat_ctx=_ctx_with(("user", "I had a date last night"),
+                           ("assistant", "ooh, tell me everything")),
+    )
+    asyncio.run(agent._start_main_cascade_session(
+        _practice_ctx(), seed, _Sess(), flush=_FakeFlush(), window=[]))
+
+    # The agent keeps the full prior exchange for genuine later turns ...
+    assert [getattr(i, "role", None) for i in captured["chat_ctx"].items] == [
+        "user", "assistant",
+    ]
+    # ... but the cold-start opener is generated against a history-free context,
+    # so there is no "I had a date last night" turn for the LLM to answer first.
+    opener_ctx = opener_calls["opener_chat_ctx"]
+    assert opener_ctx is not agent.NOT_GIVEN
+    assert list(opener_ctx.items) == []
+
+
+def test_voice_tool_use_prompt_has_call_before_confirm_directive():
+    """Voice tool-use directive (founder voice bug, 2026-10-28): the prompt must
+    tell the agent to CALL the tool for an app action and only confirm from its
+    actual result — never narrate an action as done without invoking the tool."""
+    text = agent.load_voice_tool_use()
+    assert text  # loaded from prompts/voice_tool_use.md, not inline
+    low = text.lower()
+    assert "must call" in low
+    assert "never" in low  # never claim an action that wasn't actually taken
+    # the result-grounded confirm rule
+    assert "returned" in low or "result" in low
+
+
+def test_cascade_instructions_append_the_tool_use_directive():
+    """The cascade session's instructions carry the tool-use directive; the
+    Gemini Live path (empty tool_use) stays byte-identical to the composed base.
+    """
+    directive = agent.load_voice_tool_use()
+    cascade = agent._compose_instructions("SYS", "ACCENT", "VOCAB", directive)
+    assert directive in cascade
+    # Default (Gemini Live) omits it entirely — unchanged behaviour.
+    gemini = agent._compose_instructions("SYS", "ACCENT", "VOCAB")
+    assert directive not in gemini
+    assert gemini == "SYS\n\nACCENT\n\nVOCAB"

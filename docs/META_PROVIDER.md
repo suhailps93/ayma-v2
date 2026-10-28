@@ -297,14 +297,54 @@ the accent for the next session boot. `RuntimeVoices.supports_accent` carries th
 flag for `bind_stack`; the text `/chat` path gates on the saved stack
 (`voice_catalog.accent_supported`).
 
-**Cascade cold-start (fixed 2026-10-27).** A fresh Meta-cascade call used to answer
-a *trailing* user turn seeded from the previous conversation's persisted history —
-already handled — the moment it connected, before the caller spoke (Gemini Live
-does not). `agent._cascade_seed_chat_ctx` now drops any trailing run of user turns
-from the cascade's seeded `chat_ctx` at start (the whole seed is prior-session
-history; new turns arrive live via STT), so the cascade greets via the normal
-opener and waits for real input. All prior context is kept, the full window is
-still persisted, and the Gemini path is unchanged.
+**Cascade cold-start (fixed in two parts, 2026-10-27 + 2026-10-28).** A fresh
+Meta-cascade call used to speak a reply to the caller's last message from the
+*previous* call the moment it connected, before the caller spoke (Gemini Live does
+not). Two separate causes:
+
+1. **session.start answered a trailing user turn (2026-10-27).** If the prior
+   conversation's persisted history ended with an unanswered *user* turn, it was
+   seeded into the model and answered on connect. `agent._cascade_seed_chat_ctx`
+   drops any trailing run of user turns from the cascade's seeded `chat_ctx` at
+   start (the whole seed is prior-session history; new turns arrive live via STT).
+   Correct but incomplete — only covers the trailing-user case.
+
+2. **The silent-caller opener continued the previous conversation (2026-10-28 —
+   the bug that persisted).** When the prior conversation ended with Ayma's reply
+   (Part 1 strips nothing, the opener fires), the cold-start opener
+   (`maybe_open_conversation` → `generate_reply(load_voice_opener())`) ran against
+   the agent's *full* seeded history, which still held the caller's earlier
+   message; with `prompts/voice_opener.md` telling the model to "pick the thread
+   back up," the cascade chat LLM opened by answering/continuing that old message.
+   Fix: `_start_main_cascade_session` passes a **history-free** `chat_ctx`
+   (`llm.ChatContext.empty()`) to the opener via
+   `_open_main_call` → `maybe_open_conversation(opener_chat_ctx=…)` →
+   `generate_reply(chat_ctx=…)`. LiveKit's `generate_reply` uses the passed
+   context *instead of* the agent's history for that one reply, so the opener
+   greets fresh with nothing to answer (the rolling summary still rides in the
+   system prompt). The agent's own `chat_ctx` keeps the full prior exchange for
+   every genuine later turn. `prompts/voice_opener.md` also carries an explicit
+   "brand-new call — do not answer/continue the previous message" guardrail.
+
+Both parts are cascade-scoped: Gemini Live / OpenAI Realtime leave `opener_chat_ctx`
+`NOT_GIVEN`, so their opener generates against the full agent context exactly as
+before. All prior context is kept, the full window is still persisted, and the
+Gemini path is unchanged.
+
+**Voice tool-use reliability (2026-10-28).** On the cascade, Muse Spark sometimes
+*narrated* an app action as done without calling the tool ("rerunning that now"
+with no tool fired; "open my appearance report" → opened Settings and said "opened
+settings"). This is probabilistic tool-calling. Mitigation: `prompts/voice_tool_use.md`
+(`prompt.load_voice_tool_use`) is appended to the **cascade** session instructions
+in `_start_main_cascade_session` via `_compose_instructions`'s `tool_use` part. It
+requires that every app action go through the matching tool, that the agent confirm
+only from the tool's actual returned result, and that it NEVER claim an action is
+done/in-progress unless the tool was invoked and returned — call first, then speak
+from the result, and pick the tool matching the specific request. Gemini Live leaves
+`tool_use` empty, so its instructions are unchanged. **Model-reliability mitigation,
+not a guarantee:** Muse Spark tool-calling is probabilistic, so it cuts but may not
+fully remove false "done" claims and mis-routes; if cascade tool reliability stays
+poor, Gemini Live (reliable tool-calling) is the voice fallback.
 
 **How to flip (MAIN voice to Meta):**
 
