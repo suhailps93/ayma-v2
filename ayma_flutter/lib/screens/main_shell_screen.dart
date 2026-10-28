@@ -1,11 +1,15 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/app_context.dart';
+import '../services/feature_tour_store.dart';
 import '../services/screen_capture.dart';
 import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
 import '../services/chat_inbox.dart';
 import '../services/tab_request.dart';
+import '../services/tour_content.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../widgets/ask_ayma_overlay.dart';
@@ -13,6 +17,7 @@ import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_tab_bar.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
+import 'feature_tour_screen.dart';
 import 'messages_screen.dart';
 import 'profile_tab_screen.dart';
 import 'voice_call_screen.dart';
@@ -47,6 +52,7 @@ class MainShellScreen extends StatefulWidget {
     super.key,
     this.voiceController,
     this.transcriptStore,
+    this.featureTourStore,
   });
 
   static const path = '/';
@@ -56,6 +62,10 @@ class MainShellScreen extends StatefulWidget {
   /// shell fall through to the shared [AymaSession].
   final VoiceSessionController? voiceController;
   final TranscriptStore? transcriptStore;
+
+  /// Test-only: the per-user feature-tour seen-state store. Production uses the
+  /// shared [featureTourStoreGlobal].
+  final FeatureTourStore? featureTourStore;
 
   @override
   State<MainShellScreen> createState() => _MainShellScreenState();
@@ -70,6 +80,8 @@ class _MainShellScreenState extends State<MainShellScreen>
       widget.transcriptStore ?? AymaSession.instance.store;
   late final VoiceSessionController _voice =
       widget.voiceController ?? AymaSession.instance.voice;
+  late final FeatureTourStore _tourStore =
+      widget.featureTourStore ?? featureTourStoreGlobal;
 
   int _index = 0;
   // Which tabs the user has visited, oldest first, no consecutive repeats. The
@@ -225,6 +237,42 @@ class _MainShellScreenState extends State<MainShellScreen>
     // Shared, ref-counted per voice controller: two shells can be mounted
     // at once, and one disposing must not unhook the other's Hang Up / Mute.
     _callBackground = CallBackgroundService.acquire(_voice);
+    // Feature tour (§11.2): the shell is the first-chat surface, so this is the
+    // pre-boarding → first-chat gate. First run (no features seen) shows the
+    // full walkthrough; a later open with only some ids seen spotlights just
+    // the new features. Deferred to after the first frame so it never blocks
+    // the shell building, and never shows at sign-in or before pre-boarding —
+    // only a signed-in user who has reached their own chat lands here.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowFeatureTour());
+  }
+
+  /// Decides whether to auto-show the tour and in which mode, from the
+  /// per-user seen-state. Best-effort: any failure silently leaves the shell
+  /// untouched rather than blocking the first chat.
+  Future<void> _maybeShowFeatureTour() async {
+    // Only ever for a signed-in user who has reached their own chat — this is
+    // the pre-boarding → first-chat gate, never before sign-in. Also makes it
+    // a clean no-op in widget tests / contexts without a Firebase session.
+    try {
+      if (FirebaseAuth.instance.currentUser == null) return;
+    } catch (_) {
+      return;
+    }
+    try {
+      final decision = decideTour(await _tourStore.loadSeen());
+      if (!decision.show || !mounted) return;
+      // Only when the shell is actually the visible route — a deep link may
+      // have pushed another screen on top during startup.
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+      context.push(
+        FeatureTourScreen.path,
+        extra: FeatureTourArgs(
+          features: decision.features,
+          spotlight: decision.spotlight,
+        ),
+      );
+    } catch (_) {/* never block the shell on the tour */}
   }
 
   void _toAymaTab() {

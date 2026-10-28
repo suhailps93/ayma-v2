@@ -14,6 +14,7 @@ import 'accent_color_screen.dart';
 import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
 import 'developer_screen.dart';
+import 'feature_tour_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -314,6 +315,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(BiometricConsentSettingsScreen.path),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Help',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          ListTile(
+            key: const ValueKey('settings-feature-tour'),
+            leading: Icon(Icons.explore_outlined, color: ac.fgDim),
+            title: Text('How to use Ayma',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text('Replay the feature tour any time.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            // Full replay on demand (not a spotlight): all features, and it
+            // re-marks them seen — harmless, they've now seen them again.
+            onTap: () => context.push(FeatureTourScreen.path),
           ),
           Divider(color: ac.lineSoft),
           Padding(

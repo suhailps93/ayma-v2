@@ -4,6 +4,13 @@ Last updated: 2026-10-26. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## Feature tour: per-feature seen-state + spotlights (meta-hackathon, 2026-10-28) — DONE [[todo-feature-tour-per-feature]]
+- Rebuilt the `/tour` walkthrough from a one-time pre-sign-in pre-screen into a per-feature system. Content is an ordered `TourFeature` list (stable `feature_id` + short how-to) in `lib/services/tour_content.dart`, seeded: voice dating, profile building, your Story, Ayma's models (brain+voice), appearance report, Qloo taste, AI date sim, chat coach, connect-an-agent, notifications, privacy.
+- **Auto-show** moved to `MainShellScreen` (first-chat surface), post-first-frame, signed-in only → fires right after pre-boarding, before first chat; never at/ before sign-in. Per-user seen-state on `users/{uid}/profile/main.seen_tour_features` (`arrayUnion`, own-profile; `firestore.rules` allowlist updated). `decideTour`: none seen → full tour (mark all); some unseen → spotlight only the new ids (mark them); all seen → nothing.
+- **Settings → Help → "How to use Ayma"** replays the full tour. Dev "Reset & preview" kept; old dev-only splash-gate relaxation deleted (superseded).
+- **No APK / no versionCode bump / no deploy** — code + tests + push only; consolidation build follows. `flutter test` incl. layout matrix green.
+- **Standing rule (now in AGENTS.md definition-of-done + ARCHITECTURE §11.2a):** every new user-facing feature must add/update its entry in the feature tour (`tour_content.dart` — a `feature_id` + how-to), so existing users get a spotlight for it on next open.
+
 ## Integration 2216 (meta-hackathon, 2026-10-26) — live queue (single source of truth)
 
 **DONE tonight (merged into `meta-hackathon`, built APK 2216, NOT deployed, NOT pushed):**

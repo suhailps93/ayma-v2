@@ -21,7 +21,6 @@ import 'services/app_command_host.dart';
 import 'services/app_command_service.dart';
 import 'services/dev_panel_session.dart';
 import 'services/error_reporting.dart';
-import 'services/feature_tour_store.dart';
 import 'services/notification_service.dart';
 import 'services/orb_animation_settings.dart';
 import 'services/revenuecat_service.dart';
@@ -129,9 +128,8 @@ Future<void> main() async {
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();
   await orbAnimationSettingsGlobal.load();
-  // Whether the first-launch feature tour has been seen — read before splash
-  // decides where to route (§11.2), so the gate is synchronous there.
-  await featureTourStoreGlobal.load();
+  // The feature tour's seen-state now lives per-user on the profile document
+  // and is read lazily by the main-shell gate (§11.2) — no startup preload.
   // A tapped push notification (cold start or already running) opens the
   // screen its `deep_link` data names directly — a match request, a DM
   // thread, … — instead of leaving the tap to land wherever the app

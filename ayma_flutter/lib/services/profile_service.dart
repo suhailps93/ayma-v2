@@ -258,6 +258,44 @@ class ProfileService {
     return Color(0xFF000000 | rgb);
   }
 
+  /// Reads the set of feature-tour `feature_id`s this user has already been
+  /// shown (`users/{uid}/profile/main.seen_tour_features`). Empty before the
+  /// first-run walkthrough, or on any read failure / signed-out state — an
+  /// empty set means "never seen", which shows the tour rather than hiding it.
+  Future<Set<String>> readSeenTourFeatures() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return <String>{};
+    final snap = await _profileDoc.get();
+    final raw = snap.data()?['seen_tour_features'];
+    return raw is List ? raw.whereType<String>().toSet() : <String>{};
+  }
+
+  /// Adds [featureIds] to the user's seen set (idempotent `arrayUnion`), so the
+  /// new-feature spotlight only ever shows an id once. Merges — never clobbers
+  /// other profile fields.
+  Future<void> markTourFeaturesSeen(Iterable<String> featureIds) {
+    final ids = featureIds.toList();
+    if (ids.isEmpty) return Future<void>.value();
+    return _profileDoc.set(
+      {
+        'seen_tour_features': FieldValue.arrayUnion(ids),
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  /// Developer-only: clears the seen set so the full tour shows again.
+  Future<void> resetTourFeatures() {
+    return _profileDoc.set(
+      {
+        'seen_tour_features': FieldValue.delete(),
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
   static String _extension(String path) {
     final dot = path.lastIndexOf('.');
     return dot == -1 ? '.jpg' : path.substring(dot);

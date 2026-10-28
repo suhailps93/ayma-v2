@@ -1351,43 +1351,44 @@ Every endpoint in §10.2 except `/cron/*` requires a verified Firebase ID token 
 
 ### 11.2 App entry flow
 
-On the **very first launch only**, before the landing, a one-time **feature tour** runs (§11.2a). Once it is dismissed (or on every later launch), the normal flow runs:
-
-Splash → Firebase Auth state check → anonymous sign-in if none exists (§3.3) → `session_mode` drives a `go_router` redirect:
+Splash → Firebase Auth state check → sign-in if none exists (§3.3) → `session_mode` drives a `go_router` redirect:
 
 - `marketing` → marketing chat screen (restricted-topic voice/text, §3.3)
 - `interview` → preboarding screen sequence (§4.2)
 - `active` → main app shell (§11.3)
 
+The **feature tour** (§11.2a) is **not** gated at the splash. It runs one step later, at the **pre-boarding → first-chat** transition: the main app shell is the first-chat surface, so the shell itself decides (from a per-user seen-state) whether to auto-show the tour. This keeps it strictly post-sign-in and post-pre-boarding, and lets the same mechanism later spotlight only newly-shipped features.
+
 ```
-first launch, not signed in            every later launch / signed-in user
-+---------------------+                +---------------------+
-|  Splash             |                |  Splash             |
-|  feature_tour_seen? |── no, and ──►  |  (tour already seen |
-|                     |   user is      |   or user signed    |
-|                     |   anon/null    |   in → skip tour)    |
-+----------+----------+                +----------+----------+
-           │  show once                           │
-           ▼                                       │
-+---------------------+   Skip / Get started       │
-|  Feature Tour (/tour)|  set feature_tour_seen ───┘
-|  5 swipeable pages   |  → back to Splash, normal flow
-+---------------------+
-                                        │ bootstrap → session_mode
+Splash → bootstrap → session_mode redirect
+                         │
+      ┌──────────────────┼───────────────────────┐
+      ▼                  ▼                        ▼
+ marketing chat     preboarding (§4.2)        main shell (§11.3)
+                         │  Save → push      (first-chat surface)
+                         │  primer → paywall       │
+                         └────────► main shell ◄───┘
+                                        │ post-first-frame gate
                                         ▼
-                         marketing chat / preboarding / main shell
+                         decideTour(seen_tour_features):
+                          · none seen      → FULL tour (/tour), mark all seen
+                          · some new unseen → SPOTLIGHT only those, mark them
+                          · all seen        → nothing
                          (age + biometric-consent gates unchanged)
 ```
 
-### 11.2a First-launch feature tour (as built, 2026-10-26)
+### 11.2a Feature tour (rebuilt per-feature, 2026-10-28)
 
-`FeatureTourScreen` (`lib/screens/feature_tour_screen.dart`, route `/tour`) — a swipeable five-page walkthrough (dark theme, serif display headline, one-line subtitle, a small animated demo illustration per page reusing `AymaOrb` and the shared `ChatBubble`, a page-dot indicator + back chevron at the top, a big pill "Next" / "Get started" button at the bottom, and a top "Skip"). It explains, in order: voice-first dating, Ayma building your profile as you chat, practice dates, in-chat coaching, and privacy/18+/consent.
+`FeatureTourScreen` (`lib/screens/feature_tour_screen.dart`, route `/tour`) — a swipeable walkthrough (dark theme, serif display headline, one-line subtitle, a small demo illustration per page — the animated `AymaOrb` / profile-card / `ChatBubble` / coach-chips demos plus a generic accent glyph for icon-only features — a page-dot indicator + back chevron at the top, a big pill "Next" / "Get started" button at the bottom, and a top "Skip"). It is a pure client-side surface: it never touches auth, `session_mode`, or the age / biometric-consent gates.
 
-- **Pure client-side pre-screen.** It never touches auth, the server-derived `session_mode`, or the age / biometric-consent gates. The splash gate only shows it when the user is anonymous/`null` **and** the tour has not been seen — so a signed-in (returning) user never sees it and cannot be trapped by it; once it is dismissed it routes back to splash and the normal `entryRouteFor` flow runs.
-- **Dev-only preview (as built, 2026-10-27).** A signed-in dev never hit the anonymous-only gate, so resetting the flag did nothing visible and there was no way to review the tour. Two dev-only hooks fix that without changing production behaviour: (1) the Developer-panel action (now **"Reset & preview feature tour"**) clears the seen flag **and** navigates straight to `/tour`, so it previews right there; (2) the splash gate is relaxed to also fire for a signed-in user when `DevPanelSession.instance.unlocked` is true and the flag is clear — so "reset + relaunch" previews it for a signed-in dev too. For normal (non-dev) users the gate is unchanged (anonymous-only). After Skip / the last-page CTA the tour marks itself seen and routes back through the normal splash flow, so a signed-in dev lands in the app and is never trapped.
-- **Seen flag.** Persisted locally via `FeatureTourStore` (`lib/services/feature_tour_store.dart`), the same best-effort `SharedPreferences` pattern as `OrbAnimationSettings` — key `feature_tour_seen`, loaded at startup in `main.dart` so the splash gate is synchronous. The last page's CTA and the top "Skip" both mark it seen. The Developer panel's "Reset & preview feature tour" action clears it (and previews the tour immediately) for demos.
-- **Reduced motion.** Honours `MediaQuery.disableAnimationsOf`: every illustration falls back to its final static state (AymaOrb already does this internally).
-- **Layout + tests.** The `/tour` route has a `test/layout_matrix_test.dart` entry (no overflow across the full matrix), plus `test/feature_tour_screen_test.dart` (pages advance, CTA flips on the last page, Skip/CTA set the seen flag and route onward, reduced motion renders static). The dev-only preview is covered in `test/developer_screen_test.dart` (the reset action navigates to `/tour`) and `test/splash_routing_test.dart` (an unlocked dev with the flag clear is routed to the tour; a normal signed-in user is not).
+- **Content is data, in one place.** The tour is modelled as an ordered list of `TourFeature` entries in `lib/services/tour_content.dart`, each with a **stable `feature_id`** + short how-to copy + a visual. Adding a feature to the tour = adding one entry (new id + how-to). Seeded features (in order): `voice_dating`, `profile_building`, `your_story`, `ayma_models` (brain + voice), `appearance_report`, `qloo_taste`, `date_sim`, `chat_coach`, `connect_agent`, `notifications`, `privacy`. **Process rule:** every new user-facing feature must add/update its tour entry (see §0 definition of done and `docs/AGENT_HANDOFF.md`).
+- **Per-user seen-state (not a local flag).** The set of seen `feature_id`s is persisted on the user's own profile document, `users/{uid}/profile/main.seen_tour_features` (an array, `arrayUnion`-merged — never clobbers other fields). `ProfileService.readSeenTourFeatures` / `markTourFeaturesSeen` / `resetTourFeatures` do the I/O; `FeatureTourStore` (`lib/services/feature_tour_store.dart`) wraps them and defaults to "nothing seen" on any read failure. Own-profile only; `firestore.rules` adds `seen_tour_features` to the `profile/main` create/update allowlist. It follows the user across devices/reinstalls.
+- **Auto-show timing (post-pre-boarding, pre-first-chat).** The gate lives in `MainShellScreen` (the first-chat surface), fired once after the first frame and only for a signed-in user — never at the splash, never before sign-in. `decideTour(seen)` (pure, in `tour_content.dart`): nothing seen → the **full** walkthrough (first run), marks every current id seen on finish; some current ids unseen → a **spotlight** of only those new features (a "NEW" framing, "Got it" CTA), marks just them; all seen → nothing. A returning `active` user who has already seen everything lands straight in chat.
+- **New-feature spotlight.** Because the seen-state is a set of ids (not a boolean), shipping a new `TourFeature` with a new id makes every existing user's next app-open spotlight exactly that feature (in tour order), then record it seen. No migration, no versioning.
+- **Settings replay.** Settings → **Help → "How to use Ayma"** (`settings-feature-tour`) pushes `/tour` for the full tour on demand, any time (re-marks everything seen — harmless).
+- **Dev preview.** The Developer panel's **"Reset & preview feature tour"** clears `seen_tour_features` (so the next shell open re-runs the first-run tour) and opens the full tour to review. The former dev-only splash-gate relaxation is gone (superseded by the main-shell gate).
+- **Reduced motion.** Honours `MediaQuery.disableAnimationsOf`: every illustration falls back to its final static state.
+- **Layout + tests.** The `/tour` route has a `test/layout_matrix_test.dart` entry (the page-dot strip is wrapped in a scale-down `FittedBox` so a long feature list never overflows at narrow widths / large text). Tests: `test/feature_tour_screen_test.dart` (pages advance, CTA flips, Skip/CTA mark every shown feature's id seen and route onward, spotlight framing, reduced-motion static), `test/feature_tour_gate_test.dart` (`decideTour`: first-run full vs new-feature spotlight vs nothing; stale ids ignored; content ids unique), `test/feature_tour_seen_state_test.dart` (the Firestore round-trip: `arrayUnion` accumulates, reset clears, other fields untouched), `test/developer_screen_test.dart` (the reset action opens `/tour`), and `test/splash_routing_test.dart` (no tour detour at the splash).
 
 **Startup resilience (as built, 2026-10-26).** `/bootstrap` is the first network the app does, so a transient DNS/connectivity blip must never leave the splash spinning forever (founder-reported hang). `ApiClient.bootstrap` puts explicit deadlines on both halves — the Firebase ID-token refresh (12s) and the POST itself (15s) — and maps a timeout, a `ClientException`, or a Firebase `network-request-failed` to a connection-class `ApiException` (no `statusCode`). `SplashScreen._resolve` then:
 

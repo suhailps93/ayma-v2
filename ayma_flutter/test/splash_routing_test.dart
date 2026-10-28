@@ -4,8 +4,6 @@ import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
-import 'package:ayma_flutter/services/dev_panel_session.dart';
-import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -64,7 +62,6 @@ GoRouter _router(String sessionMode) => GoRouter(
         GoRoute(path: '/', builder: (_, __) => const _Marker('shell')),
         GoRoute(
             path: '/recover', builder: (_, __) => const _Marker('recover')),
-        GoRoute(path: '/tour', builder: (_, __) => const _Marker('tour')),
       ],
     );
 
@@ -105,35 +102,16 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  group('dev-only feature-tour preview gate', () {
-    setUp(() => DevPanelSession.instance.lock());
-    tearDown(() async {
-      DevPanelSession.instance.lock();
-      // Leave the shared global flag clear for any later test.
-      await featureTourStoreGlobal.reset();
-    });
-
-    testWidgets(
-        'a signed-in dev (panel unlocked, flag clear) is routed to the tour',
-        (tester) async {
-      DevPanelSession.instance.unlock('pw');
-      await tester.pumpWidget(
-        MaterialApp.router(routerConfig: _router('active')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('screen:tour'), findsOneWidget);
-      expect(find.text('screen:shell'), findsNothing);
-    });
-
-    testWidgets(
-        'a normal signed-in user (panel locked) is NOT routed to the tour',
-        (tester) async {
-      await tester.pumpWidget(
-        MaterialApp.router(routerConfig: _router('active')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('screen:tour'), findsNothing);
-      expect(find.text('screen:shell'), findsOneWidget);
-    });
+  // The feature tour is no longer gated at the splash (§11.2): it now runs
+  // after pre-boarding, from the main-shell gate — see
+  // `feature_tour_gate_test.dart`. A signed-in user routes straight past the
+  // splash to their session with no tour detour.
+  testWidgets('no tour detour at the splash for a signed-in user',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp.router(routerConfig: _router('active')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('screen:shell'), findsOneWidget);
   });
 }

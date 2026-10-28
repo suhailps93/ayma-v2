@@ -2,36 +2,70 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/feature_tour_store.dart';
+import '../services/tour_content.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/overflow_guards.dart';
-import 'splash_screen.dart';
+import 'main_shell_screen.dart';
 
-/// First-launch feature tour (§11.2): a swipeable, five-page walkthrough shown
-/// ONCE, before the anonymous landing, on the very first launch. It is a pure
-/// client-side pre-screen — it never touches auth, the server-derived
-/// `session_mode`, or the age/consent gates. The last page's "Get started" CTA
-/// and the top "Skip" both mark the tour seen ([FeatureTourStore]) and hand off
-/// to the normal splash → `entryRouteFor` flow.
+/// Arguments for the `/tour` route, passed as `GoRouterState.extra` by the
+/// surface that launches it:
+///  * the main-shell gate (first-run full walkthrough, or a new-feature
+///    spotlight of just the unseen ids),
+///  * the Settings "How to use Ayma" replay (the full tour on demand),
+///  * the Developer panel preview.
+class FeatureTourArgs {
+  const FeatureTourArgs({this.features, this.spotlight = false});
+
+  /// Which features to show, in order. Null → the full [tourFeatures] list.
+  final List<TourFeature>? features;
+
+  /// A new-feature spotlight (changes the framing/CTA) vs the full tour.
+  final bool spotlight;
+}
+
+/// Feature tour (§11.2): a swipeable walkthrough of the app's key features,
+/// each a [TourFeature] from the single `tour_content.dart` list. Shown
+/// automatically ONCE, right after pre-boarding and before the first chat (the
+/// main-shell gate), then replayable any time from Settings. When a later build
+/// ships a new feature, the same screen runs in `spotlight` mode over just the
+/// unseen ids.
 ///
-/// Dark-theme, large serif headline, one-line subtitle, a small animated demo
-/// illustration per page (reusing [AymaOrb] and [ChatBubble]), a page-dot
-/// progress indicator and back chevron at the top, and a big pill button at the
-/// bottom. Honours reduced motion (`MediaQuery.disableAnimationsOf`): every
-/// illustration falls back to its final static state when animations are off.
+/// On the last page's CTA (and on Skip) it marks every shown feature's
+/// `feature_id` seen ([FeatureTourStore]) and hands back to wherever it was
+/// launched from. Pure client-side UI: it never touches auth, the
+/// server-derived `session_mode`, or the age/consent gates.
+///
+/// Dark-theme, large serif headline, one-line subtitle, a small demo
+/// illustration per page, a page-dot progress indicator and back chevron at the
+/// top, and a big pill button at the bottom. Honours reduced motion
+/// (`MediaQuery.disableAnimationsOf`): every illustration falls back to its
+/// final static state when animations are off.
 class FeatureTourScreen extends StatefulWidget {
-  const FeatureTourScreen({super.key, this.store, this.onContinue});
+  const FeatureTourScreen({
+    super.key,
+    this.store,
+    this.onContinue,
+    this.features,
+    this.spotlight = false,
+  });
 
   static const path = '/tour';
 
   /// Injected in tests; defaults to the app-wide [featureTourStoreGlobal].
   final FeatureTourStore? store;
 
-  /// What to do once the tour is dismissed (seen flag already set). Defaults to
-  /// routing back to splash, which re-runs the normal entry flow. Injected in
-  /// tests to observe the hand-off without a full router.
+  /// What to do once the tour is dismissed (seen state already written).
+  /// Defaults to popping back to the launching surface, or home if there is
+  /// nothing to pop. Injected in tests to observe the hand-off.
   final VoidCallback? onContinue;
+
+  /// Which features to walk through, in order. Null → the full tour.
+  final List<TourFeature>? features;
+
+  /// New-feature spotlight framing (vs the full first-run walkthrough).
+  final bool spotlight;
 
   @override
   State<FeatureTourScreen> createState() => _FeatureTourScreenState();
@@ -43,6 +77,11 @@ class _FeatureTourScreenState extends State<FeatureTourScreen> {
   bool _finishing = false;
 
   FeatureTourStore get _store => widget.store ?? featureTourStoreGlobal;
+
+  List<TourFeature> get _features =>
+      (widget.features == null || widget.features!.isEmpty)
+      ? tourFeatures
+      : widget.features!;
 
   @override
   void dispose() {
@@ -59,7 +98,7 @@ class _FeatureTourScreenState extends State<FeatureTourScreen> {
   }
 
   void _next() {
-    if (_page >= _tourPages.length - 1) {
+    if (_page >= _features.length - 1) {
       _finish();
       return;
     }
@@ -72,17 +111,26 @@ class _FeatureTourScreenState extends State<FeatureTourScreen> {
   Future<void> _finish() async {
     if (_finishing) return;
     setState(() => _finishing = true);
-    await _store.markSeen();
+    await _store.markSeen(_features.map((f) => f.featureId));
     if (!mounted) return;
     (widget.onContinue ?? _defaultContinue)();
   }
 
-  void _defaultContinue() => context.go(SplashScreen.path);
+  /// Back to wherever the tour was launched from, or home if it was entered by
+  /// a full navigation with nothing to pop.
+  void _defaultContinue() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go(MainShellScreen.path);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final isLast = _page == _tourPages.length - 1;
+    final features = _features;
+    final isLast = _page == features.length - 1;
     return Scaffold(
       backgroundColor: ac.bg,
       body: SafeArea(
@@ -107,14 +155,14 @@ class _FeatureTourScreenState extends State<FeatureTourScreen> {
                   ),
                   Expanded(
                     child: Center(
-                      child: _Dots(count: _tourPages.length, index: _page),
+                      child: _Dots(count: features.length, index: _page),
                     ),
                   ),
                   TextButton(
                     key: const ValueKey('tour-skip'),
                     onPressed: _finishing ? null : _finish,
                     child: Text(
-                      'Skip',
+                      widget.spotlight ? 'Dismiss' : 'Skip',
                       style: AymaType.sans(
                         size: 14,
                         weight: FontWeight.w600,
@@ -128,9 +176,12 @@ class _FeatureTourScreenState extends State<FeatureTourScreen> {
           ],
           body: PageView.builder(
             controller: _controller,
-            itemCount: _tourPages.length,
+            itemCount: features.length,
             onPageChanged: (i) => setState(() => _page = i),
-            itemBuilder: (context, i) => _TourPageView(page: _tourPages[i]),
+            itemBuilder: (context, i) => _TourPageView(
+              feature: features[i],
+              spotlight: widget.spotlight,
+            ),
           ),
           footer: [
             Padding(
@@ -147,7 +198,7 @@ class _FeatureTourScreenState extends State<FeatureTourScreen> {
                     shape: const StadiumBorder(),
                     textStyle: AymaType.sans(size: 16, weight: FontWeight.w600),
                   ),
-                  child: Text(isLast ? 'Get started' : 'Next'),
+                  child: Text(isLast ? _lastCtaLabel : 'Next'),
                 ),
               ),
             ),
@@ -156,60 +207,17 @@ class _FeatureTourScreenState extends State<FeatureTourScreen> {
       ),
     );
   }
+
+  String get _lastCtaLabel => widget.spotlight ? 'Got it' : 'Get started';
 }
-
-/// One page's copy + which demo illustration it shows. Copy is easy to edit —
-/// just this one const list.
-class _TourPage {
-  const _TourPage({
-    required this.headline,
-    required this.subtitle,
-    required this.visual,
-  });
-
-  final String headline;
-  final String subtitle;
-  final _TourVisual visual;
-}
-
-enum _TourVisual { orb, profileFill, chatBubbles, coachChips, shield }
-
-const _tourPages = <_TourPage>[
-  _TourPage(
-    headline: 'Dating, by voice',
-    subtitle: 'Meet Ayma. Talk to her like a friend — no endless swiping.',
-    visual: _TourVisual.orb,
-  ),
-  _TourPage(
-    headline: 'She gets to know you',
-    subtitle: 'Just talk. Ayma builds your profile as you chat.',
-    visual: _TourVisual.profileFill,
-  ),
-  _TourPage(
-    headline: 'Practice before you meet',
-    subtitle:
-        'Rehearse the date — text or voice — with a simulation of your match.',
-    visual: _TourVisual.chatBubbles,
-  ),
-  _TourPage(
-    headline: 'Your wingman in every chat',
-    subtitle: 'Stuck on what to say? Ayma opens for you and coaches you '
-        'line by line.',
-    visual: _TourVisual.coachChips,
-  ),
-  _TourPage(
-    headline: 'Yours, and only yours',
-    subtitle: "18+, consent-first, private. You're always in control.",
-    visual: _TourVisual.shield,
-  ),
-];
 
 /// One page: the illustration above, the serif headline and subtitle below.
 /// Scrolls instead of overflowing in short/landscape windows (`CenteredScroll`).
 class _TourPageView extends StatelessWidget {
-  const _TourPageView({required this.page});
+  const _TourPageView({required this.feature, required this.spotlight});
 
-  final _TourPage page;
+  final TourFeature feature;
+  final bool spotlight;
 
   @override
   Widget build(BuildContext context) {
@@ -220,10 +228,14 @@ class _TourPageView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _TourIllustration(visual: page.visual, animate: animate),
+          if (spotlight) ...[
+            Text('NEW', style: AymaType.mono(size: 11, color: ac.accent)),
+            const SizedBox(height: 16),
+          ],
+          _TourIllustration(feature: feature, animate: animate),
           const SizedBox(height: 36),
           Text(
-            page.headline,
+            feature.headline,
             textAlign: TextAlign.center,
             style: AymaType.serif(size: 38, color: ac.fg),
           ),
@@ -231,7 +243,7 @@ class _TourPageView extends StatelessWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 360),
             child: Text(
-              page.subtitle,
+              feature.subtitle,
               textAlign: TextAlign.center,
               style: AymaType.sans(size: 16, height: 1.45, color: ac.fgDim),
             ),
@@ -243,15 +255,15 @@ class _TourPageView extends StatelessWidget {
 }
 
 class _TourIllustration extends StatelessWidget {
-  const _TourIllustration({required this.visual, required this.animate});
+  const _TourIllustration({required this.feature, required this.animate});
 
-  final _TourVisual visual;
+  final TourFeature feature;
   final bool animate;
 
   @override
   Widget build(BuildContext context) {
-    switch (visual) {
-      case _TourVisual.orb:
+    switch (feature.visual) {
+      case TourVisual.orb:
         // AymaOrb reads reduced motion itself; the listening state gives the
         // gentle breathing pulse.
         return const SizedBox(
@@ -260,14 +272,16 @@ class _TourIllustration extends StatelessWidget {
             child: AymaOrb(size: 132, state: AymaOrbState.listening),
           ),
         );
-      case _TourVisual.profileFill:
+      case TourVisual.profileFill:
         return _ProfileFillCard(animate: animate);
-      case _TourVisual.chatBubbles:
+      case TourVisual.chatBubbles:
         return _ChatBubblesDemo(animate: animate);
-      case _TourVisual.coachChips:
+      case TourVisual.coachChips:
         return _CoachChipsDemo(animate: animate);
-      case _TourVisual.shield:
-        return const _ShieldGlyph();
+      case TourVisual.shield:
+        return const _Glyph(Icons.shield_rounded);
+      case TourVisual.icon:
+        return _Glyph(feature.icon ?? Icons.star_rounded);
     }
   }
 }
@@ -343,15 +357,16 @@ class _ProfileFillCardState extends State<_ProfileFillCard>
       children: [
         SizedBox(
           width: 78,
-          child: Text(
-            label,
-            style: AymaType.sans(size: 12, color: ac.fgMute),
-          ),
+          child: Text(label, style: AymaType.sans(size: 12, color: ac.fgMute)),
         ),
         Expanded(
           child: Text(
             value,
-            style: AymaType.sans(size: 14, weight: FontWeight.w500, color: ac.fg),
+            style: AymaType.sans(
+              size: 14,
+              weight: FontWeight.w500,
+              color: ac.fg,
+            ),
           ),
         ),
       ],
@@ -361,8 +376,11 @@ class _ProfileFillCardState extends State<_ProfileFillCard>
     final start = i / _fields.length;
     final anim = CurvedAnimation(
       parent: _c,
-      curve: Interval(start, (start + 0.45).clamp(0.0, 1.0),
-          curve: Curves.easeOut),
+      curve: Interval(
+        start,
+        (start + 0.45).clamp(0.0, 1.0),
+        curve: Curves.easeOut,
+      ),
     );
     return AnimatedBuilder(
       animation: anim,
@@ -378,8 +396,8 @@ class _ProfileFillCardState extends State<_ProfileFillCard>
   }
 }
 
-/// Page 3: two or three chat bubbles animating in one after another, using the
-/// shared [ChatBubble].
+/// Practice page: two or three chat bubbles animating in one after another,
+/// using the shared [ChatBubble].
 class _ChatBubblesDemo extends StatefulWidget {
   const _ChatBubblesDemo({required this.animate});
 
@@ -442,8 +460,11 @@ class _ChatBubblesDemoState extends State<_ChatBubblesDemo>
     final start = i / _bubbles.length;
     final anim = CurvedAnimation(
       parent: _c,
-      curve: Interval(start, (start + 0.45).clamp(0.0, 1.0),
-          curve: Curves.easeOut),
+      curve: Interval(
+        start,
+        (start + 0.45).clamp(0.0, 1.0),
+        curve: Curves.easeOut,
+      ),
     );
     return AnimatedBuilder(
       animation: anim,
@@ -459,8 +480,8 @@ class _ChatBubblesDemoState extends State<_ChatBubblesDemo>
   }
 }
 
-/// Page 4: suggestion chips sliding in above a mock composer, plus a one-line
-/// tip.
+/// Coach page: suggestion chips sliding in above a mock composer, plus a
+/// one-line tip.
 class _CoachChipsDemo extends StatefulWidget {
   const _CoachChipsDemo({required this.animate});
 
@@ -553,15 +574,22 @@ class _CoachChipsDemoState extends State<_CoachChipsDemo>
       ),
       child: Text(
         _chips[i],
-        style: AymaType.sans(size: 13, weight: FontWeight.w500, color: ac.accent),
+        style: AymaType.sans(
+          size: 13,
+          weight: FontWeight.w500,
+          color: ac.accent,
+        ),
       ),
     );
     if (!widget.animate) return chip;
     final start = i / _chips.length;
     final anim = CurvedAnimation(
       parent: _c,
-      curve: Interval(start, (start + 0.5).clamp(0.0, 1.0),
-          curve: Curves.easeOut),
+      curve: Interval(
+        start,
+        (start + 0.5).clamp(0.0, 1.0),
+        curve: Curves.easeOut,
+      ),
     );
     return AnimatedBuilder(
       animation: anim,
@@ -577,9 +605,12 @@ class _CoachChipsDemoState extends State<_CoachChipsDemo>
   }
 }
 
-/// Page 5: a shield/lock glyph — privacy, 18+, consent-first.
-class _ShieldGlyph extends StatelessWidget {
-  const _ShieldGlyph();
+/// A circular accent glyph — the generic illustration for a feature that
+/// doesn't ship a bespoke animated demo (privacy, Story, models, etc.).
+class _Glyph extends StatelessWidget {
+  const _Glyph(this.icon);
+
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -595,7 +626,7 @@ class _ShieldGlyph extends StatelessWidget {
             color: ac.accentFaint,
             border: Border.all(color: ac.accentSoft, width: 1),
           ),
-          child: Icon(Icons.shield_rounded, size: 64, color: ac.accent),
+          child: Icon(icon, size: 64, color: ac.accent),
         ),
       ),
     );
@@ -612,22 +643,29 @@ class _Dots extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < count; i++)
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-            margin: const EdgeInsets.symmetric(horizontal: 3),
-            width: i == index ? 20 : 7,
-            height: 7,
-            decoration: BoxDecoration(
-              color: i == index ? ac.accent : ac.lineSoft,
-              borderRadius: BorderRadius.circular(4),
+    // Scale the dot strip down rather than overflow: with many features (and a
+    // 48px back slot + the Skip button eating the header at large text scales
+    // on a 320px screen) a fixed-width Row would overflow. FittedBox keeps it
+    // centered and shrinks it to fit — no fixed sizes, layout-matrix safe.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < count; i++)
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOut,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              width: i == index ? 20 : 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: i == index ? ac.accent : ac.lineSoft,
+                borderRadius: BorderRadius.circular(4),
+              ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }

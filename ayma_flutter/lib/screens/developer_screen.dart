@@ -442,17 +442,18 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         contentPadding: EdgeInsets.zero,
         title: Text('Reset & preview feature tour',
             style: AymaType.sans(size: 15, color: ac.fg)),
-        subtitle: Text('Opens the first-launch walkthrough now, and clears the '
-            'seen flag so it also shows again on next launch.',
+        subtitle: Text('Opens the full walkthrough now, and clears your seen '
+            'features so the first-run tour (and new-feature spotlights) show '
+            'again from scratch.',
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
         trailing: Icon(Icons.refresh, color: ac.fgMute),
         onTap: () async {
-          // Dev-only preview: clear the flag (so reset + relaunch also works
-          // for a signed-in dev via the relaxed splash gate) and jump straight
-          // to the tour so it can be reviewed right here.
+          // Dev-only preview: clear the per-user seen set (so the next main-
+          // shell open re-runs the first-run tour) and open the full tour here
+          // to review it. Push so it pops back to this panel when dismissed.
           await featureTourStoreGlobal.reset();
           if (!context.mounted) return;
-          context.go(FeatureTourScreen.path);
+          context.push(FeatureTourScreen.path);
         },
       ),
     ];

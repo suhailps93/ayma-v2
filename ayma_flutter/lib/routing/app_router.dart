@@ -113,9 +113,6 @@ final appRouter = GoRouter(
       PrivacyScreen.path,
       BiometricInfoScreen.path,
       RecoveryScreen.path,
-      // The first-launch feature tour (§11.2) runs before any sign-in — it's a
-      // pure client-side pre-screen, so an unauthenticated user can reach it.
-      FeatureTourScreen.path,
     };
     // A shared-report link is public (the snapshot needs no auth).
     if (!signedIn && !open.contains(loc) && !loc.startsWith('/s/')) {
@@ -143,10 +140,21 @@ final appRouter = GoRouter(
       builder: (context, state) => const UnderageScreen(),
     ),
     GoRoute(
-      // The first-launch feature tour (§11.2). No nav bar — like the other
-      // pre-auth screens, there is no signed-in session yet.
+      // The feature tour (§11.2). Signed-in only now: it runs after
+      // pre-boarding (the main-shell gate), as a Settings replay, or the
+      // Developer preview. No nav bar — it's a full-screen walkthrough. The
+      // launching surface passes a [FeatureTourArgs] via `extra` to choose the
+      // full tour vs a new-feature spotlight of just the unseen ids.
       path: FeatureTourScreen.path,
-      builder: (context, state) => const FeatureTourScreen(),
+      builder: (context, state) {
+        final args = state.extra is FeatureTourArgs
+            ? state.extra as FeatureTourArgs
+            : null;
+        return FeatureTourScreen(
+          features: args?.features,
+          spotlight: args?.spotlight ?? false,
+        );
+      },
     ),
     GoRoute(
       path: SignInScreen.path,

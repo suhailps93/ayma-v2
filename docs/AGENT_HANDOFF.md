@@ -152,6 +152,9 @@ Repo and release rules (also in `AGENTS.md`; do not diverge)
 - Versioning: bump `pubspec.yaml` build number on each shipped APK; `versionCode` must never go down.
 - `AGENTS.md` "test, commit, log" per-step process applies to `PLAN.md` steps. For ad-hoc founder requests,
   follow the flow above (agent -> merge -> push -> deploy -> install).
+- **Feature tour entry per feature.** Every new user-facing feature must add/update its entry in the feature
+  tour (`ayma_flutter/lib/services/tour_content.dart` — a stable `feature_id` + short how-to). The tour
+  auto-shows after pre-boarding and spotlights any unseen feature on next open (ARCHITECTURE §11.2a).
 
 ---
 

@@ -4,7 +4,6 @@ import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
-import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -367,14 +366,13 @@ void main() {
     );
   });
 
-  testWidgets('reset & preview feature tour clears the flag and opens /tour', (
+  testWidgets('reset & preview feature tour opens /tour', (
     tester,
   ) async {
     DevPanelSession.instance.unlock('pw');
-    // A broken SharedPreferences read keeps the default; mark it seen first so
-    // the reset's clearing is observable.
-    await featureTourStoreGlobal.markSeen();
-    addTearDown(featureTourStoreGlobal.reset);
+    // The seen-state now lives per-user on the profile doc (not a local flag);
+    // reset() is a best-effort Firestore clear that no-ops without Firebase
+    // here. This test just asserts the dev tile still opens the tour.
     final router = GoRouter(
       initialLocation: DeveloperScreen.path,
       routes: [
@@ -407,6 +405,5 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('screen:tour'), findsOneWidget);
-    expect(featureTourStoreGlobal.seen, isFalse);
   });
 }

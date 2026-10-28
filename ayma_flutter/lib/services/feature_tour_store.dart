@@ -1,56 +1,57 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'profile_service.dart';
 
-/// Whether the first-launch feature tour (`FeatureTourScreen`) has already
-/// been shown, persisted locally — same best-effort `SharedPreferences`
-/// pattern as [OrbAnimationSettings]/`ThemeController`: [load] reads the flag
-/// once at startup so [seen] is available synchronously when splash decides
-/// where to route (§11.2), setters write through.
+/// Per-user, per-feature seen-state for the feature tour (§11.2).
 ///
-/// A single global instance ([featureTourStoreGlobal]) so the splash gate and
-/// the Developer-panel reset read and write the same flag. The tour is a pure
-/// client-side pre-screen: it never touches auth, the server-derived
-/// `session_mode`, or the age/consent gates — it only precedes the anonymous
-/// landing on the very first launch, then hands off to the normal flow.
+/// The tour is an ordered list of features ([tourFeatures]), each with a stable
+/// `feature_id`. This store records WHICH feature ids a user has already been
+/// shown, persisted on their own profile document
+/// (`users/{uid}/profile/main.seen_tour_features`) so it follows them across
+/// devices and reinstalls — not a local flag.
+///
+/// How the gating reads it:
+///  * [loadSeen] empty  → first run: show the full walkthrough, then
+///    [markSeen] every current id.
+///  * [loadSeen] missing some current ids → those are NEW features shipped
+///    since the user last saw the tour: spotlight only them, then mark them.
+///  * [loadSeen] covers every current id → show nothing.
+///
+/// Methods are overridable so tests can supply an in-memory double without
+/// Firebase. The seen set is own-profile only — never another user's.
 class FeatureTourStore {
-  FeatureTourStore();
+  FeatureTourStore({ProfileService? profiles}) : _profilesOverride = profiles;
 
-  static const _key = 'feature_tour_seen';
+  final ProfileService? _profilesOverride;
 
-  bool _seen = false;
+  // Lazy so a test double (or a signed-out context) never constructs a real
+  // ProfileService before Firebase is ready.
+  ProfileService get _profiles => _profilesOverride ?? ProfileService();
 
-  /// Whether the tour has been dismissed (last page CTA or Skip) before.
-  /// Defaults to `false` (never seen) until [load] says otherwise, and on any
-  /// storage failure — so a broken read shows the tour rather than hiding it.
-  bool get seen => _seen;
-
-  /// Reads the saved flag. Defaults (not seen) survive a missing key or
-  /// missing storage (tests / restricted context).
-  Future<void> load() async {
+  /// The feature ids this user has already seen. Empty (not seen) on any
+  /// storage failure or signed-out state — a broken read shows the tour
+  /// rather than hiding it.
+  Future<Set<String>> loadSeen() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      _seen = prefs.getBool(_key) ?? false;
+      return await _profiles.readSeenTourFeatures();
     } catch (_) {
-      // No storage — keep the default (not seen).
+      return <String>{};
     }
   }
 
-  /// Marks the tour dismissed so it never shows again on launch.
-  Future<void> markSeen() async {
-    _seen = true;
+  /// Marks [featureIds] seen so they never auto-show again (idempotent).
+  Future<void> markSeen(Iterable<String> featureIds) async {
     try {
-      await (await SharedPreferences.getInstance()).setBool(_key, true);
+      await _profiles.markTourFeaturesSeen(featureIds);
     } catch (_) {/* best-effort */}
   }
 
-  /// Developer-only: clears the flag so the tour shows again next launch.
+  /// Developer-only: clears the seen set so the full tour shows again.
   Future<void> reset() async {
-    _seen = false;
     try {
-      await (await SharedPreferences.getInstance()).remove(_key);
+      await _profiles.resetTourFeatures();
     } catch (_) {/* best-effort */}
   }
 }
 
-/// App-wide instance — the splash gate, the tour screen and the Developer
-/// panel all share it.
+/// App-wide instance — the main-shell gate, the Settings replay entry and the
+/// Developer panel all share it.
 final featureTourStoreGlobal = FeatureTourStore();
