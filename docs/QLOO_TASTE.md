@@ -45,7 +45,7 @@ tags. Any live failure (timeout, auth, unexpected payload) falls back to the
 fixture for that request. Every response carries `source: "qloo" | "fixture"`;
 the web page and app card show a "sample data" chip on fixture.
 
-**Status: LIVE** since 2026-10-27 (ayma-api revision `ayma-api-00220-fc8`): the
+**Status: LIVE** since 2026-10-27 (ayma-api revision `ayma-api-00221-wjd`): the
 deployed service serves `source: "qloo"` from the hackathon Insights API.
 Verified demo pairs: maya×leo 25 (music 0, film 25, dining 50), aisha×noah 42
 (music 50, film 25, dining 50), maya×aisha 25 (music 50, film 12, dining 12);

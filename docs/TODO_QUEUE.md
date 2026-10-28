@@ -28,7 +28,7 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 ## Qloo Agentic Hackathon (meta-hackathon, 2026-10-27) — deadline Fri Oct 30, 8:45 PM PT
 
 - Taste match powered by Qloo built (`docs/QLOO_TASTE.md`): `POST /taste/pair`, public judge page `GET /taste/demo`, Flutter "Taste match" card on the Date Sim result.
-- Qloo is LIVE on ayma-api (`ayma-api-00220-fc8`, 2026-10-27): `QLOO_API_KEY` mounted, `/taste/demo/pair` serves `source: "qloo"`.
+- Qloo is LIVE on ayma-api (`ayma-api-00221-wjd`, 2026-10-27): `QLOO_API_KEY` mounted, `/taste/demo/pair` serves `source: "qloo"`.
 - Astro: extract the public Qloo demo repo (files listed in `docs/QLOO_TASTE.md`), add licence, submit on Devpost with the `/taste/demo` URL.
 
 ## 0. PRIORITY (founder, 2026-10-25): app-side testing and changes come first. Backend/vendor/admin work waits behind them.
