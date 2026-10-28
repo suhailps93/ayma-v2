@@ -577,6 +577,47 @@ def test_voice_language_directive_uses_the_saved_preference():
     assert "Speak like this by default: Malayalam mixed with English." in text
 
 
+def test_voice_opener_with_prior_context_offers_a_choice_not_a_continuation():
+    """Founder behaviour (2026-10-28): with prior conversation the opener must
+    greet + offer to continue-or-switch, and explicitly NOT resume the old topic
+    itself. The one-line last-topic hint is woven into the offer."""
+    text = prompt_mod.load_voice_opener(
+        True, "your date on Friday with Priya"
+    )
+    assert "your date on Friday with Priya" in text
+    low = text.lower()
+    assert "choice" in low or "either" in low or "or is there something else" in low
+    assert "do not" in low and ("continue" in low or "resume" in low)
+    # The fresh-only wording must not leak into the prior-context opener.
+    assert "no particular prior conversation" not in low
+
+
+def test_voice_opener_without_prior_context_is_a_plain_fresh_opener():
+    text = prompt_mod.load_voice_opener(False)
+    low = text.lower()
+    assert "no particular prior conversation" in low
+    # No continue-or-switch choice, and no leftover template placeholder.
+    assert "{last_topic_hint}" not in text
+    assert "pick up where we left off" not in low
+
+
+def test_voice_opener_with_prior_flag_but_empty_hint_falls_back_to_fresh():
+    """A has-prior flag with no usable hint still yields the fresh opener (no
+    dangling placeholder, no empty 'pick up where we left off about ""')."""
+    text = prompt_mod.load_voice_opener(True, "   ")
+    assert "{last_topic_hint}" not in text
+    assert "no particular prior conversation" in text.lower()
+
+
+def test_voice_opener_never_leaks_block_markers():
+    for text in (
+        prompt_mod.load_voice_opener(True, "coffee plans"),
+        prompt_mod.load_voice_opener(False),
+    ):
+        assert "OPENER:PRIOR" not in text
+        assert "OPENER:FRESH" not in text
+
+
 def test_misheard_fragment_detection():
     import voices
 

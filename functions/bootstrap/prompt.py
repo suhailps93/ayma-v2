@@ -213,10 +213,43 @@ def load_mode_prompt(session_mode: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def load_voice_opener() -> str:
-    """Instruction for Ayma's own opening line on a call the caller hasn't
-    spoken in yet (``prompts/voice_opener.md``)."""
+def _voice_opener_raw() -> str:
     return _VOICE_OPENER_PATH.read_text(encoding="utf-8").strip()
+
+
+_OPENER_PRIOR_MARK = ("<!-- OPENER:PRIOR -->", "<!-- /OPENER:PRIOR -->")
+_OPENER_FRESH_MARK = ("<!-- OPENER:FRESH -->", "<!-- /OPENER:FRESH -->")
+
+
+def _opener_block(raw: str, keep: tuple[str, str], drop: tuple[str, str]) -> str:
+    """Return ``raw`` with the ``keep`` block's markers stripped and the ``drop``
+    block (markers included) removed, then whitespace tidied."""
+    for mark in (keep[0], keep[1]):
+        raw = raw.replace(mark, "")
+    start, end = raw.find(drop[0]), raw.find(drop[1])
+    if start != -1 and end != -1:
+        raw = raw[:start] + raw[end + len(drop[1]):]
+    return re.sub(r"\n{3,}", "\n\n", raw).strip()
+
+
+def load_voice_opener(has_prior_conversation: bool, last_topic_hint: str = "") -> str:
+    """Instruction for Ayma's own opening line on a call the caller hasn't spoken
+    in yet (``prompts/voice_opener.md``), scoped to whether this caller has a
+    prior conversation to offer (founder behaviour, 2026-10-28).
+
+    When ``has_prior_conversation`` is True the opener is a GREET + a choice —
+    "pick up where we left off about X, or something else?" — and explicitly does
+    NOT continue the previous topic itself; ``last_topic_hint`` is a short,
+    one-line reference to the last thing discussed (never the full transcript),
+    substituted into that offer. When False it is a plain fresh warm opener. All
+    the instructional prose lives in the prompt file; this only selects the right
+    block and injects the hint value."""
+    raw = _voice_opener_raw()
+    hint = " ".join((last_topic_hint or "").split()).strip()
+    if has_prior_conversation and hint:
+        block = _opener_block(raw, _OPENER_PRIOR_MARK, _OPENER_FRESH_MARK)
+        return block.replace("{last_topic_hint}", hint)
+    return _opener_block(raw, _OPENER_FRESH_MARK, _OPENER_PRIOR_MARK)
 
 
 @lru_cache(maxsize=1)

@@ -2125,12 +2125,14 @@ async def _open_main_call(
     """Open a started main voice call the same way on both the Gemini Live and
     Meta cascade paths: a pre-sign-in "welcome" room has Ayma greet first; every
     other call lets Ayma open only if the caller stays silent
-    (:func:`maybe_open_conversation`).
+    (:func:`maybe_open_conversation`), which — when there is prior context —
+    greets and offers the choice to continue or switch rather than resuming the
+    old topic (founder behaviour, 2026-10-28).
 
-    ``opener_chat_ctx`` is forwarded to the silent-caller opener so the cascade
-    can greet fresh without the previous conversation in the opener's generation
-    context (founder cold-start bug, 2026-10-28); NOT_GIVEN leaves the opener
-    unchanged for Gemini Live / every other path."""
+    ``opener_chat_ctx`` is forwarded to the silent-caller opener as a secondary
+    guard scoping the opener's generation context (the cascade passes a
+    history-free context); NOT_GIVEN leaves it against the agent's full context
+    for Gemini Live / every other path."""
     if seed.greeting_instructions:
         try:
             await session.generate_reply(instructions=seed.greeting_instructions)
@@ -2439,16 +2441,18 @@ async def _start_main_cascade_session(
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
-    # Cold-start opener fix (founder bug, 2026-10-28): fix #1 (above) only stops
-    # ``session.start`` from auto-answering a TRAILING stale user turn. The
-    # silent-caller opener (:func:`maybe_open_conversation`) still ran
-    # ``generate_reply`` against the agent's full seeded history, so the chat LLM
-    # treated the previous conversation's last exchange as something to continue
-    # and SPOKE a reply to the old message before the caller said anything. The
-    # opener here generates against a history-free context (the rolling summary
-    # still rides in the system prompt), so it is a fresh greeting with no prior
-    # turn to answer; the agent's own ``chat_ctx`` keeps the full window for every
-    # later real turn. Gemini Live is left NOT_GIVEN and is unchanged.
+    # Cold-start opener (founder behaviour, 2026-10-28): when there is prior
+    # context the opener GREETS and OFFERS A CHOICE ("pick up where we left off
+    # about X, or something else?") instead of resuming the old topic. That is
+    # driven by the opener instruction + the has-prior/last-topic-hint signal in
+    # :func:`maybe_open_conversation` (the real fix — an earlier attempt that only
+    # passed an empty chat_ctx here still continued the topic, because the rolling
+    # summary rides in the SYSTEM PROMPT, not chat_ctx, and the old opener prompt
+    # told Ayma to "pick the thread back up"). The empty ``chat_ctx`` below stays
+    # as a secondary guard so the chat LLM has no previous-turn object to answer
+    # the instant it opens; the agent's own ``chat_ctx`` keeps the full window for
+    # every later real turn, so "yeah, continue" still works. Gemini Live is left
+    # NOT_GIVEN and gets the same greet+choice from the opener instruction.
     await _open_main_call(
         session, seed, window=window, opener_chat_ctx=llm.ChatContext.empty()
     )
@@ -2774,6 +2778,33 @@ def _arm_practice_cascade_fallback(
         asyncio.create_task(_switch())
 
 
+# A one-line last-topic hint for the opener is capped at this many characters so
+# the opener gets just enough to reference ("where we left off about X") without
+# the full prior turn being dumped back into the opening generation.
+_OPENER_HINT_MAX_CHARS = 200
+
+
+def _opener_prior_context(seed_turns: list[Turn]) -> tuple[bool, str]:
+    """Whether this caller has a prior conversation the opener can offer to pick
+    back up, and a short one-line hint at the last topic (founder behaviour,
+    2026-10-28).
+
+    ``has_prior`` is True when the seeded window carries any real (non-empty)
+    prior turn; the hint is the most recent such turn's text, whitespace-collapsed
+    and truncated to :data:`_OPENER_HINT_MAX_CHARS`. The hint is only a reference
+    for the greeting ("want to pick up where we left off about …?") — the FULL
+    context still rides in the agent's own ``chat_ctx`` for every later turn, so
+    if the caller says "yeah, continue" it works; the opener just must not dump or
+    continue that context itself."""
+    real = [t for t in seed_turns if t.text.strip()]
+    if not real:
+        return False, ""
+    hint = " ".join(real[-1].text.split()).strip()
+    if len(hint) > _OPENER_HINT_MAX_CHARS:
+        hint = hint[:_OPENER_HINT_MAX_CHARS].rstrip() + "…"
+    return bool(hint), hint
+
+
 async def maybe_open_conversation(
     session: AgentSession,
     seed: RoomSeed,
@@ -2794,14 +2825,23 @@ async def maybe_open_conversation(
     seeded turn is the caller's (a resumed call mid-turn), or when the opener
     is disabled by config. Runs at most once per session by construction.
 
-    ``opener_chat_ctx`` (cascade cold-start fix, founder bug 2026-10-28) scopes
-    the history the opener's ``generate_reply`` generates against, WITHOUT
-    touching the agent's own ``chat_ctx`` (which keeps the full window for every
-    later real turn). The Meta cascade passes a history-free context here so the
-    opener is a fresh greeting and the chat LLM has no previous-conversation turn
-    to answer/continue the instant it opens; left NOT_GIVEN (Gemini Live / every
-    other path), the opener generates against the agent's full context exactly as
-    before, so that path is unchanged."""
+    Opener behaviour (founder, 2026-10-28): when this caller HAS prior
+    conversation context, the opener is a GREET + a choice — "pick up where we
+    left off about X, or something else?" — and explicitly does NOT continue the
+    old topic itself; with no prior context it is a plain fresh warm opener. The
+    has-prior flag and a short one-line last-topic hint (never the full
+    transcript) are computed from ``seed.seed_turns`` and passed into the opener
+    instruction (:func:`prompt.load_voice_opener`). The full context still rides
+    in the agent's own ``chat_ctx``, so if the caller then says "continue" it
+    works. This applies on BOTH the Meta cascade and Gemini Live.
+
+    ``opener_chat_ctx`` is a secondary guard that scopes the history the opener's
+    ``generate_reply`` generates against, WITHOUT touching the agent's own
+    ``chat_ctx`` (which keeps the full window for every later real turn). The Meta
+    cascade passes a history-free context so the chat LLM has no previous-turn
+    object to answer the instant it opens (the greet+choice is driven by the
+    instruction above regardless); left NOT_GIVEN (Gemini Live / every other
+    path), the opener generates against the agent's full context."""
     grace = (
         CONFIG.voice_opener_grace_seconds if grace_seconds is None else grace_seconds
     )
@@ -2829,7 +2869,10 @@ async def maybe_open_conversation(
         pass
     if user_started.is_set() or _has_new_turns(window, seeded):
         return False
-    reply_kwargs: dict = {"instructions": load_voice_opener()}
+    has_prior, last_topic_hint = _opener_prior_context(seed.seed_turns)
+    reply_kwargs: dict = {
+        "instructions": load_voice_opener(has_prior, last_topic_hint)
+    }
     if opener_chat_ctx is not NOT_GIVEN:
         reply_kwargs["chat_ctx"] = opener_chat_ctx
     try:

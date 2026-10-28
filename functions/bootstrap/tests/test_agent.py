@@ -2149,6 +2149,59 @@ def test_cascade_opener_generates_against_history_free_context():
     assert list(passed.items) == []
 
 
+def test_opener_prior_context_helper():
+    """has-prior / last-topic-hint derivation for the opener signal."""
+    assert agent._opener_prior_context([]) == (False, "")
+    # Blank-text turns don't count as prior conversation.
+    assert agent._opener_prior_context(
+        [agent.Turn(role=agent.ROLE_AYMA, text="   ")]
+    ) == (False, "")
+    # The hint is the most recent real turn, whitespace-collapsed.
+    has_prior, hint = agent._opener_prior_context(
+        [
+            agent.Turn(role=agent.ROLE_USER, text="tell me about her"),
+            agent.Turn(role=agent.ROLE_AYMA, text="Priya  seemed\n keen"),
+        ]
+    )
+    assert has_prior is True and hint == "Priya seemed keen"
+    # A very long last turn is truncated to a one-line hint, not dumped whole.
+    long_turn = [agent.Turn(role=agent.ROLE_AYMA, text="x " * 400)]
+    has_prior, hint = agent._opener_prior_context(long_turn)
+    assert has_prior is True
+    assert len(hint) <= agent._OPENER_HINT_MAX_CHARS + 1  # +1 for the ellipsis
+
+
+def test_opener_offers_choice_when_prior_context_exists():
+    """New call WITH prior context: the opener instruction greets + offers the
+    continue-or-switch choice and references the last topic, rather than
+    continuing it (founder behaviour, 2026-10-28)."""
+    import asyncio
+
+    s = _OpenerSession()
+    seed = _opener_seed(
+        seed_turns=[
+            agent.Turn(role=agent.ROLE_USER, text="should I text Priya back"),
+            agent.Turn(role=agent.ROLE_AYMA, text="whether to text Priya back"),
+        ]
+    )
+    assert asyncio.run(_run_opener(s, seed, [])) is True
+    instr = s.replies[0].lower()
+    assert "whether to text priya back" in instr
+    assert "do not" in instr and ("continue" in instr or "resume" in instr)
+    assert "no particular prior conversation" not in instr
+
+
+def test_opener_is_fresh_when_no_prior_context():
+    """New call with NO prior context: a plain fresh warm opener, no choice."""
+    import asyncio
+
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    instr = s.replies[0].lower()
+    assert "no particular prior conversation" in instr
+    assert "pick up where we left off" not in instr
+
+
 def test_opener_swallows_generate_failure():
     import asyncio
 
@@ -3201,11 +3254,11 @@ def test_cascade_cold_start_opener_runs_against_history_free_context(monkeypatch
     """Founder cold-start bug, 2026-10-28 (path B — the opener).
 
     The previous conversation ended with Ayma's reply, so the opener fires on a
-    silent caller. Before the fix the opener ran generate_reply against the
-    agent's FULL seeded history (which still held the caller's earlier message),
-    and the chat LLM spoke a reply to that old message. The fix hands the opener
-    a history-free chat_ctx, so it greets fresh with nothing to answer, while the
-    agent's own chat_ctx still carries the whole prior exchange for later turns."""
+    silent caller. The cascade forwards a history-free chat_ctx to the opener as a
+    SECONDARY guard (the greet+choice behaviour itself is driven by the opener
+    instruction + has-prior signal; see the opener-path tests above), while the
+    agent's own chat_ctx still carries the whole prior exchange for later turns so
+    "yeah, continue" works."""
     captured: dict = {}
     monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
     for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",

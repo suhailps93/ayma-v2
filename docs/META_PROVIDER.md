@@ -316,26 +316,40 @@ not). Two separate causes:
    Correct but incomplete — only covers the trailing-user case.
 
 2. **The silent-caller opener continued the previous conversation (2026-10-28 —
-   the bug that persisted).** When the prior conversation ended with Ayma's reply
-   (Part 1 strips nothing, the opener fires), the cold-start opener
-   (`maybe_open_conversation` → `generate_reply(load_voice_opener())`) ran against
-   the agent's *full* seeded history, which still held the caller's earlier
-   message; with `prompts/voice_opener.md` telling the model to "pick the thread
-   back up," the cascade chat LLM opened by answering/continuing that old message.
-   Fix: `_start_main_cascade_session` passes a **history-free** `chat_ctx`
-   (`llm.ChatContext.empty()`) to the opener via
-   `_open_main_call` → `maybe_open_conversation(opener_chat_ctx=…)` →
-   `generate_reply(chat_ctx=…)`. LiveKit's `generate_reply` uses the passed
-   context *instead of* the agent's history for that one reply, so the opener
-   greets fresh with nothing to answer (the rolling summary still rides in the
-   system prompt). The agent's own `chat_ctx` keeps the full prior exchange for
-   every genuine later turn. `prompts/voice_opener.md` also carries an explicit
-   "brand-new call — do not answer/continue the previous message" guardrail.
+   the bug that persisted, now fixed for real).** When the prior conversation
+   ended with Ayma's reply (Part 1 strips nothing, the opener fires), the
+   cold-start opener continued the previous topic the instant the call opened.
+   **Real root cause:** the rolling summary + recent turns ride in the **system
+   prompt** (`compose_system_prompt`), *not* `chat_ctx`, and the old
+   `prompts/voice_opener.md` told the model to "pick the thread back up." So an
+   earlier attempt that scoped the opener's `generate_reply` to an **empty**
+   `chat_ctx` changed the wrong layer — the summary was still in the system
+   prompt and the opener instruction still *asked* for a continuation, so Ayma
+   continued.
 
-Both parts are cascade-scoped: Gemini Live / OpenAI Realtime leave `opener_chat_ctx`
-`NOT_GIVEN`, so their opener generates against the full agent context exactly as
-before. All prior context is kept, the full window is still persisted, and the
-Gemini path is unchanged.
+   **Desired behaviour (founder, 2026-10-28 — supersedes "greet fresh"):** on a
+   new call *with* prior context, Ayma **greets and offers a choice** — e.g.
+   "Hey [name], want to pick up where we left off about [topic], or is there
+   something else on your mind?" — and does **not** resume the old topic herself;
+   she keeps the context, so "yeah, continue" works on the caller's next turn.
+   With *no* prior context, a plain fresh warm opener.
+
+   **Fix:** `maybe_open_conversation` derives `has_prior_conversation` + a short
+   **one-line last-topic hint** from `seed.seed_turns` (`agent._opener_prior_context`
+   — truncated, never the full transcript) and passes them into
+   `load_voice_opener(has_prior, hint)`. `prompts/voice_opener.md` was rewritten
+   into a **prior-context** block (greet + continue-or-switch choice, explicit
+   "do NOT answer/resume/summarise the previous topic yourself") and a **fresh**
+   block. The history-free `chat_ctx` the cascade passes to the opener's
+   `generate_reply` stays only as a **secondary guard**; the greet+choice is now
+   driven by the instruction, independent of which layer carries the summary.
+
+This is a **general behaviour**, not cascade-only: driven by the opener
+instruction + the has-prior/last-topic signal (both path-agnostic), Gemini Live
+gets the same greet+choice. Only the opener's `opener_chat_ctx` secondary guard
+stays cascade-scoped (Gemini Live / OpenAI Realtime leave it `NOT_GIVEN`). All
+prior context is kept and the full window is still persisted, so continuing on
+the caller's next turn works on every stack.
 
 **Voice tool-use reliability (2026-10-28).** On the cascade, Muse Spark sometimes
 *narrated* an app action as done without calling the tool ("rerunning that now"
