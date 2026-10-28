@@ -10,6 +10,10 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 - **Settings → Help → "How to use Ayma"** replays the full tour. Dev "Reset & preview" kept; old dev-only splash-gate relaxation deleted (superseded).
 - **No APK / no versionCode bump / no deploy** — code + tests + push only; consolidation build follows. `flutter test` incl. layout matrix green.
 - **Standing rule (now in AGENTS.md definition-of-done + ARCHITECTURE §11.2a):** every new user-facing feature must add/update its entry in the feature tour (`tour_content.dart` — a `feature_id` + how-to), so existing users get a spotlight for it on next open.
+## Dev-mode build flag (meta-hackathon, 2026-10-28) — DONE
+- **Dev mode is now compile-time gated so customer/store builds ship with it unavailable.** New `kDevModeEnabled` (`ayma_flutter/lib/dev_mode.dart`, `bool.fromEnvironment('ENABLE_DEV_MODE', defaultValue: false)`, read via the `devModeEnabled` getter). Default FALSE (fail-safe): with it off, the seven-tap/long-press unlock gesture is a no-op and the `/settings/developer`, `AymaNotesScreen` and `AdminFeedbackScreen` routes redirect to the main shell (no deep link reaches them). Password + dev-view-allowlist gates still apply when dev mode is on.
+- **Build commands.** Internal/dev APK (keeps dev mode): `scripts/build-apk.sh --release` — it now passes `--dart-define=ENABLE_DEV_MODE=true`. Customer/store releases omit the define (dev off): both `codemagic.yaml` workflows (Android Firebase + iOS App Store) are commented to that effect. **The next consolidation APK for the founder MUST build with `--dart-define=ENABLE_DEV_MODE=true`** (use `scripts/build-apk.sh`) or he loses dev mode on his test build.
+- **No APK / no versionCode bump / no deploy** (code + tests + push only). Tests: new `dev_mode_gate_test.dart` + `settings_screen_test.dart` (+1); full Flutter suite + layout matrix green. Docs: ARCHITECTURE (dev-mode build gate), HACKATHON_STATUS, this line.
 
 ## Integration 2216 (meta-hackathon, 2026-10-26) — live queue (single source of truth)
 

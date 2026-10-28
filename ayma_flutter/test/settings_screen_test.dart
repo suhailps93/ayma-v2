@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:ayma_flutter/dev_mode.dart';
 import 'package:ayma_flutter/screens/settings_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
@@ -45,6 +46,9 @@ ApiClient _api(void Function(String path) onCall) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  // Every test leaves the compile-time dev-mode flag at its default (off);
+  // the two unlock tests opt in explicitly.
+  tearDown(() => debugDevModeOverride = null);
 
   Widget host(ThemeController c, ProfileService p, ApiClient a) =>
       AnimatedBuilder(
@@ -147,6 +151,7 @@ void main() {
 
   testWidgets('seven taps on the version row open the Developer panel; '
       'fewer do nothing', (tester) async {
+    debugDevModeOverride = true;
     await pumpRouted(tester);
     final stamp = find.byKey(const ValueKey('build-stamp'));
     await tester.scrollUntilVisible(stamp, 200);
@@ -164,6 +169,7 @@ void main() {
 
   testWidgets('long-pressing the build stamp opens the Developer panel',
       (tester) async {
+    debugDevModeOverride = true;
     await pumpRouted(tester);
     final stamp = find.byKey(const ValueKey('build-stamp'));
     await tester.scrollUntilVisible(stamp, 200);
@@ -171,6 +177,27 @@ void main() {
     await tester.longPress(stamp);
     await tester.pumpAndSettle();
     expect(find.text('ROUTE /settings/developer'), findsOneWidget);
+  });
+
+  testWidgets(
+      'with dev mode off (customer build), the unlock gesture is a no-op',
+      (tester) async {
+    // Default: debugDevModeOverride == null → compiled kDevModeEnabled (false).
+    await pumpRouted(tester);
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    await tester.scrollUntilVisible(stamp, 200);
+    await tester.pumpAndSettle();
+    // Seven taps — more than the unlock threshold — do nothing.
+    for (var i = 0; i < 8; i++) {
+      await tester.tap(stamp);
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('ROUTE /settings/developer'), findsNothing);
+    // A long-press is inert too.
+    await tester.longPress(stamp);
+    await tester.pumpAndSettle();
+    expect(find.text('ROUTE /settings/developer'), findsNothing);
   });
 
   testWidgets('the Plan row opens the Plan page', (tester) async {

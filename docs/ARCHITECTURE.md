@@ -280,7 +280,18 @@ flowchart LR
   (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
 - *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
-- *Developer panel* (`/settings/developer`, seven taps on the version row) is **password-gated**: opening it shows
+- *Dev-mode build gate (customer builds ship with no dev path)*: the whole Developer panel is behind a **compile-time
+  flag** `kDevModeEnabled` (`lib/dev_mode.dart`, `bool.fromEnvironment('ENABLE_DEV_MODE', defaultValue: false)`,
+  read everywhere through the `devModeEnabled` getter so tests can override it). It **defaults to false (fail-safe)**:
+  any build that does not explicitly opt in — every **customer / store release** (Codemagic Android + iOS workflows,
+  Play) — compiles dev mode out entirely. With it off, the seven-tap (and long-press) version gesture is a no-op, and
+  the `/settings/developer`, `AymaNotesScreen` and `AdminFeedbackScreen` routes **redirect to the main shell** (they
+  stay in the route table so the app-registry invariant holds, but their `redirect` bounces every visit), so no deep
+  link or stale link can reach them either. **Internal / development APKs opt in** by passing
+  `--dart-define=ENABLE_DEV_MODE=true`, wired into `scripts/build-apk.sh`; the customer/store workflows in
+  `codemagic.yaml` deliberately omit it. The two gates compose: the build flag decides whether dev mode exists, and
+  (when it does) the `DEV_PANEL_PASSWORD` + dev-view allowlist below still gate its contents.
+- *Developer panel* (`/settings/developer`, seven taps on the version row, dev builds only) is **password-gated**: opening it shows
   only a password field, and its contents (build/mode/account, real-money spend, free reload, per-conversation cost,
   release notes, and the **Ayma's Notes** entry) appear only after `POST /dev/verify` succeeds
   against `DEV_PANEL_PASSWORD`. The

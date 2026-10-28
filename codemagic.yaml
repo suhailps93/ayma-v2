@@ -113,6 +113,11 @@ workflows:
           # app_config/sentry. Never commit the DSN.
           VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
           test -n "$REVENUECAT_ANDROID_KEY" || { echo "REVENUECAT_ANDROID_KEY is not set"; exit 1; }
+          # Dev mode is intentionally OFF here: this is a customer-facing
+          # distribution build, so it must NOT pass --dart-define=ENABLE_DEV_MODE=true.
+          # Omitting it leaves kDevModeEnabled at its false default, so the
+          # seven-tap unlock and the whole Developer panel compile out. Only the
+          # internal scripts/build-apk.sh opts in. (See lib/dev_mode.dart.)
           flutter build apk --release \
             --dart-define=REVENUECAT_ANDROID_KEY="$REVENUECAT_ANDROID_KEY" \
             --dart-define=SENTRY_DSN="$SENTRY_DSN" \
@@ -232,6 +237,11 @@ workflows:
           # app_config/sentry. Never commit the DSN.
           VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
           test -n "$REVENUECAT_IOS_KEY" || { echo "REVENUECAT_IOS_KEY is not set"; exit 1; }
+          # Dev mode is intentionally OFF here: this is the customer-facing
+          # App Store / TestFlight build, so it must NOT pass
+          # --dart-define=ENABLE_DEV_MODE=true. Omitting it leaves
+          # kDevModeEnabled at its false default, so the seven-tap unlock and
+          # the whole Developer panel compile out. (See lib/dev_mode.dart.)
           flutter build ipa --release \
             --dart-define=REVENUECAT_IOS_KEY="$REVENUECAT_IOS_KEY" \
             --dart-define=SENTRY_DSN="$SENTRY_DSN" \

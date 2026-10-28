@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
+import '../dev_mode.dart';
 import '../features/date_sim/date_sim_screen.dart';
 import '../features/practice_date/practice_debrief_screen.dart';
 import '../features/practice_date/practice_screen.dart';
@@ -371,25 +372,40 @@ final appRouter = GoRouter(
             : const NavBarShell(child: PlanScreen());
       },
     ),
+    // Dev-only routes. They stay in the table (so the app-registry invariant
+    // holds), but every one is hard-gated by the compile-time dev-mode flag:
+    // when dev mode is off (`kDevModeEnabled == false` — every customer /
+    // store build, the fail-safe default), each redirects to the main shell,
+    // so even a deep link or stale link cannot reach the Developer panel or
+    // anything behind it. The seven-tap unlock gesture is a no-op then too
+    // (settings_screen.dart). Internal / dev builds opt in with
+    // `--dart-define=ENABLE_DEV_MODE=true` (scripts/build-apk.sh).
     GoRoute(
       path: DeveloperScreen.path,
+      redirect: (context, state) =>
+          devModeEnabled ? null : MainShellScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: DeveloperScreen()),
     ),
     GoRoute(
       // "Ayma's Notes" — the full analytical picture ("the intelligence
-      // beneath the portrait"). Dev-only on purpose: it is reached only from
-      // the unlocked Developer panel, and this redirect bounces anyone who
-      // tries to deep-link it while the panel is locked, so no normal-user
-      // path (and no stale link) can surface the analysis layer (§11.2).
+      // beneath the portrait"). Dev-only on purpose: reached only from the
+      // unlocked Developer panel, and this redirect bounces anyone who tries
+      // to deep-link it unless dev mode is on AND the panel is unlocked, so no
+      // normal-user path (and no stale link) can surface the analysis layer
+      // (§11.2).
       path: AymaNotesScreen.path,
       redirect: (context, state) =>
-          DevPanelSession.instance.unlocked.value ? null : MainShellScreen.path,
+          devModeEnabled && DevPanelSession.instance.unlocked.value
+              ? null
+              : MainShellScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: AymaNotesScreen()),
     ),
     GoRoute(
       path: AdminFeedbackScreen.path,
+      redirect: (context, state) =>
+          devModeEnabled ? null : MainShellScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: AdminFeedbackScreen()),
     ),

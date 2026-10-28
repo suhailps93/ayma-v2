@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../dev_mode.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
@@ -64,6 +65,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   DateTime? _lastBuildTap;
 
   void _onBuildTap() {
+    // Customer / store builds compile with dev mode off (kDevModeEnabled ==
+    // false): the unlock gesture is a complete no-op and the Developer panel
+    // is unreachable.
+    if (!devModeEnabled) return;
     final now = DateTime.now();
     final last = _lastBuildTap;
     _buildTaps = last != null && now.difference(last) < _tapWindow
@@ -74,6 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _openDeveloper() {
+    if (!devModeEnabled) return;
     _buildTaps = 0;
     _lastBuildTap = null;
     context.push(DeveloperScreen.path);
