@@ -208,8 +208,8 @@ void main() {
 
   testWidgets(
       '"Run analysis" POSTs the appearance run with the chosen face photo, '
-      'body skipped (no eligible photo), and opens the report in-place — NOT '
-      'the chat shell (§ founder 2026-10-28)',
+      'body skipped (no eligible photo), in the BACKGROUND — no blocking '
+      'dialog, no chat shell, no forced navigation (§ founder 2026-10-28)',
       (tester) async {
     bigView(tester);
     Map<String, dynamic>? ran;
@@ -219,8 +219,8 @@ void main() {
 
     await openSheet(tester);
     await tester.tap(find.text('Run analysis'));
-    // Sheet dismisses, the run POSTs behind the progress dialog, and the router
-    // opens the appearance report.
+    // Sheet dismisses and the run fires in the background — the user is NOT
+    // held behind a modal and is NOT navigated to the report.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
@@ -233,11 +233,13 @@ void main() {
     expect(ran!['face_media_ids'], ['m1']);
     expect(ran!.containsKey('body_media_ids'), false);
     expect(ran!['image_paths'], isEmpty);
-    // ...and we opened the report in-place, never pushing a chat kickoff or
-    // landing on the chat shell.
+    // ...and nothing navigated: no chat kickoff, no chat shell, no report push
+    // (the background run surfaces via the report card refresh + a toast).
     expect(ChatInbox.instance.pending.value, isNull);
     expect(find.text('SHELL'), findsNothing);
-    expect(find.text('APPEARANCE rid'), findsOneWidget);
+    expect(find.text('APPEARANCE rid'), findsNothing);
+    // We stayed on the Skills screen.
+    expect(find.text('Appearance'), findsOneWidget);
   });
 
   testWidgets(

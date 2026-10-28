@@ -256,12 +256,17 @@ class _AppearanceChoice {
 }
 
 /// Show the Appearance pre-run sheet (the Face/Body photo groups) and, if the
-/// user taps Run, actually POST the appearance run with the chosen photos and
-/// open the resulting report in-place — it does NOT open the chat (§ founder
-/// 2026-10-28: "Run analysis" must run the analysis and show the report, not
-/// pin a card in chat). Shared by the Skills-screen Appearance action and the
-/// Appearance report screen's Re-run, so both entry points show the same
-/// grouping and skip/add-photo choices. Never hard-blocks: a skipped or empty
+/// user taps Run, kick off the appearance run with the chosen photos **in the
+/// background** and let the user stay put or navigate away freely (§ founder
+/// 2026-10-28: the analysis must run in the background again — tapping Back
+/// must NOT cancel it, as a blocking dialog did). The run is fired as a
+/// lifecycle-independent request: `POST /appearance/report` persists the report
+/// and writes its `[appearance:<id>]` chat marker + bumps the `appearance/
+/// current` pointer server-side regardless of what the UI does next, so the
+/// report card simply updates when the run lands. We only surface a
+/// non-blocking toast — never a modal the user can accidentally kill the run
+/// by dismissing. Shared by the Skills-screen Appearance action and the
+/// Appearance report screen's Re-run. Never hard-blocks: a skipped or empty
 /// group simply doesn't run.
 Future<void> runAppearanceFromPreRunSheet(
     BuildContext context, ApiClient api, {
@@ -285,66 +290,41 @@ Future<void> runAppearanceFromPreRunSheet(
     AymaToast.show(context, 'Nothing selected to analyse.');
     return;
   }
-  // A blocking progress dialog while the run builds the report; dismissed on
-  // success (we navigate to the report) or on failure (we toast).
-  final nav = Navigator.of(context, rootNavigator: true);
-  unawaited(showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const _RunningDialog(),
-  ));
+  // Non-blocking acknowledgement, then fire-and-forget: the run is NOT tied to
+  // this screen's lifecycle, so the user can leave (Back) and it keeps going.
+  AymaToast.show(
+    context,
+    "Running your analysis — I'll update your report when it's ready.",
+  );
+  unawaited(_runAppearanceInBackground(context, api, choice));
+}
+
+/// Drives the appearance run to completion independently of any widget: the
+/// HTTP request lives on the event loop, not the navigator, so navigating away
+/// can't cancel it. Surfacing the outcome is best-effort — a still-mounted
+/// caller gets a toast; a user who has moved on still gets the result via the
+/// report card refresh (and the backend's chat marker), so nothing is lost.
+Future<void> _runAppearanceInBackground(
+    BuildContext context, ApiClient api, _AppearanceChoice choice) async {
   try {
-    final result = await api.runAppearanceReport(
+    await api.runAppearanceReport(
       wantFace: choice.wantFace,
       wantBody: choice.wantBody,
       faceMediaIds: choice.wantFace ? choice.faceMediaIds : null,
       bodyMediaIds: choice.wantBody ? choice.bodyMediaIds : null,
       imagePaths: choice.imagePaths,
     );
-    if (nav.canPop()) nav.pop();
-    if (!context.mounted) return;
-    // `report_hub.resolve_owner` maps an appearance id to the caller's own uid,
-    // so `current` always opens the just-produced report; the concrete id is
-    // used when present.
-    final id = result.reportId.isNotEmpty ? result.reportId : 'current';
-    context.push('/appearance/$id');
+    if (context.mounted) {
+      AymaToast.show(context, 'Your Appearance report is ready.');
+    }
   } catch (_) {
-    if (nav.canPop()) nav.pop();
     if (context.mounted) {
       AymaToast.show(
         context,
-        "Couldn't run the analysis. Please try again.",
+        "Couldn't finish the analysis. Please try again.",
         kind: AymaToastKind.error,
       );
     }
-  }
-}
-
-/// The blocking "running your analysis" dialog shown while the appearance run
-/// POSTs and builds the report.
-class _RunningDialog extends StatelessWidget {
-  const _RunningDialog();
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Dialog(
-      backgroundColor: ac.bgElev,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const AymaOrb(size: 44, state: AymaOrbState.thinking),
-            const SizedBox(height: 16),
-            Text(
-              'Running your analysis…',
-              style: AymaType.sans(size: 14, color: ac.fg),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -384,7 +364,15 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
   bool _loading = true;
   bool _skipFace = false;
   bool _skipBody = false;
-  bool _adding = false;
+
+  /// Number of add-photo uploads still in flight per axis. Each in-flight
+  /// upload renders one "Uploading…" spinner placeholder tile in that axis's
+  /// strip; it is decremented (and replaced by the real tile, or dropped on
+  /// failure) as each upload resolves. Counting — rather than a single bool —
+  /// lets several concurrent adds each show their own spinner (§ founder
+  /// 2026-10-28: the carousel must show the upload is happening).
+  int _faceUploading = 0;
+  int _bodyUploading = 0;
 
   late final ChatService _chat = widget.chatService ?? ChatService();
 
@@ -474,7 +462,6 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
   /// 2026-10-28 privacy fix). This is the ONLY place the sheet opens a picker;
   /// it does not navigate anywhere.
   Future<void> _addPhoto({required bool face}) async {
-    if (_adding) return;
     final List<File> files;
     try {
       files = await (widget.pickImages?.call() ?? _defaultPick());
@@ -482,33 +469,50 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
       return; // Picker unavailable / cancelled — nothing to do.
     }
     if (files.isEmpty || !mounted) return;
-    setState(() => _adding = true);
-    final added = <EligiblePhoto>[];
-    final failed = <Object>[];
+    // Show one spinner placeholder per picked file straight away, so the strip
+    // visibly reflects the in-flight upload (§ founder 2026-10-28). Concurrent
+    // adds stack their own placeholders via these counters.
+    setState(() {
+      if (face) {
+        _faceUploading += files.length;
+      } else {
+        _bodyUploading += files.length;
+      }
+    });
+    var failures = 0;
     for (final f in files) {
+      EligiblePhoto? photo;
       try {
         final up = await _chat.uploadImage(f, prefix: 'appearance');
-        added.add(EligiblePhoto(mediaId: up.storagePath, url: up.downloadUrl));
-      } catch (e) {
-        failed.add(e);
+        photo = EligiblePhoto(mediaId: up.storagePath, url: up.downloadUrl);
+      } catch (_) {
+        failures++;
       }
+      if (!mounted) return;
+      // Retire this upload's placeholder and, on success, swap in its tile
+      // (pre-selected). On failure the placeholder simply disappears.
+      setState(() {
+        if (face) {
+          _faceUploading--;
+          if (photo != null) {
+            _faceAdded.add(photo);
+            _faceSel.add(photo.mediaId);
+          }
+        } else {
+          _bodyUploading--;
+          if (photo != null) {
+            _bodyAdded.add(photo);
+            _bodySel.add(photo.mediaId);
+          }
+        }
+      });
     }
-    if (!mounted) return;
-    setState(() {
-      final bucket = face ? _faceAdded : _bodyAdded;
-      final sel = face ? _faceSel : _bodySel;
-      for (final p in added) {
-        bucket.add(p);
-        sel.add(p.mediaId); // added photos start selected
-      }
-      _adding = false;
-    });
-    if (failed.isNotEmpty && mounted) {
+    if (failures > 0 && mounted) {
       AymaToast.show(
         context,
-        failed.length == 1
+        failures == 1
             ? "Couldn't add that photo."
-            : "Couldn't add ${failed.length} photos.",
+            : "Couldn't add $failures photos.",
         kind: AymaToastKind.error,
       );
     }
@@ -583,6 +587,14 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
               'leave it out, add another, or skip a section — never required.',
               style: AymaType.sans(size: 12.5, soft: true, color: ac.fgMute),
             ),
+            const SizedBox(height: 8),
+            // The single most important guidance: couple/group shots muddy the
+            // read, so steer to solo photos up front (§ founder 2026-10-28).
+            Text(
+              'Use photos of just you — no other people.',
+              style: AymaType.sans(
+                  size: 12.5, weight: FontWeight.w600, color: ac.fgDim),
+            ),
             const SizedBox(height: 16),
             if (_loading)
               const Padding(
@@ -595,7 +607,9 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
               _AxisGroup(
                 title: 'Face analysis',
                 icon: Icons.face_retouching_natural_outlined,
+                guidance: 'A clear photo of your face.',
                 photos: [...?e?.face, ..._faceAdded],
+                uploadingCount: _faceUploading,
                 selected: _faceSel,
                 skipped: _skipFace,
                 emptyPrompt: 'Add a photo that clearly shows your face.',
@@ -607,7 +621,9 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
               _AxisGroup(
                 title: 'Body analysis',
                 icon: Icons.accessibility_new_outlined,
+                guidance: 'A clear photo of your full body.',
                 photos: [...?e?.body, ..._bodyAdded],
+                uploadingCount: _bodyUploading,
                 selected: _bodySel,
                 skipped: _skipBody,
                 emptyPrompt: 'Add a full-body photo for a body report.',
@@ -642,7 +658,9 @@ class _AxisGroup extends StatelessWidget {
   const _AxisGroup({
     required this.title,
     required this.icon,
+    required this.guidance,
     required this.photos,
+    required this.uploadingCount,
     required this.selected,
     required this.skipped,
     required this.emptyPrompt,
@@ -653,7 +671,14 @@ class _AxisGroup extends StatelessWidget {
 
   final String title;
   final IconData icon;
+
+  /// One short line under the header saying what photo this axis wants.
+  final String guidance;
   final List<EligiblePhoto> photos;
+
+  /// How many add-photo uploads are still in flight for this axis; each renders
+  /// a spinner placeholder tile in the strip (before the Add tile).
+  final int uploadingCount;
   final Set<String> selected;
   final bool skipped;
   final String emptyPrompt;
@@ -694,6 +719,11 @@ class _AxisGroup extends StatelessWidget {
                 ),
             ],
           ),
+          const SizedBox(height: 4),
+          Text(
+            guidance,
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+          ),
           const SizedBox(height: 8),
           if (!hasPhotos)
             Padding(
@@ -709,20 +739,26 @@ class _AxisGroup extends StatelessWidget {
               height: 64,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: photos.length + 1,
+                // Strip order: existing tiles, then one spinner per in-flight
+                // upload, then the always-present Add tile.
+                itemCount: photos.length + uploadingCount + 1,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (_, i) {
-                  if (i == photos.length) {
-                    return _AddPhotoTile(onTap: onAddPhoto);
+                  if (i < photos.length) {
+                    final p = photos[i];
+                    return _PhotoTile(
+                      url: p.url,
+                      isSelected: selected.contains(p.mediaId),
+                      // Selecting is disabled visually while skipped, but the
+                      // tap still toggles so the choice is ready if they
+                      // un-skip.
+                      onTap: () => onTogglePhoto(p.mediaId),
+                    );
                   }
-                  final p = photos[i];
-                  return _PhotoTile(
-                    url: p.url,
-                    isSelected: selected.contains(p.mediaId),
-                    // Selecting is disabled visually while skipped, but the tap
-                    // still toggles so the choice is ready if they un-skip.
-                    onTap: () => onTogglePhoto(p.mediaId),
-                  );
+                  if (i < photos.length + uploadingCount) {
+                    return const _UploadingTile();
+                  }
+                  return _AddPhotoTile(onTap: onAddPhoto);
                 },
               ),
             ),
@@ -847,6 +883,45 @@ class _AddPhotoTile extends StatelessWidget {
               Text('Add', style: AymaType.sans(size: 10, color: ac.fgMute)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A placeholder tile shown in an [_AxisGroup]'s strip while an added photo is
+/// still uploading: a small spinner over "Uploading…", same 64px footprint as
+/// a real thumbnail so the strip doesn't jump when the tile swaps in. One of
+/// these shows per in-flight upload (§ founder 2026-10-28: the carousel must
+/// show the upload is happening, not sit blank).
+class _UploadingTile extends StatelessWidget {
+  const _UploadingTile();
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Semantics(
+      label: 'Uploading photo',
+      excludeSemantics: true,
+      child: Container(
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          color: ac.bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: ac.lineSoft),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: ac.fgDim),
+            ),
+            const SizedBox(height: 5),
+            Text('Uploading…', style: AymaType.sans(size: 9, color: ac.fgMute)),
+          ],
         ),
       ),
     );

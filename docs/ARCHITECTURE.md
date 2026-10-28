@@ -39,7 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, tap-to-deselect + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid}, rides run as image_paths, never published<br/>Run analysis POSTs the run and opens the report in-place, not chat<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, tap-to-deselect + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -226,18 +226,31 @@ flowchart LR
   surfaced but never pre-checked (defensive: can't verify solo + correct type). In the sheet a photo starts selected iff
   its `auto_select` is true; tapping a thumbnail toggles whether it feeds that axis — selection is local to
   the sheet and **never navigates** (a tap only select/deselects; only the explicit **Add photo** tile, now present on
-  **both** groups whether empty or not, opens the picker). *Privacy (§ founder 2026-10-28 fix)*: **Add photo** no longer
+  **both** groups whether empty or not, opens the picker). Each section carries one short guidance line under its header
+  ("A clear photo of your face." / "A clear photo of your full body.") and the sheet shows a single prominent note —
+  "Use photos of just you — no other people." — since couple/group shots muddy the read (§ founder 2026-10-28).
+  *Privacy (§ founder 2026-10-28 fix)*: **Add photo** no longer
   routes to the public-profile photo editor (which published to the grid). It now picks image(s) and uploads them
   **privately** to the caller's own `uploads/{uid}/appearance_*` tree via `ChatService.uploadImage` — the same private
-  channel chat attachments use — and shows them as pre-selected tiles. Those added photos ride the run as `image_paths`
+  channel chat attachments use — and shows them as pre-selected tiles. *While each add uploads* the sheet shows a
+  per-upload **"Uploading…" spinner placeholder tile** (`_UploadingTile`) in that section's strip, swapped for the real
+  pre-selected tile on success or removed with a brief inline error toast on failure; concurrent adds each show their
+  own spinner (`_faceUploading`/`_bodyUploading` counters), so the carousel never sits blank mid-upload (§ founder
+  2026-10-28). Those added photos ride the run as `image_paths`
   only (never grid `media_id`s), so they are **never** added to `profile/main.photos` or any public collection; the
   backend folds `image_paths` into the vision pass as bytes and never writes them anywhere public (see
   [PRIVACY.md](PRIVACY.md), "Appearance analysis photos"). The run (`POST /appearance/report`) accepts
   `want_face`/`want_body`, optional `face_media_ids`/`body_media_ids` (the still-selected grid photos), and
-  `image_paths` (the privately-added photos). **"Run analysis" runs the analysis in-place, not in chat (§ founder
-  2026-10-28 fix)**: tapping it POSTs `/appearance/report` behind a blocking "Running your analysis…" dialog, then opens
-  the resulting `/appearance/{id}` report screen — it no longer pushes a `ChatKickoff.appearance` and navigates to the
-  chat shell. The backend
+  `image_paths` (the privately-added photos). **"Run analysis" runs the analysis in the BACKGROUND (§ founder
+  2026-10-28 fix)**: tapping it dismisses the sheet, shows a non-blocking toast ("Running your analysis — I'll update
+  your report when it's ready."), and fires `POST /appearance/report` as a lifecycle-independent request
+  (`_runAppearanceInBackground`) — it does **not** hold the user behind a modal and does **not** force-navigate to the
+  report. Because the run lives on the event loop (not the navigator), tapping **Back** does not cancel it; the backend
+  persists the report, writes its `[appearance:<id>]` chat marker and bumps the `appearance/current` pointer regardless,
+  so the report card simply refreshes when the run lands (a best-effort "ready" toast surfaces for a still-mounted
+  caller). This replaces the earlier blocking "Running your analysis…" dialog, which cancelled the run when the user
+  navigated away (§ founder 2026-10-28: "it used to run in the background"). It still never pushes a
+  `ChatKickoff.appearance` or lands on the chat shell. The backend
   honours the user's own pick via `appearance._pick` + `_bucket_eligible` — the *same* categorisation the sheet uses, so
   a freshly-added, not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is
   refused; an explicit selection never falls back to a chat attachment. `run_appearance` returns and persists a per-axis
