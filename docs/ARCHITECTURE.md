@@ -159,9 +159,15 @@ flowchart LR
   tool description lists every destination as `key (label)` (not bare keys) so the model maps the user's words
   — "appearance report" → `my_appearance` — deterministically rather than guessing. The registry's
   `report_actions` (e.g. `rerun_appearance` → the `run_appearance_report` tool, `rerun_web_research` → `deep_dive`)
-  turn "re-run / regenerate my report" into the tool that actually re-runs it; `app_action`/`open_screen`
-  redirect a report-action phrase to that tool instead of erroring. `run_appearance_report` is the chat/voice
-  counterpart of the Appearance screen's Recalculate button (`POST /appearance/report` → `appearance.run_appearance`).
+  turn "re-run / regenerate my report" into the tool that actually re-runs it. When a re-run phrase is instead
+  routed to `open_screen` or `app_action` (probabilistic Meta tool-selection), those tools now *run the report
+  themselves* via `_run_report_action` and return its real `[appearance:<id>]`/`[deep_dive:<id>]` card marker —
+  they never deflect with a "use the … tool" pointer or merely open the existing report (founder bug 2026-10-28:
+  "rerun the appearance report" either opened the old report or returned a pointer, never re-running). `open_screen`
+  checks `find_report_action` *before* `find_destination` so an explicit re-run wins over the `my_appearance`
+  open its words also match; `find_report_action` matches strictly (an exact name or a full re-run alias contained
+  in the request, never the reverse), so a bare "appearance report" stays an open. `run_appearance_report` is the
+  chat/voice counterpart of the Appearance screen's Recalculate button (`POST /appearance/report` → `appearance.run_appearance`).
 - *Deep-dive photo sources*: Custom Search image API (only when `IMAGE_SEARCH_API_KEY`/`_CSE_ID` are set),
   public profile pages from a grounded Gemini call plus Vertex AI Search (`deepdive_public_profiles`,
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch

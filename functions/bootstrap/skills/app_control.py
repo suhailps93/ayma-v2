@@ -388,14 +388,9 @@ def _bind_current_screen(db, uid: str) -> Callable[..., str]:
 
 def _not_a_page(asked: str) -> str:
     """The honest answer for a request that matches no destination (known
-    unavailable things are answered before this): a pointer to the right tool
-    when it's a setting/action, otherwise "doesn't exist" with the real list."""
-    report = app_registry.find_report_action(asked)
-    if report:
-        return (
-            f"'{asked}' runs a report, it isn't a page — use the {report['via']} "
-            f"tool to {report['label'][0].lower()}{report['label'][1:]}."
-        )
+    unavailable things, and report re-runs, are handled before this): a pointer
+    to the right tool when it's a setting/action, otherwise "doesn't exist"
+    with the real list."""
     act = app_registry.find_account_action(asked)
     if act:
         return (
@@ -475,14 +470,51 @@ async def _unavailable_reply(db, uid: str, gone: dict) -> str:
     return f"Not available: {gone['say']}"
 
 
+async def _run_report_action(db, uid: str, report: dict) -> str:
+    """Actually (re)run the report a navigation/app_action request named, by
+    invoking the same chat/voice tool (``report['via']``) that runs it — then
+    return its real result (the ``[appearance:<id>]`` / ``[deep_dive:<id>]``
+    card marker), not a text pointer telling the user to go use a tool.
+
+    The app-driving path must DO the re-run, not deflect it (founder bug
+    2026-10-28: "rerun the appearance report" either opened the existing report
+    or returned "use the run_appearance_report tool", never re-running). The
+    tool is bound here on ``(db, uid)`` alone, so it only ever touches this
+    authenticated user's own report — no attachment, no third party."""
+    via = report.get("via")
+    if via == "run_appearance_report":
+        from . import run_appearance_report as _report
+
+        return await _report.SKILL.bind(db, uid)()
+    if via == "deep_dive":
+        from . import deep_dive as _report
+
+        # A re-run of the user's own web research — self only (never a third
+        # party from an app-control phrase); the bind resolves their profile
+        # name, so no name is passed.
+        return await _report.SKILL.bind(db, uid)(full_name="", subject="self")
+    logger.error("report action %r has no runnable via (%r)", report.get("key"), via)
+    return _NOT_APPLIED
+
+
 def _bind_open_screen(db, uid: str) -> Callable[..., str]:
     async def open_screen(screen: str = "") -> str:
+        asked = screen.strip()
+        # A re-run request ("rerun / regenerate / recalculate the appearance
+        # report") must RUN the report, even though its words also match the
+        # my_appearance destination — opening the old report is not re-running
+        # it. Checked before find_destination so the re-run wins; a bare
+        # "appearance report" (an open) does not match find_report_action and
+        # still navigates below.
+        report = app_registry.find_report_action(asked)
+        if report:
+            return await _run_report_action(db, uid, report)
         dest = app_registry.find_destination(screen)
         if dest is None:
-            gone = app_registry.find_unavailable(screen.strip())
+            gone = app_registry.find_unavailable(asked)
             if gone:
                 return await _unavailable_reply(db, uid, gone)
-            return _not_a_page(screen.strip())
+            return _not_a_page(asked)
         path, label = await asyncio.to_thread(_resolve_path, db, uid, dest)
         return await _navigate(db, uid, dest["key"], path, label)
 
@@ -730,11 +762,10 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
         if setting is None:
             report = app_registry.find_report_action(a)
             if report:
-                return (
-                    f"That re-runs a report — use the {report['via']} tool to "
-                    f"{report['label'][0].lower()}{report['label'][1:]}, not "
-                    "app_action."
-                )
+                # A re-run request routed here instead of to the tool: run it
+                # ourselves (don't deflect) so the user gets the refreshed
+                # report, not a pointer.
+                return await _run_report_action(db, uid, report)
             act = app_registry.find_account_action(a)
             if act and act["handler"] == "navigate_only":
                 return await _navigate_only(db, uid, act["destination"], act["say"])

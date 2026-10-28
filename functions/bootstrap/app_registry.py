@@ -115,10 +115,31 @@ def find_account_action(text: str) -> dict | None:
 
 
 def find_report_action(text: str) -> dict | None:
-    """The report-run action a 'rerun the appearance report' style request
-    names, or ``None`` — used to redirect app_action/open_screen to the tool
-    (``via``) that actually (re)runs the report."""
-    return _lookup(report_actions(), text)
+    """The report-run action an *explicit re-run* request names ("rerun /
+    regenerate / recalculate the appearance report"), or ``None``.
+
+    Matched strictly, by an exact name or a full re-run alias contained in the
+    request — never the reverse (a bare "appearance report" is an *open*, not a
+    re-run, so it must not match here and steal the navigation). Every alias
+    carries its own re-run verb, so forward containment already encodes "this
+    is a re-run". The app-driving path uses the match to actually run the report
+    (``skills.app_control._run_report_action``), via the tool named in ``via``."""
+    want = normalise(text)
+    if not want:
+        return None
+    raw = text.strip().lower()
+    for e in report_actions():
+        if raw == e["key"] or want in _names(e):
+            return e
+    best: tuple[int, dict] | None = None
+    for e in report_actions():
+        for n in _names(e):
+            if len(n) < 4:
+                continue
+            if re.search(rf"\b{re.escape(n)}\b", want):
+                if best is None or len(n) > best[0]:
+                    best = (len(n), e)
+    return best[1] if best else None
 
 
 def find_unavailable(text: str, exact: bool = False) -> dict | None:

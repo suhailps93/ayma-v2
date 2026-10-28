@@ -673,17 +673,97 @@ def test_app_action_rejects_an_unknown_action():
     assert _PENDING not in db.store
 
 
-def test_app_action_rerun_report_points_to_the_run_tool():
-    # Founder bug 2026-10-27: "rerun the appearance report" hit app_action and
-    # died with "no such setting/key". Now it's recognised as a report action
-    # and the model is pointed at the tool that actually re-runs it.
+def _patch_appearance_run(monkeypatch, rid="rpt-9"):
+    """Make run_appearance_report runnable in-process: stub the credit check
+    and the engine so calling the tool returns the real ``[appearance:<id>]``
+    card marker. Returns a dict the fake engine fills with what it was asked."""
+    import token_ledger
+    from skills import run_appearance_report as rar
+
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    seen: dict = {}
+
+    async def _fake_run(db, uid, **kw):
+        seen.update(uid=uid, source=kw.get("source"))
+        return {"id": rid}
+
+    monkeypatch.setattr(rar.engine, "run_appearance", _fake_run)
+    return seen
+
+
+def _patch_deep_dive_run(monkeypatch):
+    """Make a self web-research re-run runnable in-process, returning the
+    ``[deep_dive:<id>]`` card marker. Returns a dict the fake engine fills."""
+    import skill_memory
+    import skill_runs
+    import token_ledger
+    from skills import deep_dive as dd
+
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    seen: dict = {}
+
+    async def _fake_run(full_name, db=None, uid=None, context="", is_self=False):
+        seen.update(name=full_name, is_self=is_self)
+        return {"confidence": "ok", "facts": ["x"], "summary": "s"}
+
+    monkeypatch.setattr(dd.engine, "profile_full_name", lambda db, uid: "Sam Doe")
+    monkeypatch.setattr(dd.engine, "profile_dive_context", lambda db, uid, n: "")
+    monkeypatch.setattr(dd.engine, "run", _fake_run)
+    monkeypatch.setattr(dd.engine, "teaser", lambda d: "Here's what I found")
+    monkeypatch.setattr(dd.engine, "dive_report_id", lambda name: "dive-1")
+    monkeypatch.setattr(skill_memory, "save_web_findings", lambda db, uid, d: None)
+    monkeypatch.setattr(skill_runs, "record", lambda *a, **k: None)
+    return seen
+
+
+def test_app_action_rerun_report_executes_the_report(monkeypatch):
+    # Founder bug 2026-10-28: "rerun the appearance report" routed to app_action
+    # used to DEFLECT ("use the run_appearance_report tool"), never re-running.
+    # Now the app-driving path runs it and returns the real card marker.
+    seen = _patch_appearance_run(monkeypatch, "rpt-aa")
     db = _Db()
     for phrase in ("rerun appearance report", "regenerate appearance report",
                    "recalculate my appearance report"):
         out = _run(app_control._bind_app_action(db, "me")(phrase))
-        assert "run_appearance_report" in out, phrase
-        assert "There is no" not in out  # not the old "no such setting" error
-    assert _PENDING not in db.store
+        assert "[appearance:rpt-aa]" in out, phrase
+        assert "tool" not in out  # not the old deflection pointer
+    assert seen["source"] == "chat_tool"
+    assert _PENDING not in db.store  # a run, not a queued navigate/app_action
+
+
+def test_open_screen_rerun_appearance_executes_the_report(monkeypatch):
+    # The same re-run routed to open_screen must RUN the report, not open the
+    # existing one (its words also match the my_appearance destination).
+    seen = _patch_appearance_run(monkeypatch, "rpt-os")
+    db = _Db()
+    for phrase in ("rerun appearance report", "regenerate appearance report",
+                   "recalculate my appearance report", "refresh appearance report"):
+        out = _run(app_control._bind_open_screen(db, "me")(phrase))
+        assert "[appearance:rpt-os]" in out, phrase
+        assert "did NOT navigate" not in out
+    assert seen["source"] == "chat_tool"
+    assert _PENDING not in db.store  # no navigate command queued
+
+
+def test_open_screen_bare_appearance_report_still_opens(monkeypatch):
+    # A plain "appearance report" (no re-run verb) stays an OPEN — it navigates
+    # to the existing report and never silently re-runs.
+    seen = _patch_appearance_run(monkeypatch)
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("appearance report"))
+    assert out.startswith("navigated: screen=my_appearance")
+    assert "source" not in seen  # run_appearance was never called
+
+
+def test_rerun_web_research_executes_deep_dive(monkeypatch):
+    # The web-research re-run must execute too (a self deep dive), via both
+    # open_screen and app_action.
+    db = _Db()
+    for tool in ("_bind_open_screen", "_bind_app_action"):
+        seen = _patch_deep_dive_run(monkeypatch)
+        out = _run(getattr(app_control, tool)(db, "me")("rerun web research"))
+        assert "[deep_dive:dive-1]" in out, tool
+        assert seen["is_self"] is True, tool
 
 
 def test_run_appearance_report_skill_is_registered_and_triggers(monkeypatch):
