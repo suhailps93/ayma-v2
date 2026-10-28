@@ -16,6 +16,7 @@ Every write triggers a debounced background completeness recompute.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Callable
 
@@ -25,7 +26,22 @@ import question_tree
 
 from ._base import Skill, last_user_quote
 
+logger = logging.getLogger("ayma.questionnaire")
+
 _SOURCES = ("stated", "inferred")
+
+# The three ``page_type: "taste"`` questionnaire nodes and the header each maps
+# to on the user's PUBLIC Taste wiki page. These answers are the only path real
+# users have to populate the Taste page that the Qloo engine
+# (``taste_match.parse_taste`` — aliases music/film/food, up to 5 names each)
+# reads for the taste-match report. Composed deterministically into the
+# ``Music: … / Film: … / Food: …`` shape the parser expects.
+_TASTE_NODE_HEADERS = {
+    "taste_music": "Music",
+    "taste_film": "Film",
+    "taste_food": "Food",
+}
+_TASTE_PAGE_ID = "taste"
 
 # Founder directive, 2026-09-20: never let a pronoun/gender-identity value be
 # guessed. Every other hard-filter node may be recorded as source="inferred"
@@ -195,6 +211,54 @@ def _validate(node: dict, value: str):
 # --- shared write ---------------------------------------------------------
 
 
+def _sync_taste_page(db, uid: str) -> None:
+    """Compose the user's PUBLIC Taste wiki page from their taste questionnaire
+    answers, in the ``Music: … / Film: … / Food: …`` shape the Qloo engine
+    (``taste_match.parse_taste``) reads. Called after any taste node is
+    recorded.
+
+    These answers are the user's own stated favourites, intended for their
+    public Taste page (public by design, like the seeded demo profiles and the
+    hard-filter ``qz_*`` mirror), so the compiled body is written straight to
+    the page rather than through the AI-rewrite approval proposal flow. A
+    manual ``user_edits`` override, if the user ever set one, still wins in the
+    public view (``public_profile`` prefers it) and is never touched here; an
+    existing visibility choice is preserved."""
+    qcol = (
+        db.collection("users").document(uid).collection("questionnaire")
+    )
+    lines: list[str] = []
+    for node_id, header in _TASTE_NODE_HEADERS.items():
+        snap = qcol.document(node_id).get()
+        if not getattr(snap, "exists", False):
+            continue
+        value = " ".join(str((snap.to_dict() or {}).get("value") or "").split())
+        if value:
+            lines.append(f"{header}: {value}")
+    if not lines:
+        return
+    page_ref = (
+        db.collection("users")
+        .document(uid)
+        .collection("wiki_pages")
+        .document(_TASTE_PAGE_ID)
+    )
+    existing = page_ref.get()
+    payload: dict = {
+        "ai_body": "\n".join(lines),
+        "page_type": "taste",
+        "updated_at": firestore.SERVER_TIMESTAMP,
+        "ai_body_updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    if getattr(existing, "exists", False):
+        cur = existing.to_dict() or {}
+        payload["visibility"] = cur.get("visibility") or "public"
+    else:
+        payload["visibility"] = "public"
+        payload["created_at"] = firestore.SERVER_TIMESTAMP
+    page_ref.set(payload, merge=True)
+
+
 def _profile_ref(db, uid: str):
     return (
         db.collection("users")
@@ -258,6 +322,14 @@ def _record(
     if profile_patch:
         profile_patch["updated_at"] = firestore.SERVER_TIMESTAMP
         _profile_ref(db, uid).set(profile_patch, merge=True)
+
+    # A taste answer also (re)composes the user's public Taste wiki page so the
+    # Qloo taste match has real data — best-effort, never fails the answer.
+    if node_id in _TASTE_NODE_HEADERS:
+        try:
+            _sync_taste_page(db, uid)
+        except Exception:  # noqa: BLE001 - best-effort, never fail the write
+            logger.warning("taste page sync failed for %s", uid, exc_info=True)
 
     try:
         import completeness

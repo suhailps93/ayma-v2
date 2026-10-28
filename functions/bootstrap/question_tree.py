@@ -38,6 +38,7 @@ PAGE_TYPE_LABELS = {
     "lifestyle": "Daily life & habits",
     "relationships": "Relationship style",
     "interests": "Interests",
+    "taste": "Music, film & food",
     "values": "Values & beliefs",
     "career": "Work & ambition",
     "goals": "Goals & timelines",

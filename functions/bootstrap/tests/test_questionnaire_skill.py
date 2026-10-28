@@ -161,6 +161,54 @@ def test_record_answer_narrative_just_marks_addressed():
     assert db.docs[_q("casual_perfect_night_narrative")]["value"]
 
 
+def _taste_page(db):
+    return db.docs.get(("users", "u1", "wiki_pages", "taste"))
+
+
+def test_taste_answers_compose_public_taste_wiki_page():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+
+    assert "recorded" in fn(
+        "taste_music", "Khruangbin, Bon Iver, Phoebe Bridgers", "stated"
+    )
+    page = _taste_page(db)
+    assert page is not None
+    assert page["page_type"] == "taste"
+    assert page["visibility"] == "public"
+    assert page["ai_body"] == "Music: Khruangbin, Bon Iver, Phoebe Bridgers"
+
+    fn("taste_film", "Arrival, Amélie, Spirited Away", "stated")
+    fn("taste_food", "Tartine Bakery, Zuni Café", "stated")
+    body = _taste_page(db)["ai_body"]
+    assert body == (
+        "Music: Khruangbin, Bon Iver, Phoebe Bridgers\n"
+        "Film: Arrival, Amélie, Spirited Away\n"
+        "Food: Tartine Bakery, Zuni Café"
+    )
+
+    # The composed body is exactly what the Qloo engine's parser reads.
+    import taste_match
+
+    assert taste_match.parse_taste(body) == {
+        "music": ["Khruangbin", "Bon Iver", "Phoebe Bridgers"],
+        "film": ["Arrival", "Amélie", "Spirited Away"],
+        "dining": ["Tartine Bakery", "Zuni Café"],
+    }
+
+
+def test_taste_page_preserves_user_chosen_visibility_on_reanswer():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    fn("taste_music", "Khruangbin", "stated")
+    # the user later hides the page themselves
+    db.docs[("users", "u1", "wiki_pages", "taste")]["visibility"] = "private"
+    fn("taste_music", "Khruangbin, Bon Iver", "stated")
+    page = _taste_page(db)
+    assert page["visibility"] == "private"
+    assert page["ai_body"] == "Music: Khruangbin, Bon Iver"
+
+
 def test_record_answer_bad_node_and_bad_value():
     db = FakeDb({_PROF: {}})
     fn = skills.make_session_tool_fns(db, "u1")["record_answer"]

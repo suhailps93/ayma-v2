@@ -518,10 +518,12 @@ def test_intent_unset_returns_only_the_global_core(monkeypatch):
     # only `all` sections, and the routing section folds into its own CTA.
     # Family-of-origin and friends are universal getting-to-know-you basics
     # (unlike future-facing family-planning), so they're visible pre-intent
-    # too, same as identity/personality/lifestyle.
+    # too, same as identity/personality/lifestyle. `taste` (music/film/food —
+    # the Qloo Taste page) is a branch-`all` section, so it also shows
+    # pre-intent, like interests.
     assert section_pts <= {
         "identity", "personality", "lifestyle", "family", "social_circle",
-        "career", "values", "interests", "dealbreakers", "sensitive",
+        "career", "values", "interests", "taste", "dealbreakers", "sensitive",
     }
     assert not section_pts & {"goals", "relationships", "finances"}
 

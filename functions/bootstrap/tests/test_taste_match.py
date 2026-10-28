@@ -256,3 +256,54 @@ def test_match_report_endpoint_embeds_taste_section(db, monkeypatch):
     assert taste["status"] == "ok"
     assert 0 <= taste["score"] <= 100
     assert taste["date_ideas"]
+
+
+# --------------------------------------------------------------------------- #
+# Questionnaire → public Taste page → real pairing (the collection path)
+# --------------------------------------------------------------------------- #
+def test_questionnaire_taste_answers_produce_a_real_pairing(db):
+    """Two fresh users with NO Taste page start at no_taste; after each answers
+    the taste questionnaire nodes, both have a public Taste page in the shape
+    parse_taste reads and the match returns a real score (not no_taste)."""
+    import skills
+
+    for uid, name in (("qa", "Ada"), ("qb", "Bruno")):
+        db.collection("users").document(uid).collection("profile").document(
+            "main"
+        ).set({"name": name, "location": "San Francisco"})
+
+    # Before answering: no public Taste page → no_taste.
+    with pytest.raises(taste_match.NoTaste):
+        taste_match.taste_from_view(public_profile.build(db, "qb", "qa"))
+
+    def answer(uid, pairs):
+        fn = skills.make_session_tool_fns(db, uid)["record_answer"]
+        for nid, val in pairs:
+            assert "recorded" in fn(nid, val, "stated")
+
+    answer("qa", [
+        ("taste_music", "Khruangbin, Bon Iver, Phoebe Bridgers"),
+        ("taste_film", "Lost in Translation, Amélie, Spirited Away"),
+        ("taste_food", "Tartine Bakery, Zuni Café"),
+    ])
+    answer("qb", [
+        ("taste_music", "Thelonious Monk, Khruangbin, Kamasi Washington"),
+        ("taste_film", "Blade Runner 2049, Arrival, Spirited Away"),
+        ("taste_food", "Ramen Shop, Blue Bottle Coffee"),
+    ])
+
+    # The composed page is public and parseable.
+    page = (
+        db.collection("users").document("qa").collection("wiki_pages")
+        .document("taste").get().to_dict()
+    )
+    assert page["visibility"] == "public" and page["page_type"] == "taste"
+    assert taste_match.parse_taste(page["ai_body"])["music"][0] == "Khruangbin"
+
+    a = taste_match.taste_from_view(public_profile.build(db, "qb", "qa"))
+    b = taste_match.taste_from_view(public_profile.build(db, "qa", "qb"))
+    result = asyncio.run(taste_match.match(a, b))
+    assert 0 <= result["score"] <= 100 and result["score_label"]
+
+    section = asyncio.run(taste_match.report_section(db, "qa", "qb"))
+    assert section["status"] == "ok"

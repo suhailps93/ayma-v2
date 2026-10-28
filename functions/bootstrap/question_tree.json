@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "_doc": "Tree-based deep-matchmaking questionnaire (revamp). A flat array of nodes; `branch` routes them: `all` is the global core every intent sees, and `casual` / `long_term` / `nikah` are the intent-specific deep layers. `question_tree.nodes_for_intent(intent)` returns the global core plus one branch. The `nikah` branch is complete but never routed to yet (parked). Source: docs research schema (Aimma Deep Matchmaking Data Model). Loaded by question_tree.py and completeness.py; nothing here is hardcoded inline. `ayma_prompt` is a hint for how Ayma raises the topic naturally in conversation, never a scripted question.",
 
   "kinds": ["enum", "multi", "scale", "bool", "narrative"],
@@ -1528,6 +1528,48 @@
       "hard_filter": false,
       "dating_relevant": true,
       "ayma_prompt": "whether they keep their lifestyle modest as income grows or upgrade with it"
+    },
+    {
+      "id": "taste_music",
+      "tier": "core",
+      "page_type": "taste",
+      "branch": "all",
+      "label": "Favourite music",
+      "kind": "narrative",
+      "options": null,
+      "scale": null,
+      "weight": 3,
+      "hard_filter": false,
+      "dating_relevant": true,
+      "ayma_prompt": "their favourite artists or bands — record as a comma-separated list of up to 5 names (e.g. 'Khruangbin, Bon Iver, Phoebe Bridgers'), not a sentence; drives the Qloo taste match on their public Taste page"
+    },
+    {
+      "id": "taste_film",
+      "tier": "deep",
+      "page_type": "taste",
+      "branch": "all",
+      "label": "Favourite films & shows",
+      "kind": "narrative",
+      "options": null,
+      "scale": null,
+      "weight": 3,
+      "hard_filter": false,
+      "dating_relevant": true,
+      "ayma_prompt": "their favourite films or shows — record as a comma-separated list of up to 5 titles (e.g. 'Arrival, Amélie, Spirited Away'), not a sentence; drives the Qloo taste match on their public Taste page"
+    },
+    {
+      "id": "taste_food",
+      "tier": "deep",
+      "page_type": "taste",
+      "branch": "all",
+      "label": "Favourite food & places",
+      "kind": "narrative",
+      "options": null,
+      "scale": null,
+      "weight": 3,
+      "hard_filter": false,
+      "dating_relevant": true,
+      "ayma_prompt": "their favourite restaurants, cafes, cuisines or foods — record as a comma-separated list of up to 5 (e.g. 'Tartine Bakery, Zuni Café, ramen'), not a sentence; drives the Qloo taste match on their public Taste page"
     }
   ]
 }

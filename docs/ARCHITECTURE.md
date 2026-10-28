@@ -2039,8 +2039,22 @@ people have no public Taste page it carries a `{"status": "no_taste"}` marker
 (the client shows an empty state); on any other failure the section is omitted,
 never erroring the report.
 
+**Where the Taste page comes from.** Real users populate it through the normal
+questionnaire: three `page_type: "taste"` nodes in the question tree
+(`question_tree.json`, branch `all` — `taste_music` core, `taste_film` /
+`taste_food` deep) that Ayma asks conversationally. On any taste answer,
+`skills/questionnaire.py::_sync_taste_page` composes the user's
+`wiki_pages/taste` page deterministically in the `Music: … / Film: … / Food: …`
+shape `parse_taste` reads, `visibility: "public"` by design (the user's own
+stated favourites, like the seeded demo profiles), written straight to `ai_body`
+— not through the AI-rewrite approval flow — so the match reads fresh data. See
+`docs/QLOO_TASTE.md` § "Where the Taste page comes from".
+
 ```mermaid
 flowchart LR
+  QZ["Questionnaire taste nodes<br/>(taste_music/film/food)"] --> SYNC["_sync_taste_page<br/>→ public wiki_pages/taste"]
+  SYNC --> A
+  SYNC --> B
   A["Person A public profile<br/>Taste page"] --> PA["parse_taste"]
   B["Person B public profile<br/>Taste page"] --> PB["parse_taste"]
   PA & PB --> RES["Qloo /search<br/>names → entities"]

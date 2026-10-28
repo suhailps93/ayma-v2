@@ -35,6 +35,37 @@ In the app: open a demo profile → **Simulate a conversation** → run it; the
    top 3; plus the top joint film pick ("movie night") and music pick
    ("listening date or live show") that neither person already listed.
 
+## Where the Taste page comes from
+
+Real users populate their PUBLIC Taste page through the normal questionnaire.
+Three `page_type: "taste"` nodes live in the question tree
+(`functions/bootstrap/question_tree.json`, branch `all`, so every intent and the
+pre-intent flow see them): `taste_music` (core), `taste_film` and `taste_food`
+(deep). Ayma raises them conversationally via `next_questions` and records the
+answer with `record_answer` as a comma-separated list of up to 5 names.
+
+On any taste answer, `skills/questionnaire.py::_sync_taste_page` composes the
+user's `users/{uid}/wiki_pages/taste` page deterministically in the exact shape
+`parse_taste` reads:
+
+```
+Music: Khruangbin, Bon Iver, Phoebe Bridgers
+Film: Arrival, Amélie, Spirited Away
+Food: Tartine Bakery, Zuni Café
+```
+
+The page is `visibility: "public"` by design — it is the user's own stated
+favourites, meant to be shared, exactly like the seeded demo profiles and the
+`qz_*` hard-filter mirror. Because the content IS the user's stated answer (no
+model inference, nothing embarrassing a reviewer would need to vet), it is
+written straight to `ai_body` rather than through the AI-rewrite approval
+proposal flow, so the taste match reads fresh data immediately. A manual
+`user_edits` override (if the user ever hand-edits the page) still wins in the
+public view and is never touched; an existing visibility choice is preserved.
+So a pair who both answered the taste questions get a real score with no manual
+Taste-page editing — previously only the four seeded demo profiles and anyone
+who hand-added a Taste page had taste data.
+
 ## Live vs fixture
 
 `qloo_client.get_client()` returns the live client when `QLOO_API_KEY` is set
