@@ -14,6 +14,12 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 - Fail-visible "Show AI notes" toggle fix: the dev_panel toggle now surfaces a clear error and keeps the switch on the true state when the `/dev/flags` write doesn't take (was a silent false-success).
 - Version bump `1.30.0+2216`; dependency pin `sse-starlette==3.0.3` (so `mcp==2.3.0` coexists with `fastapi==0.115.6`). Tests green (flutter 1072 incl. layout matrix; backend 2433, bar the known `test_vendor_spend` date-flake).
 
+## UI batch 2228 (meta-hackathon, 2026-10-28) — DONE
+- **Retired the `dev_panel` flag end-to-end.** Per founder decision, dev-facing AI annotations (fact tag / confidence) now render ONLY inside the password-gated, dev-only **Ayma's notes** screen (`story_ai_notes`), never in the normal UI for anyone. Removed the "Show AI notes" toggle, the `DevPanelFlag` client plumbing + `app_config/dev_panel` listener, `POST`/`GET /dev/flags`, the server flag definition/seed/mirror, and the now-dead tests. The Developer-panel unlock (`POST /dev/verify`, `DEV_PANEL_PASSWORD`) is unchanged.
+- **Inline "Turn on AI Avatar" button** (`dateSimEnableAvatarButton`) on the date-sim setup screen: when the user's own avatar is off, a one-tap button calls `setAiAvatar(true)` in-place (no trip to Settings); the profile stream clears the gate on success, write errors shown inline.
+- **Low-context warning** (`dateSimLowContextWarning`) before a sim, from `GET /date-sim/estimate?other_uid=`'s `readiness` block; uses the server `message` when present. Informs, does not block.
+- Version `1.30.0+2228`. Tests: flutter 1135 (incl. layout matrix) green; backend green bar the known `test_vendor_spend` date-flake.
+
 ## Integration 2217 (meta-hackathon, 2026-10-26) — final pass
 
 **DONE (merged into `meta-hackathon` on top of 2216, built APK 2217, NOT deployed, NOT pushed):**
@@ -157,7 +163,7 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 The standing snapshot (`users/{uid}/persona/avatar`, `persona_snapshot.py`) is built and wired for AI↔AI date sims. Remaining:
 - **Human↔AI voice reads the snapshot.** The voice/agent path (`agent.py`/`voices.py`/`voice_catalog.py`) was intentionally NOT touched (another agent owns the stack-aware voice vocabulary). Wire the voice persona to spawn from `get_persona_snapshot` (the distilled `brief` + grounding) so human↔AI uses the same standing avatar. Includes surfacing `readiness`/`low_context` at any human↔AI conversation-entry preflight (today only the date-sim `GET /date-sim/estimate?other_uid=` carries it).
 - **Accent in the snapshot.** The schema reserves voice/gender; spoken **accent** is not yet stored on the snapshot. UPDATE 2026-10-27 (branch `accent-work`): the accent field now EXISTS — `ayma_voice_accent` free text on `profile/main`, set from the "Ayma's models" Accent box or `set_voice_preference`, used by accent-capable voice providers at session boot (`voice_catalog.provider_supports_accent`). The snapshot can now read `ayma_voice_accent` and persist it; honour it only for accent-capable providers (same capability check).
-- **Flutter: low-context warning UI.** Backend returns `readiness.{readiness_score,low_context,message}` on the date-sim preflight; the "You & <name>" sim setup screen should show the warning copy when `low_context` is true (copy is server-provided in `message`).
+- **Flutter: low-context warning UI.** DONE (APK 2228): the date-sim setup screen fetches `readiness` from `GET /date-sim/estimate?other_uid=` and shows a warning (`dateSimLowContextWarning`) when `low_context` is true, using the server `message` when present. Informs, does not block.
 - **True conversation-volume count.** `conversation_volume` currently uses the already-gathered capped style-exemplar count (cheap, zero extra reads) as a proxy; it under-counts very chatty users (short-only, deduped, capped at 40). If needed, swap to a true uncapped own-message count across `dm_threads`.
 - **Deletion coverage audit (pre-existing).** `date_sims` and `practice_sessions` subcollections are not in `schema.ACCOUNT_SUBCOLLECTIONS` (persona IS, added here). Consider adding them so account deletion wipes them too.
 

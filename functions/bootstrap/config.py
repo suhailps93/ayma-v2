@@ -118,10 +118,9 @@ class Config:
     (comma-separated), default empty."""
 
     dev_panel_password: str
-    """Password ``POST /dev/flags`` checks before toggling the ``dev_panel``
-    feature flag from the app's Developer panel. From Secret Manager
-    (``DEV_PANEL_PASSWORD``) in deployment; an unset value makes the endpoint
-    refuse every toggle."""
+    """Password ``POST /dev/verify`` checks before unlocking the app's
+    Developer panel. From Secret Manager (``DEV_PANEL_PASSWORD``) in
+    deployment; an unset value makes the endpoint refuse every unlock."""
 
     admin_password: str
     """Password the ``/admin/*`` console checks against the ``X-Admin-Password``

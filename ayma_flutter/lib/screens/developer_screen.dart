@@ -7,7 +7,6 @@ import '../build_info.dart';
 import '../services/api_client.dart';
 import '../services/ayma_session.dart';
 import '../services/credits_balance.dart';
-import '../services/dev_panel_flag.dart';
 import '../services/dev_panel_session.dart';
 import '../services/feature_tour_store.dart';
 import '../theme.dart';
@@ -24,7 +23,7 @@ import 'story_editor_screen.dart';
 /// settings seven times (or long-pressing it). Opening it shows ONLY a
 /// password field: all contents — build / mode / account diagnostics,
 /// real-money spend, the free reload, per-conversation cost, the detailed
-/// release notes and the AI-notes flag toggle — stay hidden until the
+/// release notes and the dev-only Ayma's-notes entry — stay hidden until the
 /// developer password is verified server-side (`POST /dev/verify`). The unlock
 /// lives only in memory for the app session ([DevPanelSession]); a restart, or
 /// a long enough backgrounding, re-locks it. Dollar figures still come only
@@ -34,7 +33,6 @@ class DeveloperScreen extends StatefulWidget {
   const DeveloperScreen({
     super.key,
     this.api,
-    this.flag,
     this.session,
     this.auth,
   });
@@ -42,7 +40,6 @@ class DeveloperScreen extends StatefulWidget {
   static const path = '/settings/developer';
 
   final ApiClient? api;
-  final DevPanelFlag? flag;
   final DevPanelSession? session;
   final FirebaseAuth? auth;
 
@@ -52,12 +49,10 @@ class DeveloperScreen extends StatefulWidget {
 
 class _DeveloperScreenState extends State<DeveloperScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
-  DevPanelFlag get _flag => widget.flag ?? DevPanelFlag.instance;
   DevPanelSession get _session => widget.session ?? DevPanelSession.instance;
   final _password = TextEditingController();
   late Future<UsageSummary> _usage = _api.usage();
   bool _unlocking = false;
-  bool _switching = false;
   bool _reloading = false;
   bool _resettingMoney = false;
 
@@ -101,53 +96,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _unlocking = false);
-    }
-  }
-
-  /// Flip the `dev_panel` AI-notes flag, reusing the password verified at
-  /// unlock — the toggle only ever shows while the session is unlocked.
-  Future<void> _setFlag(bool value) async {
-    if (_switching) return;
-    final password = _session.password;
-    if (password == null) return;
-    setState(() => _switching = true);
-    try {
-      final now = await _api.setDevPanelFlag(
-        password: password,
-        enabled: value,
-      );
-      // Always reflect the server's confirmed (persisted) value — never the
-      // requested one. If the write didn't take (server answered 200 but the
-      // flag is unchanged), the switch stays where it truly is and we say so,
-      // rather than showing a success toast for a change that never landed.
-      _flag.enabled.value = now;
-      if (now == value) {
-        _say(now ? 'AI debug notes are on.' : 'AI debug notes are off.',
-            kind: AymaToastKind.success);
-      } else {
-        _say(
-            "Couldn't save that — the server kept AI notes "
-            '${now ? 'on' : 'off'}. Try again.',
-            kind: AymaToastKind.error);
-      }
-    } on ApiException catch (e) {
-      if (e.statusCode == 403) {
-        // The password changed under us (or the session is stale) — relock.
-        _session.lock();
-        _say('Developer access expired. Enter the password again.',
-            kind: AymaToastKind.warning);
-      } else {
-        _say(switch (e.statusCode) {
-          429 => 'Too many attempts. Try again later.',
-          503 => 'Switching is not configured on the server.',
-          _ => "Couldn't switch the flag. Check your connection.",
-        }, kind: AymaToastKind.error);
-      }
-    } catch (_) {
-      _say("Couldn't switch the flag. Check your connection.",
-          kind: AymaToastKind.error);
-    } finally {
-      if (mounted) setState(() => _switching = false);
     }
   }
 
@@ -335,49 +283,11 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     ];
   }
 
-  /// Unlocked: the AI-notes toggle, build diagnostics, real-money spend and the
-  /// detailed release notes.
+  /// Unlocked: build diagnostics, real-money spend, the dev-only Ayma's-notes
+  /// entry and the detailed release notes.
   List<Widget> _unlockedChildren(BuildContext context) {
     final ac = context.ac;
     return [
-      const Eyebrow('AI debug notes'),
-      const SizedBox(height: 12),
-      Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Show AI notes',
-                  style: AymaType.sans(size: 15, color: ac.fg),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'dev_panel — dev-facing AI annotations (tags, confidence) '
-                  'in the normal UI, for everyone.',
-                  style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-                ),
-              ],
-            ),
-          ),
-          _switching
-              ? const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : ValueListenableBuilder<bool>(
-                  valueListenable: _flag.enabled,
-                  builder: (context, on, _) => Switch(
-                    key: const ValueKey('dev-panel-switch'),
-                    value: on,
-                    onChanged: _setFlag,
-                  ),
-                ),
-        ],
-      ),
-      const SizedBox(height: 36),
       const Eyebrow('Build'),
       const SizedBox(height: 12),
       _kv(context, 'Build', appBuildTag),
@@ -619,19 +529,19 @@ class _Spend extends StatelessWidget {
       children: [
         const Eyebrow('Real money'),
         const SizedBox(height: 12),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
+        // Wrap, not Row: at large text scales the big serif figure plus its
+        // label can exceed the width, so the label reflows below instead of
+        // overflowing (layout matrix: 1.5x/2.0x narrow sizes).
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.end,
           children: [
             Text(
               _usd(u.realMoneyUsd),
               style: AymaType.serif(size: 44, color: ac.fg),
             ),
-            Flexible(
-              child: Text(
-                '  spent for real',
-                style: AymaType.sans(size: 15, color: ac.fgMute),
-              ),
+            Text(
+              '  spent for real',
+              style: AymaType.sans(size: 15, color: ac.fgMute),
             ),
           ],
         ),
@@ -654,9 +564,8 @@ class _Spend extends StatelessWidget {
             ),
           ],
         ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.end,
           children: [
             Text(
               _usd(u.realMoneyAllTimeUsd),

@@ -44,7 +44,7 @@ flowchart LR
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
-    API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
+    API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/verify, /voice/context"]
     Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping,<br/>kept up per call by a /keepalive request to itself<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     MCP["Ayma MCP server (/mcp, flag mcp_server, default OFF)<br/>bring-your-own-agent: profile/matches/DM/persona tools<br/>opaque per-user tokens (Firestore-validated, revocable)<br/>gates server-side: scope, 18+, moderation, no-PII, per-token rate limit<br/>NO Ayma LLM — the client's model does all reasoning"]
@@ -243,11 +243,12 @@ flowchart LR
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
 - *Developer panel* (`/settings/developer`, seven taps on the version row) is **password-gated**: opening it shows
   only a password field, and its contents (build/mode/account, real-money spend, free reload, per-conversation cost,
-  release notes, the AI-notes toggle, and the **Ayma's Notes** entry) appear only after `POST /dev/verify` succeeds
+  release notes, and the **Ayma's Notes** entry) appear only after `POST /dev/verify` succeeds
   against `DEV_PANEL_PASSWORD`. The
   unlock is in-memory for the app session (`DevPanelSession`, re-locks on restart or ~5 min backgrounded). The
-  `dev_panel` flag now gates only the dev-facing AI annotations in the normal UI (read live from `app_config/dev_panel`);
-  its toggle lives inside the unlocked panel and `POST /dev/flags` writes it with the same password.
+  dev-facing AI annotations (a fact's raw tag / confidence) render only inside the password-gated **Ayma's Notes**
+  screen (`story_ai_notes`), never in the normal UI any viewer sees (the former `dev_panel` flag and its toggle were
+  retired in APK 2228).
   - *Ayma's Notes (dev-only)* — the unlocked panel has an **"Ayma's notes"** entry opening the standalone
     `AymaNotesScreen` (`/settings/developer/ayma-notes`), which renders `story.get_ai_notes` (the full analytical
     picture incl. `{{ai_only}}` spans, the deleted-photos group, and the AI-only appearance card). It exposes "the
@@ -1265,7 +1266,7 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 
 As built, the API also serves (see §0): `GET/POST /biometric-consent`, `POST /biometric-consent/withdraw`,
 `POST /age-gate/declare`, `PUT /profile/preferences` (partner age range, `distance_pref`), `POST/DELETE /voice/context`,
-`GET/POST /dev/flags`, `POST /webhooks/revenuecat`, and the password-protected admin set (`/admin`,
+`POST /dev/verify`, `POST /webhooks/revenuecat`, and the password-protected admin set (`/admin`,
 `/admin/provider-spend`, `/admin/vendors`, `/admin/vendor-spend`, `/admin/feature-flags`, `/admin/users`). The
 `/instagram/*` routes answer 404 while `meta_integrations` is off.
 

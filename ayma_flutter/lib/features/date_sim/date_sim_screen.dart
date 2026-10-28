@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_client.dart';
 import '../../services/date_sim_service.dart';
+import '../../services/profile_service.dart';
 import '../../theme.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/out_of_credits.dart';
@@ -33,6 +34,7 @@ class DateSimScreen extends StatefulWidget {
     this.threadId,
     this.api,
     this.service,
+    this.profiles,
     this.simId,
   });
 
@@ -50,6 +52,7 @@ class DateSimScreen extends StatefulWidget {
 
   final ApiClient? api;
   final DateSimService? service;
+  final ProfileService? profiles;
 
   /// Reopen an existing simulation (already running or finished) and watch it,
   /// instead of starting at the setup form. No new run is started.
@@ -64,11 +67,29 @@ enum _Phase { setup, live }
 class _DateSimScreenState extends State<DateSimScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   late final DateSimService _service = widget.service ?? DateSimService();
+  late final ProfileService _profiles = widget.profiles ?? ProfileService();
   final ScrollController _scroll = ScrollController();
 
   _Phase _phase = _Phase.setup;
   String? _error;
   int _count = 6;
+
+  /// Whether the CURRENT user's AI Avatar is on. A sim runs both personas on
+  /// the user's own credits and needs the user's avatar enabled; when off, the
+  /// setup screen shows a one-tap "Turn on AI Avatar" gate instead of the
+  /// controls. On until the profile stream says otherwise, so the gate never
+  /// flashes for the common (enabled) case.
+  bool _avatarEnabled = true;
+  StreamSubscription<bool>? _avatarSub;
+
+  /// True while the in-place "Turn on AI Avatar" write is in flight.
+  bool _enablingAvatar = false;
+
+  /// A short inline error if enabling the avatar failed; cleared on retry.
+  String? _avatarError;
+
+  /// The match's avatar readiness, for the low-context warning before a sim.
+  DateSimReadiness? _readiness;
 
   DateSimDoc? _sim;
   List<DateSimMessage> _messages = const [];
@@ -89,6 +110,12 @@ class _DateSimScreenState extends State<DateSimScreen> {
   void initState() {
     super.initState();
     _loadEstimate();
+    _avatarSub = _profiles.watchAiAvatar().listen((on) {
+      if (mounted) setState(() => _avatarEnabled = on);
+    }, onError: (_) {
+      // A read failure leaves the gate at its optimistic default (enabled),
+      // so the user is never locked out of the screen by a transient error.
+    });
     final existing = widget.simId;
     if (existing != null) {
       _phase = _Phase.live;
@@ -100,16 +127,43 @@ class _DateSimScreenState extends State<DateSimScreen> {
   void dispose() {
     _simSub?.cancel();
     _msgSub?.cancel();
+    _avatarSub?.cancel();
     _scroll.dispose();
     super.dispose();
   }
 
   Future<void> _loadEstimate() async {
     try {
-      final e = await _api.dateSimEstimate();
-      if (mounted) setState(() => _estimate = e);
+      final e = await _api.dateSimEstimate(otherUid: widget.uid);
+      if (mounted) {
+        setState(() {
+          _estimate = e.credits;
+          _readiness = e.readiness;
+        });
+      }
     } catch (_) {
       // The warning still shows, without a number.
+    }
+  }
+
+  /// Enable the user's AI Avatar in-place, so the sim gate clears without a
+  /// trip to Settings. The profile stream flips [_avatarEnabled] on success;
+  /// a write failure shows a short inline error.
+  Future<void> _enableAvatar() async {
+    if (_enablingAvatar) return;
+    setState(() {
+      _enablingAvatar = true;
+      _avatarError = null;
+    });
+    try {
+      await _profiles.setAiAvatar(true);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _avatarError =
+            "Couldn't turn on your AI Avatar. Please try again.");
+      }
+    } finally {
+      if (mounted) setState(() => _enablingAvatar = false);
     }
   }
 
@@ -281,43 +335,56 @@ class _DateSimScreenState extends State<DateSimScreen> {
             style: AymaType.sans(size: 13, color: ac.fgDim),
           ),
           const SizedBox(height: 20),
-          _CreditWarning(count: _count, credits: _estimate[_count]),
-          const SizedBox(height: 28),
-          Text(
-            'Messages to exchange',
-            style: AymaType.sans(
-              size: 14,
-              weight: FontWeight.w600,
-              color: ac.fgDim,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _CountStepper(
-            value: _count,
-            min: _min,
-            max: _max,
-            onChanged: (v) => setState(() => _count = v),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 20),
+          if (!_avatarEnabled)
+            _AvatarGate(
+              name: _name,
+              busy: _enablingAvatar,
+              error: _avatarError,
+              onEnable: _enableAvatar,
+            )
+          else ...[
+            _CreditWarning(count: _count, credits: _estimate[_count]),
+            if (_readiness?.lowContext ?? false) ...[
+              const SizedBox(height: 16),
+              _LowContextWarning(readiness: _readiness!, fallbackName: _name),
+            ],
+            const SizedBox(height: 28),
             Text(
-              _error!,
-              key: const Key('dateSimError'),
-              textAlign: TextAlign.center,
-              style: AymaType.sans(size: 14, color: ac.error),
+              'Messages to exchange',
+              style: AymaType.sans(
+                size: 14,
+                weight: FontWeight.w600,
+                color: ac.fgDim,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _CountStepper(
+              value: _count,
+              min: _min,
+              max: _max,
+              onChanged: (v) => setState(() => _count = v),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 20),
+              Text(
+                _error!,
+                key: const Key('dateSimError'),
+                textAlign: TextAlign.center,
+                style: AymaType.sans(size: 14, color: ac.error),
+              ),
+            ],
+            const SizedBox(height: 28),
+            FilledButton(
+              key: const Key('dateSimRunButton'),
+              onPressed: _run,
+              style: FilledButton.styleFrom(
+                backgroundColor: ac.accent,
+                foregroundColor: ac.onAccent,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('Simulate a conversation'),
             ),
           ],
-          const SizedBox(height: 28),
-          FilledButton(
-            key: const Key('dateSimRunButton'),
-            onPressed: _run,
-            style: FilledButton.styleFrom(
-              backgroundColor: ac.accent,
-              foregroundColor: ac.onAccent,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-            child: const Text('Simulate a conversation'),
-          ),
         ],
       ),
     );
@@ -530,6 +597,123 @@ class _CreditWarning extends StatelessWidget {
                         'including a final compatibility read. Both agents are '
                         'billed to you.',
               style: AymaType.sans(size: 13, color: ac.fg, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown on the setup screen when the user's own AI Avatar is off. A sim needs
+/// the user's avatar, so instead of a dead-end "go to Settings" message this
+/// enables it in-place with one tap ([onEnable] → `setAiAvatar(true)`); the
+/// gate clears as soon as the profile stream reports it on.
+class _AvatarGate extends StatelessWidget {
+  const _AvatarGate({
+    required this.name,
+    required this.busy,
+    required this.error,
+    required this.onEnable,
+  });
+
+  final String name;
+  final bool busy;
+  final String? error;
+  final VoidCallback onEnable;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      key: const Key('dateSimAvatarGate'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: ac.accentFaint,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            name.isEmpty
+                ? 'Simulated dates run your AI alongside theirs, so you need '
+                      'your AI Avatar turned on.'
+                : 'Simulated dates run your AI alongside $name’s, so you need '
+                      'your AI Avatar turned on.',
+            style: AymaType.sans(size: 14, color: ac.fg, height: 1.4),
+          ),
+        ),
+        const SizedBox(height: 20),
+        FilledButton(
+          key: const Key('dateSimEnableAvatarButton'),
+          onPressed: busy ? null : onEnable,
+          style: FilledButton.styleFrom(
+            backgroundColor: ac.accent,
+            foregroundColor: ac.onAccent,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+          ),
+          child: busy
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: ac.onAccent,
+                  ),
+                )
+              : const Text('Turn on AI Avatar'),
+        ),
+        if (error != null) ...[
+          const SizedBox(height: 14),
+          Text(
+            error!,
+            key: const Key('dateSimAvatarGateError'),
+            textAlign: TextAlign.center,
+            style: AymaType.sans(size: 13.5, color: ac.error),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// A pre-sim warning when the match's AI persona has little to go on, so the
+/// user knows a simulated chat won't reflect them well. Informs, never blocks.
+class _LowContextWarning extends StatelessWidget {
+  const _LowContextWarning({required this.readiness, required this.fallbackName});
+
+  final DateSimReadiness readiness;
+  final String fallbackName;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final name = readiness.name.isNotEmpty
+        ? readiness.name
+        : (fallbackName.isEmpty ? 'This person' : fallbackName);
+    final text = readiness.message.isNotEmpty
+        ? readiness.message
+        : "$name doesn't have much context yet — a simulated chat with their "
+              'AI won’t be an accurate reflection of them.';
+    return Container(
+      key: const Key('dateSimLowContextWarning'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ac.accentFaint,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ac.lineSoft, width: 0.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 20, color: ac.fgDim),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: AymaType.sans(size: 13.5, color: ac.fg, height: 1.4),
             ),
           ),
         ],

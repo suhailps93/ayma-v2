@@ -167,8 +167,13 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         PracticeScreen(uid: 'her', name: 'Dana', api: api),
     PracticeDebriefScreen.path: () =>
         PracticeDebriefScreen(sessionId: 'p1', name: 'Dana', api: api),
-    DateSimScreen.path: () =>
-        DateSimScreen(uid: 'her', name: 'Dana', threadId: 'her__me', api: api),
+    DateSimScreen.path: () => DateSimScreen(
+      uid: 'her',
+      name: 'Dana',
+      threadId: 'her__me',
+      api: api,
+      profiles: profiles,
+    ),
     ExploreScreen.path: () => shell(
       ExploreScreen(apiClient: api, initialQuery: 'climbers in Denver'),
     ),
@@ -400,6 +405,7 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
               api: api,
               simId: 'sim1',
               service: DateSimService(auth: kLayoutAuth, firestore: fs),
+              profiles: ProfileService(auth: kLayoutAuth, firestore: fs),
             ),
           ),
         );

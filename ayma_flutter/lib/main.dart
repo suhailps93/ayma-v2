@@ -19,7 +19,6 @@ import 'services/accent_color_controller.dart';
 import 'services/api_client.dart';
 import 'services/app_command_host.dart';
 import 'services/app_command_service.dart';
-import 'services/dev_panel_flag.dart';
 import 'services/dev_panel_session.dart';
 import 'services/error_reporting.dart';
 import 'services/feature_tour_store.dart';
@@ -116,7 +115,6 @@ Future<void> main() async {
     }
   });
 
-  DevPanelFlag.instance.listen(FirebaseFirestore.instance);
   WidgetsBinding.instance.addObserver(DevPanelSession.instance);
   AppCommandHost(AppCommandService.shared).attach();
   // Every screen tells Ayma what is on it, and she can operate its controls

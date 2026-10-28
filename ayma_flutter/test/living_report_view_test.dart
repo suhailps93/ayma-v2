@@ -15,7 +15,6 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
@@ -525,17 +524,30 @@ ApiClient _aiNotesToneApi() {
 }
 
 void main() {
-  testWidgets('a fact\'s raw tag/confidence annotation follows the '
-      'dev_panel flag live', (tester) async {
-    addTearDown(() => DevPanelFlag.instance.enabled.value = true);
-    DevPanelFlag.instance.enabled.value = true;
+  testWidgets(
+      "a fact's raw tag/confidence annotation shows only in the dev-only "
+      "Ayma's-notes report, never in the normal UI", (tester) async {
+    // Normal report (deep_dive): the fact text renders, the dev-facing
+    // tag/confidence annotation does NOT — it is no longer shown to anyone in
+    // the normal UI.
     await tester.pumpWidget(_host(_api()));
     await tester.pumpAndSettle();
-    expect(find.text('education · high'), findsOneWidget);
-
-    DevPanelFlag.instance.enabled.value = false;
-    await tester.pump();
+    expect(find.text('• Graduated in 2020.'), findsOneWidget);
     expect(find.text('education · high'), findsNothing);
+
+    // The same fact inside the password-gated, dev-only story_ai_notes report
+    // DOES carry the annotation.
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'story_ai_notes',
+          reportId: 'u1',
+          apiClient: _reportApi('story_ai_notes', 'u1', _report()),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('education · high'), findsOneWidget);
     expect(find.text('• Graduated in 2020.'), findsOneWidget);
   });
 

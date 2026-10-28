@@ -47,11 +47,11 @@ voice context compression.
 and `app_config/sentry` > code default. Flag keys: `llm_route_json|vision|chat` (`inference`/`vertex`),
 `voice_provider` (`inference`/`google`), `llm_percent_*`, `llm_allowlist_*`, `llm_fallback_to_google`,
 `maps_grounding`, `deepdive_public_profiles`, `deepdive_blocked_regions`, `vertex_ai_search`,
-`vertex_ai_search_daily_cap`, `meta_integrations` (V2, off), `sentry`, `dev_panel` (on; now gates only the dev-facing
-AI annotations in the normal UI — turn off at store release. It no longer gates the Developer panel, whose contents are
-always password-gated via `POST /dev/verify` against `DEV_PANEL_PASSWORD`; its toggle lives inside the unlocked panel
-and `POST /dev/flags` writes it). `sentry`, `meta_integrations` and
-`dev_panel` are mirrored to `app_config/<flag>.enabled` for the app.
+`vertex_ai_search_daily_cap`, `meta_integrations` (V2, off), `sentry`, `mcp_server`. The former `dev_panel` flag was
+retired in APK 2228: dev-facing AI annotations (fact tag / confidence) now render only inside the password-gated,
+dev-only **Ayma's notes** screen, never in the normal UI. The Developer panel is still password-gated via
+`POST /dev/verify` against `DEV_PANEL_PASSWORD` (that unlock was never this flag). `sentry` and `meta_integrations`
+are mirrored to `app_config/<flag>.enabled` for the app.
 
 ```
 python3 scripts/flags.py list                       # effective values + source   (branch all-features-on)

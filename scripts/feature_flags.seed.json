@@ -20,6 +20,5 @@
   "vertex_ai_search_daily_cap": 300,
   "meta_integrations": false,
   "sentry": true,
-  "dev_panel": true,
   "mcp_server": false
 }

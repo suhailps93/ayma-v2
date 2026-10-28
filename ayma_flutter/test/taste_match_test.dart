@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/date_sim_service.dart';
+import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -89,6 +90,7 @@ Future<void> _runSim(WidgetTester tester, ApiClient api) async {
       api: api,
       simId: 'sim1',
       service: DateSimService(auth: auth, firestore: fs),
+      profiles: ProfileService(auth: auth, firestore: fs),
     ),
   ));
   await tester.pump();

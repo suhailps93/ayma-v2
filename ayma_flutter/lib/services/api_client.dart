@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
+import '../features/date_sim/date_sim_models.dart';
 import '../features/date_sim/taste_models.dart';
 import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
@@ -1129,26 +1130,11 @@ class ApiClient {
   }
 
   /// `POST /dev/verify` — verify the developer password to unlock the
-  /// Developer panel's contents, without changing any flag. The server checks
-  /// [password] against its own secret; throws [ApiException] with status 403
-  /// (wrong password), 429 (locked out) or 503 (not configured).
+  /// Developer panel's contents. The server checks [password] against its own
+  /// secret; throws [ApiException] with status 403 (wrong password), 429
+  /// (locked out) or 503 (not configured).
   Future<void> verifyDevPassword(String password) async {
     await _sendJson('POST', '/dev/verify', {'password': password});
-  }
-
-  /// `POST /dev/flags` — switch the `dev_panel` feature flag. The server
-  /// checks [password] against its own secret; throws [ApiException] with
-  /// status 403 (wrong password), 429 (locked out) or 503 (not configured).
-  /// Returns the new value.
-  Future<bool> setDevPanelFlag({
-    required String password,
-    required bool enabled,
-  }) async {
-    final m = await _sendJson('POST', '/dev/flags', {
-      'password': password,
-      'dev_panel': enabled,
-    });
-    return m['dev_panel'] == true;
   }
 
   static String _upgradeMessage(String body) {
@@ -1397,14 +1383,27 @@ class ApiClient {
   }
 
   /// `GET /date-sim/estimate` — approximate credits per message count (both
-  /// agents are billed to the user). Empty when unavailable.
-  Future<Map<int, int>> dateSimEstimate() async {
-    final r = await _http.get(_uri('/date-sim/estimate'),
-        headers: await _headers());
-    if (r.statusCode != 200) return const {};
-    final raw = (jsonDecode(r.body) as Map<String, dynamic>)['credits_by_messages']
-        as Map<String, dynamic>;
-    return {for (final e in raw.entries) int.parse(e.key): (e.value as num).toInt()};
+  /// agents are billed to the user). When [otherUid] is given, also carries the
+  /// match's avatar `readiness` block so the setup screen can warn when the
+  /// match has little context. Empty credits when unavailable.
+  Future<DateSimEstimate> dateSimEstimate({String? otherUid}) async {
+    final uri = (otherUid != null && otherUid.isNotEmpty)
+        ? _uri('/date-sim/estimate')
+            .replace(queryParameters: {'other_uid': otherUid})
+        : _uri('/date-sim/estimate');
+    final r = await _http.get(uri, headers: await _headers());
+    if (r.statusCode != 200) return const DateSimEstimate();
+    final body = jsonDecode(r.body) as Map<String, dynamic>;
+    final raw =
+        (body['credits_by_messages'] as Map<String, dynamic>?) ?? const {};
+    final readiness = body['readiness'] as Map<String, dynamic>?;
+    return DateSimEstimate(
+      credits: {
+        for (final e in raw.entries) int.parse(e.key): (e.value as num).toInt(),
+      },
+      readiness:
+          readiness == null ? null : DateSimReadiness.fromMap(readiness),
+    );
   }
 
   /// `POST /profiles/mini` — name + resolved photo URL for a batch of users

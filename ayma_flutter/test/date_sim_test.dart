@@ -5,6 +5,7 @@ import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/date_sim_service.dart';
+import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -25,7 +26,7 @@ http.Response _json(Object body, [int status = 200]) => http.Response(
 /// the test plays the backend's part by writing the sim's docs, exactly as
 /// `date_sim.run_simulation` does.
 class _Harness {
-  _Harness({this.postStatus = 200, this.postBody = '{}'}) {
+  _Harness({this.postStatus = 200, this.postBody = '{}', this.readiness}) {
     auth = MockFirebaseAuth(signedIn: true);
     fs = FakeFirebaseFirestore();
     api = ApiClient(
@@ -34,6 +35,7 @@ class _Harness {
         if (req.url.path == '/date-sim/estimate') {
           return _json({
             'credits_by_messages': {for (var n = 2; n <= 20; n++) '$n': n * 10},
+            if (readiness != null) 'readiness': readiness,
           });
         }
         if (req.url.path == '/date-sim') {
@@ -54,6 +56,9 @@ class _Harness {
 
   final int postStatus;
   final String postBody;
+
+  /// Optional `readiness` block the `/date-sim/estimate` mock returns.
+  final Map<String, dynamic>? readiness;
   final Completer<void> release = Completer<void>();
   late final MockFirebaseAuth auth;
   late final FakeFirebaseFirestore fs;
@@ -92,6 +97,7 @@ class _Harness {
     name: 'Dana',
     api: api,
     service: DateSimService(auth: auth, firestore: fs),
+    profiles: ProfileService(auth: auth, firestore: fs),
   );
 }
 
@@ -115,6 +121,65 @@ void main() {
     expect(find.byKey(const Key('dateSimCountValue')), findsOneWidget);
     expect(find.byKey(const Key('dateSimSetupNote')), findsOneWidget);
     expect(find.text('6'), findsOneWidget); // sensible default
+  });
+
+  testWidgets(
+    'AI Avatar off: shows the in-place enable gate, not the run controls; '
+    'turning it on clears the gate',
+    (tester) async {
+      final h = _Harness();
+      final uid = h.auth.currentUser!.uid;
+      await h.fs.doc('users/$uid/profile/main').set({'ai_avatar_enabled': false});
+      await tester.pumpWidget(_wrap(h.screen()));
+      await _settle(tester);
+
+      // Gate up, run controls gone.
+      expect(find.byKey(const Key('dateSimAvatarGate')), findsOneWidget);
+      expect(find.byKey(const Key('dateSimEnableAvatarButton')), findsOneWidget);
+      expect(find.byKey(const Key('dateSimRunButton')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('dateSimEnableAvatarButton')));
+      await _settle(tester);
+
+      // The write landed and the stream flipped the gate: controls return.
+      final doc = await h.fs.doc('users/$uid/profile/main').get();
+      expect(doc.data()?['ai_avatar_enabled'], isTrue);
+      expect(find.byKey(const Key('dateSimAvatarGate')), findsNothing);
+      expect(find.byKey(const Key('dateSimRunButton')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'low-context match: warns before simulating, without blocking the run',
+    (tester) async {
+      final h = _Harness(readiness: {
+        'name': 'Dana',
+        'readiness_score': 12,
+        'low_context': true,
+      });
+      await tester.pumpWidget(_wrap(h.screen()));
+      await _settle(tester);
+
+      expect(find.byKey(const Key('dateSimLowContextWarning')), findsOneWidget);
+      expect(find.textContaining("doesn't have much context yet"),
+          findsOneWidget);
+      // Informs, does not block — the run button is still there.
+      expect(find.byKey(const Key('dateSimRunButton')), findsOneWidget);
+    },
+  );
+
+  testWidgets('low-context warning uses the backend message when present',
+      (tester) async {
+    final h = _Harness(readiness: {
+      'name': 'Dana',
+      'readiness_score': 8,
+      'low_context': true,
+      'message': 'Dana just joined — too little to go on for a real read.',
+    });
+    await tester.pumpWidget(_wrap(h.screen()));
+    await _settle(tester);
+    expect(find.text('Dana just joined — too little to go on for a real read.'),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -295,6 +360,7 @@ void main() {
               api: h.api,
               simId: 'sim1',
               service: DateSimService(auth: h.auth, firestore: h.fs),
+              profiles: ProfileService(auth: h.auth, firestore: h.fs),
             ),
             theme: theme,
           ),

@@ -5,7 +5,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/living_report.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
-import '../services/dev_panel_flag.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_orb.dart';
@@ -492,6 +491,10 @@ class LivingReportViewState extends State<LivingReportView>
                 section: section,
                 report: report,
                 canEdit: canEdit,
+                // Dev-facing per-fact annotations (tag/confidence) render only
+                // inside the password-gated Ayma's-notes screen
+                // (`story_ai_notes`), never in the normal UI any viewer sees.
+                showDevAnnotations: widget.reportType == 'story_ai_notes',
                 selected: _selected,
                 selecting: _selecting,
                 onHeadingTap: _selecting || section.blockIds.isEmpty
@@ -567,6 +570,7 @@ class _SectionView extends StatelessWidget {
     required this.section,
     required this.report,
     required this.canEdit,
+    required this.showDevAnnotations,
     required this.selected,
     required this.selecting,
     required this.onHeadingTap,
@@ -577,6 +581,10 @@ class _SectionView extends StatelessWidget {
   final ReportSection section;
   final LivingReport report;
   final bool canEdit;
+
+  /// Whether a fact's raw tag/confidence annotation is shown — true only for
+  /// the dev-only Ayma's-notes report (`story_ai_notes`).
+  final bool showDevAnnotations;
   final Set<String> selected;
   final bool selecting;
   final VoidCallback? onHeadingTap;
@@ -610,6 +618,7 @@ class _SectionView extends StatelessWidget {
       flush();
       rows.add(_BlockRow(
         block: b,
+        showDevAnnotations: showDevAnnotations,
         selected: selected.contains(b.blockId),
         selecting: selecting,
         onTap: () => onBlockTap(b),
@@ -742,6 +751,7 @@ class _Sentence extends StatelessWidget {
 class _BlockRow extends StatelessWidget {
   const _BlockRow({
     required this.block,
+    required this.showDevAnnotations,
     required this.selected,
     required this.selecting,
     required this.onTap,
@@ -749,6 +759,7 @@ class _BlockRow extends StatelessWidget {
   });
 
   final ReportBlock block;
+  final bool showDevAnnotations;
   final bool selected;
   final bool selecting;
   final VoidCallback onTap;
@@ -760,7 +771,8 @@ class _BlockRow extends StatelessWidget {
     final child = switch (block.type) {
       kBlockSectionHead => Text(block.text,
           style: AymaType.sans(size: 13, soft: true, color: ac.fgMute)),
-      kBlockFact => _FactRow(block: block),
+      kBlockFact =>
+        _FactRow(block: block, showDevAnnotations: showDevAnnotations),
       kBlockAttribute => _AttributeRow(block: block),
       kBlockStat => _StatRow(block: block),
       kBlockLink => _LinkRow(block: block),
@@ -800,8 +812,13 @@ class _BlockRow extends StatelessWidget {
 }
 
 class _FactRow extends StatelessWidget {
-  const _FactRow({required this.block});
+  const _FactRow({required this.block, required this.showDevAnnotations});
   final ReportBlock block;
+
+  /// Whether the model's raw tag/confidence annotation is shown — true only in
+  /// the dev-only, password-gated Ayma's-notes screen (`story_ai_notes`), never
+  /// in the normal UI any viewer sees.
+  final bool showDevAnnotations;
 
   @override
   Widget build(BuildContext context) {
@@ -812,19 +829,12 @@ class _FactRow extends StatelessWidget {
       children: [
         _LinkifiedText('• ${block.text}',
             style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
-        // The model's raw tag / confidence label is a dev-facing annotation:
-        // shown only while the `dev_panel` flag is on.
-        if (block.tag.isNotEmpty || conf.isNotEmpty)
-          ValueListenableBuilder<bool>(
-            valueListenable: DevPanelFlag.instance.enabled,
-            builder: (context, dev, _) => !dev
-                ? const SizedBox.shrink()
-                : Padding(
-                    key: const ValueKey('fact-dev-annotation'),
-                    padding: const EdgeInsets.only(left: 14, top: 2),
-                    child: Text('${block.tag}$conf',
-                        style: AymaType.mono(size: 9, color: ac.fgMute)),
-                  ),
+        if (showDevAnnotations && (block.tag.isNotEmpty || conf.isNotEmpty))
+          Padding(
+            key: const ValueKey('fact-dev-annotation'),
+            padding: const EdgeInsets.only(left: 14, top: 2),
+            child: Text('${block.tag}$conf',
+                style: AymaType.mono(size: 9, color: ac.fgMute)),
           ),
       ],
     );

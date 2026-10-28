@@ -4935,23 +4935,6 @@ async def credits_topup(
     return await asyncio.to_thread(token_ledger.usage, uid)
 
 
-class DevFlagsRequest(BaseModel):
-    """Body of ``POST /dev/flags`` — only ``dev_panel`` may be written."""
-
-    model_config = {"extra": "forbid"}
-
-    password: str = Field(min_length=1, max_length=256)
-    dev_panel: bool
-
-
-@app.get("/dev/flags")
-async def dev_flags_get(uid: str = Depends(require_uid)) -> dict[str, bool]:
-    """The effective ``dev_panel`` flag (the app's Developer panel gate)."""
-    import dev_flags
-
-    return {"dev_panel": await asyncio.to_thread(dev_flags.current)}
-
-
 class DevVerifyRequest(BaseModel):
     """Body of ``POST /dev/verify`` — the Developer panel's unlock check."""
 
@@ -4964,10 +4947,10 @@ class DevVerifyRequest(BaseModel):
 async def dev_verify(
     request: Request, body: DevVerifyRequest, uid: str = Depends(require_uid)
 ) -> dict[str, bool]:
-    """Verify the Developer-panel password server-side without changing any
-    flag. The app calls this to unlock the panel's contents; the same
-    constant-time compare and Firestore-backed lockout as ``POST /dev/flags``
-    apply, and the password is never logged."""
+    """Verify the Developer-panel password server-side. The app calls this to
+    unlock the panel's contents; a constant-time compare against
+    ``DEV_PANEL_PASSWORD`` with a Firestore-backed lockout (see ``dev_flags``)
+    applies, and the password is never logged."""
     import dev_flags
 
     try:
@@ -4989,37 +4972,6 @@ async def dev_verify(
     except dev_flags.BadPassword as exc:
         raise HTTPException(status_code=403, detail="Wrong password.") from exc
     return {"ok": True}
-
-
-@app.post("/dev/flags")
-async def dev_flags_set(
-    request: Request, body: DevFlagsRequest, uid: str = Depends(require_uid)
-) -> dict[str, bool]:
-    """Switch ``dev_panel`` live from the app's Developer panel. The password
-    is checked server-side against ``DEV_PANEL_PASSWORD`` with a Firestore-backed
-    lockout (see ``dev_flags``); the write lands in ``config/feature_flags`` and
-    its ``app_config/dev_panel`` mirror, which the app listens to."""
-    import dev_flags
-
-    try:
-        value = await asyncio.to_thread(
-            dev_flags.set_dev_panel,
-            get_db(), uid, body.password, body.dev_panel,
-            ip=ratelimit.trusted_client_ip(request),
-        )
-    except dev_flags.NotConfigured as exc:
-        raise HTTPException(
-            status_code=503, detail="Developer flag switching is not configured."
-        ) from exc
-    except dev_flags.LockedOut as exc:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many wrong passwords. Try again later.",
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from exc
-    except dev_flags.BadPassword as exc:
-        raise HTTPException(status_code=403, detail="Wrong password.") from exc
-    return {"dev_panel": value}
 
 
 @app.post("/webhooks/revenuecat", dependencies=[Depends(require_revenuecat)])

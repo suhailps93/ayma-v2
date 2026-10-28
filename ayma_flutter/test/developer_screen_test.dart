@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -58,7 +57,6 @@ Future<void> _pump(WidgetTester tester, Widget page) async {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    DevPanelFlag.instance.enabled.value = true;
     DevPanelSession.instance.lock();
   });
   tearDown(() => DevPanelSession.instance.lock());
@@ -78,7 +76,6 @@ void main() {
     expect(find.text('BUILD'), findsNothing);
     expect(find.textContaining('spent for real'), findsNothing);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
-    expect(find.byKey(const ValueKey('dev-panel-switch')), findsNothing);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsNothing);
     // The dev-only "Ayma's notes" entry is gated behind the unlock too — a
     // locked panel never exposes the analysis layer's entry point.
@@ -174,7 +171,9 @@ void main() {
     expect(find.text('Voice engine'), findsNothing);
     expect(find.byKey(const ValueKey('voice-engine-control')), findsNothing);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsOneWidget);
-    expect(find.byKey(const ValueKey('dev-panel-switch')), findsOneWidget);
+    // The AI-notes flag toggle was retired (dev AI notes are now dev-only in
+    // the password-gated Ayma's-notes screen); its switch no longer exists.
+    expect(find.byKey(const ValueKey('dev-panel-switch')), findsNothing);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsOneWidget);
   });
 
@@ -227,75 +226,6 @@ void main() {
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
     expect(find.textContaining('spent for real'), findsNothing);
     expect(find.byKey(const ValueKey('dev-test-upgrade-pro')), findsNothing);
-  });
-
-  testWidgets('the AI-notes toggle sends the stored password to the server', (
-    tester,
-  ) async {
-    DevPanelSession.instance.unlock('pw');
-    final posts = <Map<String, dynamic>>[];
-    final api = _api((req) async {
-      if (req.method == 'POST' && req.url.path == '/dev/flags') {
-        final body = jsonDecode(req.body) as Map<String, dynamic>;
-        posts.add(body);
-        return http.Response(jsonEncode({'dev_panel': body['dev_panel']}), 200);
-      }
-      return http.Response(jsonEncode(_usage()), 200);
-    });
-    await _pump(
-      tester,
-      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
-    );
-    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
-    await tester.pumpAndSettle();
-    expect(posts, [
-      {'password': 'pw', 'dev_panel': false},
-    ]);
-    expect(DevPanelFlag.instance.enabled.value, isFalse);
-  });
-
-  testWidgets(
-      'AI-notes toggle: a write that does not take fails visibly, switch stays',
-      (tester) async {
-    DevPanelSession.instance.unlock('pw');
-    DevPanelFlag.instance.enabled.value = true;
-    // Server answers 200 but the flag is UNCHANGED (write never landed).
-    final api = _api((req) async {
-      if (req.method == 'POST' && req.url.path == '/dev/flags') {
-        return http.Response(jsonEncode({'dev_panel': true}), 200);
-      }
-      return http.Response(jsonEncode(_usage()), 200);
-    });
-    await _pump(
-      tester,
-      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
-    );
-    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
-    await tester.pumpAndSettle();
-    // Visible error, and the flag reflects the true (unchanged) state.
-    expect(find.textContaining("Couldn't save that"), findsOneWidget);
-    expect(DevPanelFlag.instance.enabled.value, isTrue);
-  });
-
-  testWidgets('AI-notes toggle: a server error fails visibly, switch stays', (
-    tester,
-  ) async {
-    DevPanelSession.instance.unlock('pw');
-    DevPanelFlag.instance.enabled.value = true;
-    final api = _api((req) async {
-      if (req.method == 'POST' && req.url.path == '/dev/flags') {
-        return http.Response('{"detail":"boom"}', 500);
-      }
-      return http.Response(jsonEncode(_usage()), 200);
-    });
-    await _pump(
-      tester,
-      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
-    );
-    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
-    await tester.pumpAndSettle();
-    expect(find.textContaining("Couldn't switch the flag"), findsOneWidget);
-    expect(DevPanelFlag.instance.enabled.value, isTrue);
   });
 
   testWidgets('free reload calls topup and shows the new balance', (

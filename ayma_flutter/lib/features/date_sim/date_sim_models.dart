@@ -22,6 +22,41 @@ class DateSimMessage {
   );
 }
 
+/// The match's avatar "readiness" for a date sim, from
+/// `GET /date-sim/estimate?other_uid=…`. [lowContext] is true when the match's
+/// AI persona has too little to go on for the sim to reflect them well; the UI
+/// warns (but does not block) before simulating. [message] is the backend's
+/// own copy when present.
+class DateSimReadiness {
+  const DateSimReadiness({
+    this.name = '',
+    this.score = 0,
+    this.lowContext = false,
+    this.message = '',
+  });
+
+  final String name;
+  final int score;
+  final bool lowContext;
+  final String message;
+
+  factory DateSimReadiness.fromMap(Map<String, dynamic> m) => DateSimReadiness(
+    name: (m['name'] as String?) ?? '',
+    score: (m['readiness_score'] as num?)?.toInt() ?? 0,
+    lowContext: m['low_context'] == true,
+    message: (m['message'] as String?) ?? '',
+  );
+}
+
+/// The date-sim setup estimate: approximate [credits] per message count, plus
+/// an optional [readiness] block for the specific match being simulated.
+class DateSimEstimate {
+  const DateSimEstimate({this.credits = const {}, this.readiness});
+
+  final Map<int, int> credits;
+  final DateSimReadiness? readiness;
+}
+
 enum DateSimStatus { running, done, error }
 
 /// The live state of one simulation, read from the sim's Firestore doc

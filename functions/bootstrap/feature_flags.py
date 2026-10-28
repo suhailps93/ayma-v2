@@ -45,7 +45,6 @@ HISTORY_LIMIT = 20
 APP_MIRRORS = {
     "sentry": ("app_config", "sentry"),
     "meta_integrations": ("app_config", "meta_integrations"),
-    "dev_panel": ("app_config", "dev_panel"),
 }
 
 ROUTES = ("vertex", "inference")
@@ -101,9 +100,6 @@ REGISTRY: dict[str, Flag] = {
              "Instagram / Facebook connect, sign-in and photo import (V2; off for V1)"),
         Flag("sentry", "bool", "sentry_enabled",
              "Sentry error reporting (DSN still comes from secrets)"),
-        Flag("dev_panel", "bool", None,
-             "the app's hidden Developer panel and dev-facing AI annotations",
-             default=True),
         Flag("mcp_server", "bool", "mcp_server",
              "Ayma MCP server (bring-your-own-agent). Default OFF — when off "
              "every /mcp request answers 503. See docs/MCP_SERVER.md."),
