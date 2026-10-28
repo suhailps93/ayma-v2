@@ -56,6 +56,13 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   bool _reloading = false;
   bool _resettingMoney = false;
 
+  /// Dual-cloud voice agent toggle: which cloud serves the next voice call
+  /// (`cloudrun` | `livekit`). Null until loaded; `_voiceCloudBusy` while a
+  /// read or write is in flight.
+  String? _voiceCloud;
+  bool _voiceCloudBusy = false;
+  bool _voiceCloudLoaded = false;
+
   /// The plan whose dev test-upgrade is in flight (`plus`/`pro`/`max`), or null.
   String? _upgradingPlan;
 
@@ -63,6 +70,45 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   void dispose() {
     _password.dispose();
     super.dispose();
+  }
+
+  /// Load the saved voice-agent-cloud choice once the panel is unlocked.
+  Future<void> _loadVoiceCloud() async {
+    if (_voiceCloudLoaded || _voiceCloudBusy) return;
+    setState(() => _voiceCloudBusy = true);
+    try {
+      final v = await _api.voiceAgentCloud();
+      if (!mounted) return;
+      setState(() {
+        _voiceCloud = v;
+        _voiceCloudLoaded = true;
+      });
+    } catch (_) {
+      // Leave it unloaded; the row shows a retry affordance via the toggle.
+    } finally {
+      if (mounted) setState(() => _voiceCloudBusy = false);
+    }
+  }
+
+  Future<void> _setVoiceCloud(String cloud) async {
+    if (_voiceCloudBusy || _voiceCloud == cloud) return;
+    setState(() => _voiceCloudBusy = true);
+    try {
+      final saved = await _api.setVoiceAgentCloud(cloud);
+      if (!mounted) return;
+      setState(() => _voiceCloud = saved);
+      _say(
+        saved == 'livekit'
+            ? 'Voice agent: LiveKit Cloud (next call).'
+            : 'Voice agent: Cloud Run (next call).',
+        kind: AymaToastKind.success,
+      );
+    } catch (e) {
+      _say("Couldn't switch voice agent cloud ($e).",
+          kind: AymaToastKind.error);
+    } finally {
+      if (mounted) setState(() => _voiceCloudBusy = false);
+    }
   }
 
   void _say(String msg, {AymaToastKind kind = AymaToastKind.info}) {
@@ -237,10 +283,18 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       ),
       body: ValueListenableBuilder<bool>(
         valueListenable: _session.unlocked,
-        builder: (context, unlocked, _) => ListView(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-          children: unlocked ? _unlockedChildren(context) : _lockedChildren(context),
-        ),
+        builder: (context, unlocked, _) {
+          if (unlocked && !_voiceCloudLoaded && !_voiceCloudBusy) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _loadVoiceCloud();
+            });
+          }
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+            children:
+                unlocked ? _unlockedChildren(context) : _lockedChildren(context),
+          );
+        },
       ),
     );
   }
@@ -306,6 +360,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '—',
       ),
       const SizedBox(height: 36),
+      ..._voiceCloudSection(context),
       FutureBuilder<UsageSummary>(
         future: _usage,
         builder: (context, snap) {
@@ -400,6 +455,54 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           context.go(FeatureTourScreen.path);
         },
       ),
+    ];
+  }
+
+  /// Dual-cloud voice agent toggle (ARCHITECTURE §1.1): switch which cloud
+  /// serves the next voice call. `cloudrun` is the default and all of
+  /// production; `livekit` opts this account into the LiveKit-Cloud-hosted
+  /// agent. Wrap-based so it reflows (no fixed width) and the layout matrix
+  /// stays green at large text scales / narrow widths.
+  List<Widget> _voiceCloudSection(BuildContext context) {
+    final ac = context.ac;
+    final current = _voiceCloud;
+    return [
+      const Eyebrow('Voice agent cloud'),
+      const SizedBox(height: 8),
+      Text(
+        'Which cloud serves your next voice call. Cloud Run is the default '
+        '(production); LiveKit Cloud is the hosted-agent migration. Takes '
+        'effect on the next call.',
+        style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+      ),
+      const SizedBox(height: 12),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final (id, label) in const [
+            ('cloudrun', 'Cloud Run'),
+            ('livekit', 'LiveKit Cloud'),
+          ])
+            ChoiceChip(
+              key: ValueKey('dev-voice-cloud-$id'),
+              label: Text(label),
+              selected: current == id,
+              onSelected: (_voiceCloudBusy || current == null)
+                  ? null
+                  : (_) => _setVoiceCloud(id),
+            ),
+        ],
+      ),
+      if (current == null)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            _voiceCloudBusy ? 'Loading…' : 'Could not load current value.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+          ),
+        ),
+      const SizedBox(height: 36),
     ];
   }
 

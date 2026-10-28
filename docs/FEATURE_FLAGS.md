@@ -37,6 +37,16 @@ A wrong-typed value is logged and ignored (next layer applies). An unreadable Fi
 | `sentry` | bool | true | Sentry error reporting; the DSN still comes from Secret Manager (no DSN = off) |
 | `mcp_server` | bool | **false** | **master switch for the Ayma MCP server** (bring-your-own-agent; `docs/MCP_SERVER.md`). Default OFF for safety: while off, no connection can be authorized and no tool call succeeds — the MCP endpoint, `device_authorization`, `token` and `approve` all answer `503 mcp_disabled` (listing/revoking already-connected agents stays available so users can still clean up). Merging the MCP code exposes nothing until the founder flips this on. Needs no secret — MCP access tokens are opaque and validated by a Firestore lookup, not signed. Flip with `scripts/flags.py set mcp_server=true --yes` (or `FLAG_MCP_SERVER=1`). |
 
+## Per-user preferences (NOT in `config/feature_flags`)
+
+These live on `users/{uid}/profile/main`, not the global flag doc — they are opt-in
+per account, so they default to today's behaviour and never change production for
+anyone who hasn't flipped them.
+
+| Preference | Field (`profile/main`) | Default | Controls | Set by |
+|---|---|---|---|---|
+| Voice agent cloud | `voice_agent_cloud` | `cloudrun` | Which cloud serves this user's **voice** call: `cloudrun` (GCP Cloud Run `ayma-agent`, automatic dispatch — production, unchanged) or `livekit` (LiveKit Cloud Agents `ayma-lk`, explicit dispatch). Read by `main._voice_agent_cloud` → `/bootstrap` room dispatch (ARCHITECTURE §1.1). Default OFF = Cloud Run, so production voice is unchanged. | Developer screen → "Voice agent cloud"; `GET/POST /voice/agent-cloud`. Runbook: `docs/LIVEKIT_AGENT_MIGRATION.md`. |
+
 > **Retired:** `dev_panel` (dev-facing AI annotations) was removed (APK 2228, Oct 2026). Per founder decision, the model's raw tag/confidence annotations now render **only** inside the password-gated, dev-only **Ayma's notes** screen (`story_ai_notes`) — never in the normal UI for any viewer — so the flag, its `app_config/dev_panel` mirror and the `POST`/`GET /dev/flags` endpoints are gone. The Developer panel itself is still reached and unlocked exactly as before (`POST /dev/verify`, `DEV_PANEL_PASSWORD`); that unlock was never this flag.
 
 The grouped rows expand to `llm_percent_json`, `llm_percent_vision`, `llm_percent_chat`, `llm_percent_voice`, `llm_allowlist_json`, `llm_allowlist_vision`, `llm_allowlist_chat`, `llm_allowlist_voice`.

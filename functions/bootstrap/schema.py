@@ -275,6 +275,15 @@ PF_AYMA_TTS_VOICE = "ayma_tts_voice"
 # pre-selected in the UI). This is the TEXT brain; the voice stack above is a
 # separate, unchanged preference. Read/written by ``/brain/preference``.
 PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
+# Which cloud hosts the voice agent for THIS user's next call (dual-cloud agent,
+# ARCHITECTURE §1.1): "cloudrun" (GCP Cloud Run — the default and all of
+# production) or "livekit" (LiveKit Cloud Agents, opt-in via the Developer
+# screen). Read by ``main._voice_agent_cloud`` and threaded into the room
+# dispatch; "" / absent = cloudrun, so production is unchanged until a user
+# flips it. Written by ``/voice/agent-cloud``.
+PF_AYMA_VOICE_CLOUD = "voice_agent_cloud"
+VOICE_AGENT_CLOUDS = ("cloudrun", "livekit")
+VOICE_AGENT_CLOUD_DEFAULT = "cloudrun"
 # The user's own LinkedIn profile URL, given with their consent (§ Your Story
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.

@@ -1137,6 +1137,21 @@ class ApiClient {
     await _sendJson('POST', '/dev/verify', {'password': password});
   }
 
+  /// `GET /voice/agent-cloud` — which cloud serves this user's voice agent
+  /// (`cloudrun` | `livekit`). Dev-only control; `cloudrun` is the default and
+  /// all of production.
+  Future<String> voiceAgentCloud() async {
+    final m = await _getJson('/voice/agent-cloud');
+    return (m['current'] as String?) ?? 'cloudrun';
+  }
+
+  /// `POST /voice/agent-cloud` — persist which cloud serves the next voice
+  /// call. Returns the saved value.
+  Future<String> setVoiceAgentCloud(String cloud) async {
+    final m = await _sendJson('POST', '/voice/agent-cloud', {'cloud': cloud});
+    return (m['current'] as String?) ?? cloud;
+  }
+
   static String _upgradeMessage(String body) {
     try {
       final d = (jsonDecode(body) as Map)['detail'];

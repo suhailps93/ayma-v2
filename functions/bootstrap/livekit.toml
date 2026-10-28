@@ -1,0 +1,18 @@
+# LiveKit Cloud Agents config for the Ayma voice agent worker (agent.py).
+#
+# Used by `lk agent create` / `lk agent deploy` (see
+# scripts/deploy-agent-livekit.sh and docs/LIVEKIT_AGENT_MIGRATION.md).
+#
+# The dispatch name the worker registers under ("ayma-lk") is set in code
+# (CONFIG.agent_name_livekit, agent.py worker_options when AGENT_RUNTIME=livekit)
+# — NOT here. `agent.id` below is the LiveKit Cloud resource id, assigned by
+# `lk agent create` and written back into this file; leave it empty before the
+# first create.
+
+[project]
+  subdomain = "aimma-wt34nu3l"
+
+[agent]
+  # Created 2026-10-28 (region us-east, project aimma-wt34nu3l). The worker
+  # registers its dispatch name "ayma-lk" (CONFIG.agent_name_livekit) on boot.
+  id = "CA_bJMNunTLpVqk"

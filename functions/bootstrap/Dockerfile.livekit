@@ -1,0 +1,46 @@
+# LiveKit Cloud Agents image for the Ayma voice agent worker (agent.py).
+#
+# This is the LiveKit-Cloud-hosted twin of Dockerfile.agent (which stays the
+# Cloud Run deployable). Differences from the Cloud Run image:
+#   * AGENT_RUNTIME=livekit — agent.py registers under the explicit dispatch
+#     name (CONFIG.agent_name_livekit, "ayma-lk") and loads Firestore from the
+#     mounted LK_AGENT_FIRESTORE_SA service-account key instead of a GCP
+#     workload identity (there is none on LiveKit Cloud).
+#   * ENTRYPOINT runs the worker directly — LiveKit Cloud starts the container
+#     and the worker holds its own outbound connection to LiveKit; there is no
+#     Cloud Run $PORT / keep-alive contract (CallKeepAlive self-disables off
+#     Cloud Run — no K_SERVICE — so it is already a no-op here).
+#
+# glibc base (python:3.12-slim = Debian): the livekit-agents wheels and the
+# Silero/Inworld inference deps are built against glibc, not musl.
+#
+# Deployed via `lk agent create/deploy` — see scripts/deploy-agent-livekit.sh
+# and docs/LIVEKIT_AGENT_MIGRATION.md. Secrets (LIVEKIT_* auto-injected;
+# GOOGLE_API_KEY, META_API_KEY, LK_AGENT_FIRESTORE_SA, SENTRY_DSN_AGENT, …) are
+# provisioned into LiveKit's secret store, never baked into this image.
+
+FROM python:3.12-slim AS builder
+
+ARG REQUIREMENTS=requirements-agent.txt
+
+WORKDIR /app
+
+COPY ${REQUIREMENTS} ./requirements-agent.txt
+RUN pip install --no-cache-dir --no-compile --prefix=/install -r requirements-agent.txt
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    AGENT_RUNTIME=livekit
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+COPY . ./
+
+# No `download-files`: the worker uses Gemini Live's native turn-detection
+# (and the bundled Silero VAD for the Meta cascade), not livekit-agents' local
+# turn-detector models, so there is nothing to pre-fetch.
+
+ENTRYPOINT ["python", "agent.py", "start"]

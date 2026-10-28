@@ -57,6 +57,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     ConversationItemAddedEvent,
     JobContext,
     JobProcess,
+    JobRequest,
     MetricsCollectedEvent,
     RoomOutputOptions,
     UserInputTranscribedEvent,
@@ -2863,10 +2864,70 @@ def prewarm(proc: JobProcess) -> None:
             logger.warning("prewarm import of %s failed", name, exc_info=True)
 
 
+def _this_runtime_cloud() -> str:
+    """Which cloud THIS worker process is: ``livekit`` when ``AGENT_RUNTIME`` is
+    ``livekit`` (the LiveKit-Cloud-hosted deployment), else ``cloudrun`` (GCP
+    Cloud Run — the default and all of production)."""
+    return "livekit" if CONFIG.agent_runtime == "livekit" else "cloudrun"
+
+
+def _room_target_cloud(metadata: str | None) -> str:
+    """The ``voice_agent_cloud`` marker ``POST /bootstrap`` left on the room
+    metadata, or ``cloudrun`` when absent/unreadable — so a room with no marker
+    (and any room whose metadata can't be parsed yet) is served by Cloud Run
+    exactly as today."""
+    raw = (metadata or "").strip()
+    if not raw:
+        return "cloudrun"
+    try:
+        target = str(json.loads(raw).get("voice_agent_cloud", "")).strip()
+    except (ValueError, AttributeError):
+        return "cloudrun"
+    return target if target in ("cloudrun", "livekit") else "cloudrun"
+
+
+async def _request_fnc(req: JobRequest) -> None:
+    """Dual-cloud dispatch guard (ARCHITECTURE §1.1).
+
+    LiveKit still offers EVERY new room to the Cloud Run worker's automatic
+    dispatch — including rooms explicitly routed to the LiveKit-Cloud-hosted
+    worker (``agent_name``). Without this guard both deployments would join a
+    ``livekit``-routed room and contend. Each worker accepts only the rooms
+    whose ``voice_agent_cloud`` marker matches its own runtime; the other
+    declines. A room with no marker is ``cloudrun`` (unchanged production).
+
+    Fail-open: any error reading the marker ends in ``accept`` on the Cloud Run
+    worker so a guard bug can never take production voice down; the LiveKit
+    worker (explicit dispatch only ever receives its own rooms) also accepts."""
+    mine = _this_runtime_cloud()
+    try:
+        target = _room_target_cloud(req.room.metadata if req.room else None)
+    except Exception:  # noqa: BLE001 - never drop a job on a guard error
+        logger.exception("dispatch guard failed to read room target; accepting")
+        await req.accept()
+        return
+    if target != mine:
+        logger.info(
+            "declining room %s: target=%s this=%s",
+            req.room.name if req.room else "?", target, mine,
+        )
+        await req.reject()
+        return
+    await req.accept()
+
+
 def worker_options() -> WorkerOptions:
+    # Explicit agent dispatch on the LiveKit-Cloud-hosted worker (it registers
+    # under this name and is dispatched only to rooms that request it);
+    # AUTOMATIC dispatch (no agent_name) on Cloud Run, exactly as production.
+    agent_name = (
+        CONFIG.agent_name_livekit if CONFIG.agent_runtime == "livekit" else ""
+    )
     return WorkerOptions(
         entrypoint_fnc=entrypoint,
         prewarm_fnc=prewarm,
+        request_fnc=_request_fnc,
+        agent_name=agent_name,
         # The Cloud Run port ($PORT) belongs to AymaAgentServer's keep-alive
         # server (routes can't be added to the worker's own health server,
         # which is built and started inside AgentServer.run), so the worker's

@@ -281,6 +281,20 @@ def _voice_engine_seed(uid: str) -> dict[str, str]:
     return out
 
 
+def _voice_agent_cloud(uid: str) -> str:
+    """Which cloud serves this user's next voice call (§1.1, dual-cloud agent):
+    ``"cloudrun"`` (default, all of production) or ``"livekit"`` (opt-in via the
+    Developer screen, ``PF_AYMA_VOICE_CLOUD``). Any unknown/absent value falls
+    back to ``cloudrun`` so a bad read can never divert a call off production."""
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        val = str((snap.to_dict() or {}).get(schema.PF_AYMA_VOICE_CLOUD, "")).strip()
+    except Exception:  # noqa: BLE001 - never block a voice start on this read
+        logger.exception("could not read voice_agent_cloud for %s", uid)
+        return schema.VOICE_AGENT_CLOUD_DEFAULT
+    return val if val in schema.VOICE_AGENT_CLOUDS else schema.VOICE_AGENT_CLOUD_DEFAULT
+
+
 def _server_ts():
     from firebase_admin import firestore
 
@@ -791,6 +805,14 @@ async def bootstrap(
         )
         voice_name = _ayma_voice_name(uid)
         engine_seed = _voice_engine_seed(uid)
+        # Dual-cloud agent dispatch (§1.1): default "cloudrun" => no explicit
+        # agent dispatch (LiveKit auto-dispatches to the Cloud Run worker,
+        # unchanged). "livekit" => route the room to the LiveKit-Cloud-hosted
+        # worker's agent_name; the Cloud Run worker declines it (request_fnc).
+        agent_cloud = _voice_agent_cloud(uid)
+        dispatch_agent = (
+            CONFIG.agent_name_livekit if agent_cloud == "livekit" else None
+        )
         try:
             await seed_room_context(
                 room,
@@ -804,7 +826,9 @@ async def bootstrap(
                     stt_id=engine_seed["stt_id"],
                     tts_id=engine_seed["tts_id"],
                     tts_voice=engine_seed["tts_voice"],
+                    voice_agent_cloud=agent_cloud,
                 ),
+                agent_name=dispatch_agent,
             )
         except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
             logger.exception("failed to seed room context for %s", room)
@@ -5380,6 +5404,48 @@ async def set_voice_preference_endpoint(
             "accent": body.accent.strip()[:200],
         },
     }
+
+
+@app.get("/voice/agent-cloud")
+async def get_voice_agent_cloud(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Which cloud serves this user's voice agent (§1.1, dual-cloud agent):
+    ``{current, default, options}``. ``current`` is the saved
+    ``voice_agent_cloud`` (``cloudrun`` by default). Dev-only control on the
+    Developer screen; no LLM spend."""
+    return {
+        "current": _voice_agent_cloud(uid),
+        "default": schema.VOICE_AGENT_CLOUD_DEFAULT,
+        "options": list(schema.VOICE_AGENT_CLOUDS),
+    }
+
+
+class VoiceAgentCloudBody(BaseModel):
+    cloud: str = Field(min_length=1, max_length=32)
+
+
+@app.post("/voice/agent-cloud")
+async def set_voice_agent_cloud(
+    body: VoiceAgentCloudBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist which cloud serves this user's next voice call on
+    ``users/{uid}/profile/main`` (``voice_agent_cloud``, §1.1). ``cloudrun``
+    (default, all of production) routes to the Cloud Run worker via automatic
+    dispatch; ``livekit`` routes the next room explicitly to the
+    LiveKit-Cloud-hosted worker. Takes effect on the next voice session."""
+    from firebase_admin import firestore
+
+    cloud = body.cloud.strip().lower()
+    if cloud not in schema.VOICE_AGENT_CLOUDS:
+        raise HTTPException(status_code=422, detail="Unknown voice agent cloud.")
+    try:
+        schema.profile_doc(get_db(), uid).set(
+            {schema.PF_AYMA_VOICE_CLOUD: cloud, "updated_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not save voice_agent_cloud for %s", uid)
+        raise HTTPException(status_code=502, detail="Could not save preference.") from exc
+    return {"ok": True, "current": cloud}
 
 
 @app.get("/brain/preference")

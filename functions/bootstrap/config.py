@@ -408,6 +408,21 @@ class Config:
     workers are already registered) — so with ``min-instances=0`` this is the
     only thing that starts the container before the client tries to join."""
 
+    agent_runtime: str
+    """Which cloud hosts THIS agent-worker process: ``""`` / ``cloudrun`` (GCP
+    Cloud Run — the default and all of production) or ``livekit`` (LiveKit Cloud
+    Agents, opt-in behind the per-user ``voice_agent_cloud`` flag). ``AGENT_RUNTIME``.
+    Read by ``agent.py`` to pick its dispatch model (automatic on Cloud Run,
+    explicit ``agent_name`` on LiveKit) and its Firestore credential source
+    (runtime identity on Cloud Run, a mounted service-account key on LiveKit)."""
+
+    agent_name_livekit: str
+    """The explicit LiveKit agent-dispatch name the LiveKit-Cloud-hosted worker
+    registers under (``agent.py`` ``worker_options`` when ``agent_runtime ==
+    'livekit'``), and the name ``POST /bootstrap`` routes a room to when a user's
+    ``voice_agent_cloud`` is ``livekit``. The Cloud Run worker keeps AUTOMATIC
+    dispatch (no name) so production voice is unchanged. ``AGENT_NAME_LIVEKIT``."""
+
     notifications_limit: int
     """Most-recent ``users/{uid}/notifications`` the client lists (§7.3)."""
 
@@ -1094,6 +1109,8 @@ def _load() -> Config:
             os.getenv("LIVEKIT_ROOM_DEPARTURE_TIMEOUT_SECONDS", "20")
         ),
         agent_url=os.getenv("AYMA_AGENT_URL", ""),
+        agent_runtime=os.getenv("AGENT_RUNTIME", "").strip().lower(),
+        agent_name_livekit=os.getenv("AGENT_NAME_LIVEKIT", "ayma-lk").strip(),
         notifications_limit=int(os.getenv("NOTIFICATIONS_LIMIT", "50")),
         push_preview_len=int(os.getenv("PUSH_PREVIEW_LEN", "100")),
         push_cooldown_seconds=int(os.getenv("PUSH_COOLDOWN_SECONDS", "900")),

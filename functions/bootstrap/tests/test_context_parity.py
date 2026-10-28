@@ -116,7 +116,7 @@ def _livekit_env(monkeypatch):
     monkeypatch.setenv("LIVEKIT_API_SECRET", _SECRET)
     seeds = []
 
-    async def _fake_seed(room, seed_json):
+    async def _fake_seed(room, seed_json, agent_name=None):
         seeds.append((room, seed_json))
 
     monkeypatch.setattr(main, "seed_room_context", _fake_seed)
