@@ -33,11 +33,23 @@ from config import CONFIG
 
 logger = logging.getLogger("ayma.qloo")
 
-# Taste domain → Qloo entity type URN.
+# Taste domain → Qloo entity type URN. The first three are the original demo
+# domains; the rest are recognised ADDITIVELY when a Taste page lists them
+# (TV/Books/Podcasts/Games) and are simply absent otherwise — a music/film/food
+# page behaves exactly as before. All seven resolve against the live Qloo graph.
 ENTITY_TYPES = {
     "music": "urn:entity:artist",
     "film": "urn:entity:movie",
     "dining": "urn:entity:place",
+    "tv": "urn:entity:tv_show",
+    "books": "urn:entity:book",
+    "podcasts": "urn:entity:podcast",
+    "games": "urn:entity:videogame",
+    "travel": "urn:entity:destination",
+    "brands": "urn:entity:brand",
+    # Nightlife is a place scene — same entity type as dining, narrowed to
+    # nightlife venues by a tag filter in ``taste_match`` (``_DOMAIN_FILTER_TAGS``).
+    "nightlife": "urn:entity:place",
 }
 
 _FIXTURE_PATH = Path(__file__).parent / "qloo_fixture.json"
@@ -70,14 +82,29 @@ class QlooError(Exception):
 
 
 def _entity(raw: dict) -> dict:
-    """Normalise one Qloo entity: ``{id, name, affinity, tags, address}``."""
+    """Normalise one Qloo entity: ``{id, name, affinity, tags, tag_ids, address}``.
+
+    ``tags`` are human labels (unchanged); ``tag_ids`` are the parallel Qloo tag
+    URNs (``urn:tag:…``), kept so the engine can tag-align a follow-up query via
+    ``filter.tags`` (which rejects freeform strings — only tag URNs)."""
     props = raw.get("properties") or {}
     query = raw.get("query") or {}
-    tags = [
-        str(t.get("name") if isinstance(t, dict) else t)
-        for t in (raw.get("tags") or [])
-        if t
-    ]
+    # ``tags`` (names) and ``tag_ids`` (URNs) are kept index-aligned: one entry
+    # per tag that has a usable name, ``tag_ids[i]`` being that tag's URN or ""
+    # when absent — so callers can pair a label with its subtype.
+    tags: list[str] = []
+    tag_ids: list[str] = []
+    for t in raw.get("tags") or []:
+        if not t:
+            continue
+        if isinstance(t, dict):
+            name = str(t.get("name") or "").strip()
+            tid = str(t.get("tag_id") or t.get("id") or "").strip()
+        else:
+            name, tid = str(t).strip(), ""
+        if name and name != "None":
+            tags.append(name)
+            tag_ids.append(tid)
     affinity = query.get("affinity", raw.get("affinity", 0.0))
     try:
         affinity = float(affinity)
@@ -87,9 +114,47 @@ def _entity(raw: dict) -> dict:
         "id": str(raw.get("entity_id") or raw.get("id") or ""),
         "name": str(raw.get("name") or "").strip(),
         "affinity": affinity,
-        "tags": [t for t in tags if t and t != "None"],
+        "tags": tags,
+        "tag_ids": tag_ids,
         "address": (props.get("address") or raw.get("address") or None),
     }
+
+
+def _average_demographics(rows: list[dict]) -> dict:
+    """Mean of Qloo's per-entity age/gender skews into one profile read.
+
+    ``rows`` is ``results.demographics`` — one ``{entity_id, query:{age,gender}}``
+    per anchor entity. Returns ``{"age": {bucket: skew}, "gender": {...}}`` with
+    each value averaged across entities, or ``{}`` when nothing usable is
+    present (so callers degrade gracefully)."""
+    age_sums: dict[str, float] = {}
+    gender_sums: dict[str, float] = {}
+    age_n = 0
+    gender_n = 0
+    for row in rows:
+        q = row.get("query") or {}
+        age = q.get("age") or {}
+        gender = q.get("gender") or {}
+        if isinstance(age, dict) and age:
+            age_n += 1
+            for bucket, val in age.items():
+                try:
+                    age_sums[bucket] = age_sums.get(bucket, 0.0) + float(val)
+                except (TypeError, ValueError):
+                    continue
+        if isinstance(gender, dict) and gender:
+            gender_n += 1
+            for key, val in gender.items():
+                try:
+                    gender_sums[key] = gender_sums.get(key, 0.0) + float(val)
+                except (TypeError, ValueError):
+                    continue
+    out: dict = {}
+    if age_n:
+        out["age"] = {k: round(v / age_n, 4) for k, v in age_sums.items()}
+    if gender_n:
+        out["gender"] = {k: round(v / gender_n, 4) for k, v in gender_sums.items()}
+    return out
 
 
 class LiveQlooClient:
@@ -137,6 +202,7 @@ class LiveQlooClient:
         signal_ids: list[str],
         *,
         location: str | None = None,
+        filter_tags: list[str] | None = None,
         take: int = 10,
     ) -> list[dict]:
         params = {
@@ -146,11 +212,67 @@ class LiveQlooClient:
         }
         if location:
             params["filter.location.query"] = location
+        if filter_tags:
+            params["filter.tags"] = ",".join(filter_tags)
         data = self._get("/v2/insights", params)
         entities = (data.get("results") or {}).get("entities")
         if not isinstance(entities, list):
             raise QlooError("Qloo /v2/insights returned an unexpected payload")
         return [e for e in (_entity(r) for r in entities) if e["id"] and e["name"]]
+
+    def tags(self, signal_ids: list[str], *, take: int = 20) -> list[dict]:
+        """Qloo's affinity-ranked TAGS for a taste profile
+        (``/v2/insights filter.type=urn:tag``) — the dominant descriptors Qloo
+        infers across all of someone's taste, not just the literal tags on their
+        few seed entities. Returns ``[{id, name, affinity}]`` ranked high→low."""
+        if not signal_ids:
+            return []
+        data = self._get(
+            "/v2/insights",
+            {
+                "filter.type": "urn:tag",
+                "signal.interests.entities": ",".join(signal_ids),
+                "take": take,
+            },
+        )
+        rows = (data.get("results") or {}).get("tags")
+        if not isinstance(rows, list):
+            raise QlooError("Qloo /v2/insights (tags) returned an unexpected payload")
+        out: list[dict] = []
+        for r in rows:
+            tid = str(r.get("tag_id") or r.get("id") or "").strip()
+            name = str(r.get("name") or "").strip()
+            if not tid or not name:
+                continue
+            aff = (r.get("query") or {}).get("affinity", r.get("popularity", 0.0))
+            try:
+                aff = float(aff)
+            except (TypeError, ValueError):
+                aff = 0.0
+            out.append({"id": tid, "name": name, "affinity": aff})
+        return out
+
+    def demographics(self, signal_ids: list[str]) -> dict:
+        """Audience skew for a taste profile
+        (``/v2/insights filter.type=urn:demographics``). Qloo returns a signed
+        over/under-index per anchor entity across six age buckets and two gender
+        keys; this averages them into one ``{age:{bucket:skew}, gender:{…}}``
+        read for the whole profile. ``{}`` when Qloo returns no demographics."""
+        if not signal_ids:
+            return {}
+        data = self._get(
+            "/v2/insights",
+            {
+                "filter.type": "urn:demographics",
+                "signal.interests.entities": ",".join(signal_ids),
+            },
+        )
+        rows = (data.get("results") or {}).get("demographics")
+        if not isinstance(rows, list):
+            raise QlooError(
+                "Qloo /v2/insights (demographics) returned an unexpected payload"
+            )
+        return _average_demographics(rows)
 
 
 class FixtureQlooClient:
@@ -165,11 +287,15 @@ class FixtureQlooClient:
         self._by_id = {e["id"]: e for e in self._entities}
 
     def _out(self, e: dict, affinity: float) -> dict:
+        tags = list(e.get("tags") or [])
         return {
             "id": e["id"],
             "name": e["name"],
             "affinity": round(affinity, 3),
-            "tags": list(e.get("tags") or []),
+            "tags": tags,
+            # The fixture has no real Qloo tag URNs; mint stable local ids so
+            # tag-overlap still works offline (filter.tags is a no-op here).
+            "tag_ids": list(e.get("tag_ids") or [f"fx:tag:{t}" for t in tags]),
             "address": e.get("address"),
         }
 
@@ -186,26 +312,57 @@ class FixtureQlooClient:
         signal_ids: list[str],
         *,
         location: str | None = None,
+        filter_tags: list[str] | None = None,
         take: int = 10,
     ) -> list[dict]:
         bag: Counter = Counter()
         for sid in signal_ids:
             bag.update(self._by_id.get(sid, {}).get("tags") or [])
         loc = (location or "").strip().lower()
+        # filter.tags is live-only; offline we honour it softly (prefer matches,
+        # never empty the list) by mapping any tag id — our local ``fx:tag:NAME``
+        # or a real Qloo ``urn:tag:…:NAME`` — to its trailing name segment.
+        want_tags = {t.rsplit(":", 1)[-1] for t in (filter_tags or [])}
         scored = []
         for e in self._entities:
             if e["type"] != entity_type:
                 continue
             if loc and str(e.get("city") or "").lower() != loc:
                 continue
-            raw = sum(bag[t] for t in e.get("tags") or [])
+            etags = e.get("tags") or []
+            if want_tags and not want_tags.intersection(etags):
+                continue
+            raw = sum(bag[t] for t in etags)
             if raw > 0:
                 scored.append((raw, e))
+        if not scored and want_tags:
+            return self.insights(entity_type, signal_ids, location=location, take=take)
         if not scored:
             return []
         top = max(r for r, _ in scored)
         scored.sort(key=lambda x: (-x[0], x[1]["id"]))
         return [self._out(e, r / top) for r, e in scored[:take]]
+
+    def tags(self, signal_ids: list[str], *, take: int = 20) -> list[dict]:
+        """Offline stand-in for ``/v2/insights filter.type=urn:tag``: the signal
+        entities' own tags, frequency-ranked, in the live ``[{id, name,
+        affinity}]`` shape (affinity normalised to the most common tag)."""
+        bag: Counter = Counter()
+        for sid in signal_ids:
+            bag.update(self._by_id.get(sid, {}).get("tags") or [])
+        if not bag:
+            return []
+        top = max(bag.values())
+        return [
+            {"id": f"fx:tag:{name}", "name": name, "affinity": round(n / top, 3)}
+            for name, n in bag.most_common(take)
+        ]
+
+    def demographics(self, signal_ids: list[str]) -> dict:
+        """The fixture carries no demographic data (tags are illustrative, not
+        Qloo data), so this degrades to ``{}`` — the taste match simply omits the
+        demographics block offline and shows it from the live API when deployed."""
+        return {}
 
 
 def qloo_enabled() -> bool:
