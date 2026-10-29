@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from firebase_admin import firestore
 
+import practice_seed
 from config import CONFIG
 from matching_schema import (
     MATCH_CANDIDATES_COLLECTION,
@@ -146,6 +147,9 @@ def source_and_score(db, uid: str, limit: int | None = None) -> list[dict]:
     for user_snap in db.collection("users").stream():
         other = user_snap.id
         if other == uid or len(out) >= limit:
+            continue
+        # Practice-date simulator personas are never real candidates (BUG E).
+        if practice_seed.is_practice_persona(other):
             continue
         prof = (
             db.collection("users")

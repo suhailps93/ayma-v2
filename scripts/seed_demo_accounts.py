@@ -504,6 +504,12 @@ def _founder_uid(db):
 
 
 async def persist_match(db, a: str, b: str) -> float | None:
+    """Score a pair with the REAL scorer and persist the FULL report doc —
+    the same payload shape ``main._match_job`` writes (dimensions, structured
+    score, method, shared/tensions/missing, gate failures, confidence), never
+    a score-only "lite" doc. A lite doc renders the report without its
+    dimension breakdown (bug H); writing the full doc here keeps the demo
+    accounts' reports complete and the seed idempotent."""
     import matching_skill
     from pair_key import sorted_pair_key
 
@@ -513,12 +519,23 @@ async def persist_match(db, a: str, b: str) -> float | None:
         _log(f"[match] {a} x {b}: FAILED: {exc}")
         return None
     score = res.get("score")
+    lo, hi = sorted([a, b])
     db.collection("matches").document(sorted_pair_key(a, b)).set(
         {
-            "uids": sorted([a, b]),
+            "uids": [lo, hi],
             "score": score,
+            "structured_score": res.get("structured_score"),
+            "dimensions": res.get("dimensions") or [],
+            "omitted_dimensions": res.get("omitted_dimensions") or [],
             "user_explanation": res.get("user_explanation") or {},
             "ai_explanation": res.get("ai_explanation") or "",
+            "shared": res.get("shared") or [],
+            "tensions": res.get("tensions") or [],
+            "missing": res.get("missing") or [],
+            "gate_failures": res.get("gate_failures") or [],
+            "score_confidence": res.get("score_confidence"),
+            "confidence_note": res.get("confidence_note") or "",
+            "method": res.get("method") or "",
             "trust_flags": res.get("trust_flags") or {},
             "status": "scored",
             "scored_at": _now(),
@@ -526,7 +543,7 @@ async def persist_match(db, a: str, b: str) -> float | None:
         },
         merge=True,
     )
-    _log(f"[match] {a} x {b}: score={score}")
+    _log(f"[match] {a} x {b}: score={score} dims={len(res.get('dimensions') or [])}")
     return score
 
 

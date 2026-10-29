@@ -128,6 +128,21 @@ def test_source_and_score_finds_a_compatible_account():
     assert "reasons" in written
 
 
+def test_source_and_score_excludes_practice_personas():
+    # Practice-date simulator personas (demo_practice_*) are never real
+    # candidates (BUG E).
+    db = FakeDb()
+    _seed_user(db, "u1", community="c", gender="Woman",
+               interested_in=["Everyone"], location="X", birthdate="1994-01-01")
+    _seed_user(db, "demo_practice_maya", community="c", gender="Man",
+               interested_in=["Everyone"], location="X", birthdate="1993-01-01")
+    _seed_user(db, "real", community="c", gender="Man",
+               interested_in=["Everyone"], location="X", birthdate="1992-01-01")
+
+    out = matching.source_and_score(db, "u1", limit=50)
+    assert [c["candidate_uid"] for c in out] == ["real"]
+
+
 def test_source_and_score_excludes_blocked_and_matched():
     db = FakeDb()
     _seed_user(db, "u1", community="c", gender="Woman",

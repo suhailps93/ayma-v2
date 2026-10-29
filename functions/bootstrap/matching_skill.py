@@ -17,8 +17,9 @@ The overall score is the weighted mean of the rubric dimensions that actually
 have real backing (structured where available, LLM otherwise) — a dimension
 neither pass could ground in evidence from both people is **omitted**, not
 defaulted to a neutral number, and its weight is excluded from the mean
-rather than silently diluting it. The result is capped by any gate failure and
-then down-weighted for trust flags (§5.5, never excludes).
+rather than silently diluting it. The result is capped by any soft gate
+failure (and zeroed by a hard dealbreaker — gender/orientation, partner age,
+location), then down-weighted for trust flags (§5.5, never excludes).
 
 ``score_confidence`` (0..1) reports how much to trust the number: high when
 both profiles are well filled in and the dealbreaker gates had their data,
@@ -457,10 +458,15 @@ async def score_pair(
     )
     raw = _overall_from_dimensions(dims)
     if structured["gate_failures"]:
-        cap = match_deterministic._gate_cap(
-            len(structured["gate_failures"])
-        ) / 100.0
-        raw = min(raw, cap)
+        if match_deterministic.is_hard_dealbreaker(structured["gate_failures"]):
+            # A hard dealbreaker (gender/orientation, partner age, location)
+            # zeroes the match — never a 10–25 floor (BUG B).
+            raw = 0.0
+        else:
+            cap = match_deterministic._gate_cap(
+                len(structured["gate_failures"])
+            ) / 100.0
+            raw = min(raw, cap)
     score = _apply_trust_penalty(raw, flags_a, flags_b)
 
     conf, note = _confidence(
