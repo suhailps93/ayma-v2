@@ -144,11 +144,16 @@ class TasteMatchCard extends StatelessWidget {
         ],
       ),
       if (m.domains.isNotEmpty) ...[
-        const SizedBox(height: 4),
-        Text(
-          m.domains.map((d) => '${_title(d.domain)} ${d.score}').join(' · '),
+        const SizedBox(height: 12),
+        Column(
           key: const Key('tasteMatchDomains'),
-          style: AymaType.sans(size: 12.5, color: ac.fgDim),
+          children: [
+            for (final d in _orderedDomains(m.domains))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: _DomainBar(label: _title(d.domain), score: d.score),
+              ),
+          ],
         ),
       ],
       if (m.summary.isNotEmpty) ...[
@@ -196,8 +201,99 @@ class TasteMatchCard extends StatelessWidget {
     ];
   }
 
-  static String _title(String s) =>
-      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+  /// Maps a raw domain key to its display label, matching the public demo
+  /// (`taste_demo.html`): `dining` reads as "Food & places"; anything else is
+  /// title-cased.
+  static String _title(String s) {
+    switch (s) {
+      case 'music':
+        return 'Music';
+      case 'film':
+        return 'Film';
+      case 'dining':
+        return 'Food & places';
+      default:
+        return s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+    }
+  }
+
+  /// The domains in the demo's fixed order — Music, Film, Food & places —
+  /// with any further domains kept in their original order after those.
+  static List<TasteDomain> _orderedDomains(List<TasteDomain> domains) {
+    const order = ['music', 'film', 'dining'];
+    final sorted = [...domains];
+    sorted.sort((a, b) {
+      final ia = order.indexOf(a.domain);
+      final ib = order.indexOf(b.domain);
+      if (ia == -1 && ib == -1) return 0;
+      if (ia == -1) return 1;
+      if (ib == -1) return -1;
+      return ia.compareTo(ib);
+    });
+    return sorted;
+  }
+}
+
+/// One per-domain overlap row: the domain label, a horizontal 0–100 progress
+/// bar (accent fill on a faint track), and the numeric score at the right —
+/// reproducing the `.dom` row of the public demo (`taste_demo.html`). Every
+/// part is overflow-proof at textScale 2.0: the label wraps/ellipsizes inside
+/// a fixed column, the bar flexes, and the value column scales with the text.
+class _DomainBar extends StatelessWidget {
+  const _DomainBar({required this.label, required this.score});
+
+  final String label;
+  final int score;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final clamped = score.clamp(0, 100);
+    final scaler = MediaQuery.textScalerOf(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 96,
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AymaType.sans(size: 12.5, color: ac.fgDim),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Stack(
+              children: [
+                Container(height: 8, color: ac.line),
+                FractionallySizedBox(
+                  widthFactor: clamped / 100,
+                  child: Container(height: 8, color: ac.accent),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: scaler.scale(26),
+          child: Text(
+            '$clamped',
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            style: AymaType.sans(
+              size: 12.5,
+              weight: FontWeight.w600,
+              color: ac.fg,
+            ).copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _IdeaRow extends StatelessWidget {

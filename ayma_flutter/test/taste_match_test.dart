@@ -112,12 +112,20 @@ void main() {
       (tester) async {
     await _runSim(tester, _api(() => _json(_taste())));
 
-    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+    // `_runSim` has scrolled the taste card into view; assert its contents
+    // here (the taller bars push the verdict score above the built range).
     expect(find.text('Taste match'), findsOneWidget);
     expect(find.text('powered by Qloo'), findsOneWidget);
     expect(find.byKey(const Key('tasteMatchScore')), findsOneWidget);
     expect(find.text('Strong overlap'), findsOneWidget);
-    expect(find.text('Music 72 · Film 60'), findsOneWidget);
+    // Per-domain bars: labelled rows with the numeric score at the right.
+    // (The Film value 60 is distinct from the overall score 72; a dedicated
+    // multi-domain bar test in taste_match_report_section_test.dart asserts
+    // every bar value matches its domain score.)
+    expect(find.byKey(const Key('tasteMatchDomains')), findsOneWidget);
+    expect(find.text('Music'), findsOneWidget);
+    expect(find.text('Film'), findsOneWidget);
+    expect(find.text('60'), findsOneWidget);
     expect(find.text('Khruangbin'), findsOneWidget);
     expect(find.text('Lost in Translation'), findsOneWidget);
     expect(find.text("Date ideas you'd both enjoy"), findsOneWidget);
@@ -125,6 +133,17 @@ void main() {
     expect(find.text('You both rate cosy bakeries.'), findsOneWidget);
     expect(find.byKey(const Key('tasteMatchSampleChip')), findsNothing);
     expect(tester.takeException(), isNull);
+
+    // Scroll back to the top: the date-sim verdict itself still renders.
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('dateSimScore')),
+      -200,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('dateSimTranscript')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
   });
 
   testWidgets('fixture data shows the "sample data" chip', (tester) async {
