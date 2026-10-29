@@ -374,6 +374,12 @@ class AppearancePreRunSheet extends StatefulWidget {
 }
 
 class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
+  /// Max photos analysed per axis. All ticked photos for an axis are sent in
+  /// ONE combined vision call; more than this wastes credits for diminishing
+  /// returns. Mirrors the backend caps (`appearance._MAX_PHOTOS` and the
+  /// `POST /appearance/report` `face_media_ids`/`body_media_ids` max length).
+  static const int kMaxPerAxis = 6;
+
   AppearanceEligibility? _elig;
   bool _loading = true;
   bool _skipFace = false;
@@ -390,14 +396,15 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
 
   late final ChatService _chat = widget.chatService ?? ChatService();
 
-  /// The ONE photo currently selected for each axis — single-select, because
-  /// the backend analyses exactly one photo per axis. Grid photos are keyed by
-  /// `media_id`; privately-added photos are keyed by their `uploads/{uid}/…`
-  /// storage path (stored in [_faceAdded]/[_bodyAdded]). The set holds at most
-  /// one id: a tap on a tile makes it THE selected photo, replacing any
-  /// previously selected one (§ founder 2026-10-28). Selection is a local,
-  /// in-sheet choice only and never navigates anywhere. To leave a section out,
-  /// use Skip — a skipped section runs nothing regardless of its selection.
+  /// The photos currently ticked for each axis — MULTI-select, up to
+  /// [kMaxPerAxis]. All ticked photos for an axis are analysed TOGETHER in one
+  /// combined read of the same person (§ founder: real multi-select). Grid
+  /// photos are keyed by `media_id`; privately-added photos are keyed by their
+  /// `uploads/{uid}/…` storage path (stored in [_faceAdded]/[_bodyAdded]). A tap
+  /// on a tile toggles it in or out of the set, capped at [kMaxPerAxis].
+  /// Selection is a local, in-sheet choice only and never navigates anywhere.
+  /// To leave a section out, use Skip — a skipped section runs nothing
+  /// regardless of its selection.
   final Set<String> _faceSel = <String>{};
   final Set<String> _bodySel = <String>{};
 
@@ -424,27 +431,27 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
     }
   }
 
-  /// Fold a fresh eligibility read in. Single-select: on first load each axis
-  /// defaults to the FIRST photo the server marked `autoSelect` — a solo shot
-  /// of the user that actually shows that axis (§ founder 2026-10-28: a
-  /// multi-person photo is never auto-selected, and a face-only photo is never
-  /// auto-selected into Body). Later photos still render; the user can tap one
-  /// to pick it instead. A re-read preserves exactly the single photo the user
+  /// Fold a fresh eligibility read in. Multi-select: on first load each axis
+  /// defaults to ALL the photos the server marked `autoSelect` — solo shots of
+  /// the user that actually show that axis (§ founder 2026-10-28: a multi-person
+  /// photo is never auto-selected, and a face-only photo is never auto-selected
+  /// into Body), capped at [kMaxPerAxis]. The rest still render; the user can
+  /// tick or untick any. A re-read preserves exactly the photos the user
   /// currently has chosen, so neither a changed default nor a manual pick is
   /// silently flipped. Privately-added photos (keyed by storage path) are
   /// preserved untouched — only grid `media_id`s are rebuilt here.
   void _applyEligibility(AppearanceEligibility e) {
-    // First load (_elig == null): pre-select the server's FIRST auto-select
-    // photo for each axis (single-select). A re-read preserves exactly what
-    // the user currently has selected among surfaced grid photos.
+    // First load (_elig == null): pre-select every auto-select photo for each
+    // axis (capped). A re-read preserves exactly what the user currently has
+    // selected among surfaced grid photos.
     final faceIds = _elig == null
-        ? _firstAutoSelect(e.face)
+        ? _autoSelectAll(e.face)
         : {
             for (final p in e.face)
               if (_faceSel.contains(p.mediaId)) p.mediaId,
           };
     final bodyIds = _elig == null
-        ? _firstAutoSelect(e.body)
+        ? _autoSelectAll(e.body)
         : {
             for (final p in e.body)
               if (_bodySel.contains(p.mediaId)) p.mediaId,
@@ -471,13 +478,18 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
     _loading = false;
   }
 
-  /// The first auto-select photo's id as a single-element set (empty when none
-  /// is auto-selected) — the single-select default for an axis on first load.
-  static Set<String> _firstAutoSelect(List<EligiblePhoto> photos) {
+  /// Every auto-select photo's id, capped at [kMaxPerAxis] in grid order — the
+  /// multi-select default for an axis on first load (empty when none is
+  /// auto-selected).
+  static Set<String> _autoSelectAll(List<EligiblePhoto> photos) {
+    final out = <String>{};
     for (final p in photos) {
-      if (p.autoSelect) return {p.mediaId};
+      if (p.autoSelect) {
+        out.add(p.mediaId);
+        if (out.length >= kMaxPerAxis) break;
+      }
     }
-    return <String>{};
+    return out;
   }
 
   /// Add a photo to [face] (true) or the Body group (false) PRIVATELY: pick
@@ -522,19 +534,17 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
           _faceUploading--;
           if (photo != null) {
             _faceAdded.add(photo);
-            // Single-select: a freshly-added photo becomes THE Face selection.
-            _faceSel
-              ..clear()
-              ..add(photo.mediaId);
+            // Multi-select: a freshly-added photo joins the Face selection
+            // (unless that axis is already at the cap).
+            if (_faceSel.length < kMaxPerAxis) _faceSel.add(photo.mediaId);
           }
         } else {
           _bodyUploading--;
           if (photo != null) {
             _bodyAdded.add(photo);
-            // Single-select: a freshly-added photo becomes THE Body selection.
-            _bodySel
-              ..clear()
-              ..add(photo.mediaId);
+            // Multi-select: a freshly-added photo joins the Body selection
+            // (unless that axis is already at the cap).
+            if (_bodySel.length < kMaxPerAxis) _bodySel.add(photo.mediaId);
           }
         }
       });
@@ -555,15 +565,23 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
     return [for (final x in picked) File(x.path)];
   }
 
-  /// Single-select per axis: tapping a photo makes it THE photo this axis
-  /// analyses, replacing any previously selected one (the backend reads exactly
-  /// one photo per axis — § founder 2026-10-28). To leave a section out, use
-  /// Skip; selection never navigates.
-  void _select(Set<String> sel, String mediaId) {
+  /// Multi-select per axis: tapping a photo toggles it in or out of this axis's
+  /// set, enforcing the [kMaxPerAxis] cap (a tap that would exceed it is a no-op
+  /// with a brief hint). All ticked photos are analysed together. To leave a
+  /// section out, use Skip; selection never navigates.
+  void _toggle(Set<String> sel, String mediaId) {
     setState(() {
-      sel
-        ..clear()
-        ..add(mediaId);
+      if (sel.contains(mediaId)) {
+        sel.remove(mediaId);
+      } else if (sel.length < kMaxPerAxis) {
+        sel.add(mediaId);
+      } else {
+        AymaToast.show(
+          context,
+          'Up to $kMaxPerAxis photos per section.',
+          kind: AymaToastKind.info,
+        );
+      }
     });
   }
 
@@ -621,9 +639,9 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
             ),
             const SizedBox(height: 4),
             Text(
-              "Here are your photos, sorted into Face and Body. Tap one to "
-              'pick the photo I analyse for that section, add another, or skip '
-              'a section — never required.',
+              "Here are your photos, sorted into Face and Body. Tap to pick as "
+              'many as you like per section (up to $kMaxPerAxis) — I read them '
+              'together. Add another, or skip a section — never required.',
               style: AymaType.sans(size: 12.5, soft: true, color: ac.fgMute),
             ),
             const SizedBox(height: 8),
@@ -646,28 +664,30 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
               _AxisGroup(
                 title: 'Face analysis',
                 icon: Icons.face_retouching_natural_outlined,
-                guidance: 'A clear photo of your face.',
+                guidance: 'Clear photos of your face.',
                 photos: [...?e?.face, ..._faceAdded],
                 uploadingCount: _faceUploading,
                 selected: _faceSel,
+                maxSel: kMaxPerAxis,
                 skipped: _skipFace,
                 emptyPrompt: 'Add a photo that clearly shows your face.',
                 onToggleSkip: () => setState(() => _skipFace = !_skipFace),
-                onSelectPhoto: (id) => _select(_faceSel, id),
+                onTogglePhoto: (id) => _toggle(_faceSel, id),
                 onAddPhoto: () => _addPhoto(face: true),
               ),
               const SizedBox(height: 16),
               _AxisGroup(
                 title: 'Body analysis',
                 icon: Icons.accessibility_new_outlined,
-                guidance: 'A clear photo of your full body.',
+                guidance: 'Clear photos of your full body.',
                 photos: [...?e?.body, ..._bodyAdded],
                 uploadingCount: _bodyUploading,
                 selected: _bodySel,
+                maxSel: kMaxPerAxis,
                 skipped: _skipBody,
                 emptyPrompt: 'Add a full-body photo for a body report.',
                 onToggleSkip: () => setState(() => _skipBody = !_skipBody),
-                onSelectPhoto: (id) => _select(_bodySel, id),
+                onTogglePhoto: (id) => _toggle(_bodySel, id),
                 onAddPhoto: () => _addPhoto(face: false),
               ),
               const SizedBox(height: 20),
@@ -690,10 +710,10 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
 /// One axis group inside [AppearancePreRunSheet]: its photos as a horizontal
 /// strip of selectable thumbnails (dimmed when skipped), a skip/include toggle
 /// when it has photos, and an "Add photo" tile that is ALWAYS present (both
-/// axes, empty or not — § founder 2026-10-28). Single-select: tapping a
-/// thumbnail makes it THE photo this axis analyses, replacing any previously
-/// selected one — it never navigates. Only the explicit "Add photo" tile opens
-/// the photo picker.
+/// axes, empty or not — § founder 2026-10-28). Multi-select: tapping a
+/// thumbnail toggles it in or out of this axis's set (up to [maxSel]); all
+/// ticked photos are analysed together — it never navigates. Only the explicit
+/// "Add photo" tile opens the photo picker.
 class _AxisGroup extends StatelessWidget {
   const _AxisGroup({
     required this.title,
@@ -702,17 +722,18 @@ class _AxisGroup extends StatelessWidget {
     required this.photos,
     required this.uploadingCount,
     required this.selected,
+    required this.maxSel,
     required this.skipped,
     required this.emptyPrompt,
     required this.onToggleSkip,
-    required this.onSelectPhoto,
+    required this.onTogglePhoto,
     required this.onAddPhoto,
   });
 
   final String title;
   final IconData icon;
 
-  /// One short line under the header saying what photo this axis wants.
+  /// One short line under the header saying what photos this axis wants.
   final String guidance;
   final List<EligiblePhoto> photos;
 
@@ -720,10 +741,13 @@ class _AxisGroup extends StatelessWidget {
   /// a spinner placeholder tile in the strip (before the Add tile).
   final int uploadingCount;
   final Set<String> selected;
+
+  /// Max photos tickable for this axis (the per-axis cap).
+  final int maxSel;
   final bool skipped;
   final String emptyPrompt;
   final VoidCallback onToggleSkip;
-  final void Function(String mediaId) onSelectPhoto;
+  final void Function(String mediaId) onTogglePhoto;
   final VoidCallback onAddPhoto;
 
   @override
@@ -761,7 +785,10 @@ class _AxisGroup extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            guidance,
+            hasPhotos && !skipped && selected.isNotEmpty
+                ? '$guidance  ·  ${selected.length} selected'
+                    '${selected.length >= maxSel ? ' (max)' : ''}'
+                : guidance,
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
           const SizedBox(height: 8),
@@ -790,9 +817,9 @@ class _AxisGroup extends StatelessWidget {
                       url: p.url,
                       isSelected: selected.contains(p.mediaId),
                       // Selecting is dimmed visually while skipped, but the tap
-                      // still picks this photo so the choice is ready if they
+                      // still toggles this photo so the choice is ready if they
                       // un-skip.
-                      onTap: () => onSelectPhoto(p.mediaId),
+                      onTap: () => onTogglePhoto(p.mediaId),
                     );
                   }
                   if (i < photos.length + uploadingCount) {
@@ -817,10 +844,10 @@ class _AxisGroup extends StatelessWidget {
   }
 }
 
-/// A selectable thumbnail in an [_AxisGroup]. A tap makes this the one selected
-/// photo for the axis via [onTap] — it NEVER navigates (§ founder 2026-10-28:
-/// tapping a photo in the analysis sheet must only pick it). Unselected tiles
-/// dim and lose the check badge.
+/// A selectable thumbnail in an [_AxisGroup]. A tap toggles this photo in or
+/// out of the axis's set via [onTap] — it NEVER navigates (§ founder
+/// 2026-10-28: tapping a photo in the analysis sheet must only pick it).
+/// Unselected tiles dim and lose the check badge.
 class _PhotoTile extends StatelessWidget {
   const _PhotoTile({
     required this.url,
@@ -839,8 +866,8 @@ class _PhotoTile extends StatelessWidget {
       button: true,
       selected: isSelected,
       label: isSelected
-          ? 'Photo selected for analysis'
-          : 'Tap to analyse this photo instead',
+          ? 'Photo selected for analysis, tap to remove'
+          : 'Tap to add this photo to the analysis',
       excludeSemantics: true,
       child: GestureDetector(
         onTap: onTap,

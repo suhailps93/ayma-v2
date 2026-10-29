@@ -100,7 +100,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'appearance_report',
     headline: 'An honest mirror',
-    subtitle: 'Open Appearance for a private, candid read on your photos.',
+    subtitle: 'Open Appearance, tick several photos per section, and get one '
+        'private, candid read across them all.',
     icon: Icons.face_retouching_natural_outlined,
     anchorId: TourAnchors.profileAppearanceRow,
     tab: 3,
