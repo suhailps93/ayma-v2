@@ -1,6 +1,6 @@
-// Shareable reports: ReportShare, ShareService (card download, Instagram
-// fallback, DM send), the share sheet's "Share to Ayma" hand-off, and the
-// read-only SharedReportScreen deep-link view.
+// Shareable reports: ReportShare, ShareService (card download, native share,
+// DM send), the share sheet's "Share to Ayma" hand-off, and the read-only
+// SharedReportScreen deep-link view.
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,12 +9,10 @@ import 'package:ayma_flutter/screens/shared_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
-import 'package:ayma_flutter/services/meta_integrations.dart';
 import 'package:ayma_flutter/services/share_service.dart';
 import 'package:ayma_flutter/widgets/share_report_sheet.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -100,8 +98,7 @@ void main() {
     final svc = ShareService(
         api: _api(_backend(seen)),
         httpClient: _backend(seen),
-        tempDir: tmp,
-        facebookAppId: 'fb');
+        tempDir: tmp);
     final f = await svc.downloadCard(_share, story: true);
     expect(seen.last.url.queryParameters['format'], 'story');
     expect(f.readAsBytesSync(), [137, 80, 78, 71]);
@@ -116,37 +113,6 @@ void main() {
       tempDir: Directory.systemTemp,
     );
     expect(() => svc.downloadCard(_share), throwsA(isA<ApiException>()));
-  });
-
-  test('instagram story: false without an app id or on platform failure',
-      () async {
-    final seen = <http.Request>[];
-    final noId = ShareService(
-        httpClient: _backend(seen), tempDir: tmp, facebookAppId: '');
-    expect(await noId.shareToInstagramStory(_share), isFalse);
-    expect(seen, isEmpty);
-
-    const channel = MethodChannel('ayma/share');
-    TestWidgetsFlutterBinding.ensureInitialized();
-    final calls = <MethodCall>[];
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (call) async {
-      calls.add(call);
-      throw PlatformException(code: 'STORY_FAILED');
-    });
-    final svc = ShareService(
-        httpClient: _backend(seen),
-        channel: channel,
-        tempDir: tmp,
-        facebookAppId: 'fb');
-    expect(await svc.shareToInstagramStory(_share), isFalse);
-    expect(calls.single.arguments['appId'], 'fb');
-    expect(calls.single.arguments['contentUrl'], _share.url);
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (_) async => true);
-    expect(await svc.shareToInstagramStory(_share), isTrue);
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null);
   });
 
   test('sendToThread sends an in-app report card, not the external link',
@@ -176,10 +142,11 @@ void main() {
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.tap(find.byTooltip('Share'));
     await tester.pumpAndSettle();
-    for (final label in ['Share to Ayma', 'Send to a user', 'More…']) {
+    for (final label in ['Share', 'Share to Ayma', 'Send to a user']) {
       expect(find.text(label), findsOneWidget);
     }
-    // Instagram is V2: hidden while meta_integrations is off (the default).
+    // The per-app Instagram Story button is gone — the native "Share" covers
+    // Instagram (and everything else) through the OS share sheet.
     expect(find.text('Instagram Story'), findsNothing);
     await tester.tap(find.text('Share to Ayma'));
     await tester.pumpAndSettle();
@@ -190,29 +157,6 @@ void main() {
     expect(k?.kind, 'draft_text');
     expect(k?.draftBody, contains('Appearance'));
     expect(k?.draftBody, isNot(contains('justabot.info')));
-  });
-
-  testWidgets('meta_integrations on shows the Instagram Story option',
-      (tester) async {
-    MetaIntegrations.enabled.value = true;
-    addTearDown(() => MetaIntegrations.enabled.value = false);
-    final router = GoRouter(routes: [
-      GoRoute(
-          path: '/',
-          builder: (_, __) => Scaffold(
-                appBar: AppBar(actions: [
-                  ShareReportButton(
-                    reportType: 'deep_dive',
-                    reportId: 'u1',
-                    apiClient: _api(_backend(<http.Request>[])),
-                  ),
-                ]),
-              )),
-    ]);
-    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-    await tester.tap(find.byTooltip('Share'));
-    await tester.pumpAndSettle();
-    expect(find.text('Instagram Story'), findsOneWidget);
   });
 
   testWidgets('SharedReportScreen renders the public snapshot',

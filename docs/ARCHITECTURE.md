@@ -100,7 +100,7 @@ flowchart LR
   App -.->|POST /dev/test-upgrade plan (require_dev)<br/>dev-only: grant tier pool via sync_entitlement, no payment| API
   API -.->|GET /v1/subscribers if sk_ key| RCS
   Err --> Sentry
-  Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
+  Card -->|image + smart-link caption, no upload| ShareTargets[native OS share sheet → WhatsApp / Instagram / Photos / anywhere]
   API --> Sentry
   Agent --> Sentry
   Sched --> API
@@ -194,13 +194,15 @@ flowchart LR
 - *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
   scores with verdicts; up to 4 strengths; the real Ayma orb logo asset `assets/icon/ayma_orb_ios.png` in its header
   and footer, decoded up-front so it is in the captured frame) from the report's own blocks, and shares it as a PNG
-  rendered on the device (`report_card_share.dart`): WhatsApp/Instagram by direct `ACTION_SEND` intent on Android
-  (through Ayma's **own** `FileProvider`, authority `${applicationId}.fileprovider` with explicit per-URI grants —
-  share_plus's provider only exposes its own `cache/share_plus/` subfolder, which is why the direct buttons used to
-  fail while "More…" worked), the system share sheet on iOS and for More, Save image via MediaStore / Photos
-  add-only. The card is still not uploaded, but the caption now carries the free static **smart link**
-  `justabot.info/get` (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on
-  screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+  rendered on the device (`report_card_share.dart`). **The single "Share" button opens the native OS share sheet
+  directly** (`share_plus` `SharePlus.share` with the card `XFile` + caption) — the user picks WhatsApp, Instagram,
+  Messages, save-to-photos, anywhere. There are **no per-app direct-share buttons**: the earlier WhatsApp/Instagram
+  `ACTION_SEND` intents (via Ayma's own `FileProvider`) were unreliable across OEMs and repeatedly appeared broken to
+  users while the native sheet always worked, so they — and their `ayma/share` method channel, the intermediate
+  Ayma share sheet and the separate "Save image" (the native sheet already saves) — were removed (founder, 2026-10-28).
+  The card is still not uploaded, and the caption carries the free static **smart link** `justabot.info/get`
+  (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on screen only
+  ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
   Each shown photo carries a "Remove from card" (X) control (**card-only** — it never deletes the photo or its
   analysis, which stay in the full report). Removing hides that photo and slides the next pooled analysed photo
   (the full set feeding the report, best/recent first) into its place; when the pool is spent the card simply shows
@@ -284,7 +286,7 @@ flowchart LR
   neither). The `LLM_PROVIDER_*` flags remain only as the deploy-time default when a user hasn't chosen a brain. See
   §13.10 for the capability map, resolver and `/brain/preference` API.
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
-  the report-card share sheet); the orb chat sheet grows to full screen **as one continuous surface** instead of
+  the report share flows); the orb chat sheet grows to full screen **as one continuous surface** instead of
   dismissing itself and pushing a new chat route — see *Ayma chat sheet: one growing surface* below.
 - *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
   (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.

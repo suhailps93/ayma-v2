@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -16,7 +15,6 @@ import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
-import '../widgets/report_card_share_sheet.dart';
 import 'skills_screen.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
@@ -87,6 +85,12 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   /// The sharer's referral code, folded into the smart link in the caption.
   /// Best-effort: null when unknown (offline, no referral, or no API).
   String? _refCode;
+
+  /// True while the card image is being rendered for a share, so the Share
+  /// button shows a spinner and a second tap can't start a second render.
+  bool _sharing = false;
+
+  late final ReportCardShare _share = widget.shareService ?? ReportCardShare();
 
   ImageProvider _image(String url) =>
       widget.imageFor?.call(url) ?? CachedNetworkImageProvider(url);
@@ -311,16 +315,6 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     onRemovePhoto: onRemove,
   );
 
-  Future<Uint8List> _renderPng(AppearanceCardData card, Color accent) async {
-    final view = View.of(context);
-    final logo = await _ensureLogo();
-    return ReportCardShare.renderPng(
-      _cardWidget(card, accent, logo: logo),
-      view: view,
-      logicalSize: AppearanceReportCard.size,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final resolvedMyUid = widget.myUid ?? _liveUid() ?? '';
@@ -398,13 +392,20 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                 label: 'Share',
                 hint: 'Share your report card image',
                 excludeSemantics: true,
-                onTap: () => _openShare(card, ac.accent),
+                onTap: _sharing ? null : () => _openShare(card, ac.accent),
                 child: SizedBox(
                   height: 48,
                   child: FilledButton.icon(
                     key: const ValueKey('reportCardShare'),
-                    onPressed: () => _openShare(card, ac.accent),
-                    icon: const Icon(Icons.ios_share),
+                    onPressed:
+                        _sharing ? null : () => _openShare(card, ac.accent),
+                    icon: _sharing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.ios_share),
                     label: const Text('Share'),
                   ),
                 ),
@@ -430,13 +431,34 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     );
   }
 
-  void _openShare(AppearanceCardData card, Color accent) =>
-      showReportCardShareSheet(
-        context,
-        renderPng: () => _renderPng(card, accent),
+  /// Renders the card image and opens the native OS share sheet directly —
+  /// the one share path that always worked. The user picks the destination
+  /// (WhatsApp, Instagram, Messages, save-to-photos, …) there; Ayma targets no
+  /// single app itself.
+  Future<void> _openShare(AppearanceCardData card, Color accent) async {
+    if (_sharing) return;
+    final toast = AymaToast.of(context);
+    // iPad share-popover anchor: the Share button's rect, read before awaits.
+    final box = context.findRenderObject() as RenderBox?;
+    final origin =
+        box != null ? box.localToGlobal(Offset.zero) & box.size : null;
+    final view = View.of(context);
+    setState(() => _sharing = true);
+    try {
+      final logo = await _ensureLogo();
+      await _share.shareCard(
+        _cardWidget(card, accent, logo: logo),
+        view: view,
+        logicalSize: AppearanceReportCard.size,
         caption: ReportCardShare.captionFor(_refCode),
-        service: widget.shareService,
+        origin: origin,
       );
+    } catch (_) {
+      toast.show("Couldn't share that right now.", kind: AymaToastKind.error);
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
 }
 
 /// The recommendations, privately, under the card. Never on the card.

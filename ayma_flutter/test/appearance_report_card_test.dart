@@ -1,7 +1,6 @@
 // The shareable Appearance report card: what it may show (photos capped at
 // four, both scores always, positive findings only), long-text safety, the
-// Share sheet, the 1080x1920 PNG export, and the per-target hand-off.
-import 'dart:async';
+// 1080x1920 PNG export, and the single native-share hand-off.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -10,13 +9,10 @@ import 'package:ayma_flutter/models/appearance_card.dart';
 import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/gallery_saver.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/report_card_share.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/appearance_report_card.dart';
-import 'package:ayma_flutter/widgets/ayma_toast.dart';
-import 'package:ayma_flutter/widgets/report_card_share_sheet.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -397,6 +393,19 @@ void main() {
       tester,
     ) async {
       final img = await _decoded(tester);
+      final shares = <String?>[];
+      // Tapping Share decodes the logo under runAsync; the report below renders
+      // its own network images through flutter_cache_manager, so stub the
+      // path_provider channel it reaches for (it would otherwise throw a
+      // MissingPluginException inside the runAsync zone).
+      final tmpDir = Directory.systemTemp.createTempSync('appr_screen');
+      addTearDown(() => tmpDir.deleteSync(recursive: true));
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (_) async => tmpDir.path);
+      addTearDown(() => TestDefaultBinaryMessengerBinding
+          .instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null));
       await tester.pumpWidget(
         MaterialApp(
           home: AppearanceReportScreen(
@@ -405,6 +414,7 @@ void main() {
             apiClient: _api(_report()),
             profileService: _Profile(),
             imageFor: (_) => DecodedImage(img),
+            shareService: _CapturingShare(shares),
           ),
         ),
       );
@@ -451,12 +461,24 @@ void main() {
         -300,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.byKey(const ValueKey('reportCardShare')));
+      // Tapping Share goes straight to the native OS share sheet — no Ayma
+      // intermediate sheet, no per-app buttons. (The real render + system
+      // sheet is covered by the service tests; here a capturing fake records
+      // that the button is wired to the native share with the smart-link
+      // caption.)
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const ValueKey('reportCardShare')));
+        for (var i = 0; i < 40 && shares.isEmpty; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
       await tester.pumpAndSettle();
-      final labels = [for (final o in ReportCardShareSheet.options) o.$2];
-      expect(labels, ['WhatsApp', 'Instagram', 'Save image', 'More…']);
-      for (final l in labels) {
-        expect(find.text(l), findsOneWidget);
+      expect(shares, hasLength(1));
+      expect(shares.single, contains('https://justabot.info/get'));
+      // No per-app share buttons / intermediate sheet survive anywhere.
+      for (final gone in ['WhatsApp', 'Instagram', 'Instagram Story', 'More…']) {
+        expect(find.text(gone), findsNothing);
       }
     });
 
@@ -698,135 +720,44 @@ void main() {
     });
   });
 
-  group('ReportCardShare targets', () {
+  group('ReportCardShare native share', () {
     late Directory tmp;
-    late List<MethodCall> shareCalls;
-    late List<MethodCall> saveCalls;
     late List<ShareParams> system;
-    late List<String> clipboard;
-    const shareChannel = MethodChannel('ayma/share');
-    const saveChannel = MethodChannel('ayma/media_save');
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
     ReportCardShare svc() => ReportCardShare(
-      shareChannel: shareChannel,
-      gallery: const GallerySaver(channel: saveChannel),
       tempDir: tmp,
       systemShare: (p) async => system.add(p),
-      setClipboard: (t) async => clipboard.add(t),
     );
 
     setUp(() {
       tmp = Directory.systemTemp.createTempSync('card_share');
-      shareCalls = [];
-      saveCalls = [];
       system = [];
-      clipboard = [];
-      messenger.setMockMethodCallHandler(saveChannel, (c) async {
-        saveCalls.add(c);
-        return 'Pictures/Ayma';
-      });
     });
-    tearDown(() {
-      debugDefaultTargetPlatformOverride = null;
-      messenger.setMockMethodCallHandler(shareChannel, null);
-      messenger.setMockMethodCallHandler(saveChannel, null);
-      tmp.deleteSync(recursive: true);
-    });
+    tearDown(() => tmp.deleteSync(recursive: true));
 
-    test('Android WhatsApp sends the image straight to WhatsApp', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      messenger.setMockMethodCallHandler(shareChannel, (c) async {
-        shareCalls.add(c);
-        return true;
-      });
-      expect(await svc().share(CardShareTarget.whatsapp, _png), isNull);
-      final c = shareCalls.single;
-      expect(c.method, 'sendToApp');
-      expect(c.arguments['packages'], ['com.whatsapp', 'com.whatsapp.w4b']);
-      // The caption carries the Ayma smart link so the card lands with it.
-      expect(c.arguments['text'], contains('Get your report on Ayma'));
-      expect(c.arguments['text'], contains('https://justabot.info/get'));
-      expect(File(c.arguments['path'] as String).readAsBytesSync(), _png);
-      expect(system, isEmpty);
-    });
-
-    test('Android Instagram sends the image and copies the link', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      messenger.setMockMethodCallHandler(shareChannel, (c) async {
-        shareCalls.add(c);
-        return true;
-      });
-      final msg = await svc().share(CardShareTarget.instagram, _png);
-      final c = shareCalls.single;
-      expect(c.arguments['packages'], ['com.instagram.android']);
-      // Instagram strips shared text, so none is sent on the intent...
-      expect(c.arguments['text'], '');
-      // ...it lands on the clipboard instead, with a toast telling the user.
-      expect(clipboard.single, contains('https://justabot.info/get'));
-      expect(msg, 'Link copied — paste it in your story or caption.');
-      expect(system, isEmpty);
-    });
-
-    test('WhatsApp not installed reports the missing app, not a fallback',
+    test('share opens the native sheet with the card image and caption',
         () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      messenger.setMockMethodCallHandler(shareChannel, (c) async {
-        shareCalls.add(c);
-        return false;
-      });
-      await expectLater(
-        svc().share(CardShareTarget.whatsapp, _png),
-        throwsA(isA<ShareTargetNotInstalled>()
-            .having((e) => e.appLabel, 'appLabel', 'WhatsApp')),
+      await svc().share(
+        _png,
+        caption: ReportCardShare.captionFor('AB12cd'),
+        origin: const Rect.fromLTWH(1, 2, 3, 4),
       );
-      expect(shareCalls.single.arguments['packages'], [
-        'com.whatsapp',
-        'com.whatsapp.w4b',
-      ]);
-      // No silent system-sheet fallback, no clipboard write.
-      expect(system, isEmpty);
-      expect(clipboard, isEmpty);
+      final p = system.single;
+      // The caption carries the Ayma smart link (with the referral code).
+      expect(p.text, contains('Get your report on Ayma'));
+      expect(p.text, contains('https://justabot.info/get?r=AB12cd'));
+      // The rendered card rides along as a PNG file...
+      final file = p.files!.single;
+      expect(file.mimeType, 'image/png');
+      expect(File(file.path).readAsBytesSync(), _png);
+      // ...and the iPad popover anchors to the Share button's rect.
+      expect(p.sharePositionOrigin, const Rect.fromLTWH(1, 2, 3, 4));
     });
 
-    test('Instagram not installed reports the missing app', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      messenger.setMockMethodCallHandler(shareChannel, (c) async {
-        shareCalls.add(c);
-        return false;
-      });
-      await expectLater(
-        svc().share(CardShareTarget.instagram, _png),
-        throwsA(isA<ShareTargetNotInstalled>()
-            .having((e) => e.appLabel, 'appLabel', 'Instagram')),
-      );
-      expect(system, isEmpty);
-      expect(clipboard, isEmpty);
-    });
-
-    test(
-      'iOS WhatsApp/Instagram and More use the system share sheet',
-      () async {
-        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-        await svc().share(CardShareTarget.whatsapp, _png);
-        await svc().share(CardShareTarget.more, _png);
-        expect(shareCalls, isEmpty);
-        expect(system, hasLength(2));
-        expect(system.first.text, contains('Get your report on Ayma'));
-        expect(system.first.text, contains('https://justabot.info/get'));
-      },
-    );
-
-    test('Save image writes the PNG to the gallery, nothing else', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      expect(
-        await svc().share(CardShareTarget.save, _png),
-        'Saved to Pictures/Ayma',
-      );
-      expect(saveCalls.single.arguments['mime'], 'image/png');
-      expect(saveCalls.single.arguments['bytes'], _png);
-      expect(system, isEmpty);
+    test('share falls back to the default caption when none is given',
+        () async {
+      await svc().share(_png);
+      expect(system.single.text, ReportCardShare.caption);
     });
   });
 
@@ -851,95 +782,24 @@ void main() {
     });
   });
 
-  group('ReportCardShareSheet buttons', () {
-    // A fake service with no file IO, so the sheet's mapping of a share()
-    // outcome to a toast/pop can be pump-tested (the service internals — the
-    // intent selection, clipboard copy and not-installed throw — are covered
-    // by the "ReportCardShare targets" group above).
-    ReportCardShareSheet sheet(FutureOr<String?> Function(CardShareTarget) on) =>
-        ReportCardShareSheet(
-          renderPng: () async => _png,
-          service: _FakeShare(on),
-        );
-
-    // Pumps an Ayma-shaped app (toast host over the router) showing [child]
-    // as a bottom sheet, so Navigator.pop closes the sheet like in the app.
-    Future<void> show(WidgetTester tester, ReportCardShareSheet child) async {
-      await tester.pumpWidget(MaterialApp(
-        theme: AymaTheme.light,
-        builder: (context, c) => AymaToastHost(child: c!),
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: TextButton(
-                onPressed: () => showModalBottomSheet<void>(
-                  context: context,
-                  builder: (_) => child,
-                ),
-                child: const Text('open'),
-              ),
-            ),
-          ),
-        ),
-      ));
-      await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
-    }
-
-    testWidgets('a not-installed app is named, and the sheet stays open',
-        (tester) async {
-      await show(
-        tester,
-        sheet((_) => throw const ShareTargetNotInstalled('WhatsApp')),
-      );
-      await tester.tap(find.text('WhatsApp'));
-      await tester.pumpAndSettle();
-      expect(find.text("WhatsApp isn't installed."), findsOneWidget);
-      expect(find.text("Couldn't share that right now."), findsNothing);
-      // The sheet is still up so the user can choose another option.
-      expect(find.text('More…'), findsOneWidget);
-    });
-
-    testWidgets('Instagram shows the link-copied toast, then closes the sheet',
-        (tester) async {
-      await show(
-        tester,
-        sheet((_) async => 'Link copied — paste it in your story or caption.'),
-      );
-      await tester.tap(find.text('Instagram'));
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Link copied — paste it in your story or caption.'),
-        findsOneWidget,
-      );
-      // The sheet closed on success.
-      expect(find.text('More…'), findsNothing);
-    });
-
-    testWidgets('WhatsApp success closes the sheet with no toast',
-        (tester) async {
-      await show(tester, sheet((_) async => null));
-      await tester.tap(find.text('WhatsApp'));
-      await tester.pumpAndSettle();
-      expect(find.text('More…'), findsNothing);
-      expect(find.byKey(const ValueKey('ayma_toast')), findsNothing);
-    });
-  });
 }
 
-/// A [ReportCardShare] whose [share] is a test callback (no rendering, file IO
-/// or platform channels), for pump-testing the sheet's result handling.
-class _FakeShare extends ReportCardShare {
-  _FakeShare(this._on);
+/// A [ReportCardShare] that records a share instead of rendering the card and
+/// opening a real OS share sheet, so the screen test can assert the Share
+/// button is wired to the native share (and the caption) without the heavy
+/// offscreen render. Overrides [shareCard] so no [renderPng] runs.
+class _CapturingShare extends ReportCardShare {
+  _CapturingShare(this.captions);
 
-  final FutureOr<String?> Function(CardShareTarget) _on;
+  final List<String?> captions;
 
   @override
-  Future<String?> share(
-    CardShareTarget target,
-    Uint8List png, {
+  Future<void> shareCard(
+    Widget card, {
+    required ui.FlutterView view,
+    required Size logicalSize,
     Rect? origin,
     String? caption,
   }) async =>
-      _on(target);
+      captions.add(caption);
 }

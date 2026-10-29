@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/report_share.dart';
-import '../services/meta_integrations.dart';
 import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
@@ -13,9 +12,9 @@ import '../theme.dart';
 import 'ayma_toast.dart';
 
 /// The AppBar Share action the web-research and Match report screens carry
-/// (Appearance shares its image report card instead,
-/// `report_card_share_sheet.dart`). [reportType]/[reportId] are the same pair the
-/// screen's `LivingReportView` reads.
+/// (Appearance shares its image report card instead, straight to the native
+/// OS share sheet — see `appearance_report_screen.dart`). [reportType]/
+/// [reportId] are the same pair the screen's `LivingReportView` reads.
 class ShareReportButton extends StatelessWidget {
   const ShareReportButton({
     super.key,
@@ -53,7 +52,7 @@ class ShareReportButton extends StatelessWidget {
       );
 }
 
-/// Share sheet: Instagram Story, Share to Ayma, Send to a user, system sheet.
+/// Share sheet: Share to Ayma, Send to a user, and the native OS share sheet.
 class ShareReportSheet extends StatefulWidget {
   const ShareReportSheet({
     super.key,
@@ -100,13 +99,6 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
     }
   }
 
-  Future<void> _instagram() => _run((s) async {
-        if (!await _svc.shareToInstagramStory(s)) {
-          await _svc.shareViaSystem(s);
-        }
-        if (mounted) Navigator.pop(context);
-      });
-
   Future<void> _ayma() => _run((s) async {
         ChatInbox.instance.push(ChatKickoff.draftText(
             "Let's talk about this report.\n${s.plainMessage}"));
@@ -144,12 +136,11 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_busy) const LinearProgressIndicator(),
-          if (MetaIntegrations.enabled.value)
-            ListTile(
-              leading: const Icon(Icons.camera_alt_outlined),
-              title: const Text('Instagram Story'),
-              onTap: _instagram,
-            ),
+          ListTile(
+            leading: const Icon(Icons.ios_share),
+            title: const Text('Share'),
+            onTap: _system,
+          ),
           ListTile(
             leading: const Icon(Icons.auto_awesome_outlined),
             title: const Text('Share to Ayma'),
@@ -159,11 +150,6 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
             leading: const Icon(Icons.send_outlined),
             title: const Text('Send to a user'),
             onTap: _sendToUser,
-          ),
-          ListTile(
-            leading: const Icon(Icons.ios_share),
-            title: const Text('More…'),
-            onTap: _system,
           ),
         ],
       ),
