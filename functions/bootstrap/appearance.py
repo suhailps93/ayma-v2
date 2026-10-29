@@ -446,6 +446,28 @@ async def run_appearance(
         db, uid, "ok", source,
         f"produced={'+'.join(produced) or 'none'} photos={photo_count}",
     )
+    # Completion notification: a user-initiated run is fired unawaited by the
+    # client (POST /appearance/report), so the open report screen can't learn
+    # it landed once the user navigates away. Fire an in-app "report ready"
+    # notification here — where the report is persisted — so it works even if
+    # the client backgrounded/left (as long as the request completed). NOT for
+    # the silent background reconcile (``source == "auto"``), which the user
+    # never asked for and shouldn't be pinged about. Best-effort: never let a
+    # notification failure sink the report the request returns.
+    # TODO(durable-bg): if the app is KILLED mid-request this synchronous run
+    # may not finish; a fully durable server-side background job is a larger
+    # follow-up (see docs/TODO_QUEUE.md).
+    if source != "auto" and doc.get("id"):
+        try:
+            import notifications_triggers
+
+            await notifications_triggers.notify_report_ready(
+                db, uid, str(doc["id"]), body_only=(want_body and not want_face)
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "appearance: report-ready notification failed for %s", uid
+            )
     return doc
 
 

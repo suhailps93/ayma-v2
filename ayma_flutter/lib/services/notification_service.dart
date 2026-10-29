@@ -263,6 +263,12 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
   if (deepDive != null) {
     return '/deep-dive/${Uri.encodeComponent(deepDive.group(1)!)}';
   }
+  // The appearance/body report-ready notification (`appearance/{report_id}`),
+  // opening the Appearance report screen (`/appearance/:id`).
+  final appearance = RegExp(r'^appearance/(.+)$').firstMatch(deepLink);
+  if (appearance != null) {
+    return '/appearance/${Uri.encodeComponent(appearance.group(1)!)}';
+  }
   if (deepLink == 'matches') return '/matches';
   if (deepLink == 'profile_suggestions') return '/profile/me/updates';
   return '/'; // 'chat' and anything unrecognised land on the Ayma tab

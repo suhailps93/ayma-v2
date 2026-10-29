@@ -180,6 +180,11 @@ void main() {
       expect(
           deepLinkToRoute('deep_dive/a b', myUid: 'a'), '/deep-dive/a%20b');
     });
+    test('appearance maps to the appearance report screen', () {
+      expect(
+          deepLinkToRoute('appearance/current', myUid: 'a'),
+          '/appearance/current');
+    });
   });
 
   group('AppNotification.resolveActorUid', () {

@@ -1028,6 +1028,7 @@ Detection and translation happen in one model call. When the detected source alr
 - **Mutual match** (`matches/{matchId}.status` → `mutual_interest`) — pushed to both users.
 - **Cron surfaces a new scored match** (§5.3 scheduled pipeline) — one digest push per cron run if it produced at least one new `matches` doc for that user, not one push per match.
 - **Ayma re-engagement** — a scheduled job (same Cloud Scheduler pattern as lint/matching) scans for users inactive 3+ days. Ayma generates one outbound message: a specific profile share if a good unviewed scored match exists (`mutual_interest` or high score), a personalized check-in otherwise (drawn from the wiki, not generic). Written as a real Ayma-authored `raw_turns` entry (appears in the user's transcript on return) plus a push preview. Backoff after sending: next attempt no sooner than 7 days later, then 14, doubling — not a check-in every 3 days indefinitely.
+- **Appearance/body report ready** (`report_ready`) — when a **user-initiated** appearance report finishes generating and is persisted server-side (`appearance.run_appearance`, the client fires `POST /appearance/report` *unawaited*), the backend fires an in-app notification ("Your appearance report is ready" / "Your body analysis is ready" for a body-only run) so a user who navigated away or backgrounded the app still learns it landed — the open report screen auto-refreshes via `ReportEvents` only while it's still on screen. Fired at the persist point (`notifications_triggers.notify_report_ready`), so it works as long as the request completed. Deep-links to the report (`appearance/{report_id}`, read-on-tap + bell badge via §7.6) and collapses to one rolling centre entry via `dedup_id` (there is only ever one current report, so a rerun refreshes that one row rather than stacking duplicates). **Not** fired for the silent background reconcile (`skill_runs.reconcile`, `source == "auto"`) — the user never asked for those. The preview carries only the neutral "ready" string, never any report content. **Freshness stamp:** the Appearance report view (`LivingReportView`, `reportType == 'appearance'`) also shows an `Updated <relative time>` line from the report's own `meta.updated_at`/`created_at`, so the user can *see* it ran even when the content looks unchanged. TODO (durable background): if the app is KILLED mid-request the synchronous run may not finish and no report/notification is produced — a fully durable server-side background job is a larger follow-up (see `docs/TODO_QUEUE.md`).
 
 No push for Lint flags, pending-questions, or account-recovery reminders — those stay in-app/backend-only.
 
@@ -1039,7 +1040,7 @@ Firebase Cloud Messaging (FCM). The client registers its device token **on the F
 
 ### 7.3 In-app notification center
 
-`users/{uid}/notifications/{notificationId}` — `type` (`dm_message` / `mutual_match` / `new_scored_match` / `ayma_checkin` / `skill_result` / `ayma_reply` / `profile_suggestions`), `body` (preview text), `deep_link`, `created_at`, `read`. Client queries the most recent `NOTIFICATIONS_LIMIT` (existing config, 50) ordered by `created_at`. Every push also writes one of these docs — the notification center is the durable record, the push is the real-time nudge.
+`users/{uid}/notifications/{notificationId}` — `type` (`dm_message` / `mutual_match` / `new_scored_match` / `ayma_checkin` / `skill_result` / `ayma_reply` / `profile_suggestions` / `report_ready`), `body` (preview text), `deep_link`, `created_at`, `read`. Client queries the most recent `NOTIFICATIONS_LIMIT` (existing config, 50) ordered by `created_at`. Every push also writes one of these docs — the notification center is the durable record, the push is the real-time nudge.
 
 ### 7.4 Push preview content
 
@@ -1051,7 +1052,7 @@ DM pushes are never batched (time-sensitive, sent individually, suppressed only 
 
 ### 7.6 Deep linking
 
-Each notification's `deep_link` encodes a screen + id (`dm_thread/{threadId}`, `profile/{uid}`, `chat` for an Ayma check-in, `profile_suggestions` → the "Public profile updates" review screen `/profile/me/updates`). Tapping a push or a notification-center row navigates directly there via the client router.
+Each notification's `deep_link` encodes a screen + id (`dm_thread/{threadId}`, `profile/{uid}`, `chat` for an Ayma check-in, `profile_suggestions` → the "Public profile updates" review screen `/profile/me/updates`, `appearance/{report_id}` → the Appearance report screen `/appearance/:id`). Tapping a push or a notification-center row navigates directly there via the client router.
 
 **Read-sync on tap.** Tapping an OS system notification (from the shade/notification bar) also marks the matching in-app notification read so Android/iOS and the app stay in sync — otherwise the bell badge stayed stuck (founder report 2026-10-28: "1" lingering after the item was opened from a notification). Every push to a notification-center entry carries that entry's doc id as `notif_id` in its FCM `data` payload (`notifications_dispatch._deliver` / the data-only `push_data`). On tap (`PushService.listenForTaps` → `NotificationService.markReadForTap`, both the cold-start `getInitialMessage`/`initialTapData` path **and** the warm `onMessageOpenedApp` path, identical on Android and iOS):
 - `notif_id` present → mark that exact centre doc read.
@@ -1062,7 +1063,7 @@ After marking read, the OS app-icon badge is resynced to the fresh bell unread c
 
 ### 7.7 Preferences
 
-`users/{uid}/notification_prefs` — one bool per category (`dm_message`, `mutual_match`, `new_scored_match`, `ayma_checkin`, `skill_result`, `ayma_reply`, `profile_suggestions`), default `true`. Checked before sending a push **and** before writing the notification-center doc, so a muted category doesn't clutter the list either. Editable from a settings screen.
+`users/{uid}/notification_prefs` — one bool per category (`dm_message`, `mutual_match`, `new_scored_match`, `ayma_checkin`, `skill_result`, `ayma_reply`, `profile_suggestions`, `report_ready`), default `true`. Checked before sending a push **and** before writing the notification-center doc, so a muted category doesn't clutter the list either. Editable from a settings screen.
 
 `profile_suggestions` fires when a wiki ingest pass creates **new** pending public-profile changes to review (`wiki_ingest.ingest` → `profile_manual.consume_new_suggestions` → `notifications_triggers.notify_profile_suggestions`). Deduped against the `profile_suggestions_notified` set on `users/{uid}` (content-stable keys of the pending changes): it fires once when the pending count goes 0→>0 or genuinely new items appear, not on every nightly run over an unchanged set, and the set resets when nothing is pending. To also collapse two ingest passes that finish at once (chat-turn + voice, say) — which previously stacked two identical "Ayma suggests 1 update…" rows — the centre doc is written with a **stable id** (`dispatch(..., dedup_id="profile_suggestions_pending")`): concurrent writers land on one doc and each later fire overwrites it with the current count (resetting `read`/`dismissed` so the refreshed entry resurfaces). Best-effort, inside ingest, so it inherits the request's 18+/consent gates and honours the §7.5 cooldown and the category mute.
 
@@ -1488,13 +1489,16 @@ hand-off any more — both belonged to the old dismiss-and-push-a-route design a
 
 Four client-side perceived-performance improvements, all behind no flag (pure UX polish; no backend change):
 
-- **Animated-logo loader** (`lib/widgets/ayma_logo_loader.dart`, `AymaLogoLoader`) — the ONE branded "Ayma is
-  working" indicator: the bundled orb mark (`assets/icon/ayma_orb_ios.png`) with a gentle breathing pulse + halo glow.
-  Respects reduced motion (`MediaQuery.disableAnimations` or a forced `reduceMotion`): renders completely still, with
-  no controller running. Used in (a) the **voice wake/connect** state — the composer's connecting leading slot
-  (`chat_composer.dart` `_ConnectingLead`, formerly a bare `CircularProgressIndicator`) — and (b) the **report / page
-  loaders** that formerly showed `AymaOrb(thinking)`: `living_report_view.dart` (Appearance, deep-dive, Story, Match),
-  `body_report_view.dart`, `face_report_view.dart`. Founder: "the Ayma logo should have a loading animation."
+- **Loaders — two kinds, standardized.** (1) **Standard page/report loader** (`lib/widgets/app_loading_indicator.dart`,
+  `AppLoadingIndicator`) — a `CircularProgressIndicator` tinted to the user's accent (`context.ac.accent`), centred. The
+  ONE indicator for every PAGE/REPORT loading state so they all look the same: Explore (`explore_screen.dart`),
+  `living_report_view.dart` (Appearance, deep-dive, Story, Match), `body_report_view.dart`, `face_report_view.dart`.
+  Founder: "when loading a page don't show the Ayma logo; show the loading logo used in Explore — use a standardized one
+  everywhere." (2) **Animated-logo loader** (`lib/widgets/ayma_logo_loader.dart`, `AymaLogoLoader`) — the branded "Ayma
+  is waking up" indicator: the bundled orb mark (`assets/icon/ayma_orb_ios.png`) with a breathing pulse + accent halo
+  glow; respects reduced motion (`MediaQuery.disableAnimations` or a forced `reduceMotion`): renders completely still,
+  no controller running. Reserved for the **voice wake/connect** state ONLY — the composer's connecting leading slot
+  (`chat_composer.dart` `_ConnectingLead`).
 
 - **Report auto-refresh on background completion** (`lib/services/report_events.dart`, `ReportEvents`) — the Appearance
   analysis runs in the background (§0 Card, `skills_screen.dart`'s fire-and-forget run), persisting the report and

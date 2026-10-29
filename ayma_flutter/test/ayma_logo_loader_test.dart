@@ -1,8 +1,10 @@
-// The one branded animated-logo loader (founder: "the Ayma logo should have a
-// loading animation"). Confirms it renders the logo, animates by default, and
-// goes completely still under reduced motion — the latter matters because the
-// loader is used in states that must not keep ticking when the user has asked
-// the OS to reduce motion.
+// The branded animated-logo loader (founder: "the Ayma logo should have a
+// loading animation"). It is now reserved for the VOICE wake/connect state only
+// (the chat composer's connecting slot) — page/report loads use the standard
+// `AppLoadingIndicator` (see `app_loading_indicator_test.dart`). Confirms it
+// renders the logo, animates by default, and goes completely still under
+// reduced motion — the latter matters because the voice-connect state must not
+// keep ticking when the user has asked the OS to reduce motion.
 import 'package:ayma_flutter/widgets/ayma_logo_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

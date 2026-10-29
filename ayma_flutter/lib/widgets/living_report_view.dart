@@ -13,7 +13,7 @@ import '../services/report_cache.dart';
 import '../services/report_events.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
-import 'ayma_logo_loader.dart';
+import 'app_loading_indicator.dart';
 import 'ayma_photo.dart';
 import 'overflow_guards.dart';
 import 'score_bar.dart';
@@ -522,13 +522,13 @@ class LivingReportViewState extends State<LivingReportView>
     final report = _report;
     if (report == null) {
       if (_loadFailed) return _ErrorMessage(onRetry: reload);
-      // No cached copy to show yet: the branded animated-logo loader (shown
+      // No cached copy to show yet: the standard page/report loader (shown
       // only when there's NO cache — a cached report paints instantly above
       // via `_restoreFromCache`, with the fresh fetch swapping in silently).
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
-          child: AymaLogoLoader(size: 64),
+          child: AppLoadingIndicator(),
         ),
       );
     }
@@ -551,6 +551,38 @@ class LivingReportViewState extends State<LivingReportView>
     ];
   }
 
+  /// A subtle `Updated <relative time>` line from the report's own generation
+  /// timestamp (`meta.updated_at`, falling back to `created_at`). Returns a
+  /// zero-size box when the report carries no parseable timestamp, so it never
+  /// adds empty chrome. Uses `ValueKey('reportFreshness')` so a widget test can
+  /// find it.
+  Widget _buildFreshnessStamp(AymaTokens ac, LivingReport report) {
+    final raw = (report.meta.updatedAt?.isNotEmpty ?? false)
+        ? report.meta.updatedAt
+        : report.meta.createdAt;
+    final when = raw == null ? null : DateTime.tryParse(raw);
+    if (when == null) return const SizedBox.shrink();
+    return Padding(
+      key: const ValueKey('reportFreshness'),
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Text(
+        'Updated ${_relativeTime(when)}',
+        style: AymaType.mono(size: 11, color: ac.fgMute)
+            .copyWith(letterSpacing: 0.5),
+      ),
+    );
+  }
+
+  /// Short relative age for the freshness stamp — "just now", "5m ago",
+  /// "3h ago", "2d ago" (same scale as the Messages list's "Last activity").
+  static String _relativeTime(DateTime t) {
+    final d = DateTime.now().difference(t.toLocal());
+    if (d.isNegative || d.inMinutes < 1) return 'just now';
+    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+    if (d.inHours < 24) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
+  }
+
   Widget _buildReport(BuildContext context, LivingReport report) {
     final ac = context.ac;
     final canEdit = report.meta.viewerCanEdit;
@@ -570,6 +602,14 @@ class LivingReportViewState extends State<LivingReportView>
                 child: Text(report.title, style: _titleStyle(ac.fg)),
               ),
               const SizedBox(height: 24),
+            ],
+            // Freshness stamp (founder 2026-10-28: a background rerun gave no
+            // signal it finished). Shows when the Appearance report was last
+            // generated so the user can SEE it ran/refreshed even when the
+            // content looks similar. Only on the Appearance report — the one
+            // report that reruns in the background from elsewhere.
+            if (widget.reportType == 'appearance') ...[
+              _buildFreshnessStamp(ac, report),
             ],
             if (report.sections.isEmpty)
               Padding(

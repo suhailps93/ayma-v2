@@ -4,7 +4,7 @@
 // run actually had). Covers:
 //  - a cached report paints INSTANTLY on open, before the network fetch lands,
 //    then the fresh result swaps in;
-//  - with no cache, the branded animated-logo loader shows until data arrives;
+//  - with no cache, the standard loader shows until data arrives;
 //  - a ReportEvents completion makes the open report re-fetch and show the new
 //    report with no manual reload;
 //  - the fresh fetch refreshes the on-device cache.
@@ -14,7 +14,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/report_cache.dart';
 import 'package:ayma_flutter/services/report_events.dart';
-import 'package:ayma_flutter/widgets/ayma_logo_loader.dart';
+import 'package:ayma_flutter/widgets/app_loading_indicator.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -87,7 +87,7 @@ void main() {
     // network has returned anything.
     expect(find.text('Cached'), findsOneWidget);
     expect(find.text('Fresh'), findsNothing);
-    expect(find.byType(AymaLogoLoader), findsNothing);
+    expect(find.byType(AppLoadingIndicator), findsNothing);
 
     // The fresh fetch lands and swaps in.
     gate.complete();
@@ -102,7 +102,7 @@ void main() {
     expect(jsonDecode(cached!)['title'], 'Fresh');
   });
 
-  testWidgets('with no cache, the animated-logo loader shows until data lands',
+  testWidgets('with no cache, the standard loader shows until data lands',
       (tester) async {
     final gate = Completer<void>();
     final mockHttp = MockClient((req) async {
@@ -119,13 +119,13 @@ void main() {
     await tester.pumpWidget(_host(api));
     await tester.pump();
 
-    // Nothing cached: the branded loader stands in while we wait.
-    expect(find.byType(AymaLogoLoader), findsOneWidget);
+    // Nothing cached: the standard accent loader stands in while we wait.
+    expect(find.byType(AppLoadingIndicator), findsOneWidget);
     expect(find.text('Fresh'), findsNothing);
 
     gate.complete();
     await tester.pumpAndSettle();
-    expect(find.byType(AymaLogoLoader), findsNothing);
+    expect(find.byType(AppLoadingIndicator), findsNothing);
     expect(find.text('Fresh'), findsOneWidget);
   });
 

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
-import 'ayma_logo_loader.dart';
+import 'app_loading_indicator.dart';
 import 'ayma_toast.dart';
 import 'score_bar.dart';
 
@@ -96,7 +96,7 @@ class _StoredFaceReportSheetState extends State<_StoredFaceReportSheet> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(32),
-                  child: AymaLogoLoader(size: 56),
+                  child: AppLoadingIndicator(),
                 ),
               );
             }

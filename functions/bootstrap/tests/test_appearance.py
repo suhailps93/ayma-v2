@@ -952,3 +952,67 @@ def test_clear_finding_no_report_yet_raises_keyerror():
     db = FakeDb()
     with pytest.raises(KeyError):
         _run(appearance.clear_finding(db, "u1", "eye_color"))
+
+
+# --- completion notification (§ report ready) ------------------------------
+
+
+@pytest.fixture
+def _notif_capture(monkeypatch):
+    """Capture report-ready notifications fired from `run_appearance`, without
+    touching the real FCM/dispatch path."""
+    import notifications_triggers
+
+    calls = []
+
+    async def _fake(db, uid, report_id, *, body_only=False):
+        calls.append({"uid": uid, "report_id": report_id, "body_only": body_only})
+
+    monkeypatch.setattr(notifications_triggers, "notify_report_ready", _fake)
+    return calls
+
+
+def test_completing_a_report_fires_exactly_one_ready_notification(
+    _mocks, _notif_capture
+):
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(db, "u1", source="endpoint"))
+    assert len(_notif_capture) == 1
+    c = _notif_capture[0]
+    assert c["uid"] == "u1"
+    assert c["report_id"] == rep["id"] == "current"
+    assert c["body_only"] is False
+
+
+def test_body_only_run_flags_the_notification_as_body_only(_mocks, _notif_capture):
+    db = FakeDb()
+    _run(
+        appearance.run_appearance(
+            db, "u1", want_face=False, want_body=True, source="endpoint"
+        )
+    )
+    assert len(_notif_capture) == 1
+    assert _notif_capture[0]["body_only"] is True
+
+
+def test_background_auto_run_fires_no_notification(_mocks, _notif_capture):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1", source="auto"))
+    assert _notif_capture == []
+
+
+def test_unchanged_rerun_does_not_refire_the_notification(_mocks, _notif_capture):
+    # First run persists + notifies once. A rerun over the SAME photos skips the
+    # vision passes and returns the stored report without persisting, so it must
+    # not fire a second "ready" notification.
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1", source="endpoint"))
+    _run(appearance.run_appearance(db, "u1", source="endpoint"))
+    assert len(_notif_capture) == 1
+
+
+def test_no_photo_run_fires_no_notification(monkeypatch, _mocks, _notif_capture):
+    monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: [])
+    db = FakeDb()
+    assert _run(appearance.run_appearance(db, "u1", source="endpoint")) is None
+    assert _notif_capture == []

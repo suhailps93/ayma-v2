@@ -25,6 +25,10 @@ NOTIF_AYMA_REPLY = "ayma_reply"
 # are waiting to be reviewed (applied or dismissed). Deep-links to the review
 # screen; deduped so the user isn't re-pinged for an unchanged pending set.
 NOTIF_PROFILE_SUGGESTIONS = "profile_suggestions"
+# A user-initiated appearance/body report finished generating server-side while
+# the user may have navigated away. Deep-links to that report so the read-on-tap
+# + bell badge work; deduped to one rolling entry (there is one current report).
+NOTIF_REPORT_READY = "report_ready"
 
 NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_DM,
@@ -34,6 +38,7 @@ NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_SKILL_DONE,
     NOTIF_AYMA_REPLY,
     NOTIF_PROFILE_SUGGESTIONS,
+    NOTIF_REPORT_READY,
 )
 
 NOTIFICATIONS_COLLECTION = "notifications"
