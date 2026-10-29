@@ -32,9 +32,16 @@ see the contrast immediately:
   (jazz, sci-fi, fine dining). The match score is capped low and the taste card
   shows little overlap.
 
-Measured scores from the seed (`matching_skill.score_pair`, 0–1):
-Daniel×Sofia ≈ **0.99**, Daniel×Priya ≈ **0.25**. See the live numbers printed
-by `scripts/verify_demo_accounts.py`.
+Measured scores (see the live numbers printed by
+`scripts/verify_demo_accounts.py`):
+- **Match** (`matching_skill.score_pair`, 0–1): Daniel×Sofia ≈ **0.99**,
+  Daniel×Priya ≈ **0.25**.
+- **Taste** (live Qloo, `taste_match`, 0–100, all 10 domains): Daniel×Sofia =
+  **68 "Good taste overlap"** (filled per-domain bars + shared entities Bon Iver,
+  Fleet Foxes, Lost in Translation, Tartine Bakery, Fleabag, The Bear);
+  Daniel×Priya = **25 "Some taste overlap"**. (Offline, the bundled Qloo fixture
+  has only a few entities per newer domain so it over-scores the poor pair; the
+  deployed app uses live Qloo, where the split is as shown.)
 
 ## What each profile has
 
