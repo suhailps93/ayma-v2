@@ -34,6 +34,7 @@ import 'theme.dart';
 import 'widgets/ask_ayma_overlay.dart';
 import 'widgets/ayma_toast.dart';
 import 'widgets/keyboard_dismiss.dart';
+import 'widgets/tour_host.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -302,8 +303,15 @@ class AymaApp extends StatelessWidget {
         // pointer-event observer, so it cannot steal or delay any tap in
         // the tree — see [KeyboardDismissOnTap]'s doc.
         // [AymaToastHost] renders app-wide toasts above every route.
-        builder: (context, child) => AymaToastHost(
-          child: KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+        // [TourHost] is OUTERMOST so the interactive feature-tour overlay
+        // (§11.2a) sits above the Navigator — and so above every route it
+        // pushes — and stays mounted as the tour walks between pages (it is
+        // idle, adding nothing, until the shell's gate starts a tour).
+        builder: (context, child) => TourHost(
+          child: AymaToastHost(
+            child:
+                KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+          ),
         ),
         // The persistent bottom nav bar is wired per-route in
         // `routing/app_router.dart` (`NavBarShell`), not here — it needs to

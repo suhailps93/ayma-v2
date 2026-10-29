@@ -157,6 +157,12 @@ Repo and release rules (also in `AGENTS.md`; do not diverge)
   key**: `anchorId` from `tour_anchors.dart` (+ the `tab` it lives on), with that `GlobalKey` attached to the
   real target widget). The tour is an interactive coach-mark walkthrough: it auto-shows after pre-boarding and
   spotlights the real UI element for any unseen feature on next open (ARCHITECTURE §11.2a).
+  - The overlay is hosted at the **app root, above the Navigator** (`TourHost` in `main.dart`'s
+    `MaterialApp.router` builder, driven by the `TourController` singleton), so the single floating callout
+    **stays open across page/route pushes** and each step navigates itself to where its anchor lives (pop back
+    to the shell + switch tab via `TabRequest`). The shell only *decides* to start the tour; it no longer hosts
+    it. Don't re-mount `CoachMarkOverlay` inside a screen — add the entry + anchor key and the root host handles
+    the rest.
 
 ---
 

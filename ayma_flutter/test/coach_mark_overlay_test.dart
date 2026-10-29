@@ -2,6 +2,8 @@ import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ayma_orb.dart';
+import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -81,6 +83,9 @@ void main() {
                     onFinish: onFinish,
                     features: features,
                     spotlight: spotlight,
+                    // A missing anchor should skip within a few pumps here (the
+                    // on-device default is generous, to ride out transitions).
+                    maxMeasureAttempts: 3,
                   ),
                 ),
               ],
@@ -226,6 +231,7 @@ void main() {
                 store: store,
                 onFinish: () {},
                 features: _features,
+                maxMeasureAttempts: 3,
               ),
             ),
           ],
@@ -293,5 +299,152 @@ void main() {
 
     expect(find.text('Alpha'), findsOneWidget);
     expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+  });
+
+  // Bug A regression: the `home_orb` anchor must resolve to the real centre
+  // ORB, not one of the tab icon buttons (the Messages/envelope icon). The
+  // shell hands `AymaTabBar` its tour anchor keys by tab index; tab 0 is the
+  // orb, tab 2 the Messages icon.
+  testWidgets('home_orb anchor is on the orb, not a tab icon', (tester) async {
+    final anchorKeys = <int, GlobalKey>{
+      0: TourAnchors.keyFor(TourAnchors.homeOrb),
+      1: TourAnchors.keyFor(TourAnchors.exploreTab),
+      2: TourAnchors.keyFor(TourAnchors.messagesTab),
+      3: TourAnchors.keyFor(TourAnchors.profileTab),
+      AymaTabBar.kBellAnchor: TourAnchors.keyFor(TourAnchors.notificationsBell),
+    };
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: Scaffold(
+        bottomNavigationBar: AymaTabBar(
+          index: 0,
+          voice: null,
+          onSelected: (_) {},
+          anchorKeys: anchorKeys,
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    // The orb key wraps the real AymaOrb...
+    expect(
+      find.descendant(
+        of: find.byKey(TourAnchors.keyFor(TourAnchors.homeOrb)),
+        matching: find.byType(AymaOrb),
+      ),
+      findsOneWidget,
+    );
+    // ...and the Messages/envelope key does NOT (it's a different element).
+    expect(
+      find.descendant(
+        of: find.byKey(TourAnchors.keyFor(TourAnchors.messagesTab)),
+        matching: find.byType(AymaOrb),
+      ),
+      findsNothing,
+    );
+    // The resolved rects are distinct and the orb sits to the right of the
+    // Messages icon (it's the visual centre of the bar).
+    final orbRect = TourAnchors.rectFor(TourAnchors.homeOrb);
+    final messagesRect = TourAnchors.rectFor(TourAnchors.messagesTab);
+    expect(orbRect, isNotNull);
+    expect(messagesRect, isNotNull);
+    expect(orbRect == messagesRect, isFalse);
+    expect(orbRect!.center.dx, greaterThan(messagesRect!.center.dx));
+  });
+
+  // Bug B regression: the overlay is hosted ABOVE the Navigator, so a route
+  // pushed while the tour is up must NOT tear the callout down — it stays open
+  // across pages (founder's "the pop-up goes away when you click to a different
+  // page").
+  testWidgets('the callout persists across a route push', (tester) async {
+    final nav = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      navigatorKey: nav,
+      // Mirrors `TourHost`: the overlay is a sibling ABOVE the Navigator.
+      builder: (context, child) => Stack(
+        children: [
+          child!,
+          Positioned.fill(
+            child: CoachMarkOverlay(
+              store: _FakeTourStore(),
+              onFinish: () {},
+              features: const [
+                TourFeature(
+                  featureId: 'c',
+                  headline: 'Charlie',
+                  subtitle: 'third',
+                  icon: Icons.star_rounded,
+                ),
+              ],
+              maxMeasureAttempts: 3,
+            ),
+          ),
+        ],
+      ),
+      home: const Scaffold(body: Center(child: Text('Page one'))),
+    ));
+    await settle(tester);
+    expect(find.text('Charlie'), findsOneWidget);
+    expect(find.text('Page one'), findsOneWidget);
+
+    // Push a second page on top of the Navigator.
+    nav.currentState!.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Center(child: Text('Page two'))),
+      ),
+    );
+    await settle(tester);
+
+    // The new page is up AND the floating callout is still open over it.
+    expect(find.text('Page two'), findsOneWidget);
+    expect(find.text('Charlie'), findsOneWidget);
+  });
+
+  // Bug C regression: the callout must not overflow at text scale 2.0 on the
+  // smallest supported window — it scrolls/wraps instead.
+  testWidgets('callout renders without overflow at text scale 2.0',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: Builder(
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: Scaffold(
+            body: Stack(
+              children: [
+                Positioned(
+                  left: 24,
+                  bottom: 24,
+                  child: SizedBox(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    width: 64,
+                    height: 64,
+                  ),
+                ),
+                Positioned.fill(
+                  child: CoachMarkOverlay(
+                    store: _FakeTourStore(),
+                    onFinish: () {},
+                    features: _features,
+                    maxMeasureAttempts: 3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ));
+    await settle(tester);
+
+    expect(find.text('Alpha'), findsOneWidget);
+    // No RenderFlex overflow / layout exception was thrown while laying out
+    // the callout at 2.0.
+    expect(tester.takeException(), isNull);
   });
 }
