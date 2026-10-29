@@ -560,6 +560,10 @@ app.include_router(date_sim.router)
 # for a pair from their public Taste pages, plus the public judge demo page over
 # the seeded demo profiles. Its own module for the same clean-lift reason.
 import taste_match  # noqa: E402
+# Mines the user's existing Story + conversation history for music/film/food
+# favourites to fill the public Taste page the Qloo engine reads — best-effort,
+# triggered when the taste signal is thin (see taste_backfill.py).
+import taste_backfill  # noqa: E402
 
 app.include_router(taste_match.router)
 
@@ -6339,6 +6343,9 @@ async def completeness_get(uid: str = Depends(require_uid)) -> dict[str, object]
     ``intent`` branch, per-section progress, and the top unanswered nodes to
     pursue next. Served from the cached
     ``profile/main.completeness`` map, recomputed when absent or stale."""
+    # Fill the public Taste page from the user's existing Story + conversations
+    # when their taste signal is thin — best-effort, never blocks this read.
+    taste_backfill.schedule(get_db(), uid)
     return await completeness.get_or_recompute(get_db(), uid)
 
 
@@ -6347,6 +6354,9 @@ async def questionnaire_get(uid: str = Depends(require_uid)) -> dict[str, object
     """The caller's full intent-routed question tree with per-node coverage —
     ``{intent, intent_set, score, nodes: [{...node..., status, value,
     source}]}``. Drives the Flutter "Complete your profile" screen."""
+    # Same best-effort taste backfill as /completeness — fills Film/Food from
+    # existing context so the taste questions reflect what they've already said.
+    taste_backfill.schedule(get_db(), uid)
     return await completeness.questionnaire_view(get_db(), uid)
 
 
@@ -6612,6 +6622,19 @@ async def match_report(
 
     def _photo(u: str) -> str:
         return story._photo_url_safe(_primary_profile_photo_path(u)) or ""
+
+    # Lazily fill either person's public Taste page from their OWN existing
+    # Story + conversations when a domain is still empty, so the card renders
+    # full rather than with blank Film/Food. Best-effort and idempotent (a cheap
+    # no-op once all three domains are populated); each person's own stated
+    # favourites, onto their own public page — the same rule wiki_ingest uses.
+    try:
+        await asyncio.gather(
+            taste_backfill.backfill(get_db(), uid),
+            taste_backfill.backfill(get_db(), other),
+        )
+    except Exception:  # noqa: BLE001 - the report must render regardless
+        logger.warning("taste backfill before match report failed", exc_info=True)
 
     # "Taste match · powered by Qloo" — the shared-taste section between the
     # two users, from both people's PUBLIC Taste pages only (§13 Qloo taste

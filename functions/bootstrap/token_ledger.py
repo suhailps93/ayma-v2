@@ -138,6 +138,7 @@ FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (a
 FEATURE_PRACTICE = "practice"  # Practice Date — simulated-match roleplay, live coach + debrief
 FEATURE_DATE_SIM = "date_sim"  # AI Date Simulation — two personas converse, compatibility read
 FEATURE_AVATAR = "avatar"  # Persistent AI-avatar snapshot — background persona distillation (persona_snapshot.py)
+FEATURE_TASTE_BACKFILL = "taste_backfill"  # mine Story + conversation history for music/film/food favourites (taste_backfill.py)
 
 # The one user-facing label per ledger feature key — the Plan page's "Where
 # your credits went" list shows these, never the raw key. Every FEATURE_*
@@ -170,6 +171,7 @@ FEATURE_LABELS = {
     FEATURE_PRACTICE: "Practice Date",
     FEATURE_DATE_SIM: "Date simulation",
     FEATURE_AVATAR: "AI avatar",
+    FEATURE_TASTE_BACKFILL: "Taste match",
 }
 FEATURE_LABEL_FALLBACK = "Other"
 
