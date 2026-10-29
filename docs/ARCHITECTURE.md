@@ -2243,19 +2243,38 @@ people have no public Taste page it carries a `{"status": "no_taste"}` marker
 (the client shows an empty state); on any other failure the section is omitted,
 never erroring the report.
 
-**Taste capture (two paths, both to the Taste page, never Interests).** The
+**Taste capture (three paths, all to the Taste page, never Interests).** The
 public Taste page (`wiki_pages/taste`, `Music:/Film:/Food:` lines) fills from
 (1) direct answers — Ayma's `record_answer(taste_music|taste_film|taste_food)` →
-`skills/questionnaire.py::_sync_taste_page`; and (2) free-chat extraction — the
+`skills/questionnaire.py::_sync_taste_page`; (2) free-chat extraction — the
 `wiki_ingest` pass returns a structured `taste: {music, film, food}` block of
 named favourites the user stated, which `skills/questionnaire.py::
 merge_taste_mentions` appends to the taste nodes (dedup, cap 5) and recomposes
-the page. The ingest prompt routes named favourite music/films/food to that
-block and keeps `interests` for hobbies/activities only (so films/cuisines no
-longer get dumped into the Interests story), and a narrative `taste` page op is
-dropped (the structured path owns the page). The one-sided empty state surfaces
-the viewer's own tastes instead of dead-ending; this copy is server-driven
-(`taste_match._resolve_pair`), live on deploy with no app release.
+the page; and (3) **backfill from existing context** — `taste_backfill.py` mines
+the user's whole Story (all `wiki_pages` via `read_wiki_context`) **and** their
+past voice + text conversation history (`chat_history._collect` over
+`chat_messages` + `raw_turns`) with a dedicated Gemini extraction
+(`prompts/taste_extract.md`, model from `config.py`) and folds the result through
+the same `merge_taste_mentions` path. The ingest prompt routes named favourite
+music/films/food to the extraction block, is explicit about capturing **all three
+domains** (film and food are the ones most often missed), and keeps `interests`
+for hobbies/activities only (so films/cuisines no longer get dumped into the
+Interests story); a narrative `taste` page op is dropped (the structured path
+owns the page). The one-sided empty state surfaces the viewer's own tastes
+instead of dead-ending; this copy is server-driven (`taste_match._resolve_pair`),
+live on deploy with no app release.
+
+**Backfill triggers (best-effort, idempotent).** `taste_backfill.backfill(db,
+uid)` is a cheap no-op the moment all three domains have an entry (three
+Firestore reads, no LLM); only a *thin* signal (any domain empty) runs the
+extraction. It fires: fire-and-forget on `GET /completeness` and
+`GET /questionnaire` (`taste_backfill.schedule`), and awaited for both people
+inside `GET /match/{id}` just before `taste_match.report_section`, so the card
+renders full rather than with blank Film/Food. It is exempt from the credit gate
+(`enforce_cap=False`) like `wiki_ingest`, metered under the `taste_backfill`
+ledger feature, and reads only each user's OWN private content to write only
+names that user themselves stated onto their OWN public Taste page — no
+cross-user private read ever reaches Qloo or another viewer.
 
 **Kill switch (billing protection).** The `qloo_enabled` feature flag (default
 **ON**, `docs/FEATURE_FLAGS.md`) disables every Qloo call at runtime with **no
@@ -2273,7 +2292,10 @@ gate is `qloo_client.qloo_enabled()`.
 **Where the Taste page comes from.** Real users populate it through the normal
 questionnaire (no separate taste form): three `page_type: "taste"` nodes in the
 question tree (`question_tree.json`, branch `all` — `taste_music` core weight 5,
-`taste_film` / `taste_food` deep weight 4) that Ayma asks conversationally. On
+`taste_film` / `taste_food` deep weight 5) that Ayma asks conversationally. All
+three carry equal top weight so answering one domain never crowds the other two
+out of `next_questions` — a user with Music filled but Film/Food empty still gets
+Film and Food ranked at the very top (founder directive, Qloo demo). On
 any taste answer, `skills/questionnaire.py::_sync_taste_page` composes the user's
 `wiki_pages/taste` page deterministically in the `Music: … / Film: … / Food: …`
 shape `parse_taste` reads, `visibility: "public"` by design (the user's own
@@ -2292,7 +2314,10 @@ complete-profile screen (`GET /questionnaire`). See `docs/QLOO_TASTE.md`
 
 ```mermaid
 flowchart LR
-  QZ["Questionnaire taste nodes<br/>(taste_music/film/food)"] --> SYNC["_sync_taste_page<br/>→ public wiki_pages/taste"]
+  BF["taste_backfill<br/>Story (wiki_pages) + conversations<br/>(chat_messages + raw_turns)<br/>→ Gemini taste_extract"] --> MTM["merge_taste_mentions"]
+  WI["wiki_ingest free-chat<br/>taste: {music,film,food}"] --> MTM
+  MTM --> QZ["Questionnaire taste nodes<br/>(taste_music/film/food)"]
+  QZ --> SYNC["_sync_taste_page<br/>→ public wiki_pages/taste"]
   SYNC --> A
   SYNC --> B
   A["Person A public profile<br/>Taste page"] --> PA["parse_taste"]

@@ -41,9 +41,12 @@ Real users populate their PUBLIC Taste page through the normal questionnaire —
 no separate taste form or CTA. Three `page_type: "taste"` nodes live in the
 question tree (`functions/bootstrap/question_tree.json`, branch `all`, so every
 intent and the pre-intent flow see them): `taste_music` (core, weight 5),
-`taste_film` and `taste_food` (deep, weight 4). Ayma raises them conversationally
-via `next_questions` and records the answer with `record_answer` as a
-comma-separated list of up to 5 names.
+`taste_film` and `taste_food` (deep, weight 5). All three carry equal top weight
+so answering one domain never crowds the other two out of `next_questions` — a
+user with Music filled but Film/Food empty still gets Film and Food ranked at the
+very top (founder directive, Qloo demo). Ayma raises them conversationally via
+`next_questions` and records the answer with `record_answer` as a comma-separated
+list of up to 5 names.
 
 **Asked early (so the Qloo Taste match stops showing empty).** `taste` is a
 _promoted_ section in `completeness.py` (`_EARLY_PAGE_TYPES`): it is always
@@ -54,12 +57,13 @@ of `next` (right after the routing node — the identity basics come from
 preboarding and are not re-asked) for any user who hasn't answered it yet, and
 makes the **"Tastes (music, film & food)"** section show as an open, fillable
 topic on the complete-profile screen. Once `taste_music` is answered,
-`taste_film`/`taste_food` unlock within the section. The complete-profile screen
+`taste_film`/`taste_food` unlock within the section and — at equal top weight —
+sit at the very top of `next` until they too are answered. The complete-profile screen
 is server-driven from `GET /questionnaire` (`completeness.questionnaire_view`),
 so this needs no separate UI — the promoted section renders there automatically.
 
-**Two capture paths, both land on the structured Taste page (never Interests).**
-There are two ways taste reaches the public Taste page, and neither duplicates
+**Three capture paths, all land on the structured Taste page (never Interests).**
+There are three ways taste reaches the public Taste page, and none duplicates
 into the Interests story:
 
 1. **Direct answer** — Ayma calls `record_answer(taste_music|taste_film|
@@ -69,10 +73,28 @@ into the Interests story:
    fan", "I could eat ramen every day") without Ayma asking the node outright,
    the `wiki_ingest` pass that compiles the wiki returns a structured
    `taste: {music, film, food}` block (named favourites only, the user's own,
-   ≤5 per domain — see `prompts/wiki_ingest.md`). `wiki_ingest` hands it to
+   ≤5 per domain — see `prompts/wiki_ingest.md`, now explicit about capturing
+   all three domains). `wiki_ingest` hands it to
    `skills/questionnaire.py::merge_taste_mentions`, which APPENDS those names to
    the taste questionnaire nodes (dedup, cap 5, never overwriting a direct
    answer) and recomposes the Taste page.
+3. **Backfill from existing context** (`functions/bootstrap/taste_backfill.py`)
+   — for a user whose taste is still thin, mine everything they have ALREADY
+   said: their whole Story (all `wiki_pages` via `wiki_query.read_wiki_context`)
+   **and** their past voice + text conversation history
+   (`chat_history._collect` over `chat_messages` + `raw_turns`). A dedicated
+   Gemini pass (`prompts/taste_extract.md`, model from `config.py`) pulls out
+   music/film/food favourites across all three domains, folded through the same
+   `merge_taste_mentions`. **Idempotent and cheap:** a no-op (three Firestore
+   reads, no LLM) the moment all three domains have an entry; only a thin signal
+   (any domain empty) runs the extraction. **Triggered** fire-and-forget on
+   `GET /completeness` and `GET /questionnaire` (`taste_backfill.schedule`) and
+   awaited for both people inside `GET /match/{id}` just before
+   `report_section`, so the card fills rather than showing blank Film/Food.
+   Exempt from the credit gate (`enforce_cap=False`) like `wiki_ingest`, metered
+   under the `taste_backfill` ledger feature. Reads only each user's OWN private
+   content to write only names that user themselves stated onto their OWN public
+   Taste page — no cross-user private read reaches Qloo or another viewer.
 
 So Film:/Food: fill from the user's film/cuisine mentions **during the taste
 flow or free chat** even when Ayma didn't explicitly ask those nodes — the bug
@@ -172,7 +194,15 @@ No taste page → 404 `{"code":"no_taste","message":…}`.
 
 Public profile data only, for both people (also for the caller — the caller's
 own private pages are not used). Only entity names a person published are sent
-to Qloo. Not credit-metered (Qloo hackathon key, no LLM call).
+to Qloo. The match itself is not credit-metered (Qloo hackathon key, no LLM
+call). The **taste backfill** is the one taste path that does read a user's own
+private content and does make an LLM call: it reads only that user's OWN Story
+and conversations, extracts only names they themselves stated, and writes them
+onto their OWN public Taste page by the same rules `wiki_ingest` already applies
+— no cross-user private read, and nothing private ever reaches Qloo or another
+viewer. It is metered (exempt from the credit gate, like `wiki_ingest`) under the
+`taste_backfill` ledger feature, and is idempotent (a no-op once all three
+domains are filled).
 
 ## Files (self-contained for the public-repo extraction)
 
@@ -181,9 +211,10 @@ to Qloo. Not credit-metered (Qloo hackathon key, no LLM call).
 `practice_seed.py` (all four demo profiles — maya/leo/aisha/noah — carry FULL
 Music/Film/Food on BOTH sides, so every demo pair renders a real overlap + date
 ideas); the taste capture path `skills/questionnaire.py` (`_sync_taste_page` +
-`merge_taste_mentions`) and the free-chat extraction in `wiki_ingest.py` /
+`merge_taste_mentions`), the free-chat extraction in `wiki_ingest.py` /
 `prompts/wiki_ingest.md` (+ the tightened `interests` description in
-`wiki_schema.json`); the router mount + `GET /match/{id}` embedding in
+`wiki_schema.json`), and the context backfill `taste_backfill.py` /
+`prompts/taste_extract.md` / `tests/test_taste_backfill.py`; the router mount + `GET /match/{id}` embedding in
 `main.py`; Flutter shared card `ayma_flutter/lib/widgets/taste_match_card.dart`
 + `taste_models.dart` (reused by the date-sim result and the match report; the
 one-sided copy is server-driven, so no app change was needed).
