@@ -21,8 +21,14 @@ shared-taste chips and date ideas, plus **per-domain bars** — one horizontal
 tabular figures), ordered Music → Film → Food & places (`dining` → "Food &
 places"), reproducing the public demo `taste_demo.html`. Bars appear only when
 both sides have taste (`domains` non-empty); otherwise the card shows the
-no-Taste-page note. Pure presentation over the data the report/pair already
-return (`taste.domains`).
+no-Taste-page note. Below the summary it also surfaces the depth fields: a
+**"Why you match"** row of outline tag chips from `shared_tags` (wrapping,
+visually distinct from the filled `shared` entity chips, hidden when empty) and
+a compact muted **demographics line** from `demographics.note` (shown only when
+the block is non-null and its note non-empty; the raw skew maps are not shown).
+Pure presentation over the data the report/pair already return (`taste.domains`,
+`taste.shared_tags`, `taste.demographics`) — both new rows are additive and
+hidden when their data is absent.
 
 ## How it works
 
