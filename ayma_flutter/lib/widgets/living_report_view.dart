@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -5,9 +9,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/living_report.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/report_cache.dart';
+import '../services/report_events.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
-import 'ayma_orb.dart';
+import 'ayma_logo_loader.dart';
 import 'ayma_photo.dart';
 import 'overflow_guards.dart';
 import 'score_bar.dart';
@@ -113,11 +119,17 @@ class LivingReportView extends StatefulWidget {
     this.showTitle = true,
     this.loader,
     this.hideBlock,
+    this.myUid,
   });
 
   final String reportType;
   final String reportId;
   final ApiClient? apiClient;
+
+  /// The signed-in uid the stale-while-revalidate cache is scoped to.
+  /// Injectable for tests; production reads the live Firebase uid. Empty /
+  /// null disables caching (nothing is read or written).
+  final String? myUid;
 
   /// Shown in place of the section list when the report has no sections at
   /// all.
@@ -167,9 +179,32 @@ class LivingReportViewState extends State<LivingReportView>
 
   /// The last successfully loaded report, kept mounted across a reload
   /// (§ `reload` doc: stale-while-revalidate, not swap-for-a-spinner) —
-  /// `null` only before the very first load resolves.
+  /// `null` only before the very first load resolves AND no cached copy was
+  /// restored.
   LivingReport? _report;
   bool _loadFailed = false;
+
+  /// The signed-in uid the report cache is scoped to (own-data only). Empty
+  /// in tests / signed out, which disables caching gracefully.
+  String get _uid {
+    final injected = widget.myUid;
+    if (injected != null) return injected;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      // No Firebase app configured (unit tests): no caching, just fetch.
+      return '';
+    }
+  }
+
+  /// Only the user's OWN report (the default network fetch) is cached — the
+  /// read-only public-snapshot path ([LivingReportView.loader]) is someone
+  /// else's data keyed differently, so it's never cached here.
+  bool get _cacheable => widget.loader == null;
+
+  /// The last [ReportEvents] revision for this report type we've already
+  /// reacted to, so a background completion triggers exactly one reload.
+  int _handledRevision = 0;
 
   /// Ad-hoc multi-select (§ founder point 4): every block id the user has
   /// checked, across any section, any combination. Non-empty <=> selection
@@ -194,13 +229,64 @@ class LivingReportViewState extends State<LivingReportView>
   void initState() {
     super.initState();
     reassertScreenContext();
+    _handledRevision = ReportEvents.instance.revisionFor(widget.reportType);
+    ReportEvents.instance.addListener(_onReportEvent);
+    // Stale-while-revalidate (founder: the heavy report pages "take time to
+    // load, should we cache them? — yes"): paint the last cached copy
+    // instantly if there is one, then always fetch fresh in the background.
+    _restoreFromCache();
     _load();
+  }
+
+  @override
+  void dispose() {
+    ReportEvents.instance.removeListener(_onReportEvent);
+    super.dispose();
+  }
+
+  /// A background run of this report type finished elsewhere in the app
+  /// (§ `report_events.dart`) — re-fetch so the open report shows the fresh
+  /// result without the user reloading by hand (founder 2026-10-28 bug).
+  /// Fires at most once per completion by tracking the handled revision.
+  void _onReportEvent() {
+    final rev = ReportEvents.instance.revisionFor(widget.reportType);
+    if (rev == _handledRevision) return;
+    _handledRevision = rev;
+    _load();
+  }
+
+  /// Best-effort synchronous-feeling restore of the last cached payload. Only
+  /// fills `_report` when nothing has loaded yet, so a fresh fetch that has
+  /// already landed (or a reload's in-place content) is never clobbered by
+  /// stale cache.
+  Future<void> _restoreFromCache() async {
+    if (!_cacheable) return;
+    try {
+      final raw = await ReportCache.instance
+          .readReport(_uid, widget.reportType, widget.reportId);
+      if (raw == null || !mounted || _report != null) return;
+      final report =
+          LivingReport.fromMap(jsonDecode(raw) as Map<String, dynamic>);
+      if (!mounted || _report != null) return;
+      setState(() => _report = report);
+      widget.onLoaded?.call(report);
+    } catch (_) {
+      // A corrupt / unreadable cache entry just means we wait for the network
+      // fetch — never surface it.
+    }
   }
 
   Future<void> _load() async {
     try {
       final r = await (widget.loader?.call() ??
           _api.getReport(widget.reportType, widget.reportId));
+      if (_cacheable && r.source.isNotEmpty) {
+        // Refresh the cache so the next open paints this instantly, and so the
+        // background auto-refresh keeps the cache current too. `source` is the
+        // exact server JSON this report was parsed from.
+        unawaited(ReportCache.instance.writeReport(
+            _uid, widget.reportType, widget.reportId, jsonEncode(r.source)));
+      }
       if (!mounted) return;
       setState(() {
         _report = r;
@@ -218,7 +304,8 @@ class LivingReportViewState extends State<LivingReportView>
   }
 
   /// Re-fetches the whole report — called once the Ask Ayma overlay closes
-  /// on a turn that actually changed something. Deliberately does NOT tear
+  /// on a turn that actually changed something, and when a background run of
+  /// this report type completes ([_onReportEvent]). Deliberately does NOT tear
   /// down and rebuild the section list while the fetch is in flight (no
   /// `FutureBuilder`-style loading state once there's already a `_report` on
   /// screen — § bug: that swap used to unmount the `ListView` and reset its
@@ -435,8 +522,14 @@ class LivingReportViewState extends State<LivingReportView>
     final report = _report;
     if (report == null) {
       if (_loadFailed) return _ErrorMessage(onRetry: reload);
+      // No cached copy to show yet: the branded animated-logo loader (shown
+      // only when there's NO cache — a cached report paints instantly above
+      // via `_restoreFromCache`, with the fresh fetch swapping in silently).
       return const Center(
-        child: AymaOrb(size: 64, state: AymaOrbState.thinking),
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: AymaLogoLoader(size: 64),
+        ),
       );
     }
     return _buildReport(context, report);

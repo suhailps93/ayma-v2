@@ -284,6 +284,7 @@ class LivingReport {
     required this.title,
     required this.sections,
     required this.meta,
+    this.source = const {},
   });
 
   factory LivingReport.fromMap(Map<String, dynamic> m) => LivingReport(
@@ -295,11 +296,19 @@ class LivingReport {
         meta: ReportMeta.fromMap(
           (m['meta'] as Map?)?.cast<String, dynamic>() ?? const {},
         ),
+        source: m,
       );
 
   final String title;
   final List<ReportSection> sections;
   final ReportMeta meta;
+
+  /// The raw server JSON this report was parsed from, so the stale-while-
+  /// revalidate report cache (`report_cache.dart`) can persist the exact
+  /// payload and rebuild it on the next open via [LivingReport.fromMap]
+  /// without a second serialization surface. Empty for a report not built
+  /// from a map (none currently).
+  final Map<String, dynamic> source;
 
   /// Every block id in the report, section order preserved — what a
   /// report-header tap sends as `block_ids` with `scope: "report"`.

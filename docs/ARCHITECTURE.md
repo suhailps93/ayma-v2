@@ -1482,6 +1482,48 @@ hand-off any more — both belonged to the old dismiss-and-push-a-route design a
    (page behind only dims; the sheet never slides away)                  +------------------------+
 ```
 
+### 11.6c Branded loading, report caching & optimistic cold start (as built, 2026-10-28)
+
+Four client-side perceived-performance improvements, all behind no flag (pure UX polish; no backend change):
+
+- **Animated-logo loader** (`lib/widgets/ayma_logo_loader.dart`, `AymaLogoLoader`) — the ONE branded "Ayma is
+  working" indicator: the bundled orb mark (`assets/icon/ayma_orb_ios.png`) with a gentle breathing pulse + halo glow.
+  Respects reduced motion (`MediaQuery.disableAnimations` or a forced `reduceMotion`): renders completely still, with
+  no controller running. Used in (a) the **voice wake/connect** state — the composer's connecting leading slot
+  (`chat_composer.dart` `_ConnectingLead`, formerly a bare `CircularProgressIndicator`) — and (b) the **report / page
+  loaders** that formerly showed `AymaOrb(thinking)`: `living_report_view.dart` (Appearance, deep-dive, Story, Match),
+  `body_report_view.dart`, `face_report_view.dart`. Founder: "the Ayma logo should have a loading animation."
+
+- **Report auto-refresh on background completion** (`lib/services/report_events.dart`, `ReportEvents`) — the Appearance
+  analysis runs in the background (§0 Card, `skills_screen.dart`'s fire-and-forget run), persisting the report and
+  bumping `appearance/current` server-side. On success the runner calls `ReportEvents.instance.completed('appearance')`;
+  `LivingReportView` listens and re-fetches when its own report type bumps (tracking a per-type revision so it reloads
+  exactly once per completion), so an open report screen / report card shows the fresh report with no manual reload.
+  Fixes the founder bug "it didn't create a new report" (the report WAS generated; the open view just never re-read it).
+
+- **Stale-while-revalidate report caching** (`lib/services/report_cache.dart`, `ReportCache`) — the heavy report pages
+  refetched from scratch on every open (founder: "body and [others] take time to load, should we cache them? — yes").
+  `LivingReportView` now, on open, paints the last cached payload INSTANTLY (if present), fetches fresh in the
+  background, and swaps the fresh result in when it lands; the animated-logo loader shows only when there is NO cache.
+  The fresh fetch (and Improvement 2's auto-refresh) refresh the cache. Payload is the exact server JSON (via
+  `ApiClient.getReportJson`), stored in `SharedPreferences`, keyed by **uid + report type + report id** — own-data,
+  on-device only, never across users. Only the user's own report is cached (the read-only public-snapshot `loader`
+  path is not).
+
+- **Optimistic cold start** (`splash_screen.dart`) — the splash no longer blocks on the full bootstrap. When a cached
+  entry route exists for the signed-in uid (`ReportCache.readBootRoute`), it paints that last-known UI immediately and
+  runs bootstrap in the background, correcting the route only if the real session differs — e.g. to sign-in on a
+  genuine 401/403 or an unusable restored session. Gated on BOTH a non-anonymous signed-in user AND a cached route for
+  that exact uid, and only the plain entry route is ever cached (never a consent/underage/recover gate), so it can't
+  flash a wrong signed-in/out state. All existing startup hardening (deadline watchdog, auto-retry/backoff, branded
+  Retry UI, never-sign-out-on-a-network-blip) is intact — the background bootstrap retries transient failures with the
+  same backoff and leaves the cached UI up. Founder: "show the cached page and bootstrap in the backend."
+
+- **Cache lifecycle / privacy** — `ReportCache.clearForSignOut()` wipes every cached report and boot route. It is
+  called centrally from `main.dart`'s `authStateChanges` listener on a real sign-out (a previously-seen uid going to
+  null), NOT on the initial signed-out emission at launch (which would wipe the cache the optimistic boot needs), and
+  also on the splash's background broken-auth path.
+
 ### 11.7 Implementation steps
 
 1. **Client: `go_router` setup** — root router config with the redirect logic from §11.2, routes for every screen named in §11.3/§11.5.

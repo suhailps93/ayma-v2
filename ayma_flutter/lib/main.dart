@@ -27,6 +27,7 @@ import 'services/revenuecat_service.dart';
 import 'services/meta_integrations.dart';
 import 'services/sentry_config.dart';
 import 'services/push_service.dart';
+import 'services/report_cache.dart';
 import 'services/screen_capture.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
@@ -99,10 +100,24 @@ Future<void> main() async {
   // on the free grant; the call is idempotent and never double-credits.
   RevenueCatService.instance.listenForEntitlementChanges(ApiClient());
   final push = PushService();
+  // Tracks the last signed-in uid so a transition to null can be recognised as
+  // a real SIGN-OUT (clear the per-user local caches) rather than the initial
+  // signed-out emission at launch — clearing on that startup null would wipe
+  // the boot/report cache the optimistic cold start depends on.
+  String? lastKnownUid;
   FirebaseAuth.instance.authStateChanges().listen((user) {
     if (user == null) {
+      // A previously-signed-in user went to null: sign-out / account deletion
+      // from any path. Clear this device's cached reports and boot route so
+      // none of the previous user's own data survives (privacy) and the next
+      // cold start never optimistically replays a stale session.
+      if (lastKnownUid != null) {
+        unawaited(ReportCache.instance.clearForSignOut());
+      }
+      lastKnownUid = null;
       unawaited(RevenueCatService.instance.logOut());
     } else {
+      lastKnownUid = user.uid;
       unawaited(RevenueCatService.instance.logIn(user.uid));
       // Register this device for push (§7.2) once auth is ready. Done here —
       // not in a one-shot at launch — because `currentUser` is still null

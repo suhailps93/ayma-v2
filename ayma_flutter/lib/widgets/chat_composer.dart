@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'ayma_logo_loader.dart';
 import 'keyboard_dismiss.dart';
 
 /// Padding wrapping the composer bar at the bottom of a chat screen — shared
@@ -359,7 +360,6 @@ class _ChatComposerState extends State<ChatComposer>
     // "listening" before it genuinely is.
     final leading = widget.mode == ComposerMode.connecting
         ? _ConnectingLead(
-            color: ac.fgMute,
             reduceMotion:
                 MediaQuery.maybeOf(context)?.disableAnimations ?? false,
           )
@@ -444,15 +444,15 @@ class _RoundIconButton extends StatelessWidget {
 }
 
 /// The leading slot of the voice row while a session is still being
-/// established ([ComposerMode.connecting]): a small spinner sized to match
+/// established ([ComposerMode.connecting]): the animated Ayma-logo loader
+/// (founder: "the Ayma logo should have a loading animation") sized to match
 /// [_RoundIconButton]'s 44px touch slot so the row height never jumps when it
 /// swaps to the real mic button once live. Non-interactive — there is nothing
-/// to mute yet. Respects reduced motion by falling back to a static, dimmed
-/// (unlit) mic glyph, which still reads as "not listening yet".
+/// to mute yet. The loader renders the logo completely still under reduced
+/// motion, which still reads as "not listening yet".
 class _ConnectingLead extends StatelessWidget {
-  const _ConnectingLead({required this.color, required this.reduceMotion});
+  const _ConnectingLead({required this.reduceMotion});
 
-  final Color color;
   final bool reduceMotion;
 
   @override
@@ -461,16 +461,7 @@ class _ConnectingLead extends StatelessWidget {
       width: 44,
       height: 44,
       child: Center(
-        child: reduceMotion
-            ? Icon(Icons.mic_none_rounded, size: 20, color: color)
-            : SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(color),
-                ),
-              ),
+        child: AymaLogoLoader(size: 24, reduceMotion: reduceMotion),
       ),
     );
   }

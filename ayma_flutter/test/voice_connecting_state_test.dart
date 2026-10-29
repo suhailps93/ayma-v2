@@ -13,6 +13,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
+import 'package:ayma_flutter/widgets/ayma_logo_loader.dart';
 import 'package:ayma_flutter/widgets/chat_composer.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -64,8 +65,8 @@ void main() {
   tearDown(() => VoiceSessionController.active = null);
 
   testWidgets(
-    'chat composer mic: connecting shows "Connecting/Waking" + spinner, '
-    'not "Listening"; agent join flips to "Listening"',
+    'chat composer mic: connecting shows "Connecting/Waking" + animated logo '
+    'loader, not "Listening"; agent join flips to "Listening"',
     (tester) async {
       final transport = FakeVoiceTransport();
       final voice = VoiceSessionController(
@@ -90,7 +91,7 @@ void main() {
       expect(_composerMode(tester), ComposerMode.connecting);
       expect(find.text('Waking Ayma…'), findsOneWidget);
       expect(find.text('Listening…'), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AymaLogoLoader), findsOneWidget);
       // The lit capturing mic (listening) must be absent while connecting.
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
 
@@ -102,7 +103,7 @@ void main() {
       expect(voice.phase, VoiceSessionPhase.live);
       expect(_composerMode(tester), ComposerMode.listening);
       expect(find.text('Listening…'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(AymaLogoLoader), findsNothing);
 
       // Tear down the live session cleanly: `stop()` is fire-and-forget (its
       // awaited teardown only advances under `pump`, never a bare `await`, so
@@ -153,7 +154,7 @@ void main() {
       expect(_composerMode(tester), ComposerMode.connecting);
       expect(find.text('Waking Ayma…'), findsOneWidget);
       expect(find.text('Listening…'), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AymaLogoLoader), findsOneWidget);
 
       transport.markAgentReady();
       await tester.pump();
@@ -161,7 +162,7 @@ void main() {
 
       expect(_composerMode(tester), ComposerMode.listening);
       expect(find.text('Listening…'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(AymaLogoLoader), findsNothing);
     },
   );
 }

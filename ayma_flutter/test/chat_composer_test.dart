@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ayma_logo_loader.dart';
 import 'package:ayma_flutter/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -175,7 +176,8 @@ void main() {
     }
 
     testWidgets(
-      'shows a spinner and the connecting label, never the live mic',
+      'shows the animated logo loader and the connecting label, never the '
+      'live mic',
       (tester) async {
         await pumpComposer(
           tester,
@@ -183,7 +185,7 @@ void main() {
           statusLabel: 'Connecting…',
         );
         expect(find.text('Connecting…'), findsOneWidget);
-        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(find.byType(AymaLogoLoader), findsOneWidget);
         // The lit "capturing" mic (listening) must not be shown while
         // connecting — that is exactly what read as "Listening" too early.
         expect(find.byIcon(Icons.mic_rounded), findsNothing);
@@ -200,11 +202,11 @@ void main() {
         statusLabel: 'Waking Ayma…',
       );
       expect(find.text('Waking Ayma…'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AymaLogoLoader), findsOneWidget);
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
     });
 
-    testWidgets('reduced motion swaps the spinner for a static unlit mic', (
+    testWidgets('reduced motion shows the static (unanimated) logo loader', (
       tester,
     ) async {
       await pumpComposer(
@@ -214,7 +216,15 @@ void main() {
         reduceMotion: true,
       );
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+      // The logo loader is still present, just rendered completely still.
+      expect(find.byType(AymaLogoLoader), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AymaLogoLoader),
+          matching: find.byType(AnimatedBuilder),
+        ),
+        findsNothing,
+      );
       expect(find.text('Connecting…'), findsOneWidget);
     });
 

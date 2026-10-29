@@ -1,6 +1,6 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-10-26. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-10-28. Update this file whenever an item changes; commit and push to main.
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
@@ -14,6 +14,14 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 - **Dev mode is now compile-time gated so customer/store builds ship with it unavailable.** New `kDevModeEnabled` (`ayma_flutter/lib/dev_mode.dart`, `bool.fromEnvironment('ENABLE_DEV_MODE', defaultValue: false)`, read via the `devModeEnabled` getter). Default FALSE (fail-safe): with it off, the seven-tap/long-press unlock gesture is a no-op and the `/settings/developer`, `AymaNotesScreen` and `AdminFeedbackScreen` routes redirect to the main shell (no deep link reaches them). Password + dev-view-allowlist gates still apply when dev mode is on.
 - **Build commands.** Internal/dev APK (keeps dev mode): `scripts/build-apk.sh --release` — it now passes `--dart-define=ENABLE_DEV_MODE=true`. Customer/store releases omit the define (dev off): both `codemagic.yaml` workflows (Android Firebase + iOS App Store) are commented to that effect. **The next consolidation APK for the founder MUST build with `--dart-define=ENABLE_DEV_MODE=true`** (use `scripts/build-apk.sh`) or he loses dev mode on his test build.
 - **No APK / no versionCode bump / no deploy** (code + tests + push only). Tests: new `dev_mode_gate_test.dart` + `settings_screen_test.dart` (+1); full Flutter suite + layout matrix green. Docs: ARCHITECTURE (dev-mode build gate), HACKATHON_STATUS, this line.
+
+## Perceived-perf batch: loader + report refresh + caching + cold start (meta-hackathon, 2026-10-28, APK 2232) — DONE [[todo-perf-loader-cache-coldstart]]
+- **Animated Ayma-logo loader** (`lib/widgets/ayma_logo_loader.dart`, `AymaLogoLoader`): orb mark with a breathing-pulse+glow, reduced-motion safe. Replaces the voice-connect spinner (`chat_composer.dart` `_ConnectingLead`) and the report loaders (`living_report_view.dart`, `body_report_view.dart`, `face_report_view.dart`, previously `AymaOrb(thinking)`).
+- **Report auto-refresh** (`lib/services/report_events.dart`, `ReportEvents`): the background Appearance run fires `completed('appearance')`; `LivingReportView` re-fetches on it so the open report/card updates with no manual reload (fixes founder "it didn't create a new report").
+- **Stale-while-revalidate report cache** (`lib/services/report_cache.dart`, `ReportCache`, SharedPreferences, keyed uid+type+id, own-data/on-device): `LivingReportView` paints the cached report instantly then revalidates; loader only when no cache; fresh fetch + auto-refresh keep the cache current.
+- **Optimistic cold start** (`splash_screen.dart`): paints the cached entry route (`ReportCache.readBootRoute`) immediately and bootstraps in the background, correcting to sign-in on a real 401/403 / broken session; gated so it never flashes a wrong state; existing startup hardening intact.
+- **Privacy**: cache is own-data + local only; cleared on sign-out (central `main.dart` authStateChanges real-signout hook; also splash broken-auth path).
+- Tests: `ayma_logo_loader_test.dart`, `report_cache_swr_test.dart`, `splash_optimistic_boot_test.dart` + updated composer/voice-connecting assertions; `flutter analyze` clean; layout matrix green. Not a feature-tour feature (loading polish — per standing-rule judgment). Built APK 2232 with `--dart-define=ENABLE_DEV_MODE=true`. No backend change / no deploy. Docs: ARCHITECTURE §11.6c, HACKATHON_STATUS, this line.
 
 ## Integration 2216 (meta-hackathon, 2026-10-26) — live queue (single source of truth)
 

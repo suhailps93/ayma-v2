@@ -10,6 +10,7 @@ import '../routing/entry.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
+import '../services/report_cache.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/overflow_guards.dart';
 import 'biometric_consent_screen.dart';
@@ -146,7 +147,8 @@ class _SplashScreenState extends State<SplashScreen> {
     // pre-boarding, right before the first chat (the main-shell gate in
     // `MainShellScreen`), guarded by a per-user seen-state — never before
     // sign-in. The Developer panel still previews it on demand.
-    final user = (widget.auth ?? FirebaseAuth.instance).currentUser;
+    final auth = widget.auth ?? FirebaseAuth.instance;
+    final user = auth.currentUser;
     final anonymousLanding = user == null || user.isAnonymous;
     if (anonymousLanding) {
       _inFlight = false;
@@ -154,30 +156,38 @@ class _SplashScreenState extends State<SplashScreen> {
       return;
     }
 
+    // Optimistic cold start (founder 2026-10-28: "show the cached page and
+    // bootstrap in the backend"). When we have a cached entry route for THIS
+    // signed-in uid, paint the last-known UI immediately and move the full
+    // bootstrap to the background — it corrects the route if the session has
+    // actually changed. Gated on BOTH a non-anonymous signed-in user (checked
+    // above) AND a cached route for that exact uid, so we never flash a
+    // signed-in UI for a user we have no record of, nor one belonging to a
+    // different account. Only the plain entry route is ever cached (see
+    // [_cacheEntryRoute]), so the optimistic replay can't show a stale
+    // consent / underage / recover gate. No cache (first run, or just after a
+    // sign-out cleared it) falls through to the original blocking resolve,
+    // with its watchdog / retry / backoff hardening fully intact.
+    final cachedRoute = await ReportCache.instance.readBootRoute(user.uid);
+    if (cachedRoute != null && cachedRoute.isNotEmpty && mounted) {
+      _inFlight = false;
+      // Capture the router now: after we navigate, this widget's context is
+      // gone, so the background correction navigates via the router instance
+      // (which outlives the splash) rather than a stale context.
+      final router = GoRouter.of(context);
+      router.go(cachedRoute);
+      unawaited(_backgroundBootstrap(user.uid, auth, cachedRoute, router));
+      return;
+    }
+
     _attempt++;
     try {
       final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
-      var consentRequired = result.biometricConsentRequired;
-      if (consentRequired &&
-          !result.ageBlocked &&
-          !result.recoveryRequired &&
-          await _recordPendingConsent()) {
-        consentRequired = false;
-      }
+      final route = await _resolveRoute(result);
       if (!mounted) return;
-      if (!consentRequired) BiometricConsentState.instance.clear();
-      context.go(
-        result.ageBlocked
-            ? UnderageScreen.path
-            : result.recoveryRequired
-                ? '/recover'
-                : consentRequired
-                    // An account with no consent record and nothing ticked
-                    // on this device: the one-time consent screen.
-                    ? BiometricConsentScreen.path
-                    : entryRouteFor(result.sessionMode),
-      );
+      _cacheEntryRoute(user.uid, result, route);
+      context.go(route);
     } on AuthSessionException catch (e) {
       // The restored auth session is unusable (keystore / decrypt failure after
       // an Auto Backup restore, or a rejected / disabled user) — NOT a network
@@ -216,6 +226,87 @@ class _SplashScreenState extends State<SplashScreen> {
       );
     } finally {
       _inFlight = false;
+    }
+  }
+
+  /// Turns a successful [BootstrapResult] into the route to land on, applying
+  /// the biometric-consent side-effects exactly as the original inline logic
+  /// did. Shared by the blocking resolve and the optimistic background
+  /// bootstrap so both compute the destination identically. Uses no
+  /// [BuildContext], so it is safe to call after the splash has been disposed.
+  Future<String> _resolveRoute(BootstrapResult result) async {
+    var consentRequired = result.biometricConsentRequired;
+    if (consentRequired &&
+        !result.ageBlocked &&
+        !result.recoveryRequired &&
+        await _recordPendingConsent()) {
+      consentRequired = false;
+    }
+    if (!consentRequired) BiometricConsentState.instance.clear();
+    return result.ageBlocked
+        ? UnderageScreen.path
+        : result.recoveryRequired
+            ? '/recover'
+            : consentRequired
+                // An account with no consent record and nothing ticked
+                // on this device: the one-time consent screen.
+                ? BiometricConsentScreen.path
+                : entryRouteFor(result.sessionMode);
+  }
+
+  /// Remembers [route] for [uid]'s next cold start — but ONLY when it is the
+  /// plain entry route (no exceptional gate fired). Caching, say, the consent
+  /// or underage gate and replaying it optimistically could flash a state that
+  /// no longer applies; the entry routes are stable and safe to show first.
+  void _cacheEntryRoute(String uid, BootstrapResult result, String route) {
+    if (route == entryRouteFor(result.sessionMode)) {
+      unawaited(ReportCache.instance.writeBootRoute(uid, route));
+    }
+  }
+
+  /// Runs the full bootstrap after the optimistic cached UI is already on
+  /// screen, then corrects the route if the real session differs. Independent
+  /// of this (now-disposed) widget's lifecycle, so it navigates via the global
+  /// [appRouter], never [context]. Keeps every startup-hardening rule: a
+  /// network blip NEVER signs the user out — it retries with the same backoff
+  /// and leaves the cached UI up; only a genuine auth rejection (401/403) or an
+  /// unusable restored session routes to sign-in.
+  Future<void> _backgroundBootstrap(
+      String uid, FirebaseAuth auth, String shownRoute, GoRouter router) async {
+    for (var attempt = 0; attempt < SplashScreen.maxStartupAttempts; attempt++) {
+      try {
+        final result = await widget.apiClient!.bootstrap(sessionId: '');
+        final route = await _resolveRoute(result);
+        _cacheEntryRoute(uid, result, route);
+        if (route != shownRoute) router.go(route);
+        return;
+      } on AuthSessionException catch (e) {
+        debugPrint('splash(bg): broken auth session, signing out — ${e.message}');
+        try {
+          await auth.signOut();
+        } catch (_) {
+          // Sign-in re-authenticates and overwrites the bad persisted session.
+        }
+        await ReportCache.instance.clearForSignOut();
+        router.go(SignInScreen.path);
+        return;
+      } on ApiException catch (e) {
+        if (e.statusCode == 401 || e.statusCode == 403) {
+          // Token genuinely rejected: correct the optimistic UI to sign-in.
+          router.go(SignInScreen.path);
+          return;
+        }
+        if (!_isRetryable(e) ||
+            attempt == SplashScreen.maxStartupAttempts - 1) {
+          return; // Give up quietly; the cached UI stays, next launch retries.
+        }
+        await Future<void>.delayed(
+            _backoff[attempt.clamp(0, _backoff.length - 1)]);
+      } catch (_) {
+        if (attempt == SplashScreen.maxStartupAttempts - 1) return;
+        await Future<void>.delayed(
+            _backoff[attempt.clamp(0, _backoff.length - 1)]);
+      }
     }
   }
 

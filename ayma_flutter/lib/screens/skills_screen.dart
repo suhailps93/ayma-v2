@@ -10,6 +10,7 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/profile_service.dart';
+import '../services/report_events.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
@@ -314,6 +315,11 @@ Future<void> _runAppearanceInBackground(
       bodyMediaIds: choice.wantBody ? choice.bodyMediaIds : null,
       imagePaths: choice.imagePaths,
     );
+    // The backend has persisted the report and bumped the `appearance/current`
+    // pointer. Tell any open Appearance report screen / report card to re-fetch
+    // so the fresh report shows without the user reloading (founder 2026-10-28:
+    // "it didn't create a new report" when it actually had).
+    ReportEvents.instance.completed('appearance');
     if (context.mounted) {
       AymaToast.show(context, 'Your Appearance report is ready.');
     }
