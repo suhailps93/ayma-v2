@@ -137,6 +137,82 @@ def test_edit_story_entry_unmatched_line_asks_and_does_not_overwrite(monkeypatch
     assert "couldn't find" in out.lower() and "which" in out.lower()
 
 
+# A single-paragraph, multi-sentence section like the real "Identity" section
+# (founder bug 2026-10-28, 3rd report). The whole paragraph is one line, so the
+# whole body is itself a match candidate — the regressions below prove the
+# model can't make a one-line edit wipe it.
+_IDENTITY_BODY = (
+    "His full name is Suhail. Born in Dubai, he moved to Kerala at age five. "
+    "After college he moved to the United States for graduate studies. "
+    "He currently lives in San Jose and speaks Malayalam and English."
+)
+_IDENTITY_FIXED = _IDENTITY_BODY.replace(
+    "Malayalam and English", "Malayalam, English, Hindi, and Tamil"
+)
+
+
+def _identity(_db, _uid):
+    return {"sections": [{"page_id": "identity", "page_type": "identity",
+                          "title": "Identity", "body": _IDENTITY_BODY,
+                          "edit_body": _IDENTITY_BODY}]}
+
+
+@pytest.mark.parametrize(
+    "find_text, new_text",
+    [
+        # The model read the section back and passed the WHOLE paragraph as
+        # find_text + a whole-section rewrite as new_text (the real voice bug).
+        (_IDENTITY_BODY, _IDENTITY_FIXED),
+        # ...or passed the whole rewrite with NO find_text at all.
+        ("", _IDENTITY_FIXED),
+        # ...or targeted the right line but still handed a whole-section rewrite.
+        ("I speak Malayalam and English", _IDENTITY_FIXED),
+    ],
+)
+def test_edit_story_entry_never_overwrites_the_whole_section(
+    monkeypatch, find_text, new_text
+):
+    saved, snaps = {}, []
+    monkeypatch.setattr(story, "get_story", _identity)
+    monkeypatch.setattr(
+        story, "save_section",
+        lambda db, uid, pid, body, **k: saved.update(pid=pid, body=body),
+    )
+    monkeypatch.setattr(story, "_snapshot_section", lambda *a, **k: snaps.append(a) or "v1")
+
+    fn = _bound("edit_story_entry", object())
+    out = fn(section="identity", find_text=find_text, new_text=new_text)
+
+    # Only the one line changed — every OTHER sentence is byte-for-byte intact,
+    # and the section was NOT replaced by the rewrite wholesale.
+    assert saved.get("body") == _IDENTITY_FIXED
+    assert "His full name is Suhail." in saved["body"]
+    assert "Born in Dubai, he moved to Kerala at age five." in saved["body"]
+    assert "for graduate studies." in saved["body"]
+    assert "Malayalam, English, Hindi, and Tamil" in saved["body"]
+    assert "Identity" in out
+
+
+def test_edit_story_entry_refuses_a_full_rewrite_instead_of_wiping(monkeypatch):
+    calls = []
+    monkeypatch.setattr(story, "get_story", _identity)
+    monkeypatch.setattr(story, "save_section", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(story, "_snapshot_section", lambda *a, **k: calls.append(a))
+
+    fn = _bound("edit_story_entry", object())
+    # Every sentence differs → this is a rewrite, not a one-line edit.
+    out = fn(
+        section="identity",
+        find_text="",
+        new_text=(
+            "She is a doctor in Boston. She grew up in Canada. "
+            "She loves skiing. She has two dogs."
+        ),
+    )
+    assert not calls  # nothing written — the section is not wiped
+    assert "one-line" in out.lower() or "which" in out.lower()
+
+
 def test_edit_story_entry_ambiguous_line_asks_which_one(monkeypatch):
     body = "I love hiking in the mountains.\nI love hiking by the river."
     sec = [{"page_id": "interests", "page_type": "interests", "title": "Interests",

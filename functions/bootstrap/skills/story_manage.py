@@ -24,9 +24,20 @@ target line can't be confidently located — no good match, or two different lin
 match about equally — neither tool overwrites anything; it returns a
 clarification listing the candidate lines and asks which one, so a broad,
 unintended overwrite can never happen silently (founder bug 2026-10-28: a
-"change this one line" request rewrote the whole career section). The pre-edit
-wording is snapshotted to the section's version history first, so every change
-is revertible.
+"change this one line" request rewrote the whole career section).
+
+The edit is also robust against the model MISUSING the tool. A section is often
+a single multi-sentence paragraph, so the whole body is itself a match
+candidate; a model (especially on voice) may read the section back and pass the
+whole paragraph as ``find_text`` and/or a whole rewrite as ``new_text``, which
+once overwrote the entire Identity section (founder bug 2026-10-28, 3rd report).
+So every write is reconciled sentence-by-sentence against the current body
+(:func:`_surgical_merge`): only the sentences that genuinely changed are
+written, every unchanged sentence is copied back byte-for-byte, and if what the
+model passed would rewrite MOST of a multi-sentence section the tool refuses and
+asks for the specific line instead of wiping it. The pre-edit wording is
+snapshotted to the section's version history first, so every change is
+revertible.
 
 A direct user edit here applies **in place** and is done: ``story.save_section``
 stamps a one-shot flag so the change is never re-surfaced as a pending "Public
@@ -67,6 +78,18 @@ _STOPWORDS = frozenset(
 _MATCH_MIN = 0.6
 _AMBIGUOUS_MARGIN = 0.12
 _SENTENCE_END = (".", "!", "?")
+
+# A one-line edit should touch only a small slice of a multi-sentence section.
+# If reconciling the model's wording against the current section would rewrite
+# MOST of it, that isn't a single-line edit — the model handed a whole-section
+# rewrite as `new_text`, or mis-targeted the whole section with `find_text`
+# (founder bug 2026-10-28, 3rd report: a one-line change wiped the whole
+# Identity section — the section is one paragraph, so the whole body is itself a
+# match candidate and got overwritten). In that case we ask rather than
+# overwrite. Only applied to sections with enough sentences to tell a one-line
+# edit from a rewrite.
+_MAX_CHANGED_FRACTION = 0.5
+_REWRITE_MIN_SENTENCES = 2
 
 
 def _terms(text: str) -> set[str]:
@@ -225,6 +248,99 @@ def _replace_unit(body: str, unit: str, new_text: str) -> str:
     return body[:idx] + new_text + tail + body[idx + len(unit):]
 
 
+def _is_section_rewrite(body: str, new_text: str) -> bool:
+    """True when ``new_text`` is a rewrite of the WHOLE section rather than a
+    single replacement line — it has several sentences AND keeps a majority of
+    the section's existing sentences verbatim (the model read the section back
+    and changed one line inside it). Single-sentence ``new_text`` is never a
+    rewrite, so a normal one-line edit stays on the ``find_text`` path."""
+    body_sents = rb.split_sentences(body)
+    new_sents = rb.split_sentences(new_text)
+    if (
+        len(body_sents) < _REWRITE_MIN_SENTENCES
+        or len(new_sents) < _REWRITE_MIN_SENTENCES
+    ):
+        return False
+    new_norm = _norm_ws(new_text)
+    kept = sum(1 for s in body_sents if (n := _norm_ws(s)) and n in new_norm)
+    return kept >= max(1, len(body_sents) // 2)
+
+
+def _sentence_tokens(body: str) -> tuple[str, list[tuple[str, str]]] | None:
+    """``(lead, [(sentence, trailing_glue), ...])`` such that ``lead`` plus every
+    ``sentence + glue`` concatenated is ``body`` byte-for-byte. ``glue`` is the
+    sentence-ending punctuation and whitespace up to the next sentence, so an
+    unchanged sentence re-emits exactly as it was. ``None`` when a sentence piece
+    can't be located back in ``body`` (so the caller declines rather than risk a
+    lossy write)."""
+    sents = rb.split_sentences(body)
+    if not sents:
+        return None
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    for s in sents:
+        i = body.find(s, pos)
+        if i < 0:
+            return None
+        spans.append((i, i + len(s)))
+        pos = i + len(s)
+    lead = body[: spans[0][0]]
+    toks: list[tuple[str, str]] = []
+    for k, (a, b) in enumerate(spans):
+        nxt = spans[k + 1][0] if k + 1 < len(spans) else len(body)
+        toks.append((body[a:b], body[b:nxt]))
+    return lead, toks
+
+
+def _surgical_merge(
+    old: str, intended: str
+) -> tuple[str | None, list[tuple[str, str]], int]:
+    """Reconcile ``intended`` against ``old`` so the result differs from ``old``
+    only in the sentences that genuinely changed — every unchanged sentence is
+    copied back from ``old`` byte-for-byte (its punctuation and spacing with it).
+    This is the guard that keeps a whole-section ``new_text`` (or a ``find_text``
+    that matched the whole body) from blowing the section away: only the changed
+    sentences are written.
+
+    Returns ``(new_body, changed_pairs, n_total)`` — ``changed_pairs`` is the
+    list of ``(before, after)`` sentence edits (a removed sentence is
+    ``(before, "")``, an added one ``("", after)``), ``n_total`` the number of
+    sentences in ``old``. ``new_body`` is ``None`` when ``old`` can't be
+    tokenised safely."""
+    told = _sentence_tokens(old)
+    if told is None:
+        return None, [], 0
+    lead_o, toks_o = told
+    tnew = _sentence_tokens(intended)
+    toks_n = tnew[1] if tnew is not None else [
+        (s, " ") for s in rb.split_sentences(intended)
+    ]
+    o_norm = [_norm_ws(s) for s, _ in toks_o]
+    n_norm = [_norm_ws(s) for s, _ in toks_n]
+    sm = difflib.SequenceMatcher(None, o_norm, n_norm, autojunk=False)
+    out: list[str] = [lead_o]
+    changed: list[tuple[str, str]] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            for k in range(i1, i2):
+                out.append(toks_o[k][0])
+                out.append(toks_o[k][1])
+            continue
+        # Changed region: emit the NEW sentences (each with its own trailing
+        # punctuation/spacing, so a reworded line keeps its full stop) and
+        # record the before -> after pairs. A deleted sentence emits nothing.
+        for off in range(max(i2 - i1, j2 - j1)):
+            new_s, new_g = (
+                toks_n[j1 + off] if j1 + off < j2 else ("", "")
+            )
+            old_s = toks_o[i1 + off][0] if i1 + off < i2 else ""
+            if new_s:
+                out.append(new_s)
+                out.append(new_g)
+            changed.append((old_s, new_s))
+    return "".join(out), changed, len(toks_o)
+
+
 def _remove_unit(body: str, unit: str) -> str:
     """``body`` with the first occurrence of ``unit`` removed, tidying the
     whitespace it leaves behind."""
@@ -258,14 +374,20 @@ _EDIT_DECL = {
         "line of that section exactly as it was. YOU CAN do this from an "
         "ordinary chat; you no longer need them to open the story editor. "
         "`section` names the part to change (its title, topic, or a few words "
-        "from it); `find_text` is the existing line/sentence to change — quote or "
-        "closely paraphrase what it currently says; `new_text` is the corrected "
-        "wording to put in that line's place. Do NOT pass the whole section as "
-        "`new_text`: only the one line changes, and if the line was public it "
-        "stays public (the edit applies in place, with no extra approval step). "
-        "If you can't pin down which line they mean, the tool asks them to pick — "
-        "it never overwrites. The change is saved to history and is revertible. "
-        "After it succeeds, tell them the precise before -> after in one line."
+        "from it); `find_text` is REQUIRED — pass the ONE existing line/sentence "
+        "to change, copied VERBATIM (or very closely paraphrased) exactly as it "
+        "reads now, NOT the whole section; `new_text` is ONLY that one line's "
+        "corrected wording. NEVER pass the whole section, or more than the single "
+        "changed line, as `new_text` or `find_text`: e.g. to change \"I speak "
+        "Malayalam and English\" to add two languages, pass find_text=\"I speak "
+        "Malayalam and English\" and new_text=\"I speak Malayalam, English, Hindi, "
+        "and Tamil\" — never the paragraph around it. Only the one line changes, "
+        "and if it was public it stays public (the edit applies in place, with no "
+        "extra approval step). If you can't pin down which line they mean, the "
+        "tool asks them to pick — it never overwrites, and it refuses to wipe a "
+        "section when what you pass would rewrite most of it. The change is saved "
+        "to history and is revertible. After it succeeds, tell them the precise "
+        "before -> after in one line."
     ),
     "parameters": {
         "type": "object",
@@ -348,14 +470,40 @@ def _bind_edit(db, uid: str) -> Callable[..., str]:
         title = s.get("title") or page_id
         body = _edit_body(s)
         find = (find_text or "").strip()
-        if not find:
+
+        # Build the full new body the model is gesturing at. A whole-section
+        # rewrite handed in `new_text` IS that body (ignore `find_text` — it was
+        # likely the whole section quoted back); otherwise locate the one line
+        # and splice the replacement in.
+        if _is_section_rewrite(body, new_text):
+            intended = new_text
+        else:
+            if not find:
+                return _which_line_msg(title, _visible_lines(body))
+            unit, ambiguous = _locate_line(body, find)
+            if unit is None:
+                return _which_line_msg(title, _visible_lines(body), ambiguous)
+            intended = _replace_unit(body, unit, new_text)
+            if intended == body:
+                return _which_line_msg(title, _visible_lines(body))
+
+        # Reconcile so ONLY genuinely-changed sentences differ and every
+        # unchanged sentence stays byte-for-byte — this is the guard against a
+        # whole-section overwrite even when the model targeted the whole section
+        # or passed a full rewrite.
+        new_body, changed, n_total = _surgical_merge(body, intended)
+        if new_body is None or not changed or new_body == body:
+            if new_body == body:
+                return f'that line already reads that way in your "{title}"'
             return _which_line_msg(title, _visible_lines(body))
-        unit, ambiguous = _locate_line(body, find)
-        if unit is None:
-            return _which_line_msg(title, _visible_lines(body), ambiguous)
-        new_body = _replace_unit(body, unit, new_text)
-        if new_body == body:
-            return _which_line_msg(title, _visible_lines(body))
+        if n_total >= 3 and len(changed) / n_total > _MAX_CHANGED_FRACTION:
+            # Changing most of a multi-sentence section isn't a one-line edit —
+            # ask rather than wipe it (founder bug 2026-10-28, 3rd report).
+            return (
+                f'that looks like a rewrite of most of your "{title}" section, '
+                "not a one-line change — tell me the exact line to change and "
+                "what it should say, and I'll change only that."
+            )
         try:
             # Commit the current wording to history first, so this edit is
             # revertible to exactly what it said before.
@@ -367,9 +515,12 @@ def _bind_edit(db, uid: str) -> Callable[..., str]:
             )
         except KeyError:
             return "that section isn't there anymore"
+        before = changed[0][0] or "(nothing)"
+        after = changed[0][1] or "(removed)"
+        more = "" if len(changed) == 1 else f" (and {len(changed) - 1} more)"
         return (
-            f'done — in your "{title}" I changed only that one line: '
-            f'"{unit}" -> "{new_text}". '
+            f'done — in your "{title}" I changed only that line{more}: '
+            f'"{before}" -> "{after}". '
             "Say the word if you want the old wording back."
         )
 
