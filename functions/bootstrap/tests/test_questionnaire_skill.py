@@ -311,6 +311,19 @@ def test_next_questions_returns_highest_weight_unanswered_first():
     } == set(qs[0])
 
 
+def test_next_questions_offers_taste_early_for_a_user_without_taste():
+    # Founder directive (meta-hackathon): taste must be asked EARLY so the
+    # public Taste page / Qloo "Taste match" gets populated. `taste_music` is a
+    # promoted, top-weight node, so it rides near the top of the short list the
+    # conversational agent is handed, for a user who hasn't answered it yet.
+    import json
+
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["next_questions"]
+    ids = [q["id"] for q in json.loads(_run(fn()))["questions"]]
+    assert "taste_music" in ids
+
+
 def test_next_questions_drops_answered_nodes():
     import json
 

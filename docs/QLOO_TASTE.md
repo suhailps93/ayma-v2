@@ -37,12 +37,26 @@ In the app: open a demo profile → **Simulate a conversation** → run it; the
 
 ## Where the Taste page comes from
 
-Real users populate their PUBLIC Taste page through the normal questionnaire.
-Three `page_type: "taste"` nodes live in the question tree
-(`functions/bootstrap/question_tree.json`, branch `all`, so every intent and the
-pre-intent flow see them): `taste_music` (core), `taste_film` and `taste_food`
-(deep). Ayma raises them conversationally via `next_questions` and records the
-answer with `record_answer` as a comma-separated list of up to 5 names.
+Real users populate their PUBLIC Taste page through the normal questionnaire —
+no separate taste form or CTA. Three `page_type: "taste"` nodes live in the
+question tree (`functions/bootstrap/question_tree.json`, branch `all`, so every
+intent and the pre-intent flow see them): `taste_music` (core, weight 5),
+`taste_film` and `taste_food` (deep, weight 4). Ayma raises them conversationally
+via `next_questions` and records the answer with `record_answer` as a
+comma-separated list of up to 5 names.
+
+**Asked early (so the Qloo Taste match stops showing empty).** `taste` is a
+_promoted_ section in `completeness.py` (`_EARLY_PAGE_TYPES`): it is always
+unlocked and transparent to the sequential core-first gate, so it never waits
+behind every earlier section's core and never locks the sections after it.
+Combined with `taste_music`'s top weight, that lands `taste_music` near the top
+of `next` (right after the routing node — the identity basics come from
+preboarding and are not re-asked) for any user who hasn't answered it yet, and
+makes the **"Tastes (music, film & food)"** section show as an open, fillable
+topic on the complete-profile screen. Once `taste_music` is answered,
+`taste_film`/`taste_food` unlock within the section. The complete-profile screen
+is server-driven from `GET /questionnaire` (`completeness.questionnaire_view`),
+so this needs no separate UI — the promoted section renders there automatically.
 
 On any taste answer, `skills/questionnaire.py::_sync_taste_page` composes the
 user's `users/{uid}/wiki_pages/taste` page deterministically in the exact shape

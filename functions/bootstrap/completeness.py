@@ -573,6 +573,18 @@ _ROUTING_ID = "relationship_intent"
 # above — i.e. covered (1.0) or a confident inference / partial (0.7).
 _UNLOCK_COVERAGE = 0.7
 
+# Promoted sections: always reachable regardless of how far the user has got in
+# the sequential core-first flow, and never gating the sections that follow
+# them in priority order. `taste` (music/film/food — the public Qloo Taste page
+# that `taste_match.parse_taste` reads) is promoted here so its questions
+# surface near the top of `next` for a user who hasn't answered them yet and
+# show as a fillable topic on the complete-profile screen, rather than staying
+# buried behind every earlier section's core. Its high node weights
+# (`taste_music` is weight 5) then rank it among the first items offered. The
+# normal identity -> personality -> ... progression is untouched. See
+# docs/QLOO_TASTE.md and ARCHITECTURE.md (questionnaire / taste priority).
+_EARLY_PAGE_TYPES = frozenset({"taste"})
+
 
 def _visible(evaluated: list[dict], intent_set: bool) -> list[dict]:
     """The evaluated nodes the client sees. Until the user has picked a
@@ -589,7 +601,9 @@ def _section_gating(
     """``(ordered_page_types, meta)`` where ``meta[page_type]`` is
     ``{unlocked, core_total, core_answered, core_ok}``. Sections are walked in
     :func:`question_tree.sections_for_intent` order; a section is unlocked when
-    it is the first, or every core node of every earlier section is answered.
+    it is the first, a promoted :data:`_EARLY_PAGE_TYPES` section, or every core
+    node of every earlier non-promoted section is answered. A promoted section
+    is also transparent to the gate — it never locks the sections after it.
     While the intent is unset the routing section is represented by its own
     always-on prompt and is dropped from the section list."""
     present = {e["node"]["page_type"] for e in visible}
@@ -618,13 +632,18 @@ def _section_gating(
         core_total = len(core)
         core_answered = sum(1 for e in core if e["coverage"] >= _UNLOCK_COVERAGE)
         core_ok = core_answered >= core_total  # vacuously true with no core
+        early = pt in _EARLY_PAGE_TYPES
         meta[pt] = {
-            "unlocked": i == 0 or earlier_core_ok,
+            "unlocked": early or i == 0 or earlier_core_ok,
             "core_total": core_total,
             "core_answered": core_answered,
             "core_ok": core_ok,
         }
-        earlier_core_ok = earlier_core_ok and core_ok
+        # A promoted ("early") section is always open and is transparent to the
+        # sequential gate: leaving it unanswered must not lock the sections
+        # that follow it in priority order. See _EARLY_PAGE_TYPES.
+        if not early:
+            earlier_core_ok = earlier_core_ok and core_ok
     return ordered, meta
 
 

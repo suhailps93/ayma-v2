@@ -2170,15 +2170,24 @@ calls ⇒ no billing** once the hackathon credits run out. The single greppable
 gate is `qloo_client.qloo_enabled()`.
 
 **Where the Taste page comes from.** Real users populate it through the normal
-questionnaire: three `page_type: "taste"` nodes in the question tree
-(`question_tree.json`, branch `all` — `taste_music` core, `taste_film` /
-`taste_food` deep) that Ayma asks conversationally. On any taste answer,
-`skills/questionnaire.py::_sync_taste_page` composes the user's
+questionnaire (no separate taste form): three `page_type: "taste"` nodes in the
+question tree (`question_tree.json`, branch `all` — `taste_music` core weight 5,
+`taste_film` / `taste_food` deep weight 4) that Ayma asks conversationally. On
+any taste answer, `skills/questionnaire.py::_sync_taste_page` composes the user's
 `wiki_pages/taste` page deterministically in the `Music: … / Film: … / Food: …`
 shape `parse_taste` reads, `visibility: "public"` by design (the user's own
 stated favourites, like the seeded demo profiles), written straight to `ai_body`
-— not through the AI-rewrite approval flow — so the match reads fresh data. See
-`docs/QLOO_TASTE.md` § "Where the Taste page comes from".
+— not through the AI-rewrite approval flow — so the match reads fresh data.
+
+**Asked early so the Taste match isn't empty.** `taste` is a _promoted_ section
+in `completeness.py` (`_EARLY_PAGE_TYPES`): always unlocked and transparent to
+`completeness._section_gating`'s sequential core-first unlock, so it never waits
+behind every earlier section's core and never locks the sections after it. With
+`taste_music` at top weight it rides near the top of `next` (just after the
+routing node) for anyone who hasn't answered it, and surfaces as the open,
+fillable **"Tastes (music, film & food)"** section on the server-driven
+complete-profile screen (`GET /questionnaire`). See `docs/QLOO_TASTE.md`
+§ "Where the Taste page comes from".
 
 ```mermaid
 flowchart LR
