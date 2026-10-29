@@ -20,6 +20,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/match_report_cache.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -165,6 +166,9 @@ Future<void> _sendComposer(WidgetTester tester, String text) async {
 
 void main() {
   setUp(() {
+    // BUG F: the session report cache is a singleton — clear it so one case's
+    // cached header never paints in the next (e.g. the never-scored case).
+    MatchReportCache.instance.reset();
     final b = TestWidgetsFlutterBinding.ensureInitialized();
     b.platformDispatcher.views.first.physicalSize = const Size(1200, 3200);
     b.platformDispatcher.views.first.devicePixelRatio = 1.0;

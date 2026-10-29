@@ -657,7 +657,24 @@ def test_match_adapter_carries_score_and_viewers_own_explanation(monkeypatch):
         b["text"] for sec in report["sections"] for b in sec["blocks"] if "text" in b
     )
     assert "Bob's own version" not in full_text
+    # A scored pair (no `status: mutual_interest`) is only a compatibility
+    # preview, so the title/score read "Compatibility", never "Match" (§5.3).
+    assert report["title"] == "Compatibility with Bob Bee"
+    assert blocks["score"]["label"] == "Compatibility score"
+
+
+def test_match_adapter_says_match_only_for_a_mutual_pair(monkeypatch):
+    """A genuine mutual match (`status == mutual_interest`, both liked each
+    other) is the ONLY case that reads "Match" rather than "Compatibility"
+    (§5.3)."""
+    doc = dict(_MATCH_DOC)
+    doc["status"] = "mutual_interest"
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: doc)
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    blocks = _blocks(report)
     assert report["title"] == "Match with Bob Bee"
+    assert blocks["score"]["label"] == "Match score"
 
 
 def test_match_adapter_shows_the_other_participants_explanation_for_them(monkeypatch):

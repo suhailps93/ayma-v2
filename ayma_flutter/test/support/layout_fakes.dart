@@ -202,6 +202,17 @@ Object? _bodyFor(String path) {
     return {'cards': [for (var i = 0; i < 6; i++) _card(i)]};
   }
   if (path.startsWith('/explore/profile/')) return _profile();
+  if (path == '/profiles/mini') {
+    // Names + photos for the "send to a user" recipient picker. Long name so
+    // the row's name ellipsizes rather than overflowing next to the avatar
+    // and Send button at scale 2.0.
+    return {
+      'profiles': {
+        'her': {'name': kLongName, 'photo': 'https://cdn/her.jpg', 'online': true},
+        'bob': {'name': 'Bob', 'photo': '', 'online': false},
+      },
+    };
+  }
   if (path == '/chat/history') {
     return {
       'messages': [

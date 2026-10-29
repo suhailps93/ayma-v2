@@ -3463,6 +3463,7 @@ class MatchReport {
     required this.otherName,
     required this.otherPhoto,
     required this.myPhoto,
+    this.mutual = false,
     this.scoreConfidence,
     this.confidenceNote = '',
     this.gateFailures = const [],
@@ -3484,6 +3485,11 @@ class MatchReport {
   final String otherName;
   final String otherPhoto;
   final String myPhoto;
+
+  /// A genuine MUTUAL match — both people liked each other
+  /// (`matches/{id}.status == "mutual_interest"`). When false, this screen is
+  /// only a compatibility preview and reads "Compatibility", not "Match".
+  final bool mutual;
 
   /// 0..1 — how much to trust the number. High when both profiles are
   /// detailed and the dealbreaker gates had their data.
@@ -3534,6 +3540,7 @@ class MatchReport {
       otherName: other['name'] as String? ?? '',
       otherPhoto: other['photo'] as String? ?? '',
       myPhoto: me['photo'] as String? ?? '',
+      mutual: m['mutual'] == true,
       scoreConfidence: (m['score_confidence'] as num?)?.toDouble(),
       confidenceNote: m['confidence_note'] as String? ?? '',
       gateFailures: (m['gate_failures'] as List? ?? const [])

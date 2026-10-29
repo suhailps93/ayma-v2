@@ -6475,15 +6475,21 @@ class CompatibilityRequest(BaseModel):
 
 
 def _match_label(name: str) -> str:
-    return f"Checked your match with {name}"
+    return f"Checked your compatibility with {name}"
 
 
 def _match_chat_text(name: str, pct: int, match_id: str) -> str:
-    """The chat event for a finished match: a one-line teaser with the score
-    and the `[match:<id>]` sentinel (the client strips it and shows the match
-    card that opens `/match/<id>`). Never the report itself (§ founder: keep
-    report-result chat messages to a teaser + link)."""
-    return f"Your match with {name} is ready: {pct}%.\n\n[match:{match_id}]"
+    """The chat event for a finished compatibility score: a one-line teaser
+    with the score and the `[match:<id>]` sentinel (a code token the client
+    strips to show the card that opens `/match/<id>` — do not translate it).
+    Phrased "compatibility", never "match": a computed score is only a
+    compatibility preview, not a mutual match (both liked each other). Never
+    the report itself (§ founder: keep report-result chat to a teaser +
+    link)."""
+    return (
+        f"Your compatibility report with {name} is ready: {pct}%."
+        f"\n\n[match:{match_id}]"
+    )
 
 
 async def _match_job(uid: str, other: str) -> None:
@@ -6536,10 +6542,10 @@ async def _match_job(uid: str, other: str) -> None:
 
     pct = round(float(result["score"]) * 100)
     try:
-        name = _profile_full_name(other) or "your match"
+        name = _profile_full_name(other) or "them"
     except Exception:  # noqa: BLE001 - a name read must not lose the result
         logger.exception("match job: name read failed for %s", other)
-        name = "your match"
+        name = "them"
     # Drop the result into the Ayma conversation as an event, the same way a
     # finished deep dive does (`_finish_deep_dive`): a short line plus the
     # `[match:<id>]` sentinel the chat renders as a tappable match-score card.
@@ -6557,7 +6563,7 @@ async def _match_job(uid: str, other: str) -> None:
         logger.exception("match chat event failed for %s", uid)
     try:
         await notifications_triggers.notify_skill_done(
-            db, uid, f"Your match with {name} is ready — {pct}%.",
+            db, uid, f"Your compatibility report with {name} is ready — {pct}%.",
             f"match/{match_id}",
         )
     except Exception:  # noqa: BLE001
@@ -6659,6 +6665,11 @@ async def match_report(
     return {
         "match_id": match_id,
         "score": d.get("score"),
+        # A "match" in Ayma means a MUTUAL like (both people liked each other,
+        # `status == mutual_interest`). Until then this report is only a
+        # compatibility preview, so the client reads this flag to say
+        # "Compatibility" rather than "Match" (§5.3).
+        "mutual": d.get("status") == MATCH_STATUS_MUTUAL,
         "taste": taste,
         "structured_score": d.get("structured_score"),
         "dimensions": d.get("dimensions") or [],
