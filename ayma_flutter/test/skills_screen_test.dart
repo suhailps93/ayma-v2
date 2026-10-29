@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/skills_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -278,6 +279,75 @@ void main() {
     expect(ran!['want_body'], false); // skipped
     expect(ran!['face_media_ids'], ['m1']);
     expect(ran!.containsKey('body_media_ids'), false);
+  });
+
+  testWidgets(
+      'multi-select: all eligible face photos are selected by default, and '
+      'deselecting one drops it from the run', (tester) async {
+    bigView(tester);
+    Map<String, dynamic>? ran;
+    final api = _api(
+      eligibility: {
+        'face': [
+          {'media_id': 'f0', 'url': 'https://example.invalid/f0.png'},
+          {'media_id': 'f1', 'url': 'https://example.invalid/f1.png'},
+          {'media_id': 'f2', 'url': 'https://example.invalid/f2.png'},
+        ],
+        'body': const [],
+        'has_face_photo': true,
+        'has_body_photo': false,
+      },
+      onAppearanceRun: (b) => ran = b,
+    );
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    await openSheet(tester);
+    // All three face thumbnails render and start selected (auto-select).
+    expect(find.byType(AymaPhoto), findsNWidgets(3));
+
+    // Deselect the first photo (f0), leaving f1 + f2. The tap lands on the
+    // tile's gesture handler (the check badge sits over the photo).
+    await tester.tap(find.byType(AymaPhoto).first, warnIfMissed: false);
+    await tester.pump();
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    expect(ran, isNotNull);
+    expect(ran!['want_face'], true);
+    expect(ran!['face_media_ids'], ['f1', 'f2']); // f0 removed, grid order kept
+  });
+
+  testWidgets('multi-select caps a section at six photos', (tester) async {
+    bigView(tester);
+    Map<String, dynamic>? ran;
+    final api = _api(
+      eligibility: {
+        'face': [
+          for (var i = 0; i < 9; i++)
+            {'media_id': 'f$i', 'url': 'https://example.invalid/f$i.png'},
+        ],
+        'body': const [],
+        'has_face_photo': true,
+        'has_body_photo': false,
+      },
+      onAppearanceRun: (b) => ran = b,
+    );
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    await openSheet(tester);
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    // The default selection is capped at the per-axis max, not all nine.
+    expect(ran, isNotNull);
+    expect((ran!['face_media_ids'] as List).length,
+        AppearancePreRunSheetState.kMaxPerAxis);
   });
 
   testWidgets('a persistent credits row shows the balance and taps through to '

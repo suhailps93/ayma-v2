@@ -86,6 +86,43 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('per-domain bars render for every domain, in demo order, '
+        'with the value matching each score', (tester) async {
+      // Input deliberately out of order (dining, music, film) to prove the
+      // card reorders to the demo's Music → Film → Food & places.
+      final load = TasteMatchLoad.match(TasteMatch.fromMap({
+        'source': 'qloo',
+        'score': 50,
+        'score_label': 'Good overlap',
+        'summary': 'A summary.',
+        'domains': [
+          {'domain': 'dining', 'score': 56},
+          {'domain': 'music', 'score': 12},
+          {'domain': 'film', 'score': 34},
+        ],
+      }));
+      await tester.pumpWidget(_host(TasteMatchCard.resolved(load)));
+      await tester.pump();
+
+      expect(find.byKey(const Key('tasteMatchDomains')), findsOneWidget);
+      // Labels, including the dining → "Food & places" mapping.
+      expect(find.text('Music'), findsOneWidget);
+      expect(find.text('Film'), findsOneWidget);
+      expect(find.text('Food & places'), findsOneWidget);
+      // Each bar's value text equals its domain score (distinct from the
+      // overall score 50, so no collision with the big score).
+      expect(find.text('12'), findsOneWidget);
+      expect(find.text('34'), findsOneWidget);
+      expect(find.text('56'), findsOneWidget);
+      // Rendered top-to-bottom in demo order regardless of input order.
+      final musicY = tester.getTopLeft(find.text('Music')).dy;
+      final filmY = tester.getTopLeft(find.text('Film')).dy;
+      final foodY = tester.getTopLeft(find.text('Food & places')).dy;
+      expect(musicY, lessThan(filmY));
+      expect(filmY, lessThan(foodY));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('the no-Taste-page empty state', (tester) async {
       const hint = 'Maya hasn\'t added a public Taste page yet — add one to '
           'see a taste match.';

@@ -45,7 +45,10 @@ logger = logging.getLogger("ayma.taste_match")
 
 TASTE_PAGE_TYPE = "taste"
 
-# Header words people use on a Taste page → our domain keys.
+# Header words people use on a Taste page → our domain keys. music/film/dining
+# are the original three; tv/books/podcasts/games are recognised ADDITIVELY —
+# present only when a Taste page lists them, absent (and zero extra Qloo calls)
+# otherwise, so a music/film/food page behaves exactly as before.
 _DOMAIN_ALIASES = {
     "music": "music",
     "artists": "music",
@@ -59,8 +62,51 @@ _DOMAIN_ALIASES = {
     "places": "dining",
     "restaurants": "dining",
     "cafes": "dining",
+    "tv": "tv",
+    "tv shows": "tv",
+    "shows": "tv",
+    "television": "tv",
+    "series": "tv",
+    "books": "books",
+    "book": "books",
+    "reading": "books",
+    "authors": "books",
+    "podcasts": "podcasts",
+    "podcast": "podcasts",
+    "games": "games",
+    "game": "games",
+    "video games": "games",
+    "videogames": "games",
+    "gaming": "games",
+    "travel": "travel",
+    "destinations": "travel",
+    "destination": "travel",
+    "trips": "travel",
+    "places to go": "travel",
+    "brands": "brands",
+    "brand": "brands",
+    "fashion": "brands",
+    "style": "brands",
+    "nightlife": "nightlife",
+    "bars": "nightlife",
+    "clubs": "nightlife",
+    "going out": "nightlife",
 }
-_DOMAIN_LABELS = {"music": "music", "film": "film", "dining": "food & places"}
+_DOMAIN_LABELS = {
+    "music": "music",
+    "film": "film",
+    "dining": "food & places",
+    "tv": "TV",
+    "books": "books",
+    "podcasts": "podcasts",
+    "games": "games",
+    "travel": "travel",
+    "brands": "fashion & brands",
+    "nightlife": "nightlife",
+}
+# Domains that need a tag filter on their Qloo recs (a place type narrowed to a
+# scene). Keyed by domain; applied to every insights call for that domain.
+_DOMAIN_FILTER_TAGS = {"nightlife": ["urn:tag:category:place:nightlife"]}
 _MAX_PER_DOMAIN = 5
 _RECS_PER_DOMAIN = 8
 _MAX_DATE_PLACES = 3
@@ -91,7 +137,27 @@ OTHER_MISSING_MESSAGE = (
     "— but yours is ready ({mine}). The moment {other} adds theirs, your shared "
     "tastes and date ideas appear here."
 )
-_DOMAIN_SUMMARY_ORDER = (("music", "Music"), ("film", "Film"), ("dining", "Food"))
+_DOMAIN_SUMMARY_ORDER = (
+    ("music", "Music"),
+    ("film", "Film"),
+    ("dining", "Food"),
+    ("tv", "TV"),
+    ("books", "Books"),
+    ("podcasts", "Podcasts"),
+    ("games", "Games"),
+    ("travel", "Travel"),
+    ("brands", "Brands"),
+    ("nightlife", "Nightlife"),
+)
+# Qloo demographic age buckets → short human labels (for the demographics read).
+_AGE_LABELS = {
+    "24_and_younger": "24 & under",
+    "25_to_29": "25–29",
+    "30_to_34": "30–34",
+    "35_to_44": "35–44",
+    "45_to_54": "45–54",
+    "55_and_older": "55+",
+}
 
 
 class NoTaste(Exception):
@@ -196,6 +262,111 @@ async def _resolve(client, taste: dict[str, list[str]]) -> dict[str, list[dict]]
     return out
 
 
+# Tag subtypes that read as taste descriptors ("Indie", "A24", "Slow-burn") —
+# preferred for the "why you match" headline over niche keyword/dish/decor tags.
+_HEADLINE_TAG_SUBTYPES = (":genre:", ":subgenre:", ":theme:", ":style:", ":music:")
+
+
+def _headline(tid: str) -> bool:
+    return any(s in tid for s in _HEADLINE_TAG_SUBTYPES)
+
+
+def _shared_tags(a_tags: list[dict], b_tags: list[dict], a_ents, b_ents) -> list[str]:
+    """The taste descriptors both people's graphs share — the "why you match".
+
+    Two complementary Qloo tag signals, blended into readable labels:
+
+    * **Entity genre/theme tags** — the curated genre/theme/style tags on each
+      person's resolved entities (from ``/search``), intersected. These are the
+      clean descriptors of what they actually listed (e.g. both love Khruangbin
+      → "Psychedelic", "Funk"), so genre/theme matches lead.
+    * **Profile tags** — Qloo's affinity-ranked tags for each whole taste
+      profile (``client.tags`` → ``/v2/insights filter.type=urn:tag``),
+      intersected, as a supplement so broader shared affinities still surface.
+
+    Headline (genre/theme/style) labels always lead; niche keyword tags fill in
+    only when nothing cleaner is shared, so a real overlap always shows."""
+    from collections import Counter
+
+    def pairs(ents):
+        return [
+            (name, tid)
+            for es in ents.values()
+            for e in es
+            for name, tid in zip(e["tags"], e.get("tag_ids") or [""] * len(e["tags"]))
+        ]
+
+    a_pairs, b_pairs = pairs(a_ents), pairs(b_ents)
+    a_counts = Counter(name for name, _ in a_pairs)
+    b_names = {name for name, _ in b_pairs}
+    nice = {name for name, tid in a_pairs + b_pairs if _headline(tid)}
+    ent_shared = [n for n in a_counts if n in b_names]
+    ent_shared.sort(key=lambda n: (n not in nice, -a_counts[n], n))
+    ent_headline = [n for n in ent_shared if n in nice]
+
+    b_by_id = {t["id"]: t for t in b_tags}
+    api = sorted(
+        (
+            (t["affinity"] + b_by_id[t["id"]]["affinity"], t["name"])
+            for t in a_tags
+            if t["id"] in b_by_id and _headline(t["id"])
+        ),
+        key=lambda x: (-x[0], x[1]),
+    )
+    api_headline = [name for _, name in api]
+
+    shared: list[str] = []
+    for name in ent_headline + api_headline + ent_shared:
+        if name not in shared:
+            shared.append(name)
+    return shared[:8]
+
+
+def _demo_read(demo: dict) -> dict | None:
+    """One person's audience skew → ``{top_age, gender_lean, age, gender}``, or
+    ``None`` when Qloo returned no demographics (offline, or a thin signal)."""
+    if not demo:
+        return None
+    age = demo.get("age") or {}
+    gender = demo.get("gender") or {}
+    top_age = max(age, key=age.get) if age else None
+    gender_lean = None
+    if gender:
+        male, female = gender.get("male", 0.0), gender.get("female", 0.0)
+        gender_lean = (
+            "male" if male > female else "female" if female > male else "balanced"
+        )
+    return {
+        "top_age": _AGE_LABELS.get(top_age, top_age) if top_age else None,
+        "gender_lean": gender_lean,
+        "age": age,
+        "gender": gender,
+    }
+
+
+def _demographics_block(
+    a_name: str, b_name: str, a_demo: dict, b_demo: dict
+) -> dict | None:
+    """The ``demographics`` response block from each person's Qloo audience skew.
+
+    Sends only taste entity ids to Qloo (never user identity); reads back the
+    age/gender lean of the AUDIENCE for those tastes. ``None`` when neither side
+    has data, so the card simply omits it."""
+    a_read, b_read = _demo_read(a_demo), _demo_read(b_demo)
+    if not a_read and not b_read:
+        return None
+    note = ""
+    if a_read and b_read and a_read["top_age"] and b_read["top_age"]:
+        if a_read["top_age"] == b_read["top_age"]:
+            note = f"Both your tastes index with the {a_read['top_age']} crowd."
+        else:
+            note = (
+                f"{a_name}'s tastes index {a_read['top_age']}, "
+                f"{b_name}'s {b_read['top_age']}."
+            )
+    return {"a": a_read, "b": b_read, "note": note}
+
+
 async def _match_with(client, a: tuple, b: tuple) -> dict:
     a_name, a_city, a_taste = a
     b_name, b_city, b_taste = b
@@ -210,21 +381,60 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
         raise NoTaste(b_name)
     both_ids = a_ids + [i for i in b_ids if i not in a_ids]
 
-    domains = list(qloo_client.ENTITY_TYPES)
+    # Score only the domains at least one person actually listed (ordered by
+    # ENTITY_TYPES). A music/film/food page still fires exactly the original
+    # three domains; TV/Books/Podcasts/Games add their calls ONLY when present.
+    domains = [
+        d for d in qloo_client.ENTITY_TYPES if d in a_taste or d in b_taste
+    ]
     rec_jobs = []
     for domain in domains:
         etype = qloo_client.ENTITY_TYPES[domain]
-        rec_jobs.append(asyncio.to_thread(client.insights, etype, a_ids, take=_RECS_PER_DOMAIN))
-        rec_jobs.append(asyncio.to_thread(client.insights, etype, b_ids, take=_RECS_PER_DOMAIN))
-        rec_jobs.append(asyncio.to_thread(client.insights, etype, both_ids, take=_RECS_PER_DOMAIN))
+        dft = _DOMAIN_FILTER_TAGS.get(domain)
+        rec_jobs.append(asyncio.to_thread(client.insights, etype, a_ids, filter_tags=dft, take=_RECS_PER_DOMAIN))
+        rec_jobs.append(asyncio.to_thread(client.insights, etype, b_ids, filter_tags=dft, take=_RECS_PER_DOMAIN))
+        rec_jobs.append(asyncio.to_thread(client.insights, etype, both_ids, filter_tags=dft, take=_RECS_PER_DOMAIN))
+
+    # Tag-align the date places to BOTH people: the place tags their dining
+    # picks share (filter.tags takes tag URNs, not freeform strings). Empty when
+    # they share no dining tags — then the places call is unfiltered as before.
+    place_filter_tags = sorted(
+        {t for e in a_ents.get("dining", []) for t in e.get("tag_ids") or [] if t}
+        & {t for e in b_ents.get("dining", []) for t in e.get("tag_ids") or [] if t}
+    )
+    location = a_city or b_city or None
     places_job = asyncio.to_thread(
         client.insights,
         qloo_client.ENTITY_TYPES["dining"],
         both_ids,
-        location=a_city or b_city or None,
+        location=location,
+        filter_tags=place_filter_tags or None,
         take=_MAX_DATE_PLACES,
     )
-    *recs, places = await asyncio.gather(*rec_jobs, places_job)
+    jobs = [
+        *rec_jobs,
+        places_job,
+        asyncio.to_thread(client.tags, a_ids, take=40),
+        asyncio.to_thread(client.tags, b_ids, take=40),
+        asyncio.to_thread(client.demographics, a_ids),
+        asyncio.to_thread(client.demographics, b_ids),
+    ]
+    results = await asyncio.gather(*jobs)
+    recs = results[: len(rec_jobs)]
+    places, a_tags, b_tags, a_demo, b_demo = results[len(rec_jobs):]
+    # If the tag filter excluded every place, fall back to the unfiltered picks
+    # so date ideas never go dark on a tight tag match.
+    if not places and place_filter_tags:
+        places = await asyncio.to_thread(
+            client.insights,
+            qloo_client.ENTITY_TYPES["dining"],
+            both_ids,
+            location=location,
+            take=_MAX_DATE_PLACES,
+        )
+
+    shared_tags = _shared_tags(a_tags, b_tags, a_ents, b_ents)
+    demographics = _demographics_block(a_name, b_name, a_demo, b_demo)
 
     per_domain: list[dict] = []
     shared: list[str] = []
@@ -270,30 +480,45 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
     if best and best["score"] > 0:
         summary += f" Strongest overlap: {_DOMAIN_LABELS[best['domain']]}."
 
+    # Cross-domain hook: the place recs are tag-aligned to both people, so say
+    # which shared taste drives them ("because you both lean …").
+    tag_hook = f" Because you both lean {shared_tags[0]}." if shared_tags else ""
     date_ideas = [
         {
             "name": p["name"],
             "kind": "dining",
             "why": "Ranked by Qloo for both of your tastes"
             + (f" ({', '.join(p['tags'][:3])})" if p["tags"] else "")
-            + ".",
+            + "."
+            + tag_hook,
             "address": p["address"],
         }
         for p in places
     ]
-    for domain, kind, lead in (
-        ("film", "film", "Movie night"),
-        ("music", "music", "Listening date or live show"),
+    # One pick per OTHER present domain (film + music as before; TV/Books/
+    # Podcasts/Games join only when the pair listed them).
+    for domain, lead in (
+        ("film", "Movie night"),
+        ("music", "Listening date or live show"),
+        ("tv", "Binge night"),
+        ("books", "Book swap"),
+        ("podcasts", "A podcast to share"),
+        ("games", "Game night"),
+        ("travel", "Weekend trip"),
+        ("nightlife", "Night out"),
+        ("brands", "Browse together"),
     ):
+        if domain not in joint_by_domain:
+            continue
         pick = next(
-            (r for r in joint_by_domain.get(domain, []) if r["id"] not in seed_ids),
+            (r for r in joint_by_domain[domain] if r["id"] not in seed_ids),
             None,
-        ) or next(iter(joint_by_domain.get(domain, [])), None)
+        ) or next(iter(joint_by_domain[domain]), None)
         if pick:
             date_ideas.append(
                 {
                     "name": pick["name"],
-                    "kind": kind,
+                    "kind": domain,
                     "why": f"{lead}: Qloo ranks it highly for both of you.",
                     "address": None,
                 }
@@ -307,6 +532,8 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
         "score_label": _label(score),
         "summary": summary,
         "shared": shared,
+        "shared_tags": shared_tags,
+        "demographics": demographics,
         "domains": per_domain,
         "date_ideas": date_ideas,
     }

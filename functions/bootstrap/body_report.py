@@ -1,11 +1,14 @@
-"""Honest, data-driven physique report from a single photo (§ body report).
+"""Honest, data-driven physique report from one or more photos (§ body report).
 
-The body-photo counterpart to :mod:`face_report`. One Gemini **vision** call
-turns a full- or upper-body photo the user shared into a structured report — an
-overall 0-10 score and a verdict, a per-feature breakdown (frame, proportions,
-posture, muscularity, leanness, …), quick facts, and concrete strengths /
-improvements / recommendations. Candid by design: the prompt asks for specific,
-unflattering observations, not compliments.
+The body-photo counterpart to :mod:`face_report`. ONE vision call turns the
+full- or upper-body photo(s) the user shared into a single structured report —
+an overall 0-10 score and a verdict, a per-feature breakdown (frame,
+proportions, posture, muscularity, leanness, …), quick facts, and concrete
+strengths / improvements / recommendations. When several photos are given they
+are all of the SAME person (different angles/lighting/moments) and are
+reconciled into ONE combined read — never treated as different people. Candid
+by design: the prompt asks for specific, unflattering observations, not
+compliments.
 
 Two callers:
 
@@ -14,11 +17,19 @@ Two callers:
 * ``POST /body-report`` — the Profile-tab entry point; runs on the user's
   primary profile photo (or an attachment) and returns the full dict for the
   in-app report view.
+* the Appearance report (:mod:`appearance`) — passes ALL the body photos the
+  user ticked in the pre-run sheet for one combined read.
+
+Prompts live in ``prompts/body_report.md`` (``## system`` / ``## instruction``
+sections), loaded dynamically — never inline (AGENTS.md).
 """
 
 from __future__ import annotations
 
 import logging
+import re
+from functools import lru_cache
+from pathlib import Path
 
 import gemini
 import report_blocks as rb
@@ -27,39 +38,35 @@ from llm_provider import get_vision_provider
 
 logger = logging.getLogger("ayma.bodyreport")
 
-_SYSTEM = (
-    "You are a physique-analysis reviewer producing an honest, data-driven "
-    "body report from a single photo. Be candid and specific — not "
-    "flattering. Base every observation on what is visible in the image. Score "
-    "on a 0-10 scale where 5 is average; reserve 8+ for a genuinely "
-    "exceptional physique. Name concrete things (rounded shoulders, a soft "
-    "midsection, underdeveloped calves, a narrow clavicle frame) rather than "
-    "vague praise. If the photo is unusable — no clear full or upper body, "
-    "heavy occlusion, baggy clothing that hides the figure, extreme angle or "
-    "blur — set `usable` to false and leave the analysis fields minimal. An "
-    "upper-body-only photo (no legs in frame) is usable — just don't claim "
-    "anything about parts you can't see: skip or hedge leg-dependent reads "
-    "(leg proportions, overall height, lower-body leanness) rather than "
-    "guessing, and say so in the relevant note (e.g. \"legs not visible\") "
-    "instead of inventing a confident answer."
-)
+_PROMPTS_PATH = Path(__file__).with_name("prompts") / "body_report.md"
 
-_INSTRUCTION = (
-    "Analyse the physique in this photo and return the structured report. "
-    "Give an `overall_score` (0-10, one decimal is fine) and a short "
-    "`verdict` such as \"Above average\" with a one-sentence `verdict_note`. "
-    "Score each visible feature (frame, proportions, posture, muscularity, "
-    "leanness, symmetry, v_taper, skin_and_grooming, presence) with a 0-10 "
-    "`score` and a specific `note`. Fill `quick_facts` (body_type, "
-    "est_height_impression, build, estimated_body_fat_range, "
-    "dominant_strength, weakest_area, frame_size) — if the legs aren't in "
-    "frame, put \"not visible\" for est_height_impression rather than "
-    "guessing, and base frame_size/build/proportions only on what's shown. "
-    "List honest `strengths` and "
-    "`improvements`, and concrete `recommendations` tagged by category "
-    "(training, nutrition, posture, styling, recovery). Do not be kind for its "
-    "own sake — a useful report is an accurate one."
-)
+
+@lru_cache(maxsize=1)
+def _prompt_sections() -> dict[str, str]:
+    """The ``## name`` sections of ``prompts/body_report.md``."""
+    text = _PROMPTS_PATH.read_text(encoding="utf-8")
+    out: dict[str, str] = {}
+    key: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        m = re.match(r"^##\s+([\w-]+)\s*$", line)
+        if m:
+            if key is not None:
+                out[key] = "\n".join(buf).strip()
+            key, buf = m.group(1), []
+        elif key is not None:
+            buf.append(line)
+    if key is not None:
+        out[key] = "\n".join(buf).strip()
+    return out
+
+
+def _system() -> str:
+    return _prompt_sections()["system"]
+
+
+def _instruction() -> str:
+    return _prompt_sections()["instruction"]
 
 _FEATURE_SCHEMA = {
     "type": "object",
@@ -141,34 +148,72 @@ def _num(value, default: float = 0.0) -> float:
         return default
 
 
+def _normalize_images(
+    image_or_images, mime_type: str | None, source_path: str | None
+) -> list[tuple[bytes, str, str]]:
+    """Coerce either call form into a ``[(bytes, mime, path), …]`` list:
+
+    * single image (legacy): ``run(image_bytes, mime_type, source_path=…)``;
+    * multi image: ``run([(bytes, mime, path), …])`` — all the SAME person.
+
+    Drops any entry with empty bytes; defaults a blank mime to ``image/jpeg``.
+    """
+    if isinstance(image_or_images, (bytes, bytearray)):
+        if not image_or_images:
+            return []
+        mime = (mime_type or "image/jpeg").strip() or "image/jpeg"
+        return [(bytes(image_or_images), mime, source_path or "")]
+    out: list[tuple[bytes, str, str]] = []
+    for item in image_or_images or []:
+        data = item[0]
+        if not data:
+            continue
+        mime = (item[1] if len(item) > 1 else None) or "image/jpeg"
+        mime = str(mime).strip() or "image/jpeg"
+        path = str(item[2]).strip() if len(item) > 2 and item[2] else ""
+        out.append((bytes(data), mime, path))
+    return out
+
+
 async def run(
-    image_bytes: bytes,
-    mime_type: str,
+    image_or_images,
+    mime_type: str | None = None,
     *,
     uid: str | None = None,
     source_path: str | None = None,
 ) -> dict:
-    """Analyse ``image_bytes`` and return the structured report dict
-    (``usable``, ``overall_score``, ``verdict``, ``features``, ``quick_facts``,
-    ``strengths``, ``improvements``, ``recommendations``, ``source_photos``).
+    """Analyse one or more photos OF THE SAME PERSON in ONE combined vision
+    call and return the structured report dict (``usable``, ``overall_score``,
+    ``verdict``, ``features``, ``quick_facts``, ``strengths``, ``improvements``,
+    ``recommendations``, ``source_photos``).
 
-    ``source_path`` — the Storage path the caller read ``image_bytes`` from, if
-    any — is echoed back as ``source_photos`` (a one-item list, kept a list for
-    shape-consistency with the multi-photo reports). ``None``/``""`` -> an
-    empty list.
+    Two call forms:
 
-    Raises ``ValueError`` for empty bytes. Metered to ``uid`` under the
-    ``body_report`` feature; a cap hit propagates ``TokenCapExceeded``.
+    * single image (legacy/chat/auto path):
+      ``run(image_bytes, mime_type, uid=…, source_path=…)``;
+    * multi image (the Appearance pre-run sheet's ticked set):
+      ``run([(bytes, mime, path), …], uid=…)`` — every photo is the same
+      person; they are reconciled into ONE report, not treated as different
+      people.
+
+    Every analysed photo's Storage path is echoed back as ``source_photos`` so
+    every reader can tell which photos produced the report. An entry with no
+    path contributes nothing to that list; no identifiable photo -> an empty
+    list.
+
+    Raises ``ValueError`` when no usable image bytes are given. Metered to
+    ``uid`` under the ``body_report`` feature; a cap hit propagates
+    ``TokenCapExceeded``.
     """
-    if not image_bytes:
+    images = _normalize_images(image_or_images, mime_type, source_path)
+    if not images:
         raise ValueError("an image is required")
-    mime_type = (mime_type or "image/jpeg").strip() or "image/jpeg"
 
     report = await get_vision_provider("reports").generate_json(
-        _INSTRUCTION,
-        system_prompt=_SYSTEM,
+        _instruction(),
+        system_prompt=_system(),
         response_schema=_SCHEMA,
-        image=(image_bytes, mime_type),
+        images=[(data, mime) for data, mime, _p in images],
         uid=uid,
         feature=token_ledger.FEATURE_BODY_REPORT,
     )
@@ -213,7 +258,7 @@ async def run(
             for r in (report.get("recommendations") or [])
             if isinstance(r, dict) and r.get("text")
         ],
-        "source_photos": [source_path] if source_path else [],
+        "source_photos": [p for _d, _m, p in images if p],
     }
 
 

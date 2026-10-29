@@ -84,6 +84,7 @@ from prompt import (  # noqa: E402
     compose_system_prompt,
     load_practice_greeting,
     load_voice_opener,
+    load_voice_session_seed,
     load_voice_tool_use,
     voice_accent_directive,
     voice_swap_confirm,
@@ -2127,6 +2128,7 @@ async def _open_main_call(
     *,
     window: list[Turn],
     opener_chat_ctx: NotGivenOr[object] = NOT_GIVEN,
+    seed_user_turn: bool = False,
 ) -> None:
     """Open a started main voice call the same way on both the Gemini Live and
     Meta cascade paths: a pre-sign-in "welcome" room has Ayma greet first; every
@@ -2138,15 +2140,27 @@ async def _open_main_call(
     ``opener_chat_ctx`` is forwarded to the silent-caller opener as a secondary
     guard scoping the opener's generation context (the cascade passes a
     history-free context); NOT_GIVEN leaves it against the agent's full context
-    for Gemini Live / every other path."""
+    for Gemini Live / every other path.
+
+    ``seed_user_turn`` is set only on the cascade (text-LLM) path: an
+    agent-initiated greeting/opener on a chat LLM must carry at least one user
+    turn, or the OpenAI-compatible gateway (incl. LiveKit Inference) rejects the
+    system-only message list with HTTP 400. A benign synthetic user turn
+    (:func:`load_voice_session_seed`) is seeded so the opener generates normally.
+    Realtime models (Gemini Live / Inference RealtimeModel) never hit that path,
+    so they leave it False."""
     if seed.greeting_instructions:
+        reply_kwargs: dict = {"instructions": seed.greeting_instructions}
+        if seed_user_turn:
+            reply_kwargs["user_input"] = load_voice_session_seed()
         try:
-            await session.generate_reply(instructions=seed.greeting_instructions)
+            await session.generate_reply(**reply_kwargs)
         except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
             logger.exception("welcome greeting failed")
     else:
         await maybe_open_conversation(
-            session, seed, window=window, opener_chat_ctx=opener_chat_ctx
+            session, seed, window=window, opener_chat_ctx=opener_chat_ctx,
+            seed_user_turn=seed_user_turn,
         )
 
 
@@ -2460,7 +2474,8 @@ async def _start_main_cascade_session(
     # every later real turn, so "yeah, continue" still works. Gemini Live is left
     # NOT_GIVEN and gets the same greet+choice from the opener instruction.
     await _open_main_call(
-        session, seed, window=window, opener_chat_ctx=llm.ChatContext.empty()
+        session, seed, window=window, opener_chat_ctx=llm.ChatContext.empty(),
+        seed_user_turn=True,
     )
 
 
@@ -2732,9 +2747,16 @@ async def _start_practice_session(
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
     # The simulated match "picks up the phone" and opens in character instead of
-    # waiting for the user (they are rehearsing their opener either way).
+    # waiting for the user (they are rehearsing their opener either way). On the
+    # Meta cascade (text chat LLM) a greeting with no prior user turn would reach
+    # the OpenAI-compatible gateway as a system-only message list and 400, so a
+    # benign synthetic user turn is seeded; the Gemini Live / Inference realtime
+    # path does not hit that request shape and is left unseeded.
+    greeting_kwargs: dict = {"instructions": load_practice_greeting()}
+    if meta_cascade:
+        greeting_kwargs["user_input"] = load_voice_session_seed()
     try:
-        await session.generate_reply(instructions=load_practice_greeting())
+        await session.generate_reply(**greeting_kwargs)
     except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
         logger.exception("practice greeting failed")
 
@@ -2818,6 +2840,7 @@ async def maybe_open_conversation(
     window: list[Turn],
     grace_seconds: float | None = None,
     opener_chat_ctx: NotGivenOr[object] = NOT_GIVEN,
+    seed_user_turn: bool = False,
 ) -> bool:
     """Ayma speaks first on a normal call when the caller stays silent.
 
@@ -2847,7 +2870,14 @@ async def maybe_open_conversation(
     cascade passes a history-free context so the chat LLM has no previous-turn
     object to answer the instant it opens (the greet+choice is driven by the
     instruction above regardless); left NOT_GIVEN (Gemini Live / every other
-    path), the opener generates against the agent's full context."""
+    path), the opener generates against the agent's full context.
+
+    ``seed_user_turn`` is the cascade (text-LLM) guard: the opener's
+    ``generate_reply`` carries a synthetic opening user turn
+    (:func:`load_voice_session_seed`) so the chat LLM never receives a system-only
+    message list — which the OpenAI-compatible gateway (incl. LiveKit Inference)
+    rejects with HTTP 400. Realtime paths leave it False (they don't hit that
+    LLM request shape), so their opener is byte-identical to before."""
     grace = (
         CONFIG.voice_opener_grace_seconds if grace_seconds is None else grace_seconds
     )
@@ -2881,6 +2911,8 @@ async def maybe_open_conversation(
     }
     if opener_chat_ctx is not NOT_GIVEN:
         reply_kwargs["chat_ctx"] = opener_chat_ctx
+    if seed_user_turn:
+        reply_kwargs["user_input"] = load_voice_session_seed()
     try:
         await session.generate_reply(**reply_kwargs)
     except Exception:  # noqa: BLE001 - a missed opener shouldn't kill the call

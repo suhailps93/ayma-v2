@@ -45,7 +45,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, SINGLE-SELECT per axis (tap a photo to make it THE one analysed, replacing the prior pick; backend reads exactly one photo per axis) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, MULTI-SELECT per axis (tap to tick several, up to 6; ALL ticked photos read together in ONE combined face/body call) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -244,14 +244,17 @@ flowchart LR
   single clear face for Face (`shows_face`), the user's body for Body (`shows_body`). A **multi-person** photo is
   **never** auto-selected in either axis (analysis needs solo shots of the user; not analysing photos of other people is
   also privacy-positive), a face-only/no-body photo is never pre-checked into Body, and an untagged/ambiguous photo is
-  surfaced but never pre-checked (defensive: can't verify solo + correct type). **The sheet is SINGLE-SELECT per axis
-  (§ founder 2026-10-29 fix)**: the backend analyses exactly ONE photo per axis, so each axis holds at most one selected
-  photo. On first load an axis defaults to the **first** `auto_select` photo (or none); tapping a thumbnail makes it
-  **THE** photo analysed for that axis, **replacing** any previously selected one (adding a photo likewise becomes that
-  axis's sole pick) — so exactly one `media_id` (or one privately-added `image_path`) per axis is sent on run. This fixed
-  the repeat-report bug: the old multi-select kept the sticky auto-selected default alongside a newly-tapped photo, and
-  since the backend reads only the first grid photo in grid order, the default re-won and every rerun re-analysed the same
-  photo and produced an identical report (§ founder 2026-10-29). To leave a section out, use **Skip**. Selection is local
+  surfaced but never pre-checked (defensive: can't verify solo + correct type). **The sheet is MULTI-SELECT per axis
+  (§ founder: real multi-select done right)**: the user ticks as many photos per section as they like (up to
+  `kMaxPerAxis` = 6, mirrored by the backend `appearance._MAX_PHOTOS` and the endpoint's `max_length=6`), and the backend
+  analyses **ALL** of an axis's ticked photos **together in ONE combined vision call** — `face_report.run`/`body_report.run`
+  accept a list of images and reconcile them into a single candid read of the SAME person, never as different people; the
+  report's `source_photos` lists every analysed photo. On first load an axis defaults to **all** its `auto_select` photos
+  (capped), and tapping a thumbnail **toggles** it in or out of that axis's set; a freshly-added photo joins the set
+  (unless already at the cap). This is the fix for the earlier first-photo-only "stale report" bug: the OLD multi-select
+  UI let the user tick several but the backend read only the FIRST grid photo in grid order, so every rerun re-analysed
+  the same one photo and produced an identical report (§ founder 2026-10-29). The interim single-select workaround is now
+  superseded — the backend genuinely reads the whole ticked set. To leave a section out, use **Skip**. Selection is local
   to the sheet and **never navigates** (a tap only picks; only the explicit **Add photo** tile, now present on **both**
   groups whether empty or not, opens the picker). **Loading state (§ founder 2026-10-29)**: while a run is in flight the
   report screen (`AppearanceReportScreen`) shows it IS running — the top-right Re-run control swaps to a spinner (disabled)
@@ -281,9 +284,12 @@ flowchart LR
   caller). This replaces the earlier blocking "Running your analysis…" dialog, which cancelled the run when the user
   navigated away (§ founder 2026-10-28: "it used to run in the background"). It still never pushes a
   `ChatKickoff.appearance` or lands on the chat shell. The backend
-  honours the user's own pick via `appearance._pick` + `_bucket_eligible` — the *same* categorisation the sheet uses, so
-  a freshly-added, not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is
-  refused; an explicit selection never falls back to a chat attachment. `run_appearance` returns and persists a per-axis
+  honours the user's own picks via `appearance._pick_all` + `_bucket_eligible` — the *same* categorisation the sheet uses,
+  returning ALL selected eligible photos for an axis (capped at `_MAX_PHOTOS`) for one combined read, so a freshly-added,
+  not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is refused; an
+  explicit selection never falls back to a chat attachment. The face/body report prompts are externalised to
+  `functions/bootstrap/prompts/face_report.md` and `body_report.md` (`## system` / `## instruction` sections, loaded
+  dynamically — AGENTS.md: no inline prompt strings). `run_appearance` returns and persists a per-axis
   `category_status` (`ran` / `skipped` / `no_eligible_photo`). **A rerun never wipes the axis it didn't run**: when this
   run only produced one axis (the other skipped, or wanted but with no eligible photo), the previously-produced section
   is reused rather than regressed to `needs_*_photo` — so the unified face+body score, and the shareable report card
@@ -1740,6 +1746,8 @@ Every user can switch Ayma's **voice stack** per user — not just the Gemini pr
 
 This is a **general behaviour**, not cascade-only: because it is driven by the opener instruction + the has-prior/last-topic signal (both path-agnostic), Gemini Live gets the same greet+choice. The opener's `opener_chat_ctx` secondary guard is still cascade-scoped (Gemini Live / OpenAI Realtime leave it `NOT_GIVEN`). All prior context is kept and the full window is still persisted/summarised, so continuing on the caller's next turn works on every stack.
 
+**Cascade proactive-greeting 400 — the synthetic opening user turn (Sentry `ayma-agent` inference bug, first seen 2026-10-26).** On a **cascade** session the brain is a text chat LLM reached over the OpenAI-compatible protocol (LiveKit Inference `inference.LLM`, or Meta Muse via `lk_openai.LLM`). `session.generate_reply(instructions=…)` adds the instruction as a **system** message, so an **agent-initiated** opener/greeting with *no prior user turn* produced a **system-only** message list — and the gateway rejects that with `HTTP 400: "messages must contain at least one message with role user or tool"`. LiveKit's OpenAI provider format (`_provider_format/openai.py::to_chat_ctx`) accepts but does **not** apply `inject_dummy_user_message` (unlike the google/anthropic/aws formats), so nothing in the framework backfills the user turn. Fix: every cascade proactive opener/greeting seeds one benign synthetic user turn via `generate_reply(user_input=prompt.load_voice_session_seed())` (`prompts/voice_session_seed.md`) — `_open_main_call(…, seed_user_turn=True)` (covers the pre-sign-in welcome greeting *and* the silent-caller opener on the main cascade), `maybe_open_conversation(…, seed_user_turn=True)`, and the Practice Date greeting when `meta_cascade` is true. **Realtime** stacks (Gemini Live / Inference `RealtimeModel`) never reach that chat-completions request shape, so they leave `seed_user_turn` False and their opener/greeting is byte-identical to before. The seed is a system cue the persona is told not to read aloud or answer as speech; the opener/greeting instruction drives the actual first line exactly as before.
+
 **Voice tool-use reliability (founder bug 2026-10-28).** On the Meta cascade the chat LLM (Muse Spark) sometimes *narrated* an app action as done without actually calling the tool — e.g. "rerunning that for you now" with no tool fired, or "open my appearance report" → it opened Settings and said "opened settings." This is probabilistic tool-calling, not a routing bug. Mitigation: `prompts/voice_tool_use.md` (loaded via `prompt.load_voice_tool_use`) is appended to the **cascade** session instructions in `_start_main_cascade_session` (through `_compose_instructions`'s new `tool_use` part). It directs the agent that every app action (open screen, run/re-run a report, change a setting, navigate) MUST go through the matching tool, that it may confirm an action ONLY from the tool's actual returned result, and that it must NEVER say an action is done/in-progress ("rerunning now", "opened that") unless the tool was actually invoked and returned — call the tool first, then speak from the result, and pick the tool that matches the specific request rather than opening a nearby screen. Cascade-scoped: Gemini Live leaves `tool_use` empty (`_compose_instructions` default), so its instructions stay byte-identical. This is a **model-reliability mitigation**, not a guarantee — Muse Spark tool-calling is probabilistic, so it reduces but may not fully eliminate false "done" claims; if cascade tool reliability stays poor, the Gemini Live voice path (reliable tool-calling) is the fallback.
 
 **Agent — `agent._run_session`** reads the preference via the room seed (`main._voice_engine_seed` → `livekit_token.build_room_seed`). Empty `voice_mode` resolves to `CONFIG.llm_provider_voice_main` (default `meta` → the Meta cascade: Muse Spark + `deepgram/nova-3` + `fishaudio/s2.1-pro` voice Hannah). Cascade → `build_cascade_session(brain, stt, tts, voice, language)`; realtime → Gemini Live (`build_realtime_model`), OpenAI Realtime (`build_openai_realtime_model`, or Gemini Live when inert), or another inference realtime model. Every non-default path falls back to Gemini Live on a build or runtime error, so a voice-stack switch can never break a user's call. The **LOCKED** Gemini model ids are never edited — the selection only chooses provider/model/voice/language. Flags: `docs/FEATURE_FLAGS.md`; detail: `docs/META_PROVIDER.md`.
@@ -2260,13 +2268,49 @@ section in the match-compatibility report between two users (§5 / `GET
 + `report_section`, the non-raising helper the match report embeds),
 `qloo_client.py` (live Qloo Insights API + offline fixture), `qloo_fixture.json`,
 `taste_demo.html`. Flutter: shared card `lib/widgets/taste_match_card.dart` +
-`taste_models.dart` (reused by the date-sim result and the match report).
+`taste_models.dart` (reused by the date-sim result and the match report). The
+card renders per-domain overlap as horizontal 0–100 **bars** (one per domain,
+accent fill on a faint track, value right-aligned with tabular figures),
+ordered Music → Film → Food & places (`dining` reads as "Food & places") to
+mirror the public demo `taste_demo.html`; bars show only when both sides have
+taste (`domains` non-empty), otherwise the card falls back to the no-Taste-page
+note. Pure presentation — no data-flow change (the report already delivers
+`taste.domains`).
 Reads PUBLIC profile data only (both people) — no private or cross-user private
 reads. Live when `QLOO_API_KEY` is mounted; otherwise — or on any live
 failure — the fixture. The match report degrades gracefully: when one or both
 people have no public Taste page it carries a `{"status": "no_taste"}` marker
 (the client shows an empty state); on any other failure the section is omitted,
 never erroring the report.
+
+**Qloo depth (breadth × explainability).** The engine uses Qloo across four
+call shapes and ten entity types (full enumeration + live samples:
+`docs/QLOO_TASTE.md`):
+- **`/search`** resolves each listed name to a Qloo entity of its domain's type.
+- **`/v2/insights` entity recs** (`filter.type=urn:entity:*`) drive the
+  per-domain overlap score, now over ten domains: music (`artist`), film
+  (`movie`), dining (`place`), **TV (`tv_show`), books (`book`), podcasts
+  (`podcast`), games (`videogame`), travel (`destination`), brands (`brand`),
+  nightlife (`place` + a nightlife tag filter)**. New domains are **additive**:
+  scored only when a Taste page lists them (`present` domains), so a
+  music/film/food page behaves exactly as before and makes the same calls.
+- **`/v2/insights filter.type=urn:tag`** per person → the genre/theme tags each
+  taste profile skews to; intersected (genre/theme preferred, niche keywords
+  last) into **`shared_tags`** — the readable "why you match" headline, also
+  blended with the genre/theme tags shared by their resolved entities.
+- **`/v2/insights filter.type=urn:demographics`** per person → the age/gender
+  **audience skew** of each person's tastes, averaged across their entities into
+  a **`demographics`** block (per-person `top_age`/`gender_lean` + a shared
+  note). Sends only taste entity ids, never user identity.
+- **`filter.tags`** tag-aligns the joint date-place query to the place tags both
+  people's dining picks share (with an unfiltered fallback so ideas never go
+  dark), and each place "why" names the shared tag ("Because you both lean …").
+
+The response adds `shared_tags: [str]` and `demographics: {a, b, note} | null`
+to the existing `source/a/b/score/score_label/summary/shared/domains/date_ideas`
+(nothing renamed/removed); `domains` and `date_ideas` now span whichever of the
+ten domains are present. Date ideas carry one pick per present domain
+(`kind` ∈ the domain keys) plus the tag-aligned places.
 
 **Taste capture (three paths, all to the Taste page, never Interests).** The
 public Taste page (`wiki_pages/taste`, `Music:/Film:/Food:` lines) fills from
@@ -2347,13 +2391,17 @@ flowchart LR
   SYNC --> B
   A["Person A public profile<br/>Taste page"] --> PA["parse_taste"]
   B["Person B public profile<br/>Taste page"] --> PB["parse_taste"]
-  PA & PB --> RES["Qloo /search<br/>names → entities"]
-  RES --> RA["/v2/insights per domain<br/>(A signals)"]
-  RES --> RB["/v2/insights per domain<br/>(B signals)"]
-  RES --> RJ["/v2/insights joint<br/>(A+B signals; places in A's city)"]
+  PA & PB --> RES["Qloo /search<br/>names → entities (10 types)<br/>+tags, +tag_ids"]
+  RES --> RA["/v2/insights per present domain<br/>(A signals)"]
+  RES --> RB["/v2/insights per present domain<br/>(B signals)"]
+  RES --> RJ["/v2/insights joint<br/>(A+B signals; places in A's city,<br/>filter.tags = shared place tags)"]
+  RES --> TG["/v2/insights filter.type=urn:tag<br/>(A tags ∩ B tags → shared_tags)"]
+  RES --> DM["/v2/insights filter.type=urn:demographics<br/>(A, B audience skew → demographics)"]
   RA & RB --> SC["overlap per domain → score,<br/>label, summary, shared"]
-  RJ --> DI["date ideas<br/>(3 places + film + music)"]
-  SC & DI --> OUT["POST /taste/pair → date-sim card<br/>GET /match/{id}.taste → match report section<br/>GET /taste/demo/pair → judge page"]
-  Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json)"]
+  TG --> SC
+  DM --> SC
+  RJ --> DI["date ideas<br/>(places + one pick per present domain,<br/>tag-aligned 'why')"]
+  SC & DI --> OUT["POST /taste/pair → date-sim card<br/>GET /match/{id}.taste → match report section<br/>GET /taste/demo/pair → judge page<br/>(+shared_tags, +demographics)"]
+  Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json; tags()/demographics() degrade)"]
 ```
 

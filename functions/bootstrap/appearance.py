@@ -11,10 +11,13 @@ single report with three parts:
   own ``photo_ids`` (:func:`physical_attributes.merge`) — the photo(s) that
   are the basis for it.
 * **face** — the :mod:`face_report` shape (overall score, features, strengths,
-  recommendations), computed from the best ``usable_for_face`` photo. No usable
-  photo → ``{"status": "needs_face_photo"}``.
-* **body** — the :mod:`body_report` shape, from the best ``usable_for_body``
-  photo. None → ``{"status": "needs_body_photo"}``.
+  recommendations). When the pre-run sheet names an explicit selection, ALL the
+  ticked eligible photos are fed to one combined :func:`face_report.run` read of
+  the same person; otherwise the single best ``usable_for_face`` photo (auto/chat
+  path). No usable photo → ``{"status": "needs_face_photo"}``.
+* **body** — the :mod:`body_report` shape, likewise: all the ticked eligible
+  photos combined, or the single best ``usable_for_body`` photo on the auto path.
+  None → ``{"status": "needs_body_photo"}``.
 
 ONE doc, forever: ``users/{uid}/appearance_reports/current`` — a fixed id,
 always overwritten in place, never a fresh auto-id per run (that was the bug:
@@ -173,40 +176,46 @@ def _bucket_eligible(attrs: dict, flag: str) -> bool:
     return (uf or not ub) if flag == "usable_for_face" else (ub or not uf)
 
 
-def _pick(
+def _pick_all(
     photos: list[dict],
     extra: list[tuple[bytes, str, str]],
     flag: str,
     *,
     only_media_ids: set[str] | None = None,
-):
-    """Pick the photo to feed this axis. Returns ``(bytes, mime, storage_path)``
-    or ``None``.
+) -> list[tuple[bytes, str, str]]:
+    """Every photo to feed this axis, as ``[(bytes, mime, storage_path), …]`` —
+    all fed together to :func:`face_report.run` / :func:`body_report.run` for
+    ONE combined read of the same person.
 
     When ``only_media_ids`` is given (an explicit, grid-based selection from the
-    pre-run sheet) the first *selected* grid photo that is bucket-eligible for
-    the axis (:func:`_bucket_eligible`) is used — honouring the user's own pick,
-    including an untagged/freshly-added photo, while still refusing a photo
-    clearly meant for the other axis (§ founder 2026-10-28: all photos
-    selectable, the user's choice drives the read). The ``extra`` fallback is
-    deliberately NOT taken for an explicit selection: a chat attachment is never
-    silently substituted for a named grid photo — so a selection that matches
-    nothing eligible resolves to "not available", never a bogus read.
+    pre-run sheet) ALL *selected* grid photos that are bucket-eligible for the
+    axis (:func:`_bucket_eligible`) are returned, in grid order, capped at
+    :data:`_MAX_PHOTOS` — honouring the user's own pick, including an
+    untagged/freshly-added photo, while still refusing a photo clearly meant for
+    the other axis (§ founder 2026-10-28: all photos selectable, the user's
+    choice drives the read). The ``extra`` fallback is deliberately NOT taken for
+    an explicit selection: a chat attachment is never silently substituted for a
+    named grid photo — so a selection that matches nothing eligible resolves to
+    "not available", never a bogus read.
 
     With no explicit selection (``only_media_ids is None`` — the chat/auto path)
-    the legacy behaviour stands: the first grid photo whose shot-type ``flag``
-    is set, else the first attached ``extra`` image, else ``None``."""
-    for p in photos:
-        attrs = p.get("attrs") or {}
-        if only_media_ids is not None:
+    the legacy behaviour stands: the single best photo — the first grid photo
+    whose shot-type ``flag`` is set, else the first attached ``extra`` image — as
+    a one-item list, so the auto path spends on just one photo. Empty list when
+    nothing qualifies."""
+    if only_media_ids is not None:
+        out: list[tuple[bytes, str, str]] = []
+        for p in photos:
+            attrs = p.get("attrs") or {}
             if p.get("media_id") in only_media_ids and _bucket_eligible(attrs, flag):
-                return p["bytes"], p["mime"], p.get("path", "")
-            continue
-        if attrs.get(flag):
-            return p["bytes"], p["mime"], p.get("path", "")
-    if only_media_ids is None and extra:
-        return extra[0]
-    return None
+                out.append((p["bytes"], p["mime"], p.get("path", "")))
+        return out[:_MAX_PHOTOS]
+    for p in photos:
+        if (p.get("attrs") or {}).get(flag):
+            return [(p["bytes"], p["mime"], p.get("path", ""))]
+    if extra:
+        return [extra[0]]
+    return []
 
 
 def _axis_ran(axis) -> bool:
@@ -309,13 +318,17 @@ async def run_appearance(
     :func:`body_report.run`. Propagates :class:`token_ledger.TokenCapExceeded`.
 
     ``face_media_ids`` / ``body_media_ids`` — when the caller (the pre-run
-    sheet) names an explicit, grid-based selection — restrict each axis to
-    those grid photos. ``None`` means "auto" (the first eligible grid photo, or
-    an ``extra_images`` fallback), preserving the legacy/chat behaviour. A named
-    selection is validated on the way in: only the caller's OWN current grid
-    photos that are actually eligible for the axis survive — an id that isn't in
-    the grid or isn't shot-type-eligible is dropped, so a mis-specified or
-    stale id can never feed a bogus read.
+    sheet) names an explicit, grid-based selection — restrict each axis to those
+    grid photos, and ALL of the selected eligible photos for an axis are analysed
+    together in ONE combined :func:`face_report.run` / :func:`body_report.run`
+    read of the same person (capped at :data:`_MAX_PHOTOS`), not just the first
+    (that first-photo-only read was the old "stale report" bug). ``None`` means
+    "auto" (the single best eligible grid photo, or an ``extra_images``
+    fallback), preserving the legacy/chat behaviour. A named selection is
+    validated on the way in: only the caller's OWN current grid photos that are
+    actually eligible for the axis survive — an id that isn't in the grid or
+    isn't shot-type-eligible is dropped, so a mis-specified or stale id can never
+    feed a bogus read.
 
     The returned/persisted report carries a ``category_status`` map
     (``{"face": ran|skipped|no_eligible_photo, "body": ...}``): ``skipped`` when
@@ -399,27 +412,23 @@ async def run_appearance(
         pa_doc = None
     attributes = _attributes_payload(pa_doc)
 
-    # --- face
+    # --- face: ALL ticked face photos -> ONE combined read of the same person
     face: dict = dict(NEEDS_FACE)
     if want_face:
-        pick = _pick(photos, extra, "usable_for_face", only_media_ids=face_sel)
-        if pick is not None:
-            report = await face_report.run(
-                pick[0], pick[1], uid=uid, source_path=pick[2]
-            )
+        picks = _pick_all(photos, extra, "usable_for_face", only_media_ids=face_sel)
+        if picks:
+            report = await face_report.run(picks, uid=uid)
             if isinstance(report, dict) and report.get("usable", True):
                 face = report
                 skill_memory.save_face_analysis(db, uid, report)
                 skill_memory.promote(db, uid, "face_analysis")
 
-    # --- body
+    # --- body: ALL ticked body photos -> ONE combined read of the same person
     body: dict = dict(NEEDS_BODY)
     if want_body:
-        pick = _pick(photos, extra, "usable_for_body", only_media_ids=body_sel)
-        if pick is not None:
-            report = await body_report.run(
-                pick[0], pick[1], uid=uid, source_path=pick[2]
-            )
+        picks = _pick_all(photos, extra, "usable_for_body", only_media_ids=body_sel)
+        if picks:
+            report = await body_report.run(picks, uid=uid)
             if isinstance(report, dict) and report.get("usable", True):
                 body = report
                 skill_memory.save_body_analysis(db, uid, report)
