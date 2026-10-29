@@ -134,6 +134,83 @@ void main() {
   );
 
   testWidgets(
+    'an incoming message already in the reader\'s language never shows '
+    'Translate: the backend returns the original and no affordance is offered',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      // Same-script (Latin) text the backend resolves to the reader's own
+      // language: it hands back the original unchanged (confidence too low / not
+      // foreign), so the widget must offer nothing.
+      final dm = _FakeDm(
+        ctrl,
+        translate: (text) => DmTranslation(translated: text),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add([_incoming('hey sexy')]);
+      await tester.pumpAndSettle();
+
+      // The message shows, but there is NO Translate affordance on English.
+      expect(find.text('hey sexy'), findsOneWidget);
+      expect(find.text('Translate'), findsNothing);
+      expect(find.text('Already in your language'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'a short different-script (Malayalam) message still offers Translate and '
+    'translates on tap — script detection is reliable even when short',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        translate: (_) =>
+            const DmTranslation(translated: 'hi', detectedSourceLang: 'ml'),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add([_incoming('ഹായ്')]);
+      await tester.pumpAndSettle();
+
+      // Offered without any up-front call (reliably foreign by script).
+      expect(find.text('ഹായ്'), findsOneWidget);
+      expect(find.text('Translate'), findsOneWidget);
+      expect(dm.translateCalls, isEmpty);
+
+      await tester.tap(find.text('Translate'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('hi'), findsOneWidget);
+      expect(find.textContaining('translated from ml'), findsOneWidget);
+      expect(dm.translateCalls.single.text, 'ഹായ്');
+    },
+  );
+
+  testWidgets(
     'outgoing translation is opt-in: off by default the typed text is sent '
     'unchanged; no translate call is made',
     (tester) async {

@@ -1017,7 +1017,12 @@ flowchart LR
 
 **Endpoint:** `POST /dm/translate`
 `{"thread_id": "<sorted-pair id>", "text": "...", "target_lang": "<code|name>", "source_lang": "<optional hint>"}` → `{"translated": "...", "detected_source_lang": "<code|name>"}`.
-Detection and translation happen in one model call. When the detected source already equals the target, the model returns the text unchanged (no pointless round-trip). Module: `functions/bootstrap/dm_translate.py`; prompt: `functions/bootstrap/prompts/dm_translate.md`.
+Detection and translation happen in one model call; the model also returns a `confidence` (0–1) for its detection. When the detected source already equals the target, the model returns the text unchanged (no pointless round-trip). Module: `functions/bootstrap/dm_translate.py`; prompt: `functions/bootstrap/prompts/dm_translate.md`.
+
+**Confidence & script gate (only translate what is confidently foreign):** `translate()` only surfaces a translation when the message is confidently in a language *different* from the target; otherwise it returns the original unchanged (so the client shows nothing / "already in your language"). The decision (`_should_surface_translation`):
+- Empty translation, or identical to the original, or detected source == target → **not surfaced**.
+- A **different writing system** than the target (e.g. Malayalam text, English reader — via `_dominant_script` vs `_script_of_lang`) → **surfaced**, regardless of confidence (script detection is reliable even for very short messages).
+- **Same writing system** (typically Latin↔Latin): surfaced only when `confidence >= CONFIDENCE_THRESHOLD` (0.75) **and** the detected source differs from the target. This is what stops short ambiguous Latin text ("hello", "hey") from being mis-detected as foreign and offered a pointless Translate. The prompt instructs the model to report a genuinely low confidence for short/ambiguous single words.
 
 **Provider:** routed through the LLM provider abstraction on the **`translate` surface** (`LLM_PROVIDER_TRANSLATE`, `config.llm_provider_translate`), which **defaults to `meta`** (Muse/Meta — the cross-language feature is "powered by Muse"), with the standard Gemini fallback (`llm_meta_fallback`). Metered under the `dm_translate` token-ledger feature key, **cap-exempt** (`enforce_cap=False`): translating what a match just said must never be gated on the reader's credit balance.
 
@@ -1026,7 +1031,11 @@ Detection and translation happen in one model call. When the detected source alr
 **Target language:** incoming messages translate INTO the reader's preferred language — the language set on the voice-engine switcher (`VoiceSelection.languageCode`, read best-effort from `GET /voice/engines`) if present, else the device locale (`PlatformDispatcher.locale`). Outgoing drafts translate INTO the match's language, learned from the `detected_source_lang` of an incoming message the reader has translated.
 
 **Client UI (`dm_thread_screen.dart`):**
-- **Incoming:** each incoming text bubble carries a subtle "Translate" affordance (`_TranslatableText`). Tapping it shows the translation beneath the original with a "translated from `lang`" label and a Show-original / Hide toggle; the original is always present. A per-thread **"Auto-translate their messages"** toggle (thread menu) translates incoming messages on arrival.
+- **Incoming:** each incoming text bubble (`_TranslatableText`) decides *whether to offer translation at all* so the reader is never offered "Translate" on a message already in their own language (the bug fixed 2026-10-29). Script detection (`lib/utils/dm_language.dart`, mirroring the backend) splits incoming text into:
+  - **Different writing system than the reader's language** (reliably foreign, e.g. Malayalam) → the subtle "Translate" affordance shows immediately, no detection round-trip.
+  - **Same-script** (Latin↔Latin: English/Spanish/French for an English reader) → *ambiguous*, so the backend detector runs once quietly; it returns a real translation only when confident the text is a different language (see the confidence gate above), otherwise the original. "Translate" then appears only for confidently-foreign same-script messages (translation cached, revealed on tap); a message in the reader's own language shows nothing.
+  - **Script-less noise** (emoji/numbers only) → never offered.
+  Tapping "Translate" shows the translation beneath the original with a "translated from `lang`" label and a Show-original / Hide toggle; the original is always present. A per-thread **"Auto-translate their messages"** toggle (thread menu) translates incoming messages on arrival (the same confidence/script gate still applies, so same-language messages stay untranslated).
 - **Outgoing:** an opt-in **"Translate what I send"** toggle (thread menu, off by default) with a quiet one-line banner while on. On send it translates the draft into the match's language and shows a confirm sheet (the exact text that will be sent, plus the user's original) — nothing is sent until the user confirms, so the user's words are never silently changed.
 - **Graceful everywhere:** a failed/unavailable translation degrades to the original with no error-blocking.
 

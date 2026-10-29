@@ -56,7 +56,11 @@ def test_translate_returns_translation_and_detected_lang(monkeypatch):
     provider = _patch_provider(
         monkeypatch,
         _FakeProvider(
-            {"translated": "  Hello, how are you?  ", "detected_source_lang": "es"}
+            {
+                "translated": "  Hello, how are you?  ",
+                "detected_source_lang": "es",
+                "confidence": 0.97,
+            }
         ),
     )
     out = _run(dm_translate.translate("Hola, ¿cómo estás?", "en", uid="me"))
@@ -116,6 +120,114 @@ def test_translate_surface_defaults_to_meta():
     from config import CONFIG
 
     assert CONFIG.llm_provider_translate == "meta"
+
+
+# --- confidence / script decision (§6.12) -------------------------------- #
+
+
+def test_low_confidence_short_latin_falls_back_to_original(monkeypatch):
+    # "hey sexy" is ambiguous short Latin-script text. Even if the model guesses
+    # a foreign language and "translates" it, a low confidence means we assume
+    # it is already in the reader's language and hand back the original — no
+    # spurious Translate on noise.
+    _patch_provider(
+        monkeypatch,
+        _FakeProvider(
+            {
+                "translated": "oye sexy",
+                "detected_source_lang": "es",
+                "confidence": 0.3,
+            }
+        ),
+    )
+    out = _run(dm_translate.translate("hey sexy", "en", uid="me"))
+    assert out == {"translated": "hey sexy", "detected_source_lang": "es"}
+
+
+def test_high_confidence_latin_foreign_is_translated(monkeypatch):
+    # A confidently-detected Latin-script foreign language (French) still
+    # translates even though it shares the Latin script with English.
+    _patch_provider(
+        monkeypatch,
+        _FakeProvider(
+            {
+                "translated": "Hello my friend",
+                "detected_source_lang": "fr",
+                "confidence": 0.95,
+            }
+        ),
+    )
+    out = _run(dm_translate.translate("Bonjour mon ami", "en", uid="me"))
+    assert out == {"translated": "Hello my friend", "detected_source_lang": "fr"}
+
+
+def test_different_script_short_translates_even_at_low_confidence(monkeypatch):
+    # A non-Latin script (Malayalam) is reliably foreign on script alone, so a
+    # short message translates regardless of the model's reported confidence.
+    _patch_provider(
+        monkeypatch,
+        _FakeProvider(
+            {
+                "translated": "hello",
+                "detected_source_lang": "ml",
+                "confidence": 0.2,
+            }
+        ),
+    )
+    out = _run(dm_translate.translate("ഹായ്", "en", uid="me"))
+    assert out == {"translated": "hello", "detected_source_lang": "ml"}
+
+
+# --- _should_surface_translation (the pure decision) --------------------- #
+
+
+def test_decision_same_language_short_and_long():
+    # Same language (the model returns the text unchanged, detected == target).
+    assert not dm_translate._should_surface_translation(
+        "hi", "hi", "en", 0.99, "en"
+    )
+    long = "Sorry for the spam, I'll pause here and let you catch up."
+    assert not dm_translate._should_surface_translation(
+        long, long, "en", 0.99, "en"
+    )
+    # Even if the model hands back a reworded "translation", a detected source
+    # equal to the target is never surfaced.
+    assert not dm_translate._should_surface_translation(
+        "hello", "hello!", "en", 0.9, "en"
+    )
+
+
+def test_decision_different_script_translates_regardless_of_confidence():
+    assert dm_translate._should_surface_translation(
+        "ഹായ്", "hi", "ml", 0.1, "en"
+    )
+
+
+def test_decision_high_confidence_latin_foreign_translates():
+    assert dm_translate._should_surface_translation(
+        "Bonjour", "Hello", "fr", 0.9, "en"
+    )
+
+
+def test_decision_low_confidence_same_script_does_not_translate():
+    assert not dm_translate._should_surface_translation(
+        "hey", "oye", "es", 0.3, "en"
+    )
+
+
+def test_decision_empty_or_unchanged_translation_is_not_surfaced():
+    assert not dm_translate._should_surface_translation("hi", "", "fr", 0.9, "en")
+    assert not dm_translate._should_surface_translation("hi", "hi", "fr", 0.9, "en")
+
+
+def test_dominant_script_detection():
+    assert dm_translate._dominant_script("hello") == "latin"
+    assert dm_translate._dominant_script("¿Cómo estás?") == "latin"
+    assert dm_translate._dominant_script("ഹായ് സുഖമാണോ") == "malayalam"
+    assert dm_translate._dominant_script("123 👍 !!!") == "none"
+    assert dm_translate._script_of_lang("en") == "latin"
+    assert dm_translate._script_of_lang("ml") == "malayalam"
+    assert dm_translate._script_of_lang("en-US") == "latin"
 
 
 # --- endpoint ------------------------------------------------------------ #

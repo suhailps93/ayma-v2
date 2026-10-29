@@ -26,6 +26,7 @@ import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
 import '../services/screen_capture.dart';
+import '../utils/dm_language.dart';
 
 /// How many of the newest DM messages Ayma's screen context may include.
 const int _kContextMessages = 3;
@@ -657,6 +658,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                               ),
                       autoTranslate: _autoTranslate,
                       onDetected: _onOtherLangDetected,
+                      preferredLang: _preferredLang,
                     );
                     return FadeSlideIn(
                       key: ValueKey(m.id),
@@ -1170,6 +1172,7 @@ class _Bubble extends StatelessWidget {
     this.translate,
     this.autoTranslate = false,
     this.onDetected,
+    this.preferredLang = '',
   });
   final DmMessage message;
   final bool mine;
@@ -1177,10 +1180,13 @@ class _Bubble extends StatelessWidget {
   /// Translate this bubble's text into the reader's language (incoming text
   /// bubbles only; null disables the affordance). [autoTranslate] runs it on
   /// first display; [onDetected] reports the detected source language up so an
-  /// outgoing translation knows the match's language.
+  /// outgoing translation knows the match's language. [preferredLang] is the
+  /// reader's language, used to decide whether a message is in a different
+  /// writing system (and so reliably foreign).
   final Future<DmTranslation> Function(String text)? translate;
   final bool autoTranslate;
   final void Function(String lang)? onDetected;
+  final String preferredLang;
 
   @override
   Widget build(BuildContext context) {
@@ -1215,6 +1221,7 @@ class _Bubble extends StatelessWidget {
         translate: translate!,
         autoTranslate: autoTranslate,
         onDetected: onDetected,
+        preferredLang: preferredLang,
       );
     } else {
       tight = false;
@@ -1371,6 +1378,18 @@ class _Bubble extends StatelessWidget {
 /// toggle) renders the translation beneath it with a "translated from `lang`"
 /// label and a toggle to hide it again. Any failure degrades to just the
 /// original — translation never blocks reading the message.
+///
+/// Whether to even offer a translation is decided per message, so the reader is
+/// never offered "Translate" on a message already in their own language:
+/// - A DIFFERENT writing system than [preferredLang] (e.g. Malayalam text for
+///   an English reader) is reliably foreign on script alone — the "Translate"
+///   affordance shows immediately, no detection round-trip needed.
+/// - SAME-script text (English, Spanish, French for an English reader) is
+///   ambiguous — especially short messages like "hello" — so we quietly run the
+///   backend detector once: it returns a real translation only when confident
+///   the text is a different language, otherwise the original (so nothing is
+///   offered). The "Translate" affordance appears only for confidently-foreign
+///   same-script messages; the translation is cached and revealed on tap.
 class _TranslatableText extends StatefulWidget {
   const _TranslatableText({
     super.key,
@@ -1379,6 +1398,7 @@ class _TranslatableText extends StatefulWidget {
     required this.translate,
     required this.autoTranslate,
     this.onDetected,
+    this.preferredLang = '',
   });
 
   final String text;
@@ -1386,6 +1406,7 @@ class _TranslatableText extends StatefulWidget {
   final Future<DmTranslation> Function(String text) translate;
   final bool autoTranslate;
   final void Function(String lang)? onDetected;
+  final String preferredLang;
 
   @override
   State<_TranslatableText> createState() => _TranslatableTextState();
@@ -1395,13 +1416,26 @@ class _TranslatableTextState extends State<_TranslatableText> {
   DmTranslation? _tr;
   bool _loading = false;
   bool _failed = false;
-  bool _manual = false; // the user tapped Translate (vs auto-translate)
+  bool _manual = false; // the user tapped Translate (vs auto/eager detection)
   bool _show = true; // show the translation block (toggle to hide)
+
+  /// A reliably-foreign message (different writing system than the reader's
+  /// language): offer "Translate" immediately, no detection needed.
+  bool get _foreignByScript =>
+      isForeignScript(widget.text, widget.preferredLang);
+
+  /// Same-script text that must be detected to tell the reader's own language
+  /// (don't offer) from a confidently-foreign one (offer). Script-less noise
+  /// (emoji/numbers) is neither, so it is never detected or offered.
+  bool get _ambiguousSameScript =>
+      dominantScript(widget.text) != 'none' && !_foreignByScript;
 
   @override
   void initState() {
     super.initState();
-    if (widget.autoTranslate) _run(manual: false);
+    // Auto-translate runs everything; otherwise quietly detect same-script text
+    // so a message already in the reader's language never shows "Translate".
+    if (widget.autoTranslate || _ambiguousSameScript) _run(manual: false);
   }
 
   @override
@@ -1421,7 +1455,10 @@ class _TranslatableTextState extends State<_TranslatableText> {
     setState(() {
       _loading = true;
       _failed = false;
-      if (manual) _manual = true;
+      if (manual) {
+        _manual = true;
+        _show = true;
+      }
     });
     try {
       final tr = await widget.translate(widget.text);
@@ -1432,7 +1469,6 @@ class _TranslatableTextState extends State<_TranslatableText> {
       setState(() {
         _tr = tr;
         _loading = false;
-        _show = true;
       });
     } catch (_) {
       if (!mounted) return;
@@ -1450,6 +1486,10 @@ class _TranslatableTextState extends State<_TranslatableText> {
         t.translated.trim() != widget.text.trim();
   }
 
+  /// Whether the translation block is currently visible — auto-translate shows
+  /// it inline; a manual tap reveals the (possibly already-fetched) translation.
+  bool get _revealed => widget.autoTranslate || _manual;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -1460,7 +1500,12 @@ class _TranslatableTextState extends State<_TranslatableText> {
       Text(widget.text, style: AymaType.message(color: widget.ink)),
     ];
 
-    if (_loading) {
+    // Only surface a spinner when the reader asked (tapped) or auto-translate
+    // is on — the quiet same-script detection must not flash "Translating…" on
+    // every ordinary same-language message.
+    final showLoading = _loading && _revealed;
+
+    if (showLoading) {
       rows.add(Padding(
         padding: const EdgeInsets.only(top: 4),
         child: Row(
@@ -1478,7 +1523,8 @@ class _TranslatableTextState extends State<_TranslatableText> {
       ));
     } else if (_isTranslated) {
       final from = _tr!.detectedSourceLang;
-      if (_show) {
+      if (_revealed && _show) {
+        // Reader is seeing the translation inline (auto-translate or after tap).
         rows.add(Padding(
           padding: const EdgeInsets.only(top: 6),
           child: Text(
@@ -1493,15 +1539,26 @@ class _TranslatableTextState extends State<_TranslatableText> {
           muted: muted,
           onTap: () => setState(() => _show = false),
         ));
-      } else {
+      } else if (_revealed) {
+        // Reader hid the translation (manual/auto) — let them bring it back.
         rows.add(_affordance(
           label: 'Show translation',
           muted: muted,
           onTap: () => setState(() => _show = true),
         ));
+      } else {
+        // Confidently foreign but not yet revealed: offer the translation
+        // (already fetched for same-script, or fetched on tap for a different
+        // script — either way no extra round-trip is needed to reveal it).
+        rows.add(_affordance(
+          label: 'Translate',
+          muted: muted,
+          onTap: () => _reveal(),
+        ));
       }
     } else if (_tr != null) {
-      // Translated, but the message was already in the reader's language.
+      // Detected and resolved to the reader's own language: offer nothing,
+      // unless the reader explicitly tapped Translate on it.
       if (_manual) {
         rows.add(Padding(
           padding: const EdgeInsets.only(top: 4),
@@ -1514,13 +1571,16 @@ class _TranslatableTextState extends State<_TranslatableText> {
         muted: muted,
         onTap: () => _run(manual: true),
       ));
-    } else {
+    } else if (_foreignByScript) {
+      // Reliably foreign, not yet fetched (different script, auto-translate off).
       rows.add(_affordance(
         label: 'Translate',
         muted: muted,
         onTap: () => _run(manual: true),
       ));
     }
+    // Otherwise (same-script detection pending, or script-less noise): show just
+    // the original with no affordance.
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1528,6 +1588,12 @@ class _TranslatableTextState extends State<_TranslatableText> {
       children: rows,
     );
   }
+
+  /// Reveal an already-fetched translation (no new round-trip).
+  void _reveal() => setState(() {
+        _manual = true;
+        _show = true;
+      });
 
   Widget _affordance({
     required String label,

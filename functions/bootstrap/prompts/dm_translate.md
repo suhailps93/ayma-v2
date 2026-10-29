@@ -12,12 +12,19 @@ The user content gives you:
 
 Return JSON only, matching this shape exactly:
 
-{"translated": "...", "detected_source_lang": "..."}
+{"translated": "...", "detected_source_lang": "...", "confidence": 0.0}
 
 Rules:
 - `detected_source_lang` is a short language code or name for the language the
   TEXT is actually written in (e.g. "es", "Spanish", "ml", "Malayalam"). Prefer
   the same form the target language was given in.
+- `confidence` is a number from 0.0 to 1.0 — how sure you are of
+  `detected_source_lang`. Be honest and calibrated: very short or ambiguous
+  text (e.g. "hi", "hey", "ok", a single Latin-script word that exists in many
+  languages) is genuinely uncertain, so report a LOW confidence (well under
+  0.5). Only report high confidence (0.8+) when the text clearly belongs to one
+  language — distinctive words, grammar, accents or a non-Latin script. When in
+  doubt, prefer a lower number.
 - If the detected source language is already the target language, do NOT
   translate: return the TEXT unchanged as `translated`, with
   `detected_source_lang` set to the target. (Never "translate" a message into
