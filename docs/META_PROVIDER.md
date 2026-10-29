@@ -50,7 +50,7 @@ surface is explicitly flipped.
 
 ## Unified Brain (§13.10) — one per-user LLM for all text surfaces
 
-The per-surface flags below are now the **deploy-time default**; the **user-facing** choice is a single per-user **Brain** (`ayma_brain_model`, `gemini` | `meta`) that drives every text surface. The text call sites resolve through `llm_provider.get_user_brain_provider(uid, surface, needs=<capability>)` instead of `get_llm_provider(surface)` directly: the user's brain when it has the needed capability, else Gemini. Capabilities per brain are the single source of truth in `llm_provider.BRAIN_CAPABILITIES` — **Gemini**: text/json/vision/web/tools; **Meta/Muse Spark**: text/json/tools (no vision, no web). So `web` and `vision` always resolve to Gemini (consistent with `get_vision_provider` and the Gemini-only deep-dive). API: `GET`/`POST /brain/preference`; default `AYMA_BRAIN_DEFAULT=meta`. Full detail: `docs/ARCHITECTURE.md` §13.10, `docs/FEATURE_FLAGS.md`.
+The per-surface flags below are now the **deploy-time default**; the **user-facing** choice is a single per-user **Brain** (`ayma_brain_model`, `gemini` | `meta`) that drives every text surface. The text call sites resolve through `llm_provider.get_user_brain_provider(uid, surface, needs=<capability>)` instead of `get_llm_provider(surface)` directly: the user's brain when it has the needed capability, else Gemini. Capabilities per brain are the single source of truth in `llm_provider.BRAIN_CAPABILITIES` — **Gemini**: text/json/vision/web/tools; **Meta/Muse Spark**: text/json/tools (no vision, no web). So `web` and `vision` always resolve to Gemini (consistent with `get_vision_provider` and the Gemini-only deep-dive). API: `GET`/`POST /brain/preference`; **QLOO-PHASE default `AYMA_BRAIN_DEFAULT=gemini`** (founder directive — Qloo judged before Meta; flips back to `meta`/Muse post-Qloo for the Meta hackathon). Full detail: `docs/ARCHITECTURE.md` §13.10, `docs/FEATURE_FLAGS.md`.
 
 ## Wired surfaces
 
@@ -223,17 +223,19 @@ until the credit posts, so this is **gated on billing** — not flipped yet.
 
 ### MAIN Ayma voice on the Meta cascade (`LLM_PROVIDER_VOICE_MAIN`)
 
-The **normal, non-practice** Ayma voice call (`agent._run_session`) runs on the
-Meta cascade by default, behind its **own** flag `LLM_PROVIDER_VOICE_MAIN`
-(`config.llm_provider_voice_main`) — SEPARATE from the Practice `LLM_PROVIDER_VOICE`
-flag so each voice flips and rolls back on its own. **Default `meta`** (founder
-directive "default everything to Muse"): a user with no saved voice preference
-gets the Meta cascade — `cascade` / Muse Spark brain / `deepgram/nova-3` STT /
-`fishaudio/s2.1-pro` TTS / voice **Hannah** — as both the `/voice/engines`
-user-facing default (`voice_catalog._default_from`) and the stack the agent builds
-at call time (`agent._run_session`, empty `voice_mode` → `MODE_CASCADE` when
-`llm_provider_voice_main == meta`). `LLM_PROVIDER_VOICE_MAIN=gemini` flips the main
-call back to the LOCKED Gemini Live `RealtimeModel`. It deliberately does **not**
+The **normal, non-practice** Ayma voice call (`agent._run_session`) runs behind its
+**own** flag `LLM_PROVIDER_VOICE_MAIN` (`config.llm_provider_voice_main`) — SEPARATE
+from the Practice `LLM_PROVIDER_VOICE` flag so each voice flips and rolls back on its
+own. **QLOO-PHASE default `gemini`** (founder directive — Qloo is judged BEFORE Meta,
+so a new/unset user gets the best-experience stack): a user with no saved voice
+preference gets the LOCKED Gemini Live `RealtimeModel` — `realtime` mode / Gemini
+Live native audio / voice **Aoede** — as both the `/voice/engines` user-facing
+default (`voice_catalog._default_from`) and the stack the agent builds at call time
+(`agent._run_session`, empty `voice_mode` → `MODE_REALTIME` / Gemini Live when
+`llm_provider_voice_main != meta`). **Flips back to `meta` (the Meta cascade —
+`cascade` / Muse Spark / `deepgram/nova-3` / `fishaudio/s2.1-pro` / voice Hannah)
+post-Qloo for the Meta hackathon**; `LLM_PROVIDER_VOICE_MAIN=meta` sets the cascade
+explicitly. It deliberately does **not**
 inherit the global `LLM_PROVIDER` default — it is its own dedicated var, so a
 blanket `LLM_PROVIDER` change can never sweep the main voice.
 

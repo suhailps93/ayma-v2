@@ -4,6 +4,15 @@ Last updated: 2026-10-29. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## POST-QLOO: flip app-wide default stack back to Muse (meta) (2026-10-29) — TODO [[todo-post-qloo-flip-defaults-to-muse]]
+- For the Qloo hackathon (judged BEFORE Meta) the app-wide default stack for new/unset users was temporarily set to **Gemini** (founder directive, model-lock change authorized): `config.brain_default` = `gemini` and `config.llm_provider_voice_main` = `gemini` (main voice → Realtime / Gemini Live native audio / Aoede). Branch `qloo-default-gemini` off `meta-hackathon`.
+- **After Qloo**, flip both back to `meta` (Muse) for the Meta hackathon:
+  1. `config.py`: `brain_default` default `"gemini"` → `"meta"`; `llm_provider_voice_main` default `"gemini"` → `"meta"`. Update the adjacent docstrings/comments (they carry the "QLOO-PHASE" note).
+  2. Redeploy **ayma-api** (brain, text surfaces) via its deploy script and **ayma-agent** via `scripts/deploy-agent.sh --release` (main voice). `deploy-agent.sh` no longer pins `LLM_PROVIDER_VOICE_MAIN`, so the config default governs after `--release`.
+  3. Revert the test flips in `tests/test_config.py` (`test_main_voice_defaults_to_gemini_live` / `test_main_voice_honours_explicit_meta_override`) and the doc notes in `FEATURE_FLAGS.md` / `ARCHITECTURE.md` / `AGENT_HANDOFF.md`.
+  4. Verify as a new/unset user: Brain=Muse, main voice=Meta cascade (Hannah).
+- Note: per-surface `dm_coach`/`translate` stayed on `meta` throughout (no change needed).
+
 ## Taste match card: per-domain bars matching the judge demo (meta-hackathon, 2026-10-29) — DONE
 - Founder (Qloo deadline): make the in-app "Taste match · powered by Qloo" card visually match the public judge demo (`functions/bootstrap/taste_demo.html`). The one visual gap was per-domain overlap rendered as a plain text line ("Music 72 · Film 60") instead of the demo's horizontal bars.
 - **Fix (pure presentation, `taste_match_card.dart`):** replaced the text line with per-domain **bars** — one row per domain (label, horizontal 0–100 progress bar with accent fill on a faint `ac.line` track via `FractionallySizedBox`, value right-aligned with tabular figures), ordered Music → Film → Food & places (`_title` maps `dining`→"Food & places", `_orderedDomains` sorts to the demo order regardless of backend order). Bars show only when `m.domains` is non-empty; otherwise the existing note/empty state is unchanged. Every other state (big score, label, summary, shared chips, date ideas, one-sided note, `sample` chip) intact. Overflow-proof at textScale 2.0 (label wraps/ellipsizes in a fixed column, bar flexes, value column scales with the text).

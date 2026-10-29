@@ -178,11 +178,12 @@ class Config:
     #
     # Voice provider flip (hackathon Deliverable A): the locked Gemini Live
     # voice above stays here as the always-available FALLBACK. The dedicated flag
-    # ``llm_provider_voice_main`` (below) now DEFAULTS to ``meta`` (founder
-    # directive — "default everything to Muse"), so the MAIN voice call runs on
-    # the Meta cascade (Muse Spark LLM) for a user with no saved preference;
-    # ``LLM_PROVIDER_VOICE_MAIN=gemini`` flips it back. A build failure or any
-    # mid-call cascade error still falls back to the locked Gemini Live voice.
+    # ``llm_provider_voice_main`` (below) QLOO-PHASE DEFAULTS to ``gemini``
+    # (founder directive — Qloo judged before Meta, best-experience stack), so
+    # the MAIN voice call runs on the locked Gemini Live native-audio voice for a
+    # user with no saved preference; ``LLM_PROVIDER_VOICE_MAIN=meta`` flips it to
+    # the Meta cascade (Muse Spark), which is the post-Qloo default for Meta.
+    # A build failure or any mid-call cascade error still falls back to Gemini Live.
     # The flag only selects which stack builds — the model ids here are never
     # changed or removed, so the lock stays in force for the fallback path.
     # ---------------------------------------------------------------- #
@@ -859,13 +860,15 @@ class Config:
 
     llm_provider_voice_main: str
     """Provider switch for the MAIN (normal, non-practice) Ayma voice call,
-    ``gemini`` | ``meta``. Flip back to Gemini with ``LLM_PROVIDER_VOICE_MAIN=gemini``.
+    ``gemini`` | ``meta``. ``LLM_PROVIDER_VOICE_MAIN=meta`` flips it to Muse.
 
-    Default ``meta`` (founder directive — "default everything to Muse"): a user
-    with no saved voice preference gets the Meta cascade (Muse Spark brain +
-    deepgram/nova-3 STT + fishaudio/s2.1-pro TTS, voice Hannah), which is both the
-    ``/voice/engines`` user-facing default (``voice_catalog._default_from``) and
-    the stack the agent actually builds at call time (``agent.py``). Unlike the
+    QLOO-PHASE default ``gemini`` (founder directive — Qloo is judged BEFORE
+    Meta, so a user with no saved voice preference gets the best-experience
+    stack: Gemini Live native-audio voice, Realtime mode, voice Aoede). This is
+    both the ``/voice/engines`` user-facing default (``voice_catalog._default_from``)
+    and the stack the agent actually builds at call time (``agent.py``). It flips
+    back to ``meta`` (Meta cascade / Muse Spark) post-Qloo for the Meta hackathon.
+    Unlike the
     other per-surface switches it does NOT inherit the global ``LLM_PROVIDER``
     default: it is its own dedicated var so a global ``LLM_PROVIDER`` change never
     sweeps the main voice. When set to ``meta`` the main voice is built as the
@@ -886,8 +889,9 @@ class Config:
     """The unified **Brain** shown pre-selected on the "Ayma's models" screen
     and used as the fallback brain for the text surfaces when a user has NOT
     saved an ``ayma_brain_model`` preference, ``gemini`` | ``meta`` (vendor
-    name, not a model id). Default ``meta`` — the hackathon runs on Muse Spark
-    by default (founder "default everything to Muse" rule). A brain that lacks a
+    name, not a model id). QLOO-PHASE default ``gemini`` (founder directive —
+    Qloo is judged before Meta; new/unset users get the best-experience stack),
+    flips back to ``meta`` (Muse Spark) post-Qloo. A brain that lacks a
     needed capability (web, vision) is still resolved to Gemini per the
     capability map in ``llm_provider`` — so the Muse default never silently
     drops web reading or image analysis. Override with ``AYMA_BRAIN_DEFAULT``.
@@ -1199,7 +1203,9 @@ def _load() -> Config:
         ).strip().lower(),
         # Explicit-only (no LLM_PROVIDER inheritance): the main voice is the
         # LOCKED Gemini Live model, so a global flip must never sweep it.
-        llm_provider_voice_main=os.getenv("LLM_PROVIDER_VOICE_MAIN", "meta"),
+        # QLOO-PHASE default = ``gemini`` (founder directive — judged BEFORE
+        # Meta, best-experience stack). Flips back to ``meta`` post-Qloo.
+        llm_provider_voice_main=os.getenv("LLM_PROVIDER_VOICE_MAIN", "gemini"),
         llm_provider_voice=os.getenv(
             "LLM_PROVIDER_VOICE", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),
@@ -1218,9 +1224,11 @@ def _load() -> Config:
         == "true",
         # Unified Brain default (§13.10): the brain used for the text surfaces
         # when a user hasn't picked one, and shown pre-selected in the UI.
-        # Hackathon default = Muse (``meta``); capability gaps still route to
-        # Gemini (web/vision) via the llm_provider capability map.
-        brain_default=os.getenv("AYMA_BRAIN_DEFAULT", "meta").strip().lower(),
+        # QLOO-PHASE default = Gemini (founder directive — Qloo is judged BEFORE
+        # Meta, so new/unset users get the best-experience stack). Flips back to
+        # Muse (``meta``) post-Qloo. Capability gaps still route to Gemini
+        # (web/vision) via the llm_provider capability map.
+        brain_default=os.getenv("AYMA_BRAIN_DEFAULT", "gemini").strip().lower(),
         # Voice ENGINE picker (§13.9).
         openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime"),
         voice_openai_realtime_enabled=os.getenv(
