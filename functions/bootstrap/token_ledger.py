@@ -695,6 +695,12 @@ def _contact_verified(uid: str) -> bool:
         from firebase_admin import auth as firebase_auth
 
         user = firebase_auth.get_user(uid)
+        email = str(user.email or "").strip().lower()
+        # Demo/judge accounts (docs/DEMO_ACCOUNTS.md) skip the email-verified
+        # check — and only these exact emails; every other account still needs a
+        # verified phone/email. See CONFIG.test_bypass_emails.
+        if email and email in CONFIG.test_bypass_emails:
+            return True
         return bool(user.phone_number) or (
             bool(user.email) and bool(user.email_verified)
         )

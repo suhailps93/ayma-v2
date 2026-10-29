@@ -215,9 +215,21 @@ def _base(flag: Flag) -> Any:
     return getattr(CONFIG, flag.config_attr)
 
 
-def resolve(name: str) -> tuple[Any, str]:
-    """``(value, source)``; source is ``env``, ``firestore`` or ``default``."""
+def resolve(name: str, uid: str | None = None) -> tuple[Any, str]:
+    """``(value, source)``; source is ``env``, ``firestore``, ``default`` or,
+    for a per-user override, ``user_override``.
+
+    When ``uid`` is one of ``CONFIG.all_flags_on_uids`` (the demo/judge
+    accounts, see ``docs/DEMO_ACCOUNTS.md``) every *boolean* flag resolves ON
+    for that user, without touching any global flag. Non-bool flags (routes,
+    percents, lists, ints) have no meaningful "on" and are resolved normally."""
     flag = REGISTRY[name]
+    if (
+        uid
+        and flag.kind == "bool"
+        and uid in CONFIG.all_flags_on_uids
+    ):
+        return True, "user_override"
     env_text = os.environ.get(ENV_PREFIX + name.upper())
     if env_text is not None and env_text.strip():
         try:
@@ -234,12 +246,12 @@ def resolve(name: str) -> tuple[Any, str]:
     return _base(flag), "default"
 
 
-def get(name: str) -> Any:
-    return resolve(name)[0]
+def get(name: str, uid: str | None = None) -> Any:
+    return resolve(name, uid)[0]
 
 
-def enabled(name: str) -> bool:
-    return bool(get(name))
+def enabled(name: str, uid: str | None = None) -> bool:
+    return bool(get(name, uid))
 
 
 def snapshot() -> dict[str, dict]:

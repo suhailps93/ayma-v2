@@ -104,9 +104,10 @@ _JSON_OBJ_RE = re.compile(r"\{.*\}", re.S)
 _cache: dict[str, tuple[float, list[dict]]] = {}
 
 
-def enabled() -> bool:
-    """The ``deepdive_public_profiles`` flag."""
-    return feature_flags.enabled("deepdive_public_profiles")
+def enabled(uid: str | None = None) -> bool:
+    """The ``deepdive_public_profiles`` flag. ``uid`` lets a demo/judge account
+    (``CONFIG.all_flags_on_uids``) resolve it ON via the per-user override."""
+    return feature_flags.enabled("deepdive_public_profiles", uid)
 
 
 def region_blocked(location: str) -> bool:
@@ -287,7 +288,7 @@ async def find_public_profile_images(
     grounded Gemini call, at most one Vertex AI Search query and at most
     :data:`MAX_PROFILES` page fetches."""
     stats = stats if stats is not None else {}
-    if not enabled():
+    if not enabled(uid):
         stats["public_profiles"] = "flag_off"
         logger.info("public-profile discovery skipped: flag off")
         return []

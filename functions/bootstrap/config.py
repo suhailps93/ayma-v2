@@ -117,6 +117,22 @@ class Config:
     """Firebase-uid allowlist for the Dev view. Env ``DEV_VIEW_UIDS``
     (comma-separated), default empty."""
 
+    test_bypass_emails: tuple[str, ...]
+    """Demo/judge accounts whose Firebase email need NOT be verified to clear
+    the free start-grant contact check (``token_ledger._contact_verified``).
+    Ayma has no hard email-verification wall; this is the one privilege gate
+    that reads ``email_verified``, so the allowlist is scoped to exactly these
+    emails and every other account is still gated. Env ``TEST_BYPASS_EMAILS``
+    (comma-separated), default: the three public hackathon demo logins
+    (``docs/DEMO_ACCOUNTS.md``). Not a secret."""
+
+    all_flags_on_uids: tuple[str, ...]
+    """Firebase uids for which every boolean feature flag resolves ON, honored
+    inside ``feature_flags.resolve(name, uid=...)`` without flipping any global
+    flag. Scoped to the demo/judge accounts so they can exercise every feature.
+    Env ``ALL_FLAGS_ON_UIDS`` (comma-separated), default: the three demo uids
+    (``docs/DEMO_ACCOUNTS.md``). Not a secret."""
+
     dev_panel_password: str
     """Password ``POST /dev/verify`` checks before unlocking the app's
     Developer panel. From Secret Manager (``DEV_PANEL_PASSWORD``) in
@@ -1022,6 +1038,14 @@ def _load() -> Config:
         cron_secret=os.getenv("CRON_SECRET", ""),
         dev_view_emails=_csv("DEV_VIEW_EMAILS", "suhailps@gmail.com", lower=True),
         dev_view_uids=_csv("DEV_VIEW_UIDS", ""),
+        test_bypass_emails=_csv(
+            "TEST_BYPASS_EMAILS",
+            "test1@gmail.com,test2@gmail.com,test3@gmail.com",
+            lower=True,
+        ),
+        all_flags_on_uids=_csv(
+            "ALL_FLAGS_ON_UIDS", "demo-test1,demo-test2,demo-test3"
+        ),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
         dev_panel_password=os.getenv("DEV_PANEL_PASSWORD", ""),
         mcp_server=os.getenv("MCP_SERVER", "false").strip().lower()
