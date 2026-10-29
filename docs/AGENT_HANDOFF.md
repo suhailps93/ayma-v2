@@ -268,6 +268,20 @@ section; until it exists only dev-view/debug test purchases credit via sync). Mo
 `.env.local`. The founder keeps off-repo key backups in `~/.ayma-keys/` (not for agents to read or copy).
 Cloud Scheduler jobs `ayma-cron-*` call `/cron/*` with `X-Cron-Secret`.
 
+### Demo/judge accounts (test1/test2/test3)
+Three complete demo logins for judges — see `docs/DEMO_ACCOUNTS.md` (the shareable
+guide). Built/kept by an idempotent seed; needs ADC for `ayma-ai`.
+```
+python3 scripts/seed_demo_accounts.py            # create / upsert (idempotent)
+python3 scripts/seed_demo_accounts.py --reset    # wipe the 3 accounts + rebuild
+python3 scripts/verify_demo_accounts.py          # print evidence for every requirement
+```
+Logins `test1/test2/test3@gmail.com` / `Test123` (public demo creds, in DEMO_ACCOUNTS.md).
+Two scoped overrides power them, both committed defaults (no env/secret, no global
+flag flip): `CONFIG.test_bypass_emails` (skip the start-grant email check for those
+3 emails only) and `CONFIG.all_flags_on_uids` (all bool flags on for those 3 uids
+only). Activated by a normal code-only `scripts/deploy-api.sh`.
+
 ---
 
 ## 4. Agent orchestration model

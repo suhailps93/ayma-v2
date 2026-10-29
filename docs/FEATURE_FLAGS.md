@@ -9,6 +9,7 @@ Inference-vs-Vertex routing table are in `docs/ARCHITECTURE.md` section 0.
 
 ## Resolution order (highest first)
 
+0. **Per-uid demo override** (bool flags only): when `resolve(name, uid)` is called with a `uid` in `CONFIG.all_flags_on_uids`, every boolean flag resolves `True` (source `user_override`) — see "Per-uid all-flags-on override" below. Never touches the global doc.
 1. `FLAG_<NAME>` environment variable (local dev, tests, emergency pin), e.g. `FLAG_MAPS_GROUNDING=false`.
 2. `config/feature_flags` -> `<name>`.
 3. Legacy docs, still honoured: `config/llm_routing` (`json|vision|chat|voice` groups, `fallback`) and `app_config/sentry` (`enabled`).
@@ -37,6 +38,22 @@ A wrong-typed value is logged and ignored (next layer applies). An unreadable Fi
 | `sentry` | bool | true | Sentry error reporting; the DSN still comes from Secret Manager (no DSN = off) |
 | `qloo_enabled` | bool | **true** | **kill switch for ALL Qloo Taste API calls** (billing protection). Default ON while we have hackathon credits. When `false`, **no Qloo HTTP request is made anywhere** — `taste_match.match` short-circuits before any call and every surface degrades to the no-taste empty state (the "Taste match · powered by Qloo" section carries `{"status": "no_taste"}`, `POST /taste/pair` and `GET /taste/demo/pair` return `404 no_taste`, the demo page shows the empty state). `qloo_client.get_client` also refuses to hand out a live client while off, so nothing can bill Qloo. Flip fast with `scripts/flags.py set qloo_enabled=false --yes` (or `FLAG_QLOO_ENABLED=0`) — **no redeploy**. See `docs/ARCHITECTURE.md` §19. |
 | `mcp_server` | bool | **false** | **master switch for the Ayma MCP server** (bring-your-own-agent; `docs/MCP_SERVER.md`). Default OFF for safety: while off, no connection can be authorized and no tool call succeeds — the MCP endpoint, `device_authorization`, `token` and `approve` all answer `503 mcp_disabled` (listing/revoking already-connected agents stays available so users can still clean up). Merging the MCP code exposes nothing until the founder flips this on. Needs no secret — MCP access tokens are opaque and validated by a Firestore lookup, not signed. Flip with `scripts/flags.py set mcp_server=true --yes` (or `FLAG_MCP_SERVER=1`). |
+
+## Per-uid all-flags-on override (demo/judge accounts)
+
+`feature_flags.resolve/get/enabled` take an optional `uid`. When that `uid` is in
+`CONFIG.all_flags_on_uids` (env `ALL_FLAGS_ON_UIDS`, committed default = the three
+demo uids `demo-test1,demo-test2,demo-test3`), **every boolean flag resolves ON**
+for that user only, reported with source `user_override`. Non-bool flags (routes,
+percents, lists, ints) have no meaningful "on" and are resolved normally. This is
+a read-only short-circuit at the top of `resolve()`: it writes nothing and flips
+no global flag, so no other account is affected.
+
+The override only applies where a call site passes a `uid`. User-facing gates with
+a uid in hand (e.g. the deep-dive public-profiles gate) honour it; a few uid-less
+gates (`sentry`, `vertex_ai_search`) and the two FastAPI-dependency gates whose
+Instagram flow includes pre-login endpoints (`meta_integrations`, `mcp_server`)
+remain globally governed by design. See `docs/DEMO_ACCOUNTS.md`.
 
 ## Per-user preferences (NOT in `config/feature_flags`)
 
