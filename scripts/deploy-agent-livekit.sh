@@ -55,8 +55,9 @@ NONSECRET_ENV=(
   "CONTEXT_OPT_MEASURE=true"
   "LLM_PROVIDER_VOICE=meta"
   "LLM_PROVIDER_VOICE_MAIN=meta"
-  "META_CASCADE_TTS_VOICE_FEMALE=Ashley"
-  "META_CASCADE_TTS_VOICE_MALE=Alex"
+  # No TTS model/voice ids here (AGENTS.md): the default TTS (fishaudio/s2.1-pro,
+  # voice Hannah) and the gender-matched voices (Hannah/Adrian) are the committed
+  # config.py defaults — the single source of truth.
 )
 
 # Secrets pulled from GCP Secret Manager → injected into LiveKit's secret store

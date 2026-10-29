@@ -612,18 +612,22 @@ def default_selection() -> dict[str, str]:
 
 def _default_from(sources: dict[str, object]) -> dict[str, str]:
     if CONFIG.llm_provider_voice_main == PROVIDER_META:
-        # Exactly what agent.py uses at call time for a user with no saved pick.
+        # Exactly what agent.py uses at call time for a user with no saved pick:
+        # the Meta cascade with the configured TTS voice (``voice_id``), so the
+        # "Ayma's models" screen shows the real default voice (Hannah) selected.
         return {
             "mode": MODE_CASCADE, "realtime_model_id": "",
             "brain_id": BRAIN_META,
             "stt_id": CONFIG.meta_cascade_stt_model,
             "tts_id": CONFIG.meta_cascade_tts_model,
+            "voice_id": CONFIG.meta_cascade_tts_voice,
         }
     stt = _first(sources["stt"])  # type: ignore[index]
     tts = _first(sources["tts"])  # type: ignore[index]
     return {
         "mode": MODE_REALTIME, "realtime_model_id": REALTIME_GEMINI,
         "brain_id": BRAIN_META, "stt_id": stt, "tts_id": tts,
+        "voice_id": "",
     }
 
 

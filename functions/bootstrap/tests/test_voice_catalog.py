@@ -176,6 +176,31 @@ def test_meta_default_is_configured_cascade_not_first_entry(monkeypatch):
     assert d["tts_id"] in [t["id"] for t in cat["tts"]]
 
 
+def test_no_pref_default_resolves_to_meta_cascade_hannah(monkeypatch):
+    # A user with no saved preference gets the founder's target stack:
+    # cascade / Muse Spark / deepgram-nova-3 / fishaudio-s2.1-pro / Hannah.
+    import dataclasses
+
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG,
+        llm_provider_voice_main=vc.PROVIDER_META,
+        meta_cascade_stt_model="deepgram/nova-3",
+        meta_cascade_tts_model="fishaudio/s2.1-pro",
+        meta_cascade_tts_voice="9a9cf47702da476aa4629e2506d4a857",  # Hannah
+    ))
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    vc.clear_cache()
+    d = vc.default_selection()
+    assert d["mode"] == vc.MODE_CASCADE
+    assert d["realtime_model_id"] == ""
+    assert d["brain_id"] == vc.BRAIN_META
+    assert d["stt_id"] == "deepgram/nova-3"
+    assert d["tts_id"] == "fishaudio/s2.1-pro"
+    assert d["voice_id"] == "9a9cf47702da476aa4629e2506d4a857"
+    # Hannah is a valid voice id of the default TTS.
+    assert d["voice_id"] in vc.tts_voice_ids("fishaudio/s2.1-pro")
+
+
 def test_configured_models_added_when_missing_from_live(monkeypatch):
     import dataclasses
 

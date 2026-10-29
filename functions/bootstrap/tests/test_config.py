@@ -64,13 +64,31 @@ def test_meta_cascade_defaults(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     cfg = config._load()
     # TTS vendor + voice + VAD live in config so the flag can reach them.
-    assert cfg.meta_cascade_tts_model == "inworld/inworld-tts-1"
-    assert cfg.meta_cascade_tts_voice == ""
-    # Gender-matched cascade voices default to real Inworld voice ids so
-    # female personas sound female and male personas sound male.
-    assert cfg.meta_cascade_tts_voice_female == "Ashley"
-    assert cfg.meta_cascade_tts_voice_male == "Alex"
+    # Default TTS is Fish Audio s2.1-pro, voice Hannah (the founder's selected
+    # default). Fish Audio voices are addressed by id, so the voice is Hannah's
+    # documented id, not the label.
+    assert cfg.meta_cascade_tts_model == "fishaudio/s2.1-pro"
+    assert cfg.meta_cascade_tts_voice == "9a9cf47702da476aa4629e2506d4a857"
+    # Gender-matched cascade voices default to real Fish Audio voice ids so
+    # female personas sound female (Hannah) and male personas sound male (Adrian).
+    assert cfg.meta_cascade_tts_voice_female == "9a9cf47702da476aa4629e2506d4a857"
+    assert cfg.meta_cascade_tts_voice_male == "bf322df2096a46f18c579d0baa36f41d"
     assert cfg.meta_cascade_vad_model == "silero"
+
+
+def test_main_voice_defaults_to_meta_cascade(monkeypatch):
+    # Founder directive ("default everything to Muse"): a user with no saved
+    # voice preference gets the Meta cascade, not the locked Gemini Live voice.
+    monkeypatch.delenv("LLM_PROVIDER_VOICE_MAIN", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    cfg = config._load()
+    assert cfg.llm_provider_voice_main == "meta"
+
+
+def test_main_voice_honours_explicit_gemini_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER_VOICE_MAIN", "gemini")
+    cfg = config._load()
+    assert cfg.llm_provider_voice_main == "gemini"
 
 
 def test_meta_cascade_tts_vendor_is_env_overridable(monkeypatch):

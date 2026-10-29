@@ -145,7 +145,7 @@ demo story, applied to practice voice first.
 |---|---|---|
 | STT | Deepgram Nova-3 (`config.meta_cascade_stt_model`, default `deepgram/nova-3`) | `livekit.agents.inference.STT` via the LiveKit **Inference gateway** (LiveKit-credit covered, authed with the worker's `LIVEKIT_API_KEY`/`SECRET`) |
 | LLM | Meta Muse Spark `muse-spark-1.3` (`config.meta_chat_model`) | `livekit-plugins-openai` `openai.LLM`, pointed at `config.meta_api_base_url` + the `META_API_KEY` secret, `reasoning_effort=config.meta_reasoning_effort` (`minimal` — Muse Spark is reasoning-only; omit it and replies come back empty) |
-| TTS | Inworld (`config.meta_cascade_tts_model`, default `inworld/inworld-tts-1`; base `config.meta_cascade_tts_voice` optional, gender-matched `config.meta_cascade_tts_voice_female`/`_male` default to Inworld `Ashley`/`Alex`) | `livekit.agents.inference.TTS` via the LiveKit **Inference gateway** |
+| TTS | Fish Audio (`config.meta_cascade_tts_model`, default `fishaudio/s2.1-pro`; base `config.meta_cascade_tts_voice` default **Hannah**'s Fish Audio voice id, gender-matched `config.meta_cascade_tts_voice_female`/`_male` default to Fish Audio `Hannah`/`Adrian`) | `livekit.agents.inference.TTS` via the LiveKit **Inference gateway** |
 | VAD | Silero (`config.meta_cascade_vad_model`, default `silero`) | `livekit.agents.inference.VAD` — bundled, runs locally in the worker (the cascade has no server-side turn detection) |
 
 **Why the STT leg is NOT Meta.** Meta's `muse-voice-transcribe-1.0` is listed in
@@ -159,22 +159,25 @@ while the **LLM leg stays Meta Muse Spark** — the "runs on Meta" story holds
 (reasoning/conversation is Meta; STT/TTS are LiveKit-gateway infra either way).
 `config.meta_transcribe_model` is kept only as the record of the Meta STT id.
 
-The TTS vendor is **config, not hardcoded** — Rime (`rime/…`) and Fish
-(`fishaudio/…`) are documented A/B alternatives reachable by setting
+The TTS vendor is **config, not hardcoded** — the default is Fish Audio
+(`fishaudio/s2.1-pro`, the founder's selected default); Inworld (`inworld/…`) and
+Rime (`rime/…`) are documented A/B alternatives reachable by setting
 `META_CASCADE_TTS_MODEL`/`_VOICE`; the STT model is likewise `META_CASCADE_STT_MODEL`.
+Fish Audio voices are addressed by **id, not name**, so the voice values are the
+documented Fish Audio voice ids (`voice_catalog._TTS_FALLBACK_VOICES["fishaudio"]`),
+not labels.
 
 **Gender-matched TTS voice.** `agent._cascade_tts_voice_for_gender(persona_gender)`
-picks the Inworld voice for the persona's gender and passes it as the session's
+picks the Fish Audio voice for the persona's gender and passes it as the session's
 `tts_voice`: feminine personas get `config.meta_cascade_tts_voice_female` (env
-`META_CASCADE_TTS_VOICE_FEMALE`, default **`Ashley`**), masculine personas get
+`META_CASCADE_TTS_VOICE_FEMALE`, default **`Hannah`**), masculine personas get
 `config.meta_cascade_tts_voice_male` (env `META_CASCADE_TTS_VOICE_MALE`, default
-**`Alex`**). Non-binary / unknown gender — or a gender voice explicitly blanked —
-falls back to the base `META_CASCADE_TTS_VOICE` (empty → the vendor default
-voice). The voice ids live only in `config.py` (AGENTS.md: never in `agent.py`).
-These defaults were previously empty, so every persona fell back to the single
-vendor-default voice and gender was effectively ignored on the cascade; they now
-default to `Ashley`/`Alex` so female personas sound female and male personas
-sound male without any env override.
+**`Adrian`**). Non-binary / unknown gender — or a gender voice explicitly blanked —
+falls back to the base `META_CASCADE_TTS_VOICE` (now **`Hannah`**, the founder's
+selected default voice). The voice ids live only in `config.py` (AGENTS.md: never
+in `agent.py`). So on the cascade female personas sound female (Hannah), male
+personas sound male (Adrian), and everyone else gets Hannah, without any env
+override.
 
 **Fallbacks — a flip can never take voice down.**
 - *Build* — if the cascade can't be built (no `META_API_KEY`,
@@ -220,15 +223,19 @@ until the credit posts, so this is **gated on billing** — not flipped yet.
 
 ### MAIN Ayma voice on the Meta cascade (`LLM_PROVIDER_VOICE_MAIN`)
 
-The **normal, non-practice** Ayma voice call (`agent._run_session`) can also run
-on the Meta cascade, behind its **own** flag `LLM_PROVIDER_VOICE_MAIN`
+The **normal, non-practice** Ayma voice call (`agent._run_session`) runs on the
+Meta cascade by default, behind its **own** flag `LLM_PROVIDER_VOICE_MAIN`
 (`config.llm_provider_voice_main`) — SEPARATE from the Practice `LLM_PROVIDER_VOICE`
-flag so each voice flips and rolls back on its own. Default `gemini`: the main
-call runs the **LOCKED Gemini Live `RealtimeModel` exactly as today**, zero
-behaviour change until the one env var is flipped. It deliberately does **not**
-inherit the global `LLM_PROVIDER` default — the main voice is the locked Gemini
-Live model, so a blanket `LLM_PROVIDER=meta` can never sweep it; only
-`LLM_PROVIDER_VOICE_MAIN=meta` selects the cascade.
+flag so each voice flips and rolls back on its own. **Default `meta`** (founder
+directive "default everything to Muse"): a user with no saved voice preference
+gets the Meta cascade — `cascade` / Muse Spark brain / `deepgram/nova-3` STT /
+`fishaudio/s2.1-pro` TTS / voice **Hannah** — as both the `/voice/engines`
+user-facing default (`voice_catalog._default_from`) and the stack the agent builds
+at call time (`agent._run_session`, empty `voice_mode` → `MODE_CASCADE` when
+`llm_provider_voice_main == meta`). `LLM_PROVIDER_VOICE_MAIN=gemini` flips the main
+call back to the LOCKED Gemini Live `RealtimeModel`. It deliberately does **not**
+inherit the global `LLM_PROVIDER` default — it is its own dedicated var, so a
+blanket `LLM_PROVIDER` change can never sweep the main voice.
 
 When `=meta`, the main call reuses the same `agent.build_meta_cascade_session`
 (STT/LLM/TTS/VAD table above) and **intentionally bypasses the locked Gemini Live
@@ -366,16 +373,18 @@ not a guarantee:** Muse Spark tool-calling is probabilistic, so it cuts but may 
 fully remove false "done" claims and mis-routes; if cascade tool reliability stays
 poor, Gemini Live (reliable tool-calling) is the voice fallback.
 
-**How to flip (MAIN voice to Meta):**
+**How to roll back (MAIN voice to the locked Gemini Live):** the default is now
+`meta`, so no env var is needed to get the cascade. To pin the main voice back to
+Gemini Live:
 
 ```
 # on the ayma-agent Cloud Run service (or .env.local for local dev)
-LLM_PROVIDER_VOICE_MAIN=meta
+LLM_PROVIDER_VOICE_MAIN=gemini
 ```
 
-Roll back by removing the var (or `LLM_PROVIDER_VOICE_MAIN=gemini`) and restarting.
-Applies to the next main voice call. Same billing gate as Practice — a live Meta
-voice call bills the card until the credit posts.
+Applies to the next main voice call; Fish Audio is a credited LiveKit provider
+(`VOICE_CREDITED_PROVIDERS`), so the default cascade adds no per-call billing
+surprise.
 
 ### Per-user voice ENGINE switcher (§13.9)
 

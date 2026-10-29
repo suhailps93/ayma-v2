@@ -177,13 +177,14 @@ class Config:
     # defaults ARE the lock — deploy scripts no longer set model ids.
     #
     # Voice provider flip (hackathon Deliverable A): the locked Gemini Live
-    # voice above stays here and stays the default. Setting the dedicated flag
-    # ``LLM_PROVIDER_VOICE_MAIN=meta`` (``llm_provider_voice_main`` below)
-    # intentionally BYPASSES this locked Gemini Live voice and runs the MAIN
-    # voice call on the Meta cascade (Muse Spark LLM) instead; a build failure
-    # or any mid-call cascade error falls back to Gemini Live. The flag only
-    # selects which stack builds — the model ids here are never changed or
-    # removed. Default ``gemini`` keeps the lock in force everywhere.
+    # voice above stays here as the always-available FALLBACK. The dedicated flag
+    # ``llm_provider_voice_main`` (below) now DEFAULTS to ``meta`` (founder
+    # directive — "default everything to Muse"), so the MAIN voice call runs on
+    # the Meta cascade (Muse Spark LLM) for a user with no saved preference;
+    # ``LLM_PROVIDER_VOICE_MAIN=gemini`` flips it back. A build failure or any
+    # mid-call cascade error still falls back to the locked Gemini Live voice.
+    # The flag only selects which stack builds — the model ids here are never
+    # changed or removed, so the lock stays in force for the fallback path.
     # ---------------------------------------------------------------- #
 
     gemini_model: str
@@ -766,28 +767,33 @@ class Config:
     meta_cascade_tts_model: str
     """TTS model for the Meta voice cascade, in LiveKit Inference
     ``provider/model[:voice]`` form (the gateway is LiveKit-credit covered, authed
-    with the worker's ``LIVEKIT_API_KEY``/``SECRET``). Default Inworld; Rime and
-    Fish are documented A/B alternatives (``docs/META_PROVIDER.md``). The vendor
-    lives here, not in ``agent.py``, so the flag can reach it. Override with
-    ``META_CASCADE_TTS_MODEL``."""
+    with the worker's ``LIVEKIT_API_KEY``/``SECRET``). Default Fish Audio
+    ``s2.1-pro`` (the founder's selected default); Inworld and Rime are documented
+    A/B alternatives (``docs/META_PROVIDER.md``). The vendor lives here, not in
+    ``agent.py``, so the flag can reach it. Override with ``META_CASCADE_TTS_MODEL``."""
 
     meta_cascade_tts_voice: str
     """Optional voice preset for ``meta_cascade_tts_model`` (empty = the vendor
-    default voice). Override with ``META_CASCADE_TTS_VOICE``."""
+    default voice). Defaults to Fish Audio ``Hannah`` (a conversational
+    specialist, feminine) — the founder's selected default voice. Fish Audio
+    voices are addressed by id, so the value is Hannah's documented voice id
+    (``voice_catalog._TTS_FALLBACK_VOICES["fishaudio"]``), never the label.
+    Override with ``META_CASCADE_TTS_VOICE``."""
 
     meta_cascade_tts_voice_female: str
     """Gender-matched TTS voice preset for the cascade when it simulates a
     FEMALE Practice Date persona (``agent.build_meta_cascade_session``). The
     vendor's own voice id lives here, never hardcoded in ``agent.py``; defaults
-    to the feminine Inworld voice ``Ashley`` so female personas sound female. If
-    set empty it falls back to ``meta_cascade_tts_voice``. Override with
+    to the feminine Fish Audio voice ``Hannah`` so female personas sound female.
+    If set empty it falls back to ``meta_cascade_tts_voice``. Override with
     ``META_CASCADE_TTS_VOICE_FEMALE``."""
 
     meta_cascade_tts_voice_male: str
     """Gender-matched TTS voice preset for the cascade when it simulates a MALE
-    Practice Date persona. Defaults to the masculine Inworld voice ``Alex`` so
-    male personas sound male. If set empty it falls back to
-    ``meta_cascade_tts_voice``. Override with ``META_CASCADE_TTS_VOICE_MALE``."""
+    Practice Date persona. Defaults to the masculine Fish Audio voice ``Adrian``
+    (friendly, casual American) so male personas sound male. If set empty it
+    falls back to ``meta_cascade_tts_voice``. Override with
+    ``META_CASCADE_TTS_VOICE_MALE``."""
 
     meta_cascade_vad_model: str
     """VAD model that segments speech for the Meta cascade (the cascade has no
@@ -853,16 +859,18 @@ class Config:
 
     llm_provider_voice_main: str
     """Provider switch for the MAIN (normal, non-practice) Ayma voice call,
-    ``gemini`` | ``meta``. Flip with ``LLM_PROVIDER_VOICE_MAIN=meta``.
+    ``gemini`` | ``meta``. Flip back to Gemini with ``LLM_PROVIDER_VOICE_MAIN=gemini``.
 
-    Default ``gemini`` — the main voice runs the LOCKED Gemini Live
-    ``RealtimeModel`` exactly as today, so production behaviour is UNCHANGED
-    until this one var is explicitly flipped. Unlike the other per-surface
-    switches it does NOT inherit the global ``LLM_PROVIDER`` default: the main
-    voice is the LOCKED Gemini Live model (see the "LOCKED MODELS" block), so a
-    global ``LLM_PROVIDER=meta`` must never sweep it — only this dedicated var
-    can. When set to ``meta`` the main voice is built as the Meta cascade
-    (LiveKit Inference STT -> Meta Muse Spark LLM -> Inworld TTS + Silero VAD,
+    Default ``meta`` (founder directive — "default everything to Muse"): a user
+    with no saved voice preference gets the Meta cascade (Muse Spark brain +
+    deepgram/nova-3 STT + fishaudio/s2.1-pro TTS, voice Hannah), which is both the
+    ``/voice/engines`` user-facing default (``voice_catalog._default_from``) and
+    the stack the agent actually builds at call time (``agent.py``). Unlike the
+    other per-surface switches it does NOT inherit the global ``LLM_PROVIDER``
+    default: it is its own dedicated var so a global ``LLM_PROVIDER`` change never
+    sweeps the main voice. When set to ``meta`` the main voice is built as the
+    Meta cascade
+    (LiveKit Inference STT -> Meta Muse Spark LLM -> Fish Audio TTS + Silero VAD,
     :func:`agent.build_meta_cascade_session`), intentionally BYPASSING the
     locked Gemini Live voice for Muse Spark; a build failure or any mid-call
     cascade error falls back to Gemini Live so the flip can never take the main
@@ -1156,14 +1164,20 @@ def _load() -> Config:
             "META_CASCADE_STT_MODEL", "deepgram/nova-3"
         ),
         meta_cascade_tts_model=os.getenv(
-            "META_CASCADE_TTS_MODEL", "inworld/inworld-tts-1"
+            "META_CASCADE_TTS_MODEL", "fishaudio/s2.1-pro"
         ),
-        meta_cascade_tts_voice=os.getenv("META_CASCADE_TTS_VOICE", ""),
+        # Fish Audio "Hannah" (a conversational specialist, feminine) — the
+        # founder's selected default voice. Fish Audio voices are addressed by
+        # id, not name, so this is Hannah's documented id from
+        # ``voice_catalog._TTS_FALLBACK_VOICES["fishaudio"]``.
+        meta_cascade_tts_voice=os.getenv(
+            "META_CASCADE_TTS_VOICE", "9a9cf47702da476aa4629e2506d4a857"
+        ),
         meta_cascade_tts_voice_female=os.getenv(
-            "META_CASCADE_TTS_VOICE_FEMALE", "Ashley"
+            "META_CASCADE_TTS_VOICE_FEMALE", "9a9cf47702da476aa4629e2506d4a857"
         ),
         meta_cascade_tts_voice_male=os.getenv(
-            "META_CASCADE_TTS_VOICE_MALE", "Alex"
+            "META_CASCADE_TTS_VOICE_MALE", "bf322df2096a46f18c579d0baa36f41d"
         ),
         meta_cascade_vad_model=os.getenv("META_CASCADE_VAD_MODEL", "silero"),
         meta_reasoning_effort=os.getenv("META_REASONING_EFFORT", "minimal"),
@@ -1185,7 +1199,7 @@ def _load() -> Config:
         ).strip().lower(),
         # Explicit-only (no LLM_PROVIDER inheritance): the main voice is the
         # LOCKED Gemini Live model, so a global flip must never sweep it.
-        llm_provider_voice_main=os.getenv("LLM_PROVIDER_VOICE_MAIN", "gemini"),
+        llm_provider_voice_main=os.getenv("LLM_PROVIDER_VOICE_MAIN", "meta"),
         llm_provider_voice=os.getenv(
             "LLM_PROVIDER_VOICE", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),

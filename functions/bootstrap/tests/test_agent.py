@@ -67,11 +67,15 @@ def test_realtime_model_falls_back_for_an_unknown_voice(monkeypatch):
 
 
 def test_cascade_tts_voice_matches_persona_gender(monkeypatch):
-    # With default config the cascade (Inworld) TTS must pick a gender-matched
+    # With default config the cascade (Fish Audio) TTS must pick a gender-matched
     # voice: female personas sound female, male personas sound male. Load a
     # fresh config with the override env vars cleared so we exercise the
-    # config.py defaults (Ashley / Alex), not whatever the ambient env sets.
+    # config.py defaults (Hannah / Adrian), not whatever the ambient env sets.
+    # Fish Audio voices are addressed by id, so these are the documented ids.
     import config as config_module
+
+    hannah = "9a9cf47702da476aa4629e2506d4a857"  # feminine
+    adrian = "bf322df2096a46f18c579d0baa36f41d"  # masculine
 
     for var in (
         "META_CASCADE_TTS_VOICE",
@@ -82,15 +86,15 @@ def test_cascade_tts_voice_matches_persona_gender(monkeypatch):
     default_cfg = config_module._load()
     monkeypatch.setattr(agent, "CONFIG", default_cfg)
 
-    assert agent._cascade_tts_voice_for_gender("female") == "Ashley"
-    assert agent._cascade_tts_voice_for_gender("woman") == "Ashley"
-    assert agent._cascade_tts_voice_for_gender("male") == "Alex"
-    assert agent._cascade_tts_voice_for_gender("man") == "Alex"
-    # Non-binary / unknown / unset gender falls back to the base default
-    # (empty by default → the vendor default voice).
-    assert agent._cascade_tts_voice_for_gender("non-binary") == ""
-    assert agent._cascade_tts_voice_for_gender("") == ""
-    assert agent._cascade_tts_voice_for_gender(None) == ""
+    assert agent._cascade_tts_voice_for_gender("female") == hannah
+    assert agent._cascade_tts_voice_for_gender("woman") == hannah
+    assert agent._cascade_tts_voice_for_gender("male") == adrian
+    assert agent._cascade_tts_voice_for_gender("man") == adrian
+    # Non-binary / unknown / unset gender falls back to the base default voice,
+    # which now defaults to Hannah (the founder's selected default voice).
+    assert agent._cascade_tts_voice_for_gender("non-binary") == hannah
+    assert agent._cascade_tts_voice_for_gender("") == hannah
+    assert agent._cascade_tts_voice_for_gender(None) == hannah
 
 
 def test_room_seed_carries_the_voice_name():
@@ -2636,11 +2640,18 @@ def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
     monkeypatch.setenv("META_API_KEY", "test-key")
     captured = _install_fake_cascade_plugins(monkeypatch)
 
+    # Explicitly empty voice → no "voice" key is added (the vendor default).
     # CONFIG is a frozen dataclass — reload it from env and swap agent.CONFIG.
-    monkeypatch.delenv("META_CASCADE_TTS_VOICE", raising=False)
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "")
     monkeypatch.setattr(agent, "CONFIG", config._load())
     agent.build_meta_cascade_session()
     assert "voice" not in captured["tts"]
+
+    # The config default voice (Hannah) IS passed through when the env is unset.
+    monkeypatch.delenv("META_CASCADE_TTS_VOICE", raising=False)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    agent.build_meta_cascade_session()
+    assert captured["tts"]["voice"] == "9a9cf47702da476aa4629e2506d4a857"
 
     monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Ashley")
     monkeypatch.setattr(agent, "CONFIG", config._load())
@@ -2649,9 +2660,9 @@ def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
 
 
 def test_meta_cascade_picks_the_gender_matched_tts_voice(monkeypatch):
-    """A Practice Date persona's gender selects the matching Inworld voice from
-    config (never a voice id hardcoded in agent.py); the MAIN path (no gender)
-    and an unset gender voice both fall back to the configured default."""
+    """A Practice Date persona's gender selects the matching cascade TTS voice
+    from config (never a voice id hardcoded in agent.py); the MAIN path (no
+    gender) and an unset gender voice both fall back to the configured default."""
     import config
 
     monkeypatch.setenv("META_API_KEY", "test-key")
@@ -2682,8 +2693,8 @@ def test_meta_cascade_picks_the_gender_matched_tts_voice(monkeypatch):
 def test_meta_cascade_gender_voice_falls_back_when_unconfigured(monkeypatch):
     """When the gender-specific voice is explicitly blanked, gender matching
     falls back safely to the configured default voice rather than an invented
-    id. (The config.py defaults are non-empty — Ashley / Alex — so "unset" here
-    means the operator cleared the env var to force the fallback.)"""
+    id. (The config.py defaults are non-empty — Hannah / Adrian — so "unset"
+    here means the operator cleared the env var to force the fallback.)"""
     import config
 
     monkeypatch.setenv("META_API_KEY", "test-key")

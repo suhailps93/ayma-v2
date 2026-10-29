@@ -5289,10 +5289,17 @@ async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
     tts_id = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip() or default["tts_id"]
     # The chosen voice: a Gemini preset lives in ayma_voice_name; every other
     # voice (cascade TTS, OpenAI realtime) in ayma_tts_voice.
+    # Empty = no saved voice. Fall back to the catalog default voice
+    # (``default["voice_id"]``) ONLY when the user's resolved stack matches the
+    # default's stack, so a no-pref user sees the real default (Hannah on the
+    # Meta cascade) pre-selected — never a cross-stack id (a fishaudio voice must
+    # not leak into a Gemini realtime slot, or vice versa).
+    on_default_stack = mode == str(default.get("mode", ""))
+    default_voice = str(default.get("voice_id", "")).strip() if on_default_stack else ""
     if mode == voice_catalog.MODE_REALTIME and realtime_id == voice_catalog.REALTIME_GEMINI:
-        voice_id = str(prof.get(schema.PF_AYMA_VOICE, "")).strip()
+        voice_id = str(prof.get(schema.PF_AYMA_VOICE, "")).strip() or default_voice
     else:
-        voice_id = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip()
+        voice_id = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip() or default_voice
     lang_text = str(prof.get(_voices.PF_AYMA_VOICE_LANGUAGE, "")).strip()
     lang_code = (_voices.bcp47_hint(lang_text) or "") if lang_text else ""
     accent_text = str(prof.get(_voices.PF_AYMA_VOICE_ACCENT, "")).strip()

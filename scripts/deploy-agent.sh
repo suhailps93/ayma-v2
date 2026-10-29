@@ -27,12 +27,13 @@ IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/ayma-agent:
 # AYMA_AGENT_URL is this service's own URL: each active call holds a
 # keep-alive request open against it (agent_keepalive.py) so Cloud Run does
 # not scale the instance down mid-call.
-# META_CASCADE_TTS_VOICE_FEMALE/MALE pin the gender-matched Inworld cascade
-# voices so female Practice Date personas sound female and male personas sound
-# male. config.py defaults to these same values, so the behaviour is correct
-# even without these entries; they are set explicitly so a `--release` (which
-# --set-env-vars fully replaces) does not silently drop them off the revision.
-ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LLM_PROVIDER_VOICE=meta,LLM_PROVIDER_VOICE_MAIN=meta,META_CASCADE_TTS_VOICE_FEMALE=Ashley,META_CASCADE_TTS_VOICE_MALE=Alex"
+# Voice/TTS model + voice ids are NOT set here (AGENTS.md: no model/voice ids
+# outside config.py). The gender-matched cascade voices and the default TTS
+# model/voice are the committed config.py defaults (Fish Audio s2.1-pro, voice
+# Hannah; gender-matched Hannah/Adrian) — the single source of truth. A
+# `--release` dropping these off the revision is correct: config.py supplies the
+# same values, so female personas sound female and male male without any env pin.
+ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LLM_PROVIDER_VOICE=meta,LLM_PROVIDER_VOICE_MAIN=meta"
 SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SENTRY_DSN=SENTRY_DSN_AGENT:latest,META_API_KEY=META_API_KEY:latest"
 
 # min-instances=0 is the PERMANENT intended config (founder decision,
