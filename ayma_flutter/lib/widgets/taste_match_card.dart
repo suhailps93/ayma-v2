@@ -202,6 +202,12 @@ class TasteMatchCard extends StatelessWidget {
       ],
       if (m.shared.isNotEmpty) ...[
         const SizedBox(height: 12),
+        Text(
+          'You both listed',
+          style: AymaType.sans(
+              size: 11.5, weight: FontWeight.w600, color: ac.fgMute),
+        ),
+        const SizedBox(height: 6),
         Wrap(
           key: const Key('tasteMatchShared'),
           spacing: 6,

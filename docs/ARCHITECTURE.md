@@ -2298,8 +2298,14 @@ call shapes and ten entity types (full enumeration + live samples:
   (`movie`), dining (`place`), **TV (`tv_show`), books (`book`), podcasts
   (`podcast`), games (`videogame`), travel (`destination`), brands (`brand`),
   nightlife (`place` + a nightlife tag filter)**. New domains are **additive**:
-  scored only when a Taste page lists them (`present` domains), so a
-  music/film/food page behaves exactly as before and makes the same calls.
+  scored only when **both** people list them, so a music/film/food page behaves
+  exactly as before and a domain only one side filled is never an overlap. Each
+  person's per-domain set is their **stated entities plus** Qloo's recs, so a
+  directly-shared favourite always counts and a shared domain never reads a
+  spurious 0. Qloo's cross-domain predicted entities drive the score but are
+  **never** surfaced as a stated/shared taste — the `shared` chips hold only
+  names both people listed, and the strongest-overlap line only appears above
+  the "Different tastes" band so header and narrative agree (bug G fix).
 - **`/v2/insights filter.type=urn:tag`** per person → the genre/theme tags each
   taste profile skews to; intersected (genre/theme preferred, niche keywords
   last) into **`shared_tags`** — the readable "why you match" headline, also
@@ -2398,15 +2404,15 @@ flowchart LR
   A["Person A public profile<br/>Taste page"] --> PA["parse_taste"]
   B["Person B public profile<br/>Taste page"] --> PB["parse_taste"]
   PA & PB --> RES["Qloo /search<br/>names → entities (10 types)<br/>+tags, +tag_ids"]
-  RES --> RA["/v2/insights per present domain<br/>(A signals)"]
-  RES --> RB["/v2/insights per present domain<br/>(B signals)"]
+  RES --> RA["/v2/insights per both-stated domain<br/>(A signals)"]
+  RES --> RB["/v2/insights per both-stated domain<br/>(B signals)"]
   RES --> RJ["/v2/insights joint<br/>(A+B signals; places in A's city,<br/>filter.tags = shared place tags)"]
   RES --> TG["/v2/insights filter.type=urn:tag<br/>(A tags ∩ B tags → shared_tags)"]
   RES --> DM["/v2/insights filter.type=urn:demographics<br/>(A, B audience skew → demographics)"]
-  RA & RB --> SC["overlap per domain → score,<br/>label, summary, shared"]
+  RA & RB --> SC["overlap per both-stated domain (stated+recs)<br/>→ score, label, summary;<br/>shared = names BOTH listed only (no predictions)"]
   TG --> SC
   DM --> SC
-  RJ --> DI["date ideas<br/>(places + one pick per present domain,<br/>tag-aligned 'why')"]
+  RJ --> DI["date ideas<br/>(places + one pick per both-stated domain,<br/>tag-aligned 'why')"]
   SC & DI --> OUT["POST /taste/pair → date-sim card<br/>GET /match/{id}.taste → match report section<br/>GET /taste/demo/pair → judge page<br/>(+shared_tags, +demographics)"]
   Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json; tags()/demographics() degrade)"]
 ```

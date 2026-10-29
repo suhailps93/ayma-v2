@@ -229,6 +229,34 @@ def test_absence_of_a_domain_does_not_break_scoring():
     assert "shared_tags" in result and isinstance(result["shared_tags"], list)
 
 
+def test_domain_only_one_side_stated_is_never_an_overlap():
+    """Bug G: a domain only ONE person listed (here Ada's books) must never be
+    scored, shown as a per-domain overlap bar, or named the "strongest
+    overlap", and its Qloo cross-domain predictions must never surface as a
+    shared taste. Only the both-stated domains (music, film) are scored, and
+    the shared chips hold only entities both people actually listed."""
+    fix = qloo_client.FixtureQlooClient()
+    a = (
+        "Ada",
+        "San Francisco",
+        {
+            "music": ["Khruangbin", "Bon Iver"],
+            "film": ["Spirited Away"],
+            "books": ["Just Kids", "Dune"],
+        },
+    )
+    b = ("Bo", "Oakland", {"music": ["Khruangbin", "Tame Impala"], "film": ["Spirited Away"]})
+    result = asyncio.run(taste_match.match(a, b, client=fix))
+    present = {d["domain"] for d in result["domains"]}
+    assert "books" not in present  # only Ada listed books
+    assert present <= {"music", "film"}
+    assert "books" not in result["summary"].lower()  # not the strongest overlap
+    # The shared chips are genuine stated overlap only — both listed these.
+    assert "Khruangbin" in result["shared"] and "Spirited Away" in result["shared"]
+    # No books date idea either (neither a both-stated nor a places domain).
+    assert "books" not in {i["kind"] for i in result["date_ideas"]}
+
+
 def test_shared_tags_intersects_profile_tags_with_fallback():
     a_tags = [
         {"id": "urn:tag:genre:indie", "name": "Indie", "affinity": 1.0},

@@ -40,15 +40,22 @@ hidden when their data is absent.
 2. **Resolve** every name to a Qloo entity of its domain's type
    (`GET /search?query=…&types=urn:entity:…`) — ten entity types (below).
    Resolved entities carry their Qloo `tags` (names) and `tag_ids` (URNs).
-3. **Compatibility** — for each *present* domain, Qloo recommendations
-   (`GET /v2/insights`, `signal.interests.entities` = ALL of a person's
-   entities, so it's cross-domain) for person A and for person B; domain score =
-   overlap coefficient of the two recommendation sets × 100; overall = mean of
-   present domains. Shared tastes = names both listed outright, then shared
-   recommendations in the joint ranking's order. Label: ≥70 strong, ≥45 good,
-   ≥25 some, else different. Summary is a short template over the shared names +
-   best domain. **Only domains someone listed are scored** — a music/film/food
-   page makes exactly the original calls; TV/Books/… add theirs only when present.
+3. **Compatibility** — for each domain **both** people listed, Qloo
+   recommendations (`GET /v2/insights`, `signal.interests.entities` = ALL of a
+   person's entities, so it's cross-domain) for person A and for person B;
+   domain score = overlap coefficient × 100 of the two sets, each being that
+   person's **stated entities in the domain plus** their recs (so a directly-
+   shared favourite always counts and a shared domain never reads a spurious 0);
+   overall = mean of the both-stated domains. **Shared tastes = only names both
+   people listed outright** — Qloo's cross-domain predicted entities drive the
+   score but are never surfaced as a stated/shared taste. Label: ≥70 strong,
+   ≥45 good, ≥25 some, else different. Summary is a short template: it phrases a
+   shared taste only from the names both listed, and appends the strongest-
+   overlap domain only above the "Different tastes" band, so the header label
+   and the narrative never contradict. **Only domains BOTH people listed are
+   scored** — a domain only one side filled is never scored, never an overlap
+   bar, and never the strongest overlap (bug G); a music/film/food page makes
+   exactly the original calls, TV/Books/… add theirs only when both list them.
 4. **Why you match (`shared_tags`)** — `GET /v2/insights filter.type=urn:tag`
    gives Qloo's affinity-ranked tags for each whole taste profile; the engine
    intersects the two (genre/theme/style labels surfaced ahead of niche keyword

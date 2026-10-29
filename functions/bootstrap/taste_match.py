@@ -5,9 +5,15 @@ dining favourites), resolves those names to Qloo taste-graph entities, and
 returns:
 
 * a **taste compatibility signal** — a 0–100 shared-taste score, a label, a
-  short human summary, per-domain overlap, and the tastes they share; computed
-  from how much the two people's Qloo recommendations overlap in each domain
-  (cross-domain: every recommendation is driven by ALL of a person's signals);
+  short human summary, per-domain overlap, and the tastes they share. Both the
+  score bars and the shared-taste surface are grounded in the domains BOTH
+  people actually stated: a domain only one side listed is never scored, never
+  shown as an overlap, and never the "strongest overlap", and the only entities
+  surfaced as a shared taste are ones both pages listed — Qloo's cross-domain
+  predictions drive the per-domain score but are never presented as a stated
+  taste. The per-domain overlap is how much the two people's stated entities and
+  Qloo recommendations overlap in each both-stated domain (cross-domain: every
+  recommendation is driven by ALL of a person's signals);
 * **taste-based date ideas** — Qloo place recommendations near the first
   person's city driven by BOTH people's signals at once, plus a film and a
   music pick both of their taste graphs rank highly.
@@ -381,11 +387,16 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
         raise NoTaste(b_name)
     both_ids = a_ids + [i for i in b_ids if i not in a_ids]
 
-    # Score only the domains at least one person actually listed (ordered by
-    # ENTITY_TYPES). A music/film/food page still fires exactly the original
-    # three domains; TV/Books/Podcasts/Games add their calls ONLY when present.
+    # Score only the domains BOTH people actually listed (ordered by
+    # ENTITY_TYPES). A shared taste can only exist where both sides stated
+    # entries, so a domain only one person filled is never scored, never shown
+    # as an overlap bar, and never the "strongest overlap" (bug G: Qloo
+    # cross-domain predictions for a domain the viewer left blank must not be
+    # surfaced as a stated/shared taste). A music/film/food pair still fires
+    # exactly the original three domains; TV/Books/… add their calls only when
+    # BOTH pages list them.
     domains = [
-        d for d in qloo_client.ENTITY_TYPES if d in a_taste or d in b_taste
+        d for d in qloo_client.ENTITY_TYPES if d in a_taste and d in b_taste
     ]
     rec_jobs = []
     for domain in domains:
@@ -439,17 +450,24 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
     per_domain: list[dict] = []
     shared: list[str] = []
     joint_by_domain: dict[str, list[dict]] = {}
-    # Tastes both people listed outright come first.
+    # The ONLY entities surfaced as a shared taste are ones BOTH people listed
+    # on their own Taste page — never a Qloo cross-domain prediction (bug G).
     a_seed = {e["id"]: e["name"] for es in a_ents.values() for e in es}
     seed_ids = set(a_ids) | set(b_ids)
     for e in (e for es in b_ents.values() for e in es):
         if e["id"] in a_seed and e["name"] not in shared:
             shared.append(e["name"])
+    # Per-domain overlap, for the both-stated domains only. Each person's set is
+    # their stated entities in the domain PLUS Qloo's recommendations for it, so
+    # a directly-shared favourite always counts and a genuinely shared domain
+    # never reads as a spurious 0 (bug G: Music/Film scored 0 while an
+    # inferred-only domain scored highest). Qloo's predicted entities drive the
+    # score but are never surfaced as a stated/shared taste.
     for i, domain in enumerate(domains):
         a_recs, b_recs, joint = recs[3 * i], recs[3 * i + 1], recs[3 * i + 2]
         joint_by_domain[domain] = joint
-        a_set = {r["id"] for r in a_recs}
-        b_set = {r["id"] for r in b_recs}
+        a_set = {r["id"] for r in a_recs} | {e["id"] for e in a_ents.get(domain, [])}
+        b_set = {r["id"] for r in b_recs} | {e["id"] for e in b_ents.get(domain, [])}
         if not a_set or not b_set:
             continue
         common = a_set & b_set
@@ -459,10 +477,6 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
                 "score": round(100 * len(common) / min(len(a_set), len(b_set))),
             }
         )
-        # Shared recommendations, in the joint ranking's order.
-        for r in joint:
-            if r["id"] in common and r["name"] not in shared:
-                shared.append(r["name"])
 
     score = (
         round(sum(d["score"] for d in per_domain) / len(per_domain))
@@ -471,13 +485,21 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
     )
     shared = shared[:6]
     best = max(per_domain, key=lambda d: d["score"], default=None)
+    # The narrative must agree with the header label (bug G: header said
+    # "Different tastes" while the narrative claimed an overlap). Only genuine
+    # stated overlap is phrased as a shared taste; the "Different tastes" band
+    # (score < 25) never claims one, and the strongest-overlap line is appended
+    # only above that band so header and narrative can't contradict.
     if shared:
+        summary = f"{a_name} and {b_name} both listed {_join(shared[:3])}."
+    elif score >= 25:
         summary = (
-            f"{a_name} and {b_name}'s tastes meet around {_join(shared[:3])}."
+            f"{a_name} and {b_name} didn't list the same favourites, but their "
+            "taste graphs lean the same way."
         )
     else:
         summary = f"{a_name} and {b_name} have quite different taste graphs."
-    if best and best["score"] > 0:
+    if best and best["score"] > 0 and score >= 25:
         summary += f" Strongest overlap: {_DOMAIN_LABELS[best['domain']]}."
 
     # Cross-domain hook: the place recs are tag-aligned to both people, so say
