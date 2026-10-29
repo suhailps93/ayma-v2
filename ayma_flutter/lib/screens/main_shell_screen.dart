@@ -255,6 +255,13 @@ class _MainShellScreenState extends State<MainShellScreen>
     // into the Ayma tab".
     TabRequest.instance.pending.addListener(_consumeTabRequest);
     _consumeTabRequest();
+    // A full-tour replay (Settings "How to use Ayma" / Dev preview) sets a
+    // TourRequest and `go('/')`. When this shell is already mounted, `go('/')`
+    // just pops back to it without rebuilding, so the initState gate below never
+    // re-runs — listen for the request here too so a replay shows the tour even
+    // over the live shell. A request that landed before this shell existed is
+    // still handled by the first-frame gate ([_maybeShowFeatureTour]).
+    TourRequest.instance.pending.addListener(_consumeTourRequest);
     // F4: backgrounding during a live call surfaces a real OS call UI — an
     // ongoing notification with Hang Up / Mute on Android, a CallKit call on
     // iOS — so the call is always visible and controllable, never silently
@@ -320,10 +327,37 @@ class _MainShellScreenState extends State<MainShellScreen>
     if (target != null && target != _index) _selectTab(target);
   }
 
+  /// A replay was requested while this shell is already mounted — run the full
+  /// walkthrough (never stacking a second tour on top of a running one). The
+  /// replay fires `go('/')` to pop the Settings/Dev screen it was launched from;
+  /// starting (and measuring the first anchor) before that pop finishes would
+  /// spotlight the wrong widget — the shell is still offstage/mid-transition —
+  /// so defer until this shell is the current, on-screen route.
+  void _consumeTourRequest() {
+    if (!mounted || _tourFeatures != null) return;
+    if (!TourRequest.instance.consume()) return;
+    _startTourWhenCurrent(attempt: 0);
+  }
+
+  void _startTourWhenCurrent({required int attempt}) {
+    if (!mounted || _tourFeatures != null) return;
+    final route = ModalRoute.of(context);
+    // Wait out the launching screen's pop animation (capped so a never-current
+    // shell can't loop forever — then start anyway rather than drop the replay).
+    if (route != null && !route.isCurrent && attempt < 90) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _startTourWhenCurrent(attempt: attempt + 1),
+      );
+      return;
+    }
+    _startTour(tourFeatures, spotlight: false);
+  }
+
   @override
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
     TabRequest.instance.pending.removeListener(_consumeTabRequest);
+    TourRequest.instance.pending.removeListener(_consumeTourRequest);
     _callBackground.release();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,

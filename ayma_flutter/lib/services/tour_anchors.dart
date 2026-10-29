@@ -35,6 +35,16 @@ class TourAnchors {
   /// The Profile tab (Story, Ayma's models, appearance report).
   static const profileTab = 'profile_tab';
 
+  /// The "My story" row inside the Profile tab — a sub-step of the Profile
+  /// walkthrough (§11.2a).
+  static const profileStoryRow = 'profile_story_row';
+
+  /// The "Appearance" row inside the Profile tab.
+  static const profileAppearanceRow = 'profile_appearance_row';
+
+  /// The "Ayma's settings" row inside the Profile tab (her brain + voice).
+  static const profileAymaSettingsRow = 'profile_ayma_settings_row';
+
   /// The notification bell in the nav bar.
   static const notificationsBell = 'notifications_bell';
 
@@ -44,6 +54,11 @@ class TourAnchors {
   /// widget can attach it and the engine can later find it.
   static GlobalKey keyFor(String id) =>
       _keys.putIfAbsent(id, () => GlobalKey(debugLabel: 'tour:$id'));
+
+  /// The live [BuildContext] of the widget currently carrying [id]'s key, or
+  /// null when nothing is mounted for it. The engine uses this to scroll an
+  /// off-screen anchor (a Profile row) into view before spotlighting it.
+  static BuildContext? contextFor(String id) => _keys[id]?.currentContext;
 
   /// The global on-screen rect of the widget currently carrying [id]'s key, or
   /// null when nothing is mounted / laid out for it (a gated feature, the wrong

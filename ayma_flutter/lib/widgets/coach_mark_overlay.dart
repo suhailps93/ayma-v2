@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../services/feature_tour_store.dart';
 import '../services/tour_anchors.dart';
 import '../services/tour_content.dart';
 import '../theme.dart';
+
+/// Padding grown around a spotlighted widget for both the painted cutout and
+/// the press-through hit region, so the two always line up exactly.
+const double _kHolePad = 8.0;
 
 /// The interactive coach-mark / spotlight engine for the feature tour (§11.2a).
 ///
@@ -12,7 +17,15 @@ import '../theme.dart';
 /// scrim with a rounded-rect spotlight cutout around the step's target widget
 /// (resolved from its [TourAnchors] key), plus an anchored callout — a short
 /// title, a one-line how-to, a step counter, a persistent "Skip tour" and a
-/// "Next" / "Got it" button that prompts the user to press through.
+/// "Next" / "Got it" button.
+///
+/// The spotlight is INTERACTIVE: the cutout is press-through (a [_HoleGate]
+/// lets the tap fall through to the real widget behind, while a [Listener]
+/// observes the same tap), so tapping the highlighted anchor performs its real
+/// action AND advances the tour — tap the Profile tab and it opens Profile,
+/// then the tour continues into its in-Profile sub-steps. Only the dimmed scrim
+/// around the cutout absorbs taps. An off-screen anchor (a Profile row below the
+/// fold) is scrolled into view before it's spotlighted.
 ///
 /// Cross-screen: a step whose anchor lives on another shell tab names that tab
 /// ([TourFeature.tab]); the engine asks the host to switch there ([onSwitchTab])
@@ -101,17 +114,49 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   }
 
   /// After the next frame, switch to the step's tab (if any) and measure its
-  /// anchor. A non-null anchor that doesn't resolve skips the step.
+  /// anchor. A cross-tab anchor (a Profile row) is scrolled into view first; an
+  /// anchor that still doesn't resolve after a few frames skips the step.
   void _scheduleMeasure() {
     final feature = widget.features[_index];
     final tab = feature.tab;
     if (tab != null) widget.onSwitchTab?.call(tab);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _measureAfterFrame(feature, attempt: 0);
+  }
+
+  void _measureAfterFrame(TourFeature feature, {required int attempt}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final anchorId = feature.anchorId;
-      final rect = anchorId == null ? null : widget.resolveRect(anchorId);
-      if (anchorId != null && rect == null) {
-        // Target absent on this build — skip gracefully, never block.
+      if (anchorId == null) {
+        // A centered intro/outro step — no spotlight, no cutout.
+        setState(() {
+          _rect = null;
+          _ready = true;
+        });
+        return;
+      }
+      // Scroll the target into view when it lives in a scrollable (a Profile
+      // row below the fold) so the spotlight lands on it rather than skipping.
+      final anchorContext = TourAnchors.contextFor(anchorId);
+      if (anchorContext != null && anchorContext.mounted) {
+        try {
+          await Scrollable.ensureVisible(
+            anchorContext,
+            alignment: 0.5,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+          );
+        } catch (_) {/* no scrollable ancestor — measure as-is */}
+        if (!mounted) return;
+      }
+      final rect = widget.resolveRect(anchorId);
+      if (rect == null) {
+        // Not laid out yet (a tab still switching in) — retry a couple of
+        // frames before giving up and skipping gracefully, never blocking.
+        if (attempt < 3) {
+          _measureAfterFrame(feature, attempt: attempt + 1);
+          return;
+        }
         _advance();
         return;
       }
@@ -124,6 +169,9 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
 
   void _advance() {
     if (_finishing) return;
+    // Drop any keyboard a press-through tap raised (e.g. the chat composer) so
+    // it never covers the next step's anchor.
+    FocusManager.instance.primaryFocus?.unfocus();
     if (_index >= widget.features.length - 1) {
       _finish();
       return;
@@ -134,6 +182,32 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
       _rect = null;
     });
     _scheduleMeasure();
+  }
+
+  /// The transparent cutout's rect in global coordinates — the painted hole and
+  /// the press-through hit region share it, or null while no anchor is shown.
+  Rect? get _holeRect =>
+      _ready && _rect != null ? _rect!.inflate(_kHolePad) : null;
+
+  Offset? _downInHole;
+
+  /// A press-through tap begins: remember where, to tell a tap on the cutout
+  /// (which also reaches the real widget behind) from a drag or a scrim tap.
+  void _onPointerDown(PointerDownEvent event) {
+    final hole = _holeRect;
+    _downInHole =
+        hole != null && hole.contains(event.position) ? event.position : null;
+  }
+
+  /// A press-through tap on the cutout both let the real widget act (it was
+  /// never blocked) and advances the tour — so tapping Profile opens Profile
+  /// and moves on to its sub-steps.
+  void _onPointerUp(PointerUpEvent event) {
+    final down = _downInHole;
+    _downInHole = null;
+    if (down == null || _finishing) return;
+    final hole = _holeRect;
+    if (hole != null && hole.contains(event.position)) _advance();
   }
 
   Future<void> _finish() async {
@@ -157,20 +231,27 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
         child: Stack(
           children: [
             // Scrim + spotlight. Full-screen (outside SafeArea) so its paint
-            // origin matches the global rects the anchors report.
+            // origin matches the global rects the anchors report. The dimmed
+            // area absorbs taps, but the cutout is press-through — the
+            // [_HoleGate] lets the hit fall through to the real widget behind,
+            // and the [Listener] observes the same tap to advance the tour.
             Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {}, // absorb taps on the dimmed area
-                child: AnimatedBuilder(
-                  animation: _pulse,
-                  builder: (context, _) => CustomPaint(
-                    key: const ValueKey('coach-spotlight'),
-                    painter: _SpotlightPainter(
-                      hole: _ready ? _rect : null,
-                      scrim: Colors.black.withValues(alpha: 0.72),
-                      ring: ac.accent,
-                      glow: _pulse.isAnimating ? _pulse.value : 0,
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: _onPointerDown,
+                onPointerUp: _onPointerUp,
+                child: _HoleGate(
+                  hole: _holeRect,
+                  child: AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (context, _) => CustomPaint(
+                      key: const ValueKey('coach-spotlight'),
+                      painter: _SpotlightPainter(
+                        hole: _ready ? _rect : null,
+                        scrim: Colors.black.withValues(alpha: 0.72),
+                        ring: ac.accent,
+                        glow: _pulse.isAnimating ? _pulse.value : 0,
+                      ),
                     ),
                   ),
                 ),
@@ -184,41 +265,89 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   }
 
   Widget _buildCallout(AymaTokens ac, TourFeature feature, bool isLast) {
-    final card = ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 360),
-      child: _CalloutCard(
-        feature: feature,
-        spotlight: widget.spotlight,
-        index: _index,
-        total: widget.features.length,
-        isLast: isLast,
-        finishing: _finishing,
-        onNext: _advance,
-        onSkip: _finish,
-      ),
+    final card = _CalloutCard(
+      feature: feature,
+      spotlight: widget.spotlight,
+      index: _index,
+      total: widget.features.length,
+      isLast: isLast,
+      finishing: _finishing,
+      onNext: _advance,
+      onSkip: _finish,
     );
     final size = MediaQuery.sizeOf(context);
-    // Place the callout in the half of the screen opposite the spotlight so it
-    // never sits on top of the highlighted element; centered when there's no
-    // target. Scroll-safe: pinned to an edge, scrolls only if it can't fit.
+    // A non-anchored (summary) step is centered on screen. An anchored step's
+    // callout sits in the half opposite its spotlight so it never covers the
+    // highlighted element — and, crucially, never covers the press-through
+    // cutout. The card shrink-wraps its height (scrolling only if it can't
+    // fit, so it stays overflow-safe at text scale 2.0), so the empty area
+    // around it passes taps through to the scrim/cutout below.
     final targetInBottomHalf =
         _rect != null && _rect!.center.dy > size.height / 2;
-    final align = _rect == null
-        ? MainAxisAlignment.center
-        : (targetInBottomHalf ? MainAxisAlignment.start : MainAxisAlignment.end);
+    final alignment = _rect == null
+        ? Alignment.center
+        : (targetInBottomHalf ? Alignment.topCenter : Alignment.bottomCenter);
     return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight - 32),
-          child: Column(
-            mainAxisAlignment: align,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [card],
+      builder: (context, constraints) => Align(
+        alignment: alignment,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 360,
+              maxHeight: constraints.maxHeight - 32,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              children: [card],
+            ),
           ),
         ),
       ),
     );
+  }
+}
+
+/// A hit-test gate that blocks pointers over the dimmed scrim but lets them
+/// fall through the spotlight [hole] to the real widget behind the overlay, so
+/// the highlighted anchor stays tappable (§11.2a). Its child is paint-only
+/// (the scrim), so it never contributes its own hits.
+class _HoleGate extends SingleChildRenderObjectWidget {
+  const _HoleGate({required this.hole, super.child});
+
+  final Rect? hole;
+
+  @override
+  _RenderHoleGate createRenderObject(BuildContext context) =>
+      _RenderHoleGate(hole);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderHoleGate renderObject) {
+    renderObject.hole = hole;
+  }
+}
+
+class _RenderHoleGate extends RenderProxyBox {
+  _RenderHoleGate(this._hole);
+
+  Rect? _hole;
+  set hole(Rect? value) {
+    if (value != _hole) _hole = value;
+  }
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    final hole = _hole;
+    // Inside the cutout: report no hit so the tap reaches the app behind.
+    if (hole != null && hole.contains(position)) return false;
+    // Everywhere else: absorb the tap (dim the app) without probing the
+    // paint-only child.
+    if (size.contains(position)) {
+      result.add(BoxHitTestEntry(this, position));
+      return true;
+    }
+    return false;
   }
 }
 
@@ -368,7 +497,6 @@ class _SpotlightPainter extends CustomPainter {
   final double glow;
 
   static const _radius = 16.0;
-  static const _pad = 8.0;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -377,7 +505,7 @@ class _SpotlightPainter extends CustomPainter {
       canvas.drawRect(full, Paint()..color = scrim);
       return;
     }
-    final cut = hole!.inflate(_pad);
+    final cut = hole!.inflate(_kHolePad);
     canvas.saveLayer(full, Paint());
     canvas.drawRect(full, Paint()..color = scrim);
     canvas.drawRRect(
@@ -386,7 +514,7 @@ class _SpotlightPainter extends CustomPainter {
     );
     canvas.restore();
     if (glow > 0) {
-      final grow = _pad + 6 * glow;
+      final grow = _kHolePad + 6 * glow;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           hole!.inflate(grow),

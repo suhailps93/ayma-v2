@@ -192,6 +192,99 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Got it'), findsOneWidget);
   });
 
+  // A host that layers the overlay over a tappable anchor and a full-screen
+  // background sensor, mirroring the real shell (overlay as a sibling above the
+  // app) so press-through hit testing behaves the same.
+  Widget pressHost({
+    required FeatureTourStore store,
+    required VoidCallback onAnchorTap,
+    required VoidCallback onBgTap,
+  }) {
+    return MaterialApp(
+      theme: AymaTheme.dark,
+      home: Scaffold(
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onBgTap,
+              ),
+            ),
+            Positioned(
+              left: 24,
+              bottom: 24,
+              child: GestureDetector(
+                key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                behavior: HitTestBehavior.opaque,
+                onTap: onAnchorTap,
+                child: const SizedBox(width: 64, height: 64),
+              ),
+            ),
+            Positioned.fill(
+              child: CoachMarkOverlay(
+                store: store,
+                onFinish: () {},
+                features: _features,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  testWidgets('tapping the cutout presses through to the real widget AND '
+      'advances the tour', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    var anchorTaps = 0;
+    var bgTaps = 0;
+    await tester.pumpWidget(pressHost(
+      store: _FakeTourStore(),
+      onAnchorTap: () => anchorTaps++,
+      onBgTap: () => bgTaps++,
+    ));
+    await settle(tester);
+    expect(find.text('Alpha'), findsOneWidget);
+
+    // Tap the spotlighted anchor (bottom-left 64x64 box, centered).
+    await tester.tapAt(const Offset(56, 544));
+    await settle(tester);
+
+    // The real widget behind the cutout received the tap (press-through)...
+    expect(anchorTaps, 1);
+    expect(bgTaps, 0);
+    // ...and the tour advanced (A -> B skipped -> Charlie).
+    expect(find.text('Charlie'), findsOneWidget);
+    expect(find.text('Alpha'), findsNothing);
+  });
+
+  testWidgets('tapping the dimmed scrim is absorbed — no press-through, no '
+      'advance', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    var anchorTaps = 0;
+    var bgTaps = 0;
+    await tester.pumpWidget(pressHost(
+      store: _FakeTourStore(),
+      onAnchorTap: () => anchorTaps++,
+      onBgTap: () => bgTaps++,
+    ));
+    await settle(tester);
+    expect(find.text('Alpha'), findsOneWidget);
+
+    // Tap far from the cutout (bottom-left) and the callout (top) — pure scrim.
+    await tester.tapAt(const Offset(700, 300));
+    await settle(tester);
+
+    expect(bgTaps, 0); // blocked by the scrim
+    expect(anchorTaps, 0);
+    expect(find.text('Alpha'), findsOneWidget); // did not advance
+  });
+
   testWidgets('reduced motion renders without crashing', (tester) async {
     await tester.pumpWidget(
       host(store: _FakeTourStore(), onFinish: () {}, reducedMotion: true),
