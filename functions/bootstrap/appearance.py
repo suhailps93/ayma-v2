@@ -325,14 +325,19 @@ async def run_appearance(
     when it produced a real read.
 
     Founder's call: "if user rerun the Photo analysis without adding new
-    photos just share the last aggregated one" — when every photo this run
-    would analyse (grid + ``extra_images``, by storage path) is exactly the
-    set already reflected on the persisted report, all three Gemini vision
-    passes (:func:`physical_attributes.refresh`, :func:`face_report.run`,
-    :func:`body_report.run`) are skipped entirely and the existing persisted
-    report is returned unchanged (see :func:`_unchanged_since_last_run`). Any
-    addition or removal — or a photo that can't be reliably identified by
-    storage path — falls through to a normal run.
+    photos just share the last aggregated one" — on the NO-SELECTION rerun path
+    (``face_media_ids``/``body_media_ids`` both ``None`` — chat / auto
+    reconcile), when every photo this run would analyse (grid + ``extra_images``,
+    by storage path) is exactly the set already reflected on the persisted
+    report, all three Gemini vision passes (:func:`physical_attributes.refresh`,
+    :func:`face_report.run`, :func:`body_report.run`) are skipped entirely and
+    the existing persisted report is returned unchanged (see
+    :func:`_unchanged_since_last_run`). This dedup does NOT apply when the caller
+    names an explicit grid selection: a deliberate "analyse THESE photos" pick
+    always drives a fresh read (§ founder 2026-10-28), so selecting different
+    already-in-grid photos yields a report reflecting them, never the prior one.
+    Any addition or removal — or a photo that can't be reliably identified by
+    storage path — also falls through to a normal run.
     """
     if not uid:
         return None
@@ -342,8 +347,23 @@ async def run_appearance(
         _record(db, uid, "skipped", source, "no_photo")
         return None
 
+    # Whole-grid "nothing changed, re-share the last report" dedup applies ONLY
+    # to the no-selection rerun path (chat / auto reconcile), where the caller
+    # named no photos and the grid set is the sole input. An EXPLICIT grid
+    # selection (``face_media_ids`` / ``body_media_ids`` from the pre-run sheet)
+    # is a deliberate "analyse THESE photos" action: it must always drive a
+    # fresh read, even when the overall grid set is unchanged — otherwise
+    # picking different already-in-grid photos silently re-shows the prior
+    # report (§ founder 2026-10-28: "Run analysis says updated but it's the SAME
+    # old report"). A prior axis is then reused ONLY when that axis was genuinely
+    # skipped (``want_*=False`` / nothing eligible) — see the per-axis merge
+    # below, never because the grid set as a whole looked unchanged.
+    explicit_selection = face_media_ids is not None or body_media_ids is not None
     current_paths = _identified_paths(photos, extra)
-    prev = _unchanged_since_last_run(db, uid, current_paths)
+    prev = (
+        None if explicit_selection
+        else _unchanged_since_last_run(db, uid, current_paths)
+    )
     if prev is not None:
         _record(db, uid, "skipped", source, "unchanged_photos")
         prev_face = prev.get("face") or dict(NEEDS_FACE)

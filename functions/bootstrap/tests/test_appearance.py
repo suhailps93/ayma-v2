@@ -565,6 +565,72 @@ def test_rerun_with_unchanged_photo_set_skips_gemini_and_reuses_report(_mocks):
     assert led["last_status"] == "skipped" and led["detail"] == "unchanged_photos"
 
 
+def test_explicit_selection_of_a_different_in_grid_photo_forces_a_fresh_run(
+    monkeypatch, _mocks
+):
+    # § founder 2026-10-28 (4th broken handoff): "selects specific photos -> Run
+    # analysis -> 'report updated' -> but it's the SAME old report". The grid set
+    # is UNCHANGED between the two runs, so the whole-grid "nothing changed"
+    # dedup WOULD short-circuit and re-share the prior report. But the user
+    # explicitly picked a DIFFERENT already-in-grid photo -> that selection must
+    # drive a FRESH analysis of THAT photo, never a reuse of the previous report.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"f1", "mime": "image/jpeg", "path": "uploads/u1/f1.jpg",
+             "media_id": "m1",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+            {"bytes": b"f2", "mime": "image/jpeg", "path": "uploads/u1/f2.jpg",
+             "media_id": "m2",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        ],
+    )
+
+    # attributes.source_photos reflects the WHOLE grid (both photos) on every
+    # run -- so the photo set the old dedup keys on is identical across the two
+    # runs, which is exactly the condition that falsely reused the report.
+    async def _pa_refresh_grid(db, uid, *, persist_report=False, **kw):
+        _mocks["pa"] += 1
+        return {
+            "fields": _PA_FIELDS, "report_id": "pr1", "photo_count": 2,
+            "photo_paths": ["uploads/u1/f1.jpg", "uploads/u1/f2.jpg"],
+        }
+
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_refresh_grid)
+
+    # The produced read varies by the photo actually analysed -- so a fresh run
+    # is provable from the output score, not just the source_photos echo.
+    async def _face_by_path(b, m, *, uid=None, source_path=None):
+        _mocks["face"] += 1
+        score = 9.9 if source_path == "uploads/u1/f2.jpg" else 3.3
+        return {**_FACE, "overall_score": score, "source_photos": [source_path]}
+
+    monkeypatch.setattr(appearance.face_report, "run", _face_by_path)
+
+    db = FakeDb()
+    # First run: user explicitly analyses photo m1 (f1.jpg).
+    first = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["m1"], want_body=False,
+    ))
+    assert first["face"]["source_photos"] == ["uploads/u1/f1.jpg"]
+    assert first["face"]["overall_score"] == 3.3
+    assert _mocks["face"] == 1
+
+    # Rerun selecting the OTHER in-grid photo m2 (f2.jpg). Grid set unchanged ->
+    # the old whole-grid dedup would reuse `first` (the bug). It must instead run
+    # a SECOND, fresh face pass on f2 and the report must reflect f2.
+    second = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["m2"], want_body=False,
+    ))
+    assert _mocks["face"] == 2                                   # a second real vision pass
+    assert second["face"]["source_photos"] == ["uploads/u1/f2.jpg"]  # the picked photo
+    assert second["face"]["overall_score"] == 9.9               # f2's read, not f1's
+    assert second["face"]["source_photos"] != first["face"]["source_photos"]
+    # a real run, never recorded as the "unchanged_photos" skip.
+    led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
+    assert led["last_status"] == "ok" and led["detail"] != "unchanged_photos"
+
+
 def test_rerun_after_a_photo_is_added_runs_analysis_again(monkeypatch, _mocks):
     db = FakeDb()
     _run(appearance.run_appearance(db, "u1"))

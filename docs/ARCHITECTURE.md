@@ -259,6 +259,16 @@ flowchart LR
   is reused rather than regressed to `needs_*_photo` — so the unified face+body score, and the shareable report card
   (which needs both scores), survive a one-axis rerun (§ founder 2026-10-28: "after Ayma reran I don't see the report
   card anymore"). A genuinely-empty axis still stays "not available" and is **never** scored.
+  **Fresh analysis on a selected photo (§ founder 2026-10-28, 4th handoff fix)**: an explicit grid selection
+  (`face_media_ids`/`body_media_ids` named by the pre-run sheet) is a deliberate "analyse THESE photos" action and
+  **always** drives a fresh vision pass on the picked photo — even when the *overall* grid photo set is unchanged. The
+  whole-grid "nothing changed, re-share the last report" dedup (`appearance._unchanged_since_last_run`, which compares the
+  whole grid + `extra_images` set against the prior report's `attributes.source_photos`) therefore applies **only** to the
+  no-selection rerun path (chat / `source == "auto"` reconcile, both media-id lists `None`). Before this fix the dedup ran
+  regardless of selection, so re-selecting a *different* already-in-grid photo left the grid set identical and the run was
+  skipped (`skill_runs/appearance` → `last_status: skipped, detail: unchanged_photos`), silently re-showing the previous
+  report. A prior axis is now reused **only** when that axis was genuinely skipped (`want_*=False` / nothing eligible) — the
+  per-axis merge above — never because the grid set as a whole looked unchanged.
 - *Appearance report vision routing*: the face and body reports are vision-dependent, so their image call goes through
   `llm_provider.get_vision_provider("reports")` — the configured `reports` provider only when it genuinely does vision
   (`supports_vision`), else **Gemini**. A text/reasoning-only provider (Muse Spark, `supports_vision=False`) would
