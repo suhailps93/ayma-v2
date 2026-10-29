@@ -478,8 +478,9 @@ def test_open_profile_reports_when_nobody_matches():
 # --- registry wiring --------------------------------------------------
 
 _COMMAND_TOOLS = {
-    "open_screen", "search_explore", "open_profile", "open_message_thread",
-    "open_match_report", "app_action", "account_action", "ui_action",
+    "open_screen", "search_explore", "open_profile", "list_conversations",
+    "open_message_thread", "open_match_report", "app_action",
+    "account_action", "ui_action",
 }
 
 
@@ -646,7 +647,9 @@ def test_open_message_thread_resolves_an_existing_conversation():
         "participants": ["me", "u-jordan"]
     }
     out = _run(app_control._bind_open_message_thread(db, "me")("jordan"))
-    assert out == "navigated: screen=dm — the conversation with jordan is open."
+    assert out == (
+        "navigated: screen=dm — the conversation with Jordan Lee is open."
+    )
     cmd = db.store[_PENDING]
     assert cmd == {**cmd, "action": "open_dm_thread", "uid": "u-jordan"}
 
@@ -668,8 +671,117 @@ def test_open_message_thread_reports_when_no_conversation_exists():
     db.seed_user("me", "Me")
     db.seed_user("u-jordan", "Jordan Lee")
     out = _run(app_control._bind_open_message_thread(db, "me")("jordan"))
-    assert "couldn't find an existing conversation" in out
+    assert "couldn't find any existing conversations" in out
     assert _PENDING not in db.store
+
+
+def test_open_message_thread_not_found_when_name_matches_no_thread():
+    # A thread exists, but not with the person the user named ("Sahil not
+    # found"): no navigation, no false success chip (founder bug 2026-10-28).
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    db.store[("dm_threads", "me__u-jordan")] = {
+        "participants": ["me", "u-jordan"],
+        "last_message_at": _FreshTs(),
+    }
+    out = _run(app_control._bind_open_message_thread(db, "me")("sahil"))
+    assert "couldn't find an existing conversation with sahil" in out
+    assert _PENDING not in db.store
+
+
+def test_open_message_thread_opens_the_most_recent_on_last():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-old", "Old Friend")
+    db.seed_user("u-new", "New Friend")
+    db.store[("dm_threads", "me__u-old")] = {
+        "participants": ["me", "u-old"], "last_message_at": _AgeTs(9_000),
+    }
+    db.store[("dm_threads", "me__u-new")] = {
+        "participants": ["me", "u-new"], "last_message_at": _AgeTs(1_000),
+    }
+    out = _run(app_control._bind_open_message_thread(db, "me")("last"))
+    assert "the conversation with New Friend is open" in out
+    assert db.store[_PENDING]["uid"] == "u-new"
+
+
+def test_open_message_thread_fuzzy_name_resolves():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sahil", "Sahil Patel")
+    db.store[("dm_threads", "me__u-sahil")] = {
+        "participants": ["me", "u-sahil"], "last_message_at": _FreshTs(),
+    }
+    # A slightly-off spelling still resolves to the one match.
+    out = _run(app_control._bind_open_message_thread(db, "me")("sahel"))
+    assert "the conversation with Sahil Patel is open" in out
+    assert db.store[_PENDING]["uid"] == "u-sahil"
+
+
+def test_open_message_thread_asks_which_when_ambiguous():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-a", "Alex Rivera")
+    db.seed_user("u-b", "Alex Chen")
+    for tid, other in (("me__u-a", "u-a"), ("me__u-b", "u-b")):
+        db.store[("dm_threads", tid)] = {
+            "participants": ["me", other], "last_message_at": _FreshTs(),
+        }
+    out = _run(app_control._bind_open_message_thread(db, "me")("alex"))
+    assert "more than one conversation" in out
+    assert "Alex Rivera" in out and "Alex Chen" in out
+    assert _PENDING not in db.store
+
+
+# --- list_conversations -------------------------------------------------
+
+def test_list_conversations_orders_by_recency_and_flags_unread():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-old", "Old Friend")
+    db.seed_user("u-new", "New Friend")
+    db.store[("dm_threads", "me__u-old")] = {
+        "participants": ["me", "u-old"], "last_message_at": _AgeTs(9_000),
+    }
+    db.store[("dm_threads", "me__u-new")] = {
+        "participants": ["me", "u-new"], "last_message_at": _AgeTs(1_000),
+        "unread": {"me": 2},
+    }
+    out = _run(app_control._bind_list_conversations(db, "me")())
+    assert out.index("New Friend") < out.index("Old Friend")
+    assert "unread" in out
+    assert "2 conversations" in out
+
+
+def test_list_conversations_is_own_user_only():
+    # A thread between two OTHER users must never appear in this user's list.
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-a", "Person A")
+    db.seed_user("u-b", "Person B")
+    db.store[("dm_threads", "me__u-a")] = {
+        "participants": ["me", "u-a"], "last_message_at": _FreshTs(),
+    }
+    db.store[("dm_threads", "u-a__u-b")] = {
+        "participants": ["u-a", "u-b"], "last_message_at": _FreshTs(),
+    }
+    out = _run(app_control._bind_list_conversations(db, "me")())
+    assert "Person A" in out
+    assert "Person B" not in out
+
+
+def test_list_conversations_excludes_hidden_and_reports_none():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-a", "Person A")
+    db.store[("dm_threads", "me__u-a")] = {
+        "participants": ["me", "u-a"], "last_message_at": _FreshTs(),
+        "hidden_for": ["me"],
+    }
+    out = _run(app_control._bind_list_conversations(db, "me")())
+    assert "no message threads" in out
+    assert "Person A" not in out
 
 
 # --- app_action -----------------------------------------------------------

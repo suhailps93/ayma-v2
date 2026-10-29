@@ -93,6 +93,7 @@ from prompt import (  # noqa: E402
 )
 import skills  # noqa: E402
 import voices  # noqa: E402
+from tool_labels import NO_CHIP as _NO_CHIP  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
@@ -706,6 +707,11 @@ def _publish_tool_event(
     did (``tool_labels.outcome_label``)."""
     if phase == "start":
         label = _working_label(name)
+    elif label == _NO_CHIP:
+        # The tool ran but did not do the visible thing its chip would claim
+        # (e.g. the app never navigated). An empty end-label clears the live
+        # "…ing" indicator on the client and queues no settled chip.
+        label = ""
     else:
         label = label or _tool_label(name)
     payload = json.dumps({"name": name, "label": label, "phase": phase}).encode()

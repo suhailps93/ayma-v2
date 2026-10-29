@@ -13,6 +13,22 @@ surface ever falls back to a raw "Read dm thread" / "Working…" placeholder.
 
 from __future__ import annotations
 
+# Sentinel outcome for a tool that ran but did NOT do the visible thing its
+# chip would claim (e.g. open_message_thread found no conversation, or the app
+# never navigated). Returned by :func:`outcome_label`; the callers suppress the
+# success chip entirely — voice clears its "…ing" indicator and adds nothing,
+# text adds nothing to ``tools_used`` (founder bug 2026-10-28: a false "Opened
+# that conversation" chip showed even when the open failed).
+NO_CHIP = "\x00no_chip"
+
+# App-control tools whose chip must only show on a real navigation. Each
+# returns a result beginning with ``navigated:`` on success and an honest
+# failure line otherwise (``skills/app_control.py``).
+_NAV_CHIP_TOOLS = frozenset(
+    "open_message_thread open_screen open_profile open_match_report "
+    "search_explore".split()
+)
+
 TOOL_LABELS = {
     # Built-in grounding
     "web_search": "Searched the web",
@@ -39,6 +55,7 @@ TOOL_LABELS = {
     "remove_story_entry": "Removed that from your story",
     "find_fact_source": "Traced where that came from",
     "read_dm_thread": "Read your messages with them",
+    "list_conversations": "Checked your conversations",
     "send_dm_message": "Worked on a message",
     # Questionnaire skill
     "next_questions": "Checked what to ask next",
@@ -74,11 +91,21 @@ def tool_label(name: str) -> str:
 
 def outcome_label(name: str, result: object) -> str | None:
     """A label read from what the tool actually did, for the tools whose one
-    name covers different outcomes; ``None`` means use :func:`tool_label`.
+    name covers different outcomes; ``None`` means use :func:`tool_label`, and
+    :data:`NO_CHIP` means show no chip at all.
 
     ``send_dm_message`` previews or sends, so a fixed "Sent your message"
     chip showed even when nothing was sent (founder test 2026-10-26). A send
-    shows the recipient and the exact text, the chat's "Sent" card."""
+    shows the recipient and the exact text, the chat's "Sent" card.
+
+    The app-control navigation tools (:data:`_NAV_CHIP_TOOLS`) only earn their
+    "Opened …" chip on a real navigation — their result starts with
+    ``navigated:``. Anything else (not found, the app didn't navigate) returns
+    :data:`NO_CHIP` so no false success chip shows (founder bug 2026-10-28)."""
+    if name in _NAV_CHIP_TOOLS:
+        if isinstance(result, str) and result.startswith("navigated:"):
+            return None
+        return NO_CHIP
     if name != "send_dm_message" or not isinstance(result, str):
         return None
     if result.startswith("SENT to "):
@@ -117,6 +144,7 @@ WORKING_LABELS = {
     "remove_story_entry": "Updating your story…",
     "find_fact_source": "Tracing where that came from…",
     "read_dm_thread": "Pulling up your chat…",
+    "list_conversations": "Checking your conversations…",
     "send_dm_message": "Working on your message…",
     # App control (skills/app_control.py)
     "open_screen": "Opening that…",

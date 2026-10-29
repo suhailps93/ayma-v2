@@ -169,6 +169,19 @@ flowchart LR
   open its words also match; `find_report_action` matches strictly (an exact name or a full re-run alias contained
   in the request, never the reverse), so a bare "appearance report" stays an open. `run_appearance_report` is the
   chat/voice counterpart of the Appearance screen's Recalculate button (`POST /appearance/report` → `appearance.run_appearance`).
+- *Conversations / DM navigation (`skills/app_control.py`)*: `list_conversations` reads the signed-in user's own
+  `dm_threads` (scoped by `participants array_contains uid`, excluding `hidden_for` self) and returns each thread's
+  other-person name, recency and unread flag, most-recent first — never message bodies (privacy-safe; `read_dm_thread`
+  is the on-request path to the messages). It answers "who has messaged me?" / "who's in my conversations?" and is
+  registered in both the text (`make_session_tool_fns` via `COMMAND_SKILLS`) and voice (`make_livekit_tools` via
+  `VOICE_SKILLS`) tool sets, like the other app-control tools. `open_message_thread` now accepts "last" / "most recent"
+  (opens the most recently active thread) and a partial/fuzzy person name (best-match against the thread list, with a
+  close-spelling fallback); when more than one thread is equally plausible it asks which rather than silently guessing.
+  **Chip-on-success:** the navigation tools (`open_message_thread`, `open_screen`, `open_profile`, `open_match_report`,
+  `search_explore`) earn their "Opened …" chip only when the tool result starts with `navigated:`. Any other result
+  (not found, the app never navigated) returns `tool_labels.NO_CHIP`, which both surfaces honour — text drops it from
+  `tools_used`, voice sends an empty-label `tool_used` end event that clears the "…ing" indicator and queues no settled
+  chip — so a failed open no longer shows a false "Opened that conversation" chip (founder bug 2026-10-28).
 - *Deep-dive photo sources*: Custom Search image API (only when `IMAGE_SEARCH_API_KEY`/`_CSE_ID` are set),
   public profile pages from a grounded Gemini call plus Vertex AI Search (`deepdive_public_profiles`,
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
