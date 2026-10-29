@@ -20,6 +20,8 @@
   .label { font-weight:600; }
   .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
   .chip { background:#fde9f0; color:#9a1f4b; padding:4px 10px; border-radius:999px; font-size:.9rem; }
+  .tagchip { background:#eef0fb; color:#33408c; }
+  .demo { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
   .tag { font-size:.75rem; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin-left:6px; }
   .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
   .bar > i { display:block; height:100%; background:var(--pink); }
@@ -35,8 +37,10 @@
 <main>
   <h1>Taste match, powered by Qloo</h1>
   <p class="sub">Ayma is an AI matchmaker. Pick two demo profiles: Qloo's taste graph
-    scores how much their music, film and food tastes overlap, then suggests date
-    ideas they'd both enjoy. All four profiles are synthetic demo people.</p>
+    scores how much their tastes overlap across music, film, food, TV, books,
+    podcasts, games, travel, brands and nightlife, reads the shared Qloo tags that
+    explain <em>why</em> they match and the audience each taste skews to, then
+    suggests date ideas they'd both enjoy. All four profiles are synthetic demo people.</p>
 
   <div class="card pick">
     <select id="a" aria-label="First person"></select>
@@ -49,8 +53,10 @@
 
   <footer>Each demo person's public "Taste" page (e.g. <em>Music: Khruangbin, Bon Iver</em>)
     is resolved to Qloo entities; per-domain overlap of their Qloo recommendations
-    gives the score, and a joint Qloo query (both people's signals at once) ranks the
-    date spots. Only public profile data is used.</footer>
+    gives the score, the genre/theme tags their graphs share give the "why you match",
+    a Qloo demographics call reads the audience each taste skews to, and a joint,
+    tag-aligned Qloo query (both people's signals at once) ranks the date spots.
+    Only public profile data is used.</footer>
 </main>
 <script>
 const PEOPLE = [["maya","Maya · San Francisco"],["leo","Leo · Oakland"],["aisha","Aisha · Berkeley"],["noah","Noah · San Jose"]];
@@ -59,7 +65,8 @@ const go = document.getElementById("go"), out = document.getElementById("out");
 for (const [id, label] of PEOPLE) { a.add(new Option(label, id)); b.add(new Option(label, id)); }
 b.value = "leo";
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const DOMAIN = {music:"Music", film:"Film", dining:"Food & places"};
+const DOMAIN = {music:"Music", film:"Film", dining:"Food & places", tv:"TV", books:"Books", podcasts:"Podcasts", games:"Games", travel:"Travel", brands:"Brands", nightlife:"Nightlife"};
+const AGE = {"24_and_younger":"24 & under","25_to_29":"25–29","30_to_34":"30–34","35_to_44":"35–44","45_to_54":"45–54","55_and_older":"55+"};
 
 async function run() {
   if (a.value === b.value) { out.innerHTML = '<div class="card err">Pick two different people.</div>'; return; }
@@ -71,6 +78,15 @@ async function run() {
     const domains = (d.domains || []).map(x =>
       `<div class="dom"><span>${esc(DOMAIN[x.domain] || x.domain)}</span><div class="bar"><i style="width:${Number(x.score)||0}%"></i></div><span>${Number(x.score)||0}</span></div>`).join("");
     const shared = (d.shared || []).map(s => `<span class="chip">${esc(s)}</span>`).join("");
+    const tags = (d.shared_tags || []).map(s => `<span class="chip tagchip">${esc(s)}</span>`).join("");
+    const demo = d.demographics;
+    let demoHtml = "";
+    if (demo && (demo.a || demo.b)) {
+      const line = p => p ? `${p.top_age ? "skews " + esc(p.top_age) : ""}${p.gender_lean && p.gender_lean !== "balanced" ? ", " + esc(p.gender_lean) + "-leaning" : ""}` : "no read";
+      demoHtml = `<div class="demo"><strong>Audience read</strong> <span class="muted">(Qloo demographics)</span>
+        <div class="muted">${esc(d.a.name)} ${line(demo.a)} · ${esc(d.b.name)} ${line(demo.b)}</div>
+        ${demo.note ? `<div class="muted">${esc(demo.note)}</div>` : ""}</div>`;
+    }
     const ideas = (d.date_ideas || []).map(i =>
       `<li><strong>${esc(i.name)}</strong><span class="tag">${esc(i.kind)}</span>${i.address ? `<div class="muted">${esc(i.address)}</div>` : ""}<div class="why">${esc(i.why)}</div></li>`).join("");
     out.innerHTML = `
@@ -80,7 +96,9 @@ async function run() {
         <div class="label">${esc(d.score_label)}</div>
         <p>${esc(d.summary)}</p>
         ${domains}
-        ${shared ? `<div class="chips">${shared}</div>` : ""}
+        ${shared ? `<div class="label" style="margin-top:12px">Shared tastes</div><div class="chips">${shared}</div>` : ""}
+        ${tags ? `<div class="label" style="margin-top:12px">Why you match <span class="muted">(shared Qloo tags)</span></div><div class="chips">${tags}</div>` : ""}
+        ${demoHtml}
       </div>
       <div class="card"><strong>Date ideas you'd both enjoy</strong><ul>${ideas || '<li class="muted">No ideas found.</li>'}</ul></div>`;
   } catch (e) {
