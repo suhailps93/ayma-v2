@@ -2259,8 +2259,14 @@ accent fill on a faint track, value right-aligned with tabular figures),
 ordered Music → Film → Food & places (`dining` reads as "Food & places") to
 mirror the public demo `taste_demo.html`; bars show only when both sides have
 taste (`domains` non-empty), otherwise the card falls back to the no-Taste-page
-note. Pure presentation — no data-flow change (the report already delivers
-`taste.domains`).
+note. Below the summary the card also surfaces the depth fields: a **"Why you
+match"** row of outline tag chips from `shared_tags` (visually distinct from the
+filled `shared` entity chips; wraps, hidden when empty) and a compact muted
+**demographics line** from `demographics.note` (shown only when non-null with a
+non-empty note — the raw per-person skew maps are never surfaced). Pure
+presentation — no data-flow change (the report already delivers `taste.domains`,
+`taste.shared_tags`, `taste.demographics`); both new rows are additive and
+hidden when their data is absent.
 Reads PUBLIC profile data only (both people) — no private or cross-user private
 reads. Live when `QLOO_API_KEY` is mounted; otherwise — or on any live
 failure — the fixture. The match report degrades gracefully: when one or both

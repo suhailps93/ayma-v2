@@ -163,6 +163,43 @@ class TasteMatchCard extends StatelessWidget {
           style: AymaType.sans(size: 14, color: ac.fg, height: 1.45),
         ),
       ],
+      if (m.sharedTags.isNotEmpty) ...[
+        const SizedBox(height: 12),
+        Text(
+          'Why you match',
+          style: AymaType.sans(
+              size: 11.5, weight: FontWeight.w600, color: ac.fgMute),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          key: const Key('tasteMatchSharedTags'),
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final t in m.sharedTags)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: ac.accent, width: 0.5),
+                ),
+                child: Text(
+                  t,
+                  style: AymaType.sans(size: 12.5, color: ac.fgDim),
+                ),
+              ),
+          ],
+        ),
+      ],
+      if (m.demographics != null) ...[
+        const SizedBox(height: 10),
+        Text(
+          m.demographics!.note,
+          key: const Key('tasteMatchDemographics'),
+          style: AymaType.sans(size: 12, color: ac.fgMute, height: 1.4),
+        ),
+      ],
       if (m.shared.isNotEmpty) ...[
         const SizedBox(height: 12),
         Wrap(

@@ -85,6 +85,15 @@ Map<String, dynamic> _tastePayload() => {
   'score_label': 'Strong overlap with a very long label to wrap',
   'summary': kLongText,
   'shared': [for (var i = 0; i < 6; i++) 'A long shared taste name $i'],
+  'shared_tags': [
+    for (var i = 0; i < 6; i++) 'A long why-you-match descriptor $i',
+  ],
+  'demographics': {
+    'a': {'top_age': '24 & under'},
+    'b': {'top_age': '45–54'},
+    'note': 'Maya\'s tastes index 24 & under, while Leo\'s index much older '
+        'at 45–54 — a wide age span worth a mention in the write-up.',
+  },
   'domains': [
     {'domain': 'music', 'score': 72},
     {'domain': 'film', 'score': 64},

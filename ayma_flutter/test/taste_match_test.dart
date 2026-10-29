@@ -146,6 +146,61 @@ void main() {
     expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
   });
 
+  testWidgets('shared_tags chips and demographics note both render',
+      (tester) async {
+    final taste = {
+      ..._taste(),
+      'shared_tags': ['Atmospheric', 'Melancholic', 'Psychological drama'],
+      'demographics': {
+        'a': {'top_age': '24 & under'},
+        'b': {'top_age': '45–54'},
+        'note': "Maya's tastes index 24 & under, Leo's 45–54.",
+      },
+    };
+    await _runSim(tester, _api(() => _json(taste)));
+
+    expect(find.byKey(const Key('tasteMatchSharedTags')), findsOneWidget);
+    expect(find.text('Why you match'), findsOneWidget);
+    expect(find.text('Atmospheric'), findsOneWidget);
+    expect(find.text('Psychological drama'), findsOneWidget);
+    expect(find.byKey(const Key('tasteMatchDemographics')), findsOneWidget);
+    expect(find.text("Maya's tastes index 24 & under, Leo's 45–54."),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('absent shared_tags/demographics render neither row',
+      (tester) async {
+    // The base payload omits both fields entirely.
+    await _runSim(tester, _api(() => _json(_taste())));
+
+    expect(find.byKey(const Key('tasteMatchSharedTags')), findsNothing);
+    expect(find.text('Why you match'), findsNothing);
+    expect(find.byKey(const Key('tasteMatchDemographics')), findsNothing);
+    // The rest of the card is unaffected and nothing overflows.
+    expect(find.byKey(const Key('tasteMatchScore')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('empty shared_tags and null-note demographics render neither',
+      (tester) async {
+    final taste = {
+      ..._taste(),
+      'shared_tags': <String>[],
+      'demographics': {
+        'a': {'top_age': '24 & under'},
+        'b': {'top_age': '45–54'},
+        'note': '',
+      },
+    };
+    await _runSim(tester, _api(() => _json(taste)));
+
+    expect(find.byKey(const Key('tasteMatchSharedTags')), findsNothing);
+    expect(find.text('Why you match'), findsNothing);
+    expect(find.byKey(const Key('tasteMatchDemographics')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('fixture data shows the "sample data" chip', (tester) async {
     await _runSim(tester, _api(() => _json(_taste(source: 'fixture'))));
 

@@ -17,6 +17,23 @@ class TasteDomain {
       );
 }
 
+/// The one-line, human demographics read for a pair ("Maya's tastes index
+/// 24 & under, Leo's 45–54."). The card shows only [note]; the raw per-person
+/// age/gender skews in the backend payload are deliberately not surfaced.
+class TasteDemographics {
+  const TasteDemographics({required this.note});
+
+  final String note;
+
+  /// `null` when absent/not a map or when there's no usable [note] to show.
+  static TasteDemographics? fromMap(Object? v) {
+    if (v is! Map) return null;
+    final note = v['note'];
+    if (note is! String || note.isEmpty) return null;
+    return TasteDemographics(note: note);
+  }
+}
+
 /// A date idea both people would enjoy; [address] is null when unknown.
 class TasteDateIdea {
   const TasteDateIdea({
@@ -48,6 +65,8 @@ class TasteMatch {
     this.scoreLabel = '',
     this.summary = '',
     this.shared = const [],
+    this.sharedTags = const [],
+    this.demographics,
     this.domains = const [],
     this.dateIdeas = const [],
   });
@@ -57,6 +76,13 @@ class TasteMatch {
   final String scoreLabel;
   final String summary;
   final List<String> shared;
+
+  /// Genre/theme "why you match" descriptors (e.g. "Atmospheric",
+  /// "Psychological drama"); empty when the backend didn't return any.
+  final List<String> sharedTags;
+
+  /// The one-line demographics read, or `null` when unavailable.
+  final TasteDemographics? demographics;
   final List<TasteDomain> domains;
   final List<TasteDateIdea> dateIdeas;
 
@@ -69,6 +95,11 @@ class TasteMatch {
             .whereType<String>()
             .where((s) => s.isNotEmpty)
             .toList(),
+        sharedTags: ((m['shared_tags'] as List?) ?? const [])
+            .whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .toList(),
+        demographics: TasteDemographics.fromMap(m['demographics']),
         domains: ((m['domains'] as List?) ?? const [])
             .whereType<Map<String, dynamic>>()
             .map(TasteDomain.fromMap)
