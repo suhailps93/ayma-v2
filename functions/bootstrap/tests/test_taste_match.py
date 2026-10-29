@@ -149,7 +149,7 @@ def test_live_client_wire_shape(monkeypatch):
                             "entity_id": "P1",
                             "name": "Yoshi's",
                             "query": {"affinity": 0.91},
-                            "tags": [{"name": "Jazz"}],
+                            "tags": [{"name": "Jazz", "tag_id": "urn:tag:genre:jazz"}],
                             "properties": {"address": "510 Embarcadero W"},
                         }
                     ]
@@ -162,7 +162,14 @@ def test_live_client_wire_shape(monkeypatch):
     assert live.search("Khruangbin", "urn:entity:artist")["id"] == "E1"
     recs = live.insights("urn:entity:place", ["E1"], location="Oakland", take=3)
     assert recs == [
-        {"id": "P1", "name": "Yoshi's", "affinity": 0.91, "tags": ["Jazz"], "address": "510 Embarcadero W"}
+        {
+            "id": "P1",
+            "name": "Yoshi's",
+            "affinity": 0.91,
+            "tags": ["Jazz"],
+            "tag_ids": ["urn:tag:genre:jazz"],
+            "address": "510 Embarcadero W",
+        }
     ]
     assert all(key == "k" for _, key in calls)
     assert "signal.interests.entities=E1" in calls[1][0]
@@ -174,6 +181,137 @@ def test_get_client_uses_key_when_present(monkeypatch):
     assert isinstance(qloo_client.get_client(), qloo_client.FixtureQlooClient)
     monkeypatch.setenv("QLOO_API_KEY", "x")
     assert isinstance(qloo_client.get_client(), qloo_client.LiveQlooClient)
+
+
+# --------------------------------------------------------------------------- #
+# Qloo DEPTH: new domains, shared_tags, demographics (additive response fields)
+# --------------------------------------------------------------------------- #
+def test_parse_taste_recognizes_all_new_domain_headers():
+    body = (
+        "Music: Khruangbin · TV: Fleabag, Twin Peaks · Books: Dune\n"
+        "Podcasts: Radiolab · Games: Hades · Travel: Kyoto, Big Sur\n"
+        "Brands: A24 · Nightlife: The Saloon"
+    )
+    parsed = taste_match.parse_taste(body)
+    assert parsed["tv"] == ["Fleabag", "Twin Peaks"]
+    assert parsed["books"] == ["Dune"]
+    assert parsed["podcasts"] == ["Radiolab"]
+    assert parsed["games"] == ["Hades"]
+    assert parsed["travel"] == ["Kyoto", "Big Sur"]
+    assert parsed["brands"] == ["A24"]
+    assert parsed["nightlife"] == ["The Saloon"]
+
+
+def test_new_entity_types_parsed_and_scored_via_fixture():
+    """A Taste page with TV + Books + Travel scores those domains and emits a
+    date idea per present domain (fixture entities)."""
+    fix = qloo_client.FixtureQlooClient()
+    a = ("Ada", "San Francisco", {"tv": ["Fleabag", "Twin Peaks"], "books": ["Just Kids", "Norwegian Wood"], "travel": ["Kyoto"]})
+    b = ("Bo", "Oakland", {"tv": ["Twin Peaks", "Chef's Table"], "books": ["Dune", "The Overstory"], "travel": ["Big Sur"]})
+    result = asyncio.run(taste_match.match(a, b, client=fix))
+    present = {d["domain"] for d in result["domains"]}
+    assert {"tv", "books"} <= present
+    assert 0 <= result["score"] <= 100
+    # Both listed Twin Peaks outright → it's a shared taste.
+    assert "Twin Peaks" in result["shared"]
+    kinds = {i["kind"] for i in result["date_ideas"]}
+    assert "tv" in kinds and "books" in kinds
+
+
+def test_absence_of_a_domain_does_not_break_scoring():
+    """A music-only pair scores only music — no film/dining calls, no crash."""
+    fix = qloo_client.FixtureQlooClient()
+    a = ("A", "San Francisco", {"music": ["Khruangbin", "Bon Iver"]})
+    b = ("B", "Oakland", {"music": ["Tame Impala", "Khruangbin"]})
+    result = asyncio.run(taste_match.match(a, b, client=fix))
+    assert {d["domain"] for d in result["domains"]} <= {"music"}
+    assert 0 <= result["score"] <= 100
+    assert "shared_tags" in result and isinstance(result["shared_tags"], list)
+
+
+def test_shared_tags_intersects_profile_tags_with_fallback():
+    a_tags = [
+        {"id": "urn:tag:genre:indie", "name": "Indie", "affinity": 1.0},
+        {"id": "urn:tag:genre:folk", "name": "Folk", "affinity": 0.9},
+        {"id": "urn:tag:genre:jazz", "name": "Jazz", "affinity": 0.5},
+    ]
+    b_tags = [
+        {"id": "urn:tag:genre:folk", "name": "Folk", "affinity": 0.8},
+        {"id": "urn:tag:genre:indie", "name": "Indie", "affinity": 0.95},
+        {"id": "urn:tag:genre:soul", "name": "Soul", "affinity": 0.6},
+    ]
+    shared = taste_match._shared_tags(a_tags, b_tags, {}, {})
+    assert shared[:2] == ["Indie", "Folk"]  # ranked by combined affinity
+    assert "Jazz" not in shared and "Soul" not in shared
+    # No profile-tag overlap → fall back to literal seed-entity tag overlap.
+    a_ents = {"music": [{"tags": ["chill", "groove"]}]}
+    b_ents = {"music": [{"tags": ["groove", "ambient"]}]}
+    assert taste_match._shared_tags([], [], a_ents, b_ents) == ["groove"]
+
+
+def test_demographics_block_parsed_and_degrades():
+    a_demo = {
+        "age": {"25_to_29": 0.4, "30_to_34": 0.1, "55_and_older": -0.6},
+        "gender": {"male": 0.2, "female": -0.2},
+    }
+    b_demo = {
+        "age": {"25_to_29": 0.5, "30_to_34": -0.2},
+        "gender": {"male": -0.3, "female": 0.3},
+    }
+    block = taste_match._demographics_block("Maya", "Leo", a_demo, b_demo)
+    assert block["a"]["top_age"] == "25–29" and block["a"]["gender_lean"] == "male"
+    assert block["b"]["gender_lean"] == "female"
+    assert "25–29" in block["note"]
+    # Degraded: no data on either side → no demographics block.
+    assert taste_match._demographics_block("Maya", "Leo", {}, {}) is None
+
+
+def test_fixture_match_adds_shared_tags_and_degrades_demographics(db):
+    result = asyncio.run(taste_match.match(*_pair(db, MAYA, LEO)))
+    assert result["source"] == "fixture"
+    assert result["shared_tags"] and isinstance(result["shared_tags"], list)
+    # The fixture carries no demographic data → the block degrades to None.
+    assert result["demographics"] is None
+
+
+def test_live_client_tags_and_demographics_wire_shape(monkeypatch):
+    def fake_urlopen(req, timeout):
+        url = req.full_url
+
+        class _Resp:
+            def __init__(self, payload):
+                self._b = json.dumps(payload).encode()
+
+            def read(self):
+                return self._b
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        if "urn%3Atag" in url or "urn:tag" in url:
+            return _Resp({"results": {"tags": [
+                {"tag_id": "urn:tag:genre:indie", "name": "Indie", "query": {"affinity": 0.92}},
+                {"tag_id": "urn:tag:genre:folk", "name": "Folk", "popularity": 0.5},
+            ]}})
+        return _Resp({"results": {"demographics": [
+            {"entity_id": "E1", "query": {"age": {"25_to_29": 0.4, "30_to_34": 0.2}, "gender": {"male": 0.1, "female": -0.1}}},
+            {"entity_id": "E2", "query": {"age": {"25_to_29": 0.2, "30_to_34": 0.4}, "gender": {"male": 0.3, "female": -0.3}}},
+        ]}})
+
+    monkeypatch.setattr(qloo_client.urllib.request, "urlopen", fake_urlopen)
+    live = qloo_client.LiveQlooClient("k", "https://q.example", 3)
+    tags = live.tags(["E1", "E2"])
+    assert tags == [
+        {"id": "urn:tag:genre:indie", "name": "Indie", "affinity": 0.92},
+        {"id": "urn:tag:genre:folk", "name": "Folk", "affinity": 0.5},
+    ]
+    demo = live.demographics(["E1", "E2"])
+    # Averaged across the two anchor entities.
+    assert demo["age"]["25_to_29"] == 0.3 and demo["age"]["30_to_34"] == 0.3
+    assert demo["gender"]["male"] == 0.2
 
 
 # --------------------------------------------------------------------------- #

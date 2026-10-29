@@ -340,6 +340,261 @@
    ]
   },
   {
+   "id": "fx-fleabag",
+   "type": "urn:entity:tv_show",
+   "name": "Fleabag",
+   "tags": [
+    "quirky",
+    "melancholy",
+    "romantic",
+    "thoughtful"
+   ]
+  },
+  {
+   "id": "fx-planet-earth-ii",
+   "type": "urn:entity:tv_show",
+   "name": "Planet Earth II",
+   "tags": [
+    "documentary",
+    "nature",
+    "ocean"
+   ]
+  },
+  {
+   "id": "fx-chefs-table",
+   "type": "urn:entity:tv_show",
+   "name": "Chef's Table",
+   "tags": [
+    "documentary",
+    "artisan",
+    "cinematic"
+   ]
+  },
+  {
+   "id": "fx-twin-peaks",
+   "type": "urn:entity:tv_show",
+   "name": "Twin Peaks",
+   "tags": [
+    "quirky",
+    "atmospheric",
+    "cinematic",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-the-bear",
+   "type": "urn:entity:tv_show",
+   "name": "The Bear",
+   "tags": [
+    "artisan",
+    "drama",
+    "city"
+   ]
+  },
+  {
+   "id": "fx-just-kids",
+   "type": "urn:entity:book",
+   "name": "Just Kids",
+   "tags": [
+    "indie",
+    "folk",
+    "melancholy",
+    "city"
+   ]
+  },
+  {
+   "id": "fx-the-overstory",
+   "type": "urn:entity:book",
+   "name": "The Overstory",
+   "tags": [
+    "nature",
+    "outdoors",
+    "thoughtful"
+   ]
+  },
+  {
+   "id": "fx-dune",
+   "type": "urn:entity:book",
+   "name": "Dune",
+   "tags": [
+    "sci-fi",
+    "adventure",
+    "cinematic"
+   ]
+  },
+  {
+   "id": "fx-norwegian-wood",
+   "type": "urn:entity:book",
+   "name": "Norwegian Wood",
+   "tags": [
+    "melancholy",
+    "romantic",
+    "quiet"
+   ]
+  },
+  {
+   "id": "fx-the-soul-of-an-octopus",
+   "type": "urn:entity:book",
+   "name": "The Soul of an Octopus",
+   "tags": [
+    "ocean",
+    "nature",
+    "documentary"
+   ]
+  },
+  {
+   "id": "fx-song-exploder",
+   "type": "urn:entity:podcast",
+   "name": "Song Exploder",
+   "tags": [
+    "indie",
+    "thoughtful",
+    "groove"
+   ]
+  },
+  {
+   "id": "fx-radiolab",
+   "type": "urn:entity:podcast",
+   "name": "Radiolab",
+   "tags": [
+    "sci-fi",
+    "thoughtful",
+    "documentary"
+   ]
+  },
+  {
+   "id": "fx-this-american-life",
+   "type": "urn:entity:podcast",
+   "name": "This American Life",
+   "tags": [
+    "thoughtful",
+    "city",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-big-sur",
+   "type": "urn:entity:destination",
+   "name": "Big Sur",
+   "tags": [
+    "outdoors",
+    "nature",
+    "ocean",
+    "adventure"
+   ]
+  },
+  {
+   "id": "fx-kyoto",
+   "type": "urn:entity:destination",
+   "name": "Kyoto",
+   "tags": [
+    "quiet",
+    "artisan",
+    "classic",
+    "thoughtful"
+   ]
+  },
+  {
+   "id": "fx-lisbon",
+   "type": "urn:entity:destination",
+   "name": "Lisbon",
+   "tags": [
+    "city",
+    "romantic",
+    "upbeat"
+   ]
+  },
+  {
+   "id": "fx-portland",
+   "type": "urn:entity:destination",
+   "name": "Portland",
+   "tags": [
+    "indie",
+    "artisan",
+    "outdoors"
+   ]
+  },
+  {
+   "id": "fx-a24",
+   "type": "urn:entity:brand",
+   "name": "A24",
+   "tags": [
+    "indie",
+    "cinematic",
+    "quirky",
+    "melancholy"
+   ]
+  },
+  {
+   "id": "fx-patagonia",
+   "type": "urn:entity:brand",
+   "name": "Patagonia",
+   "tags": [
+    "outdoors",
+    "nature",
+    "adventure"
+   ]
+  },
+  {
+   "id": "fx-aesop",
+   "type": "urn:entity:brand",
+   "name": "Aesop",
+   "tags": [
+    "artisan",
+    "classic",
+    "chill"
+   ]
+  },
+  {
+   "id": "fx-moleskine",
+   "type": "urn:entity:brand",
+   "name": "Moleskine",
+   "tags": [
+    "artisan",
+    "classic",
+    "thoughtful"
+   ]
+  },
+  {
+   "id": "fx-the-saloon",
+   "type": "urn:entity:place",
+   "name": "The Saloon",
+   "tags": [
+    "nightlife",
+    "live-music",
+    "soul",
+    "classic"
+   ],
+   "city": "San Francisco",
+   "address": "1232 Grant Ave, San Francisco"
+  },
+  {
+   "id": "fx-madrone-art-bar",
+   "type": "urn:entity:place",
+   "name": "Madrone Art Bar",
+   "tags": [
+    "nightlife",
+    "live-music",
+    "quirky",
+    "indie"
+   ],
+   "city": "San Francisco",
+   "address": "500 Divisadero St, San Francisco"
+  },
+  {
+   "id": "fx-the-uptown",
+   "type": "urn:entity:place",
+   "name": "The Uptown Nightclub",
+   "tags": [
+    "nightlife",
+    "live-music",
+    "indie",
+    "groove"
+   ],
+   "city": "Oakland",
+   "address": "1928 Telegraph Ave, Oakland"
+  },
+  {
    "id": "fx-tartine-bakery",
    "type": "urn:entity:place",
    "name": "Tartine Bakery",
