@@ -147,12 +147,14 @@ Future<void> _pumpSheet(
 }
 
 void main() {
-  const faceSelected = 'Photo selected for analysis';
-  const faceUnselected = 'Tap to analyse this photo instead';
+  // MULTI-SELECT semantics (§ founder: real multi-select): each thumbnail is a
+  // toggle, and every eligible/auto-select photo is ticked by default.
+  const faceSelected = 'Photo selected for analysis, tap to remove';
+  const faceUnselected = 'Tap to add this photo to the analysis';
 
   testWidgets('shows both Face and Body buckets populated from all photos, '
-      'with an Add photo tile on each, and ONE photo pre-selected per axis',
-      (tester) async {
+      'with an Add photo tile on each, and ALL auto-select photos pre-selected '
+      'per axis', (tester) async {
     final observer = _PushCountObserver();
     await _pumpSheet(
         tester, _FakeApi(_eligWith(face: 3, body: 2)), observer);
@@ -160,9 +162,9 @@ void main() {
     expect(find.text('Face analysis'), findsOneWidget);
     expect(find.text('Body analysis'), findsOneWidget);
 
-    // Single-select: exactly ONE photo per axis is pre-selected (the first
-    // auto-select), so 1 Face + 1 Body = 2 check badges, not one per photo.
-    expect(find.byIcon(Icons.check), findsNWidgets(2));
+    // Multi-select: EVERY auto-select photo is pre-ticked, so 3 Face + 2 Body
+    // = 5 check badges (one per selected photo), not one per axis.
+    expect(find.byIcon(Icons.check), findsNWidgets(5));
     // An Add photo tile in BOTH buckets (ISSUE 3): two 'Add' labels + icons.
     expect(find.text('Add'), findsNWidgets(2));
     expect(find.byIcon(Icons.add_a_photo_outlined), findsNWidgets(2));
@@ -174,17 +176,20 @@ void main() {
     await _pumpSheet(
         tester, _FakeApi(_eligWith(face: 1, body: 1)), observer);
 
-    // Each section says what photo it wants, and a single prominent note warns
-    // against couple/group photos (§ founder 2026-10-28).
-    expect(find.text('A clear photo of your face.'), findsOneWidget);
-    expect(find.text('A clear photo of your full body.'), findsOneWidget);
+    // Each section says what photos it wants (the line also carries the live
+    // selected count, e.g. "Clear photos of your face.  ·  1 selected"), and a
+    // single prominent note warns against couple/group photos (§ founder
+    // 2026-10-28).
+    expect(find.textContaining('Clear photos of your face.'), findsOneWidget);
+    expect(find.textContaining('Clear photos of your full body.'),
+        findsOneWidget);
     expect(find.text('Use photos of just you — no other people.'),
         findsOneWidget);
   });
 
   testWidgets(
-      'SINGLE-SELECT: tapping another photo replaces the selection '
-      '(B deselects A) and does NOT navigate', (tester) async {
+      'MULTI-SELECT: tapping a tile TOGGLES it (remove then re-add) and does '
+      'NOT navigate', (tester) async {
     final observer = _PushCountObserver();
     // Body empty so every selected/unselected label is a Face tile — the axis
     // under test in isolation.
@@ -192,30 +197,34 @@ void main() {
         tester, _FakeApi(_eligWith(face: 2, body: 0)), observer);
 
     final pushesAfterOpen = observer.pushes; // the home route only
-    // Exactly ONE Face photo pre-selected (single-select default), the other
-    // surfaced but unselected.
+    // Both Face photos are pre-selected (multi-select default).
+    expect(find.bySemanticsLabel(faceSelected), findsNWidgets(2));
+    expect(find.bySemanticsLabel(faceUnselected), findsNothing);
+    expect(find.byIcon(Icons.check), findsNWidgets(2));
+
+    // Tap one selected tile -> it is REMOVED from the set (toggle off), leaving
+    // one selected and one unselected — the others are untouched (no replace).
+    await tester.tap(find.bySemanticsLabel(faceSelected).first);
+    await tester.pump();
     expect(find.bySemanticsLabel(faceSelected), findsOneWidget);
     expect(find.bySemanticsLabel(faceUnselected), findsOneWidget);
     expect(find.byIcon(Icons.check), findsOneWidget);
 
-    // Tap the OTHER (unselected) photo -> it becomes THE selection and the
-    // previously selected one is deselected (replace, not add).
+    // Tap the now-unselected tile -> it is ADDED back (toggle on): both selected
+    // again, so toggling is additive, not a single-pick replace.
     await tester.tap(find.bySemanticsLabel(faceUnselected));
     await tester.pump();
-
-    // Still exactly ONE selected: the tap replaced, it did not add a second.
-    expect(find.bySemanticsLabel(faceSelected), findsOneWidget);
-    expect(find.bySemanticsLabel(faceUnselected), findsOneWidget);
-    expect(find.byIcon(Icons.check), findsOneWidget);
+    expect(find.bySemanticsLabel(faceSelected), findsNWidgets(2));
+    expect(find.byIcon(Icons.check), findsNWidgets(2));
 
     // The crux of ISSUE 4: a photo tap must never push a route.
     expect(observer.pushes, pushesAfterOpen);
   });
 
   testWidgets(
-      'SINGLE-SELECT: Run sends exactly ONE media id per axis, and the tapped '
-      'photo wins over the auto-selected default', (tester) async {
-    final api = _FakeApi(_eligWith(face: 2, body: 1));
+      'MULTI-SELECT: Run sends ALL ticked media ids per axis, in grid order, '
+      'and a de-ticked photo is dropped from the run', (tester) async {
+    final api = _FakeApi(_eligWith(face: 3, body: 1));
 
     final router = GoRouter(
       initialLocation: '/start',
@@ -241,10 +250,12 @@ void main() {
     await tester.pump(const Duration(seconds: 1)); // sheet + eligibility
     expect(find.text('Run analysis'), findsOneWidget);
 
-    // Default pre-selects f0 (Face) and b0 (Body). Tap the other Face photo so
-    // the explicit pick (f1) replaces the default (f0).
-    expect(find.bySemanticsLabel(faceUnselected), findsOneWidget);
-    await tester.tap(find.bySemanticsLabel(faceUnselected));
+    // All three Face photos (f0,f1,f2) and the one Body photo (b0) start ticked
+    // (the selected label is shared across axes: 3 face + 1 body = 4). The tiles
+    // render in section order, so index 1 is the middle Face photo, f1.
+    expect(find.bySemanticsLabel(faceSelected), findsNWidgets(4));
+    // De-tick the MIDDLE Face photo (f1) so the run must reflect the change.
+    await tester.tap(find.bySemanticsLabel(faceSelected).at(1));
     await tester.pump();
 
     await tester.tap(find.text('Run analysis'));
@@ -252,9 +263,10 @@ void main() {
     await tester.pump(const Duration(seconds: 1)); // sheet gone -> run fires
 
     expect(api.runCalls, 1);
-    // Exactly one id per axis; Face carries the TAPPED photo (f1), not the
-    // sticky default (f0) — the root-cause of the repeat-report bug.
-    expect(api.ranFaceMediaIds, ['f1']);
+    // ALL still-ticked ids are sent, in grid order, with f1 dropped — proving
+    // the run reads the whole selected set, not just the first photo (the old
+    // stale-report bug), and that a changed selection drives the new set.
+    expect(api.ranFaceMediaIds, ['f0', 'f2']);
     expect(api.ranBodyMediaIds, ['b0']);
     expect(api.ranImagePaths, isEmpty);
   });
@@ -286,15 +298,15 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.byIcon(Icons.check), findsNWidgets(2));
 
-    // The upload completes -> placeholder gone, the new tile becomes THE Face
-    // selection (single-select: it replaces f0), so the count stays 2 (the new
-    // Face pick + the unchanged Body pick), not 3.
+    // The upload completes -> placeholder gone, the new tile JOINS the Face
+    // selection (multi-select: added to the existing f0, not a replace), so the
+    // count rises to 3 (f0 + the new Face pick + the unchanged Body pick).
     chat.complete();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('Uploading…'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byIcon(Icons.check), findsNWidgets(2));
+    expect(find.byIcon(Icons.check), findsNWidgets(3));
   });
 
   testWidgets(
@@ -352,9 +364,9 @@ void main() {
     expect(chat.prefixes, ['appearance']);
     // No route was pushed: the public-profile editor was never opened.
     expect(observer.pushes, pushesAfterOpen);
-    // The added photo becomes THE Face selection (single-select: replaces f0),
-    // so the count stays 2 (new Face pick + unchanged Body pick).
-    expect(find.byIcon(Icons.check), findsNWidgets(2));
+    // The added photo JOINS the Face selection (multi-select: added to f0), so
+    // the count rises to 3 (f0 + new Face pick + unchanged Body pick).
+    expect(find.byIcon(Icons.check), findsNWidgets(3));
   });
 
   testWidgets(
@@ -415,10 +427,10 @@ void main() {
     // NOT block on it.
     expect(api.runCalls, 1);
     expect(api.runCompleted, isFalse);
-    // Single-select: adding a Face photo REPLACED the default grid pick (f0),
-    // so Face carries no grid media id — only the privately-added photo, which
-    // rides as an image_path. Body keeps its single grid pick.
-    expect(api.ranFaceMediaIds, isEmpty);
+    // Multi-select: adding a Face photo ADDS to the default grid pick (f0), so
+    // Face still carries its grid media id f0, while the privately-added photo
+    // rides separately as an image_path. Body keeps its single grid pick.
+    expect(api.ranFaceMediaIds, ['f0']);
     expect(api.ranBodyMediaIds, ['b0']);
     // ...and the privately-added photo went ONLY as an image_path (a private
     // uploads/ path), never smuggled into the grid media-id lists.
