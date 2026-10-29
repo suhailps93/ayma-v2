@@ -20,7 +20,13 @@
       "taste": {
         "music": ["Bon Iver", "Fleet Foxes", "Phoebe Bridgers"],
         "film": ["Lost in Translation", "Before Sunrise", "Paterson"],
-        "food": ["Tartine Bakery", "Cheese Board Collective"]
+        "food": ["Tartine Bakery", "Cheese Board Collective"],
+        "tv": ["Fleabag", "Chef's Table", "The Bear"],
+        "books": ["Just Kids", "Norwegian Wood", "The Overstory"],
+        "podcasts": ["Song Exploder", "This American Life"],
+        "games": ["Stardew Valley", "Journey", "Firewatch"],
+        "travel": ["Kyoto", "Lisbon", "Portland"],
+        "brands": ["A24", "Aesop", "Moleskine"]
       },
       "image_prompts": {
         "face": "A photorealistic, modest dating-profile headshot of a 29-year-old Latino man named Daniel: short dark wavy hair, warm brown eyes, light stubble, kind easy smile, wearing a simple olive crew-neck sweater. Natural daylight, softly blurred bookshop background, 50mm lens, candid, fully clothed, tasteful, high quality.",
@@ -47,7 +53,13 @@
       "taste": {
         "music": ["Bon Iver", "Fleet Foxes", "Big Thief"],
         "film": ["Lost in Translation", "Her", "Moonrise Kingdom"],
-        "food": ["Tartine Bakery", "Zuni Café"]
+        "food": ["Tartine Bakery", "Zuni Café"],
+        "tv": ["Fleabag", "The Bear", "Chef's Table"],
+        "books": ["Just Kids", "Norwegian Wood", "The Soul of an Octopus"],
+        "podcasts": ["Song Exploder", "Radiolab"],
+        "games": ["Stardew Valley", "Journey", "Gris"],
+        "travel": ["Kyoto", "Lisbon", "Big Sur"],
+        "brands": ["A24", "Aesop", "Patagonia"]
       },
       "image_prompts": {
         "face": "A photorealistic, modest dating-profile headshot of a 27-year-old Italian-American woman named Sofia: shoulder-length dark wavy hair, warm hazel eyes, light freckles, soft genuine smile, wearing a simple cream ribbed sweater. Natural daylight, softly blurred ceramics-studio background, 50mm lens, candid, fully clothed, tasteful, high quality.",
@@ -74,7 +86,13 @@
       "taste": {
         "music": ["Thelonious Monk", "Bill Evans", "Kamasi Washington"],
         "film": ["Blade Runner 2049", "Interstellar", "Free Solo"],
-        "food": ["Philz Coffee", "San Pedro Square Market"]
+        "food": ["Philz Coffee", "San Pedro Square Market"],
+        "tv": ["Twin Peaks", "Planet Earth II"],
+        "books": ["Dune", "The Soul of an Octopus"],
+        "podcasts": ["Radiolab"],
+        "games": ["Counter-Strike", "Call of Duty"],
+        "travel": ["Big Sur", "Reykjavik"],
+        "brands": ["Patagonia", "The North Face"]
       },
       "image_prompts": {
         "face": "A photorealistic, modest dating-profile headshot of a 30-year-old South-Asian woman named Priya: long straight dark hair, dark brown eyes, confident composed smile, wearing a tailored charcoal blazer over a crew-neck top. Soft daylight, blurred modern-office window background, 50mm lens, candid, fully clothed, tasteful, high quality.",

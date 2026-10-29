@@ -93,8 +93,9 @@ def _prompt(name: str) -> str:
     return (_PROMPTS / name).read_text(encoding="utf-8")
 
 
-def _gen_json(prompt: str):
-    """One Vertex-Gemini call that must return a JSON array/object."""
+def _gen_json(prompt: str, *, attempts: int = 3):
+    """One Vertex-Gemini JSON call, with a per-call HTTP timeout + retries so a
+    congested Vertex `global` endpoint can't hang or crash the seed."""
     from config import CONFIG
     from google import genai
     from google.genai import types
@@ -103,19 +104,30 @@ def _gen_json(prompt: str):
         vertexai=True,
         project=CONFIG.project_id or "ayma-ai",
         location=CONFIG.gemini_location,
+        http_options=types.HttpOptions(timeout=120_000),  # ms
     )
-    resp = client.models.generate_content(
-        model=CONFIG.gemini_model,
-        contents=prompt,
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
-    )
-    text = (resp.text or "").strip()
-    if text.startswith("```"):
-        text = text.split("```", 2)[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
-    return json.loads(text)
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            resp = client.models.generate_content(
+                model=CONFIG.gemini_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                ),
+            )
+            text = (resp.text or "").strip()
+            if text.startswith("```"):
+                text = text.split("```", 2)[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+            return json.loads(text)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            _log(f"[gen_json] attempt {attempt + 1}/{attempts} failed: "
+                 f"{type(exc).__name__}: {str(exc)[:120]}")
+    raise RuntimeError(f"_gen_json failed after {attempts} attempts: {last_exc}")
 
 
 def _fmt(template: str, persona: dict) -> str:
@@ -249,16 +261,49 @@ def write_profile_and_questionnaire(db, persona: dict, qz: dict, location: str) 
     _log(f"[profile] wrote profile/main + {len(qz)} questionnaire answers for {uid}")
 
 
+# Taste-page headers the Qloo parser accepts (taste_match._DOMAIN_ALIASES).
+# Only music/film/food are questionnaire-node-backed; the rest live on the page.
+_TASTE_HEADERS = [
+    ("music", "Music"), ("film", "Film"), ("food", "Food"), ("tv", "TV"),
+    ("books", "Books"), ("podcasts", "Podcasts"), ("games", "Games"),
+    ("travel", "Travel"), ("brands", "Brands"),
+]
+
+
 def write_taste(db, persona: dict) -> None:
-    """Public Taste page + taste nodes via the real questionnaire pipeline."""
+    """Public Taste page across all Qloo domains.
+
+    music/film/food go through the real questionnaire pipeline
+    (`merge_taste_mentions` -> taste nodes + base page); then the page body is
+    overwritten to include the six page-only domains (TV/Books/Podcasts/Games/
+    Travel/Brands), which the merged 10-domain Qloo engine reads from the page.
+    """
     import skills.questionnaire as q
 
+    uid = persona["uid"]
     t = persona["taste"]
     q.merge_taste_mentions(
-        db, persona["uid"],
-        {"music": t["music"], "film": t["film"], "food": t["food"]},
+        db, uid, {"music": t["music"], "film": t["film"], "food": t["food"]},
     )
-    _log(f"[taste] wrote taste page + nodes for {persona['uid']}")
+    lines = [
+        f"{header}: {', '.join(t[key])}"
+        for key, header in _TASTE_HEADERS
+        if t.get(key)
+    ]
+    db.collection("users").document(uid).collection("wiki_pages").document(
+        "taste"
+    ).set(
+        {
+            "ai_body": "\n".join(lines),
+            "visibility": "public",
+            "page_type": "taste",
+            "title": "Taste",
+            "updated_at": _now(),
+            "ai_body_updated_at": _now(),
+        },
+        merge=True,
+    )
+    _log(f"[taste] {uid}: taste page ({len(lines)} domains) + music/film/food nodes")
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +623,11 @@ async def run(args) -> int:
     except ValueError:
         pass
     from db import get_db
+    import gemini
+
+    # Vertex `global` can spike; give each generate call more headroom than the
+    # 75s default so a transient slow spell doesn't abort the seed (process-only).
+    gemini._GENERATE_TIMEOUT_SECONDS = 150.0
 
     db = get_db()
     personas = _load_personas()
@@ -596,8 +646,14 @@ async def run(args) -> int:
         write_profile_and_questionnaire(db, p, qz, location)
         write_taste(db, p)
         if not args.no_llm:
-            write_story(db, p, regen=args.reset)
-            write_conversation(db, p, regen=args.reset)
+            try:
+                write_story(db, p, regen=args.reset)
+            except Exception as exc:  # noqa: BLE001
+                _log(f"[story] {p['uid']}: FAILED: {exc}")
+            try:
+                write_conversation(db, p, regen=args.reset)
+            except Exception as exc:  # noqa: BLE001
+                _log(f"[chat] {p['uid']}: FAILED: {exc}")
 
     _log("\n=== PHASE 2: photos + appearance ===")
     if not args.no_images:
@@ -623,8 +679,13 @@ async def run(args) -> int:
 
     if not args.no_llm:
         _log("\n=== PHASE 5: DMs ===")
-        drive_dm(db, by_key["test1"], by_key["test2"], "strong", regen=args.reset)
-        drive_dm(db, by_key["test1"], by_key["test3"], "mismatched", regen=args.reset)
+        for a_key, b_key, quality in (
+            ("test1", "test2", "strong"), ("test1", "test3", "mismatched")
+        ):
+            try:
+                drive_dm(db, by_key[a_key], by_key[b_key], quality, regen=args.reset)
+            except Exception as exc:  # noqa: BLE001
+                _log(f"[dm] {a_key} x {b_key}: FAILED: {exc}")
 
         _log("\n=== PHASE 6: avatar chats ===")
         await drive_avatar_chat(db, t1, by_key["test2"], regen=args.reset)
