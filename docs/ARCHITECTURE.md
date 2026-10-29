@@ -1600,6 +1600,19 @@ Four client-side perceived-performance improvements, all behind no flag (pure UX
   on-device only, never across users. Only the user's own report is cached (the read-only public-snapshot `loader`
   path is not).
 
+- **"Never run" vs "load failed" on the Web research screen** (`deep_dive_report_screen.dart`, `LivingReportView`) —
+  the generic report read (`GET /report/{type}/{id}` → `report_hub.get_report`) already returns a **clean 404** (a
+  `KeyError` when `deep_dive.read_dive` finds no stored dive) for a subject no one has ever searched, distinct from a
+  5xx / connection-class error on a report that may exist. `LivingReportView` branches on this: an `ApiException` with
+  `statusCode == 404` sets `_neverRun` (not `_loadFailed`) and, when the host passes an `emptyBuilder`, renders that
+  empty state instead of the "Couldn't load that report." + Retry error. The Web research screen supplies a
+  **"No web research yet" + "Run report"** empty state; "Run report" derives the subject from the report id
+  (`uid_<subject>` → that uid, the server infers `is_self`; `name_<slug>` → that name) and kicks off the same
+  `POST /deep-dive` run as the AppBar "Re-run", then shows the in-progress banner and swaps the result in via
+  `DeepDiveActivity`. Every other report type passes no `emptyBuilder`, so a 404 still shows the retry error exactly as
+  before. A dive that *ran* but found nothing is NOT a 404 — the adapter returns a real report with a "Nothing found
+  yet." block, which renders normally (ran ≠ never run).
+
 - **Optimistic cold start** (`splash_screen.dart`) — the splash no longer blocks on the full bootstrap. When a cached
   entry route exists for the signed-in uid (`ReportCache.readBootRoute`), it paints that last-known UI immediately and
   runs bootstrap in the background, correcting the route only if the real session differs — e.g. to sign-in on a

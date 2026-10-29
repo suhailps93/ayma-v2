@@ -157,6 +157,12 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     ),
     DeepDiveReportScreen.path: () =>
         shell(DeepDiveReportScreen(reportId: 'r1', apiClient: api)),
+    // The web-research screen's "never run" empty state (a clean 404, not a
+    // load failure): "No web research yet" + a "Run report" action. A
+    // synthetic target — same screen, a 404 api. Not an appRouter path.
+    'web research (never run)': () => shell(
+      DeepDiveReportScreen(reportId: 'uid_her', apiClient: layoutApi404()),
+    ),
     PhysicalAttributesReportScreen.path: () =>
         shell(PhysicalAttributesReportScreen(reportId: 'r1', apiClient: api)),
     AppearanceReportScreen.path: () => shell(
