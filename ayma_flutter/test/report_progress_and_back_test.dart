@@ -236,12 +236,12 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.refresh));
     await tester.pump();
-    expect(find.text('Recalculating this match…'), findsOneWidget);
+    expect(find.text('Recalculating this report…'), findsOneWidget);
     expect(find.byIcon(Icons.refresh), findsNothing);
 
     gate.complete(http.Response(jsonEncode({'ok': true}), 200));
     await tester.pumpAndSettle();
-    expect(find.text('Recalculating this match…'), findsNothing);
+    expect(find.text('Recalculating this report…'), findsNothing);
     expect(find.byIcon(Icons.refresh), findsOneWidget);
   });
 
