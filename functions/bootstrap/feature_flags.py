@@ -103,6 +103,12 @@ REGISTRY: dict[str, Flag] = {
         Flag("mcp_server", "bool", "mcp_server",
              "Ayma MCP server (bring-your-own-agent). Default OFF — when off "
              "every /mcp request answers 503. See docs/MCP_SERVER.md."),
+        Flag("qloo_enabled", "bool", None,
+             "Kill switch for ALL Qloo Taste API calls (billing protection). "
+             "Default ON. When false, NO Qloo HTTP request is made anywhere and "
+             "the taste features degrade to the no-taste empty state. Flip with "
+             "scripts/flags.py set qloo_enabled=false --yes (no redeploy).",
+             default=True),
     ]
 }
 

@@ -307,3 +307,56 @@ def test_questionnaire_taste_answers_produce_a_real_pairing(db):
 
     section = asyncio.run(taste_match.report_section(db, "qa", "qb"))
     assert section["status"] == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# Kill switch — the ``qloo_enabled`` feature flag (billing protection)
+# --------------------------------------------------------------------------- #
+def test_kill_switch_makes_zero_qloo_calls(db, monkeypatch):
+    """With qloo_enabled OFF, match() short-circuits to NoTaste and the Qloo
+    client is NEVER invoked — proving no outbound Qloo HTTP call (no billing)."""
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "false")
+    assert qloo_client.qloo_enabled() is False
+    spy = _RecordingLive()  # records every name it would send to Qloo
+    with pytest.raises(taste_match.NoTaste):
+        asyncio.run(taste_match.match(*_pair(db, MAYA, LEO), client=spy))
+    assert spy.sent == []  # not one name reached the Qloo client
+
+
+def test_kill_switch_get_client_never_returns_live(monkeypatch):
+    """Even with a key set, get_client() hands out the offline fixture (no
+    network) while the kill switch is off; back to live once re-enabled."""
+    monkeypatch.setenv("QLOO_API_KEY", "x")
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "false")
+    assert isinstance(qloo_client.get_client(), qloo_client.FixtureQlooClient)
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "true")
+    assert isinstance(qloo_client.get_client(), qloo_client.LiveQlooClient)
+
+
+def test_kill_switch_report_section_degrades_to_no_taste(db, monkeypatch):
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "false")
+    section = asyncio.run(taste_match.report_section(db, MAYA, LEO))
+    assert section["status"] == "no_taste"
+    assert section["message"]
+
+
+def test_kill_switch_pair_endpoint_is_404_no_taste(db, monkeypatch):
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "false")
+    resp = client.post(
+        "/taste/pair", json={"other_uid": LEO}, headers=_auth(monkeypatch, MAYA)
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "no_taste"
+
+
+def test_kill_switch_demo_pair_is_404(db, monkeypatch):
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "false")
+    resp = client.get("/taste/demo/pair", params={"a": "maya", "b": "aisha"})
+    assert resp.status_code == 404
+
+
+def test_on_by_default_normal_behaviour_unchanged(db):
+    """Default (flag unset) keeps Qloo on — the engine still scores a pair."""
+    assert qloo_client.qloo_enabled() is True
+    result = asyncio.run(taste_match.match(*_pair(db, MAYA, LEO)))
+    assert 0 <= result["score"] <= 100 and result["source"] == "fixture"

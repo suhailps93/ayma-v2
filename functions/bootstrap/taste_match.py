@@ -276,7 +276,16 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
 async def match(a: tuple, b: tuple, client=None) -> dict:
     """Taste match for two ``(name, city, taste)`` tuples. Uses the live Qloo
     client when configured; any live failure falls back to the fixture so the
-    surface never goes dark (the response's ``source`` says which ran)."""
+    surface never goes dark (the response's ``source`` says which ran).
+
+    Kill switch: when the ``qloo_enabled`` feature flag is OFF this makes NO
+    Qloo call at all (not even the fixture) and raises :class:`NoTaste`, so
+    every surface degrades to the no-taste empty state and nothing can bill
+    Qloo. Flip it with ``scripts/flags.py set qloo_enabled=false --yes`` (no
+    redeploy). See docs/FEATURE_FLAGS.md."""
+    if not qloo_client.qloo_enabled():
+        logger.info("qloo_enabled is off — skipping all Qloo calls (kill switch)")
+        raise NoTaste((a[0] if a else "") or "This person")
     client = client or qloo_client.get_client()
     try:
         return await _match_with(client, a, b)

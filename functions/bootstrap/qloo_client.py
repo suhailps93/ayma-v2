@@ -208,9 +208,29 @@ class FixtureQlooClient:
         return [self._out(e, r / top) for r, e in scored[:take]]
 
 
+def qloo_enabled() -> bool:
+    """Kill switch for ALL Qloo API calls — the ``qloo_enabled`` feature flag
+    (default True). Flip it OFF at runtime, with NO redeploy, to stop every
+    outbound Qloo HTTP call (billing protection once the hackathon credits run
+    out)::
+
+        scripts/flags.py set qloo_enabled=false --yes
+
+    When false the taste features degrade to the no-taste empty state
+    (:func:`taste_match.match` short-circuits before any Qloo call) and this
+    function never hands out a :class:`LiveQlooClient`. See docs/FEATURE_FLAGS.md.
+    """
+    import feature_flags
+
+    return feature_flags.enabled("qloo_enabled")
+
+
 def get_client():
-    """The live client when ``QLOO_API_KEY`` is set, else the fixture."""
+    """The live client when ``QLOO_API_KEY`` is set AND ``qloo_enabled`` is on;
+    otherwise the offline fixture (which makes no network call). The flag is a
+    second guard behind :func:`taste_match.match` so no path can bill Qloo while
+    the kill switch is off."""
     key = os.environ.get("QLOO_API_KEY", "").strip()
-    if key:
+    if key and qloo_enabled():
         return LiveQlooClient(key, CONFIG.qloo_api_base_url, CONFIG.qloo_timeout_seconds)
     return FixtureQlooClient()

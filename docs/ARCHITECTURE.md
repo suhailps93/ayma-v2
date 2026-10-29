@@ -2144,6 +2144,19 @@ people have no public Taste page it carries a `{"status": "no_taste"}` marker
 (the client shows an empty state); on any other failure the section is omitted,
 never erroring the report.
 
+**Kill switch (billing protection).** The `qloo_enabled` feature flag (default
+**ON**, `docs/FEATURE_FLAGS.md`) disables every Qloo call at runtime with **no
+redeploy** — `scripts/flags.py set qloo_enabled=false --yes`. When off,
+`taste_match.match` short-circuits **before any outbound Qloo HTTP call** (not
+even the fixture) and raises `NoTaste`, so every surface degrades to the
+no-taste empty state — the match-report section carries `{"status":
+"no_taste"}`, `POST /taste/pair` and `GET /taste/demo/pair` return
+`404 no_taste`, the demo page shows its empty state. As a second guard,
+`qloo_client.get_client` refuses to hand out a `LiveQlooClient` while the flag
+is off (returns the offline fixture). The guarantee: **flag off ⇒ zero Qloo API
+calls ⇒ no billing** once the hackathon credits run out. The single greppable
+gate is `qloo_client.qloo_enabled()`.
+
 **Where the Taste page comes from.** Real users populate it through the normal
 questionnaire: three `page_type: "taste"` nodes in the question tree
 (`question_tree.json`, branch `all` — `taste_music` core, `taste_film` /
