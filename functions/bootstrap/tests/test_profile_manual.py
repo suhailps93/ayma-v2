@@ -1,6 +1,7 @@
 """Manual public-profile editing and the approve-before-apply AI proposals."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fake_firestore import SERVER_TIMESTAMP, FakeDb
@@ -764,3 +765,153 @@ def test_ai_proposal_for_a_custom_section_uses_its_title(model):
         )
     )
     assert [p["title"] for p in pm.list_proposals(db, UID)] == ["Pets"]
+
+
+# --- founder bug 2026-10-28: duplicate / garbled / resurrected proposals ----
+
+
+def test_reworded_pin_is_not_resurrected_as_a_proposal():
+    # Founder bug: the user edited "speaks Malayalam, English, and Tamil and
+    # Hindi" down to "Malayalam and English", but the older wording lingered in
+    # manual_pinned. preserve() re-appended it verbatim because it was no longer
+    # a substring, so a rewrite that otherwise matched the user's text still
+    # produced a spurious Apply/Dismiss card. A pinned sentence already present
+    # as a reworded restatement must not be re-attached.
+    db = _db()
+    _page(
+        db,
+        "identity",
+        ai_body="He currently lives in San Jose and speaks Malayalam and English.",
+        user_edits="He currently lives in San Jose and speaks Malayalam and English.",
+        manual_pinned=[
+            "He currently lives in San Jose and speaks Malayalam, English, "
+            "and Tamil and Hindi"
+        ],
+    )
+    # Ayma re-ingests the same (user-approved) fact.
+    _ingest_write(
+        db, "identity",
+        "He currently lives in San Jose and speaks Malayalam and English.",
+    )
+    # No card: the rewrite matches the live public text once the stale pin is
+    # no longer force-appended.
+    assert pm.list_proposals(db, UID) == []
+    text = pm.get_text(db, UID)["text"]
+    # and the sentence appears exactly once — no garbled duplicate.
+    assert text.count("speaks Malayalam") == 1
+    assert "Tamil and Hindi" not in text
+
+
+def test_apply_does_not_duplicate_a_reworded_pinned_fact():
+    # Founder bug: a stale pinned sentence ("bachelors of science") that the
+    # user had reworded ("BTech") was appended on apply, leaving both variants —
+    # "...BTech... ...bachelors of science..." — garbled duplicate text. Apply
+    # must write the current value once, never re-add the superseded wording.
+    db = _db()
+    _page(
+        db,
+        "career",
+        ai_body="She is a nurse. She completed her BTech at MG University.",
+        user_edits="She is a nurse. She completed her BTech at MG University.",
+        manual_pinned=["She completed her bachelors of science at MG University."],
+    )
+    _ingest_write(
+        db, "career",
+        "She is a surgeon. She completed her BTech at MG University.",
+    )
+    [prop] = pm.list_proposals(db, UID)
+    # the proposal is only the real nurse->surgeon change, no stale-pin noise
+    assert any(c["op"] == "add" and "surgeon" in c["text"] for c in prop["changes"])
+    assert all("bachelors of science" not in c["text"] for c in prop["changes"])
+    pm.apply_proposal(db, UID, "career")
+    public = story.strip_private_spans(_doc(db, "career")["user_edits"])
+    assert "surgeon" in public
+    assert public.count("MG University") == 1  # the fact once, no duplicate
+    assert "bachelors of science" not in public
+    # the superseded pin is pruned from the stored list, not carried forward
+    assert "bachelors of science" not in " ".join(
+        _doc(db, "career").get("manual_pinned") or []
+    )
+
+
+def test_genuinely_distinct_pin_is_still_kept_on_apply():
+    # The dedupe must not over-suppress: a pinned fact that is NOT a restatement
+    # of anything in the rewrite is still guaranteed to stay public.
+    db = _db()
+    _page(
+        db,
+        "interests",
+        ai_body="She climbs on weekends.",
+        user_edits="She climbs on weekends.",
+        manual_pinned=["She volunteers at an animal shelter."],
+    )
+    _ingest_write(db, "interests", "She climbs and surfs.")
+    pm.apply_proposal(db, UID, "interests")
+    public = story.strip_private_spans(_doc(db, "interests")["user_edits"])
+    assert "She volunteers at an animal shelter." in public
+    assert "surfs" in public
+
+
+def test_duplicate_change_rows_are_collapsed_in_the_review_card():
+    # Even if a messy frozen base repeats a sentence, the card never shows the
+    # same change twice.
+    before = "She bakes bread. She bakes bread."
+    after = "She paints."
+    items = pm._change_items(
+        story.strip_private_spans(before), story.strip_private_spans(after)
+    )
+    # the raw change list carries every decidable position …
+    assert sum(1 for it in items if it["op"] == "remove") == 2
+    # … but the displayed rows collapse the identical removals to one.
+    shown = pm._dedupe_changes(items)
+    removes = [c for c in shown if c["op"] == "remove"]
+    assert len(removes) == 1
+
+
+def test_recent_user_edit_suppresses_lagging_reingest_across_the_window():
+    # Founder bug: one stale ingest could spend the one-shot guard and the NEXT
+    # lagging pass would then revert the user's edit. Any re-ingest landing
+    # within the suppression window of the user's edit is swallowed — even when
+    # the explicit one-shot flag is already gone.
+    db = _db()
+    _page(
+        db,
+        "interests",
+        ai_body="She climbs on weekends.",
+        user_edits="She climbs on weekends. She bakes sourdough.",
+        user_updated_at=datetime.now(timezone.utc),  # just edited
+        # note: no suppress_next_proposal flag set at all
+    )
+    _ingest_write(db, "interests", "She climbs and surfs.")  # diverging, lagging
+    assert pm.list_proposals(db, UID) == []
+    assert "She bakes sourdough." in pm.get_text(db, UID)["text"]
+    assert "surfs" not in pm.get_text(db, UID)["text"]
+
+
+def test_old_user_edit_outside_window_lets_a_genuine_rewrite_propose():
+    # Once the window lapses, a genuinely new Ayma discovery surfaces normally.
+    db = _db()
+    _page(
+        db,
+        "interests",
+        ai_body="She climbs on weekends.",
+        user_edits="She climbs on weekends.",
+        user_updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+    )
+    _ingest_write(db, "interests", "She climbs on weekends. She paints.")
+    assert any(
+        "paints" in c["text"]
+        for p in pm.list_proposals(db, UID)
+        for c in p["changes"]
+    )
+
+
+def test_only_one_pending_proposal_field_per_section():
+    # Structural guarantee behind "one card per section": pending_proposal is a
+    # single dict the latest rewrite overwrites — never a growing collection.
+    db = _db()
+    _ingest_write(db, "interests", "She climbs and surfs.")
+    _ingest_write(db, "interests", "She climbs and paints.")
+    prop = _doc(db, "interests")["pending_proposal"]
+    assert isinstance(prop, dict)
+    assert "paints" in prop["after"] and "surfs" not in prop["after"]

@@ -59,7 +59,7 @@ import hashlib
 import logging
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import gemini
@@ -94,6 +94,25 @@ _CUSTOM_ID_PREFIX = "custom-"
 _MAX_SLUG_CHARS = 40
 F_PINNED = "manual_pinned"
 F_PROPOSAL = "pending_proposal"
+
+# A pinned sentence is treated as "already on the public text" — so it is NOT
+# re-appended as a duplicate — when it is a substring of the public text or a
+# near-duplicate of a sentence already there above this ratio. This is what
+# stops a reworded fact (the user changed "bachelors of science" to "BTech", or
+# "Malayalam, English, and Tamil and Hindi" to "Malayalam and English") from
+# being resurrected verbatim and piling up as garbled duplicate text — the
+# founder bug 2026-10-28. Reworded restatements of one sentence score ~0.85+;
+# genuinely distinct facts score well under 0.6, so 0.7 separates them safely.
+_PIN_SIMILAR = 0.7
+
+# A direct user edit (story.save_section / profile_manual._write_section /
+# remove_section) stamps user_updated_at and suppresses the NEXT ingest's
+# re-proposal of it. A single lagging re-ingest is not always the only one in
+# flight after an edit, so suppression stays active for any ingest landing
+# within this window of the user's edit — not just the first — so a user edit
+# reliably applies in place and never re-surfaces as an Apply/Dismiss card
+# while stale passes drain (founder bug 2026-10-28).
+_SUPPRESS_WINDOW = timedelta(minutes=10)
 
 KIND_REMOVED = "removed_fact"
 KIND_ADDED = "added_fact"
@@ -663,20 +682,86 @@ def _write_section(
 # --- Ayma's updates: propose, then apply or dismiss --------------------
 
 
+def _similar(a: str, b: str) -> bool:
+    """Whether two normalized sentences are close enough to be the same fact
+    reworded (see :data:`_PIN_SIMILAR`)."""
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio() >= _PIN_SIMILAR
+
+
+def _pins_to_append(pinned: list[str], public_text: str) -> list[str]:
+    """The pinned sentences that must be re-attached to ``public_text`` because
+    they are genuinely absent — deduplicated and never a reworded restatement of
+    something already shown.
+
+    A pinned sentence is already present (so it is skipped, never appended as a
+    duplicate) when its normalized text is a substring of the public text, or
+    when some sentence already in the public text — or a pin we already accepted
+    this pass — is a near-duplicate of it (:func:`_similar`). Without this, a
+    pinned fact the user reworded no longer matches verbatim and gets appended
+    again, piling up garbled duplicate half-sentences (founder bug 2026-10-28).
+    Accepted pins join the running set so two near-duplicate pins can't both be
+    added. Returned in input order."""
+    public_norm = _norm(public_text)
+    present = [_norm(s) for s in rb.split_sentences(public_text) if _norm(s)]
+    out: list[str] = []
+    for sentence in pinned:
+        n = _norm(sentence)
+        if not n or n in public_norm:
+            continue
+        if any(e in n or _similar(n, e) for e in present):
+            continue
+        present.append(n)
+        out.append(sentence.strip())
+    return out
+
+
+def _prune_pins(pinned: list[str], public_text: str) -> list[str]:
+    """The stored pinned list reduced to the sentences actually carried on the
+    public text now — dropping ones the user (or an applied rewrite) has since
+    reworded or removed, and collapsing exact duplicates. Keeps pinned honest so
+    a superseded entry can never be re-appended on a later rebuild. Mirrors the
+    substring filter :func:`_write_section` already applies on a manual save."""
+    public_norm = _norm(public_text)
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in pinned:
+        n = _norm(p)
+        if not n or n not in public_norm or n in seen:
+            continue
+        seen.add(n)
+        out.append(p)
+    return out
+
+
 def preserve(new_body: str, current_body: str, pinned: list[str]) -> str:
-    """``new_body`` with every ``ai_only`` span of ``current_body`` and every
-    pinned sentence guaranteed present."""
+    """``new_body`` with every ``ai_only`` span of ``current_body`` kept, and
+    every pinned sentence that is genuinely missing re-attached. A pinned
+    sentence already represented on the public text — verbatim or reworded — is
+    never re-appended (:func:`_pins_to_append`), so a rewrite can't resurrect a
+    fact the user edited away or duplicate one they rephrased."""
     segments = story.parse_spans(new_body)
     have_ai = _norm(" ".join(s["text"] for s in segments if s["kind"] == "ai_only"))
-    public_now = _norm(story.strip_private_spans(new_body))
+    public_now = story.strip_private_spans(new_body)
     for seg in story.parse_spans(current_body):
         if seg["kind"] == "ai_only" and _norm(seg["text"]) not in have_ai:
             segments.append({"text": "\n", "kind": "public"})
             segments.append({"text": seg["text"].strip(), "kind": "ai_only"})
-    for sentence in pinned:
-        if _norm(sentence) and _norm(sentence) not in public_now:
-            segments.append({"text": "\n\n" + sentence, "kind": "public"})
+    for sentence in _pins_to_append(pinned, public_now):
+        segments.append({"text": "\n\n" + sentence, "kind": "public"})
     return story._serialize_spans(segments).strip()
+
+
+def _edited_within_window(ts) -> bool:
+    """Whether a user edit stamped ``user_updated_at`` (``ts``) landed within
+    :data:`_SUPPRESS_WINDOW` of now. Best-effort — anything that is not a usable
+    timestamp reads as 'not recent', never raising into an ingest write."""
+    if not isinstance(ts, datetime):
+        return False
+    try:
+        edited = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        return _now() - edited <= _SUPPRESS_WINDOW
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def route_ai_update(page_id: str, cur: dict, payload: dict) -> dict:
@@ -691,27 +776,37 @@ def route_ai_update(page_id: str, cur: dict, payload: dict) -> dict:
 
     The propose/Apply-Dismiss flow is only for Ayma's OWN discovered edits.
     When the user themselves just edited this section in place
-    (``story.save_section``/``remove_section`` stamped the one-shot
-    ``suppress_next_proposal`` guard and already cleared the live card), the
-    **next** rewrite that would differ from their text is swallowed instead of
-    re-surfaced as a pending card — so a lagging re-ingest can never revert the
-    user's own change, and a user-requested edit never produces a proposal
-    (founder bug 2026-10-28). The guard is spent only on that one suppressed
-    rewrite: writes with nothing to propose (private/hidden page, first public
-    write, or a rewrite that already matches the live public text) keep it, so
-    it still catches the first rewrite that genuinely diverges rather than
-    being wasted on an unrelated no-op pass in between."""
-    suppress = bool(cur.get(story.F_SUPPRESS_PROPOSAL))
+    (``story.save_section``/``remove_section`` stamped the
+    ``suppress_next_proposal`` guard and ``user_updated_at`` and already cleared
+    the live card), a rewrite that would differ from their text is swallowed
+    instead of re-surfaced as a pending card — so a lagging re-ingest can never
+    revert the user's own change, and a user-requested edit never produces a
+    proposal (founder bug 2026-10-28).
+
+    Suppression fires on either signal: the explicit one-shot flag, OR the page
+    having been user-edited within :data:`_SUPPRESS_WINDOW`. The one-shot flag
+    alone caught only the FIRST diverging pass, but more than one stale ingest
+    can be in flight after an edit; the time window keeps swallowing every
+    lagging pass until it lapses, so the edit reliably stays applied in place
+    across the whole re-ingest window. The explicit flag is spent only on a
+    swallowed divergence; the window needs no spending (it lapses on its own),
+    and writes with nothing to propose (private/hidden page, first public write,
+    or a rewrite already matching the live text) keep the flag. After the window
+    lapses a genuinely new Ayma discovery surfaces as a proposal as before."""
+    suppress_flag = bool(cur.get(story.F_SUPPRESS_PROPOSAL))
+    suppress = suppress_flag or _edited_within_window(
+        cur.get(story.F_USER_UPDATED_AT)
+    )
     has_proposal = bool(cur.get(F_PROPOSAL))
 
     def _settle(spend: bool) -> dict:
         """A write with nothing to propose: clear any stale card, and consume
-        the user-edit guard only when ``spend`` (i.e. we actually swallowed a
-        diverging rewrite)."""
+        the explicit one-shot flag only when ``spend`` (i.e. we actually
+        swallowed a diverging rewrite). The time window is never spent here."""
         out: dict = {}
         if has_proposal:
             out[F_PROPOSAL] = None
-        if suppress and spend:
+        if suppress_flag and spend:
             out[story.F_SUPPRESS_PROPOSAL] = False
         return out
 
@@ -731,8 +826,9 @@ def route_ai_update(page_id: str, cur: dict, payload: dict) -> dict:
         return _settle(spend=False)
     # Ayma's rewrite diverges from the live public text.
     if suppress:
-        # The user just edited this section directly: swallow this one diverging
-        # rewrite (never re-propose or revert their change) and spend the guard.
+        # The user edited this section directly (one-shot flag set, or within
+        # the window): swallow this diverging rewrite — never re-propose or
+        # revert their change — and spend the explicit flag if it was set.
         return _settle(spend=True)
     out: dict = {F_PROPOSAL: {"before": current, "after": after, "created_at": _now()}}
     if not (cur.get(story.F_USER_EDITS) or "").strip():
@@ -765,12 +861,32 @@ def _iter_changes(before_public: str, after_public: str):
 
 def _change_items(before_public: str, after_public: str) -> list[dict]:
     """The reviewable changes: one ``{id, op, text}`` per added/removed
-    sentence."""
+    sentence. Ids stay aligned with :func:`_iter_changes` (and so with
+    :func:`_rebuild_public`), so every position is decidable — display-time
+    deduplication of identical rows is :func:`_dedupe_changes`'s job, not
+    this one."""
     return [
         {"id": cid, "op": seg["op"], "text": seg["text"]}
         for seg, cid in _iter_changes(before_public, after_public)
         if cid is not None
     ]
+
+
+def _dedupe_changes(changes: list[dict]) -> list[dict]:
+    """Collapse rows with the same op and normalized text to the first, for
+    display. A messy frozen base can repeat a sentence; the review card must
+    never show the same change twice (founder bug 2026-10-28). The dropped
+    row keeps its own id and stays decidable — resolving the shown row and
+    re-reading simply drops the duplicate from the next render."""
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for ch in changes:
+        key = (ch["op"], _norm(ch["text"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(ch)
+    return out
 
 
 def _decided_map(prop: dict) -> dict[str, str]:
@@ -820,11 +936,9 @@ def _compose_body(
     as an ``ai_only`` note (Ayma still has it and it shows in Ayma's Notes, but
     never on the public profile), and every pinned sentence kept public."""
     body = _build_body(current_body, new_public, private)
-    public_now = _norm(story.strip_private_spans(body))
     segments = story.parse_spans(body)
-    for sentence in pinned:
-        if _norm(sentence) and _norm(sentence) not in public_now:
-            segments.append({"text": "\n\n" + sentence, "kind": "public"})
+    for sentence in _pins_to_append(pinned, story.strip_private_spans(body)):
+        segments.append({"text": "\n\n" + sentence, "kind": "public"})
     return story._serialize_spans(segments).strip()
 
 
@@ -848,6 +962,10 @@ def _write_decided(
     new_public, private = _rebuild_public(before_public, after_public, decided)
     pinned = list(data.get(F_PINNED) or [])
     body = _compose_body(story._effective_body(data), new_public, private, pinned)
+    # Keep the stored pinned list honest: drop entries the applied text has
+    # reworded or dropped so a superseded pin can never be re-appended later
+    # (founder bug 2026-10-28). Mirrors the filter _write_section applies.
+    pruned_pins = _prune_pins(pinned, story.strip_private_spans(body))
     ai_body = (data.get(story.F_AI_BODY) or "").strip()
     fresh = [p for p in private if _norm(p) not in _norm(ai_body)]
     if fresh:
@@ -858,6 +976,7 @@ def _write_decided(
             story.F_USER_EDITS: body,
             story.F_USER_UPDATED_AT: story._server_ts(),
             story.F_AI_BODY: ai_body,
+            F_PINNED: pruned_pins,
             F_PROPOSAL: None if not remaining else {**prop, "decided": decided},
         },
         merge=True,
@@ -923,7 +1042,11 @@ def list_proposals(db, uid: str) -> list[dict]:
             )
             continue
         out.append(
-            {"page_id": snap.id, "title": _title(snap.id, data), "changes": pending}
+            {
+                "page_id": snap.id,
+                "title": _title(snap.id, data),
+                "changes": _dedupe_changes(pending),
+            }
         )
     out.sort(key=lambda p: p["title"].lower())
     return out
