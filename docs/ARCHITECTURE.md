@@ -2158,6 +2158,20 @@ people have no public Taste page it carries a `{"status": "no_taste"}` marker
 (the client shows an empty state); on any other failure the section is omitted,
 never erroring the report.
 
+**Taste capture (two paths, both to the Taste page, never Interests).** The
+public Taste page (`wiki_pages/taste`, `Music:/Film:/Food:` lines) fills from
+(1) direct answers — Ayma's `record_answer(taste_music|taste_film|taste_food)` →
+`skills/questionnaire.py::_sync_taste_page`; and (2) free-chat extraction — the
+`wiki_ingest` pass returns a structured `taste: {music, film, food}` block of
+named favourites the user stated, which `skills/questionnaire.py::
+merge_taste_mentions` appends to the taste nodes (dedup, cap 5) and recomposes
+the page. The ingest prompt routes named favourite music/films/food to that
+block and keeps `interests` for hobbies/activities only (so films/cuisines no
+longer get dumped into the Interests story), and a narrative `taste` page op is
+dropped (the structured path owns the page). The one-sided empty state surfaces
+the viewer's own tastes instead of dead-ending; this copy is server-driven
+(`taste_match._resolve_pair`), live on deploy with no app release.
+
 **Kill switch (billing protection).** The `qloo_enabled` feature flag (default
 **ON**, `docs/FEATURE_FLAGS.md`) disables every Qloo call at runtime with **no
 redeploy** — `scripts/flags.py set qloo_enabled=false --yes`. When off,

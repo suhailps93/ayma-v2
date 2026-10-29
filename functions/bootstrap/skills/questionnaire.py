@@ -259,6 +259,103 @@ def _sync_taste_page(db, uid: str) -> None:
     page_ref.set(payload, merge=True)
 
 
+# Up to 5 names per taste domain (matches the node prompts and
+# ``taste_match._MAX_PER_DOMAIN``).
+_MAX_TASTE_NAMES = 5
+# A taste entry is a short proper name ("Iron Man", "WALL-E", "ramen"), never a
+# sentence — these caps drop any prose the extractor might hand back.
+_MAX_TASTE_NAME_CHARS = 60
+_MAX_TASTE_NAME_WORDS = 8
+# Free-conversation taste extraction maps Qloo domains to the taste nodes.
+_TASTE_DOMAIN_NODES = {
+    "music": "taste_music",
+    "film": "taste_film",
+    "food": "taste_food",
+}
+
+
+def _split_taste_names(value: str) -> list[str]:
+    """The comma-separated names stored on a taste questionnaire node."""
+    out: list[str] = []
+    for part in (value or "").split(","):
+        name = " ".join(part.split()).strip(" .,")
+        if name:
+            out.append(name)
+    return out
+
+
+def merge_taste_mentions(db, uid: str, mentions: dict) -> list[str]:
+    """Fold named taste favourites the user stated in free conversation into the
+    structured taste questionnaire nodes, then recompose the public Taste page.
+
+    ``mentions`` is ``{"music": [...], "film": [...], "food": [...]}`` — bare
+    names the user named as their own favourite artists/bands, films/shows and
+    food/cuisines/restaurants (e.g. ``{"film": ["Iron Man", "WALL-E"]}``). This
+    is the extraction half of taste capture: it makes Film:/Food: fill from what
+    the user actually said even when Ayma didn't call ``record_answer`` for them,
+    so taste mentions land on the public Taste page the Qloo engine reads instead
+    of only in the free-text Interests story. Names are APPENDED to any existing
+    answer (deduped case-insensitively, order kept, capped at 5), never
+    overwriting a node the user answered directly. Returns the domains that
+    gained a name. Best-effort by design — callers (``wiki_ingest``) ignore
+    failures so capture never blocks a turn."""
+    if not uid or not isinstance(mentions, dict):
+        return []
+    qcol = db.collection("users").document(uid).collection("questionnaire")
+    changed: list[str] = []
+    for domain, node_id in _TASTE_DOMAIN_NODES.items():
+        incoming = mentions.get(domain)
+        if not isinstance(incoming, list):
+            continue
+        clean: list[str] = []
+        for item in incoming:
+            name = " ".join(str(item or "").split()).strip(" .,")
+            if (
+                name
+                and len(name) <= _MAX_TASTE_NAME_CHARS
+                and len(name.split()) <= _MAX_TASTE_NAME_WORDS
+            ):
+                clean.append(name)
+        if not clean:
+            continue
+        snap = qcol.document(node_id).get()
+        existing_val = ""
+        if getattr(snap, "exists", False):
+            existing_val = str((snap.to_dict() or {}).get("value") or "")
+        names = _split_taste_names(existing_val)
+        seen = {n.casefold() for n in names}
+        added = False
+        for name in clean:
+            if len(names) >= _MAX_TASTE_NAMES:
+                break
+            if name.casefold() not in seen:
+                names.append(name)
+                seen.add(name.casefold())
+                added = True
+        if not added:
+            continue
+        qcol.document(node_id).set(
+            {
+                "node_id": node_id,
+                "value": ", ".join(names),
+                "source": "stated",
+                "confidence": "high",
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        changed.append(domain)
+    if changed:
+        _sync_taste_page(db, uid)
+        try:
+            import completeness
+
+            completeness.schedule(db, uid)
+        except Exception:  # noqa: BLE001 - best-effort, never fail the write
+            pass
+    return changed
+
+
 def _profile_ref(db, uid: str):
     return (
         db.collection("users")

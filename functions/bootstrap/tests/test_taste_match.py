@@ -206,12 +206,16 @@ def test_pair_endpoint_between_caller_and_match(db, monkeypatch):
 
 
 def test_pair_endpoint_no_taste_is_404_with_code(db, monkeypatch):
+    # Viewer (Sam) has no Taste page, the match (Leo) does — the one-sided
+    # "add yours" state, still 404 no_taste, message tells the viewer to add
+    # their page and names the match.
     user = db.collection("users").document("fresh")
     user.collection("profile").document("main").set({"name": "Sam", "birthdate": "1990-01-01"})
     resp = client.post("/taste/pair", json={"other_uid": LEO}, headers=_auth(monkeypatch, "fresh"))
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "no_taste"
-    assert "Sam" in resp.json()["detail"]["message"]
+    msg = resp.json()["detail"]["message"]
+    assert "Leo" in msg and "Taste page" in msg
 
 
 def test_pair_endpoint_requires_auth(db):
@@ -231,13 +235,31 @@ def test_report_section_ok_has_status_score_and_ideas(db):
 
 
 def test_report_section_no_taste_degrades_without_error(db):
+    # Viewer has no Taste page (the match does): the "add yours" one-sided
+    # state — status no_taste, message prompts the viewer and names the match.
     user = db.collection("users").document("fresh")
     user.collection("profile").document("main").set(
         {"name": "Sam", "birthdate": "1990-01-01"}
     )
     section = asyncio.run(taste_match.report_section(db, "fresh", LEO))
     assert section["status"] == "no_taste"
-    assert "Sam" in section["message"]
+    assert "Leo" in section["message"] and "Taste page" in section["message"]
+
+
+def test_report_section_one_sided_surfaces_viewer_tastes(db):
+    """Viewer HAS a Taste page, the match does NOT: the card no longer
+    dead-ends — it surfaces the viewer's own tastes and a friendly line."""
+    # Maya (seeded, full taste) views a match with no Taste page.
+    bare = db.collection("users").document("bare")
+    bare.collection("profile").document("main").set(
+        {"name": "Dillu", "birthdate": "1992-01-01"}
+    )
+    section = asyncio.run(taste_match.report_section(db, MAYA, "bare"))
+    assert section["status"] == "no_taste"
+    msg = section["message"]
+    assert "Dillu" in msg
+    # The viewer's own tastes are surfaced (Maya listed Khruangbin under Music).
+    assert "Music:" in msg and "Khruangbin" in msg
 
 
 def test_match_report_endpoint_embeds_taste_section(db, monkeypatch):

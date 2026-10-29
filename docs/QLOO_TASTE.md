@@ -58,6 +58,32 @@ topic on the complete-profile screen. Once `taste_music` is answered,
 is server-driven from `GET /questionnaire` (`completeness.questionnaire_view`),
 so this needs no separate UI — the promoted section renders there automatically.
 
+**Two capture paths, both land on the structured Taste page (never Interests).**
+There are two ways taste reaches the public Taste page, and neither duplicates
+into the Interests story:
+
+1. **Direct answer** — Ayma calls `record_answer(taste_music|taste_film|
+   taste_food, …)`; the answer is stored on the questionnaire node.
+2. **Free-chat extraction** — when the user just names favourites in
+   conversation ("I love Iron Man, WALL-E and the Marvel movies", "big AC/DC
+   fan", "I could eat ramen every day") without Ayma asking the node outright,
+   the `wiki_ingest` pass that compiles the wiki returns a structured
+   `taste: {music, film, food}` block (named favourites only, the user's own,
+   ≤5 per domain — see `prompts/wiki_ingest.md`). `wiki_ingest` hands it to
+   `skills/questionnaire.py::merge_taste_mentions`, which APPENDS those names to
+   the taste questionnaire nodes (dedup, cap 5, never overwriting a direct
+   answer) and recomposes the Taste page.
+
+So Film:/Food: fill from the user's film/cuisine mentions **during the taste
+flow or free chat** even when Ayma didn't explicitly ask those nodes — the bug
+the founder hit (films dumped into the Interests story, Taste `Film:`/`Food:`
+left empty, Food never captured). The `wiki_ingest` prompt now routes named
+favourite music/films/food to the `taste` block, keeps `interests` for hobbies/
+activities only (not lists of favourite titles/dishes), and a narrative `taste`
+page op from the model is dropped (the structured path owns that page). The
+`interests` page_type description in `wiki_schema.json` was tightened to stop
+the "tastes" overlap that invited the misrouting.
+
 On any taste answer, `skills/questionnaire.py::_sync_taste_page` composes the
 user's `users/{uid}/wiki_pages/taste` page deterministically in the exact shape
 `parse_taste` reads:
@@ -118,6 +144,21 @@ Config (`config.py`): `QLOO_API_BASE_URL` (default
   `status: "ok"`, a `{"status":"no_taste","message":…}` empty-state marker when
   one/both lack a public Taste page, or `null` on any other failure (the report
   never errors).
+
+**One-sided empty state (improved).** When only one side has a Taste page the
+card no longer dead-ends on a bare "they haven't added it." The message is
+tailored (`taste_match._resolve_pair`):
+- **Viewer has taste, match doesn't** (the founder's "Dillu" case) — the message
+  surfaces the viewer's OWN tastes ("…but yours is ready (Music: …; Film: …;
+  Food: …). The moment {name} adds theirs, your shared tastes and date ideas
+  appear here.") so the viewer's taste signal still shows.
+- **Viewer missing, match has taste** — prompts the viewer to add their page and
+  names the match.
+- **Both missing** — the generic add-a-Taste-page hint.
+  This copy is **server-driven** (the Flutter card renders the server `message`
+  as its note — `TasteMatchLoad.fromReportValue` / `loadTasteMatch`), so it ships
+  the moment ayma-api deploys, no app release needed. Full dual-sided rendering
+  (score, shared chips, date ideas) is unchanged when both have taste.
 - `GET /taste/demo` — public HTML judge page (`taste_demo.html`).
 - `GET /taste/demo/pair?a=&b=` — public; ONLY the four seeded demo ids
   (`maya|leo|aisha|noah`), anything else 404, so it can never read a real user.
@@ -137,6 +178,12 @@ to Qloo. Not credit-metered (Qloo hackathon key, no LLM call).
 
 `functions/bootstrap/taste_match.py`, `qloo_client.py`, `qloo_fixture.json`,
 `taste_demo.html`, `tests/test_taste_match.py`; the "Taste" pages in
-`practice_seed.py`; the router mount + `GET /match/{id}` embedding in `main.py`;
-Flutter shared card `ayma_flutter/lib/widgets/taste_match_card.dart` +
-`taste_models.dart` (reused by the date-sim result and the match report).
+`practice_seed.py` (all four demo profiles — maya/leo/aisha/noah — carry FULL
+Music/Film/Food on BOTH sides, so every demo pair renders a real overlap + date
+ideas); the taste capture path `skills/questionnaire.py` (`_sync_taste_page` +
+`merge_taste_mentions`) and the free-chat extraction in `wiki_ingest.py` /
+`prompts/wiki_ingest.md` (+ the tightened `interests` description in
+`wiki_schema.json`); the router mount + `GET /match/{id}` embedding in
+`main.py`; Flutter shared card `ayma_flutter/lib/widgets/taste_match_card.dart`
++ `taste_models.dart` (reused by the date-sim result and the match report; the
+one-sided copy is server-driven, so no app change was needed).

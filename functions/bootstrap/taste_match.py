@@ -79,6 +79,19 @@ NO_TASTE_MESSAGE = (
     "{name} hasn't added a public Taste page yet — add one with lines like "
     "'Music: …', 'Film: …', 'Food: …' to see a taste match."
 )
+# One-sided states. Rather than dead-ending on "they haven't added it", we tell
+# the viewer exactly what's missing and (when it's the other person) surface the
+# viewer's OWN tastes so the card still carries their taste signal.
+VIEWER_MISSING_MESSAGE = (
+    "Add your public Taste page — lines like 'Music: …', 'Film: …', 'Food: …' — "
+    "to see how your tastes overlap with {other}."
+)
+OTHER_MISSING_MESSAGE = (
+    "{other} hasn't added a public Taste page yet, so there's no overlap to show "
+    "— but yours is ready ({mine}). The moment {other} adds theirs, your shared "
+    "tastes and date ideas appear here."
+)
+_DOMAIN_SUMMARY_ORDER = (("music", "Music"), ("film", "Film"), ("dining", "Food"))
 
 
 class NoTaste(Exception):
@@ -124,6 +137,32 @@ def taste_from_view(view: dict | None) -> tuple[str, str, dict[str, list[str]]]:
     if not taste:
         raise NoTaste(name or "This person")
     return name, str(view.get("location") or ""), taste
+
+
+def _view_name(view: dict | None) -> str:
+    """Display name from a public view, for a message even when taste is absent."""
+    return (str((view or {}).get("name") or "").strip()) or "they"
+
+
+def _safe_taste(view: dict | None) -> tuple[str, str, dict[str, list[str]]] | None:
+    """``taste_from_view`` but ``None`` (not raised) when the person simply has
+    no Taste page. An unreachable profile (deleted/blocked) still raises
+    ``ValueError`` so the caller can drop the section entirely."""
+    try:
+        return taste_from_view(view)
+    except NoTaste:
+        return None
+
+
+def _taste_summary(taste: dict[str, list[str]]) -> str:
+    """``Music: …; Film: …; Food: …`` from a parsed taste map, for the viewer's
+    own tastes in the one-sided empty state."""
+    parts = [
+        f"{label}: {', '.join(taste[domain])}"
+        for domain, label in _DOMAIN_SUMMARY_ORDER
+        if taste.get(domain)
+    ]
+    return "; ".join(parts)
 
 
 def _label(score: int) -> str:
@@ -298,6 +337,30 @@ def _no_taste_detail(exc: NoTaste) -> dict:
     return {"code": "no_taste", "message": NO_TASTE_MESSAGE.format(name=exc.name)}
 
 
+async def _resolve_pair(db, viewer_uid: str, other_uid: str) -> tuple[str, object]:
+    """Resolve the viewer × other taste pair from both PUBLIC views.
+
+    Returns ``("ok", match_payload)`` when BOTH have a usable Taste page, else
+    ``("no_taste", message)`` naming which side is missing — surfacing the
+    viewer's own tastes when it's the OTHER person who hasn't added one, so the
+    card never dead-ends. Raises ``ValueError`` if a profile is unreachable
+    (deleted/blocked), so the caller can omit the section."""
+    a_view = await asyncio.to_thread(public_profile.build, db, viewer_uid, viewer_uid)
+    b_view = await asyncio.to_thread(public_profile.build, db, viewer_uid, other_uid)
+    a = _safe_taste(a_view)
+    b = _safe_taste(b_view)
+    other_name = _view_name(b_view)
+    if a and b:
+        return "ok", await match(a, b)
+    if a and not b:
+        return "no_taste", OTHER_MISSING_MESSAGE.format(
+            other=other_name, mine=_taste_summary(a[2])
+        )
+    if b and not a:
+        return "no_taste", VIEWER_MISSING_MESSAGE.format(other=other_name)
+    return "no_taste", NO_TASTE_MESSAGE.format(name=other_name)
+
+
 async def report_section(db, viewer_uid: str, other_uid: str) -> dict | None:
     """The "Taste match · powered by Qloo" section for the match report between
     the viewer and another matched user, from BOTH people's PUBLIC Taste pages
@@ -310,18 +373,19 @@ async def report_section(db, viewer_uid: str, other_uid: str) -> dict | None:
     marker when one or both people have no public Taste page; or ``None`` on
     any unexpected failure, so the report renders without the section rather
     than erroring. A live Qloo failure already falls back to the fixture inside
-    :func:`match`, so this never dark-fails on a transient vendor error."""
+    :func:`match`, so this never dark-fails on a transient vendor error. The
+    one-sided empty state (viewer has taste, match doesn't) surfaces the viewer's
+    own tastes rather than a bare "they haven't added it" — see
+    :func:`_resolve_pair`."""
     try:
-        a = taste_from_view(
-            await asyncio.to_thread(public_profile.build, db, viewer_uid, viewer_uid)
-        )
-        b = taste_from_view(
-            await asyncio.to_thread(public_profile.build, db, viewer_uid, other_uid)
-        )
-        result = await match(a, b)
-        result["status"] = "ok"
-        return result
+        status, payload = await _resolve_pair(db, viewer_uid, other_uid)
+        if status == "ok":
+            result = payload
+            result["status"] = "ok"
+            return result
+        return {"status": "no_taste", "message": payload}
     except NoTaste as exc:
+        # Kill switch (qloo disabled) — match() short-circuits to NoTaste.
         return {
             "status": "no_taste",
             "message": NO_TASTE_MESSAGE.format(name=exc.name),
@@ -352,13 +416,17 @@ async def taste_pair(
     db = get_db()
     other = req.other_uid.strip()
     try:
-        a = taste_from_view(await asyncio.to_thread(public_profile.build, db, caller.uid, caller.uid))
-        b = taste_from_view(await asyncio.to_thread(public_profile.build, db, caller.uid, other))
-        return await match(a, b)
+        status, payload = await _resolve_pair(db, caller.uid, other)
     except NoTaste as exc:
+        # Kill switch (qloo disabled) — match() short-circuits to NoTaste.
         raise HTTPException(status_code=404, detail=_no_taste_detail(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="No profile to match with.") from exc
+    if status == "ok":
+        return payload
+    raise HTTPException(
+        status_code=404, detail={"code": "no_taste", "message": payload}
+    )
 
 
 @router.get("/taste/demo", response_class=HTMLResponse, include_in_schema=False)

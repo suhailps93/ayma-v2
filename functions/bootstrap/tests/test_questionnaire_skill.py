@@ -209,6 +209,62 @@ def test_taste_page_preserves_user_chosen_visibility_on_reanswer():
     assert page["ai_body"] == "Music: Khruangbin, Bon Iver"
 
 
+def test_merge_taste_mentions_fills_film_and_food_from_free_chat():
+    """Named films/food the user mentions in free chat populate the TASTE page's
+    Film:/Food: lines (not Interests), appending to any direct answer; Music is
+    left working. This is the extraction half of taste capture (wiki_ingest)."""
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    # Music came in as a direct taste answer.
+    fn("taste_music", "Billie Eilish, Bruno Mars", "stated")
+
+    changed = questionnaire.merge_taste_mentions(
+        db,
+        "u1",
+        {
+            "music": ["Billie Eilish", "Russ"],  # dupe dropped, Russ appended
+            "film": ["Iron Man", "WALL-E", "Terminator"],
+            "food": ["ramen"],
+        },
+    )
+    assert set(changed) == {"music", "film", "food"}
+    assert db.docs[_q("taste_film")]["value"] == "Iron Man, WALL-E, Terminator"
+    assert db.docs[_q("taste_food")]["value"] == "ramen"
+    assert db.docs[_q("taste_music")]["value"] == "Billie Eilish, Bruno Mars, Russ"
+
+    import taste_match
+
+    parsed = taste_match.parse_taste(_taste_page(db)["ai_body"])
+    assert parsed["film"] == ["Iron Man", "WALL-E", "Terminator"]
+    assert parsed["dining"] == ["ramen"]
+
+
+def test_merge_taste_mentions_caps_dedupes_and_drops_prose():
+    db = FakeDb({_PROF: {}})
+    changed = questionnaire.merge_taste_mentions(
+        db,
+        "u1",
+        {
+            "film": [
+                "Iron Man", "iron man", "WALL-E", "Terminator", "Friends",
+                "Marvel", "Dune",  # 6th+ unique over the cap of 5 is dropped
+                "a long sentence the model mistakenly put here as a title okay",
+            ]
+        },
+    )
+    assert changed == ["film"]
+    names = db.docs[_q("taste_film")]["value"].split(", ")
+    assert len(names) == 5  # capped
+    assert "iron man" not in [n for n in names if n != "Iron Man"]  # dedup kept first
+
+
+def test_merge_taste_mentions_noop_returns_empty():
+    db = FakeDb({_PROF: {}})
+    assert questionnaire.merge_taste_mentions(db, "u1", {}) == []
+    assert questionnaire.merge_taste_mentions(db, "u1", {"film": []}) == []
+    assert _taste_page(db) is None
+
+
 def test_record_answer_bad_node_and_bad_value():
     db = FakeDb({_PROF: {}})
     fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
