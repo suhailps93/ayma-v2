@@ -39,7 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, SINGLE-SELECT per axis (tap a photo to make it THE one analysed, replacing the prior pick; backend reads exactly one photo per axis) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, MULTI-SELECT per axis (tap to tick several, up to 6; ALL ticked photos read together in ONE combined face/body call) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -238,14 +238,17 @@ flowchart LR
   single clear face for Face (`shows_face`), the user's body for Body (`shows_body`). A **multi-person** photo is
   **never** auto-selected in either axis (analysis needs solo shots of the user; not analysing photos of other people is
   also privacy-positive), a face-only/no-body photo is never pre-checked into Body, and an untagged/ambiguous photo is
-  surfaced but never pre-checked (defensive: can't verify solo + correct type). **The sheet is SINGLE-SELECT per axis
-  (§ founder 2026-10-29 fix)**: the backend analyses exactly ONE photo per axis, so each axis holds at most one selected
-  photo. On first load an axis defaults to the **first** `auto_select` photo (or none); tapping a thumbnail makes it
-  **THE** photo analysed for that axis, **replacing** any previously selected one (adding a photo likewise becomes that
-  axis's sole pick) — so exactly one `media_id` (or one privately-added `image_path`) per axis is sent on run. This fixed
-  the repeat-report bug: the old multi-select kept the sticky auto-selected default alongside a newly-tapped photo, and
-  since the backend reads only the first grid photo in grid order, the default re-won and every rerun re-analysed the same
-  photo and produced an identical report (§ founder 2026-10-29). To leave a section out, use **Skip**. Selection is local
+  surfaced but never pre-checked (defensive: can't verify solo + correct type). **The sheet is MULTI-SELECT per axis
+  (§ founder: real multi-select done right)**: the user ticks as many photos per section as they like (up to
+  `kMaxPerAxis` = 6, mirrored by the backend `appearance._MAX_PHOTOS` and the endpoint's `max_length=6`), and the backend
+  analyses **ALL** of an axis's ticked photos **together in ONE combined vision call** — `face_report.run`/`body_report.run`
+  accept a list of images and reconcile them into a single candid read of the SAME person, never as different people; the
+  report's `source_photos` lists every analysed photo. On first load an axis defaults to **all** its `auto_select` photos
+  (capped), and tapping a thumbnail **toggles** it in or out of that axis's set; a freshly-added photo joins the set
+  (unless already at the cap). This is the fix for the earlier first-photo-only "stale report" bug: the OLD multi-select
+  UI let the user tick several but the backend read only the FIRST grid photo in grid order, so every rerun re-analysed
+  the same one photo and produced an identical report (§ founder 2026-10-29). The interim single-select workaround is now
+  superseded — the backend genuinely reads the whole ticked set. To leave a section out, use **Skip**. Selection is local
   to the sheet and **never navigates** (a tap only picks; only the explicit **Add photo** tile, now present on **both**
   groups whether empty or not, opens the picker). **Loading state (§ founder 2026-10-29)**: while a run is in flight the
   report screen (`AppearanceReportScreen`) shows it IS running — the top-right Re-run control swaps to a spinner (disabled)
@@ -275,9 +278,12 @@ flowchart LR
   caller). This replaces the earlier blocking "Running your analysis…" dialog, which cancelled the run when the user
   navigated away (§ founder 2026-10-28: "it used to run in the background"). It still never pushes a
   `ChatKickoff.appearance` or lands on the chat shell. The backend
-  honours the user's own pick via `appearance._pick` + `_bucket_eligible` — the *same* categorisation the sheet uses, so
-  a freshly-added, not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is
-  refused; an explicit selection never falls back to a chat attachment. `run_appearance` returns and persists a per-axis
+  honours the user's own picks via `appearance._pick_all` + `_bucket_eligible` — the *same* categorisation the sheet uses,
+  returning ALL selected eligible photos for an axis (capped at `_MAX_PHOTOS`) for one combined read, so a freshly-added,
+  not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is refused; an
+  explicit selection never falls back to a chat attachment. The face/body report prompts are externalised to
+  `functions/bootstrap/prompts/face_report.md` and `body_report.md` (`## system` / `## instruction` sections, loaded
+  dynamically — AGENTS.md: no inline prompt strings). `run_appearance` returns and persists a per-axis
   `category_status` (`ran` / `skipped` / `no_eligible_photo`). **A rerun never wipes the axis it didn't run**: when this
   run only produced one axis (the other skipped, or wanted but with no eligible photo), the previously-produced section
   is reused rather than regressed to `needs_*_photo` — so the unified face+body score, and the shareable report card
