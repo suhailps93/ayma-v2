@@ -43,8 +43,10 @@ _RAW = {
 
 @pytest.fixture
 def _patch_json(monkeypatch):
-    async def _json(contents, system_prompt, response_schema=None, image=None, **kw):
-        assert image is not None and image[0] == b"jpegbytes"
+    async def _json(contents, system_prompt, response_schema=None, image=None,
+                    images=None, **kw):
+        # body_report.run now always sends a (possibly one-item) images list.
+        assert images and images[0][0] == b"jpegbytes"
         assert kw.get("feature") == token_ledger.FEATURE_BODY_REPORT
         return dict(_RAW)
 
@@ -83,9 +85,10 @@ def test_run_uses_gemini_vision_even_when_reports_flipped_to_meta(monkeypatch):
     )
     used = {"gemini": False}
 
-    async def _json(contents, system_prompt, response_schema=None, image=None, **kw):
+    async def _json(contents, system_prompt, response_schema=None, image=None,
+                    images=None, **kw):
         used["gemini"] = True
-        assert image is not None and image[0] == b"jpegbytes"
+        assert images and images[0][0] == b"jpegbytes"
         return dict(_RAW)
 
     async def _no_meta(*a, **k):
