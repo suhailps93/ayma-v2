@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
-import 'ayma_logo_loader.dart';
 import 'keyboard_dismiss.dart';
 
 /// Padding wrapping the composer bar at the bottom of a chat screen — shared
@@ -361,15 +360,13 @@ class _ChatComposerState extends State<ChatComposer>
 
   Widget _voiceRow(AymaTokens ac) {
     // While connecting/waking the mic is NOT yet being captured, so the
-    // leading slot shows a connecting indicator rather than the lit, tappable
-    // "capturing" mic (tapping which would be a no-op mute before the call is
-    // live anyway) — the one visual that otherwise made the composer read as
-    // "listening" before it genuinely is.
+    // leading slot shows a dimmed, unlit microphone — still clearly a mic, just
+    // muted/inactive — rather than the lit, tappable "capturing" mic (tapping
+    // which would be a no-op mute before the call is live anyway). A static
+    // dimmed mic reads as "not listening yet" without implying the composer is
+    // already capturing audio.
     final leading = widget.mode == ComposerMode.connecting
-        ? _ConnectingLead(
-            reduceMotion:
-                MediaQuery.maybeOf(context)?.disableAnimations ?? false,
-          )
+        ? _ConnectingLead(color: ac.fgMute)
         : _RoundIconButton(
             icon: widget.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
             tooltip: widget.muted ? 'Unmute' : 'Mute',
@@ -451,16 +448,16 @@ class _RoundIconButton extends StatelessWidget {
 }
 
 /// The leading slot of the voice row while a session is still being
-/// established ([ComposerMode.connecting]): the animated Ayma-logo loader
-/// (founder: "the Ayma logo should have a loading animation") sized to match
-/// [_RoundIconButton]'s 44px touch slot so the row height never jumps when it
-/// swaps to the real mic button once live. Non-interactive — there is nothing
-/// to mute yet. The loader renders the logo completely still under reduced
-/// motion, which still reads as "not listening yet".
+/// established ([ComposerMode.connecting]): a dimmed, unlit microphone glyph
+/// (founder: the mic should stay visible, just clearly not-yet-listening — not
+/// an orb and not a spinner) sized to match [_RoundIconButton]'s 44px touch
+/// slot so the row height never jumps when it swaps to the real mic button once
+/// live. Non-interactive — there is nothing to mute yet. Static in every case,
+/// including reduced motion, which still reads as "not listening yet".
 class _ConnectingLead extends StatelessWidget {
-  const _ConnectingLead({required this.reduceMotion});
+  const _ConnectingLead({required this.color});
 
-  final bool reduceMotion;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
@@ -468,7 +465,7 @@ class _ConnectingLead extends StatelessWidget {
       width: 44,
       height: 44,
       child: Center(
-        child: AymaLogoLoader(size: 24, reduceMotion: reduceMotion),
+        child: Icon(Icons.mic_none_rounded, size: 20, color: color),
       ),
     );
   }

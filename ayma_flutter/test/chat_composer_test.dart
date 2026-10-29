@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 
 import 'package:ayma_flutter/theme.dart';
-import 'package:ayma_flutter/widgets/ayma_logo_loader.dart';
 import 'package:ayma_flutter/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -176,8 +175,8 @@ void main() {
     }
 
     testWidgets(
-      'shows the animated logo loader and the connecting label, never the '
-      'live mic',
+      'shows a dimmed, unlit mic and the connecting label, never a spinner '
+      'or the live mic',
       (tester) async {
         await pumpComposer(
           tester,
@@ -185,7 +184,10 @@ void main() {
           statusLabel: 'Connecting…',
         );
         expect(find.text('Connecting…'), findsOneWidget);
-        expect(find.byType(AymaLogoLoader), findsOneWidget);
+        // The connecting slot stays a visible microphone, just dimmed/unlit.
+        expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+        // Not a spinner (founder: no CircularProgressIndicator).
+        expect(find.byType(CircularProgressIndicator), findsNothing);
         // The lit "capturing" mic (listening) must not be shown while
         // connecting — that is exactly what read as "Listening" too early.
         expect(find.byIcon(Icons.mic_rounded), findsNothing);
@@ -202,11 +204,11 @@ void main() {
         statusLabel: 'Waking Ayma…',
       );
       expect(find.text('Waking Ayma…'), findsOneWidget);
-      expect(find.byType(AymaLogoLoader), findsOneWidget);
+      expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
     });
 
-    testWidgets('reduced motion shows the static (unanimated) logo loader', (
+    testWidgets('reduced motion still shows the dimmed static mic, no spinner', (
       tester,
     ) async {
       await pumpComposer(
@@ -216,15 +218,8 @@ void main() {
         reduceMotion: true,
       );
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      // The logo loader is still present, just rendered completely still.
-      expect(find.byType(AymaLogoLoader), findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byType(AymaLogoLoader),
-          matching: find.byType(AnimatedBuilder),
-        ),
-        findsNothing,
-      );
+      // The dimmed mic is identical in the reduced-motion case.
+      expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
       expect(find.text('Connecting…'), findsOneWidget);
     });
 

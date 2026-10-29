@@ -509,7 +509,7 @@ Muting is spoken only (the control message refuses `muted: true`). `ui_action` m
 
 The user-visible "a call is live" surfaces — the OS call notification and the orb's live/"connected" treatment — turn on only once Ayma is **genuinely listening** (the agent has joined the room and the controller has reached `live` via the one-shot `agentReady` latch), never during `connecting`/`waking`. They all read one source of truth, `VoiceSessionController.isListening` (`phase == live`), so they can never diverge or light up before Ayma can hear the caller:
 
-- **Composer** (`ChatComposer`): `connecting`/`waking` → `ComposerMode.connecting` (a spinner lead, "Connecting…" / "Waking Ayma…", no animating waveform); only `live` → `listening`/`aiSpeaking` with the border waveform.
+- **Composer** (`ChatComposer`): `connecting`/`waking` → `ComposerMode.connecting` (a **dimmed, unlit microphone** lead — the mic stays visible but clearly not-yet-listening, not a spinner or orb; `_ConnectingLead` renders `Icons.mic_none_rounded` in `ac.fgMute`, static even under reduced motion — plus "Connecting…" / "Waking Ayma…", no animating waveform); only `live` → `listening`/`aiSpeaking` with the lit mic and the border waveform.
 - **Central orb** (`AymaOrb`, on `VoiceCallScreen`, the nav-bar tab `AymaTabBar`, the sign-in greeting orb, and the Practice-Date simulator): `connecting`/`waking` → `AymaOrbState.thinking` (a "working on it" visual); only `live` → `listening`/`speaking`. The orb's `voiceLive` "connected filament" glow is gated on `isListening`, so the glow switches on at the listening moment, not during connect/wake.
 - **Android call notification** (`CallBackgroundService` → `CallForegroundService.kt`): the notification is backed by a mandatory `foregroundServiceType="microphone"` foreground service, and Android has no silent FGS (`startForeground()` requires a notification). The founder's report was the full ongoing-**call** notification ("Ayma • Voice call", Hang Up / Mute pills) appearing the instant a call began connecting. The service — and therefore its notification — is now started only at the listening state (`_onVoiceChanged`/`_startUi` gate on `isListening`), so the connect/wake window shows no call notification at all. This is safe because a mic FGS is only needed to keep capture alive once the app is **backgrounded**; a foreground app records freely, and connecting/waking almost always completes while the connecting orb is on screen (foreground), so the FGS still starts in Android's required "eligible state". The documented trade-off: if the user backgrounds the app *during* connect/wake and the agent only reaches listening while still backgrounded, the FGS can't start then — no conversation is lost (the agent hadn't joined) and `CallForegroundService.onStartCommand` already guards the `startForeground()` `SecurityException` so it never crashes. iOS CallKit is reported at the same `isListening` gate.
 
@@ -1509,8 +1509,10 @@ Four client-side perceived-performance improvements, all behind no flag (pure UX
   everywhere." (2) **Animated-logo loader** (`lib/widgets/ayma_logo_loader.dart`, `AymaLogoLoader`) — the branded "Ayma
   is waking up" indicator: the bundled orb mark (`assets/icon/ayma_orb_ios.png`) with a breathing pulse + accent halo
   glow; respects reduced motion (`MediaQuery.disableAnimations` or a forced `reduceMotion`): renders completely still,
-  no controller running. Reserved for the **voice wake/connect** state ONLY — the composer's connecting leading slot
-  (`chat_composer.dart` `_ConnectingLead`).
+  no controller running. NOTE (founder 2026-10-28): this loader is **no longer wired to any production surface** — the
+  composer's connecting slot used to show it, but now shows a dimmed, unlit mic (`_ConnectingLead` →
+  `Icons.mic_none_rounded`, static even under reduced motion) so the mic stays visible while reading as "not listening
+  yet". The widget (and its test) are retained for reuse; delete if no surface re-adopts it.
 
 - **Report auto-refresh on background completion** (`lib/services/report_events.dart`, `ReportEvents`) — the Appearance
   analysis runs in the background (§0 Card, `skills_screen.dart`'s fire-and-forget run), persisting the report and
