@@ -19,21 +19,107 @@ In the app: open a demo profile → **Simulate a conversation** → run it; the
 
 1. **Taste signals** — each person's PUBLIC "Taste" wiki page (`page_type:
    "taste"`), lines like `Music: Khruangbin, Bon Iver`, `Film: Arrival`,
-   `Food: Ramen Shop` (aliases: artists/bands, movies/films, food/places/
-   restaurants/cafes; max 5 per domain). Parsed by `taste_match.parse_taste`.
+   `Food: Ramen Shop`, and optionally `TV:`, `Books:`, `Podcasts:`, `Games:`,
+   `Travel:`, `Brands:`, `Nightlife:` (full alias + header list below; max 5 per
+   domain). Parsed by `taste_match.parse_taste`.
 2. **Resolve** every name to a Qloo entity of its domain's type
-   (`GET /search?query=…&types=urn:entity:artist|movie|place`).
-3. **Compatibility** — for each domain, Qloo recommendations (`GET /v2/insights`,
-   `signal.interests.entities` = ALL of a person's entities, so it's
-   cross-domain) for person A and for person B; domain score = overlap
-   coefficient of the two recommendation sets × 100; overall = mean of domains.
-   Shared tastes = names both listed outright, then shared recommendations in
-   the joint ranking's order. Label: ≥70 strong, ≥45 good, ≥25 some, else
-   different. Summary is a short template over the shared names + best domain.
-4. **Date ideas** — one joint Qloo query (both people's entities at once) for
-   `urn:entity:place` filtered to the first person's city (`filter.location.query`),
-   top 3; plus the top joint film pick ("movie night") and music pick
-   ("listening date or live show") that neither person already listed.
+   (`GET /search?query=…&types=urn:entity:…`) — ten entity types (below).
+   Resolved entities carry their Qloo `tags` (names) and `tag_ids` (URNs).
+3. **Compatibility** — for each *present* domain, Qloo recommendations
+   (`GET /v2/insights`, `signal.interests.entities` = ALL of a person's
+   entities, so it's cross-domain) for person A and for person B; domain score =
+   overlap coefficient of the two recommendation sets × 100; overall = mean of
+   present domains. Shared tastes = names both listed outright, then shared
+   recommendations in the joint ranking's order. Label: ≥70 strong, ≥45 good,
+   ≥25 some, else different. Summary is a short template over the shared names +
+   best domain. **Only domains someone listed are scored** — a music/film/food
+   page makes exactly the original calls; TV/Books/… add theirs only when present.
+4. **Why you match (`shared_tags`)** — `GET /v2/insights filter.type=urn:tag`
+   gives Qloo's affinity-ranked tags for each whole taste profile; the engine
+   intersects the two (genre/theme/style labels surfaced ahead of niche keyword
+   tags), blended with the genre/theme tags their resolved entities share, into
+   readable descriptors ("Atmospheric", "Melancholic", "Psychedelic") — the
+   explainability of the match.
+5. **Audience read (`demographics`)** — `GET /v2/insights
+   filter.type=urn:demographics` per person returns Qloo's signed age/gender
+   over/under-index for each taste entity; averaged into one `{age, gender}`
+   read per person, surfaced as `top_age` / `gender_lean` + a shared note. Only
+   taste entity ids are sent — never user identity.
+6. **Date ideas** — one joint Qloo query (both people's entities at once) for
+   `urn:entity:place`, filtered to the first person's city
+   (`filter.location.query`) and **tag-aligned to both people** via `filter.tags`
+   = the place tags their dining picks share (unfiltered fallback so ideas never
+   go dark), top 3; each place "why" names the shared tag. Plus one pick per
+   other present domain (film → "movie night", music → "listening date", TV →
+   "binge night", books → "book swap", podcasts, games → "game night", travel →
+   "weekend trip", nightlife → "night out", brands → "browse together") that the
+   joint Qloo ranking puts highly and neither person already listed.
+
+## Qloo API surface we use (depth + breadth)
+
+This is the full enumeration of the Qloo API the taste engine touches — the
+"Technological Implementation / Qloo depth" writeup. All calls are `GET` with
+the `X-Api-Key` header against `https://hackathon.api.qloo.com`.
+
+**Endpoints & `/v2/insights` surface:**
+
+| Call | Params used | Response path | Drives |
+|---|---|---|---|
+| `GET /search` | `query`, `types` (one `urn:entity:*`), `take` | `results[]` → `entity_id`, `name`, `tags[].name`, `tags[].tag_id` | name → entity, with tags + tag ids |
+| `GET /v2/insights` (entity) | `filter.type=urn:entity:*`, `signal.interests.entities`, `filter.location.query`, `filter.tags`, `take` | `results.entities[]` → `name`, `entity_id`, `query.affinity`, `tags[]`, `properties.address` | per-domain recs → overlap score; joint recs → date ideas |
+| `GET /v2/insights` (tags) | `filter.type=urn:tag`, `signal.interests.entities`, `take` | `results.tags[]` → `tag_id`, `name`, `query.affinity` | `shared_tags` (why you match) |
+| `GET /v2/insights` (demographics) | `filter.type=urn:demographics`, `signal.interests.entities` | `results.demographics[].query.age.{bucket}`, `.gender.{male,female}` | `demographics` (audience skew) |
+
+Age buckets returned: `24_and_younger`, `25_to_29`, `30_to_34`, `35_to_44`,
+`45_to_54`, `55_and_older`; gender: `male`, `female` (signed over/under-index,
+roughly −1…+1). `filter.location.query` + `filter.tags` together can over-narrow
+and return zero places — the engine falls back to the unfiltered joint query.
+`filter.tags` takes tag URNs only (freeform strings are rejected), so place
+alignment uses the `tag_id`s the two dining picks share. Nightlife uses
+`urn:entity:place` narrowed by `filter.tags=urn:tag:category:place:nightlife`
+(verified: that tag + a location filter returns zero, so nightlife recs run
+without the location filter).
+
+**Entity types (breadth) ↔ Taste-page headers.** Every type below was verified
+to resolve against the LIVE hackathon API (search + insights):
+
+| Domain key | Entity type URN | Header strings parsed (case-insensitive) |
+|---|---|---|
+| `music` | `urn:entity:artist` | Music, Artists, Bands |
+| `film` | `urn:entity:movie` | Film, Films, Movie, Movies |
+| `dining` | `urn:entity:place` | Dining, Food, Places, Restaurants, Cafes |
+| `tv` | `urn:entity:tv_show` | TV, TV shows, Shows, Television, Series |
+| `books` | `urn:entity:book` | Books, Book, Reading, Authors |
+| `podcasts` | `urn:entity:podcast` | Podcasts, Podcast |
+| `games` | `urn:entity:videogame` | Games, Game, Video games, Videogames, Gaming |
+| `travel` | `urn:entity:destination` | Travel, Destinations, Destination, Trips, Places to go |
+| `brands` | `urn:entity:brand` | Brands, Brand, Fashion, Style |
+| `nightlife` | `urn:entity:place` + nightlife tag | Nightlife, Bars, Clubs, Going out |
+
+> Note on `videogame`: the LIVE hackathon API uses `urn:entity:videogame` (no
+> underscore). `urn:entity:video_game` returns HTTP 400 there, so the no-underscore
+> form is authoritative for this deployment.
+
+The first three (music/film/dining) are the original demo domains; the rest are
+**additive** — recognised only when a Taste page lists them, never required. A
+Taste page with only Music/Film/Food scores and calls exactly as before.
+
+**New response fields (additive — for the Flutter card + demo-data follow-up):**
+- `shared_tags: string[]` — readable shared taste descriptors (genre/theme tags),
+  the "why you match" headline.
+- `demographics: {a, b, note} | null` — per person `{top_age, gender_lean, age:{bucket:skew}, gender:{male,female}}`; `note` is a short comparison; `null` when Qloo has no read (e.g. the offline fixture).
+- `domains[].domain` and `date_ideas[].kind` now range over the ten domain keys
+  above (previously only music/film/dining).
+
+No existing field (`source, a, b, score, score_label, summary, shared, domains,
+date_ideas`) was renamed or removed.
+
+**Also available (enumerated, not needed by the match):** `GET /v2/tags`
+(resolve freeform text → tag URNs) and `GET /v2/audiences` /
+`GET /v2/audiences/types` (`signal.demographics.audiences`); `signal.location`,
+`filter.location.radius` (metres), `filter.popularity.min/max` (0–1 percentile),
+`filter.exclude.*`, and `filter.type=urn:heatmap` (geo grid). The engine sticks
+to the four call shapes above — the ones that improve a *pair* taste match.
 
 ## Where the Taste page comes from
 
@@ -132,10 +218,12 @@ who hand-added a Taste page had taste data.
 
 `qloo_client.get_client()` returns the live client when `QLOO_API_KEY` is set
 (Secret Manager → Cloud Run), else `FixtureQlooClient` — a deterministic mini
-taste graph in `functions/bootstrap/qloo_fixture.json` (48 real, well-known
-entities; tags illustrative, NOT Qloo data) scoring recommendations by shared
-tags. Any live failure (timeout, auth, unexpected payload) falls back to the
-fixture for that request. Every response carries `source: "qloo" | "fixture"`;
+taste graph in `functions/bootstrap/qloo_fixture.json` (72 real, well-known
+entities across all ten domains — artists, movies, TV, books, podcasts,
+destinations, brands, places incl. nightlife; tags illustrative, NOT Qloo data)
+scoring recommendations by shared tags, with `tags()`/`demographics()` offline
+stand-ins (demographics degrades to `null`). Any live failure (timeout, auth,
+unexpected payload) falls back to the fixture for that request. Every response carries `source: "qloo" | "fixture"`;
 the web page and app card show a "sample data" chip on fixture.
 
 **Status: LIVE** since 2026-10-27 (ayma-api revision `ayma-api-00221-wjd`): the
@@ -187,14 +275,19 @@ tailored (`taste_match._resolve_pair`):
   Cached in-process per pair.
 
 Response: `{source, a:{name}, b:{name}, score, score_label, summary, shared[],
-domains:[{domain, score}], date_ideas:[{name, kind, why, address}]}`.
-No taste page → 404 `{"code":"no_taste","message":…}`.
+shared_tags[], demographics:{a,b,note}|null, domains:[{domain, score}],
+date_ideas:[{name, kind, why, address}]}`. `shared_tags` and `demographics` are
+additive (see "Qloo API surface" above); `domain`/`kind` range over the ten
+domain keys. No taste page → 404 `{"code":"no_taste","message":…}`.
 
 ## Privacy & cost
 
 Public profile data only, for both people (also for the caller — the caller's
 own private pages are not used). Only entity names a person published are sent
-to Qloo. The match itself is not credit-metered (Qloo hackathon key, no LLM
+to Qloo — including the demographics call, which sends **only taste entity ids,
+never user identity** (name, uid, birthdate, gender, location are never sent).
+The `demographics` block is the *audience* Qloo associates with those public
+tastes, not the user's own attributes. The match itself is not credit-metered (Qloo hackathon key, no LLM
 call). The **taste backfill** is the one taste path that does read a user's own
 private content and does make an LLM call: it reads only that user's OWN Story
 and conversations, extracts only names they themselves stated, and writes them

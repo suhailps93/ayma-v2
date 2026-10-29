@@ -2253,6 +2253,35 @@ people have no public Taste page it carries a `{"status": "no_taste"}` marker
 (the client shows an empty state); on any other failure the section is omitted,
 never erroring the report.
 
+**Qloo depth (breadth × explainability).** The engine uses Qloo across four
+call shapes and ten entity types (full enumeration + live samples:
+`docs/QLOO_TASTE.md`):
+- **`/search`** resolves each listed name to a Qloo entity of its domain's type.
+- **`/v2/insights` entity recs** (`filter.type=urn:entity:*`) drive the
+  per-domain overlap score, now over ten domains: music (`artist`), film
+  (`movie`), dining (`place`), **TV (`tv_show`), books (`book`), podcasts
+  (`podcast`), games (`videogame`), travel (`destination`), brands (`brand`),
+  nightlife (`place` + a nightlife tag filter)**. New domains are **additive**:
+  scored only when a Taste page lists them (`present` domains), so a
+  music/film/food page behaves exactly as before and makes the same calls.
+- **`/v2/insights filter.type=urn:tag`** per person → the genre/theme tags each
+  taste profile skews to; intersected (genre/theme preferred, niche keywords
+  last) into **`shared_tags`** — the readable "why you match" headline, also
+  blended with the genre/theme tags shared by their resolved entities.
+- **`/v2/insights filter.type=urn:demographics`** per person → the age/gender
+  **audience skew** of each person's tastes, averaged across their entities into
+  a **`demographics`** block (per-person `top_age`/`gender_lean` + a shared
+  note). Sends only taste entity ids, never user identity.
+- **`filter.tags`** tag-aligns the joint date-place query to the place tags both
+  people's dining picks share (with an unfiltered fallback so ideas never go
+  dark), and each place "why" names the shared tag ("Because you both lean …").
+
+The response adds `shared_tags: [str]` and `demographics: {a, b, note} | null`
+to the existing `source/a/b/score/score_label/summary/shared/domains/date_ideas`
+(nothing renamed/removed); `domains` and `date_ideas` now span whichever of the
+ten domains are present. Date ideas carry one pick per present domain
+(`kind` ∈ the domain keys) plus the tag-aligned places.
+
 **Taste capture (three paths, all to the Taste page, never Interests).** The
 public Taste page (`wiki_pages/taste`, `Music:/Film:/Food:` lines) fills from
 (1) direct answers — Ayma's `record_answer(taste_music|taste_film|taste_food)` →
@@ -2332,13 +2361,17 @@ flowchart LR
   SYNC --> B
   A["Person A public profile<br/>Taste page"] --> PA["parse_taste"]
   B["Person B public profile<br/>Taste page"] --> PB["parse_taste"]
-  PA & PB --> RES["Qloo /search<br/>names → entities"]
-  RES --> RA["/v2/insights per domain<br/>(A signals)"]
-  RES --> RB["/v2/insights per domain<br/>(B signals)"]
-  RES --> RJ["/v2/insights joint<br/>(A+B signals; places in A's city)"]
+  PA & PB --> RES["Qloo /search<br/>names → entities (10 types)<br/>+tags, +tag_ids"]
+  RES --> RA["/v2/insights per present domain<br/>(A signals)"]
+  RES --> RB["/v2/insights per present domain<br/>(B signals)"]
+  RES --> RJ["/v2/insights joint<br/>(A+B signals; places in A's city,<br/>filter.tags = shared place tags)"]
+  RES --> TG["/v2/insights filter.type=urn:tag<br/>(A tags ∩ B tags → shared_tags)"]
+  RES --> DM["/v2/insights filter.type=urn:demographics<br/>(A, B audience skew → demographics)"]
   RA & RB --> SC["overlap per domain → score,<br/>label, summary, shared"]
-  RJ --> DI["date ideas<br/>(3 places + film + music)"]
-  SC & DI --> OUT["POST /taste/pair → date-sim card<br/>GET /match/{id}.taste → match report section<br/>GET /taste/demo/pair → judge page"]
-  Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json)"]
+  TG --> SC
+  DM --> SC
+  RJ --> DI["date ideas<br/>(places + one pick per present domain,<br/>tag-aligned 'why')"]
+  SC & DI --> OUT["POST /taste/pair → date-sim card<br/>GET /match/{id}.taste → match report section<br/>GET /taste/demo/pair → judge page<br/>(+shared_tags, +demographics)"]
+  Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json; tags()/demographics() degrade)"]
 ```
 
