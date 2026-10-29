@@ -1349,6 +1349,28 @@ class ApiClient {
     );
   }
 
+  /// `POST /date-sim/{simId}/continue` — continue an existing simulation with
+  /// [moreMessages] more turns, resuming from where it left off (never a
+  /// restart) and re-scoring over the full transcript. The new turns stream
+  /// into the same Firestore doc the client is already watching, so the body is
+  /// not used; this future completes when the continuation ends. Throws
+  /// [ApiException]: 402 out of credits, 403 AI-Avatar opt-out, 404 no sim.
+  Future<void> dateSimContinue(String simId, int moreMessages) async {
+    final r = await _http.post(
+      _uri('/date-sim/$simId/continue'),
+      headers: await _headers(),
+      body: jsonEncode({'more_messages': moreMessages}),
+    );
+    if (r.statusCode == 200) return;
+    throw ApiException(
+      r.statusCode == 403
+          ? _dateSimOptOutMessage(r.body)
+          : 'Continuing the simulation failed.',
+      statusCode: r.statusCode,
+      body: r.body,
+    );
+  }
+
   /// The AI-Avatar opt-out message from a 403 `/date-sim` body
   /// (`{"detail": {"code", "message"}}`).
   static String _dateSimOptOutMessage(String body) {

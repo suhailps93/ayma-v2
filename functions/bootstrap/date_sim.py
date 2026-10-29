@@ -65,10 +65,15 @@ logger = logging.getLogger("ayma.date_sim")
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 _SIM_PROMPT_PATH = _PROMPT_DIR / "date_sim.md"
 _VERDICT_PROMPT_PATH = _PROMPT_DIR / "date_sim_verdict.md"
+# Readiness-conditioned anti-fabrication fragments injected at {{CONTEXT_DEPTH}}:
+# a thinner profile (low avatar-readiness score) gets the more conservative one.
+_DEPTH_THIN_PATH = _PROMPT_DIR / "date_sim_depth_thin.md"
+_DEPTH_FULL_PATH = _PROMPT_DIR / "date_sim_depth_full.md"
 
 _PERSONA_TOKEN = "{{PERSONA}}"
 _SELF_NAME_TOKEN = "{{SELF_NAME}}"
 _OTHER_NAME_TOKEN = "{{OTHER_NAME}}"
+_CONTEXT_DEPTH_TOKEN = "{{CONTEXT_DEPTH}}"
 
 # Roles in the simulated transcript, from the VIEWING user's point of view.
 ROLE_YOU = "you"  # the current user's persona
@@ -164,14 +169,22 @@ def compose_sim_prompt(
     """``(system_prompt, user_message)`` for ``self_name``'s next turn.
 
     The system prompt is ``date_sim.md`` with the speaker's own grounding block
-    and both names filled in. The user message carries the conversation so far
-    rendered from the speaker's point of view (their own lines labelled by their
-    name, the other persona's by theirs) plus the explicit instruction to send
-    the next message — or, on an empty transcript, to open the conversation."""
+    and both names filled in, plus a readiness-conditioned anti-fabrication
+    fragment at ``{{CONTEXT_DEPTH}}``: a thin-profile speaker (low avatar
+    readiness — ``persona_snapshot.readiness_for_context``) gets the more
+    conservative "stay vague, never invent" fragment so a sparse persona cannot
+    fabricate a job/employer/location/history to fill the gaps. The user message
+    carries the conversation so far rendered from the speaker's point of view
+    (their own lines labelled by their name, the other persona's by theirs) plus
+    the explicit instruction to send the next message — or, on an empty
+    transcript, to open the conversation."""
+    readiness = persona_snapshot.readiness_for_context(ctx)
+    depth_path = _DEPTH_THIN_PATH if readiness["low_context"] else _DEPTH_FULL_PATH
     system = (
         _read(_SIM_PROMPT_PATH)
         .replace(_SELF_NAME_TOKEN, self_name)
         .replace(_OTHER_NAME_TOKEN, other_name)
+        .replace(_CONTEXT_DEPTH_TOKEN, _read(depth_path))
         .replace(_PERSONA_TOKEN, ctx.to_prompt_block())
     )
     lines: list[str] = []
@@ -236,6 +249,130 @@ def _sims(db, uid: str):
 
 async def _write(fn, *args, **kwargs) -> None:
     await asyncio.to_thread(fn, *args, **kwargs)
+
+
+async def _fail(sim_ref, code: str, reason: str) -> None:
+    """Best-effort ``status: error`` write; a failure here never masks the
+    original error (the caller re-raises it either way)."""
+    try:
+        await _write(
+            sim_ref.update,
+            {"status": STATUS_ERROR, "error": {"code": code, "message": reason}},
+        )
+    except Exception:  # noqa: BLE001 - best effort; the original error wins
+        logger.warning("date-sim could not record failure", exc_info=True)
+
+
+async def _generate_turns(
+    sim_ref,
+    self_ctx: PersonaContext,
+    match_ctx: PersonaContext,
+    self_name: str,
+    other_name: str,
+    turns: list[dict],
+    transcript: list[dict],
+    start: int,
+    count: int,
+    session_id: str,
+    uid: str,
+    deadline: float,
+) -> bool:
+    """Produce ``count`` more alternating turns starting at absolute index
+    ``start`` (``turns``/``transcript`` carry any prior turns), appending each to
+    both lists and writing its ``messages/{seq:03d}`` doc the instant it is
+    produced. The role of turn ``i`` is fixed by its absolute parity (the user
+    opens at 0), so a continuation resumes the alternation exactly where it left
+    off. Returns ``usage_capped``.
+
+    Raises :class:`asyncio.TimeoutError` past ``deadline`` and
+    :class:`token_ledger.TokenCapExceeded` only when it runs out of credits with
+    an empty transcript (otherwise it stops and flags ``usage_capped``)."""
+    usage_capped = False
+    for i in range(start, start + count):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError()
+        role = ROLE_YOU if i % 2 == 0 else ROLE_THEM
+        if role == ROLE_YOU:
+            ctx, speaker, other = self_ctx, self_name, other_name
+        else:
+            ctx, speaker, other = match_ctx, other_name, self_name
+        system, message = compose_sim_prompt(ctx, speaker, other, turns, role)
+        try:
+            text = await asyncio.wait_for(
+                practice_llm.generate_text(
+                    system,
+                    message,
+                    uid=uid,
+                    feature=token_ledger.FEATURE_DATE_SIM,
+                    session_id=session_id,
+                ),
+                timeout=min(TURN_TIMEOUT_S, remaining),
+            )
+        except token_ledger.TokenCapExceeded:
+            if not transcript:
+                raise
+            usage_capped = True
+            break
+        text = text.strip()
+        if not text:
+            break
+        turns.append({"role": role, "text": text})
+        transcript.append({"from": role, "text": text})
+        await _write(
+            sim_ref.collection("messages").document(f"{i:03d}").set,
+            {
+                "seq": i,
+                "speaker": role,
+                "text": text,
+                "at": datetime.now(timezone.utc),
+            },
+        )
+    return usage_capped
+
+
+async def _finalize(
+    sim_ref,
+    self_name: str,
+    other_name: str,
+    transcript: list[dict],
+    usage_capped: bool,
+    uid: str,
+    deadline: float,
+) -> tuple[dict, dict, bool]:
+    """Moderate the whole transcript (advisory, never blocks), re-score it, and
+    write ``status: done`` with the fresh verdict + moderation. Returns
+    ``(verdict, moderation, usage_capped)``. The verdict is re-scored over the
+    FULL transcript, so a continuation's read reflects the whole conversation."""
+    moderation = await dm_moderation.moderate(
+        "\n".join(t["text"] for t in transcript)
+    )
+    verdict: dict = {"score": 0, "score_label": "", "summary": ""}
+    if transcript and not usage_capped:
+        try:
+            verdict = await asyncio.wait_for(
+                _verdict(self_name, other_name, transcript, uid=uid),
+                timeout=max(1.0, min(TURN_TIMEOUT_S, deadline - time.monotonic())),
+            )
+        except token_ledger.TokenCapExceeded:
+            usage_capped = True
+        except Exception:  # noqa: BLE001 - a verdict failure keeps the transcript
+            logger.warning("date-sim verdict failed", exc_info=True)
+    mod = {
+        "flagged": bool(moderation.get("flagged")),
+        "categories": list(moderation.get("categories") or []),
+    }
+    await _write(
+        sim_ref.update,
+        {
+            "status": STATUS_DONE,
+            "verdict": verdict,
+            "moderation": mod,
+            "usage_capped": usage_capped,
+            "finished_at": datetime.now(timezone.utc),
+        },
+    )
+    return verdict, mod, usage_capped
 
 
 async def run_simulation(
@@ -321,101 +458,35 @@ async def run_simulation(
 
     transcript: list[dict] = []
     turns: list[dict] = []
-    usage_capped = False
     deadline = time.monotonic() + RUN_DEADLINE_S
 
-    async def _fail(code: str, reason: str) -> None:
-        try:
-            await _write(
-                sim_ref.update,
-                {"status": STATUS_ERROR, "error": {"code": code, "message": reason}},
-            )
-        except Exception:  # noqa: BLE001 - best effort; the original error wins
-            logger.warning("date-sim could not record failure", exc_info=True)
-
     try:
-        for i in range(cap):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise asyncio.TimeoutError()
-            role = ROLE_YOU if i % 2 == 0 else ROLE_THEM
-            if role == ROLE_YOU:
-                ctx, speaker, other = self_ctx, self_name, other_name
-            else:
-                ctx, speaker, other = match_ctx, other_name, self_name
-            system, message = compose_sim_prompt(ctx, speaker, other, turns, role)
-            try:
-                text = await asyncio.wait_for(
-                    practice_llm.generate_text(
-                        system,
-                        message,
-                        uid=uid,
-                        feature=token_ledger.FEATURE_DATE_SIM,
-                        session_id=session_id,
-                    ),
-                    timeout=min(TURN_TIMEOUT_S, remaining),
-                )
-            except token_ledger.TokenCapExceeded:
-                if not transcript:
-                    raise
-                usage_capped = True
-                break
-            text = text.strip()
-            if not text:
-                break
-            turns.append({"role": role, "text": text})
-            transcript.append({"from": role, "text": text})
-            await _write(
-                sim_ref.collection("messages").document(f"{i:03d}").set,
-                {
-                    "seq": i,
-                    "speaker": role,
-                    "text": text,
-                    "at": datetime.now(timezone.utc),
-                },
-            )
-
-        # Advisory moderation over the whole generated conversation — same DM
-        # policy: annotate, never block (nothing is sent to anyone).
-        moderation = await dm_moderation.moderate(
-            "\n".join(t["text"] for t in transcript)
+        usage_capped = await _generate_turns(
+            sim_ref,
+            self_ctx,
+            match_ctx,
+            self_name,
+            other_name,
+            turns,
+            transcript,
+            0,
+            cap,
+            session_id,
+            uid,
+            deadline,
         )
-
-        verdict: dict = {"score": 0, "score_label": "", "summary": ""}
-        if transcript and not usage_capped:
-            try:
-                verdict = await asyncio.wait_for(
-                    _verdict(self_name, other_name, transcript, uid=uid),
-                    timeout=max(1.0, min(TURN_TIMEOUT_S, deadline - time.monotonic())),
-                )
-            except token_ledger.TokenCapExceeded:
-                usage_capped = True
-            except Exception:  # noqa: BLE001 - a verdict failure keeps the transcript
-                logger.warning("date-sim verdict failed", exc_info=True)
-
-        mod = {
-            "flagged": bool(moderation.get("flagged")),
-            "categories": list(moderation.get("categories") or []),
-        }
-        await _write(
-            sim_ref.update,
-            {
-                "status": STATUS_DONE,
-                "verdict": verdict,
-                "moderation": mod,
-                "usage_capped": usage_capped,
-                "finished_at": datetime.now(timezone.utc),
-            },
+        verdict, mod, usage_capped = await _finalize(
+            sim_ref, self_name, other_name, transcript, usage_capped, uid, deadline
         )
     except token_ledger.TokenCapExceeded:
-        await _fail("out_of_credits", "Out of credits.")
+        await _fail(sim_ref, "out_of_credits", "Out of credits.")
         raise
     except asyncio.TimeoutError:
-        await _fail("timeout", "The simulation took too long and was stopped.")
+        await _fail(sim_ref, "timeout", "The simulation took too long and was stopped.")
         raise
     except Exception:
         logger.warning("date-sim failed", exc_info=True)
-        await _fail("failed", "The simulation failed.")
+        await _fail(sim_ref, "failed", "The simulation failed.")
         raise
 
     return {
@@ -423,6 +494,128 @@ async def run_simulation(
         "sim_id": sim_id,
         "persona": persona,
         "banner": banner,
+        "transcript": transcript,
+        "score": verdict["score"],
+        "score_label": verdict["score_label"],
+        "summary": verdict["summary"],
+        "moderation": mod,
+        "usage_capped": usage_capped,
+    }
+
+
+async def continue_simulation(
+    db, uid: str, sim_id: str, more_messages: int
+) -> dict:
+    """Append ``more_messages`` more turns to an existing simulation and re-score.
+
+    CONTINUES from where the sim left off — it reads the already-streamed
+    transcript from ``users/{uid}/date_sims/{sim_id}/messages`` and resumes the
+    alternation at the next absolute index (never a restart). Both personas are
+    rebuilt from the SAME two avatars + grounding the original used (the caller's
+    own full-context snapshot and the match's private-grounded snapshot, else the
+    match's public-profile-only persona), so the privacy boundary, disclosure
+    filter and anti-fabrication grounding are identical. The new turns stream to
+    the same ``messages`` subcollection; the verdict is then re-scored over the
+    FULL transcript and persisted. Metering, the per-turn/whole-run hang guards
+    and mid-run out-of-credits handling match :func:`run_simulation`.
+
+    Raises :class:`ValueError` when the sim doc is missing or has no match,
+    :class:`AvatarOptOut` when either party has since opted out, and
+    :class:`token_ledger.TokenCapExceeded` only when out of credits before the
+    first new turn (the caller's endpoint checks credits up front)."""
+    sim_ref = _sims(db, uid).document(sim_id)
+    snap = await asyncio.to_thread(sim_ref.get)
+    if not getattr(snap, "exists", False):
+        raise ValueError("no such simulation")
+    data = snap.to_dict() or {}
+    other_uid = str(data.get("other_uid") or "").strip()
+    if not other_uid:
+        raise ValueError("simulation has no match to continue with")
+
+    # Re-check AI-Avatar opt-out for both parties — Settings may have changed
+    # since the original run (mirrors run_simulation's gate).
+    if not ai_avatar_enabled(db, uid):
+        raise AvatarOptOut("self")
+    if not ai_avatar_enabled(db, other_uid):
+        raise AvatarOptOut("match")
+
+    # Rebuild BOTH personas from the same snapshots/grounding as the first run.
+    self_ctx = persona_snapshot.get_persona_snapshot(db, uid)
+    if self_ctx is None:
+        self_ctx = await persona_snapshot.build_persona_snapshot(
+            db, uid, distill=False
+        )
+    if self_ctx is None:
+        raise ValueError("no profile for the current user")
+    match_ctx = persona_snapshot.get_persona_snapshot(db, other_uid)
+    if match_ctx is None:
+        match_ctx = build_persona_context(db, uid, other_uid)
+    if match_ctx is None:
+        raise ValueError("no simulatable profile for the match")
+
+    self_name = self_ctx.name
+    other_name = match_ctx.name
+    session_id = f"datesim_{uuid.uuid4().hex}"
+    cap = max(MIN_MESSAGES, min(MAX_MESSAGES, int(more_messages)))
+
+    # Reconstruct the conversation so far from the streamed message docs, so the
+    # continuation resumes the alternation at the next absolute index.
+    existing = await asyncio.to_thread(
+        lambda: sorted(
+            (m.to_dict() or {} for m in sim_ref.collection("messages").stream()),
+            key=lambda d: d.get("seq", 0),
+        )
+    )
+    turns: list[dict] = [
+        {"role": m.get("speaker"), "text": str(m.get("text") or "")}
+        for m in existing
+    ]
+    transcript: list[dict] = [
+        {"from": m.get("speaker"), "text": str(m.get("text") or "")}
+        for m in existing
+    ]
+    start = len(existing)
+    deadline = time.monotonic() + RUN_DEADLINE_S
+
+    # Back to running while the extra turns + fresh read are produced.
+    await _write(
+        sim_ref.update,
+        {"status": STATUS_RUNNING, "continued_at": datetime.now(timezone.utc)},
+    )
+
+    try:
+        usage_capped = await _generate_turns(
+            sim_ref,
+            self_ctx,
+            match_ctx,
+            self_name,
+            other_name,
+            turns,
+            transcript,
+            start,
+            cap,
+            session_id,
+            uid,
+            deadline,
+        )
+        verdict, mod, usage_capped = await _finalize(
+            sim_ref, self_name, other_name, transcript, usage_capped, uid, deadline
+        )
+    except token_ledger.TokenCapExceeded:
+        await _fail(sim_ref, "out_of_credits", "Out of credits.")
+        raise
+    except asyncio.TimeoutError:
+        await _fail(sim_ref, "timeout", "The simulation took too long and was stopped.")
+        raise
+    except Exception:
+        logger.warning("date-sim continue failed", exc_info=True)
+        await _fail(sim_ref, "failed", "The simulation failed.")
+        raise
+
+    return {
+        "simulation": True,
+        "sim_id": sim_id,
+        "banner": str(data.get("banner") or ""),
         "transcript": transcript,
         "score": verdict["score"],
         "score_label": verdict["score_label"],
@@ -442,6 +635,10 @@ class DateSimRequest(BaseModel):
     other_uid: str = Field(..., min_length=1, max_length=128)
     max_messages: int = Field(DEFAULT_MESSAGES, ge=MIN_MESSAGES, le=MAX_MESSAGES)
     sim_id: str | None = Field(None, max_length=64)
+
+
+class DateSimContinueRequest(BaseModel):
+    more_messages: int = Field(DEFAULT_MESSAGES, ge=MIN_MESSAGES, le=MAX_MESSAGES)
 
 
 @router.get("/date-sim/estimate")
@@ -519,6 +716,55 @@ async def date_sim(
     except ValueError as exc:
         raise HTTPException(
             status_code=404, detail="No profile to simulate a date with."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
+        raise HTTPException(
+            status_code=502, detail=f"Date simulation failed: {exc}"
+        ) from exc
+
+
+@router.post(
+    "/date-sim/{sim_id}/continue",
+    dependencies=[Depends(require_not_underage_uid)],
+)
+async def date_sim_continue(
+    sim_id: str,
+    req: DateSimContinueRequest,
+    caller: Caller = Depends(require_caller),
+) -> dict[str, object]:
+    """Continue an existing simulation with ``more_messages`` more turns.
+
+    Resumes the two personas' conversation from where it left off (never a
+    restart) and re-scores over the full transcript. The extra turns stream into
+    the same ``users/{uid}/date_sims/{sim_id}`` the client is already watching;
+    the response just reports the final status. Nothing is sent to the match."""
+    if not _SIM_ID_RE.match(sim_id):
+        raise HTTPException(status_code=422, detail="Invalid sim_id.")
+    db = get_db()
+    # Out of credits → 402 before spending anything (mirrors the initial run).
+    try:
+        await asyncio.to_thread(token_ledger.check, caller.uid)
+    except token_ledger.TokenCapExceeded as exc:
+        raise HTTPException(status_code=402, detail="Out of credits.") from exc
+
+    try:
+        out = await continue_simulation(
+            db, caller.uid, sim_id, req.more_messages
+        )
+        return {"sim_id": out["sim_id"], "status": STATUS_DONE}
+    except token_ledger.TokenCapExceeded as exc:
+        raise HTTPException(status_code=402, detail="Out of credits.") from exc
+    except AvatarOptOut as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": f"ai_avatar_opt_out_{exc.who}",
+                "message": _OPT_OUT_MESSAGES[exc.who],
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail="No simulation to continue."
         ) from exc
     except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
         raise HTTPException(

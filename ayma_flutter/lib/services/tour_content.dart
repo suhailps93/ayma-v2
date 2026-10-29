@@ -110,7 +110,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'date_sim',
     headline: 'Practice before you meet',
-    subtitle: 'In Explore, rehearse the date — text or voice — with a match.',
+    subtitle: 'In Explore, watch your AIs feel each other out, see the score, '
+        'then keep the conversation going for more.',
     icon: Icons.chat_bubble_outline_rounded,
     anchorId: TourAnchors.exploreTab,
   ),

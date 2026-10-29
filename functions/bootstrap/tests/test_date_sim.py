@@ -514,3 +514,106 @@ def test_sim_id_is_validated_against_path_tricks():
     assert not date_sim._SIM_ID_RE.match("../other")
     assert not date_sim._SIM_ID_RE.match("a/b/c/d/e/f/g/h")
     assert date_sim._SIM_ID_RE.match("abcDEF12_-34")
+
+
+# --- anti-fabrication grounding (readiness-conditioned) -------------------- #
+def test_date_sim_prompt_forbids_fabricating_unknown_facts():
+    """The shared prompt carries the anti-fabrication rule (distinct from the
+    disclosure filter): never invent a job/employer/location/history."""
+    prompt = date_sim._read(date_sim._SIM_PROMPT_PATH).lower()
+    assert "never" in prompt and "invent" in prompt
+    assert "job" in prompt and "employer" in prompt
+    # The readiness-conditioned fragment is injected here.
+    assert date_sim._CONTEXT_DEPTH_TOKEN in date_sim._read(date_sim._SIM_PROMPT_PATH)
+
+
+def _thin_ctx() -> practice_core.PersonaContext:
+    # Only a name → very low profile completeness → low-context.
+    return practice_core.PersonaContext(
+        target_uid="thin", name="Alex", age=None, location=""
+    )
+
+
+def _rich_ctx() -> practice_core.PersonaContext:
+    return practice_core.PersonaContext(
+        target_uid="rich",
+        name="Jordan",
+        age=29,
+        location="Austin",
+        gender="woman",
+        photo_count=3,
+        pages=[{"title": f"Page {i}", "body": f"body {i}"} for i in range(5)],
+    )
+
+
+def test_thin_profile_persona_is_more_conservative_than_a_rich_one():
+    """A thin profile (low readiness) gets the conservative "stay vague, never
+    invent" fragment; a rich one gets the normal fragment — so a sparse persona
+    cannot fabricate specifics to fill the gaps."""
+    thin = _thin_ctx()
+    assert date_sim.persona_snapshot.readiness_for_context(thin)["low_context"]
+    thin_system, _ = date_sim.compose_sim_prompt(thin, "Alex", "Sam", [], date_sim.ROLE_YOU)
+    assert "context here is thin" in thin_system.lower()
+
+    rich = _rich_ctx()
+    assert not date_sim.persona_snapshot.readiness_for_context(rich)["low_context"]
+    rich_system, _ = date_sim.compose_sim_prompt(rich, "Jordan", "Sam", [], date_sim.ROLE_YOU)
+    assert "context here is thin" not in rich_system.lower()
+    assert "lean on the real interests" in rich_system.lower()
+
+
+# --- continue: append more turns, CONTINUING (never a restart) ------------- #
+def test_continue_appends_more_turns_and_rescores():
+    db = _seeded_db()
+    _fake_personas()
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 6, "sim_cont_1"))
+        before, before_msgs = _sim_docs(db, "sim_cont_1")
+        assert len(before_msgs) == 6
+        first_six = [m["text"] for m in before_msgs]
+
+        out = asyncio.run(
+            date_sim.continue_simulation(db, VIEWER, "sim_cont_1", 4)
+        )
+    finally:
+        practice_llm.clear_override()
+
+    # CONTINUED, not restarted: the original 6 are untouched and the new turns
+    # are appended at the next absolute seqs, preserving the alternation.
+    after, after_msgs = _sim_docs(db, "sim_cont_1")
+    assert len(after_msgs) == 10
+    assert [m["text"] for m in after_msgs[:6]] == first_six
+    assert [m["seq"] for m in after_msgs] == list(range(10))
+    assert [m["speaker"] for m in after_msgs] == [
+        "you", "them", "you", "them", "you", "them", "you", "them", "you", "them"
+    ]
+    assert len(out["transcript"]) == 10
+    assert after["status"] == "done"
+    assert after["verdict"]["score_label"]  # re-scored over the full transcript
+
+
+def test_continue_missing_sim_raises_value_error():
+    db = _seeded_db()
+    _fake_personas()
+    try:
+        with pytest.raises(ValueError):
+            asyncio.run(date_sim.continue_simulation(db, VIEWER, "nope_nope", 4))
+    finally:
+        practice_llm.clear_override()
+
+
+def test_continue_blocked_when_a_party_opts_out():
+    db = _seeded_db()
+    _fake_personas()
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_cont_2"))
+    finally:
+        practice_llm.clear_override()
+    _opt_out(db, MAYA)
+    _fake_personas()
+    try:
+        with pytest.raises(date_sim.AvatarOptOut) as exc:
+            asyncio.run(date_sim.continue_simulation(db, VIEWER, "sim_cont_2", 4))
+    finally:
+        practice_llm.clear_override()
+    assert exc.value.who == "match"

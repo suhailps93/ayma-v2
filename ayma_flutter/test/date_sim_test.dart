@@ -26,7 +26,12 @@ http.Response _json(Object body, [int status = 200]) => http.Response(
 /// the test plays the backend's part by writing the sim's docs, exactly as
 /// `date_sim.run_simulation` does.
 class _Harness {
-  _Harness({this.postStatus = 200, this.postBody = '{}', this.readiness}) {
+  _Harness({
+    this.postStatus = 200,
+    this.postBody = '{}',
+    this.readiness,
+    this.continueStatus = 200,
+  }) {
     auth = MockFirebaseAuth(signedIn: true);
     fs = FakeFirebaseFirestore();
     api = ApiClient(
@@ -37,6 +42,14 @@ class _Harness {
             'credits_by_messages': {for (var n = 2; n <= 20; n++) '$n': n * 10},
             if (readiness != null) 'readiness': readiness,
           });
+        }
+        if (req.url.path.endsWith('/continue')) {
+          continueCalls.add(req.url.path);
+          return http.Response(
+            '{"status":"done"}',
+            continueStatus,
+            headers: const {'content-type': 'application/json'},
+          );
         }
         if (req.url.path == '/date-sim') {
           simId =
@@ -59,6 +72,11 @@ class _Harness {
 
   /// Optional `readiness` block the `/date-sim/estimate` mock returns.
   final Map<String, dynamic>? readiness;
+
+  /// Status for `POST /date-sim/{id}/continue`, and the paths it was called
+  /// with (so a test can assert the SAME sim was continued).
+  final int continueStatus;
+  final List<String> continueCalls = <String>[];
   final Completer<void> release = Completer<void>();
   late final MockFirebaseAuth auth;
   late final FakeFirebaseFirestore fs;
@@ -370,6 +388,98 @@ void main() {
       }
     },
   );
+
+  testWidgets(
+    'a finished run can CONTINUE: more turns append to the same sim and the '
+    'score refreshes (not a restart)',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.finish();
+      await tester.pumpWidget(
+        _wrap(
+          DateSimScreen(
+            uid: 'her',
+            name: 'Dana',
+            api: h.api,
+            simId: 'sim1',
+            service: DateSimService(auth: h.auth, firestore: h.fs),
+            profiles: ProfileService(auth: h.auth, firestore: h.fs),
+          ),
+        ),
+      );
+      await _settle(tester);
+
+      // Finished: both the continue action and the primary CTA are present.
+      expect(find.byKey(const Key('dateSimContinueButton')), findsOneWidget);
+      expect(
+        find.byKey(const Key('dateSimMessageForRealButton')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('dateSimContinueButton')));
+      await _settle(tester);
+      // It continued THIS sim, not a new one.
+      expect(h.continueCalls, contains('/date-sim/sim1/continue'));
+
+      // Backend plays the continuation: back to running, then more turns + a
+      // fresh (higher) score — the original first message is still there.
+      await h.sim.update({'status': 'running'});
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimContinueButton')), findsNothing);
+
+      await h.say(1, 'them', 'haha hi! what are you into?');
+      await h.say(2, 'you', 'climbing mostly, you?');
+      await h.sim.update({
+        'status': 'done',
+        'verdict': {
+          'score': 91,
+          'score_label': 'Strong spark',
+          'summary': 'Even better the longer you talked.',
+        },
+      });
+      await _settle(tester);
+
+      // APPENDED, not restarted: the original seq-0 turn is still there and the
+      // new turns were added after it (the top bubble may be scrolled off the
+      // viewport, so this is checked in the data, not on screen).
+      final kept = await h.sim.collection('messages').orderBy('seq').get();
+      expect(kept.docs.map((d) => d['seq'] as int), containsAll([0, 1, 2]));
+      expect(kept.docs.first.data()['text'], 'hey there!');
+      expect(find.textContaining('what are you into'), findsOneWidget); // new
+      expect(find.text('91'), findsOneWidget); // re-scored over the full chat
+      expect(find.textContaining('Strong spark'), findsOneWidget);
+      expect(find.byKey(const Key('dateSimContinueButton')), findsOneWidget);
+    },
+  );
+
+  testWidgets('continue out of credits (402) opens the out-of-credits sheet',
+      (tester) async {
+    final h = _Harness(continueStatus: 402);
+    h.simId = 'sim1';
+    await h.start(status: 'done');
+    await h.say(0, 'you', 'hey there!');
+    await h.finish();
+    await tester.pumpWidget(
+      _wrap(
+        DateSimScreen(
+          uid: 'her',
+          name: 'Dana',
+          api: h.api,
+          simId: 'sim1',
+          service: DateSimService(auth: h.auth, firestore: h.fs),
+          profiles: ProfileService(auth: h.auth, firestore: h.fs),
+        ),
+      ),
+    );
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('dateSimContinueButton')));
+    await _settle(tester);
+    // The standard out-of-credits sheet is shown; the result view stays put.
+    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+  });
 
   // --- entry point on the profile rail ------------------------------------ //
   testWidgets('profile shows a Simulate-a-date button that opens the sim', (

@@ -97,6 +97,15 @@ class _DateSimScreenState extends State<DateSimScreen> {
   StreamSubscription<DateSimDoc?>? _simSub;
   StreamSubscription<List<DateSimMessage>>? _msgSub;
 
+  /// The id of the simulation currently being watched, so "Keep the
+  /// conversation going" can continue the SAME sim. Set when a run starts or
+  /// when reopening an existing sim.
+  String? _simId;
+
+  /// True while a "continue" POST is in flight (shows a spinner on the button
+  /// until the doc flips back to `running` and the live view takes over).
+  bool _continuing = false;
+
   /// The Qloo taste match, fetched once when the simulation completes.
   Future<TasteMatchLoad>? _taste;
 
@@ -120,6 +129,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
     final existing = widget.simId;
     if (existing != null) {
       _phase = _Phase.live;
+      _simId = existing;
       _listen(existing);
     }
   }
@@ -204,6 +214,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
     _stopListening();
     setState(() {
       _phase = _Phase.live;
+      _simId = simId;
       _error = null;
       _sim = null;
       _messages = const [];
@@ -283,6 +294,37 @@ class _DateSimScreenState extends State<DateSimScreen> {
       context.pop();
     }
   }
+
+  /// Continue the SAME simulation with more turns, picking up where it left off
+  /// (not a restart). The backend appends to the same Firestore doc and
+  /// re-scores over the full transcript; the live view updates from the streams
+  /// — the doc flips back to `running` (typing indicator returns), then `done`
+  /// with the refreshed score/coaching. Out of credits opens the standard sheet.
+  Future<void> _continue() async {
+    final simId = _simId;
+    if (simId == null || _continuing) return;
+    setState(() {
+      _continuing = true;
+      _error = null;
+    });
+    try {
+      await _api.dateSimContinue(simId, _count);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 402) {
+        await showOutOfCreditsSheet(context);
+      } else {
+        setState(() => _error = _continueError);
+      }
+    } catch (_) {
+      // Transport failure: the sim doc stream still reports the real outcome.
+    } finally {
+      if (mounted) setState(() => _continuing = false);
+    }
+  }
+
+  static const _continueError =
+      "Couldn't continue the conversation. Please try again.";
 
   String get _name =>
       _sim?.persona.name.isNotEmpty == true ? _sim!.persona.name : widget.name;
@@ -469,20 +511,65 @@ class _DateSimScreenState extends State<DateSimScreen> {
         if (finished)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: FilledButton.icon(
-              key: const Key('dateSimMessageForRealButton'),
-              onPressed: _messageForReal,
-              style: FilledButton.styleFrom(
-                backgroundColor: ac.accent,
-                foregroundColor: ac.onAccent,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-              icon: const Icon(Icons.send_rounded, size: 18),
-              label: Text(
-                _name.isEmpty
-                    ? 'Message them for real'
-                    : 'Message $_name for real',
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_error != null) ...[
+                  Text(
+                    _error!,
+                    key: const Key('dateSimContinueError'),
+                    textAlign: TextAlign.center,
+                    style: AymaType.sans(size: 13, color: ac.error),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                // "Keep the conversation going" — continue the same sim with
+                // more turns (only when it finished cleanly, i.e. there's a
+                // transcript to continue and no error).
+                if (status == DateSimStatus.done) ...[
+                  OutlinedButton.icon(
+                    key: const Key('dateSimContinueButton'),
+                    onPressed: _continuing ? null : _continue,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: ac.accent,
+                      side: BorderSide(color: ac.accent),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    icon: _continuing
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: ac.accent,
+                            ),
+                          )
+                        : const Icon(Icons.forum_outlined, size: 18),
+                    label: Text(
+                      _continuing
+                          ? 'Continuing…'
+                          : 'Keep the conversation going',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                FilledButton.icon(
+                  key: const Key('dateSimMessageForRealButton'),
+                  onPressed: _messageForReal,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: ac.accent,
+                    foregroundColor: ac.onAccent,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: const Icon(Icons.send_rounded, size: 18),
+                  label: Text(
+                    _name.isEmpty
+                        ? 'Message them for real'
+                        : 'Message $_name for real',
+                  ),
+                ),
+              ],
             ),
           ),
       ],

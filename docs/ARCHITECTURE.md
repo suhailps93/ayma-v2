@@ -1361,6 +1361,7 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /profile/share` | Share a profile into a DM thread | §6.11 |
 | `POST /dm/{threadId}/messages` | Send a DM message (text/photo/voice/shared_profile) | §6.8 |
 | `POST /date-sim` | AI Date Simulation: two personas converse, streamed to `users/{uid}/date_sims/{sim_id}` (owner-read) → transcript + compatibility read | §18 |
+| `POST /date-sim/{sim_id}/continue` | Continue a finished sim: append N more turns from where it left off (not a restart), re-score over the full transcript | §18 |
 | `POST /taste/pair` | Qloo taste match: shared-taste score + date ideas from both public Taste pages | §19 |
 | `GET /taste/demo`, `GET /taste/demo/pair` | Public Qloo judge demo over the seeded demo profiles only | §19 |
 | `POST /dm/translate` | Translate a DM message/draft (cross-language DM); pair-only, 18+, cap-exempt | §6.12 |
@@ -2012,7 +2013,9 @@ background refresh + readiness score in `functions/bootstrap/persona_snapshot.py
 now *produces* the snapshot during the background refresh rather than being
 called at sim-spawn time); the `/cron/persona-snapshot` sweep in `main.py`;
 prompts `prompts/persona_snapshot.md` (the distillation),
-`prompts/date_sim.md` (the two-persona framing + disclosure filter) and
+`prompts/date_sim.md` (the two-persona framing + disclosure filter +
+anti-fabrication rule, with a `{{CONTEXT_DEPTH}}` fragment from
+`prompts/date_sim_depth_thin.md` / `date_sim_depth_full.md`) and
 `prompts/date_sim_verdict.md` (the scored read); Flutter in
 `ayma_flutter/lib/features/date_sim/` (`date_sim_screen.dart`,
 `date_sim_models.dart`), `services/date_sim_service.dart` (Firestore listen), entry button in `screens/public_profile_screen.dart`,
@@ -2028,14 +2031,16 @@ flowchart LR
     U["User's FULL own context<br/>(profile + ALL wiki pages, private spans kept,<br/>+ user's OWN recent sent DMs as<br/>texting-STYLE exemplars, capped)<br/>build_self_persona_context"]
     M["Match's PUBLIC profile only<br/>(public_profile.build,<br/>never-load filtered)<br/>build_persona_context"]
   end
-  U --> P1["USER persona<br/>(prompts/date_sim.md)"]
-  M --> P2["MATCH persona<br/>(prompts/date_sim.md)"]
+  U --> P1["USER persona<br/>(prompts/date_sim.md<br/>+ readiness-conditioned<br/>anti-fabrication fragment)"]
+  M --> P2["MATCH persona<br/>(prompts/date_sim.md<br/>+ readiness-conditioned<br/>anti-fabrication fragment)"]
   P1 & P2 --> LOOP["N-turn alternation on Muse<br/>(practice_llm → LLMProvider,<br/>metered FEATURE_DATE_SIM,<br/>capped at max_messages)"]
   LOOP --> MOD["Advisory moderation<br/>(dm_moderation, never blocks)"]
   MOD --> V["Verdict call<br/>(date_sim_verdict.md →<br/>score 0-100 + label + summary)"]
   LOOP -. "each turn, the moment it is produced" .-> FS[("Firestore<br/>users/{uid}/date_sims/{sim_id}<br/>+ /messages/{seq}")]
   V -- "verdict + status=done<br/>(or status=error, partial kept)" --> FS
   FS -- "owner-read snapshots<br/>(rules; Admin-SDK writes only)" --> UI["Flutter DateSimScreen<br/>live chat + typing row,<br/>then score + summary<br/>— never sent to the match"]
+  UI -. "Keep the conversation going<br/>POST /date-sim/{id}/continue" .-> CONT["continue_simulation:<br/>resume at next seq,<br/>append N turns, re-score<br/>over the FULL transcript"]
+  CONT --> LOOP
 ```
 
 **Grounding asymmetry + the disclosure filter (privacy).** The USER's persona
@@ -2067,6 +2072,25 @@ transcript never emits it (`test_private_needle_is_grounded_but_never_emitted`),
 while confirming the needle IS in the user's grounding and NOT in the match's.
 In the future mutual-live version each side will get its own user's full
 context; for now this is one-sided.
+
+**Anti-fabrication grounding (readiness-conditioned).** Separate from the
+disclosure filter (things the persona *knows* but won't share), `date_sim.md`
+also forbids *inventing* facts the persona does **not** know: a persona may
+state only what is actually in its context and must never make up a job,
+employer, industry, title, school, hometown, where it lives beyond the city
+shown, relationship history, or any other concrete biographical detail — for
+unknowns it stays vague or deflects warmly ("I'd rather tell you in person")
+rather than improvise a plausible answer. This is tied to the avatar
+**readiness score**: `compose_sim_prompt` injects a `{{CONTEXT_DEPTH}}` fragment
+chosen from `persona_snapshot.readiness_for_context(ctx)` — a thin / low-context
+profile (`prompts/date_sim_depth_thin.md`) gets the stricter "stay general,
+never manufacture specifics" guidance, a well-filled one
+(`prompts/date_sim_depth_full.md`) the normal "lean on your real details"
+guidance. Fixes the failure mode where a sparse profile's avatar fabricated a
+confident but invented life (e.g. "tech staffing, contract roles, Bay Area").
+Tests assert the prompt carries the anti-fabrication rule and that a thin ctx
+composes the conservative fragment while a rich ctx composes the normal one
+(`test_date_sim.py`).
 
 **Endpoint + live streaming.** `POST /date-sim {other_uid, max_messages, sim_id}`
 (18+-gated like Practice Date). The client picks a random `sim_id`, starts
@@ -2101,6 +2125,26 @@ conversation" is the acknowledgement. The number comes from
 in the module) × (one turn per message + one verdict call), priced through
 `token_ledger.cost_usd_for` and `billing.credits_for` (`credits_per_usd`) — no
 inline prices or credit rates.
+
+**Continue the conversation.** After a sim finishes, the result screen offers
+"Keep the conversation going" (`dateSimContinueButton`) beside the primary
+"Message `<name>` for real" CTA. `POST /date-sim/{sim_id}/continue
+{more_messages}` runs `continue_simulation`, which reads the already-streamed
+transcript from `.../messages`, rebuilds **both** personas from the same
+snapshots/grounding the first run used, and resumes the alternation at the next
+absolute `seq` — it **continues, never restarts** (the turn-production and
+finalize steps are shared with `run_simulation` via `_generate_turns` /
+`_finalize`). The extra turns stream into the same Firestore doc the client is
+already watching (status flips `done → running → done`, so the typing row and
+then the refreshed verdict/Taste card appear in place); the verdict is re-scored
+over the **full** transcript. It re-checks the AI-Avatar opt-out of both parties
+(Settings may have changed), honours the same metering, hang guards (per-turn
+`TURN_TIMEOUT_S`, whole-run `RUN_DEADLINE_S`) and mid-run out-of-credits
+(partial kept + `usage_capped`), and keeps the "Simulated — not sent" framing;
+nothing is ever sent to the match. 402/403/404 come back from the POST as on the
+initial run. Tested in `test_date_sim.py`
+(`test_continue_appends_more_turns_and_rescores`,
+`test_continue_blocked_when_a_party_opts_out`) and `date_sim_test.dart`.
 
 **Persistent AI-avatar snapshot (founder directive 2026-10-27).** The avatar
 is no longer assembled ad hoc at sim-spawn time. Each opted-in user has one
