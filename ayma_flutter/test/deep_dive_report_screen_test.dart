@@ -57,14 +57,24 @@ Map<String, dynamic> _blockReport() => {
 ApiClient _api({
   Map<String, dynamic>? metaDoc,
   List<Map<String, dynamic>>? deepDiveCalls,
+  int metaStatus = 200,
+  int reportStatus = 200,
 }) {
   final mockHttp = MockClient((request) async {
-    if (request.url.path == '/deep-dive-report/rid1') {
-      return http.Response(jsonEncode(metaDoc ?? _metaDoc()), 200,
+    if (request.url.path.startsWith('/deep-dive-report/')) {
+      return http.Response(
+          metaStatus == 200
+              ? jsonEncode(metaDoc ?? _metaDoc())
+              : jsonEncode({'detail': 'No such report.'}),
+          metaStatus,
           headers: const {'content-type': 'application/json; charset=utf-8'});
     }
-    if (request.url.path == '/report/deep_dive/rid1') {
-      return http.Response(jsonEncode(_blockReport()), 200,
+    if (request.url.path.startsWith('/report/deep_dive/')) {
+      return http.Response(
+          reportStatus == 200
+              ? jsonEncode(_blockReport())
+              : jsonEncode({'detail': 'No such report.'}),
+          reportStatus,
           headers: const {'content-type': 'application/json; charset=utf-8'});
     }
     if (request.url.path == '/deep-dive' && request.method == 'POST') {
@@ -77,9 +87,9 @@ ApiClient _api({
   return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
-Widget _host(ApiClient api) {
+Widget _host(ApiClient api, {String reportId = 'rid1'}) {
   final router = GoRouter(
-    initialLocation: '/deep-dive/rid1',
+    initialLocation: '/deep-dive/$reportId',
     routes: [
       GoRoute(
         path: DeepDiveReportScreen.path,
@@ -149,5 +159,51 @@ void main() {
     expect(find.text('Ask Ayma'), findsNothing);
     // The re-run action stays.
     expect(find.byTooltip('Re-run'), findsOneWidget);
+  });
+
+  testWidgets(
+      'never-run (404) shows the "No web research yet" empty state, not the '
+      '"Couldn\'t load" error', (tester) async {
+    await tester.pumpWidget(_host(
+      _api(metaStatus: 404, reportStatus: 404),
+      reportId: 'uid_bob',
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No web research yet'), findsOneWidget);
+    expect(find.text('Run report'), findsOneWidget);
+    expect(find.text("Couldn't load that report."), findsNothing);
+  });
+
+  testWidgets(
+      '"Run report" on the empty state starts a dive on the subject the '
+      'uid_<x> report id names', (tester) async {
+    final calls = <Map<String, dynamic>>[];
+    await tester.pumpWidget(_host(
+      _api(metaStatus: 404, reportStatus: 404, deepDiveCalls: calls),
+      reportId: 'uid_bob',
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Run report'));
+    await tester.pumpAndSettle();
+
+    expect(calls, hasLength(1));
+    expect(calls.single['target_uid'], 'bob');
+    expect(calls.single['force'], true);
+  });
+
+  testWidgets(
+      'a genuine load failure (500) still shows the "Couldn\'t load" retry, '
+      'not the empty state', (tester) async {
+    await tester.pumpWidget(_host(
+      _api(metaStatus: 500, reportStatus: 500),
+      reportId: 'uid_bob',
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't load that report."), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('No web research yet'), findsNothing);
   });
 }

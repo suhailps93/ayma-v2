@@ -120,6 +120,7 @@ class LivingReportView extends StatefulWidget {
     this.loader,
     this.hideBlock,
     this.myUid,
+    this.emptyBuilder,
   });
 
   final String reportType;
@@ -169,6 +170,17 @@ class LivingReportView extends StatefulWidget {
   /// its blocks is dropped) — for a host screen that shows them elsewhere.
   final bool Function(ReportBlock block)? hideBlock;
 
+  /// Rendered in place of the retry error ONLY when the fetch came back a
+  /// clean 404 — the server's unambiguous "this report has never been run"
+  /// signal (`report_hub.get_report` -> `KeyError` -> 404), as opposed to a
+  /// 5xx / transport failure of an existing report (which still shows the
+  /// "Couldn't load that report." retry). Lets a host screen (web research)
+  /// offer a "Run report" call-to-action instead of an error. When null,
+  /// a never-run 404 falls back to the same retry message as any other load
+  /// failure — unchanged behaviour for every report type that doesn't supply
+  /// one.
+  final WidgetBuilder? emptyBuilder;
+
   @override
   State<LivingReportView> createState() => LivingReportViewState();
 }
@@ -183,6 +195,12 @@ class LivingReportViewState extends State<LivingReportView>
   /// restored.
   LivingReport? _report;
   bool _loadFailed = false;
+
+  /// The fetch came back a clean 404 — the server's "nothing has ever been
+  /// run for this subject" signal, distinct from [_loadFailed] (a 5xx /
+  /// transport error on a report that may well exist). Drives [emptyBuilder]
+  /// instead of the retry error.
+  bool _neverRun = false;
 
   /// The signed-in uid the report cache is scoped to (own-data only). Empty
   /// in tests / signed out, which disables caching gracefully.
@@ -291,15 +309,27 @@ class LivingReportViewState extends State<LivingReportView>
       setState(() {
         _report = r;
         _loadFailed = false;
+        _neverRun = false;
       });
       widget.onLoaded?.call(r);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       // A background reload failing leaves the still-good `_report` on
       // screen rather than blanking it out; only the very first load
-      // surfaces the retry screen (§ build: `_ErrorMessage` only shows when
-      // `_report` is still null).
-      setState(() => _loadFailed = true);
+      // surfaces the retry / empty screen (§ build: both only show when
+      // `_report` is still null). A clean 404 is the server's "never run"
+      // signal — route it to [emptyBuilder], NOT the error retry; anything
+      // else (5xx, a connection-class `ApiException` with no statusCode) is a
+      // genuine load failure.
+      final neverRun = e is ApiException && e.statusCode == 404;
+      setState(() {
+        if (neverRun) {
+          _neverRun = true;
+          _loadFailed = false;
+        } else {
+          _loadFailed = true;
+        }
+      });
     }
   }
 
@@ -521,7 +551,12 @@ class LivingReportViewState extends State<LivingReportView>
   Widget build(BuildContext context) {
     final report = _report;
     if (report == null) {
-      if (_loadFailed) return _ErrorMessage(onRetry: reload);
+      // A never-run 404 with a host-supplied empty state (web research's
+      // "Run report" call-to-action) shows that instead of the error.
+      if (_neverRun && widget.emptyBuilder != null) {
+        return widget.emptyBuilder!(context);
+      }
+      if (_loadFailed || _neverRun) return _ErrorMessage(onRetry: reload);
       // No cached copy to show yet: the standard page/report loader (shown
       // only when there's NO cache — a cached report paints instantly above
       // via `_restoreFromCache`, with the fresh fetch swapping in silently).

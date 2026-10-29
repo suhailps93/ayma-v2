@@ -434,6 +434,28 @@ ApiClient layoutApi() => ApiClient(
   auth: kLayoutAuth,
 );
 
+/// Like [layoutApi] but the report reads 404 — the server's "never run"
+/// signal. Drives the web-research screen's "No web research yet" empty
+/// state (not the "Couldn't load" error) for the layout matrix.
+ApiClient layoutApi404() => ApiClient(
+  httpClient: MockClient((request) async {
+    final path = request.url.path;
+    if (path.contains('/report/') || path.contains('/deep-dive-report/')) {
+      return http.Response(
+        jsonEncode({'detail': 'No such report.'}),
+        404,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.Response(
+      jsonEncode(_bodyFor(path)),
+      200,
+      headers: const {'content-type': 'application/json; charset=utf-8'},
+    );
+  }),
+  auth: kLayoutAuth,
+);
+
 /// A fake "Connect an agent" service: no network, no connected agents.
 McpConnectService layoutMcpConnect() => McpConnectService(
   client: MockClient((request) async => http.Response(
