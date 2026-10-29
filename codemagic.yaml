@@ -220,7 +220,17 @@ workflows:
         script: |
           set -e
           keychain initialize
+          # The app itself.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          # The Notification Service Extension is its own target with its own
+          # bundle id (sender-avatar DM pushes — see docs/ARCHITECTURE.md §7.10
+          # and ios/NotificationServiceExtension/). It needs its own App ID +
+          # provisioning profile or the archive fails to sign the .appex.
+          # --create registers the App ID on first run; the App ID must exist in
+          # the Apple Developer portal (docs/IOS_DEPLOY.md §2).
+          app-store-connect fetch-signing-files "$BUNDLE_ID.NotificationServiceExtension" \
             --type IOS_APP_STORE \
             --create
           keychain add-certificates

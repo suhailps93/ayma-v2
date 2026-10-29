@@ -103,6 +103,28 @@ Identifiers → **+** → App IDs → App.
 > a provisioning profile already exists, regenerate the profile (Codemagic's
 > `--create` handles this, or delete the profile and let it re-fetch).
 
+### 2a. App ID for the Notification Service Extension
+
+DM pushes show the **sender's avatar** on the lock screen via a Notification
+Service Extension (new target `NotificationServiceExtension`, bundle id
+**`com.ayma.aymaFlutter.NotificationServiceExtension`**; see
+`docs/ARCHITECTURE.md` §7.10 and `ios/NotificationServiceExtension/`). The
+extension is a second signed binary, so it needs its own **App ID** and
+**provisioning profile**:
+
+- Identifiers → **+** → App IDs → App → Bundle ID **Explicit** →
+  `com.ayma.aymaFlutter.NotificationServiceExtension`, description
+  `Ayma Notification Service Extension`. **No capabilities needed** (the
+  extension uses no App Group, no push entitlement of its own — it only enriches
+  an already-delivered alert).
+- `codemagic.yaml`'s signing step now runs a **second**
+  `app-store-connect fetch-signing-files "$BUNDLE_ID.NotificationServiceExtension"
+  --type IOS_APP_STORE --create`, which registers this App ID and makes its
+  profile on the first run. If that step fails with "no matching profiles",
+  create the App ID by hand as above and re-run.
+- This target rides the next **fresh iOS build** only; it is not part of any
+  Android/APK build and does not affect the backend.
+
 ### 2.2 APNs Auth Key (for FCM push) — **.p8, token-based**
 
 Keys → **+** → tick **Apple Push Notifications service (APNs)** → Register.

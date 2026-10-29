@@ -329,3 +329,34 @@ def test_deliver_sends_notification_payload_on_heads_up_channel(monkeypatch):
     assert msg.android.notification.channel_id == nd.ANDROID_DEFAULT_CHANNEL
     # iOS still gets an audible alert at APNs priority 10.
     assert msg.apns.headers["apns-priority"] == "10"
+
+
+def test_deliver_data_is_android_data_only_and_ios_mutable_for_avatar(monkeypatch):
+    """A DM push is Android data-only (the native service draws the chat-style
+    notification with the sender's avatar) and carries an APNs alert marked
+    ``mutable-content: 1`` so the iOS Notification Service Extension can
+    download ``sender_photo_url`` and attach it. The avatar URL and sender
+    identity ride in the data payload, copied into APNs ``userInfo``."""
+    sent = {}
+    monkeypatch.setattr(
+        nd.messaging, "send_each_for_multicast",
+        lambda msg: sent.update(msg=msg) or type("R", (), {"responses": []})(),
+    )
+
+    nd._deliver_data(
+        ["tok-a"], "Dillu", "hey there",
+        {"type": "dm", "thread_id": "t", "sender_photo_url": "https://x/p.jpg"},
+    )
+
+    msg = sent["msg"]
+    # Android: data-only, no notification payload (native service renders it).
+    assert msg.notification is None
+    assert msg.android.notification is None
+    assert msg.android.priority == "high"
+    assert msg.data["sender_photo_url"] == "https://x/p.jpg"
+    assert msg.data["type"] == "dm"
+    # iOS: alert + mutable-content so the service extension can attach the image.
+    assert msg.apns.headers["apns-priority"] == "10"
+    assert msg.apns.payload.aps.mutable_content is True
+    assert msg.apns.payload.aps.alert.title == "Dillu"
+    assert msg.apns.payload.aps.alert.body == "hey there"

@@ -90,8 +90,13 @@ def _deliver(
 def _deliver_data(tokens: list[str], title: str, body: str, data: dict):
     """Send one multicast push whose Android payload is **data-only**, so the
     app's own service builds the notification (a chat-style one with the
-    sender's avatar). iOS has no such hook, so APNs still carries a plain
-    alert. Split out so tests patch here, not the SDK."""
+    sender's avatar). On iOS the APNs alert carries ``mutable-content: 1`` so
+    the Notification Service Extension (ios/NotificationService) can download
+    ``sender_photo_url`` from the data payload and attach it as the
+    notification's image/avatar (UNNotificationAttachment); the data values are
+    copied into the APNs payload (FCM delivers them in ``userInfo``). If the
+    extension is absent or the download fails it falls back to the plain alert.
+    Split out so tests patch here, not the SDK."""
     msg = messaging.MulticastMessage(
         tokens=tokens,
         data={k: str(v) for k, v in data.items()},
@@ -102,6 +107,7 @@ def _deliver_data(tokens: list[str], title: str, body: str, data: dict):
                 aps=messaging.Aps(
                     alert=messaging.ApsAlert(title=title, body=body),
                     sound="default",
+                    mutable_content=True,
                 )
             ),
         ),
