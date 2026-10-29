@@ -48,7 +48,7 @@ Read `docs/AGENT_HANDOFF.md` after this file and `PLAN.md`: architecture, the fo
 
 Every change, before it counts as done, includes: (1) the docs updated (docs/*.md, ARCHITECTURE.md, FEATURE_FLAGS.md, TODO_QUEUE.md, AGENT_HANDOFF.md as relevant); (2) the architecture diagram updated; (3) stale and dead code and stale docs deleted; (4) the merge request reviewed (diff read, tests run, privacy/security/18+/consent gates checked) before merging; (5) the Flutter layout matrix (`ayma_flutter/test/layout_matrix_test.dart`, part of the normal `flutter test` run) stays green: every routed screen, sheet, dialog and toast pumped at 320x568 up to the Fold's inner display, landscape, 300px split-screen, text scale 2.0, keyboard open, RTL, light/dark, with zero RenderFlex overflows or exceptions. A new route needs a matrix entry (the test fails otherwise); fix layouts with the guards in `lib/widgets/overflow_guards.dart` rather than fixed heights. Put these five lines in every agent prompt.
 
-Also: every **new user-facing feature** must add/update its entry in the feature tour (`ayma_flutter/lib/services/tour_content.dart` — a stable `feature_id` + short how-to), so existing users get a spotlight for it on next open (§11.2a).
+Also: every **new user-facing feature** must add/update its entry in the feature tour (`ayma_flutter/lib/services/tour_content.dart` — a stable `feature_id` + short how-to + **its UI anchor key** (`anchorId`, from `tour_anchors.dart`, plus the `tab` it lives on), attaching that key to the real target widget), so the interactive coach-mark tour spotlights it and existing users get a spotlight for it on next open (§11.2a).
 
 ## Using this file from a specific tool
 

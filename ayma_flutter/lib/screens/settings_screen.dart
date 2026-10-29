@@ -9,13 +9,14 @@ import '../dev_mode.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
+import '../services/tour_request.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import 'accent_color_screen.dart';
 import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
 import 'developer_screen.dart';
-import 'feature_tour_screen.dart';
+import 'main_shell_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -336,9 +337,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: Text('Replay the feature tour any time.',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
-            // Full replay on demand (not a spotlight): all features, and it
-            // re-marks them seen — harmless, they've now seen them again.
-            onTap: () => context.push(FeatureTourScreen.path),
+            // Full replay on demand (not a spotlight): the interactive
+            // coach-mark tour runs over the live shell, so return to it and ask
+            // it to run the full walkthrough (re-marks every feature seen —
+            // harmless, they've now seen them again).
+            onTap: () {
+              TourRequest.instance.requestFull();
+              context.go(MainShellScreen.path);
+            },
           ),
           Divider(color: ac.lineSoft),
           Padding(

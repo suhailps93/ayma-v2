@@ -71,7 +71,13 @@ class ChatComposer extends StatefulWidget {
     required this.userAmplitude,
     required this.aiAmplitude,
     this.statusLabel,
+    this.rootKey,
   });
+
+  /// Feature-tour anchor for the whole composer (the "say hi to Ayma" box the
+  /// coach-mark engine spotlights). Only the main shell's chat passes it, so it
+  /// never collides with the second composer the Ask-Ayma popup builds.
+  final Key? rootKey;
 
   final ComposerMode mode;
   final TextEditingController controller;
@@ -284,6 +290,7 @@ class _ChatComposerState extends State<ChatComposer>
     // firing Send repeatedly with the keyboard up is core chat UX. Pure
     // registry marker, changes nothing about hit testing.
     return KeepKeyboardOnTap(
+      key: widget.rootKey,
       child: RepaintBoundary(
         child: AnimatedSize(
           duration: const Duration(milliseconds: 220),

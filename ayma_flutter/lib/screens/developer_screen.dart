@@ -9,12 +9,13 @@ import '../services/ayma_session.dart';
 import '../services/credits_balance.dart';
 import '../services/dev_panel_session.dart';
 import '../services/feature_tour_store.dart';
+import '../services/tour_request.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
 import 'admin_feedback_screen.dart';
-import 'feature_tour_screen.dart';
+import 'main_shell_screen.dart';
 import 'plan_screen.dart';
 import 'release_notes_screen.dart';
 import 'story_editor_screen.dart';
@@ -448,12 +449,13 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
         trailing: Icon(Icons.refresh, color: ac.fgMute),
         onTap: () async {
-          // Dev-only preview: clear the per-user seen set (so the next main-
-          // shell open re-runs the first-run tour) and open the full tour here
-          // to review it. Push so it pops back to this panel when dismissed.
+          // Dev-only preview: clear the per-user seen set (so the first-run
+          // tour shows again from scratch) and return to the shell asking it to
+          // run the full interactive coach-mark walkthrough over the live UI.
           await featureTourStoreGlobal.reset();
           if (!context.mounted) return;
-          context.push(FeatureTourScreen.path);
+          TourRequest.instance.requestFull();
+          context.go(MainShellScreen.path);
         },
       ),
     ];

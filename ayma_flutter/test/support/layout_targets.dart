@@ -16,8 +16,10 @@ import 'package:ayma_flutter/screens/admin_feedback_screen.dart';
 import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/screens/explore_screen.dart';
-import 'package:ayma_flutter/screens/feature_tour_screen.dart';
 import 'package:ayma_flutter/screens/feedback_screen.dart';
+import 'package:ayma_flutter/services/tour_anchors.dart';
+import 'package:ayma_flutter/services/tour_content.dart';
+import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
 import 'package:ayma_flutter/screens/google_account_screen.dart';
 import 'package:ayma_flutter/screens/instagram_screen.dart';
 import 'package:ayma_flutter/screens/invite_friends_screen.dart';
@@ -60,7 +62,6 @@ import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
-import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:ayma_flutter/services/google_account_service.dart';
 import 'package:ayma_flutter/services/instagram_service.dart';
 import 'package:ayma_flutter/services/match_service.dart';
@@ -116,8 +117,6 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
       ),
     ),
     UnderageScreen.path: () => UnderageScreen(signOut: () async {}),
-    FeatureTourScreen.path: () =>
-        FeatureTourScreen(store: FeatureTourStore(), onContinue: () {}),
     SignInScreen.path: () => SignInScreen(
       auth: AuthService(auth: kLayoutAuth, profileService: profiles),
       apiClient: api,
@@ -434,6 +433,57 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
           ),
         );
       },
+    // The interactive feature-tour coach-mark overlay (§11.2a): a dimming
+    // scrim + spotlight cutout around a (dummy) target near the bottom, with
+    // its anchored callout above. Long copy + scale 2.0 stress the callout's
+    // wrap/scroll safety; the always-animating pulse ring means the matrix
+    // never `pumpAndSettle`s it.
+    'feature tour coach-mark (spotlight + callout)': (context) =>
+        Navigator.of(context).push(
+          PageRouteBuilder<void>(
+            opaque: false,
+            pageBuilder: (_, __, ___) => Stack(
+              children: [
+                Positioned(
+                  left: 24,
+                  bottom: 24,
+                  child: SizedBox(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    width: 64,
+                    height: 64,
+                  ),
+                ),
+                Positioned.fill(
+                  child: CoachMarkOverlay(
+                    onFinish: () {},
+                    features: const [
+                      TourFeature(
+                        featureId: 'matrix_anchored',
+                        headline:
+                            'A deliberately long coach-mark headline that must '
+                            'wrap gracefully at text scale 2.0',
+                        subtitle:
+                            'Press and hold the orb to start a voice chat — a '
+                            'long one-liner to stress wrapping on a narrow '
+                            'screen in both directions.',
+                        icon: Icons.graphic_eq_rounded,
+                        anchorId: TourAnchors.homeOrb,
+                      ),
+                      TourFeature(
+                        featureId: 'matrix_centered',
+                        headline: 'A centered step with no spotlight',
+                        subtitle:
+                            '18+, consent-first, private. You are always in '
+                            'control.',
+                        icon: Icons.shield_outlined,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

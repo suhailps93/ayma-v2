@@ -52,7 +52,6 @@ import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/plan_screen.dart';
 import '../screens/developer_screen.dart';
-import '../screens/feature_tour_screen.dart';
 import '../screens/admin_feedback_screen.dart';
 import '../screens/trial_paywall_screen.dart';
 import '../services/revenuecat_service.dart';
@@ -140,23 +139,10 @@ final appRouter = GoRouter(
       path: UnderageScreen.path,
       builder: (context, state) => const UnderageScreen(),
     ),
-    GoRoute(
-      // The feature tour (§11.2). Signed-in only now: it runs after
-      // pre-boarding (the main-shell gate), as a Settings replay, or the
-      // Developer preview. No nav bar — it's a full-screen walkthrough. The
-      // launching surface passes a [FeatureTourArgs] via `extra` to choose the
-      // full tour vs a new-feature spotlight of just the unseen ids.
-      path: FeatureTourScreen.path,
-      builder: (context, state) {
-        final args = state.extra is FeatureTourArgs
-            ? state.extra as FeatureTourArgs
-            : null;
-        return FeatureTourScreen(
-          features: args?.features,
-          spotlight: args?.spotlight ?? false,
-        );
-      },
-    ),
+    // The feature tour (§11.2a) is no longer a route: it's an interactive
+    // coach-mark overlay the main shell hosts over its own live UI (so it can
+    // spotlight the real composer, orb and tabs). The shell's gate auto-shows
+    // it; Settings/Dev replay via `TourRequest` + `context.go('/')`.
     GoRoute(
       path: SignInScreen.path,
       builder: (context, state) => const SignInScreen(),

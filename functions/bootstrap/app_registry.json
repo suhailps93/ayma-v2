@@ -49,7 +49,6 @@
     {"route": "/splash", "reason": "app start-up bootstrap; re-running it mid-session would restart the app flow"},
     {"route": "/under-18", "reason": "age-gate outcome screen (18+ gate); never opened on request"},
     {"route": "/signin", "reason": "sign-in screen; a signed-in user is redirected away from it"},
-    {"route": "/tour", "reason": "first-launch feature tour; a pure client-side pre-screen shown once before sign-in, never opened on request"},
     {"route": "/preboarding", "reason": "first-run onboarding interview; only reached from splash"},
     {"route": "/chat", "reason": "pre-signup marketing chat; the signed-in chat is the ayma destination"},
     {"route": "/recover", "reason": "deleted-account recovery flow, reached only at sign-in"},
@@ -107,7 +106,6 @@
     "no_context": [
       {"route": "/splash", "reason": "start-up bootstrap; there is no signed-in session or content yet"},
       {"route": "/signin", "reason": "sign-in screen: credentials and codes only, and Ayma is not running before sign-in"},
-      {"route": "/tour", "reason": "first-launch feature tour shown once before sign-in; Ayma is not running yet"},
       {"route": "/recover", "reason": "deleted-account recovery at sign-in; Ayma is not running before sign-in"},
       {"route": "/s/:token", "reason": "public shared-report link opened outside a session"}
     ]

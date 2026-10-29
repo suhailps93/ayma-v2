@@ -153,8 +153,10 @@ Repo and release rules (also in `AGENTS.md`; do not diverge)
 - `AGENTS.md` "test, commit, log" per-step process applies to `PLAN.md` steps. For ad-hoc founder requests,
   follow the flow above (agent -> merge -> push -> deploy -> install).
 - **Feature tour entry per feature.** Every new user-facing feature must add/update its entry in the feature
-  tour (`ayma_flutter/lib/services/tour_content.dart` — a stable `feature_id` + short how-to). The tour
-  auto-shows after pre-boarding and spotlights any unseen feature on next open (ARCHITECTURE §11.2a).
+  tour (`ayma_flutter/lib/services/tour_content.dart` — a stable `feature_id` + short how-to + **its UI anchor
+  key**: `anchorId` from `tour_anchors.dart` (+ the `tab` it lives on), with that `GlobalKey` attached to the
+  real target widget). The tour is an interactive coach-mark walkthrough: it auto-shows after pre-boarding and
+  spotlights the real UI element for any unseen feature on next open (ARCHITECTURE §11.2a).
 
 ---
 

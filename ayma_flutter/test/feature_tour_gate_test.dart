@@ -1,3 +1,4 @@
+import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,16 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 /// The auto-show gate's pure decision (§11.2): first-run full walkthrough,
 /// new-feature spotlight, or nothing.
 const _all = <TourFeature>[
+  TourFeature(featureId: 'a', headline: 'A', subtitle: ''),
+  TourFeature(featureId: 'b', headline: 'B', subtitle: ''),
   TourFeature(
-      featureId: 'a', headline: 'A', subtitle: '', visual: TourVisual.orb),
-  TourFeature(
-      featureId: 'b', headline: 'B', subtitle: '', visual: TourVisual.shield),
-  TourFeature(
-      featureId: 'c',
-      headline: 'C',
-      subtitle: '',
-      visual: TourVisual.icon,
-      icon: Icons.star_rounded),
+    featureId: 'c',
+    headline: 'C',
+    subtitle: '',
+    icon: Icons.star_rounded,
+    anchorId: TourAnchors.homeOrb,
+  ),
 ];
 
 void main() {
@@ -48,10 +48,12 @@ void main() {
     final ids = tourFeatures.map((f) => f.featureId).toList();
     expect(ids, isNotEmpty);
     expect(ids.toSet().length, ids.length, reason: 'feature_ids must be unique');
-    // icon-visual entries must carry an icon.
+    // Every step either anchors a real UI element or is a deliberate centered
+    // callout (null anchor); an anchored step may name any tab.
     for (final f in tourFeatures) {
-      if (f.visual == TourVisual.icon) {
-        expect(f.icon, isNotNull, reason: '${f.featureId} needs an icon');
+      if (f.tab != null) {
+        expect(f.anchorId, isNotNull,
+            reason: '${f.featureId}: a tab is only meaningful with an anchor');
       }
     }
   });

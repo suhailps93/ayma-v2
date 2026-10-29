@@ -1,6 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../services/app_context.dart';
 import '../services/feature_tour_store.dart';
@@ -9,15 +8,17 @@ import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
 import '../services/chat_inbox.dart';
 import '../services/tab_request.dart';
+import '../services/tour_anchors.dart';
 import '../services/tour_content.dart';
+import '../services/tour_request.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_tab_bar.dart';
+import '../widgets/coach_mark_overlay.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
-import 'feature_tour_screen.dart';
 import 'messages_screen.dart';
 import 'profile_tab_screen.dart';
 import 'voice_call_screen.dart';
@@ -91,7 +92,28 @@ class _MainShellScreenState extends State<MainShellScreen>
   // Tabs are built on first visit and then kept alive — a not-yet-visited tab
   // is an empty box, so nothing touches its services until the user goes there.
   late final List<Widget?> _built = List<Widget?>.filled(4, null)
-    ..[0] = ChatScreen(transcriptStore: _store, voiceController: _voice);
+    ..[0] = ChatScreen(
+      transcriptStore: _store,
+      voiceController: _voice,
+      // Feature-tour anchor for the "say hi to Ayma" composer (§11.2a).
+      composerAnchorKey: TourAnchors.keyFor(TourAnchors.homeComposer),
+    );
+
+  // The in-flight coach-mark tour (§11.2a): non-null while the overlay runs.
+  // The shell hosts it as a full-screen layer above the Scaffold so it can
+  // spotlight the shell's own real UI (composer, nav-bar orb/tabs/bell).
+  List<TourFeature>? _tourFeatures;
+  bool _tourSpotlight = false;
+
+  /// The nav-bar tour anchors, by tab slot — only the shell's OWN bar takes
+  /// these (not the page-context popup's copy); see [AymaTabBar.anchorKeys].
+  Map<int, GlobalKey> get _tourAnchorKeys => {
+    0: TourAnchors.keyFor(TourAnchors.homeOrb),
+    1: TourAnchors.keyFor(TourAnchors.exploreTab),
+    2: TourAnchors.keyFor(TourAnchors.messagesTab),
+    3: TourAnchors.keyFor(TourAnchors.profileTab),
+    AymaTabBar.kBellAnchor: TourAnchors.keyFor(TourAnchors.notificationsBell),
+  };
 
   // Explore stays alive (see [_built]) rather than rebuilding each visit, so
   // its data can go stale while you're elsewhere — recalculating a match
@@ -131,7 +153,7 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// including a tap on it expanding the popup rather than opening a second
   /// one. That copy highlights the orb while the popup is expanded to full
   /// screen.
-  Widget _navBar(BuildContext context) {
+  Widget _navBar(BuildContext context, {bool anchored = false}) {
     final expanded =
         AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;
     return ListenableBuilder(
@@ -141,6 +163,9 @@ class _MainShellScreenState extends State<MainShellScreen>
         voice: _voice,
         onSelected: _onTabTap,
         onOrbLongPress: () => toggleVoiceCall(context, _voice),
+        // Only the shell's own bar carries the tour anchors — the popup's copy
+        // must not, or two live widgets share a GlobalKey (a Flutter error).
+        anchorKeys: anchored ? _tourAnchorKeys : null,
       ),
     );
   }
@@ -259,20 +284,29 @@ class _MainShellScreenState extends State<MainShellScreen>
       return;
     }
     try {
-      final decision = decideTour(await _tourStore.loadSeen());
-      if (!decision.show || !mounted) return;
       // Only when the shell is actually the visible route — a deep link may
       // have pushed another screen on top during startup.
       final route = ModalRoute.of(context);
       if (route != null && !route.isCurrent) return;
-      context.push(
-        FeatureTourScreen.path,
-        extra: FeatureTourArgs(
-          features: decision.features,
-          spotlight: decision.spotlight,
-        ),
-      );
+      // An explicit replay (Settings "How to use Ayma" / Dev preview) runs the
+      // FULL tour, ignoring the seen-state; otherwise the per-user gate decides.
+      if (TourRequest.instance.consume()) {
+        _startTour(tourFeatures, spotlight: false);
+        return;
+      }
+      final decision = decideTour(await _tourStore.loadSeen());
+      if (!decision.show || !mounted) return;
+      _startTour(decision.features, spotlight: decision.spotlight);
     } catch (_) {/* never block the shell on the tour */}
+  }
+
+  /// Starts the interactive coach-mark tour as a layer over the shell.
+  void _startTour(List<TourFeature> features, {required bool spotlight}) {
+    if (features.isEmpty || !mounted) return;
+    setState(() {
+      _tourFeatures = features;
+      _tourSpotlight = spotlight;
+    });
   }
 
   void _toAymaTab() {
@@ -298,28 +332,64 @@ class _MainShellScreenState extends State<MainShellScreen>
     super.dispose();
   }
 
+  /// Back pressed while the tour runs: skip it (marking its features seen, the
+  /// same as completing), rather than popping a tab. Handled here, in the
+  /// shell's single [PopScope], so there's one back handler — the overlay owns
+  /// no navigation of its own.
+  Future<void> _skipTourFromBack() async {
+    final features = _tourFeatures;
+    if (features == null) return;
+    setState(() => _tourFeatures = null);
+    await _tourStore.markSeen(features.map((f) => f.featureId));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final tour = _tourFeatures;
     return PopScope<Object?>(
-      canPop: _tabHistory.length <= 1,
+      // While the tour is up, intercept back to skip it instead of popping.
+      canPop: tour == null && _tabHistory.length <= 1,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _popTab();
+        if (didPop) return;
+        if (_tourFeatures != null) {
+          _skipTourFromBack();
+        } else {
+          _popTab();
+        }
       },
-      child: Scaffold(
-        // A live call keeps running (in this app, not backgrounded to the
-        // OS — that's CallBackgroundService) no matter which tab is on
-        // screen. Returning to it needs no dedicated "tap to return" pill
-        // here: the Ayma tab's own orb below already reflects live call
-        // state (glow/pulse) and is the one tap back to it, from this shell
-        // or, via `NavBarShell`'s identical-looking bar, from anywhere else
-        // in the app.
-        body: IndexedStack(
-          index: _index,
-          children: [
-            for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
-          ],
-        ),
-        bottomNavigationBar: _navBar(context),
+      child: Stack(
+        children: [
+          Scaffold(
+            // A live call keeps running (in this app, not backgrounded to the
+            // OS — that's CallBackgroundService) no matter which tab is on
+            // screen. Returning to it needs no dedicated "tap to return" pill
+            // here: the Ayma tab's own orb below already reflects live call
+            // state (glow/pulse) and is the one tap back to it, from this shell
+            // or, via `NavBarShell`'s identical-looking bar, from anywhere else
+            // in the app.
+            body: IndexedStack(
+              index: _index,
+              children: [
+                for (var i = 0; i < 4; i++)
+                  _built[i] ?? const SizedBox.shrink(),
+              ],
+            ),
+            bottomNavigationBar: _navBar(context, anchored: true),
+          ),
+          if (tour != null)
+            Positioned.fill(
+              child: CoachMarkOverlay(
+                key: const ValueKey('shell-coach-mark'),
+                features: tour,
+                spotlight: _tourSpotlight,
+                store: _tourStore,
+                onSwitchTab: _selectTab,
+                onFinish: () {
+                  if (mounted) setState(() => _tourFeatures = null);
+                },
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
+import 'package:ayma_flutter/services/tour_request.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -366,13 +367,15 @@ void main() {
     );
   });
 
-  testWidgets('reset & preview feature tour opens /tour', (
-    tester,
-  ) async {
+  testWidgets('reset & preview feature tour returns to the shell and requests '
+      'the full tour', (tester) async {
     DevPanelSession.instance.unlock('pw');
-    // The seen-state now lives per-user on the profile doc (not a local flag);
-    // reset() is a best-effort Firestore clear that no-ops without Firebase
-    // here. This test just asserts the dev tile still opens the tour.
+    TourRequest.instance.consume(); // start clean
+    addTearDown(() => TourRequest.instance.consume());
+    // The interactive coach-mark tour runs over the live shell, so the dev tile
+    // no longer pushes a tour screen — it sets a TourRequest and go('/')s back
+    // to the shell, whose gate consumes it. The seen-state reset() is a
+    // best-effort Firestore clear that no-ops without Firebase here.
     final router = GoRouter(
       initialLocation: DeveloperScreen.path,
       routes: [
@@ -384,8 +387,8 @@ void main() {
           ),
         ),
         GoRoute(
-          path: '/tour',
-          builder: (_, __) => const Scaffold(body: Text('screen:tour')),
+          path: '/',
+          builder: (_, __) => const Scaffold(body: Text('screen:shell')),
         ),
       ],
     );
@@ -404,6 +407,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('dev-reset-feature-tour')));
     await tester.pumpAndSettle();
 
-    expect(find.text('screen:tour'), findsOneWidget);
+    // Navigated back to the shell with a pending full-tour request for its gate.
+    expect(find.text('screen:shell'), findsOneWidget);
+    expect(TourRequest.instance.pending.value, isTrue);
   });
 }
