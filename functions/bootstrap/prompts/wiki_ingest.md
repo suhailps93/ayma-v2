@@ -72,6 +72,14 @@ Taste favourites are captured separately, NOT as a narrative page:
   The system folds these onto the user's public Taste page itself — never write
   a `taste` page in `pages`, and do NOT also copy these named favourites into
   the `interests` page (that would duplicate them and is wrong).
+- **Capture ALL THREE domains, not just music.** Film and food matter as much as
+  music to the taste match, and they are the ones most often missed. Scan every
+  turn for a named film, show, franchise, director, cuisine, dish, restaurant or
+  café, even in passing ("we always get Thai", "obsessed with Succession", "huge
+  Ghibli person", "best tacos are at La Taquería"), and put each under the right
+  domain. A favourite mentioned once still counts. If the user named a film but
+  no music this turn, return `film` and omit `music` — never skip the whole
+  object just because one domain is empty.
 - `interests` stays for how they spend their time — hobbies, activities,
   passions, pursuits ("rock climbing most weekends", "plays bass", "runs half
   marathons") — not lists of favourite songs, films/shows, dishes or eateries.

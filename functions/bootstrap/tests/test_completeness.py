@@ -686,6 +686,35 @@ def test_taste_film_food_unlock_once_music_answered(monkeypatch):
     }
 
 
+def test_music_answered_still_surfaces_film_and_food_high(monkeypatch):
+    # Founder directive (Qloo demo): answering one taste domain must NOT suppress
+    # the other two. A user with Music filled but Film/Food empty still gets both
+    # Film and Food offered, ranked high (all three taste nodes are weight 5, so
+    # they sit near the top of `next` once the section's core — taste_music — is
+    # answered; see question_tree.json taste weights).
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    docs = {
+        _profile_key(): dict(prof),
+        _q_key("u1", "taste_music"): {
+            "node_id": "taste_music",
+            "value": "Billie Eilish, Bruno Mars, Russ, AC/DC",
+            "source": "stated",
+        },
+    }
+    db = FakeDb(docs)
+    res = _run(completeness.compute(db, "u1"))
+    next_ids = [n["id"] for n in res["next"]]
+    # both still-empty taste domains are offered...
+    assert "taste_film" in next_ids
+    assert "taste_food" in next_ids
+    # ...and ranked high (within the handful returned), not buried.
+    assert next_ids.index("taste_film") <= 3
+    assert next_ids.index("taste_food") <= 3
+    # the answered domain is NOT re-offered.
+    assert "taste_music" not in next_ids
+
+
 # --- endpoints ----------------------------------------------------------
 
 
