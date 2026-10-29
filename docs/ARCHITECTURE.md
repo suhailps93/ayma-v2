@@ -31,6 +31,12 @@ The pieces below are the spec; this section is the map of what actually runs on 
 branch today. Every runtime switch named here is a flag in `config/feature_flags`
 (`docs/FEATURE_FLAGS.md`).
 
+> **Per-uid flag override (demo/judge accounts).** `feature_flags.resolve/get/enabled`
+> accept an optional `uid`; when it is in `CONFIG.all_flags_on_uids` every boolean
+> flag resolves ON for that user (source `user_override`), a read-only short-circuit
+> that flips no global flag. Scoped to the three `docs/DEMO_ACCOUNTS.md` accounts.
+> See `docs/FEATURE_FLAGS.md` → "Per-uid all-flags-on override".
+
 ```mermaid
 flowchart LR
   subgraph Phone["Flutter app (ayma_flutter)"]
@@ -1966,6 +1972,15 @@ The free plan grants, per `config.py`:
   verification selfie that doesn't match another grant-holding account —
   `start_grant_unlocked` / `start_grant_blocked`); never re-granted after a
   paid plan lapses.
+  - **Demo-account bypass (scoped).** Ayma has no hard email-verification wall —
+    sign-in and app use never require a verified email; the contact check
+    (`token_ledger._contact_verified`) only gates this free start grant. The
+    exact emails in `CONFIG.test_bypass_emails` (env `TEST_BYPASS_EMAILS`,
+    committed default = the three `docs/DEMO_ACCOUNTS.md` demo logins) clear that
+    check even when their Firebase email is unverified; **every other account is
+    still gated.** This is the only place `email_verified` is treated as
+    bypassable, and it is scoped to those three emails. Tested in
+    `tests/test_demo_account_overrides.py`.
 - **A daily allowance of `FREE_DAILY_ALLOWANCE_USD = $1.00` = 100 credits/day**
   (raised from $0.25/25 credits on 2026-10-27 — see below). This is the
   "Credits reset at <local time> (in Xh Ym)" line the Plan screen shows (client-computed from 00:00 UTC; paid plans show "Renews on <date>" from `period_end`), and it
