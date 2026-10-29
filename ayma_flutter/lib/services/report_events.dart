@@ -32,3 +32,27 @@ class ReportEvents extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+/// The report types the Story page renders through [LivingReportView] — the
+/// owner's private story, Ayma's notes, and the public view.
+const _storyReportTypes = ['story_private', 'story_ai_notes', 'story_public'];
+
+/// Persistent (past-tense) labels of the main chat/voice story-edit tools
+/// `edit_story_entry` / `remove_story_entry` (see `functions/bootstrap/
+/// tool_labels.py` `TOOL_LABELS`). When a finished turn reports one of these,
+/// the user's story changed out from under any open Story page.
+const _storyEditToolLabels = {
+  'Updated your story',
+  'Removed that from your story',
+};
+
+/// Called at the chat/voice tool-completion seam ([TranscriptStore]) with the
+/// finished turn's tool labels. When Ayma edited the story this turn, bump the
+/// Story report types so an open Story page live-refreshes instead of showing
+/// stale text until the user reopens it (founder fast-follow 2026-10-28).
+void signalStoryEditFromTools(Iterable<String> toolLabels) {
+  if (!toolLabels.any(_storyEditToolLabels.contains)) return;
+  for (final t in _storyReportTypes) {
+    ReportEvents.instance.completed(t);
+  }
+}

@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'report_events.dart';
+
 enum TurnRole { user, ayma }
 
 enum TurnSource { voice, text }
@@ -298,6 +300,8 @@ class TranscriptStore extends ChangeNotifier {
       feedbackTitle: feedbackTitle,
       feedbackBody: feedbackBody,
     );
+    // A chat turn that edited the story must live-refresh any open Story page.
+    signalStoryEditFromTools(tools);
     notifyListeners();
   }
 
@@ -368,6 +372,9 @@ class TranscriptStore extends ChangeNotifier {
     } else {
       _turns.add(turn);
     }
+    // A finalized voice turn that edited the story live-refreshes the open
+    // Story page (tool labels are meaningful only on the final segment).
+    if (isFinal) signalStoryEditFromTools(tools);
     _trim();
     notifyListeners();
   }
