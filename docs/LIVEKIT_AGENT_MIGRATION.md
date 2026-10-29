@@ -53,6 +53,20 @@ room explicitly routed to `ayma-lk`. Without a guard, both deployments would joi
 Net: default path is byte-for-byte unchanged; the opt-in path routes cleanly to one
 deployment.
 
+### Cost: the Cloud Run wake ping is gated to cloudrun users
+
+`ayma-agent` (Cloud Run) scales to zero, so a scaled-down instance has to be
+woken by an HTTP ping (`agent_wake.wake_agent`, main.py) before a `cloudrun`
+call can reach it. With the default now `livekit`, firing that wake on **every**
+`/bootstrap` would cold-start a 2 GB Cloud Run instance on every voice call just
+for it to decline the room (request_fnc guard) — pure wasted spend. So
+`/bootstrap` now wakes Cloud Run **only when `_voice_agent_cloud(uid) ==
+"cloudrun"`**. The pre-sign-in `/welcome/token` room is the one remaining
+always-on Cloud Run consumer: it has no uid/pref, is created with no explicit
+dispatch, and so is auto-dispatched to the Cloud Run worker — fully retiring
+Cloud Run would require migrating the welcome flow to explicit `ayma-lk`
+dispatch.
+
 ## Firestore credential for the LiveKit-hosted agent
 
 LiveKit Cloud has **no GCP workload identity**, so the hosted worker can't use ADC.

@@ -741,11 +741,19 @@ async def bootstrap(
     # (just a signed JWT) so it still happens unconditionally below, keeping
     # this call's response shape unchanged for `splash_screen.dart`.
     if session_id:
-        # Fire the ayma-agent wake ping as early as possible (§ scale-to-zero,
-        # docs/deploy.md §12.2, agent_wake.py) so Cloud Run starts the
-        # container in parallel with the LiveKit token mint + room creation
-        # below, rather than only after the client has already connected.
-        background.add_task(agent_wake.wake_agent)
+        # Dual-cloud dispatch (§1.1): resolve the user's target cloud up front.
+        # Only the Cloud Run worker needs a wake ping — livekit-routed users
+        # (the default) are served by the LiveKit-Cloud-hosted worker, which
+        # LiveKit keeps warm itself. Firing the Cloud Run wake for them would
+        # just cold-start a 2 GB instance that immediately declines the room
+        # (request_fnc guard) — pure wasted Cloud Run spend. So wake Cloud Run
+        # only when this user is actually routed there.
+        agent_cloud = _voice_agent_cloud(uid)
+        if agent_cloud == "cloudrun":
+            # Fire the wake ping as early as possible (§ scale-to-zero,
+            # docs/deploy.md §12.2, agent_wake.py) so the container starts in
+            # parallel with the LiveKit token mint + room creation below.
+            background.add_task(agent_wake.wake_agent)
         voice_language = _ayma_voice_language(uid)
         # Phase 2 voice seed diet (cost program 2026-09-26): the Live API
         # re-bills the whole seeded context on every turn of the call, so at
@@ -815,8 +823,8 @@ async def bootstrap(
         # to the LiveKit-Cloud-hosted worker's agent_name (explicit dispatch);
         # the Cloud Run worker declines it (request_fnc). "cloudrun" => no
         # explicit agent dispatch (LiveKit auto-dispatches to the Cloud Run
-        # worker, unchanged).
-        agent_cloud = _voice_agent_cloud(uid)
+        # worker, unchanged). `agent_cloud` was resolved at the top of this
+        # block (it also gates the Cloud Run wake ping).
         dispatch_agent = (
             CONFIG.agent_name_livekit if agent_cloud == "livekit" else None
         )
@@ -933,8 +941,14 @@ async def welcome_token(
     if not CONFIG.livekit_url:
         raise HTTPException(status_code=503, detail="Voice is unavailable.")
 
-    # See the matching call in /bootstrap above — wakes the scale-to-zero
-    # ayma-agent worker as early as possible.
+    # The pre-sign-in welcome room has no uid and no voice_agent_cloud pref, so
+    # it is created with NO explicit agent dispatch — LiveKit auto-dispatches it
+    # to the Cloud Run worker (the LiveKit-hosted worker is explicit-dispatch
+    # only, agent_name "ayma-lk"). So welcome always needs the Cloud Run wake,
+    # unlike authenticated /bootstrap, which wakes Cloud Run only for the
+    # "cloudrun"-routed users. This is the one remaining always-on Cloud Run
+    # consumer (see docs/LIVEKIT_AGENT_MIGRATION.md — full retirement of Cloud
+    # Run requires migrating the welcome flow to explicit ayma-lk dispatch).
     background.add_task(agent_wake.wake_agent)
     room = f"welcome-{secrets.token_urlsafe(9)}"
     try:
