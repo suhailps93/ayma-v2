@@ -39,7 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, tap-to-deselect + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, SINGLE-SELECT per axis (tap a photo to make it THE one analysed, replacing the prior pick; backend reads exactly one photo per axis) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -238,10 +238,19 @@ flowchart LR
   single clear face for Face (`shows_face`), the user's body for Body (`shows_body`). A **multi-person** photo is
   **never** auto-selected in either axis (analysis needs solo shots of the user; not analysing photos of other people is
   also privacy-positive), a face-only/no-body photo is never pre-checked into Body, and an untagged/ambiguous photo is
-  surfaced but never pre-checked (defensive: can't verify solo + correct type). In the sheet a photo starts selected iff
-  its `auto_select` is true; tapping a thumbnail toggles whether it feeds that axis — selection is local to
-  the sheet and **never navigates** (a tap only select/deselects; only the explicit **Add photo** tile, now present on
-  **both** groups whether empty or not, opens the picker). Each section carries one short guidance line under its header
+  surfaced but never pre-checked (defensive: can't verify solo + correct type). **The sheet is SINGLE-SELECT per axis
+  (§ founder 2026-10-29 fix)**: the backend analyses exactly ONE photo per axis, so each axis holds at most one selected
+  photo. On first load an axis defaults to the **first** `auto_select` photo (or none); tapping a thumbnail makes it
+  **THE** photo analysed for that axis, **replacing** any previously selected one (adding a photo likewise becomes that
+  axis's sole pick) — so exactly one `media_id` (or one privately-added `image_path`) per axis is sent on run. This fixed
+  the repeat-report bug: the old multi-select kept the sticky auto-selected default alongside a newly-tapped photo, and
+  since the backend reads only the first grid photo in grid order, the default re-won and every rerun re-analysed the same
+  photo and produced an identical report (§ founder 2026-10-29). To leave a section out, use **Skip**. Selection is local
+  to the sheet and **never navigates** (a tap only picks; only the explicit **Add photo** tile, now present on **both**
+  groups whether empty or not, opens the picker). **Loading state (§ founder 2026-10-29)**: while a run is in flight the
+  report screen (`AppearanceReportScreen`) shows it IS running — the top-right Re-run control swaps to a spinner (disabled)
+  and an **"Updating…"** banner sits over the current report — driven by a shared `ReportEvents.started`/`stopped`
+  in-progress flag the background runner sets, clearing to the fresh "Updated just now" report on completion. Each section carries one short guidance line under its header
   ("A clear photo of your face." / "A clear photo of your full body.") and the sheet shows a single prominent note —
   "Use photos of just you — no other people." — since couple/group shots muddy the read (§ founder 2026-10-28).
   *Privacy (§ founder 2026-10-28 fix)*: **Add photo** no longer

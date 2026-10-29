@@ -1,6 +1,6 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-10-28. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-10-29. Update this file whenever an item changes; commit and push to main.
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
@@ -23,6 +23,13 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 - **Fix (Issue 2):** `taste_match._resolve_pair` gives the one-sided empty state tailored, server-driven copy — when the VIEWER has taste but the match doesn't, it surfaces the viewer's own Music/Film/Food and "the moment {name} adds theirs, your shared tastes and date ideas appear here"; viewer-missing prompts them to add. Full dual-sided rendering unchanged. **Server-driven — no APK.**
 - **Demo data:** all four demo profiles (maya/leo/aisha/noah) already carry FULL Music/Film/Food on BOTH sides — confirmed, no change needed.
 - Tests: `test_questionnaire_skill.py` +3 (merge fills film/food, caps/dedup/drops prose, no-op), `test_wiki_ingest.py` +1 (routes named taste to the taste page, not interests; drops narrative taste op), `test_taste_match.py` updated +1 (one-sided surfaces viewer tastes). Full bootstrap suite green. Docs: QLOO_TASTE + ARCHITECTURE + HACKATHON_STATUS. **CODE+TESTS+PUSH + deploy ayma-api; no APK.**
+## Appearance per-axis SINGLE-select + report loading state (meta-hackathon, 2026-10-29) — DONE [[todo-appearance-single-select]]
+- Repeat-report bug, correctly root-caused to the CLIENT: `AppearancePreRunSheet`'s per-axis photo picker was MULTI-select while the backend (`appearance._pick`) reads exactly ONE photo per axis (the first selected in grid order). The sticky `auto_select` default stayed selected next to a newly-tapped photo and re-won, so every "Run analysis" re-analysed the same photo → identical report.
+- Fix (Flutter, `skills_screen.dart`): per-axis **single-select** — tapping a photo makes it THE selected one, replacing any prior pick; added photos become the sole pick; first load defaults to the first `auto_select`; exactly one `media_id`/`image_path` per axis sent; Skip leaves a section out. Dead multi-select toggle removed.
+- Founder fast-follow (same commit): **loading state** on `AppearanceReportScreen` — Re-run control spins (disabled) + "Updating…" banner while a run is in flight (`ReportEvents.started`/`stopped`/`isRunning`), clearing to the fresh report on completion.
+- Backend unchanged (one selected id → deterministic `_pick`); added a focused test `test_single_explicit_selection_analyses_exactly_that_photo`.
+- Tests: pre-run single-select assertions, report-screen loading-state test, backend test; `flutter analyze` clean, `flutter test` incl layout matrix green; `test_appearance.py` (52) green. **E2E PROVEN on emulator-5554** (Play-reviewer account): face selection A→B changed `face.source_photos`+`overall_score` between runs; loading state visible. Docs: ARCHITECTURE, HACKATHON_STATUS. **CLIENT CODE+TESTS+E2E+PUSH; rides next APK; no backend deploy.**
+- Follow-up noted (NOT in scope here): an added-only axis selection (no grid photo chosen, the photo rides as a private `image_path`) is not analysed for face/body on a grid-less account — `_pick` with a non-None empty `only_media_ids` returns None and never falls back to `extra`. The intended selection path is grid photos (`face_media_ids`/`body_media_ids`); worth a later backend tweak so a single explicitly-added `image_path` can drive its own axis read.
 
 ## Taste questions asked early + fillable from completeness (meta-hackathon, 2026-10-28) — DONE
 - Founder: let users add tastes from the profile-completeness page, and bump the taste questions' priority so they're asked EARLY (not buried) — so taste data gets populated and the Qloo "Taste match" stops showing empty. **No new form** — reuse the existing questionnaire/completeness path end-to-end.

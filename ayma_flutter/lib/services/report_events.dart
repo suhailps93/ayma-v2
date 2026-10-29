@@ -21,9 +21,37 @@ class ReportEvents extends ChangeNotifier {
 
   final Map<String, int> _revisions = {};
 
+  /// How many background runs of a [reportType] are in flight right now. A
+  /// count (not a bool) so overlapping runs each hold the "running" state until
+  /// the last one lands. An open report view watches this to show a loading
+  /// state (a spinning Re-run control + an "Updating…" banner) while a run is
+  /// in progress, so the user sees it IS running rather than a silently-stale
+  /// report (founder 2026-10-29: "doesn't look like it's running").
+  final Map<String, int> _running = {};
+
   /// How many times a report of [reportType] has completed. 0 before the
   /// first completion this session.
   int revisionFor(String reportType) => _revisions[reportType] ?? 0;
+
+  /// Whether a background run of [reportType] is in progress right now.
+  bool isRunning(String reportType) => (_running[reportType] ?? 0) > 0;
+
+  /// Signal that a background run of [reportType] has STARTED. Flips the type
+  /// to "running" and notifies listeners.
+  void started(String reportType) {
+    _running[reportType] = (_running[reportType] ?? 0) + 1;
+    notifyListeners();
+  }
+
+  /// Signal that a background run of [reportType] has STOPPED (succeeded or
+  /// failed). Clears the "running" state when the last in-flight run lands.
+  /// Does NOT bump the revision — success additionally calls [completed] so a
+  /// listener refetches; a failure only clears the spinner.
+  void stopped(String reportType) {
+    final n = (_running[reportType] ?? 0) - 1;
+    _running[reportType] = n > 0 ? n : 0;
+    notifyListeners();
+  }
 
   /// Signal that a [reportType] report finished regenerating. Bumps its
   /// revision and notifies listeners.

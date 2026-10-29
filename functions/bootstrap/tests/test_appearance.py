@@ -631,6 +631,38 @@ def test_explicit_selection_of_a_different_in_grid_photo_forces_a_fresh_run(
     assert led["last_status"] == "ok" and led["detail"] != "unchanged_photos"
 
 
+def test_single_explicit_selection_analyses_exactly_that_photo(monkeypatch, _mocks):
+    # The client is single-select: it sends exactly ONE media id per axis. The
+    # backend must analyse precisely that photo -- regardless of its position in
+    # grid order -- and no other grid photo. Here the sole pick (m2) is NOT the
+    # first grid photo, proving grid order never overrides the explicit pick.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"f1", "mime": "image/jpeg", "path": "uploads/u1/f1.jpg",
+             "media_id": "m1",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+            {"bytes": b"f2", "mime": "image/jpeg", "path": "uploads/u1/f2.jpg",
+             "media_id": "m2",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+            {"bytes": b"f3", "mime": "image/jpeg", "path": "uploads/u1/f3.jpg",
+             "media_id": "m3",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        ],
+    )
+
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["m2"], want_body=False,
+    ))
+    # Exactly one face vision pass, on exactly the picked photo (f2), not the
+    # first-in-grid (f1) and not all three.
+    assert _mocks["face"] == 1
+    assert rep["face"]["source_photos"] == ["uploads/u1/f2.jpg"]
+    led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
+    assert led["last_status"] == "ok"
+
+
 def test_rerun_after_a_photo_is_added_runs_analysis_again(monkeypatch, _mocks):
     db = FakeDb()
     _run(appearance.run_appearance(db, "u1"))

@@ -10,6 +10,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/profile_service.dart';
 import '../services/report_card_share.dart';
+import '../services/report_events.dart';
 import '../theme.dart';
 import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
@@ -116,12 +117,19 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     for (final p in _shownPool()) (_decoded[p.url]!, p.label),
   ];
 
+  /// Rebuilds the screen when an appearance run starts/stops so the Re-run
+  /// control and the "Updating…" banner reflect the live run state.
+  void _onReportEvents() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     reassertScreenContext();
     _loadName();
     _loadReferralCode();
+    ReportEvents.instance.addListener(_onReportEvents);
   }
 
   Future<void> _loadReferralCode() async {
@@ -275,6 +283,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
 
   @override
   void dispose() {
+    ReportEvents.instance.removeListener(_onReportEvents);
     _release(_decoded);
     _logo?.image.dispose();
     super.dispose();
@@ -325,6 +334,10 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     // no-photo rule.
     final showCard = card != null && _shownPool().isNotEmpty;
     final ac = context.ac;
+    // A run fired from here (or the Skills screen) is in flight: show it IS
+    // running — a spinner in place of the Re-run icon and an "Updating…" banner
+    // over the (still-visible) current report (founder 2026-10-29).
+    final running = ReportEvents.instance.isRunning('appearance');
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
@@ -332,17 +345,27 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
         actions: [
           // Re-run opens the same pre-run sheet the Skills screen uses: your
           // current photos grouped into Face / Body, with a per-group skip and
-          // an add-photo prompt for an empty group.
+          // an add-photo prompt for an empty group. While a run is in flight the
+          // control shows a spinner and is disabled so a second run can't stack.
           IconButton(
-            tooltip: 'Re-run',
-            onPressed: () => runAppearanceFromPreRunSheet(
-              context, widget.apiClient ?? ApiClient()),
-            icon: const Icon(Icons.refresh),
+            tooltip: running ? 'Running your analysis…' : 'Re-run',
+            onPressed: running
+                ? null
+                : () => runAppearanceFromPreRunSheet(
+                    context, widget.apiClient ?? ApiClient()),
+            icon: running
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
           ),
         ],
       ),
       body: ListView(
         children: [
+          if (running) const _UpdatingBanner(),
           if (showCard) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -458,6 +481,43 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     } finally {
       if (mounted) setState(() => _sharing = false);
     }
+  }
+}
+
+/// A slim banner shown at the top of the report while a background run is in
+/// flight, so the current (soon-to-be-replaced) report doesn't just sit there
+/// looking static. Pairs with the spinning Re-run control (founder 2026-10-29).
+class _UpdatingBanner extends StatelessWidget {
+  const _UpdatingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Semantics(
+      liveRegion: true,
+      label: 'Updating your appearance report',
+      child: Container(
+        width: double.infinity,
+        color: ac.bgElev,
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: ac.accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Updating your report…',
+                style: AymaType.sans(size: 13, color: ac.fg),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
