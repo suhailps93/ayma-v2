@@ -138,13 +138,20 @@ def _mocks(monkeypatch):
         lambda fields: "Physical profile — eyes: brown.",
     )
 
-    async def _face_run(b, m, *, uid=None, source_path=None):
-        seen["face"] += 1
-        return {**_FACE, "source_photos": [source_path] if source_path else []}
+    def _src_photos(image_or_images, source_path):
+        # Mirror face_report/body_report.run's own source_photos derivation for
+        # both call forms: single (bytes, source_path=…) and multi ([(b,m,p),…]).
+        if isinstance(image_or_images, (bytes, bytearray)):
+            return [source_path] if source_path else []
+        return [str(p) for _b, _m, p in (image_or_images or []) if p]
 
-    async def _body_run(b, m, *, uid=None, source_path=None):
+    async def _face_run(image_or_images, m=None, *, uid=None, source_path=None):
+        seen["face"] += 1
+        return {**_FACE, "source_photos": _src_photos(image_or_images, source_path)}
+
+    async def _body_run(image_or_images, m=None, *, uid=None, source_path=None):
         seen["body"] += 1
-        return {**_BODY, "source_photos": [source_path] if source_path else []}
+        return {**_BODY, "source_photos": _src_photos(image_or_images, source_path)}
 
     monkeypatch.setattr(appearance.face_report, "run", _face_run)
     monkeypatch.setattr(appearance.body_report, "run", _body_run)
@@ -598,12 +605,13 @@ def test_explicit_selection_of_a_different_in_grid_photo_forces_a_fresh_run(
 
     monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_refresh_grid)
 
-    # The produced read varies by the photo actually analysed -- so a fresh run
-    # is provable from the output score, not just the source_photos echo.
-    async def _face_by_path(b, m, *, uid=None, source_path=None):
+    # The produced read varies by the photo(s) actually analysed -- so a fresh
+    # run is provable from the output score, not just the source_photos echo.
+    async def _face_by_path(image_or_images, m=None, *, uid=None, source_path=None):
         _mocks["face"] += 1
-        score = 9.9 if source_path == "uploads/u1/f2.jpg" else 3.3
-        return {**_FACE, "overall_score": score, "source_photos": [source_path]}
+        paths = [str(p) for _b, _m, p in (image_or_images or []) if p]
+        score = 9.9 if "uploads/u1/f2.jpg" in paths else 3.3
+        return {**_FACE, "overall_score": score, "source_photos": paths}
 
     monkeypatch.setattr(appearance.face_report, "run", _face_by_path)
 
@@ -661,6 +669,77 @@ def test_single_explicit_selection_analyses_exactly_that_photo(monkeypatch, _moc
     assert rep["face"]["source_photos"] == ["uploads/u1/f2.jpg"]
     led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
     assert led["last_status"] == "ok"
+
+
+def _multi_face_body_grid():
+    return [
+        {"bytes": b"f1", "mime": "image/jpeg", "path": "uploads/u1/f1.jpg",
+         "media_id": "mf1",
+         "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        {"bytes": b"f2", "mime": "image/jpeg", "path": "uploads/u1/f2.jpg",
+         "media_id": "mf2",
+         "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        {"bytes": b"b1", "mime": "image/jpeg", "path": "uploads/u1/b1.jpg",
+         "media_id": "mb1",
+         "attrs": {"usable_for_face": False, "usable_for_body": True}},
+        {"bytes": b"b2", "mime": "image/jpeg", "path": "uploads/u1/b2.jpg",
+         "media_id": "mb2",
+         "attrs": {"usable_for_face": False, "usable_for_body": True}},
+    ]
+
+
+def test_multiple_selected_photos_feed_one_combined_report(monkeypatch, _mocks):
+    # Tick two face photos + two body photos. Each axis is analysed ONCE (one
+    # combined vision call), and its source_photos lists every ticked photo in
+    # grid order -- not just the first (the old stale-report bug).
+    monkeypatch.setattr(
+        appearance, "_grid_photos", lambda db, uid: _multi_face_body_grid()
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1",
+        face_media_ids=["mf1", "mf2"],
+        body_media_ids=["mb1", "mb2"],
+    ))
+    assert rep["face"]["source_photos"] == ["uploads/u1/f1.jpg", "uploads/u1/f2.jpg"]
+    assert rep["body"]["source_photos"] == ["uploads/u1/b1.jpg", "uploads/u1/b2.jpg"]
+    assert (_mocks["face"], _mocks["body"]) == (1, 1)  # ONE call per axis
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+
+
+def test_changing_the_multi_selection_yields_a_fresh_report(monkeypatch, _mocks):
+    # Same grid both runs, a DIFFERENT ticked set the second time -> a fresh
+    # combined read reflecting the new set, never a stale reuse.
+    monkeypatch.setattr(
+        appearance, "_grid_photos", lambda db, uid: _multi_face_body_grid()
+    )
+    db = FakeDb()
+    rep1 = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mf1"], want_body=False,
+    ))
+    assert rep1["face"]["source_photos"] == ["uploads/u1/f1.jpg"]
+    assert _mocks["face"] == 1
+    rep2 = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mf1", "mf2"], want_body=False,
+    ))
+    assert _mocks["face"] == 2  # a fresh pass, not reused
+    assert rep2["face"]["source_photos"] == ["uploads/u1/f1.jpg", "uploads/u1/f2.jpg"]
+
+
+def test_selection_is_capped_at_max_photos(monkeypatch, _mocks):
+    # More than _MAX_PHOTOS ticked for an axis -> capped, bounding vision cost.
+    grid = [
+        {"bytes": f"f{i}".encode(), "mime": "image/jpeg",
+         "path": f"uploads/u1/f{i}.jpg", "media_id": f"mf{i}",
+         "attrs": {"usable_for_face": True, "usable_for_body": False}}
+        for i in range(9)
+    ]
+    monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: grid)
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=[f"mf{i}" for i in range(9)], want_body=False,
+    ))
+    assert len(rep["face"]["source_photos"]) == appearance._MAX_PHOTOS
 
 
 def test_rerun_after_a_photo_is_added_runs_analysis_again(monkeypatch, _mocks):
