@@ -12,12 +12,14 @@ const double _kHolePad = 8.0;
 
 /// The interactive coach-mark / spotlight engine for the feature tour (§11.2a).
 ///
-/// Rendered as a full-screen layer on TOP of the real app (the main shell), it
-/// walks the user through the live UI one [TourFeature] at a time: a dimming
-/// scrim with a rounded-rect spotlight cutout around the step's target widget
-/// (resolved from its [TourAnchors] key), plus an anchored callout — a short
-/// title, a one-line how-to, a step counter, a persistent "Skip tour" and a
-/// "Next" / "Got it" button.
+/// Rendered as a single full-screen layer on TOP of the whole app by [TourHost]
+/// (in `MaterialApp.router`'s `builder`, above the `Navigator`), so it stays
+/// mounted across route pushes and keeps the SAME floating callout open as the
+/// tour moves between pages. It walks the user through the live UI one
+/// [TourFeature] at a time: a dimming scrim with a rounded-rect spotlight cutout
+/// around the step's target widget (resolved from its [TourAnchors] key), plus
+/// an anchored callout — a short title, a one-line how-to, a step counter, a
+/// persistent "Skip tour" and a "Next" / "Got it" button.
 ///
 /// The spotlight is INTERACTIVE: the cutout is press-through (a [_HoleGate]
 /// lets the tap fall through to the real widget behind, while a [Listener]
@@ -27,12 +29,15 @@ const double _kHolePad = 8.0;
 /// around the cutout absorbs taps. An off-screen anchor (a Profile row below the
 /// fold) is scrolled into view before it's spotlighted.
 ///
-/// Cross-screen: a step whose anchor lives on another shell tab names that tab
-/// ([TourFeature.tab]); the engine asks the host to switch there ([onSwitchTab])
-/// before spotlighting. A step whose target isn't present on this build (a
-/// gated feature, a missing widget) is skipped gracefully — the tour never
-/// blocks on a missing anchor. A step with no [TourFeature.anchorId] shows a
-/// centered callout with no cutout (an intro/outro).
+/// Navigation-aware: before measuring each step the engine asks the host to
+/// put the app where that step's anchor lives ([onPrepareStep]) — the root host
+/// pops any pushed sub-page back to the shell and switches to the step's
+/// [TourFeature.tab] — then re-acquires the anchor's rect on the new page and
+/// keeps the same callout open. A step whose target still isn't present (a gated
+/// feature, a missing widget, a page still transitioning in beyond
+/// [maxMeasureAttempts] frames) is skipped gracefully — the tour never blocks on
+/// a missing anchor. A step with no [TourFeature.anchorId] shows a centered
+/// callout with no cutout (an intro/outro).
 ///
 /// Finishing OR skipping marks every shown feature's `feature_id` seen (via
 /// [FeatureTourStore]) so it doesn't nag again, then calls [onFinish] to
@@ -45,8 +50,9 @@ class CoachMarkOverlay extends StatefulWidget {
     required this.onFinish,
     this.spotlight = false,
     this.store,
-    this.onSwitchTab,
+    this.onPrepareStep,
     this.resolveRect = TourAnchors.rectFor,
+    this.maxMeasureAttempts = 40,
   });
 
   /// The ordered steps to walk through.
@@ -63,12 +69,21 @@ class CoachMarkOverlay extends StatefulWidget {
   /// Injected in tests; defaults to the app-wide [featureTourStoreGlobal].
   final FeatureTourStore? store;
 
-  /// Asks the host to make [TourFeature.tab] the active shell body before a
-  /// step is spotlighted. Null in standalone contexts (tests, layout matrix).
-  final ValueChanged<int>? onSwitchTab;
+  /// Asks the host to put the app where the step's anchor lives before it's
+  /// measured — the root host pops any pushed sub-page back to the shell and
+  /// switches to the step's [TourFeature.tab]. Called once per step, for every
+  /// step (so a press-through that pushed a sub-page is undone before the next
+  /// anchor is measured). Null in standalone contexts (tests, layout matrix).
+  final ValueChanged<TourFeature>? onPrepareStep;
 
   /// Resolves an anchor id to its on-screen rect; injectable for tests.
   final Rect? Function(String id) resolveRect;
+
+  /// How many frames to re-try measuring a not-yet-laid-out anchor before
+  /// skipping the step gracefully. Generous on device (default 40 ≈ 0.6s) so a
+  /// step can ride out a route-pop transition + scroll-into-view; tests inject
+  /// a small value so a genuinely-missing anchor skips within a few pumps.
+  final int maxMeasureAttempts;
 
   @override
   State<CoachMarkOverlay> createState() => _CoachMarkOverlayState();
@@ -113,19 +128,23 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     super.dispose();
   }
 
-  /// After the next frame, switch to the step's tab (if any) and measure its
-  /// anchor. A cross-tab anchor (a Profile row) is scrolled into view first; an
-  /// anchor that still doesn't resolve after a few frames skips the step.
+  /// Measure this step's anchor after the next frame, first asking the host to
+  /// put the app where the anchor lives (pop to the shell, switch tab). A
+  /// cross-tab anchor (a Profile row) is scrolled into view first; an anchor
+  /// that still doesn't resolve within [CoachMarkOverlay.maxMeasureAttempts]
+  /// frames skips the step.
   void _scheduleMeasure() {
-    final feature = widget.features[_index];
-    final tab = feature.tab;
-    if (tab != null) widget.onSwitchTab?.call(tab);
-    _measureAfterFrame(feature, attempt: 0);
+    _measureAfterFrame(widget.features[_index], attempt: 0);
   }
 
   void _measureAfterFrame(TourFeature feature, {required int attempt}) {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      // Navigate to the step's page on the first attempt — in a post-frame
+      // callback, never synchronously during build, since it may `go()` or fire
+      // a `TabRequest` that rebuilds the shell. Later attempts just re-measure
+      // once that navigation has laid out.
+      if (attempt == 0) widget.onPrepareStep?.call(feature);
       final anchorId = feature.anchorId;
       if (anchorId == null) {
         // A centered intro/outro step — no spotlight, no cutout.
@@ -151,9 +170,10 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
       }
       final rect = widget.resolveRect(anchorId);
       if (rect == null) {
-        // Not laid out yet (a tab still switching in) — retry a couple of
-        // frames before giving up and skipping gracefully, never blocking.
-        if (attempt < 3) {
+        // Not laid out yet (a tab still switching in, a pushed sub-page still
+        // popping back to the shell) — retry for a bounded number of frames
+        // before giving up and skipping gracefully, never blocking.
+        if (attempt < widget.maxMeasureAttempts) {
           _measureAfterFrame(feature, attempt: attempt + 1);
           return;
         }
@@ -276,12 +296,14 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
       onSkip: _finish,
     );
     final size = MediaQuery.sizeOf(context);
-    // A non-anchored (summary) step is centered on screen. An anchored step's
-    // callout sits in the half opposite its spotlight so it never covers the
-    // highlighted element — and, crucially, never covers the press-through
-    // cutout. The card shrink-wraps its height (scrolling only if it can't
-    // fit, so it stays overflow-safe at text scale 2.0), so the empty area
-    // around it passes taps through to the scrim/cutout below.
+    // The card is always centered HORIZONTALLY (a centred Align + a capped
+    // width, so it reads as a centred dialogue on phones and tablets alike).
+    // Vertically: a non-anchored (summary) step is centred on screen; an
+    // anchored step's callout sits in the half OPPOSITE its spotlight so it
+    // never covers the highlighted element — and, crucially, never covers the
+    // press-through cutout. The card shrink-wraps its height and scrolls
+    // internally only when it can't fit (overflow-safe at text scale 2.0), so
+    // the empty area around it passes taps through to the scrim/cutout below.
     final targetInBottomHalf =
         _rect != null && _rect!.center.dy > size.height / 2;
     final alignment = _rect == null
@@ -290,18 +312,14 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     return LayoutBuilder(
       builder: (context, constraints) => Align(
         alignment: alignment,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 360,
-              maxHeight: constraints.maxHeight - 32,
-            ),
-            child: ListView(
-              shrinkWrap: true,
-              padding: EdgeInsets.zero,
-              children: [card],
-            ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 400,
+            maxHeight: constraints.maxHeight,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: card,
           ),
         ),
       ),
