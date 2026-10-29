@@ -684,34 +684,56 @@ def route_ai_update(page_id: str, cur: dict, payload: dict) -> dict:
     that already shows public text. The new ``ai_body`` itself is always kept
     (it is Ayma's memory), but the text visitors see only changes when the
     user approves: the current public text is frozen as ``user_edits`` and the
-    rewrite becomes a ``pending_proposal``. Pages with nothing public yet
+    rewrite becomes a ``pending_proposal``. A new proposal always REPLACES the
+    page's previous one, so a section is never carrying two cards at once —
+    only the latest rewrite is ever pending. Pages with nothing public yet
     (first write, private, hidden) are written straight through.
 
-    One exception comes first: the propose/Apply-Dismiss flow is only for
-    Ayma's OWN discovered edits. When the user themselves just edited this
-    section in place (``story.save_section``/``remove_section`` stamped the
-    one-shot ``suppress_next_proposal`` flag), their change applies directly and
-    is done — it is never re-proposed as a pending card (founder bug
-    2026-10-28). Honor it once, consume the flag, and drop any stale proposal."""
-    if cur.get(story.F_SUPPRESS_PROPOSAL):
-        out = {story.F_SUPPRESS_PROPOSAL: False}
-        if cur.get(F_PROPOSAL):
+    The propose/Apply-Dismiss flow is only for Ayma's OWN discovered edits.
+    When the user themselves just edited this section in place
+    (``story.save_section``/``remove_section`` stamped the one-shot
+    ``suppress_next_proposal`` guard and already cleared the live card), the
+    **next** rewrite that would differ from their text is swallowed instead of
+    re-surfaced as a pending card — so a lagging re-ingest can never revert the
+    user's own change, and a user-requested edit never produces a proposal
+    (founder bug 2026-10-28). The guard is spent only on that one suppressed
+    rewrite: writes with nothing to propose (private/hidden page, first public
+    write, or a rewrite that already matches the live public text) keep it, so
+    it still catches the first rewrite that genuinely diverges rather than
+    being wasted on an unrelated no-op pass in between."""
+    suppress = bool(cur.get(story.F_SUPPRESS_PROPOSAL))
+    has_proposal = bool(cur.get(F_PROPOSAL))
+
+    def _settle(spend: bool) -> dict:
+        """A write with nothing to propose: clear any stale card, and consume
+        the user-edit guard only when ``spend`` (i.e. we actually swallowed a
+        diverging rewrite)."""
+        out: dict = {}
+        if has_proposal:
             out[F_PROPOSAL] = None
+        if suppress and spend:
+            out[story.F_SUPPRESS_PROPOSAL] = False
         return out
+
     if (
         payload.get("visibility") != story.VIS_PUBLIC
         or cur.get("visibility") != story.VIS_PUBLIC
         or page_id in story.REPORT_LINKED_PAGE_IDS
         or page_id in story.SKILL_PAGE_IDS
     ):
-        return {}
+        return _settle(spend=False)
     current = story._effective_body(cur)
     current_public = _norm(story.strip_private_spans(current))
     if not current_public:
-        return {}
+        return _settle(spend=False)
     after = preserve(payload["ai_body"], current, list(cur.get(F_PINNED) or []))
     if _norm(story.strip_private_spans(after)) == current_public:
-        return {F_PROPOSAL: None} if cur.get(F_PROPOSAL) else {}
+        return _settle(spend=False)
+    # Ayma's rewrite diverges from the live public text.
+    if suppress:
+        # The user just edited this section directly: swallow this one diverging
+        # rewrite (never re-propose or revert their change) and spend the guard.
+        return _settle(spend=True)
     out: dict = {F_PROPOSAL: {"before": current, "after": after, "created_at": _now()}}
     if not (cur.get(story.F_USER_EDITS) or "").strip():
         out[story.F_USER_EDITS] = current
@@ -847,14 +869,32 @@ def _write_decided(
     return {"ok": True, "remaining": len(remaining), "head_version_id": version_id}
 
 
+def _live_matches_decisions(
+    data: dict, before_public: str, after_public: str, decided: dict[str, str]
+) -> bool:
+    """Whether the live public text is still exactly what the proposal's
+    decisions so far imply (``_rebuild_public``). It is, in the normal flow:
+    an undecided proposal leaves the live text as the frozen ``before``, and
+    each per-change apply writes exactly the rebuilt text. It is NOT when the
+    user edited the section directly in the meantime (``save_section`` already
+    clears the card, but a pre-fix card may linger) or a newer rewrite moved
+    the base: the proposal is then built on text that no longer exists, so
+    applying it would overwrite the user's current wording. Such a proposal is
+    stale — dropped on read and refused on apply, never regressed onto."""
+    live = _norm(story.strip_private_spans(story._effective_body(data)))
+    expected, _private = _rebuild_public(before_public, after_public, decided)
+    return live == expected
+
+
 def list_proposals(db, uid: str) -> list[dict]:
     """Every pending public-profile change, grouped by section, each change a
     ``{id, op, text}`` row with its own stable id. The profile banner counts
     the changes across this list. A proposal that is not a dict, whose changes
-    have all been decided, or whose public text no longer differs from the
-    current public text (an older rewrite overtaken by the user's own edit),
-    has nothing left to review: it is cleared here and logged, so the banner
-    never counts a change that cannot render."""
+    have all been decided, or that is stale — its frozen base no longer matches
+    the live public text, because the user edited the line directly or a newer
+    rewrite superseded it (:func:`_live_matches_decisions`) — has nothing left
+    to review: it is cleared here and logged, so the banner never counts a
+    change that cannot render and a lingering stale card self-heals on read."""
     out = []
     for snap in story._pages_col(db, uid).stream():
         data = snap.to_dict() or {}
@@ -874,8 +914,9 @@ def list_proposals(db, uid: str) -> list[dict]:
             it for it in _change_items(before_public, after_public)
             if it["id"] not in decided
         ]
-        current = _norm(story.strip_private_spans(story._effective_body(data)))
-        if not pending or _norm(after_public) == current:
+        if not pending or not _live_matches_decisions(
+            data, before_public, after_public, decided
+        ):
             snap.reference.set({F_PROPOSAL: None}, merge=True)
             logger.info(
                 "profile proposal cleared as stale uid=%s page=%s", uid, snap.id
@@ -935,13 +976,28 @@ def consume_new_suggestions(db, uid: str) -> int:
 
 def _load_proposal(db, uid: str, page_id: str) -> tuple:
     """``(ref, data, prop, before_public, after_public, items)`` for a page
-    with a dict proposal. ``KeyError`` when there is none."""
+    with a dict proposal. ``KeyError`` when there is none, or when the proposal
+    is stale — its frozen base no longer matches the live public text
+    (:func:`_live_matches_decisions`), so applying it would overwrite the
+    user's current wording. A stale proposal is cleared here before raising, so
+    an Apply/Apply-all can never regress a line to an older proposed value; the
+    client's refetch then shows the card gone."""
     ref, data = story._require_page(db, uid, page_id)
     prop = data.get(F_PROPOSAL)
     if not isinstance(prop, dict):
         raise KeyError(page_id)
     before_public = story.strip_private_spans(prop.get("before") or "")
     after_public = story.strip_private_spans(prop.get("after") or "")
+    if not _live_matches_decisions(
+        data, before_public, after_public, _decided_map(prop)
+    ):
+        ref.set({F_PROPOSAL: None}, merge=True)
+        logger.info(
+            "profile proposal cleared as stale on decide uid=%s page=%s",
+            uid,
+            page_id,
+        )
+        raise KeyError(page_id)
     items = _change_items(before_public, after_public)
     return ref, data, prop, before_public, after_public, items
 

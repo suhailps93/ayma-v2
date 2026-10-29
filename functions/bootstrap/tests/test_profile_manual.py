@@ -475,6 +475,87 @@ def test_saving_a_manual_edit_discards_a_stale_proposal(model):
     assert pm.list_proposals(db, UID) == []
 
 
+def test_user_edit_suppresses_the_next_diverging_reingest():
+    # Founder bug 2026-10-28: a user-requested surgical story edit
+    # (edit_story_entry -> story.save_section) must never be re-surfaced — nor
+    # reverted — as a pending "Public profile updates" card by a lagging
+    # re-ingest. The one-shot guard swallows the next diverging rewrite.
+    db = _db()
+    story.save_section(
+        db, UID, "interests", "She climbs on weekends. She bakes sourdough."
+    )
+    assert _doc(db, "interests")["suppress_next_proposal"] is True
+    assert _doc(db, "interests")["pending_proposal"] is None
+    # A lagging re-ingest still carries Ayma's old memory (it diverges from the
+    # user's text) — no proposal, and the user's wording is left untouched.
+    _ingest_write(db, "interests", "She climbs and surfs.")
+    assert pm.list_proposals(db, UID) == []
+    text = pm.get_text(db, UID)["text"]
+    assert "She bakes sourdough." in text and "surfs" not in text
+    # the guard was spent on that diverging rewrite
+    assert _doc(db, "interests")["suppress_next_proposal"] is False
+    # a later genuinely-new rewrite proposes normally again
+    _ingest_write(
+        db, "interests", "She climbs on weekends. She bakes sourdough. She paints."
+    )
+    assert any(
+        "paints" in c["text"]
+        for p in pm.list_proposals(db, UID)
+        for c in p["changes"]
+    )
+
+
+def test_guard_is_not_wasted_on_a_no_op_reingest_in_between():
+    # The guard protects the first rewrite that genuinely DIVERGES, even when a
+    # no-op (unchanged) ingest pass runs in between — otherwise a stray no-op
+    # could spend the guard and let the next pass revert the user's edit.
+    db = _db()
+    story.save_section(
+        db, UID, "interests", "She climbs on weekends. She bakes sourdough."
+    )
+    # A no-op re-ingest (Ayma's text already matches the user's) keeps the guard.
+    _ingest_write(db, "interests", "She climbs on weekends. She bakes sourdough.")
+    assert _doc(db, "interests")["suppress_next_proposal"] is True
+    assert pm.list_proposals(db, UID) == []
+    # The next diverging pass is still swallowed by the surviving guard.
+    _ingest_write(db, "interests", "She climbs and surfs.")
+    assert pm.list_proposals(db, UID) == []
+    assert "She bakes sourdough." in pm.get_text(db, UID)["text"]
+
+
+def test_apply_all_refuses_a_stale_proposal_and_never_regresses_the_line():
+    # Founder bug 2026-10-28: "Apply all" applied an OLDER proposed value,
+    # reverting the user's correct edit. A proposal whose frozen base no longer
+    # matches the live public text (the user edited the line to a third value)
+    # is refused and cleared — never written over the user's current wording.
+    db = _db()
+    _ingest_write(db, "interests", "She climbs and surfs.")
+    [_prop] = pm.list_proposals(db, UID)
+    ref = story._pages_col(db, UID).document("interests")
+    # A stale card lingers while the user has since edited the line directly.
+    ref.set({"user_edits": "She climbs daily. She bakes challah."}, merge=True)
+    with pytest.raises(KeyError):
+        pm.apply_proposal(db, UID, "interests")
+    assert _doc(db, "interests")["pending_proposal"] is None
+    text = pm.get_text(db, UID)["text"]
+    assert "She bakes challah." in text and "surfs" not in text
+    # and the stale card self-heals off the review list on the next read
+    assert pm.list_proposals(db, UID) == []
+
+
+def test_only_one_card_per_section_latest_rewrite_wins():
+    # No duplicate cards: a newer rewrite REPLACES the section's previous
+    # pending proposal rather than piling a second one on top of it.
+    db = _db()
+    _ingest_write(db, "interests", "She climbs and surfs.")
+    _ingest_write(db, "interests", "She climbs and paints.")
+    props = pm.list_proposals(db, UID)
+    assert len(props) == 1
+    texts = [c["text"] for c in props[0]["changes"]]
+    assert any("paints" in t for t in texts)
+    assert all("surfs" not in t for t in texts)
+
+
 def test_ingest_prompt_starts_from_saved_text_and_lists_pinned():
     db = _db()
     _page(
