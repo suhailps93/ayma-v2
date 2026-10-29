@@ -369,14 +369,16 @@ def _viewing_profile_context(db, uid: str, other: str) -> str:
         if isinstance(score, (int, float)):
             has_match_score = True
             parts.append(
-                f"A match has been computed for you two: {round(float(score))}"
-                "/100 compatibility (this is a real, computed score — you may "
-                "cite it)."
+                f"A compatibility score has been computed for you two: "
+                f"{round(float(score))}/100 compatibility (this is a real, "
+                "computed score — you may cite it). This is a compatibility "
+                "preview, not a mutual match — only call it a 'match' if they "
+                "have mutually liked each other."
             )
         expl = mdoc.get("ai_explanation", "")
         if expl:
             has_match_read = True
-            parts.append(f"Your private read on this match: {expl}")
+            parts.append(f"Your private read on this pairing: {expl}")
     except Exception:  # noqa: BLE001
         pass
     # Honest data flags: tell the model plainly what it does and doesn't have

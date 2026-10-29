@@ -333,6 +333,40 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         apiClient: api,
       ),
     ),
+    // The Instagram-DM-style "send to a user" picker (BUG P): avatar + name
+    // rows with a per-row Send button and a search box, mutual matches first.
+    // Seeded with one mutual match and one DM-only thread so both the matched
+    // badge and a plain row, plus the search field and keyboard, lay out
+    // cleanly at every size, scale and direction.
+    'send-to-user recipient picker': (context) async {
+      final fs = FakeFirebaseFirestore();
+      await fs.doc('users/her/profile/main').set({'name': kLongName});
+      await fs.doc('users/bob/profile/main').set({'name': 'Bob'});
+      await fs.doc('matches/her__me').set({
+        'uids': ['her', 'me'],
+        'status': 'mutual_interest',
+        'score': 0.9,
+      });
+      await fs.doc('dm_threads/her__me').set({
+        'participants': ['her', 'me'],
+        'unread': {'me': 0},
+      });
+      await fs.doc('dm_threads/bob__me').set({
+        'participants': ['bob', 'me'],
+        'unread': {'me': 0},
+      });
+      if (!context.mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => RecipientPicker(
+          dmService: DmService(auth: kLayoutAuth, firestore: fs, api: api),
+          matchService:
+              MatchService(auth: kLayoutAuth, firestore: fs, api: api),
+          api: api,
+        ),
+      );
+    },
     'OAuth code dialog': (context) => promptForOAuthCode(context),
     // No Firebase in tests: the permission read fails, which the primer
     // treats as "not asked yet" — so the dialog shows.

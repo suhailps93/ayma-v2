@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/match_activity.dart';
+import '../services/match_report_cache.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
@@ -75,7 +76,12 @@ class MatchReportScreen extends StatefulWidget {
 class _MatchReportScreenState extends State<MatchReportScreen>
     with ScreenContextReasserter<MatchReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
-  late Future<MatchReport?> _future = _api.matchReport(widget.matchId);
+
+  /// BUG F: a report Ayma already opened this session shows instantly from the
+  /// in-memory cache (no heavy spinner), while a cache-aware GET quietly
+  /// refreshes it in the background. Only a genuinely uncached report shows the
+  /// loading state. The Recalculate button still forces a fresh recompute.
+  late Future<MatchReport?> _future = _initialLoad();
   bool _sendingRecalc = false;
   bool _wasRecalculating = false;
   String _subjectUid = '';
@@ -89,6 +95,41 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 
   bool get _recalculating =>
       _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
+
+  /// First load: serve the cached report instantly if we have one (and refresh
+  /// it quietly in the background), otherwise do the normal GET with a spinner.
+  Future<MatchReport?> _initialLoad() {
+    final cached = MatchReportCache.instance.get(widget.matchId);
+    if (cached != null) {
+      unawaited(_refreshInBackground());
+      return Future.value(cached);
+    }
+    return _fetch();
+  }
+
+  /// A plain cache-aware GET of the stored report (never a forced recompute),
+  /// writing whatever comes back into the shared [MatchReportCache].
+  Future<MatchReport?> _fetch() async {
+    final r = await _api.matchReport(widget.matchId);
+    if (r != null) MatchReportCache.instance.put(r);
+    return r;
+  }
+
+  /// Re-GETs the report behind an already-shown cached copy and swaps it in if
+  /// it still differs; failures are swallowed so the cached view stays put.
+  Future<void> _refreshInBackground() async {
+    try {
+      final r = await _fetch();
+      if (r != null && mounted) {
+        setState(() {
+          _future = Future.value(r);
+          _reportKey.currentState?.reload();
+        });
+      }
+    } catch (_) {
+      // Keep the cached report on screen; a manual Recalculate can retry.
+    }
+  }
 
   @override
   void initState() {
@@ -126,7 +167,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     _wasRecalculating = now;
     setState(() {
       if (justFinished) {
-        _future = _api.matchReport(widget.matchId);
+        _future = _fetch();
         _reportKey.currentState?.reload();
       }
     });
@@ -150,11 +191,11 @@ class _MatchReportScreenState extends State<MatchReportScreen>
         unawaited(MatchActivity.instance
             .start(widget.matchId, previousScore: before?.score, api: _api));
       } else {
-        setState(() => _future = _api.matchReport(widget.matchId));
+        setState(() => _future = _fetch());
         _reportKey.currentState?.reload();
       }
     } catch (_) {
-      _snack("Couldn't recalculate that match.", kind: AymaToastKind.error);
+      _snack("Couldn't recalculate that report.", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _sendingRecalc = false);
     }
@@ -169,8 +210,15 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
-        
-        title: const Text('Match'),
+        // "Match" only for a genuine mutual match (both liked each other);
+        // otherwise this is a compatibility preview, so the title reads
+        // "Compatibility" (§5.3, BUG D). Defaults to "Compatibility" while the
+        // report loads — never claim a match we can't yet confirm.
+        title: FutureBuilder<MatchReport?>(
+          future: _future,
+          builder: (context, snap) =>
+              Text((snap.data?.mutual ?? false) ? 'Match' : 'Compatibility'),
+        ),
         actions: [
           FutureBuilder<MatchReport?>(
             future: _future,
@@ -206,19 +254,18 @@ class _MatchReportScreenState extends State<MatchReportScreen>
           final r = snap.data;
           if (snap.hasError) {
             return _Message(
-              text: "Couldn't load this match.",
-              onRetry: () => setState(
-                  () => _future = _api.matchReport(widget.matchId)),
+              text: "Couldn't load this report.",
+              onRetry: () => setState(() => _future = _fetch()),
             );
           }
           if (r == null) {
             return const _Message(
-                text: 'This match hasn\'t been scored yet.');
+                text: 'This compatibility hasn\'t been scored yet.');
           }
           return Column(
             children: [
               if (_recalculating)
-                const ReportProgressBanner(message: 'Recalculating this match…'),
+                const ReportProgressBanner(message: 'Recalculating this report…'),
               Expanded(
                 child: _Report(r: r, apiClient: _api, reportKey: _reportKey),
               ),
@@ -294,7 +341,7 @@ class _Report extends StatelessWidget {
           reportType: 'match',
           reportId: r.matchId,
           apiClient: apiClient,
-          emptyMessage: "Nothing to show for this match yet.",
+          emptyMessage: "Nothing to show for this report yet.",
           shrinkWrap: true,
         ),
         // "Taste match · powered by Qloo" — the shared-taste section between
