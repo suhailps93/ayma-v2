@@ -256,6 +256,11 @@ class _MainShellScreenState extends State<MainShellScreen>
     // over the live shell. A request that landed before this shell existed is
     // still handled by the first-frame gate ([_maybeShowFeatureTour]).
     TourRequest.instance.pending.addListener(_consumeTourRequest);
+    // Rebuild when the tour starts/ends so this shell's PopScope `canPop`
+    // reflects it: back while the tour is up skips it (the overlay is hosted at
+    // the app root and owns no navigation, and a root `BackButtonListener`
+    // can't reach the Router — so back is handled here, where there is one).
+    TourController.instance.addListener(_onTourChanged);
     // F4: backgrounding during a live call surfaces a real OS call UI — an
     // ongoing notification with Hang Up / Mute on Android, a CallKit call on
     // iOS — so the call is always visible and controllable, never silently
@@ -326,6 +331,11 @@ class _MainShellScreenState extends State<MainShellScreen>
     if (target != null && target != _index) _selectTab(target);
   }
 
+  /// The tour started or ended — rebuild so the [PopScope] below reflects it.
+  void _onTourChanged() {
+    if (mounted) setState(() {});
+  }
+
   /// A replay was requested while this shell is already mounted — run the full
   /// walkthrough (never stacking a second tour on top of a running one). The
   /// replay fires `go('/')` to pop the Settings/Dev screen it was launched from;
@@ -357,6 +367,7 @@ class _MainShellScreenState extends State<MainShellScreen>
     ChatInbox.instance.pending.removeListener(_toAymaTab);
     TabRequest.instance.pending.removeListener(_consumeTabRequest);
     TourRequest.instance.pending.removeListener(_consumeTourRequest);
+    TourController.instance.removeListener(_onTourChanged);
     _callBackground.release();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,
@@ -369,13 +380,20 @@ class _MainShellScreenState extends State<MainShellScreen>
   Widget build(BuildContext context) {
     // The feature tour is no longer hosted here: it lives in a single root
     // overlay above the Navigator ([TourHost]) so it survives route pushes
-    // (§11.2a). Back while the tour is up is handled there (skips the tour);
-    // this PopScope only walks the tab history.
+    // (§11.2a). But back while the tour is up is handled HERE — this is the
+    // nearest `PopScope` with a `Router` ancestor — and skips the tour (marking
+    // its features seen) rather than popping a tab. Otherwise this PopScope just
+    // walks the tab history.
+    final tourActive = TourController.instance.active;
     return PopScope<Object?>(
-      canPop: _tabHistory.length <= 1,
+      canPop: !tourActive && _tabHistory.length <= 1,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        _popTab();
+        if (TourController.instance.active) {
+          TourController.instance.skipFromBack();
+        } else {
+          _popTab();
+        }
       },
       // A live call keeps running (in this app, not backgrounded to the OS —
       // that's CallBackgroundService) no matter which tab is on screen.

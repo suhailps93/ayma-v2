@@ -59,26 +59,19 @@ class TourHost extends StatelessWidget {
         return Stack(
           children: [
             child!,
-            // Back while the tour is up skips it (marking its features seen),
-            // rather than popping a route — the overlay owns no navigation of
-            // its own. A root-level listener because the overlay no longer
-            // lives in the shell's `PopScope`. Returns false when idle so
-            // normal back routing is untouched.
+            // The overlay fills the whole window, above every route. Back while
+            // the tour is up is handled by `MainShellScreen`'s `PopScope` (it
+            // has a `Router` ancestor, which this builder-level context does
+            // not — a `BackButtonListener` here throws), where it skips the
+            // tour via `TourController`.
             Positioned.fill(
-              child: BackButtonListener(
-                onBackButtonPressed: () async {
-                  if (!TourController.instance.active) return false;
-                  await TourController.instance.skipFromBack();
-                  return true;
-                },
-                child: CoachMarkOverlay(
-                  key: const ValueKey('root-coach-mark'),
-                  features: features,
-                  spotlight: controller.spotlight,
-                  store: controller.store,
-                  onPrepareStep: _prepareStep,
-                  onFinish: controller.finish,
-                ),
+              child: CoachMarkOverlay(
+                key: const ValueKey('root-coach-mark'),
+                features: features,
+                spotlight: controller.spotlight,
+                store: controller.store,
+                onPrepareStep: _prepareStep,
+                onFinish: controller.finish,
               ),
             ),
           ],

@@ -128,12 +128,16 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     super.dispose();
   }
 
+  /// The last rect seen while waiting for it to stop moving (see below).
+  Rect? _pendingRect;
+
   /// Measure this step's anchor after the next frame, first asking the host to
   /// put the app where the anchor lives (pop to the shell, switch tab). A
   /// cross-tab anchor (a Profile row) is scrolled into view first; an anchor
   /// that still doesn't resolve within [CoachMarkOverlay.maxMeasureAttempts]
   /// frames skips the step.
   void _scheduleMeasure() {
+    _pendingRect = null;
     _measureAfterFrame(widget.features[_index], attempt: 0);
   }
 
@@ -156,8 +160,10 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
       }
       // Scroll the target into view when it lives in a scrollable (a Profile
       // row below the fold) so the spotlight lands on it rather than skipping.
+      // Only on the first attempt, so later re-measures don't nudge it each
+      // frame while we wait for it to settle.
       final anchorContext = TourAnchors.contextFor(anchorId);
-      if (anchorContext != null && anchorContext.mounted) {
+      if (attempt == 0 && anchorContext != null && anchorContext.mounted) {
         try {
           await Scrollable.ensureVisible(
             anchorContext,
@@ -178,6 +184,17 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
           return;
         }
         _advance();
+        return;
+      }
+      // Commit only once the rect has STOPPED moving between frames. A
+      // route-pop transition (a press-through that opened a sub-page, now
+      // popping back) or an in-progress scroll can shift the anchor for several
+      // frames; committing the first value would lock the spotlight onto a
+      // stale mid-transition position (e.g. the wrong Profile row). Require two
+      // consecutive equal measurements before showing it.
+      if (rect != _pendingRect && attempt < widget.maxMeasureAttempts) {
+        _pendingRect = rect;
+        _measureAfterFrame(feature, attempt: attempt + 1);
         return;
       }
       setState(() {
