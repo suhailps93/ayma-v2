@@ -6474,6 +6474,20 @@ class CompatibilityRequest(BaseModel):
     force: bool = False
 
 
+def _match_doc_is_complete(d: dict | None) -> bool:
+    """A stored ``matches/{id}`` doc counts as a COMPLETE, cacheable report
+    only when the full scorer (`matching_skill.score_pair` via `_match_job`)
+    wrote it — a score *plus* the structured breakdown (`structured_score`,
+    `method`). The demo seed once wrote score-only "lite" docs (no dimension
+    breakdown, no `structured_score`/`method`); those must be treated as a
+    cache MISS so the report is recomputed via the full pipeline rather than
+    served half-empty (bugs F/H). A complete doc is served instantly and never
+    recomputed unless the caller forces it (the "Recalculate" button)."""
+    if not d or d.get("score") is None:
+        return False
+    return d.get("structured_score") is not None and bool(d.get("method"))
+
+
 def _match_label(name: str) -> str:
     return f"Checked your match with {name}"
 
@@ -6486,9 +6500,14 @@ def _match_chat_text(name: str, pct: int, match_id: str) -> str:
     return f"Your match with {name} is ready: {pct}%.\n\n[match:{match_id}]"
 
 
-async def _match_job(uid: str, other: str) -> None:
+async def _match_job(uid: str, other: str, *, notify: bool = True) -> None:
     """Score one pair and persist ``matches/{matchId}``, then push. Runs as a
-    background task so it completes even if the app leaves. Never raises."""
+    background task so it completes even if the app leaves. Never raises.
+
+    ``notify`` — when False, the score is computed and persisted but the chat
+    event + push are skipped. Used by the report-open recompute path (bug H),
+    which silently backfills a stale "lite" doc without spamming a "match
+    ready" message every time the report is opened."""
     db = get_db()
     try:
         result = await matching_skill.score_pair(db, uid, other)
@@ -6533,6 +6552,11 @@ async def _match_job(uid: str, other: str) -> None:
     except Exception:  # noqa: BLE001 - stale-candidate cleanup must never
         # block the match result itself from landing.
         logger.exception("match job: stale candidate cleanup failed for %s x %s", uid, other)
+
+    if not notify:
+        # Silent backfill (report-open recompute of a stale "lite" doc, bug H):
+        # the full report is now persisted; no chat event / push.
+        return
 
     pct = round(float(result["score"]) * 100)
     try:
@@ -6579,16 +6603,18 @@ async def check_compatibility(
     match_id = sorted_pair_key(uid, other)
 
     # A match score is deterministic — the same two wikis always produce the
-    # same numbers. So once a pair is scored, "Run match" just returns that
-    # result; only "Recalculate" (force) re-runs it. This also stops repeated
-    # taps from spending credits and spamming notifications.
+    # same numbers. So once a pair has a COMPLETE report, "Run match" just
+    # returns that result; only "Recalculate" (force) re-runs it. This also
+    # stops repeated taps from spending credits and spamming notifications. A
+    # stale "lite" doc (score only, no breakdown) is NOT a cache hit — it falls
+    # through to a fresh full score below (bugs F/H).
     if not req.force:
         try:
             snap = get_db().collection(MATCHES_COLLECTION).document(
                 match_id
             ).get()
             d = snap.to_dict() or {}
-            if snap.exists and d.get("score") is not None:
+            if snap.exists and _match_doc_is_complete(d):
                 return {
                     "ok": True,
                     "queued": False,
@@ -6614,11 +6640,18 @@ async def check_compatibility(
 
 @app.get("/match/{match_id}")
 async def match_report(
-    match_id: str, uid: str = Depends(require_adult_uid)
+    match_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """The shareable match report for one pair — score, what lines up / what
     doesn't, the note written to the caller, and both people's photos. 404 if
-    the pair has never been scored."""
+    the pair has never been scored.
+
+    A complete stored report is served as-is (no recompute — bug F). A stale
+    "lite" doc (score only, no dimension breakdown) is served as-is this once
+    but silently recomputed in the background via the full scorer, so the next
+    open shows the full breakdown (bug H)."""
     from pair_key import uids_from_pair_key
 
     try:
@@ -6633,6 +6666,10 @@ async def match_report(
     if not snap.exists:
         raise HTTPException(status_code=404, detail="Not scored yet.")
     d = snap.to_dict() or {}
+    if not _match_doc_is_complete(d):
+        # Legacy / demo-seed "lite" doc — backfill the full report in the
+        # background (silent: no chat event or push), bug H.
+        background.add_task(_match_job, uid, other, notify=False)
 
     def _photo(u: str) -> str:
         return story._photo_url_safe(_primary_profile_photo_path(u)) or ""

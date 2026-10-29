@@ -18,6 +18,19 @@ public body. Nothing here is a real person.
 
 from __future__ import annotations
 
+# All practice-date simulator personas share this uid prefix (see
+# ``DEMO_PROFILES`` below). They are never real accounts, so Explore and
+# matching candidate sourcing exclude them (BUG E).
+DEMO_PRACTICE_UID_PREFIX = "demo_practice_"
+
+
+def is_practice_persona(uid: str) -> bool:
+    """``True`` for a practice-date simulator persona (``demo_practice_*``) —
+    a seeded, non-real account that must never appear in the live Explore feed
+    or the matching candidate pool."""
+    return str(uid or "").startswith(DEMO_PRACTICE_UID_PREFIX)
+
+
 # Each entry: the public, viewer-visible profile; the wiki pages (mixed
 # visibility, with one public body hiding a {{private}} span); and `secrets`,
 # the exact needle strings the extraction test asserts never leak.

@@ -1,11 +1,22 @@
 """Explore feed (ARCHITECTURE.md §6.1, §6.2, §6.11 steps 4–5).
 
-A live query over every user who has a ``profile/main`` — the caller included,
-with no orientation or community gating (product decision, 2026-08-30). Blocks,
-paused profiles and already-passed users are removed; deleted accounts have no
-profile doc. Dropdown filters and a once-per-search NL-parsed filter are applied
-over the same structured shape; ``matches`` / ``match_candidates`` overlay a
-score when present.
+A live query over every user who has a ``profile/main`` — the caller included.
+There is **no community gating** (the 2026-08-30 product decision still holds for
+community), but as of 2026-10-29 the founder reinstated the three onboarding
+**hard dealbreakers** as Explore exclusions, reversing the "no orientation
+gating" half of that decision: a candidate whose **gender/orientation**
+(``interested_in`` vs ``gender``, a mutual :func:`matching.orientation_match`),
+**partner age range** (``qz_partner_age_min`` / ``qz_partner_age_max``) or
+**location/relocation radius** (``qz_relocation_radius`` / ``location``) makes
+them an impossible match is dropped from the feed (:func:`_hard_dealbreaker`) —
+the same preferences that zero their compatibility report
+(``match_deterministic.HARD_DEALBREAKER_GATES``). Practice-date simulator
+personas (``demo_practice_*``) are never real accounts and are excluded too
+(``practice_seed.is_practice_persona``). Blocks, paused profiles and
+already-passed users are removed; deleted accounts have no profile doc. Dropdown
+filters and a once-per-search NL-parsed filter are applied over the same
+structured shape; ``matches`` / ``match_candidates`` overlay a score when
+present.
 
 A filter on a ``physical_attrs``-mirror field (see :func:`_passes_filters`)
 only ever matches against a candidate's PUBLIC attributes —
@@ -28,7 +39,10 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import match_deterministic
+import matching
 import physical_attributes
+import practice_seed
 import token_ledger
 from matching import _age
 from matching_schema import block_id
@@ -323,6 +337,52 @@ def _primary_photo_path(db, other: str, photos: list) -> str | None:
         return None
 
 
+def _hard_dealbreaker(me: dict, prof: dict) -> bool:
+    """``True`` when ``prof`` violates one of ``me``'s onboarding HARD
+    dealbreakers, so it must be dropped from ``me``'s Explore feed (BUG B) —
+    the same three preferences that zero a compatibility report
+    (``match_deterministic.HARD_DEALBREAKER_GATES``):
+
+    * **gender/orientation** — a mutual :func:`matching.orientation_match` over
+      each side's ``interested_in`` vs the other's ``gender``;
+    * **partner age range** — either side's age outside the other's stated
+      ``qz_partner_age_min`` / ``qz_partner_age_max`` (strict, no tolerance);
+    * **location/relocation** — different places *and* either side won't
+      relocate far (``qz_relocation_radius`` in
+      ``match_deterministic.STAY_PUT_RADII``).
+
+    Missing data on a dimension never excludes (it just can't be checked),
+    mirroring the deterministic gates' "missing data is never a failure" rule.
+    """
+    ga = str(me.get("gender") or "").strip()
+    gb = str(prof.get("gender") or "").strip()
+    ia = me.get("interested_in") or []
+    ib = prof.get("interested_in") or []
+    if ga and gb and ia and ib and not matching.orientation_match(ga, ia, gb, ib):
+        return True
+
+    my_age = _age(me.get("birthdate"))
+    their_age = _age(prof.get("birthdate"))
+    if match_deterministic._outside_range(
+        me.get("qz_partner_age_min"), me.get("qz_partner_age_max"), their_age
+    ) or match_deterministic._outside_range(
+        prof.get("qz_partner_age_min"), prof.get("qz_partner_age_max"), my_age
+    ):
+        return True
+
+    la = str(me.get("location") or "").strip().lower()
+    lb = str(prof.get("location") or "").strip().lower()
+    if la and lb and not (la == lb or la in lb or lb in la):
+        ra = me.get("qz_relocation_radius")
+        rb = prof.get("qz_relocation_radius")
+        if (
+            ra in match_deterministic.STAY_PUT_RADII
+            or rb in match_deterministic.STAY_PUT_RADII
+        ):
+            return True
+    return False
+
+
 def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
     me = (
         db.collection("users")
@@ -347,15 +407,20 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
     for user_snap in db.collection("users").stream():
         other = user_snap.id
         # Explore lists everyone with a profile, the caller included — no
-        # orientation or community gating (product decision, 2026-08-30). Only
-        # blocks / paused / already-passed and the active search filters cut
-        # the roster down. `seen` guards against ever emitting the same
-        # person twice — a stream shouldn't repeat a document id, but a
-        # single duplicate card showing two different (stale vs. current)
-        # percentages for the same real person is exactly the kind of
-        # data-integrity bug worth defending against defensively, not just
-        # trusting the source query never to regress.
+        # *community* gating (product decision, 2026-08-30). The three
+        # onboarding hard dealbreakers (gender/orientation, partner age,
+        # location — see `_hard_dealbreaker`) ARE enforced as exclusions
+        # (founder, 2026-10-29), alongside blocks / paused / already-passed,
+        # practice-date personas, and the active search filters. `seen` guards
+        # against ever emitting the same person twice — a stream shouldn't
+        # repeat a document id, but a single duplicate card showing two
+        # different (stale vs. current) percentages for the same real person
+        # is exactly the kind of data-integrity bug worth defending against
+        # defensively, not just trusting the source query never to regress.
         if other in passed or other in seen or len(cards) >= limit:
+            continue
+        # Practice-date simulator personas are never real people (BUG E).
+        if practice_seed.is_practice_persona(other):
             continue
         seen.add(other)
         try:
@@ -380,6 +445,10 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             if other != uid and prof.get("paused") is True:
                 continue
             if other != uid and _blocked(db, uid, other):
+                continue
+            # Onboarding hard dealbreakers (gender/orientation, partner age,
+            # location) exclude a candidate outright (BUG B) — self exempt.
+            if other != uid and _hard_dealbreaker(me, prof):
                 continue
             # Only spend the extra read on a search that actually touches a
             # physical-attributes filter key (the common case doesn't).

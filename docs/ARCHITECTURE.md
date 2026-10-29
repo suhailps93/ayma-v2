@@ -822,7 +822,7 @@ Fields are editable later via a profile/settings screen — direct structured wr
 
 ### 5.1 Candidate sourcing
 
-Candidate pool for a user is sourced from: same `community`, mutual `interested_in`/`gender` cross-match (A interested in B's gender and vice versa), excluding anyone already matched (any existing `matches/{matchId}` doc for the pair), anyone on either side's block list, and anyone in `deleted_accounts`. Location is not a hard filter at sourcing — it's a scoring input in Pass 1.
+Candidate pool for a user is sourced from: same `community`, mutual `interested_in`/`gender` cross-match (A interested in B's gender and vice versa), excluding anyone already matched (any existing `matches/{matchId}` doc for the pair), anyone on either side's block list, anyone in `deleted_accounts`, and any **practice-date simulator persona** (`demo_practice_*`, `practice_seed.is_practice_persona` — never a real account, BUG E). Location is not a hard filter at sourcing — it's a scoring input in Pass 1 — but it IS one of the three hard dealbreakers that zero a Pass-2 report (§5.4).
 
 ### 5.2 Two-pass scoring
 
@@ -845,6 +845,13 @@ Each Pass-2 run produces:
 - `user_explanation` — keyed per uid (`{ [uidA]: "...", [uidB]: "..." }`), each written from that user's own perspective ("since you value X, and they do too..."). Never surfaces a private fact about the other person unless it was already exchanged directly between them — this check depends on DM history and is a stated dependency on Piece 6, not built in this piece.
 - `ai_explanation` — full unrestricted reasoning using both users' complete wikis (including `ai_only`). Never shown to either user directly; used only by Ayma per §5.6.
 - `trust_flags` snapshot for both users (§5.5), factored into `score` (down-weighted, not excluded) and visible in `ai_explanation`.
+- `structured_score`, `dimensions`, `gate_failures`, `score_confidence`, `method` and the narrative lists (`shared`/`tensions`/`missing`) — the deterministic structured half (`match_deterministic.score_structured`) + the LLM narrative (`matching_skill`). These together are what makes a stored report **complete** (§5.4a).
+
+**Hard dealbreakers → 0% (BUG B, founder 2026-10-29).** Three onboarding preferences are hard gates that drive `score` to exactly **0.0** (not the soft 10–25 `_gate_cap` floor the other gates use) — `match_deterministic.HARD_DEALBREAKER_GATES` / `is_hard_dealbreaker`, applied in both `score_structured` and `matching_skill.score_pair`: **gender/orientation** (`interested_in` vs `gender`, a mutual `matching.orientation_match`), **partner age range** (`qz_partner_age_min`/`max`, strict — no tolerance) and **location/relocation** (different places + *either* side's `qz_relocation_radius` is "won't move far"). These are the same three preferences Explore excludes a candidate on outright (§6.1). Missing data on any of them is never a failure.
+
+### 5.4a Cache-aware report fetch (bugs F + H)
+
+A match score is deterministic — the same two wikis always produce the same numbers — so a scored pair's report is served from `matches/{matchId}` (keyed by `pair_key.sorted_pair_key`, deterministic per pair) **without recomputing**. `POST /check-compatibility` returns the stored report when it is **complete** and only re-runs on `force=true` (the "Recalculate" button); `GET /match/{match_id}` reads the stored doc directly. "Complete" (`main._match_doc_is_complete`) means the full scorer wrote it — a `score` **plus** `structured_score` and `method`. A stale **"lite"** doc (score-only, no breakdown — once written by the demo seed) is treated as a cache **miss**: `check-compatibility` re-scores it, and `GET /match` serves it once but queues a silent background recompute (`_match_job(..., notify=False)` — no chat event or push) so the next open shows the full dimension breakdown. The demo seed (`scripts/seed_demo_accounts.py` `persist_match`) now writes the full report payload itself, so re-seeding produces complete docs.
 
 ### 5.5 Trust flags
 
@@ -873,13 +880,14 @@ The shared builder `public_profile._viewing_profile_context` (also reused by voi
 
 ```mermaid
 flowchart LR
-  Src[Candidate sourcing<br/>§5.1] --> P1[Pass 1: heuristic]
+  Src[Candidate sourcing<br/>§5.1<br/>excl. practice personas demo_practice_*] --> P1[Pass 1: heuristic]
   P1 -->|on-demand full pool / cron stage 1| Cand["match_candidates/{candidateUid}<br/>no score"]
-  Cand -->|score overlay only| Explore[Explore feed — Piece 6 §6.1]
+  Cand -->|score overlay only| Explore["Explore feed — Piece 6 §6.1<br/>excl. hard dealbreakers (gender/age/location)<br/>+ practice personas"]
 
-  Cand -->|manual compat check| P2[Pass 2: wiki-to-wiki skill]
+  Cand -->|manual compat check| P2["Pass 2: wiki-to-wiki skill<br/>HARD dealbreaker (gender/age/location) → score 0.0<br/>soft gate → 10–25 cap"]
   P1 -->|cron stage 2, small top-K| P2
-  P2 --> Match["matches/{matchId}<br/>score · user_explanation{uidA,uidB} · ai_explanation · trust_flags · status"]
+  P2 --> Match["matches/{matchId}<br/>score · structured_score · dimensions · gate_failures<br/>user_explanation{uidA,uidB} · ai_explanation · method · trust_flags · status"]
+  Match -->|complete doc served as-is (no recompute);<br/>lite/incomplete → background recompute §5.4a| Report["GET /match · POST /check-compatibility<br/>force=true re-runs"]
   Match --> Explore
   Match --> Cards[Match cards — Piece 6]
   Match -->|grounds openers + coaching| DMA["DM assist /dm/assist — §6.9<br/>Meta Muse Spark · opener + coach + safety"]
@@ -927,7 +935,7 @@ Explore's population is a live filtered query over all eligible users (Piece 6 �
 
 ### 6.1 Explore population & eligibility
 
-Explore is a live, paginated query over **all users** matching base eligibility: same `community`, mutual `interested_in`/`gender` cross-match, excluding only `blocks` and `deleted_accounts`. Already-matched users are **not** excluded — they still appear. `match_candidates`/`matches` (Piece 5) overlay a score badge on top when present; they are not the population source.
+Explore is a live, paginated query over **all users** who have a `profile/main`, the caller included. There is **no community gating** (product decision, 2026-08-30). As of **2026-10-29** the founder reinstated the three onboarding **hard dealbreakers** as Explore exclusions (`explore._hard_dealbreaker`), reversing the "no orientation gating" half of the 2026-08-30 decision (BUG B): a candidate is dropped when **gender/orientation** (mutual `matching.orientation_match` over `interested_in`/`gender`), **partner age range** (`qz_partner_age_min`/`max`) or **location/relocation** (`qz_relocation_radius`/`location`) makes them an impossible match — the same three gates that zero a report (§5.4). Missing preference data never excludes. Also excluded: `blocks`, `deleted_accounts` (no profile doc), paused profiles, already-passed users, nameless/half-set-up profiles, and **practice-date simulator personas** (`demo_practice_*`, BUG E). Already-matched users are **not** excluded — they still appear. `match_candidates`/`matches` (Piece 5) overlay a score badge on top when present; they are not the population source.
 
 ### 6.2 Filtering
 

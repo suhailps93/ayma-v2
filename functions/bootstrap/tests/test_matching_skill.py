@@ -281,6 +281,35 @@ def test_hard_gate_caps_score_and_surfaces_a_dealbreaker(monkeypatch):
     assert out["score"] <= 0.25
 
 
+def test_hard_dealbreaker_orientation_zeroes_the_score(monkeypatch):
+    # Even with the model scoring every dimension 95, a gender/orientation
+    # hard dealbreaker forces the overall score to 0.0 (BUG B) — not the
+    # 10-25 soft floor.
+    _patch_wiki(monkeypatch)
+    monkeypatch.setattr(
+        gemini,
+        "generate_json",
+        _fake_llm(
+            dims=[
+                {"key": k, "score": 95, "rationale": "great", "confidence": "high"}
+                for k in matching_skill._DIM_KEYS
+            ]
+        ),
+    )
+    # She is interested only in women; he is a man -> impossible match.
+    db = _Db(
+        {
+            "a": _user(profile={"gender": "Woman", "interested_in": ["Women"]}),
+            "b": _user(profile={"gender": "Man", "interested_in": ["Women"]}),
+        }
+    )
+    out = _run(matching_skill.score_pair(db, "a", "b"))
+
+    assert any(g["node_id"] == "orientation" for g in out["gate_failures"])
+    assert out["raw_score"] == 0.0
+    assert out["score"] == 0.0
+
+
 def test_trust_flags_still_penalise(monkeypatch):
     _patch_wiki(monkeypatch)
     monkeypatch.setattr(gemini, "generate_json", _fake_llm())
