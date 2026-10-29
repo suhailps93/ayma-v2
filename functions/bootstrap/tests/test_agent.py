@@ -2001,10 +2001,13 @@ class _OpenerSession(_FakeMuteSession):
         super().__init__()
         self.replies = []
         self.reply_chat_ctxs = []
+        self.reply_user_inputs = []
 
-    async def generate_reply(self, instructions=None, chat_ctx=_UNSET):
+    async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
+                             user_input=_UNSET):
         self.replies.append(instructions)
         self.reply_chat_ctxs.append(chat_ctx)
+        self.reply_user_inputs.append(user_input)
 
 
 class _StateEv:
@@ -2151,6 +2154,82 @@ def test_cascade_opener_generates_against_history_free_context():
     # The opener generates with ZERO prior turns in context, so it cannot reply
     # to the previous conversation's last message.
     assert list(passed.items) == []
+
+
+def test_cascade_opener_seeds_user_turn_so_inference_never_gets_system_only():
+    """Regression (Sentry ayma-agent inference HTTP 400, first seen Oct 26 2026:
+    ``messages must contain at least one message with role user or tool``).
+
+    On the cascade (text chat LLM, incl. the LiveKit-Inference brain) an
+    agent-initiated opener with no prior user turn produced a SYSTEM-ONLY message
+    list — LiveKit's OpenAI provider format does not inject a dummy user message —
+    and the gateway rejected it with 400. ``seed_user_turn`` now carries one
+    benign synthetic user turn. Asserts the opener seeds a non-empty user_input
+    AND that replaying the framework's generate_reply composition (user turn, then
+    the opener instruction as a system message) over the OpenAI provider format
+    yields a message list with >= 1 user/tool message."""
+    import asyncio
+    from livekit.agents import llm
+    from prompt import load_voice_session_seed
+
+    s = _OpenerSession()
+    fresh = llm.ChatContext.empty()
+
+    async def go():
+        return await agent.maybe_open_conversation(
+            s, _opener_seed(), window=[], grace_seconds=0.05,
+            opener_chat_ctx=fresh, seed_user_turn=True,
+        )
+
+    assert asyncio.run(go()) is True
+    seed_text = load_voice_session_seed()
+    assert seed_text.strip()
+    assert s.reply_user_inputs == [seed_text]
+
+    composed = llm.ChatContext.empty()
+    composed.add_message(role="user", content=[s.reply_user_inputs[0]])
+    composed.add_message(role="system", content=[s.replies[0]])
+    messages, _ = composed.to_provider_format("openai")
+    assert any(m.get("role") in ("user", "tool") for m in messages), messages
+
+
+def test_realtime_opener_is_not_seeded():
+    """Realtime paths (Gemini Live / Inference RealtimeModel) do not reach the
+    chat-completions request shape, so the opener is left unseeded — byte-for-byte
+    the pre-fix behaviour."""
+    import asyncio
+
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    assert s.reply_user_inputs == [_UNSET]
+
+
+def test_welcome_greeting_seeds_user_turn_on_cascade():
+    """The pre-sign-in welcome greeting takes the same cascade guard: its
+    generate_reply carries the synthetic user turn so it is never a system-only
+    request, while its instruction is unchanged."""
+    import asyncio
+    from prompt import load_voice_session_seed
+
+    s = _OpenerSession()
+    seed = _opener_seed(greeting_instructions="greet warmly")
+    asyncio.run(
+        agent._open_main_call(s, seed, window=[], seed_user_turn=True)
+    )
+    assert s.replies == ["greet warmly"]
+    assert s.reply_user_inputs == [load_voice_session_seed()]
+
+
+def test_welcome_greeting_not_seeded_on_realtime():
+    """Welcome greeting on a realtime session (seed_user_turn left False) stays
+    unseeded — the realtime protocol accepts an opener with no user turn."""
+    import asyncio
+
+    s = _OpenerSession()
+    seed = _opener_seed(greeting_instructions="greet warmly")
+    asyncio.run(agent._open_main_call(s, seed, window=[]))
+    assert s.replies == ["greet warmly"]
+    assert s.reply_user_inputs == [_UNSET]
 
 
 def test_opener_prior_context_helper():
@@ -2745,6 +2824,7 @@ class _FakePracticeSession:
         self._handlers = {}
         self.started = False
         self.greetings = []
+        self.greeting_user_inputs = []
 
     def on(self, name, callback=None):
         def _register(fn):
@@ -2756,8 +2836,9 @@ class _FakePracticeSession:
     async def start(self, **_kwargs):
         self.started = True
 
-    async def generate_reply(self, instructions=None):
+    async def generate_reply(self, instructions=None, user_input=None):
         self.greetings.append(instructions)
+        self.greeting_user_inputs.append(user_input)
 
     def close(self, ev):
         self._handlers["close"](ev)
@@ -2795,8 +2876,29 @@ def test_start_practice_session_greets_first_in_character(monkeypatch):
     )
 
     assert session.started is True
+    from prompt import load_practice_greeting, load_voice_session_seed
+    assert session.greetings == [load_practice_greeting()]
+    # Cascade (text LLM): the greeting carries a synthetic user turn so it is
+    # never a system-only inference request (Sentry 400 regression).
+    assert session.greeting_user_inputs == [load_voice_session_seed()]
+
+
+def test_start_practice_session_greeting_not_seeded_on_realtime(monkeypatch):
+    """On the Gemini Live / Inference realtime practice path the greeting is left
+    unseeded — the realtime protocol accepts an opener with no prior user turn."""
+    _stub_practice_relays(monkeypatch)
+    session = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="persona", uid="u1", practice=True)
+
+    asyncio.run(
+        agent._start_practice_session(
+            _practice_ctx(), seed, session, meta_cascade=False, use_inference=True
+        )
+    )
+
     from prompt import load_practice_greeting
     assert session.greetings == [load_practice_greeting()]
+    assert session.greeting_user_inputs == [None]
 
 
 def test_cascade_runtime_error_falls_back_to_gemini_live(monkeypatch):
@@ -3277,8 +3379,10 @@ def test_cascade_cold_start_opener_runs_against_history_free_context(monkeypatch
         monkeypatch.setattr(agent, name, lambda *a, **k: None)
     opener_calls: dict = {}
 
-    async def _fake_open(session, seed, *, window, opener_chat_ctx):
+    async def _fake_open(session, seed, *, window, opener_chat_ctx,
+                         seed_user_turn=False):
         opener_calls["opener_chat_ctx"] = opener_chat_ctx
+        opener_calls["seed_user_turn"] = seed_user_turn
 
     monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
 
@@ -3313,6 +3417,9 @@ def test_cascade_cold_start_opener_runs_against_history_free_context(monkeypatch
     opener_ctx = opener_calls["opener_chat_ctx"]
     assert opener_ctx is not agent.NOT_GIVEN
     assert list(opener_ctx.items) == []
+    # The cascade is a text chat LLM, so the opener is seeded a synthetic user
+    # turn (Sentry inference 400 fix) rather than sent system-only.
+    assert opener_calls["seed_user_turn"] is True
 
 
 def test_voice_tool_use_prompt_has_call_before_confirm_directive():

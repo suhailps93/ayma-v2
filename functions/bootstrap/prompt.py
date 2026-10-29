@@ -48,6 +48,7 @@ _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
 _VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
 _VOICE_TOOL_USE_PATH = _DIR / "prompts" / "voice_tool_use.md"
 _PRACTICE_GREETING_PATH = _DIR / "prompts" / "practice_greeting.md"
+_VOICE_SESSION_SEED_PATH = _DIR / "prompts" / "voice_session_seed.md"
 _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
@@ -271,6 +272,23 @@ def load_practice_greeting() -> str:
     voice call — they "pick up the phone" and greet in character instead of
     waiting for the user (``prompts/practice_greeting.md``)."""
     return _PRACTICE_GREETING_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def load_voice_session_seed() -> str:
+    """The synthetic opening USER turn seeded on a cascade (text-LLM) call so an
+    agent-initiated greeting/opener never reaches the chat LLM as a system-only
+    message list (``prompts/voice_session_seed.md``).
+
+    On a cascade session (STT -> chat LLM -> TTS, incl. the LiveKit-Inference
+    brain) ``generate_reply(instructions=...)`` adds the instruction as a SYSTEM
+    message; with no prior user turn the request carries only system messages and
+    the OpenAI-compatible gateway rejects it with HTTP 400 ("messages must
+    contain at least one message with role user or tool"). Passing this as
+    ``generate_reply(user_input=...)`` inserts one benign user turn so the opener
+    generates normally. Realtime models (Gemini Live / Inference RealtimeModel)
+    do not go through that path and are never seeded."""
+    return _VOICE_SESSION_SEED_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)
