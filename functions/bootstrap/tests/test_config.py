@@ -76,19 +76,20 @@ def test_meta_cascade_defaults(monkeypatch):
     assert cfg.meta_cascade_vad_model == "silero"
 
 
-def test_main_voice_defaults_to_meta_cascade(monkeypatch):
-    # Founder directive ("default everything to Muse"): a user with no saved
-    # voice preference gets the Meta cascade, not the locked Gemini Live voice.
+def test_main_voice_defaults_to_gemini_live(monkeypatch):
+    # QLOO-PHASE directive: Qloo is judged before Meta, so a user with no saved
+    # voice preference gets the best-experience stack — the locked Gemini Live
+    # native-audio voice (Realtime). Flips back to the Meta cascade post-Qloo.
     monkeypatch.delenv("LLM_PROVIDER_VOICE_MAIN", raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     cfg = config._load()
-    assert cfg.llm_provider_voice_main == "meta"
-
-
-def test_main_voice_honours_explicit_gemini_override(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER_VOICE_MAIN", "gemini")
-    cfg = config._load()
     assert cfg.llm_provider_voice_main == "gemini"
+
+
+def test_main_voice_honours_explicit_meta_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER_VOICE_MAIN", "meta")
+    cfg = config._load()
+    assert cfg.llm_provider_voice_main == "meta"
 
 
 def test_meta_cascade_tts_vendor_is_env_overridable(monkeypatch):

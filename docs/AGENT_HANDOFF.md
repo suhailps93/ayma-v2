@@ -8,6 +8,14 @@ and where they live.** Never add any.
 Read order: `AGENTS.md` -> `PLAN.md` (Progress Log) -> this file -> `docs/deploy.md`, `docs/agent.md`,
 `docs/ARCHITECTURE.md` as needed.
 
+**QLOO-PHASE default stack (2026-10-29, founder directive — Qloo is judged BEFORE Meta).** The app-wide
+default model stack for new/unset users is **Gemini**, temporarily overriding the standing "default everything
+to Muse" rule: `config.brain_default` = `gemini` (text Brain) and `config.llm_provider_voice_main` = `gemini`
+(main voice → Realtime mode / Gemini Live native audio / voice Aoede). This **flips back to `meta` (Muse)
+post-Qloo for the Meta hackathon** — see the "POST-QLOO" item in `docs/TODO_QUEUE.md`. The per-surface
+`dm_coach`/`translate` surfaces stay on `meta`; `deploy-agent.sh` no longer pins `LLM_PROVIDER_VOICE_MAIN`
+(config default governs). Deployed: ayma-api (brain) + ayma-agent `--release` (voice).
+
 ---
 
 ## 1. Product and architecture
