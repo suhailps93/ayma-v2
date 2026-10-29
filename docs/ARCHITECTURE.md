@@ -2245,7 +2245,14 @@ section in the match-compatibility report between two users (§5 / `GET
 + `report_section`, the non-raising helper the match report embeds),
 `qloo_client.py` (live Qloo Insights API + offline fixture), `qloo_fixture.json`,
 `taste_demo.html`. Flutter: shared card `lib/widgets/taste_match_card.dart` +
-`taste_models.dart` (reused by the date-sim result and the match report).
+`taste_models.dart` (reused by the date-sim result and the match report). The
+card renders per-domain overlap as horizontal 0–100 **bars** (one per domain,
+accent fill on a faint track, value right-aligned with tabular figures),
+ordered Music → Film → Food & places (`dining` reads as "Food & places") to
+mirror the public demo `taste_demo.html`; bars show only when both sides have
+taste (`domains` non-empty), otherwise the card falls back to the no-Taste-page
+note. Pure presentation — no data-flow change (the report already delivers
+`taste.domains`).
 Reads PUBLIC profile data only (both people) — no private or cross-user private
 reads. Live when `QLOO_API_KEY` is mounted; otherwise — or on any live
 failure — the fixture. The match report degrades gracefully: when one or both

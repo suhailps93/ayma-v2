@@ -15,6 +15,15 @@ Aisha · Berkeley, Noah · San Jose) and press **Match tastes**. JSON:
 In the app: open a demo profile → **Simulate a conversation** → run it; the
 **Taste match** card sits under the compatibility score.
 
+The card (`taste_match_card.dart`) shows the overall score, label, summary,
+shared-taste chips and date ideas, plus **per-domain bars** — one horizontal
+0–100 bar per domain (accent fill on a faint track, value right-aligned with
+tabular figures), ordered Music → Film → Food & places (`dining` → "Food &
+places"), reproducing the public demo `taste_demo.html`. Bars appear only when
+both sides have taste (`domains` non-empty); otherwise the card shows the
+no-Taste-page note. Pure presentation over the data the report/pair already
+return (`taste.domains`).
+
 ## How it works
 
 1. **Taste signals** — each person's PUBLIC "Taste" wiki page (`page_type:
