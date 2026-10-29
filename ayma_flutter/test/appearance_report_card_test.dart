@@ -13,16 +13,60 @@ import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/report_card_share.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/appearance_report_card.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
+import 'package:file/file.dart' as fs;
+import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:share_plus/share_plus.dart';
 
 final Uint8List _png = File('test/fixtures/tiny.png').readAsBytesSync();
+
+/// Serves one local fixture file for any URL, so the full report's photo
+/// thumbnails (rendered through [AymaPhoto] → [CachedNetworkImage]) run their
+/// real decode pipeline with no sqflite cache database and no network — the
+/// screen tests mount the whole report, so without this the cache manager
+/// would reach for a database that `databaseFactory` never initialises under
+/// test and leave its download future pending at teardown.
+class _FakeCacheManager implements BaseCacheManager {
+  _FakeCacheManager(File ioFile)
+    : file = const LocalFileSystem().file(ioFile.path);
+
+  // flutter_cache_manager's API speaks package:file's File type.
+  final fs.File file;
+
+  @override
+  Stream<FileResponse> getFileStream(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+    bool withProgress = false,
+  }) async* {
+    yield FileInfo(
+      file,
+      FileSource.Cache,
+      DateTime.now().add(const Duration(days: 1)),
+      url,
+    );
+  }
+
+  @override
+  Future<fs.File> getSingleFile(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+  }) async => file;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
 
 Map<String, dynamic> _b(String id, String type, [Map<String, dynamic>? f]) => {
   'block_id': id,
@@ -212,6 +256,17 @@ Future<ui.Image> _decoded(WidgetTester tester) async =>
 }
 
 void main() {
+  // The screen tests mount the whole AppearanceReportScreen, whose embedded
+  // full report draws its photo thumbnails through AymaPhoto/CachedNetworkImage.
+  // Point that at a fake cache manager serving the checked-in fixture so no
+  // sqflite cache database is opened and no download future is left pending.
+  setUp(() {
+    AymaPhoto.debugCacheManager = _FakeCacheManager(
+      File('test/fixtures/tiny.png'),
+    );
+  });
+  tearDown(() => AymaPhoto.debugCacheManager = null);
+
   group('AppearanceCardData', () {
     test('caps photos at four, face photo first, no duplicates', () {
       final d = AppearanceCardData.fromReport(_living(_report(attrPhotos: 6)))!;

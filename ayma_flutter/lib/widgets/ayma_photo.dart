@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 /// A network photo with disk caching, a decode/store cap, and a gentle fade —
 /// so a photo that's been seen once (Explore card, profile, match report,
@@ -25,6 +26,14 @@ class AymaPhoto extends StatelessWidget {
   final Color? placeholderColor;
   final Widget? error;
 
+  /// Test seam: the cache manager backing the [CachedNetworkImage]. Production
+  /// leaves this null and uses the shared [DefaultCacheManager] (the same disk
+  /// cache every photo in the app fills). Widget tests inject a fake that
+  /// serves a local fixture file, so the real decode pipeline runs with no
+  /// platform channels, no sqflite database, and no network.
+  @visibleForTesting
+  static BaseCacheManager? debugCacheManager;
+
   @override
   Widget build(BuildContext context) {
     if (url.isEmpty) return _fallback(context);
@@ -32,6 +41,7 @@ class AymaPhoto extends StatelessWidget {
     final px = (displayWidth * dpr).round().clamp(48, 2000);
     return CachedNetworkImage(
       imageUrl: url,
+      cacheManager: debugCacheManager,
       fit: fit,
       fadeInDuration: const Duration(milliseconds: 180),
       memCacheWidth: px,
