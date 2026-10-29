@@ -1,13 +1,14 @@
 """Dual-cloud voice agent (ARCHITECTURE §1.1): the per-user ``voice_agent_cloud``
 flag, its ``/voice/agent-cloud`` endpoint, and the explicit-dispatch routing on
-the room-seed path. Default is ``cloudrun`` (production unchanged); ``livekit``
-routes the room to the LiveKit-Cloud-hosted worker's ``agent_name``."""
+the room-seed path. Default is ``livekit`` (a no-pref user routes to the hosted
+``ayma-lk`` worker); an explicit ``cloudrun`` pref still routes to Cloud Run."""
 
 import json
 
 import livekit_token
 import main
 import schema
+from config import CONFIG
 import pytest
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
@@ -48,9 +49,10 @@ def _patch_db(monkeypatch, doc):
 
 # --- flag resolution --------------------------------------------------------
 
-def test_flag_defaults_to_cloudrun_when_unset(monkeypatch):
+def test_flag_defaults_to_livekit_when_unset(monkeypatch):
     _patch_db(monkeypatch, _ProfileDoc())
-    assert main._voice_agent_cloud("me") == "cloudrun"
+    assert main._voice_agent_cloud("me") == "livekit"
+    assert schema.VOICE_AGENT_CLOUD_DEFAULT == "livekit"
 
 
 def test_flag_resolves_livekit_when_set(monkeypatch):
@@ -58,18 +60,24 @@ def test_flag_resolves_livekit_when_set(monkeypatch):
     assert main._voice_agent_cloud("me") == "livekit"
 
 
-def test_flag_unknown_value_falls_back_to_cloudrun(monkeypatch):
-    _patch_db(monkeypatch, _ProfileDoc({schema.PF_AYMA_VOICE_CLOUD: "bogus"}))
+def test_flag_resolves_cloudrun_when_explicitly_set(monkeypatch):
+    # Explicit opt-out still routes to Cloud Run (instant per-user rollback).
+    _patch_db(monkeypatch, _ProfileDoc({schema.PF_AYMA_VOICE_CLOUD: "cloudrun"}))
     assert main._voice_agent_cloud("me") == "cloudrun"
 
 
-def test_flag_read_error_falls_back_to_cloudrun(monkeypatch):
+def test_flag_unknown_value_falls_back_to_default(monkeypatch):
+    _patch_db(monkeypatch, _ProfileDoc({schema.PF_AYMA_VOICE_CLOUD: "bogus"}))
+    assert main._voice_agent_cloud("me") == "livekit"
+
+
+def test_flag_read_error_falls_back_to_default(monkeypatch):
     class _Boom:
         def get(self):
             raise RuntimeError("firestore down")
 
     _patch_db(monkeypatch, _Boom())
-    assert main._voice_agent_cloud("me") == "cloudrun"
+    assert main._voice_agent_cloud("me") == "livekit"
 
 
 # --- GET/POST /voice/agent-cloud -------------------------------------------
@@ -79,8 +87,8 @@ def test_get_agent_cloud_default(monkeypatch):
     resp = client.get("/voice/agent-cloud", headers=_auth(monkeypatch))
     assert resp.status_code == 200
     body = resp.json()
-    assert body["current"] == "cloudrun"
-    assert body["default"] == "cloudrun"
+    assert body["current"] == "livekit"
+    assert body["default"] == "livekit"
     assert set(body["options"]) == {"cloudrun", "livekit"}
 
 
@@ -166,3 +174,29 @@ async def test_seed_room_context_livekit_routes_to_agent_name(monkeypatch):
     await livekit_token.seed_room_context("ayma-room2", "{}", agent_name="ayma-lk")
     req = _FakeLiveKitAPI.last.room.created[0]
     assert [a.agent_name for a in req.agents] == ["ayma-lk"]
+
+
+# --- default path: no pref => explicit ayma-lk dispatch --------------------
+
+def _dispatch_agent_for(cloud: str):
+    """Mirror of the /bootstrap dispatch decision (main.py): the explicit
+    LiveKit agent_name when the resolved cloud is ``livekit``, else ``None``
+    (automatic dispatch to the Cloud Run worker)."""
+    return CONFIG.agent_name_livekit if cloud == "livekit" else None
+
+
+def test_default_path_dispatches_to_ayma_lk(monkeypatch):
+    # A user with no pref resolves to the livekit default and the room is
+    # created with EXPLICIT dispatch to the hosted agent_name (ayma-lk).
+    _patch_db(monkeypatch, _ProfileDoc())
+    resolved = main._voice_agent_cloud("me")
+    assert resolved == "livekit"
+    assert _dispatch_agent_for(resolved) == CONFIG.agent_name_livekit
+
+
+def test_explicit_cloudrun_uses_automatic_dispatch(monkeypatch):
+    # An explicit cloudrun pref => no explicit agent dispatch (Cloud Run auto).
+    _patch_db(monkeypatch, _ProfileDoc({schema.PF_AYMA_VOICE_CLOUD: "cloudrun"}))
+    resolved = main._voice_agent_cloud("me")
+    assert resolved == "cloudrun"
+    assert _dispatch_agent_for(resolved) is None

@@ -283,9 +283,11 @@ def _voice_engine_seed(uid: str) -> dict[str, str]:
 
 def _voice_agent_cloud(uid: str) -> str:
     """Which cloud serves this user's next voice call (§1.1, dual-cloud agent):
-    ``"cloudrun"`` (default, all of production) or ``"livekit"`` (opt-in via the
-    Developer screen, ``PF_AYMA_VOICE_CLOUD``). Any unknown/absent value falls
-    back to ``cloudrun`` so a bad read can never divert a call off production."""
+    ``"livekit"`` (the default — the hosted ``ayma-lk`` worker) or ``"cloudrun"``
+    (opt-out via the Developer screen, ``PF_AYMA_VOICE_CLOUD``). Any
+    unknown/absent value falls back to ``schema.VOICE_AGENT_CLOUD_DEFAULT`` (the
+    one authoritative default); a user who explicitly set ``cloudrun`` still
+    routes to Cloud Run."""
     try:
         snap = schema.profile_doc(get_db(), uid).get()
         val = str((snap.to_dict() or {}).get(schema.PF_AYMA_VOICE_CLOUD, "")).strip()
@@ -805,10 +807,11 @@ async def bootstrap(
         )
         voice_name = _ayma_voice_name(uid)
         engine_seed = _voice_engine_seed(uid)
-        # Dual-cloud agent dispatch (§1.1): default "cloudrun" => no explicit
-        # agent dispatch (LiveKit auto-dispatches to the Cloud Run worker,
-        # unchanged). "livekit" => route the room to the LiveKit-Cloud-hosted
-        # worker's agent_name; the Cloud Run worker declines it (request_fnc).
+        # Dual-cloud agent dispatch (§1.1): default "livekit" => route the room
+        # to the LiveKit-Cloud-hosted worker's agent_name (explicit dispatch);
+        # the Cloud Run worker declines it (request_fnc). "cloudrun" => no
+        # explicit agent dispatch (LiveKit auto-dispatches to the Cloud Run
+        # worker, unchanged).
         agent_cloud = _voice_agent_cloud(uid)
         dispatch_agent = (
             CONFIG.agent_name_livekit if agent_cloud == "livekit" else None
@@ -5410,7 +5413,7 @@ async def set_voice_preference_endpoint(
 async def get_voice_agent_cloud(uid: str = Depends(require_uid)) -> dict[str, object]:
     """Which cloud serves this user's voice agent (§1.1, dual-cloud agent):
     ``{current, default, options}``. ``current`` is the saved
-    ``voice_agent_cloud`` (``cloudrun`` by default). Dev-only control on the
+    ``voice_agent_cloud`` (``livekit`` by default). Dev-only control on the
     Developer screen; no LLM spend."""
     return {
         "current": _voice_agent_cloud(uid),
@@ -5428,10 +5431,10 @@ async def set_voice_agent_cloud(
     body: VoiceAgentCloudBody, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
     """Persist which cloud serves this user's next voice call on
-    ``users/{uid}/profile/main`` (``voice_agent_cloud``, §1.1). ``cloudrun``
-    (default, all of production) routes to the Cloud Run worker via automatic
-    dispatch; ``livekit`` routes the next room explicitly to the
-    LiveKit-Cloud-hosted worker. Takes effect on the next voice session."""
+    ``users/{uid}/profile/main`` (``voice_agent_cloud``, §1.1). ``livekit``
+    (the default) routes the next room explicitly to the LiveKit-Cloud-hosted
+    worker; ``cloudrun`` routes to the Cloud Run worker via automatic dispatch.
+    Takes effect on the next voice session."""
     from firebase_admin import firestore
 
     cloud = body.cloud.strip().lower()

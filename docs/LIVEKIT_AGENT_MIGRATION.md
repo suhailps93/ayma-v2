@@ -1,9 +1,18 @@
 # LiveKit Cloud Agents migration (ayma-agent → LiveKit Cloud)
 
-> Status: **flagged, opt-in, default OFF.** Production voice is unchanged — it
-> still runs on the Cloud Run `ayma-agent`. This runbook covers the dual-cloud
-> design, how to deploy the LiveKit-hosted twin, the secrets/SA it needs, the
-> dev toggle, and how to flip the default later. Branch: `meta-hackathon`.
+> Status: **LiveKit Cloud is now the DEFAULT** (flipped 2026-10-28, founder
+> decision, branch `meta-hackathon`). A user with no `voice_agent_cloud` pref
+> routes their voice room to the LiveKit-hosted `ayma-lk` worker (explicit
+> dispatch); a user who explicitly set `cloudrun` still routes to the Cloud Run
+> `ayma-agent`, which stays deployed as the opt-out / fallback. This runbook
+> covers the dual-cloud design, how to deploy the LiveKit-hosted twin, the
+> secrets/SA it needs, the dev toggle, and how to roll the default back.
+>
+> **ROLLBACK (do this to revert the default):**
+> - *Instant, per user, no deploy:* set that user's `voice_agent_cloud=cloudrun`
+>   (`POST /voice/agent-cloud {"cloud":"cloudrun"}`, or the Developer screen).
+> - *Global, one line + deploy:* set `schema.VOICE_AGENT_CLOUD_DEFAULT` back to
+>   `"cloudrun"` and redeploy ayma-api. The Cloud Run agent is always available.
 
 ## Why
 
@@ -121,28 +130,38 @@ Developer screen (`ayma_flutter/lib/screens/developer_screen.dart`), under the
 password unlock → **"Voice agent cloud"** chips (Cloud Run / LiveKit Cloud). Reads/writes
 `GET/POST /voice/agent-cloud`. Takes effect on the next voice call.
 
-## How to flip the default later
+## The default (flipped 2026-10-28) and how to roll back
 
-Today the default is `cloudrun` and is read per user from `profile/main`. To make
-LiveKit the default for everyone later, options (in order of blast radius):
+The default now lives in **one authoritative place**: `schema.VOICE_AGENT_CLOUD_DEFAULT`
+(`functions/bootstrap/schema.py`), set to `"livekit"`. `main._voice_agent_cloud(uid)`
+returns it whenever a user's `profile/main.voice_agent_cloud` is absent, empty, or an
+unknown value — so a no-pref user routes to the hosted `ayma-lk` worker via explicit
+dispatch (`/bootstrap` sets `agent_name=CONFIG.agent_name_livekit`). A user who
+explicitly set `cloudrun` still routes to Cloud Run (automatic dispatch).
 
-1. **Cohort / allowlist:** keep the per-user flag and flip it for a growing set of uids.
-2. **New-account default:** change `schema.VOICE_AGENT_CLOUD_DEFAULT` to `livekit` and
-   deploy ayma-api — new reads fall back to LiveKit. **Only do this once the LiveKit
-   worker has soaked**; it diverts every account that never set the pref.
-3. **Full cutover:** after a soak, keep the Cloud Run agent deployed as the fallback
-   for one release, then retire it.
+This was flipped from `cloudrun` only after confirming `ayma-lk`
+(`CA_bJMNunTLpVqk`, us-east) was **Running / registered** on LiveKit Cloud, and with
+the build-failure + runtime fallback to Gemini Live on the cascade path intact (a
+LiveKit-side failure can't fully kill voice).
 
-To **roll back** instantly: no deploy needed — set a user's `voice_agent_cloud` back to
-`cloudrun` (or lower `VOICE_AGENT_CLOUD_DEFAULT`). The Cloud Run agent stays the default
-and is always available.
+**Roll back the default:**
+
+1. **Instant, per user, no deploy:** set that user's `voice_agent_cloud=cloudrun`
+   (`POST /voice/agent-cloud {"cloud":"cloudrun"}`, or Developer screen → "Voice agent
+   cloud" → Cloud Run). Takes effect on their next voice call.
+2. **Global, one line + deploy:** set `schema.VOICE_AGENT_CLOUD_DEFAULT` back to
+   `"cloudrun"` and redeploy ayma-api. Every no-pref read falls back to Cloud Run again.
+3. **Full cutover (future):** after a soak, retire the Cloud Run agent in a later release.
+
+The Cloud Run `ayma-agent` stays deployed as the opt-out / fallback and is always
+available — rolling back needs no LiveKit change.
 
 ## Safety / review notes
 
-- Default OFF = Cloud Run; production voice unchanged, no Cloud Run redeploy *required*
-  for the default path (the `request_fnc` guard is additive and accepts default rooms
-  identically — redeploy the Cloud Run agent so the guard is present before anyone
-  opts in to `livekit`).
+- Default is now `livekit` (the hosted `ayma-lk` worker). The Cloud Run `ayma-agent`
+  stays deployed with the `request_fnc` guard present, serving explicit-`cloudrun`
+  users and as the instant rollback target. Its guard fails open (accepts on any read
+  error) so it can never take voice down on the opt-out path.
 - SA is least-privilege (`datastore.user`). No secret is committed; the key lives only
   in Secret Manager and LiveKit's secret store.
 - No hardcoded model/voice ids outside `config.py`.

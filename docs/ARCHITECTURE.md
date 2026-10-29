@@ -45,7 +45,7 @@ flowchart LR
 
   subgraph GCP["Google Cloud project ayma-ai"]
     API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/verify, /voice/context"]
-    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>DEFAULT voice cloud; AUTOMATIC dispatch<br/>declines rooms flagged voice_agent_cloud=livekit (request_fnc)<br/>scale-to-zero, woken by agent_wake ping,<br/>kept up per call by a /keepalive request to itself<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>opt-out/fallback voice cloud (explicit voice_agent_cloud=cloudrun users); AUTOMATIC dispatch<br/>serves rooms NOT flagged voice_agent_cloud=livekit (request_fnc)<br/>scale-to-zero, woken by agent_wake ping,<br/>kept up per call by a /keepalive request to itself<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     MCP["Ayma MCP server (/mcp, flag mcp_server, default OFF)<br/>bring-your-own-agent: profile/matches/DM/persona tools<br/>opaque per-user tokens (Firestore-validated, revocable)<br/>gates server-side: scope, 18+, moderation, no-PII, per-token rate limit<br/>NO Ayma LLM — the client's model does all reasoning"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
@@ -61,7 +61,7 @@ flowchart LR
   subgraph LK["LiveKit Cloud"]
     Room[WebRTC rooms<br/>one new room per call<br/>explicit agent dispatch set by /bootstrap when voice_agent_cloud=livekit]
     Gateway["LiveKit Inference gateway<br/>google/gemini-3.7-flash, google/gemini-3.8-live"]
-    AgentLK["ayma-lk (LiveKit Cloud Agents, same agent.py, AGENT_RUNTIME=livekit)<br/>EXPLICIT dispatch (agent_name ayma-lk), opt-in per user<br/>no wake/keepalive (LiveKit manages capacity)<br/>Firestore via mounted SA key LK_AGENT_FIRESTORE_SA<br/>flag voice_agent_cloud, default OFF"]
+    AgentLK["ayma-lk (LiveKit Cloud Agents, same agent.py, AGENT_RUNTIME=livekit)<br/>DEFAULT voice cloud; EXPLICIT dispatch (agent_name ayma-lk)<br/>no wake/keepalive (LiveKit manages capacity)<br/>Firestore via mounted SA key LK_AGENT_FIRESTORE_SA<br/>flag voice_agent_cloud, default livekit (set in schema.VOICE_AGENT_CLOUD_DEFAULT)"]
   end
 
   Firebase[Firebase Auth + FCM]

@@ -276,14 +276,17 @@ PF_AYMA_TTS_VOICE = "ayma_tts_voice"
 # separate, unchanged preference. Read/written by ``/brain/preference``.
 PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
 # Which cloud hosts the voice agent for THIS user's next call (dual-cloud agent,
-# ARCHITECTURE §1.1): "cloudrun" (GCP Cloud Run — the default and all of
-# production) or "livekit" (LiveKit Cloud Agents, opt-in via the Developer
-# screen). Read by ``main._voice_agent_cloud`` and threaded into the room
-# dispatch; "" / absent = cloudrun, so production is unchanged until a user
-# flips it. Written by ``/voice/agent-cloud``.
+# ARCHITECTURE §1.1): "livekit" (LiveKit Cloud Agents — now the default, served
+# by the hosted ``ayma-lk`` worker) or "cloudrun" (GCP Cloud Run, opt-out via
+# the Developer screen). Read by ``main._voice_agent_cloud`` and threaded into
+# the room dispatch; "" / absent = the default below. A user who explicitly set
+# "cloudrun" still routes to Cloud Run. Written by ``/voice/agent-cloud``.
+# ROLLBACK: flip VOICE_AGENT_CLOUD_DEFAULT back to "cloudrun" and redeploy
+# ayma-api (global), or set a user's ``voice_agent_cloud`` pref (instant, no
+# deploy). This single constant is the one authoritative default.
 PF_AYMA_VOICE_CLOUD = "voice_agent_cloud"
 VOICE_AGENT_CLOUDS = ("cloudrun", "livekit")
-VOICE_AGENT_CLOUD_DEFAULT = "cloudrun"
+VOICE_AGENT_CLOUD_DEFAULT = "livekit"
 # The user's own LinkedIn profile URL, given with their consent (§ Your Story
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.
