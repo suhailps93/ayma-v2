@@ -65,7 +65,7 @@ MON=$!
 GRANT=$!
 
 DEFINES="--dart-define=E2E_SHOTS=true --dart-define=E2E_NET=true"
-for f in e2e_behaviors_test e2e_edge_test e2e_auth_test e2e_net_test; do
+for f in e2e_behaviors_test e2e_edge_test e2e_hidden_test e2e_auth_test e2e_net_test; do
   echo "== E2E: $f on $DEVICE =="
   flutter test "integration_test/$f.dart" -d "$DEVICE" $DEFINES 2>&1 | tee -a "$LOG"
 done

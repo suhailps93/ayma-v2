@@ -76,6 +76,19 @@ EDGE = {
 # Which accounts are expected to pass the hard gates (for the --reset log only).
 EXPECT_PASS = {"demo-edge-nophoto", "demo-edge-agemin", "demo-edge-mutual"}
 
+# A non-bypass VIEWER login (NOT in explore_fixture_bypass_uids) used by
+# e2e_hidden_test.dart to prove fixture-hiding for a real user: its Explore must
+# HIDE every demo-edge-* fixture while still SHOWING demo-test1/2/3. It is itself
+# flagged exclude_from_explore (so it never pollutes real users' feeds) and has a
+# real auth login so the harness can sign in as it.
+VIEWER_UID = "demo-edge-viewer"
+VIEWER = {
+    **_persona(VIEWER_UID, "Owen Carter", gender="Man",
+               interested_in=("Women",), birthdate="1992-05-15",
+               headline="E2E viewer (not a bypass account)"),
+    "email": "demo-edge-viewer@gmail.com",
+}
+
 
 # A short, Daniel-compatible life story so a non-gated pair scores > 0
 # (score_pair refuses to run without a wiki on both sides). Gated pairs are
@@ -107,7 +120,7 @@ def _write_wiki(db, uid: str) -> None:
 def _reset(db):
     from pair_key import sorted_pair_key
 
-    for uid in EDGE:
+    for uid in list(EDGE) + [VIEWER_UID]:
         # delete the match doc with Daniel + the account's subcollections + doc.
         db.collection("matches").document(sorted_pair_key(DANIEL_UID, uid)).delete()
         user = db.collection("users").document(uid)
@@ -116,6 +129,13 @@ def _reset(db):
                 d.reference.delete()
         user.delete()
         sda._log(f"[edge:reset] removed {uid}")
+    # The viewer has a real auth login; remove it too.
+    try:
+        from firebase_admin import auth as fb_auth
+        fb_auth.delete_user(VIEWER_UID)
+        sda._log(f"[edge:reset] removed auth user {VIEWER_UID}")
+    except Exception:  # noqa: BLE001 - absent is fine
+        pass
 
 
 def _set_mutual(db, uid):
@@ -166,6 +186,20 @@ async def run(reset: bool) -> int:
         sda._log(f"[edge:match] {uid}: score={score} (expected {expect})")
 
     _set_mutual(db, "demo-edge-mutual")
+
+    sda._log("\n=== EDGE PHASE 3: non-bypass viewer (for the HIDDEN test) ===")
+    db.collection("users").document(VIEWER_UID).set(
+        {"demo_edge": True, "exclude_from_explore": True,
+         "updated_at": sda._now()},
+        merge=True,
+    )
+    sda.ensure_auth_user(VIEWER)
+    sda.record_consent(db, VIEWER_UID)
+    sda.write_profile_and_questionnaire(db, VIEWER, qz, VIEWER["location"])
+    _write_wiki(db, VIEWER_UID)
+    await sda.recompute_completeness(db, VIEWER_UID)
+    sda.grant_credits(VIEWER_UID)
+    sda._log(f"[edge:viewer] {VIEWER_UID} ({VIEWER['email']}) ready")
 
     sda._log("\n=== EDGE DONE ===")
     return 0

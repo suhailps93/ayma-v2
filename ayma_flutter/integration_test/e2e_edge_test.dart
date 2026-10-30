@@ -20,6 +20,7 @@ import 'package:integration_test/integration_test.dart';
 
 import 'package:ayma_flutter/main.dart' as app;
 import 'package:ayma_flutter/routing/app_router.dart' show appRouter;
+import 'package:ayma_flutter/widgets/ayma_rail_icons.dart' show AymaSearchGlyph;
 
 import 'helpers.dart';
 
@@ -149,6 +150,44 @@ void main() {
           'reportOpened=$matchOpened, Match=$isMatch, Compatibility=$isCompat '
           '(want Match=true, Compatibility=false)');
     }
+    appRouter.go('/');
+    await pumpUntil(tester, find.byIcon(Icons.search_rounded),
+        timeout: const Duration(seconds: 20));
+
+    // ---- WEBRESEARCH: the web-research icon OPENS the report page and does
+    // NOT auto-start a search (2239 web-research-icon fix). Open a profile with
+    // no prior dive (nophoto), tap the search glyph, and assert the never-run
+    // empty state ("No web research yet" + "Run web search") — a started search
+    // would instead show the "Searching the web…" progress banner.
+    appRouter.push('/profile/user/$_nophoto');
+    final haveSearchGlyph = await pumpUntil(tester, find.byType(AymaSearchGlyph),
+        timeout: const Duration(seconds: 40));
+    if (!haveSearchGlyph) {
+      fail('WEBRESEARCH', 'web-research icon not found on the profile');
+    } else {
+      final glyph = find.byType(AymaSearchGlyph);
+      try {
+        await tester.ensureVisible(glyph.first);
+        await tester.pump(const Duration(milliseconds: 200));
+      } catch (_) {/* visible */}
+      await tester.tap(glyph.first, warnIfMissed: false);
+      final onEmpty = await pumpUntil(tester, find.text('No web research yet'),
+          timeout: const Duration(seconds: 30));
+      final runCta =
+          find.widgetWithText(FilledButton, 'Run web search').evaluate().isNotEmpty;
+      final searching =
+          find.textContaining('Searching the web').evaluate().isNotEmpty;
+      await shot(tester, 'WEBRESEARCH');
+      if (onEmpty && runCta && !searching) {
+        pass('WEBRESEARCH',
+            'web-research icon opens the page ("No web research yet" + "Run web '
+            'search") and starts no search on tap');
+      } else {
+        fail('WEBRESEARCH',
+            'emptyState=$onEmpty, runCta=$runCta, autoSearching=$searching '
+            '(want empty+cta, no auto-search)');
+      }
+    }
 
     await settleHarness(tester);
     _print(results);
@@ -213,7 +252,7 @@ Future<Set<String>> _collectNamesWhileScrolling(
 
 void _print(Map<String, String> results) {
   debugPrint('\n============ EDGE E2E PASS/FAIL ============');
-  for (final k in ['GATES', 'NOPHOTO', 'ZERO', 'MATCH']) {
+  for (final k in ['GATES', 'NOPHOTO', 'ZERO', 'MATCH', 'WEBRESEARCH']) {
     debugPrint('  $k: ${results[k] ?? "NOT RUN"}');
   }
   debugPrint('============================================\n');
