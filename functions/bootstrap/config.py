@@ -1053,8 +1053,11 @@ def _load() -> Config:
         all_flags_on_uids=_csv(
             "ALL_FLAGS_ON_UIDS", "demo-test1,demo-test2,demo-test3"
         ),
+        # ONLY the dedicated e2e viewer bypasses fixture-hiding. The demo/judge
+        # accounts (demo-test1/2/3) are NOT in this set, so they get a CLEAN
+        # Explore (no demo-edge-* test fixtures) exactly like any real user.
         explore_fixture_bypass_uids=_csv(
-            "EXPLORE_FIXTURE_BYPASS_UIDS", "demo-test1,demo-test2,demo-test3"
+            "EXPLORE_FIXTURE_BYPASS_UIDS", "demo-e2e-viewer"
         ),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
         dev_panel_password=os.getenv("DEV_PANEL_PASSWORD", ""),
