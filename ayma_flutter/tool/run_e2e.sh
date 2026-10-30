@@ -59,7 +59,7 @@ MON=$!
          | grep -i mCurrentFocus | grep -qi "permission"; then
       adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1 || true
     fi
-    sleep 1.5
+    sleep 0.5
   done
 ) &
 GRANT=$!

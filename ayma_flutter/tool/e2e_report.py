@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 # Behaviour letter -> human description (the 8 fixes shipped in build 2237).
 BUGS = {
     "B": "Explore excludes profiles violating gender/age/location dealbreakers; hard-dealbreaker report scores 0%",
-    "C": 'Web research shows "No web research yet" + "Run report" when never run (error+Retry only on real failure)',
+    "C": 'Web research shows "No web research yet" + "Run web search" when never run (error+Retry only on real failure)',
     "D": 'Non-mutual pair reads "Compatibility"; only a mutual like reads "Match"',
     "E": "Practice personas (demo_practice_*) never appear in Explore",
     "F": "Re-opening an already-opened report is instant (cache); Recalculate forces a recompute",

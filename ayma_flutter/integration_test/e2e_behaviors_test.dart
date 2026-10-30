@@ -314,13 +314,13 @@ void main() {
       timeout: const Duration(seconds: 40),
     );
     final runReport =
-        find.widgetWithText(FilledButton, 'Run report').evaluate().isNotEmpty;
+        find.widgetWithText(FilledButton, 'Run web search').evaluate().isNotEmpty;
     final errorShown =
         find.textContaining("Couldn't load").evaluate().isNotEmpty;
     await shot(tester, 'C'); // web-research empty state
     if (emptyState && runReport && !errorShown) {
       pass('C',
-          '"No web research yet" + "Run report" shown for never-run subject '
+          '"No web research yet" + "Run web search" shown for never-run subject '
           '(no "Couldn\'t load" error)');
     } else {
       fail('C',
@@ -361,26 +361,41 @@ Future<bool> _openDanielReport(WidgetTester tester) async {
     debugPrint('REPORT: Daniel card not found in Explore');
     return false;
   }
-  await dismissTour(tester);
-  // Tap the card's tappable GestureDetector (the one that actually carries an
-  // onTap = push /profile/user/<uid>), not an inner decorative one.
-  try {
-    await tester.ensureVisible(daniel.first);
-    await tester.pump(const Duration(milliseconds: 300));
-  } catch (_) {/* already visible */}
-  final tappable = find.ancestor(
-    of: daniel.first,
-    matching: find.byWidgetPredicate(
-        (w) => w is GestureDetector && w.onTap != null),
-  );
-  final tapTarget = tappable.evaluate().isNotEmpty ? tappable.first : daniel.first;
-  await tester.tap(tapTarget, warnIfMissed: false);
-  // Public profile loads; the match glyph lives in its action rail.
-  final haveGlyph = await pumpUntil(tester, find.byType(AymaMatchGlyph),
-      timeout: const Duration(seconds: 30));
-  debugPrint('REPORT: after tapping Daniel -> glyph present=$haveGlyph, '
-      'onPublicProfile=${find.byType(AymaMatchGlyph).evaluate().isNotEmpty}, '
-      'texts=${_visibleTexts().take(12).toList()}');
+  // Tap the card and wait for the public profile. Retry a few times: the OS
+  // notification-permission dialog can briefly sit over the feed and swallow a
+  // tap (run_e2e.sh dismisses it host-side, but a tap can race it).
+  var haveGlyph = false;
+  for (var attempt = 0; attempt < 4 && !haveGlyph; attempt++) {
+    await dismissTour(tester);
+    if (find.textContaining('Daniel Reyes').evaluate().isEmpty) {
+      // We navigated away (e.g. onto the profile already) — check for the glyph.
+      haveGlyph = await pumpUntil(tester, find.byType(AymaMatchGlyph),
+          timeout: const Duration(seconds: 10));
+      if (haveGlyph) break;
+      // Otherwise go back to Explore and retry.
+      await openExplore(tester);
+      await pumpUntil(tester, find.textContaining('Daniel Reyes'),
+          timeout: const Duration(seconds: 20));
+    }
+    final card = find.textContaining('Daniel Reyes');
+    if (card.evaluate().isEmpty) continue;
+    try {
+      await tester.ensureVisible(card.first);
+      await tester.pump(const Duration(milliseconds: 300));
+    } catch (_) {/* already visible */}
+    final tappable = find.ancestor(
+      of: card.first,
+      matching: find.byWidgetPredicate(
+          (w) => w is GestureDetector && w.onTap != null),
+    );
+    await tester.tap(
+        tappable.evaluate().isNotEmpty ? tappable.first : card.first,
+        warnIfMissed: false);
+    haveGlyph = await pumpUntil(tester, find.byType(AymaMatchGlyph),
+        timeout: const Duration(seconds: 20));
+    debugPrint('REPORT: tap Daniel attempt $attempt -> glyph=$haveGlyph '
+        'texts=${_visibleTexts().take(10).toList()}');
+  }
   if (!haveGlyph) return false;
   return _openReportFromProfile(tester);
 }
