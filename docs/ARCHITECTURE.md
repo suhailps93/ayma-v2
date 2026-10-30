@@ -910,7 +910,7 @@ The shared builder `public_profile._viewing_profile_context` (also reused by voi
 flowchart LR
   Src[Candidate sourcing<br/>§5.1<br/>excl. practice personas demo_practice_*] --> P1[Pass 1: heuristic]
   P1 -->|on-demand full pool / cron stage 1| Cand["match_candidates/{candidateUid}<br/>no score"]
-  Cand -->|score overlay only| Explore["Explore feed — Piece 6 §6.1<br/>shows dealbreaker profiles (0% report, not hidden)<br/>excl. practice personas"]
+  Cand -->|score overlay only| Explore["Explore feed — Piece 6 §6.1<br/>shows dealbreaker profiles (0% report, not hidden)<br/>excl. practice personas + test fixtures (demo-edge-*/exclude_from_explore)"]
 
   Cand -->|manual compat check| P2["Pass 2: wiki-to-wiki skill<br/>HARD dealbreaker (gender/age/location) → score 0.0<br/>soft gate → 10–25 cap"]
   P1 -->|cron stage 2, small top-K| P2
@@ -969,7 +969,7 @@ Explore's population is a live filtered query over all eligible users (Piece 6 �
 
 ### 6.1 Explore population & eligibility
 
-Explore is a live, paginated query over **all users** who have a `profile/main`, the caller included, with **no orientation or community gating** (product decision, 2026-08-30). A profile that violates the viewer's onboarding hard dealbreakers (gender/orientation, partner age range, location/relocation) is **NOT** hidden — it still appears in the feed; the dealbreaker only surfaces as a **0% compatibility report** with a "Why this is 0%" section (§5.4), never as a quietly missing person (founder, 2026-10-29, reversing the earlier same-day "Explore drops dealbreakers" decision — showing the person and explaining the zero beats silently dropping them). Excluded: `blocks`, `deleted_accounts` (no profile doc), paused profiles, already-passed users, nameless/half-set-up profiles, and **practice-date simulator personas** (`demo_practice_*`, `practice_seed.is_practice_persona`, BUG E — these are simulator fixtures, never real accounts, and stay excluded). Already-matched users are **not** excluded — they still appear. `match_candidates`/`matches` (Piece 5) overlay a score badge on top when present; they are not the population source.
+Explore is a live, paginated query over **all users** who have a `profile/main`, the caller included, with **no orientation or community gating** (product decision, 2026-08-30). A profile that violates the viewer's onboarding hard dealbreakers (gender/orientation, partner age range, location/relocation) is **NOT** hidden — it still appears in the feed; the dealbreaker only surfaces as a **0% compatibility report** with a "Why this is 0%" section (§5.4), never as a quietly missing person (founder, 2026-10-29, reversing the earlier same-day "Explore drops dealbreakers" decision — showing the person and explaining the zero beats silently dropping them). Excluded: `blocks`, `deleted_accounts` (no profile doc), paused profiles, already-passed users, nameless/half-set-up profiles, **practice-date simulator personas** (`demo_practice_*`, `practice_seed.is_practice_persona`, BUG E — these are simulator fixtures, never real accounts, and stay excluded), and **seeded E2E test fixtures** (the `demo-edge-*` corner-case accounts, flagged `exclude_from_explore: true` on their `users/{uid}` doc by `scripts/seed_demo_edge_accounts.py`; the `demo-edge-` uid prefix is a secondary safety net — `explore._is_test_fixture`, founder 2026-10-29: these were leaking into real users' Explore once dealbreaker profiles stopped being hidden). The **curated demo set** `demo-test1/2/3` (Daniel/Sofia/Priya) carries NO such flag and stays visible — it intentionally populates Explore for the demo. **E2E bypass:** when the *viewer's* own uid is in `config.explore_fixture_bypass_uids` (env `EXPLORE_FIXTURE_BYPASS_UIDS`, default `demo-test1,demo-test2,demo-test3`), fixture-hiding is disabled for that viewer only, so the e2e harness (signed in as Daniel) can still verify a real dealbreaker profile renders in Explore; a real user is never in that set. See `docs/TESTING_E2E.md` → "Test-fixture hiding + the E2E bypass". Already-matched users are **not** excluded — they still appear. `match_candidates`/`matches` (Piece 5) overlay a score badge on top when present; they are not the population source.
 
 ### 6.2 Filtering
 
@@ -1654,6 +1654,12 @@ Four client-side perceived-performance improvements, all behind no flag (pure UX
   `DeepDiveActivity`. Every other report type passes no `emptyBuilder`, so a 404 still shows the retry error exactly as
   before. A dive that *ran* but found nothing is NOT a 404 — the adapter returns a real report with a "Nothing found
   yet." block, which renders normally (ran ≠ never run).
+  - **Entry from the profile action rail** (`public_profile_screen.dart`) — the web-research (magnifier-with-sparkle)
+    rail icon only **navigates**; it never calls `POST /deep-dive` itself. A profile with an existing report
+    (`deep_dive_id` non-empty) opens `/deep-dive/<id>`; a profile with none opens `/deep-dive/uid_<uid>`, landing on the
+    "No web research yet" + "Run web search" empty state above. The run starts only when the user taps "Run web search"
+    on that screen — opening the screen to *view* never auto-runs (regression fixed: the icon used to fire the run and
+    jump straight to the "Searching the web…" spinner).
 
 - **Optimistic cold start** (`splash_screen.dart`) — the splash no longer blocks on the full bootstrap. When a cached
   entry route exists for the signed-in uid (`ReportCache.readBootRoute`), it paints that last-known UI immediately and

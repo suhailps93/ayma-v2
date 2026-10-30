@@ -379,8 +379,8 @@ void main() {
   });
 
   testWidgets(
-      'tapping Web search with no report starts the search and opens the '
-      'report screen (not chat, not notifications)', (tester) async {
+      'tapping Web search with no report only navigates to the deep-dive screen '
+      'with a uid_<x> id and starts no search', (tester) async {
     final pushed = <String>[];
     final posts = <String>[];
     await tester.pumpWidget(_app(
@@ -390,30 +390,11 @@ void main() {
     await tester.tap(find.byType(AymaSearchGlyph));
     await tester.pumpAndSettle();
 
-    expect(posts, contains('/deep-dive'));
-    expect(pushed, contains('/deep-dive/her'));
+    // The entry point only navigates and never hits the run endpoint.
+    expect(posts, isEmpty);
+    expect(pushed, contains('/deep-dive/uid_her'));
     expect(find.text('DEEP DIVE REPORT'), findsOneWidget);
-    expect(DeepDiveActivity.instance.isSearching('her'), isTrue);
-
-    // Let the (never-landing, in this fake) poll run out so no timer leaks.
-    await tester.pump(const Duration(minutes: 10));
     expect(DeepDiveActivity.instance.isSearching('her'), isFalse);
-  });
-
-  testWidgets('Web search shows the out-of-credits sheet when capped',
-      (tester) async {
-    final pushed = <String>[];
-    await tester.pumpWidget(_app(
-        _api(_profile(deepDiveId: ''),
-            deepDive: {'usage_capped': true}),
-        pushed: pushed));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byType(AymaSearchGlyph));
-    await tester.pumpAndSettle();
-
-    expect(pushed, isEmpty);
-    expect(find.text("You're out of credits"), findsOneWidget);
   });
 
   testWidgets('Like posts and flips the heart glyph to its filled "done" state',

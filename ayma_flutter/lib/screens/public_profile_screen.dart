@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -8,7 +6,6 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
-import '../services/deep_dive_activity.dart';
 import '../services/match_activity.dart';
 import '../services/tab_request.dart';
 import '../theme.dart';
@@ -166,37 +163,6 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       }
     } finally {
       if (mounted) setState(() => _liking = false);
-    }
-  }
-
-  bool _startingSearch = false;
-
-  /// Web search on someone with no report yet: start the search right here
-  /// (no detour through chat) and open the report screen, which shows the
-  /// in-progress banner and fills in when [DeepDiveActivity] sees it land.
-  /// The report id of a cross-user dive is the subject's uid.
-  Future<void> _runWebSearch(PublicProfile p) async {
-    if (_startingSearch) return;
-    setState(() => _startingSearch = true);
-    try {
-      final res = await _api.deepDive(targetUid: p.uid, name: p.name);
-      if (!mounted) return;
-      if (res.usageCapped) {
-        showOutOfCreditsSheet(context);
-        return;
-      }
-      final reportId = res.reportId.isNotEmpty ? res.reportId : p.uid;
-      if (res.queued) {
-        unawaited(DeepDiveActivity.instance.start(reportId, api: _api));
-      }
-      context.push('/deep-dive/${Uri.encodeComponent(reportId)}');
-    } catch (_) {
-      if (mounted) {
-        AymaToast.show(context, "Couldn't start that web search.",
-            kind: AymaToastKind.error);
-      }
-    } finally {
-      if (mounted) setState(() => _startingSearch = false);
     }
   }
 
@@ -398,12 +364,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     liked: _isLiked(p),
                     liking: _liking,
                     scoring: _scoring,
-                    searching: _startingSearch,
                     score: _score ?? p.score,
                     onLike: _like,
                     onUnlike: _unlike,
                     onRunMatch: _runMatch,
-                    onWebSearch: _runWebSearch,
                   ),
                 ),
               // Persistent tab bar even though this screen is a pushed route,
@@ -1027,19 +991,16 @@ class _Actions extends StatelessWidget {
     required this.liked,
     required this.liking,
     required this.scoring,
-    required this.searching,
     required this.score,
     required this.onLike,
     required this.onUnlike,
     required this.onRunMatch,
-    required this.onWebSearch,
   });
 
   final PublicProfile p;
   final bool liked;
   final bool liking;
   final bool scoring;
-  final bool searching;
 
   /// The current match score (local override or the profile's), or null when
   /// this pair has never been scored.
@@ -1047,7 +1008,6 @@ class _Actions extends StatelessWidget {
   final void Function(PublicProfile) onLike;
   final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
-  final void Function(PublicProfile) onWebSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -1079,12 +1039,13 @@ class _Actions extends StatelessWidget {
         const SizedBox(height: 16),
         _RailButton(
           active: p.deepDiveId.isNotEmpty,
-          onPressed: p.deepDiveId.isNotEmpty
-              ? () => context
-                  .push('/deep-dive/${Uri.encodeComponent(p.deepDiveId)}')
-              : searching
-                  ? null
-                  : () => onWebSearch(p),
+          // Tapping opens the report screen, which shows the existing report or
+          // the never-run empty state with its own "Run web search" button —
+          // tapping the icon itself starts no search.
+          onPressed: () {
+            final id = p.deepDiveId.isNotEmpty ? p.deepDiveId : 'uid_${p.uid}';
+            context.push('/deep-dive/${Uri.encodeComponent(id)}');
+          },
           icon: AymaSearchGlyph(
               accent: accent, filled: p.deepDiveId.isNotEmpty),
         ),

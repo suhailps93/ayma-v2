@@ -43,6 +43,42 @@ Plus the runner `ayma_flutter/tool/run_e2e.sh` and report generator
   age-at-floor pass, and four hard-dealbreaker fails (age-over-max, one-sided
   orientation, out-of-radius location) plus a mutual-like pair.
 
+## Test-fixture hiding + the E2E bypass (contract for the GATES test)
+
+**Background (founder, 2026-10-29).** The `demo-edge-*` fixtures were leaking
+into *real users'* Explore once the dealbreaker fix made Explore show (not hide)
+dealbreaker profiles. The backend now hides every seeded test fixture from real
+users' Explore: `seed_demo_edge_accounts.py` flags each account with
+`exclude_from_explore: true` on its `users/{uid}` doc, and
+`functions/bootstrap/explore.py` (`_is_test_fixture`) drops any user carrying
+that flag — with the `demo-edge-` uid prefix as a secondary safety net. The
+curated demo set `demo-test1/2/3` (Daniel/Sofia/Priya) carries **no** flag and
+stays visible. Already-seeded live fixtures were tagged by
+`scripts/backfill_fixture_exclude_flag.py` (idempotent; `--revert` untags).
+
+**Why the E2E suite still works — the viewer bypass.** Fixture-hiding is
+disabled when the **viewer's own uid** is in `config.explore_fixture_bypass_uids`
+(env `EXPLORE_FIXTURE_BYPASS_UIDS`, default `demo-test1,demo-test2,demo-test3`).
+`e2e_edge_test.dart` signs in as **Daniel (`demo-test1`)**, who is in that set,
+so **all six `demo-edge-*` fixtures remain visible to that viewer** — GATES,
+NOPHOTO, ZERO and MATCH are unaffected by the real-user hiding. A real user is
+never in the set, so they never see fixtures.
+
+**What the GATES test must assert.** Because the viewer (Daniel) bypasses
+fixture-hiding, GATES tests the *matching gate*, not the fixture filter: against
+Daniel's Explore it asserts the **valid** edges appear (`demo-edge-nophoto`,
+`demo-edge-agemin`, `demo-edge-mutual`) and, per the current dealbreaker product
+rule (§5.4 / §6.1 — dealbreaker profiles are shown with a 0% report, not
+hidden), the **hard-dealbreaker** edges (`demo-edge-ageover`,
+`demo-edge-orient`, `demo-edge-locout`) **also appear** (their gate surfaces as a
+0% report, verified by ZERO — not as absence from Explore). The e2e agent owns
+this assertion; the real-user hiding is covered separately by the backend
+regression test `functions/bootstrap/tests/test_explore_hides_fixtures.py`.
+
+**Deploy requirement.** The deployed `ayma-api` must keep `demo-test1` in
+`EXPLORE_FIXTURE_BYPASS_UIDS` (it is the default, so no env override is needed
+unless the var is set explicitly).
+
 ## Running
 
 One command — runs the suite, captures a screenshot per behaviour and writes
@@ -128,8 +164,17 @@ The corner cases the three complete demo accounts can't express are driven
 against the seeded `demo-edge-*` fixtures (signed in as Daniel), in
 `e2e_edge_test.dart`:
 
-- **GATES** — Explore excludes the hard-dealbreaker edges (age-over-max,
-  one-sided orientation, out-of-radius location) and includes the valid ones.
+- **GATES** — against Daniel's Explore (Daniel bypasses fixture-hiding; see
+  "Test-fixture hiding + the E2E bypass"), the valid edges appear
+  (`demo-edge-nophoto`, `demo-edge-agemin`, `demo-edge-mutual`) and, per the
+  current dealbreaker rule (§5.4/§6.1), the hard-dealbreaker edges
+  (`demo-edge-ageover`, `demo-edge-orient`, `demo-edge-locout`) **also** appear
+  (their gate surfaces as a 0% report, see ZERO — not as absence from Explore).
+- **HIDDEN** — a NORMAL (non-bypass) viewer's Explore hides every `demo-edge-*`
+  fixture while still showing the curated `demo-test1/2/3` accounts.
+- **WEBRESEARCH** — tapping the web-research icon on another user's profile opens
+  the report / "No web research yet" + "Run web search" page and does NOT
+  auto-start a search (no `POST /deep-dive` fires on the tap).
 - **NOPHOTO** — a 0-photo but valid profile appears in Explore and its report
   opens (distinct from the practice-persona exclusion).
 - **ZERO** — a hard-dealbreaker pair's report scores 0% (bug B's 0% path).

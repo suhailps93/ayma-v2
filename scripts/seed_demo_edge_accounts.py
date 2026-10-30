@@ -146,7 +146,15 @@ async def run(reset: bool) -> int:
         # `collection("users").stream()`, so Explore (which streams users) would
         # silently skip the account.
         db.collection("users").document(uid).set(
-            {"demo_edge": True, "updated_at": sda._now()}, merge=True
+            {
+                "demo_edge": True,
+                # Hides this fixture from real users' Explore (filtered in
+                # functions/bootstrap/explore.py); a designated e2e/demo viewer
+                # still sees it.
+                "exclude_from_explore": True,
+                "updated_at": sda._now(),
+            },
+            merge=True,
         )
         sda.write_profile_and_questionnaire(db, p, qz, p["location"])
         _write_wiki(db, uid)
