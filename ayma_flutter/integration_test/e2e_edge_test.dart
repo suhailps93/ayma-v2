@@ -68,25 +68,22 @@ void main() {
     }
 
     // ---- GATES + NOPHOTO: the Explore roster for Daniel ----
-    await openExplore(tester);
-    await pumpUntil(tester, find.textContaining(_nophotoName),
-        timeout: const Duration(seconds: 75));
-    await _scrollExplore(tester);
-
-    bool shown(String name) => find.textContaining(name).evaluate().isNotEmpty;
     // Product correction (founder, 2026-10-29): Explore now SHOWS everyone,
     // including hard-dealbreaker profiles — the score enforces the dealbreaker
     // (0% + reasons), it is no longer hidden from the feed. So every seeded
     // edge account (valid AND dealbreaker) must appear; only practice personas
-    // stay excluded (covered by the Sofia suite's E / "Maya"). Depends on the
-    // backend branch fix/dealbreakers-show-not-hide.
-    final roster = {
-      for (final n in [
-        _nophotoName, _ageminName, _mutualName, // valid
-        _ageoverName, _orientName, _locoutName, // dealbreakers (now shown)
-      ])
-        n: shown(n),
-    };
+    // stay excluded (covered by the Sofia suite's E / "Maya"). Removing the
+    // Explore gate makes the feed longer, so collect names across the full
+    // scroll (the GridView only builds visible cards).
+    await openExplore(tester);
+    await pumpUntil(tester, find.textContaining(_nophotoName),
+        timeout: const Duration(seconds: 75));
+    final targets = [
+      _nophotoName, _ageminName, _mutualName, // valid
+      _ageoverName, _orientName, _locoutName, // dealbreakers (now shown)
+    ];
+    final seenNames = await _collectNamesWhileScrolling(tester, targets);
+    final roster = {for (final n in targets) n: seenNames.contains(n)};
     await shot(tester, 'GATES');
     if (roster.values.every((v) => v)) {
       pass('GATES',
@@ -95,7 +92,7 @@ void main() {
     } else {
       fail('GATES',
           'Explore roster incomplete: $roster (want all true — dealbreaker '
-          'profiles must SHOW; pending backend fix/dealbreakers-show-not-hide)');
+          'profiles must SHOW in Explore)');
     }
 
     if (roster[_nophotoName]!) {
@@ -187,15 +184,31 @@ Future<bool> _openReportForUid(WidgetTester tester, String uid) async {
   return false;
 }
 
-Future<void> _scrollExplore(WidgetTester tester) async {
-  final grid = find.byType(GridView);
-  if (grid.evaluate().isEmpty) return;
-  for (var i = 0; i < 4; i++) {
-    await tester.drag(grid.first, const Offset(0, -500));
-    await pumpFor(tester, const Duration(milliseconds: 500));
+/// Scrolls the Explore grid top-to-bottom, collecting which of [targets] become
+/// visible at any point (the GridView only builds on-screen cards, so a name
+/// near the bottom of a long feed is only findable mid-scroll). Returns the set
+/// of target names seen.
+Future<Set<String>> _collectNamesWhileScrolling(
+  WidgetTester tester,
+  List<String> targets,
+) async {
+  final found = <String>{};
+  void sweep() {
+    for (final n in targets) {
+      if (find.textContaining(n).evaluate().isNotEmpty) found.add(n);
+    }
   }
-  await tester.drag(grid.first, const Offset(0, 2000));
-  await pumpFor(tester, const Duration(milliseconds: 500));
+
+  sweep();
+  final grid = find.byType(GridView);
+  if (grid.evaluate().isNotEmpty) {
+    for (var i = 0; i < 12 && found.length < targets.length; i++) {
+      await tester.drag(grid.first, const Offset(0, -400));
+      await pumpFor(tester, const Duration(milliseconds: 450));
+      sweep();
+    }
+  }
+  return found;
 }
 
 void _print(Map<String, String> results) {
