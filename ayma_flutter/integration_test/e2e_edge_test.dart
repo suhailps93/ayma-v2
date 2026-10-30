@@ -257,13 +257,18 @@ Future<bool> _openReportForUid(WidgetTester tester, String uid) async {
   final end = DateTime.now().add(const Duration(seconds: 75));
   while (DateTime.now().isBefore(end)) {
     await pumpFor(tester, const Duration(milliseconds: 300));
-    if (find.text('Match report').evaluate().isNotEmpty) {
-      // Let the score block / breakdown stream in.
-      await pumpFor(tester, const Duration(seconds: 6));
-      return true;
-    }
+    if (find.text('Match report').evaluate().isNotEmpty) break;
   }
-  return false;
+  if (find.text('Match report').evaluate().isEmpty) return false;
+  // Wait for the report BODY to stream in (the score block renders a "%"), so a
+  // 0%/score assertion isn't read against a still-loading report.
+  final bodyEnd = DateTime.now().add(const Duration(seconds: 45));
+  while (DateTime.now().isBefore(bodyEnd)) {
+    await pumpFor(tester, const Duration(milliseconds: 400));
+    if (find.textContaining('%').evaluate().isNotEmpty) break;
+  }
+  await pumpFor(tester, const Duration(seconds: 2));
+  return true;
 }
 
 /// Scrolls the Explore grid top-to-bottom, collecting which of [targets] become

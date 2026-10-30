@@ -297,7 +297,11 @@ void main() {
     }
 
     // ---- Bug C: web-research never-run empty state ----
-    appRouter.push('/deep-dive/name_a-subject-never-researched-zzq');
+    // Unique subject each run — tapping "Run web search" below starts a dive, so
+    // a fixed id would stop being "never-run" on the next run.
+    final neverRunId =
+        'name_never-run-${DateTime.now().millisecondsSinceEpoch}';
+    appRouter.push('/deep-dive/$neverRunId');
     final emptyState = await pumpUntil(
       tester,
       find.text('No web research yet'),
