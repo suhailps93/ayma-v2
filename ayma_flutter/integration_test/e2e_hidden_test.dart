@@ -17,11 +17,15 @@ import 'package:ayma_flutter/main.dart' as app;
 
 import 'helpers.dart';
 
-const _viewerEmail = 'demo-edge-viewer@gmail.com';
+// Signs in as a DEMO/JUDGE account (Daniel = demo-test1). Daniel is NOT in
+// explore_fixture_bypass_uids, so his Explore must be CLEAN (no demo-edge-*
+// fixtures) — the judge guarantee. The dedicated bypass viewer DOES see them
+// (edge suite). Daniel sees the other curated demo accounts (Sofia, Priya).
+const _viewerEmail = danielEmail;
 
-// Curated demo accounts that MUST stay visible to everyone.
-const _curated = ['Daniel', 'Sofia', 'Priya'];
-// Test fixtures that MUST be hidden from a non-bypass viewer.
+// Curated demo accounts Daniel must still see.
+const _curated = ['Sofia', 'Priya'];
+// Test fixtures that MUST be hidden from a demo/judge account.
 const _fixtures = ['Nadia', 'Mara', 'Teresa', 'Robin', 'Elena', 'Hana'];
 
 void main() {
@@ -38,7 +42,7 @@ void main() {
     emit('E2E_RESULT $k FAIL $d');
   }
 
-  testWidgets('non-bypass viewer: demo-edge-* hidden, demo-test1/2/3 shown (HIDDEN)',
+  testWidgets('demo/judge account (Daniel): demo-edge-* hidden, curated shown (HIDDEN)',
       (tester) async {
     final authed = await presignIn(_viewerEmail);
     await bootApp(tester, app.main);
@@ -67,7 +71,7 @@ void main() {
     final noFixtures = fixturesShown.values.every((v) => !v);
     if (allCurated && noFixtures) {
       pass('HIDDEN',
-          'non-bypass viewer sees curated demo accounts $curatedShown and no '
+          'demo account (Daniel) sees curated demo accounts $curatedShown and no '
           'demo-edge-* fixtures $fixturesShown');
     } else {
       fail('HIDDEN',

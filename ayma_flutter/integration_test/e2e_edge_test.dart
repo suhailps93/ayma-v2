@@ -24,13 +24,16 @@ import 'package:ayma_flutter/widgets/ayma_rail_icons.dart' show AymaSearchGlyph;
 
 import 'helpers.dart';
 
-// Daniel's uid (persona demo-test1), the logged-in viewer for these edges.
-const danielEmailUid = 'demo-test1';
+// The dedicated bypass viewer (the ONLY uid in explore_fixture_bypass_uids), so
+// it sees the demo-edge-* fixtures. The demo/judge accounts do NOT (see HIDDEN).
+const viewerUid = 'demo-e2e-viewer';
+const viewerEmail = 'demo-e2e-viewer@gmail.com';
 
 // Seeded corner-case accounts (scripts/seed_demo_edge_accounts.py).
 // Only the uids we open reports for are needed; the rest are checked by name.
 const _nophoto = 'demo-edge-nophoto';
 const _ageover = 'demo-edge-ageover';
+const _orient = 'demo-edge-orient';
 const _mutual = 'demo-edge-mutual';
 
 const _nophotoName = 'Nadia';
@@ -54,9 +57,9 @@ void main() {
     emit('E2E_RESULT $k FAIL $d');
   }
 
-  testWidgets('corner cases GATES/NOPHOTO/ZERO/MATCH (Daniel + demo-edge-*)',
+  testWidgets('corner cases B/GATES/NOPHOTO/ZERO/MATCH/WEBRESEARCH (e2e viewer)',
       (tester) async {
-    await presignIn(danielEmail);
+    await presignIn(viewerEmail);
     await bootApp(tester, app.main);
     final landed = await awaitShell(tester);
     await dismissTour(tester);
@@ -107,6 +110,30 @@ void main() {
           'ageOverFilteredByAgeRange=$ageOverFiltered (want true)');
     }
 
+    // ---- B (bug B): a DEALBREAKER profile APPEARS in Explore (not hidden) AND
+    // opening its report shows 0% with the "Why this is 0%" reasons. Uses the
+    // orientation dealbreaker (Robin); maps the original bug B directly.
+    {
+      final robinShown = roster[_orientName] == true;
+      final bOpened = await _openReportForUid(tester, _orient);
+      final bZero = find.text('0%').evaluate().isNotEmpty;
+      final bReasons = const ['Why this is 0%', 'dealbreaker', 'Dealbreaker']
+          .any((t) => find.textContaining(t).evaluate().isNotEmpty);
+      await shot(tester, 'B');
+      if (robinShown && bOpened && bZero && bReasons) {
+        pass('B',
+            'dealbreaker profile ($_orientName) APPEARS in Explore and its '
+            'report shows 0% with "Why this is 0%" reasons');
+      } else {
+        fail('B',
+            'appearsInExplore=$robinShown, reportOpened=$bOpened, "0%"=$bZero, '
+            'reasonsListed=$bReasons (want all true)');
+      }
+      appRouter.go('/');
+      await pumpUntil(tester, find.byIcon(Icons.search_rounded),
+          timeout: const Duration(seconds: 20));
+    }
+
     if (roster[_nophotoName]!) {
       // 0-photo card present; confirm its report opens (profile with no images).
       final opened = await _openReportForUid(tester, _nophoto);
@@ -148,18 +175,29 @@ void main() {
     await pumpUntil(tester, find.byIcon(Icons.search_rounded),
         timeout: const Duration(seconds: 20));
 
-    // ---- MATCH: the mutual-like pair's report opens and renders (2240 shows a
-    // uniform "Match report" AppBar; the mutual flag is no longer in the title).
+    // ---- MATCH: the MUTUAL pair (both liked — status mutual_interest) is
+    // recognised as a confirmed match. Its report opens ("Match report"), and the
+    // Messages tab surfaces the mutual-only copy "You matched — say hello" for
+    // this pair (match_service.watchMutualMatches reads status==mutual_interest).
     final matchOpened = await _openReportForUid(tester, _mutual);
     final titleOk = find.text('Match report').evaluate().isNotEmpty;
+    appRouter.go('/');
+    await pumpUntil(tester, find.byIcon(Icons.search_rounded),
+        timeout: const Duration(seconds: 20));
+    final msgTab = find.byTooltip('Messages');
+    if (msgTab.evaluate().isNotEmpty) await tester.tap(msgTab.first);
+    final mutualCopy = await pumpUntil(
+        tester, find.textContaining('You matched'),
+        timeout: const Duration(seconds: 30));
     await shot(tester, 'MATCH');
-    if (matchOpened && titleOk) {
+    if (matchOpened && titleOk && mutualCopy) {
       pass('MATCH',
-          'mutual-like pair report opens with the "Match report" AppBar');
+          'mutual pair: report opens ("Match report") and Messages shows the '
+          'mutual-only "You matched — say hello"');
     } else {
       fail('MATCH',
-          'reportOpened=$matchOpened, "Match report" title=$titleOk '
-          '(want both true)');
+          'reportOpened=$matchOpened, "Match report"=$titleOk, '
+          'mutualCopyInMessages=$mutualCopy (want all true)');
     }
     appRouter.go('/');
     await pumpUntil(tester, find.byIcon(Icons.search_rounded),
@@ -220,7 +258,7 @@ String _matchId(String a, String b) {
 /// public-profile checkCompatibility, which would recompute and could reset the
 /// mutual-like status). Waits for the AppBar title and the body to stream in.
 Future<bool> _openReportForUid(WidgetTester tester, String uid) async {
-  appRouter.push('/match/${_matchId(danielEmailUid, uid)}');
+  appRouter.push('/match/${_matchId(viewerUid, uid)}');
   final end = DateTime.now().add(const Duration(seconds: 75));
   while (DateTime.now().isBefore(end)) {
     await pumpFor(tester, const Duration(milliseconds: 300));
@@ -277,7 +315,7 @@ Future<Set<String>> _collectNamesWhileScrolling(
 
 void _print(Map<String, String> results) {
   debugPrint('\n============ EDGE E2E PASS/FAIL ============');
-  for (final k in ['GATES', 'NOPHOTO', 'ZERO', 'MATCH', 'WEBRESEARCH']) {
+  for (final k in ['B', 'GATES', 'NOPHOTO', 'ZERO', 'MATCH', 'WEBRESEARCH']) {
     debugPrint('  $k: ${results[k] ?? "NOT RUN"}');
   }
   debugPrint('============================================\n');

@@ -14,9 +14,9 @@ from datetime import datetime, timezone
 
 # Behaviour letter -> human description (the 8 fixes shipped in build 2237).
 BUGS = {
-    "B": "Explore excludes profiles violating gender/age/location dealbreakers; hard-dealbreaker report scores 0%",
-    "C": 'Web research shows "No web research yet" + "Run web search" when never run (error+Retry only on real failure)',
-    "D": 'Non-mutual pair reads "Compatibility"; only a mutual like reads "Match"',
+    "B": "A dealbreaker profile appears in Explore (not hidden) and its report shows 0% with the \"Why this is 0%\" reasons",
+    "C": 'Web research never-run shows "No web research yet" + "Run web search" (no error); tapping it starts the search',
+    "D": 'A NON-mutual pair is presented as a compatibility report ("Match report"), with no false "matched" claim',
     "E": "Practice personas (demo_practice_*) never appear in Explore",
     "F": "Re-opening an already-opened report is instant (cache); Recalculate forces a recompute",
     "G": "Taste card only shows domains BOTH people stated as shared",
@@ -29,11 +29,11 @@ ORDER = ["B", "C", "D", "E", "F", "G", "H", "P"]
 # signed-out auth, host-driven offline). Any result key not in BUGS or here is
 # still rendered generically.
 EXTRA = {
-    "GATES": "Bypass viewer (Daniel) sees valid + orientation/location dealbreaker profiles (not hidden); age-over-max is filtered by the saved age range",
-    "HIDDEN": "A normal (non-bypass) viewer's Explore hides demo-edge-* fixtures while showing the curated demo-test1/2/3",
+    "GATES": "Bypass viewer (demo-e2e-viewer) sees valid + orientation/location dealbreaker profiles (not hidden); age-over-max filtered by the saved age range",
+    "HIDDEN": "A demo/judge account (Daniel) has a CLEAN Explore — demo-edge-* fixtures hidden, curated shown (judge guarantee)",
     "NOPHOTO": "A 0-photo but valid profile appears in Explore and its report opens",
     "ZERO": "A hard-dealbreaker pair's report scores 0% and lists the dealbreaker reason(s)",
-    "MATCH": 'A mutual-like pair\'s report AppBar reads "Match" (vs non-mutual "Compatibility")',
+    "MATCH": 'A MUTUAL pair is recognised (report opens + Messages shows "You matched — say hello")',
     "WEBRESEARCH": 'The web-research icon opens the report page ("No web research yet" + "Run web search") and starts no search on tap',
     "AUTH": "Signed-out boot lands on the sign-in / welcome screen",
     "OFFLINE": 'Offline splash shows "Couldn\'t connect" + Retry (adb-driven)',

@@ -51,7 +51,7 @@ void main() {
     emit('E2E_RESULT $key FAIL $detail');
   }
 
-  testWidgets('2237 behaviours B/E/H/D/P/C/F/G end-to-end (Sofia)',
+  testWidgets('behaviours E/H/D/P/C/F/G end-to-end (Sofia, a clean demo feed)',
       (tester) async {
     await presignIn(sofiaEmail);
     await bootApp(tester, app.main);
@@ -64,33 +64,26 @@ void main() {
       failNow('login failed; cannot run behaviours');
     }
 
-    // ---- Explore: bug B (candidate shows) + bug E (practice persona hidden) ----
+    // ---- Explore: bug E (practice persona hidden). Bug B (dealbreaker shows +
+    // 0% report) is covered in the edge suite as the dedicated bypass viewer,
+    // since Sofia (a demo/judge account) correctly sees a CLEAN, fixture-free
+    // feed. Here we also confirm a real candidate (Daniel) appears for Sofia.
     final onExplore = await openExplore(tester);
     if (!onExplore) {
-      fail('B', 'Explore screen never loaded');
       fail('E', 'Explore screen never loaded');
     } else {
-      // The live feed is scored server-side and can take ~45s on a cold backend.
-      // Per the 2239 product rule Explore SHOWS everyone (dealbreakers surface as
-      // a 0% report, not hidden), so B now just checks a real candidate (Daniel)
-      // appears; the exclusion cases are covered by the edge suite (GATES/ZERO)
-      // and HIDDEN. Practice personas (E) are still filtered out. The feed is
-      // long now, so sweep names across the full scroll.
       await pumpUntil(tester, find.byType(GridView),
           timeout: const Duration(seconds: 75));
       final seen = await _sweepExploreNames(tester, ['Daniel', 'Maya']);
-      await shot(tester, 'B');
       await shot(tester, 'E');
-
-      if (seen.contains('Daniel')) {
-        pass('B', 'Explore (as Sofia) shows a real candidate (Daniel)');
+      if (!seen.contains('Maya') && seen.contains('Daniel')) {
+        pass('E',
+            'practice persona "Maya" absent from Explore (and a real candidate '
+            'Daniel is shown)');
       } else {
-        fail('B', 'Explore (as Sofia) did not show Daniel across the feed');
-      }
-      if (!seen.contains('Maya')) {
-        pass('E', 'practice persona "Maya" absent from Explore');
-      } else {
-        fail('E', 'practice persona "Maya" appeared in Explore feed');
+        fail('E',
+            'Maya present=${seen.contains('Maya')} (want false), '
+            'Daniel present=${seen.contains('Daniel')} (want true)');
       }
     }
 
@@ -115,15 +108,26 @@ void main() {
       await shot(tester, 'D'); // report title + top of breakdown
       await shot(tester, 'H'); // dimension breakdown in view
 
-      // Bug D (2240 rename): the report AppBar now always reads "Match report"
-      // (the mutual flag is no longer in the title).
+      // Bug D: a NON-MUTUAL pair (Sofia×Daniel are scored, not a mutual like)
+      // must be presented as a compatibility report, never claiming a confirmed
+      // match. Assert (1) the 2240 AppBar reads "Match report", and (2) NO
+      // mutual-only claim is shown — no bare "Match" title and no "You matched"/
+      // "It's a match" copy (the mutual copy lives in Messages, see edge MATCH).
       final isMatchReport = find.text('Match report').evaluate().isNotEmpty;
-      if (isMatchReport) {
-        pass('D', 'report AppBar reads "Match report"');
+      final bareMatchTitle = find.text('Match').evaluate().isNotEmpty;
+      final falseMatchClaim =
+          find.textContaining('You matched').evaluate().isNotEmpty ||
+              find.textContaining("It's a match").evaluate().isNotEmpty ||
+              find.textContaining("It’s a match").evaluate().isNotEmpty;
+      if (isMatchReport && !bareMatchTitle && !falseMatchClaim) {
+        pass('D',
+            'non-mutual report reads "Match report" and makes NO mutual claim '
+            '(no bare "Match"/"You matched"/"It\'s a match") — presented as a '
+            'compatibility report');
       } else {
         fail('D',
-            'report AppBar title not "Match report" '
-            '(texts=${_visibleTexts().take(6).toList()})');
+            '"Match report"=$isMatchReport, bareMatchTitle=$bareMatchTitle '
+            '(want false), falseMatchClaim=$falseMatchClaim (want false)');
       }
 
       // Bug H: FULL dimension breakdown, not a score-only lite doc. Count the
@@ -304,14 +308,25 @@ void main() {
     final errorShown =
         find.textContaining("Couldn't load").evaluate().isNotEmpty;
     await shot(tester, 'C'); // web-research empty state
-    if (emptyState && runReport && !errorShown) {
+    // And tapping "Run web search" DOES start the search (the empty-state button
+    // kicks off the dive — shows the "Searching the web…" in-progress banner).
+    var searchStarted = false;
+    if (runReport) {
+      await tester.tap(find.widgetWithText(FilledButton, 'Run web search').first,
+          warnIfMissed: false);
+      searchStarted = await pumpUntil(
+          tester, find.textContaining('Searching the web'),
+          timeout: const Duration(seconds: 30));
+    }
+    if (emptyState && runReport && !errorShown && searchStarted) {
       pass('C',
-          '"No web research yet" + "Run web search" shown for never-run subject '
-          '(no "Couldn\'t load" error)');
+          '"No web research yet" + "Run web search" for a never-run subject '
+          '(no "Couldn\'t load"); tapping it starts the search ("Searching the '
+          'web…")');
     } else {
       fail('C',
-          'emptyState=$emptyState, runReport=$runReport, errorShown=$errorShown '
-          '(want emptyState=true, runReport=true, errorShown=false)');
+          'emptyState=$emptyState, runButton=$runReport, errorShown=$errorShown, '
+          'searchStartedOnTap=$searchStarted (want empty+button+started, no error)');
     }
 
     await settleHarness(tester);
@@ -413,7 +428,7 @@ List<String> _dimensionBlockKeys() {
 
 void _printTable(Map<String, String> results) {
   debugPrint('\n================ 2237 E2E PASS/FAIL ================');
-  for (final key in ['B', 'E', 'H', 'D', 'P', 'C', 'F', 'G']) {
+  for (final key in ['E', 'H', 'D', 'P', 'C', 'F', 'G']) {
     debugPrint('  $key: ${results[key] ?? "NOT RUN"}');
   }
   if (results.containsKey('LOGIN')) debugPrint('  LOGIN: ${results['LOGIN']}');
