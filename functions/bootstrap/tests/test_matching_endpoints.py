@@ -4,6 +4,7 @@ import main
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 
+import age_gate
 import explore as explore_mod
 from fake_firestore import FakeDb
 from pair_key import sorted_pair_key
@@ -270,7 +271,7 @@ def test_recalculated_match_score_is_reflected_in_explore(monkeypatch):
     # The "Recalculate" tap -> the background job it queues.
     asyncio.run(main._match_job("me", "dillu"))
 
-    cards = explore_mod.explore(db, "me", {})
+    cards, _ = explore_mod.explore(db, "me", {})
     dillu_cards = [c for c in cards if c["uid"] == "dillu"]
     assert len(dillu_cards) == 1  # exactly one card for this person
     assert dillu_cards[0]["score"] == 0.0  # the just-recalculated score
@@ -624,3 +625,147 @@ def test_explore_unlike_rejects_self(monkeypatch):
         json={"other_uid": "me"},
     )
     assert resp.status_code == 400
+
+
+def test_explore_default_feed_is_not_age_gated_but_explicit_filter_still_narrows(monkeypatch):
+    """Regression guard for founder's show-everyone rule: Explore feed must not silently
+
+    filter profiles by the viewer's saved partner age preferences (dealbreakers surface as
+    0% scores rather than being hidden), but explicit dropdown age filters must still narrow results.
+    """
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    age_gate.clear_cache()
+
+    db.docs[("users", "me")] = {"name": "Me", "birthdate": "1994-01-01"}
+    db.docs[("users", "me", "profile", "main")] = {
+        "name": "Me",
+        "birthdate": "1994-01-01",
+        "qz_partner_age_min": 24,
+        "qz_partner_age_max": 36,
+    }
+
+    db.docs[("users", "elder")] = {"name": "Elder", "birthdate": "1986-01-01"}
+    db.docs[("users", "elder", "profile", "main")] = {
+        "name": "Elder",
+        "birthdate": "1986-01-01",
+    }
+
+    db.docs[("users", "young")] = {"name": "Young", "birthdate": "1998-01-01"}
+    db.docs[("users", "young", "profile", "main")] = {
+        "name": "Young",
+        "birthdate": "1998-01-01",
+    }
+
+    resp = client.get("/explore", headers=_auth(monkeypatch))
+    assert resp.status_code == 200
+    ids = {c["uid"] for c in resp.json()["candidates"]}
+    assert "elder" in ids
+    assert "young" in ids
+    assert "me" in ids
+
+    resp2 = client.get("/explore", params={"age_max": 36}, headers=_auth(monkeypatch))
+    assert resp2.status_code == 200
+    ids2 = {c["uid"] for c in resp2.json()["candidates"]}
+    assert "elder" not in ids2
+    assert "young" in ids2
+
+
+def _seed_profile(db, uid, **profile):
+    profile.setdefault("name", uid)
+    db.docs[("users", uid)] = {"x": 1}
+    db.docs[("users", uid, "profile", "main")] = profile
+
+
+def test_explore_matches_mode_applies_preboarding_heuristics_everyone_does_not():
+    """``mode="matches"`` narrows to profiles that pass the viewer's preboarding
+    gates (orientation, saved partner age range); the default ``everyone`` mode
+    shows the same out-of-range / wrong-orientation profiles (they just score
+    0% elsewhere, never hidden)."""
+    db = FakeDb()
+    _seed_profile(
+        db, "me", gender="Woman", interested_in=["Men"],
+        birthdate="1994-01-01", location="Austin",
+        qz_partner_age_min=28, qz_partner_age_max=40,
+    )
+    _seed_profile(
+        db, "match_ok", gender="Man", interested_in=["Women"],
+        birthdate="1990-01-01", location="Austin",
+    )
+    _seed_profile(
+        db, "too_old", gender="Man", interested_in=["Women"],
+        birthdate="1970-01-01", location="Austin",
+    )
+    _seed_profile(
+        db, "wrong_orient", gender="Woman", interested_in=["Men"],
+        birthdate="1992-01-01", location="Austin",
+    )
+
+    everyone, _ = explore_mod.explore(db, "me", {}, mode="everyone")
+    ev_ids = {c["uid"] for c in everyone}
+    assert {"match_ok", "too_old", "wrong_orient"} <= ev_ids  # nobody hidden
+
+    matches, _ = explore_mod.explore(db, "me", {}, mode="matches")
+    mt_ids = {c["uid"] for c in matches}
+    assert "match_ok" in mt_ids
+    assert "too_old" not in mt_ids  # outside saved partner age range
+    assert "wrong_orient" not in mt_ids  # orientation mismatch
+
+
+def test_explore_pagination_returns_distinct_pages_via_cursor():
+    """A cursor walks the feed one bounded page at a time; pages are distinct
+    and together cover everyone; ``next_cursor`` is None only on the last page."""
+    db = FakeDb()
+    # Viewer sorts last by document id so the self card lands on page one only.
+    _seed_profile(db, "zviewer", birthdate="1994-01-01")
+    for i in range(1, 6):
+        _seed_profile(db, f"u{i}", birthdate="1993-01-01")
+
+    seen_others: list[str] = []
+    cursor = None
+    pages = 0
+    first_page_ids = None
+    while True:
+        cards, cursor = explore_mod.explore(
+            db, "zviewer", {}, limit=2, cursor=cursor
+        )
+        pages += 1
+        ids = [c["uid"] for c in cards]
+        if first_page_ids is None:
+            first_page_ids = ids
+        seen_others.extend(c["uid"] for c in cards if not c["self"])
+        # Self card only ever appears on the first page.
+        if pages > 1:
+            assert all(not c["self"] for c in cards)
+        if cursor is None:
+            break
+        assert pages < 10  # guard against a cursor that never terminates
+
+    assert first_page_ids[0] == "zviewer"  # self pinned to the top of page one
+    # Every real user surfaced exactly once across the pages.
+    assert sorted(seen_others) == ["u1", "u2", "u3", "u4", "u5"]
+    assert len(seen_others) == len(set(seen_others))
+    assert pages >= 2  # it actually paginated
+
+
+def test_explore_load_is_bounded_no_n_plus_one_profile_scan():
+    """Load cost must not scale with the total user count: with 60 users and a
+    page of 10, Explore reads at most the page's profiles plus the viewer's —
+    never a profile per user across the whole collection (the N+1 it replaced)."""
+    db = FakeDb()
+    _seed_profile(db, "viewer", birthdate="1994-01-01")
+    for i in range(60):
+        _seed_profile(db, f"u{i:02d}", birthdate="1993-01-01")
+
+    db.read_keys.clear()
+    cards, next_cursor = explore_mod.explore(db, "viewer", {}, limit=10)
+
+    profile_reads = {
+        k[1]
+        for k in db.read_keys
+        if len(k) == 4 and k[0] == "users" and k[2:] == ("profile", "main")
+    }
+    # 10 candidates on the page + the viewer's own profile — bounded, not 61.
+    assert len(profile_reads) <= 12
+    assert len(cards) <= 11  # page of 10 + the self card
+    assert next_cursor is not None  # more pages remain

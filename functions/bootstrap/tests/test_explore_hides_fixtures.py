@@ -28,7 +28,7 @@ ROWS = [
 
 def test_normal_user_explore_hides_fixtures_keeps_curated_demo():
     db = _seed(ROWS)
-    cards = ex.explore(db, "viewer", {})
+    cards, _ = ex.explore(db, "viewer", {})
     uids = {c["uid"] for c in cards}
     names = " ".join(c.get("name", "") for c in cards)
     assert "demo-edge-nophoto" not in uids
@@ -52,6 +52,6 @@ def test_e2e_bypass_viewer_sees_fixtures():
     if "demo-test1" not in config.CONFIG.explore_fixture_bypass_uids:
         pytest.skip("demo-test1 not in bypass set")
     db = _seed(ROWS)
-    cards = ex.explore(db, "demo-test1", {})
+    cards, _ = ex.explore(db, "demo-test1", {})
     uids = {c["uid"] for c in cards}
     assert "demo-edge-nophoto" in uids and "demo-edge-ageover" in uids and "demo-edge-orient" in uids

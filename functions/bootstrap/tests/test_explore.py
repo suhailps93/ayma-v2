@@ -2,6 +2,14 @@ import asyncio
 
 import gemini
 import explore as ex
+from fake_firestore import FakeDb
+
+
+def _ex(db, uid, filters=None, **kw):
+    """Unpack explore()'s (candidates, next_cursor) tuple to the card list
+    for the assertions below (pagination is covered in test_matching_endpoints)."""
+    cards, _cursor = ex.explore(db, uid, filters or {}, **kw)
+    return cards
 
 
 def test_parse_nl_query(monkeypatch):
@@ -152,50 +160,9 @@ def test_passes_filters_private_field_treated_exactly_like_an_unset_one():
 
 # --- explore() over a fake db ------------------------------------------------
 
-class _Snap:
-    def __init__(self, doc_id, data):
-        self.id = doc_id
-        self._data = data
-
-    @property
-    def exists(self):
-        return self._data is not None
-
-    def to_dict(self):
-        return None if self._data is None else dict(self._data)
-
-
-class _DocRef:
-    def __init__(self, store, key):
-        self.store, self.key = store, key
-
-    def get(self):
-        return _Snap(self.key[-1], self.store.docs.get(self.key))
-
-    def collection(self, name):
-        return _CollRef(self.store, self.key + (name,))
-
-
-class _CollRef:
-    def __init__(self, store, key):
-        self.store, self.key = store, key
-
-    def document(self, doc_id):
-        return _DocRef(self.store, self.key + (doc_id,))
-
-    def stream(self):
-        d = len(self.key)
-        for k, v in list(self.store.docs.items()):
-            if len(k) == d + 1 and k[:d] == self.key and v is not None:
-                yield _Snap(k[-1], v)
-
-
-class FakeDb:
-    def __init__(self):
-        self.docs = {}
-
-    def collection(self, name):
-        return _CollRef(self, (name,))
+# The paginated feed is exercised through the shared in-memory Firestore fake
+# (``fake_firestore.FakeDb``), which supports ``order_by`` / ``start_after`` /
+# ``get_all`` — the query surface ``explore()`` now uses.
 
 
 def _u(db, uid, **profile):
@@ -231,7 +198,7 @@ def test_explore_lists_everyone_including_self_no_gates():
     _u(db, "paused-user", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01", paused=True)
 
-    cards = ex.explore(db, "me", {})
+    cards = _ex(db, "me", {})
     ids = {c["uid"] for c in cards}
     assert ids == {"me", "match", "other-community", "other-orientation",
                    "blonde"}
@@ -243,7 +210,7 @@ def test_explore_lists_everyone_including_self_no_gates():
     assert cards[0]["uid"] == "me"  # your own card pins to the top
 
     # Search filters still narrow the roster (self has no photo_attrs).
-    ids2 = [c["uid"] for c in ex.explore(db, "me", {"hair_color": "brown"})]
+    ids2 = [c["uid"] for c in _ex(db, "me", {"hair_color": "brown"})]
     assert ids2 == ["match"]
 
 
@@ -274,14 +241,14 @@ def test_explore_search_excludes_private_physical_attributes_end_to_end():
     # excludes" guard for this field, see _PHOTO_FIELDS) even though their
     # real value is a genuine match; only the candidate who made hair_color
     # public and actually matches shows up.
-    ids = {c["uid"] for c in ex.explore(db, "me", {"hair_color": "blonde"})}
+    ids = {c["uid"] for c in _ex(db, "me", {"hair_color": "blonde"})}
     assert "private-blonde" not in ids  # a real match, but still private
     assert "public-blonde" in ids  # public and a real match
     assert "public-brunette" not in ids  # public and a real mismatch
 
     # No physical-attribute filter active at all -> nobody is even looked
     # up for visibility, and everybody shows up regardless.
-    ids_unfiltered = {c["uid"] for c in ex.explore(db, "me", {})}
+    ids_unfiltered = {c["uid"] for c in _ex(db, "me", {})}
     assert ids_unfiltered == {"me", "private-blonde", "public-blonde", "public-brunette"}
 
 
@@ -293,7 +260,7 @@ def test_paused_self_still_sees_own_card():
     _u(db, "match", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01")
 
-    cards = ex.explore(db, "me", {})
+    cards = _ex(db, "me", {})
     me_card = next((c for c in cards if c["uid"] == "me"), None)
     assert me_card is not None
     assert me_card["self"] is True and me_card["paused"] is True
@@ -337,7 +304,7 @@ def test_explore_populates_photo_path_and_survives_a_bad_photo_entry():
     _u(db, "badphoto", location="X", birthdate="1993-01-01",
        photos="not-a-list")
 
-    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    cards = {c["uid"]: c for c in _ex(db, "me", {})}
     assert cards["hasphoto"]["photo_path"] == "uploads/hasphoto/p.jpg"
     assert cards["badphoto"]["photo_path"] is None
     assert cards["me"]["photo_path"] is None
@@ -357,7 +324,7 @@ def test_score_for_prefers_the_real_match_over_a_stale_candidate():
     db.docs[("matches", sorted_pair_key("me", "them"))] = {
         "score": 0.0}  # just recalculated
 
-    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    cards = {c["uid"]: c for c in _ex(db, "me", {})}
     assert cards["them"]["score"] == 0.0
 
 
@@ -369,16 +336,28 @@ def test_explore_never_shows_two_cards_for_the_same_person():
     different percentages), Explore must still emit exactly one card per
     person."""
 
-    class _DupUsersColl:
+    class _DupQuery:
+        """Wraps the users query so its final stream repeats every doc id."""
+
         def __init__(self, real):
             self._real = real
 
-        def document(self, doc_id):
-            return self._real.document(doc_id)
+        def order_by(self, *a, **k):
+            return _DupQuery(self._real.order_by(*a, **k))
+
+        def limit(self, n):
+            return _DupQuery(self._real.limit(n))
+
+        def start_after(self, cursor):
+            return _DupQuery(self._real.start_after(cursor))
 
         def stream(self):
             snaps = list(self._real.stream())
             return iter(snaps + snaps)  # simulate a duplicated doc id
+
+    class _DupUsersColl(_DupQuery):
+        def document(self, doc_id):
+            return self._real.document(doc_id)
 
     class _DupDb:
         def __init__(self, real):
@@ -388,11 +367,14 @@ def test_explore_never_shows_two_cards_for_the_same_person():
             real_coll = self._real.collection(name)
             return _DupUsersColl(real_coll) if name == "users" else real_coll
 
+        def get_all(self, refs):
+            return self._real.get_all(refs)
+
     db = FakeDb()
     _u(db, "me", location="X", birthdate="1994-01-01")
     _u(db, "them", location="X", birthdate="1993-01-01")
 
-    cards = ex.explore(_DupDb(db), "me", {})
+    cards = _ex(_DupDb(db), "me", {})
     ids = [c["uid"] for c in cards]
     assert ids.count("them") == 1
     assert ids.count("me") == 1
@@ -405,7 +387,7 @@ def test_explore_drops_profiles_with_no_name():
     _u(db, "nameless", location="X", birthdate="1993-01-01", name="")
     _u(db, "whitespace", location="X", birthdate="1993-01-01", name="   ")
 
-    ids = {c["uid"] for c in ex.explore(db, "me", {})}
+    ids = {c["uid"] for c in _ex(db, "me", {})}
     assert ids == {"me", "real"}  # self is exempt; nameless are gated out
 
 
@@ -418,6 +400,6 @@ def test_explore_excludes_practice_personas(monkeypatch):
     _u(db, "demo_practice_maya", location="X", birthdate="1993-01-01",
        name="Maya")
 
-    ids = {c["uid"] for c in ex.explore(db, "me", {})}
+    ids = {c["uid"] for c in _ex(db, "me", {})}
     assert "demo_practice_maya" not in ids
     assert ids == {"me", "real"}

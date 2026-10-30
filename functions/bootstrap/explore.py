@@ -31,12 +31,15 @@ never gets to act as if it were public.
 
 from __future__ import annotations
 
+import base64
 import logging
 from functools import lru_cache
 from pathlib import Path
 
 import config
 import gemini
+import match_deterministic
+import matching
 import physical_attributes
 import practice_seed
 import token_ledger
@@ -344,17 +347,86 @@ def _primary_photo_path(db, other: str, photos: list) -> str | None:
         return None
 
 
-def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
-    me = (
+def _encode_cursor(uid: str) -> str:
+    """Opaque forward-pagination token = base64 of the last scanned user id."""
+    return base64.urlsafe_b64encode(uid.encode("utf-8")).decode("ascii")
+
+
+def _decode_cursor(cursor: str | None) -> str | None:
+    if not cursor:
+        return None
+    try:
+        return base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+    except Exception:  # noqa: BLE001 - a malformed cursor just restarts page one
+        return None
+
+
+def _passes_match_heuristics(me: dict, prof: dict) -> bool:
+    """``mode="matches"`` gate: the viewer's PREBOARDING preferences applied
+    one-directionally — orientation (mutual ``interested_in``/``gender``), the
+    saved partner age range (``qz_partner_age_min``/``max``, strict), and
+    location/relocation (different places + *either* side won't relocate far).
+    A check whose inputs are missing never excludes. This narrows ``matches``
+    mode only; the default ``everyone`` feed never calls it (show-everyone —
+    dealbreakers surface as a 0% score, not a hidden person, §6.1)."""
+    mg, og = str(me.get("gender") or ""), str(prof.get("gender") or "")
+    mi, oi = me.get("interested_in") or [], prof.get("interested_in") or []
+    if mg and og and mi and oi:
+        if not matching.orientation_match(mg, mi, og, oi):
+            return False
+    amin, amax = me.get("qz_partner_age_min"), me.get("qz_partner_age_max")
+    age = _age(prof.get("birthdate"))
+    if isinstance(amin, int) and (age is None or age < amin):
+        return False
+    if isinstance(amax, int) and (age is None or age > amax):
+        return False
+    la = str(me.get("location") or me.get("qz_primary_location") or "").strip().lower()
+    lb = str(prof.get("location") or prof.get("qz_primary_location") or "").strip().lower()
+    if la and lb and not (la == lb or la in lb or lb in la):
+        ra = me.get("qz_relocation_radius")
+        rb = prof.get("qz_relocation_radius")
+        if ra in match_deterministic.STAY_PUT_RADII or rb in match_deterministic.STAY_PUT_RADII:
+            return False
+    return True
+
+
+def explore(
+    db,
+    uid: str,
+    filters: dict,
+    *,
+    mode: str = "everyone",
+    limit: int = 20,
+    cursor: str | None = None,
+) -> tuple[list[dict], str | None]:
+    """One page of the Explore feed → ``(candidates, next_cursor)``.
+
+    ``mode="everyone"`` (default) applies NO preference gating: every profile
+    appears regardless of the viewer's saved orientation/age/location
+    preferences — a mismatch/dealbreaker surfaces as a low/0% compatibility
+    SCORE, never as a hidden person (founder 2026-08-30, reaffirmed
+    2026-10-30). ``mode="matches"`` additionally narrows to profiles that pass
+    the viewer's preboarding heuristics (:func:`_passes_match_heuristics`).
+
+    Explicit search filters (dropdown params / NL query, in ``filters``) apply
+    in BOTH modes. The feed is paginated by document id (``__name__``) with a
+    ``limit`` and an opaque ``cursor`` (base64 of the last scanned user id), so
+    load cost is bounded per page and never scales with the total user count;
+    the page's ``profile/main`` docs are read in a single batched ``get_all``
+    (no per-user N+1 across the whole collection). Practice-date personas and
+    seeded test fixtures stay excluded (the latter except for a designated
+    e2e/demo viewer in ``config.explore_fixture_bypass_uids``)."""
+    me_doc = (
         db.collection("users")
         .document(uid)
         .collection("profile")
         .document("main")
         .get()
-        .to_dict()
     )
+    me = me_doc.to_dict() if me_doc.exists else None
     if not me:
-        return []
+        return ([], None)
+
     passed = {
         s.id
         for s in db.collection("users")
@@ -362,76 +434,81 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
         .collection("explore_passed")
         .stream()
     }
-
-    cards: list[dict] = []
-    seen: set[str] = set()
-    # A designated e2e/demo viewer (config.explore_fixture_bypass_uids) sees
-    # seeded test fixtures so the e2e harness can still verify a real
-    # dealbreaker profile renders in Explore; real users never match.
     bypass_fixtures = uid in set(config.CONFIG.explore_fixture_bypass_uids)
-    for user_snap in db.collection("users").stream():
-        other = user_snap.id
-        # Explore lists everyone with a profile, the caller included — no
-        # orientation or community gating (product decision, 2026-08-30). Only
-        # blocks / paused / already-passed, practice-date personas and the
-        # active search filters cut the roster down. `seen` guards against ever
-        # emitting the same person twice — a stream shouldn't repeat a document
-        # id, but a single duplicate card showing two different (stale vs.
-        # current) percentages for the same real person is exactly the kind of
-        # data-integrity bug worth defending against defensively, not just
-        # trusting the source query never to regress.
-        if other in passed or other in seen or len(cards) >= limit:
-            continue
-        # Practice-date simulator personas are never real people (BUG E).
-        if practice_seed.is_practice_persona(other):
-            continue
-        # Seeded test fixtures (demo-edge-*, flagged exclude_from_explore) must
-        # never reach a real user's Explore. A designated e2e/demo viewer still
-        # sees them (bypass_fixtures). Self is always exempt.
-        if (
-            other != uid
-            and not bypass_fixtures
-            and _is_test_fixture(other, user_snap.to_dict() or {})
-        ):
+    first_page = cursor is None
+    last_uid = _decode_cursor(cursor)
+
+    # Paginated, index-free scan ordered by document id. One page of user docs
+    # per call — independent of how many users exist in total.
+    page_size = max(1, int(limit))
+    q = db.collection("users").order_by("__name__").limit(page_size)
+    if last_uid:
+        q = q.start_after(db.collection("users").document(last_uid).get())
+    user_snaps = list(q.stream())
+    next_cursor = (
+        _encode_cursor(user_snaps[-1].id)
+        if user_snaps and len(user_snaps) == page_size
+        else None
+    )
+
+    # Cheap in-memory pre-filter over the page (no extra reads): self, already
+    # passed, practice personas and (for real viewers) seeded fixtures.
+    cand_uids: list[str] = []
+    seen: set[str] = set()
+    for s in user_snaps:
+        other = s.id
+        if other in seen:
             continue
         seen.add(other)
+        if other == uid:  # self is added once, on the first page, below
+            continue
+        if other in passed:
+            continue
+        if practice_seed.is_practice_persona(other):
+            continue
+        if (not bypass_fixtures) and _is_test_fixture(other, s.to_dict() or {}):
+            continue
+        cand_uids.append(other)
+
+    # Kill the N+1: batch every surviving candidate's profile/main in one read.
+    refs = [
+        db.collection("users").document(o).collection("profile").document("main")
+        for o in cand_uids
+    ]
+    ref_uid = {ref.path: o for ref, o in zip(refs, cand_uids)}
+    prof_by_uid: dict[str, dict] = {}
+    if refs:
+        for snap in db.get_all(refs):
+            u = ref_uid.get(snap.reference.path)
+            if u is not None and snap.exists:
+                prof_by_uid[u] = snap.to_dict() or {}
+
+    need_public = any(filters.get(k) for k in _PHYSICAL_MIRROR_FILTER_KEYS)
+    cards: list[dict] = []
+    for other in cand_uids:
         try:
-            prof = (
-                db.collection("users")
-                .document(other)
-                .collection("profile")
-                .document("main")
-                .get()
-                .to_dict()
-            )
+            prof = prof_by_uid.get(other)
             if not prof:
                 continue
-            # A profile with no name isn't a real, set-up person — half-finished
-            # onboarding or a test fixture. Keep it out of the feed (self is
-            # exempt so you always see your own card).
-            if other != uid and not str(prof.get("name") or "").strip():
+            # A nameless profile isn't a real, set-up person.
+            if not str(prof.get("name") or "").strip():
                 continue
-            # "Pause matching" (§14.2) hides you from *other* people's Explore;
-            # you still see your own card (so you can tell you're paused and
-            # un-pause).
-            if other != uid and prof.get("paused") is True:
+            # "Pause matching" (§14.2) hides you from other people's Explore.
+            if prof.get("paused") is True:
                 continue
-            if other != uid and _blocked(db, uid, other):
+            if _blocked(db, uid, other):
                 continue
-            # Only spend the extra read on a search that actually touches a
-            # physical-attributes filter key (the common case doesn't).
             public_fields = (
                 physical_attributes.public_fields(db, other)
-                if any(filters.get(k) for k in _PHYSICAL_MIRROR_FILTER_KEYS)
+                if need_public
                 else None
             )
             if not _passes_filters(prof, filters, public_fields=public_fields):
                 continue
+            if mode == "matches" and not _passes_match_heuristics(me, prof):
+                continue
 
             photo_path = _primary_photo_path(db, other, prof.get("photos"))
-            # Return a ready token URL, not a raw storage path — Storage rules
-            # only let a user read their *own* uploads/ tree, so the client
-            # can't resolve another person's photo itself.
             photo_url = ""
             if photo_path:
                 try:
@@ -440,26 +517,20 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
                     photo_url = _photo_url(photo_path) or ""
                 except Exception:  # noqa: BLE001 - never sink the feed on a photo
                     photo_url = ""
-
-            liked, mutual = (
-                (False, False) if other == uid
-                else _like_state(db, uid, other)
-            )
+            liked, mutual = _like_state(db, uid, other)
             cards.append(
                 {
                     "uid": other,
-                    "name": prof.get("name", ""),
+                    "name": prof.get("name") or "",
                     "age": _age(prof.get("birthdate")),
-                    "location": prof.get("location", ""),
+                    "location": prof.get("location") or "",
                     "photo_path": photo_path,  # kept for back-compat
                     "photo_url": photo_url,
-                    "score": None
-                    if other == uid
-                    else _score_for(db, uid, other),
+                    "score": _score_for(db, uid, other),
                     "liked": liked,
                     "mutual": mutual,
-                    "self": other == uid,
-                    "paused": other == uid and prof.get("paused") is True,
+                    "self": False,
+                    "paused": False,
                 }
             )
         except Exception:  # noqa: BLE001 - one bad profile never sinks the feed
@@ -468,31 +539,49 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             )
             continue
 
-    # Your own card pins to the top; then scored matches high-to-low, then the
-    # rest.
+    # Your own card pins to the top — but only on the first page, so it isn't
+    # re-emitted (or skipped by the document-id window) on later pages. It is
+    # still subject to the explicit search filters (a search for "brown hair"
+    # shouldn't surface you if you don't match), but never to the match-mode
+    # heuristics — you always see your own card.
+    me_public = (
+        physical_attributes.public_fields(db, uid) if need_public else None
+    )
+    if first_page and _passes_filters(me, filters, public_fields=me_public):
+        self_photo_path = _primary_photo_path(db, uid, me.get("photos"))
+        self_photo_url = ""
+        if self_photo_path:
+            try:
+                from public_profile import _photo_url
+
+                self_photo_url = _photo_url(self_photo_path) or ""
+            except Exception:  # noqa: BLE001
+                self_photo_url = ""
+        cards.insert(
+            0,
+            {
+                "uid": uid,
+                "name": me.get("name") or "",
+                "age": _age(me.get("birthdate")),
+                "location": me.get("location") or "",
+                "photo_path": self_photo_path,
+                "photo_url": self_photo_url,
+                "score": None,
+                "liked": False,
+                "mutual": False,
+                "self": True,
+                "paused": me.get("paused") is True,
+            },
+        )
+
+    # Self first, then scored matches high-to-low, then the rest.
     cards.sort(
         key=lambda c: (not c["self"], c["score"] is None, -(c["score"] or 0))
     )
-    return cards
-
+    return (cards, next_cursor)
 
 def merge_filters(query_params: dict, nl_filters: dict) -> dict:
     """Explicit dropdown filters win over the NL parse."""
     merged = {k: v for k, v in (nl_filters or {}).items() if v not in (None, "")}
     merged.update({k: v for k, v in query_params.items() if v not in (None, "")})
     return merged
-
-
-def apply_saved_age_range(filters: dict, profile: dict | None) -> dict:
-    """Default the Explore age filter to the user's saved partner age range
-    (``qz_partner_age_min`` / ``qz_partner_age_max``). A bound the search
-    itself set (dropdown or natural language) is never overridden."""
-    out = dict(filters)
-    profile = profile or {}
-    for key, saved in (
-        ("age_min", profile.get("qz_partner_age_min")),
-        ("age_max", profile.get("qz_partner_age_max")),
-    ):
-        if out.get(key) is None and isinstance(saved, int):
-            out[key] = saved
-    return out

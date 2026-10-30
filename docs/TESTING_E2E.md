@@ -75,6 +75,8 @@ hidden), the **hard-dealbreaker** edges (`demo-edge-ageover`,
 this assertion; the real-user hiding is covered separately by the backend
 regression test `functions/bootstrap/tests/test_explore_hides_fixtures.py`.
 
+> **GATES age-gate flip (2026-10-30, branch `fix/explore-show-everyone-no-age-gate`).** The default `GET /explore` feed is now `mode=everyone` and applies **NO** preference gating — the previous silent default that dropped profiles outside the viewer's saved `qz_partner_age_min/max` (`apply_saved_age_range`) is **removed** (§6.1 / §6.2a). So **`demo-edge-ageover` now APPEARS in Daniel's default Explore feed** (0% report, verified by ZERO) — any GATES assertion that still expected it to be *filtered out* by age must flip to expect it to **appear**. Also note the response shape is now `{ candidates, next_cursor }` (was `{ cards, filters_applied }`) and the feed is paginated (`limit` default 20, opaque `cursor`), so a scenario looking for a specific edge may need to page with `next_cursor` to find it. An opt-in `mode=matches` is the only feed that re-applies the viewer's orientation/age/location heuristics.
+
 **Deploy requirement.** The deployed `ayma-api` must keep `demo-test1` in
 `EXPLORE_FIXTURE_BYPASS_UIDS` (it is the default, so no env override is needed
 unless the var is set explicitly).

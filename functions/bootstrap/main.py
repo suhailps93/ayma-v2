@@ -2555,11 +2555,22 @@ async def explore(
     glasses: str = "",
     age_min: int | None = None,
     age_max: int | None = None,
-    limit: int = 30,
+    mode: str = "everyone",
+    limit: int = 20,
+    cursor: str | None = None,
     uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
-    """Live Explore feed (§6.1). ``q`` is parsed once into the filter schema;
-    dropdown params override it."""
+    """One page of the Explore feed (§6.1).
+
+    ``mode``: ``everyone`` (DEFAULT) lists EVERY profile with no preference
+    gating — a mismatch/dealbreaker surfaces as a low/0% compatibility SCORE
+    (§5.4 "Why this is 0%"), never a hidden person (founder 2026-08-30,
+    reaffirmed 2026-10-30). ``matches`` narrows to profiles that pass the
+    viewer's preboarding heuristics (orientation / saved partner age range /
+    location-relocation). EXPLICIT search filters — ``q`` (parsed once into the
+    filter schema) and the dropdown params — apply in BOTH modes. The feed is
+    paginated: ``limit`` per page (capped at 60) with an opaque ``cursor``;
+    ``next_cursor`` is ``null`` on the last page."""
     try:
         nl = await explore_mod.parse_nl_query(q, uid=uid) if q.strip() else {}
     except Exception:  # noqa: BLE001 - a bad NL parse falls back to no filter
@@ -2573,21 +2584,21 @@ async def explore(
         "age_max": age_max,
     }
     filters = explore_mod.merge_filters(dropdown, nl)
+    feed_mode = mode if mode in ("everyone", "matches") else "everyone"
     try:
-        snap = await asyncio.to_thread(schema.profile_doc(get_db(), uid).get)
-        filters = explore_mod.apply_saved_age_range(
-            filters, snap.to_dict() if snap.exists else None
-        )
-    except Exception:  # noqa: BLE001 - no saved range just means no default
-        logger.warning("explore: saved age range read failed", exc_info=True)
-    try:
-        cards = await asyncio.to_thread(
-            explore_mod.explore, get_db(), uid, filters, min(limit, 60)
+        candidates, next_cursor = await asyncio.to_thread(
+            explore_mod.explore,
+            get_db(),
+            uid,
+            filters,
+            mode=feed_mode,
+            limit=min(limit, 60),
+            cursor=cursor,
         )
     except Exception:  # noqa: BLE001 - Explore must render even if the feed errors
         logger.exception("explore: feed build failed for %s", uid)
-        cards = []
-    return {"cards": cards, "filters_applied": filters}
+        candidates, next_cursor = [], None
+    return {"candidates": candidates, "next_cursor": next_cursor}
 
 
 @app.get("/explore/profile/{other_uid}")

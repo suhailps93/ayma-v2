@@ -206,19 +206,6 @@ def test_distance_pref_is_stored_and_mapped_to_relocation_radius():
     assert session_mode.describe_preferences(mirror).count("anywhere is fine") == 1
 
 
-def test_explore_defaults_to_the_saved_age_range_without_overriding():
-    import explore
-
-    saved = {"qz_partner_age_min": 26, "qz_partner_age_max": 38}
-    assert explore.apply_saved_age_range({}, saved) == {
-        "age_min": 26, "age_max": 38,
-    }
-    assert explore.apply_saved_age_range(
-        {"age_min": 30, "location": "Austin"}, saved
-    ) == {"age_min": 30, "age_max": 38, "location": "Austin"}
-    assert explore.apply_saved_age_range({}, None) == {}
-
-
 def test_save_partner_preferences_caps_min_at_the_scale_maximum():
     db = _FakeDb()
     questionnaire.save_partner_preferences(db, "u", age_min=95, age_max=99)
