@@ -255,6 +255,20 @@ Future<Set<String>> _collectNamesWhileScrolling(
       await pumpFor(tester, const Duration(milliseconds: 450));
       sweep();
     }
+    // Bulletproof pass for any still-missing target: reset to the top and use
+    // scrollUntilVisible (small steps, checks after each — never skips a row).
+    final scrollable = find.byType(Scrollable);
+    for (final n in targets.where((t) => !found.contains(t))) {
+      if (scrollable.evaluate().isEmpty) break;
+      await scrollGridToTop(tester);
+      try {
+        await tester.scrollUntilVisible(
+          find.textContaining(n).first, 140,
+          scrollable: scrollable.first, maxScrolls: 60,
+        );
+        found.add(n);
+      } catch (_) {/* genuinely not in the feed */}
+    }
   }
   return found;
 }
