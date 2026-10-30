@@ -312,6 +312,14 @@ def _describe_screen(ctx: dict) -> str:
     return _NOTHING_OPEN
 
 
+# A difflib ratio at/above this makes a near-identical spelling (user's
+# "Sophia" vs profile "Sofia", ratio 0.727) resolve to that profile directly
+# instead of the reject-then-confirm path (founder bug 2026-10-29). It sits
+# below every exact/substring tier, so it only decides when nothing better
+# matches, and the closest fuzzy candidate wins.
+_FUZZY_NAME_THRESHOLD = 0.72
+
+
 def _resolve_person(db, uid: str, name: str) -> tuple[str | None, str]:
     """Best profile-name match for ``name`` across the roster (same scan Explore
     uses). Returns ``(uid, full_name)`` or ``(None, "")``."""
@@ -322,7 +330,8 @@ def _resolve_person(db, uid: str, name: str) -> tuple[str | None, str]:
         users = list(db.collection("users").stream())
     except Exception:  # noqa: BLE001
         return None, ""
-    best: tuple[int, str, str] | None = None  # (strength, uid, full name)
+    best: tuple[float, str, str] | None = None  # (strength, uid, full name)
+    want_first = want.split(" ")[0]
     for u in users:
         other = u.id
         if other == uid:
@@ -343,12 +352,18 @@ def _resolve_person(db, uid: str, name: str) -> tuple[str | None, str]:
         if not low:
             continue
         first = low.split(" ")[0]
-        strength = (
-            3 if low == want
-            else 2 if first == want
-            else 1 if (want in low or low in want)
-            else 0
-        )
+        if low == want:
+            strength = 3.0
+        elif first == want:
+            strength = 2.0
+        elif want in low or low in want:
+            strength = 1.0
+        else:
+            ratio = max(
+                difflib.SequenceMatcher(None, first, want_first).ratio(),
+                difflib.SequenceMatcher(None, low, want).ratio(),
+            )
+            strength = ratio if ratio >= _FUZZY_NAME_THRESHOLD else 0.0
         if strength and (best is None or strength > best[0]):
             best = (strength, other, full)
     return (best[1], best[2]) if best else (None, "")

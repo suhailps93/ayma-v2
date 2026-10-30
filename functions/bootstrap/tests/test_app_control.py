@@ -475,6 +475,27 @@ def test_open_profile_reports_when_nobody_matches():
     assert _PENDING not in db.store
 
 
+def test_resolve_person_fuzzy_matches_near_identical_spellings():
+    # Founder bug 2026-10-29: "Sophia" must resolve to "Sofia Ruiz" directly via fuzzy matching.
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    assert app_control._resolve_person(db, "me", "Sophia") == ("u-sofia", "Sofia Ruiz")
+    assert app_control._resolve_person(db, "me", "Benedict") == (None, "")
+
+
+def test_open_profile_fuzzy_matches_a_near_identical_name():
+    # Founder bug 2026-10-29: fuzzy matching for open_profile should route "Sophia" to "Sofia Ruiz".
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    db.seed_user("u-sam", "Sam Fox")
+    out = _run(app_control._bind_open_profile(db, "me")("Sophia"))
+    assert out.startswith("navigated: screen=profile — Sofia Ruiz's profile is open.")
+    cmd = db.store[_PENDING]
+    assert cmd == {**cmd, "action": "open_profile", "uid": "u-sofia"}
+
+
 # --- registry wiring --------------------------------------------------
 
 _COMMAND_TOOLS = {

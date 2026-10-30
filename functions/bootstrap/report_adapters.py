@@ -57,7 +57,6 @@ import appearance
 import deep_dive
 import deep_dive_links
 import match_deterministic
-import matching_schema
 import matching_skill
 import pair_key
 import public_profile
@@ -673,20 +672,13 @@ def match_blocks(db, viewer_uid: str, match_id: str):
 
     other_name = deep_dive.profile_full_name(db, other) or "them"
 
-    # A "match" in Ayma means a MUTUAL like (both people liked each other,
-    # `status == mutual_interest`). Until then this is only a compatibility
-    # preview, so the header/score/title read "Compatibility" rather than
-    # "Match" (§5.3). The word "Match" is reserved for a genuine mutual match.
-    mutual = str(data.get("status") or "") == matching_schema.MATCH_STATUS_MUTUAL
-    noun = "Match" if mutual else "Compatibility"
-
     top_blocks: list[dict] = []
     score = data.get("score")
     if score is not None:
         band = _confidence_band(data.get("score_confidence"))
         top_blocks.append(
             rb.stat_block(
-                "score", f"{noun} score", f"{round(float(score) * 100)}%",
+                "score", "Match score", f"{round(float(score) * 100)}%",
                 basis=f"{band} confidence" if band else "",
                 editable=False,
             )
@@ -702,10 +694,10 @@ def match_blocks(db, viewer_uid: str, match_id: str):
         top_blocks.append(
             rb.section_head_block(
                 "score:status",
-                f"This {noun.lower()} hasn't been scored yet.",
+                "This match hasn't been scored yet.",
             )
         )
-    sections = [rb.make_section(noun, top_blocks)]
+    sections = [rb.make_section("Match", top_blocks)]
 
     gate_failures = [
         g for g in (data.get("gate_failures") or [])
@@ -809,7 +801,7 @@ def match_blocks(db, viewer_uid: str, match_id: str):
     _list_section("Where you differ", data.get("tensions"), "tension")
     _list_section("What'd sharpen this score", data.get("missing"), "missing")
 
-    report = rb.make_report(f"{noun} with {other_name}", sections)
+    report = rb.make_report(f"Match with {other_name}", sections)
     updated = data.get("updated_at")
     iso = lambda v: v.isoformat() if hasattr(v, "isoformat") else None  # noqa: E731
     return report, iso(updated), iso(updated)

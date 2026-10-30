@@ -269,11 +269,16 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                   ),
                 ),
               ),
+            ],
+            body: ProfileBody(
               // Ayma's own case for this match — kept as an addition above
-              // the full profile, not a replacement for it.
-              Container(
+              // the full profile, not a replacement for it. It rides inside
+              // the profile's own scroll (not the capped ChromeColumn header)
+              // so a long explanation gets full width and room to breathe
+              // instead of being crammed against the photo (§ BUG).
+              leading: Container(
                 width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                margin: const EdgeInsets.fromLTRB(20, 12, 20, 16),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: ac.bgCard,
@@ -284,9 +289,10 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('${(m.score * 100).round()}% match',
-                        style: AymaType.mono(size: 13, color: ac.accent)),
+                        style: AymaType.mono(
+                            size: 14, weight: FontWeight.w600, color: ac.accent)),
                     if (m.myExplanation.isNotEmpty) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
                       Text(m.myExplanation,
                           style: AymaType.sans(
                               size: 14, color: ac.fgDim, height: 1.4)),
@@ -294,8 +300,6 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                   ],
                 ),
               ),
-            ],
-            body: ProfileBody(
               reportType: 'public_profile',
               reportId: p.uid,
               api: _api,
