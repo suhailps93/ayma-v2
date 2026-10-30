@@ -79,30 +79,32 @@ void main() {
     await openExplore(tester);
     await pumpUntil(tester, find.textContaining(_nophotoName),
         timeout: const Duration(seconds: 75));
-    final targets = [
+    // Shown in the DEFAULT feed: the valid edges, and the orientation/location
+    // dealbreakers (hard dealbreakers surface as a 0% report per ZERO, they are
+    // NOT hidden from Explore). The age-over-max edge (Teresa) is NOT expected
+    // here: Explore defaults the age filter to the viewer's saved partner range
+    // (explore.apply_saved_age_range — Daniel's is 24-36), so a 38-year-old is
+    // filtered by that search filter, distinct from dealbreaker-hiding. Her 0%
+    // dealbreaker report is still covered by ZERO.
+    final mustShow = [
       _nophotoName, _ageminName, _mutualName, // valid
-      _ageoverName, _orientName, _locoutName, // dealbreakers (now shown)
+      _orientName, _locoutName, // orientation/location dealbreakers (shown)
     ];
-    final seenNames = await _collectNamesWhileScrolling(tester, targets);
-    final roster = {for (final n in targets) n: seenNames.contains(n)};
-    // Diagnostic: every profile name currently in the tree (bottom of feed).
-    final visible = find
-        .byType(Text)
-        .evaluate()
-        .map((e) => (e.widget as Text).data)
-        .whereType<String>()
-        .where((d) => d.contains(RegExp(r'[A-Z][a-z]+ [A-Z]')))
-        .toList();
-    debugPrint('REPORT: GATES roster=$roster visibleNames=$visible');
+    final seenNames = await _collectNamesWhileScrolling(tester, mustShow);
+    final roster = {for (final n in mustShow) n: seenNames.contains(n)};
+    // Teresa (age-over) must be absent from the DEFAULT feed (age filter).
+    final ageOverFiltered =
+        find.textContaining(_ageoverName).evaluate().isEmpty;
+    debugPrint('REPORT: GATES roster=$roster ageOverFiltered=$ageOverFiltered');
     await shot(tester, 'GATES');
-    if (roster.values.every((v) => v)) {
+    if (roster.values.every((v) => v) && ageOverFiltered) {
       pass('GATES',
-          'Explore shows all profiles incl. hard-dealbreaker ones (score '
-          'enforces the gate, not hiding): $roster');
+          'Explore shows valid + orientation/location dealbreaker profiles '
+          '(not hidden): $roster; age-over-max filtered by the saved age range');
     } else {
       fail('GATES',
-          'Explore roster incomplete: $roster (want all true — dealbreaker '
-          'profiles must SHOW in Explore)');
+          'roster=$roster (want all true — dealbreakers must SHOW), '
+          'ageOverFilteredByAgeRange=$ageOverFiltered (want true)');
     }
 
     if (roster[_nophotoName]!) {

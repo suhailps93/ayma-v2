@@ -164,12 +164,13 @@ The corner cases the three complete demo accounts can't express are driven
 against the seeded `demo-edge-*` fixtures (signed in as Daniel), in
 `e2e_edge_test.dart`:
 
-- **GATES** — against Daniel's Explore (Daniel bypasses fixture-hiding; see
-  "Test-fixture hiding + the E2E bypass"), the valid edges appear
-  (`demo-edge-nophoto`, `demo-edge-agemin`, `demo-edge-mutual`) and, per the
-  current dealbreaker rule (§5.4/§6.1), the hard-dealbreaker edges
-  (`demo-edge-ageover`, `demo-edge-orient`, `demo-edge-locout`) **also** appear
-  (their gate surfaces as a 0% report, see ZERO — not as absence from Explore).
+- **GATES** — against Daniel's Explore (Daniel bypasses fixture-hiding), the
+  valid edges appear plus the orientation/location dealbreaker edges
+  (`demo-edge-orient`, `demo-edge-locout`) — dealbreakers surface as a 0% report
+  (ZERO), not as absence. The age-over-max edge (`demo-edge-ageover`) is NOT in
+  the default feed: Explore defaults the age filter to the viewer's saved
+  partner range (`apply_saved_age_range`), a search filter distinct from
+  dealbreaker-hiding; its 0% report is still covered by ZERO.
 - **HIDDEN** — a NORMAL (non-bypass) viewer's Explore hides every `demo-edge-*`
   fixture while still showing the curated `demo-test1/2/3` accounts.
 - **WEBRESEARCH** — tapping the web-research icon on another user's profile opens

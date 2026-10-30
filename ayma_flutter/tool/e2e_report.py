@@ -29,7 +29,7 @@ ORDER = ["B", "C", "D", "E", "F", "G", "H", "P"]
 # signed-out auth, host-driven offline). Any result key not in BUGS or here is
 # still rendered generically.
 EXTRA = {
-    "GATES": "Bypass viewer (Daniel) sees all edge profiles incl. hard-dealbreaker ones (score enforces the gate, not hiding)",
+    "GATES": "Bypass viewer (Daniel) sees valid + orientation/location dealbreaker profiles (not hidden); age-over-max is filtered by the saved age range",
     "HIDDEN": "A normal (non-bypass) viewer's Explore hides demo-edge-* fixtures while showing the curated demo-test1/2/3",
     "NOPHOTO": "A 0-photo but valid profile appears in Explore and its report opens",
     "ZERO": "A hard-dealbreaker pair's report scores 0% and lists the dealbreaker reason(s)",
