@@ -23,9 +23,10 @@ restore_net() { adb shell svc wifi enable >/dev/null 2>&1 || true
                 adb shell svc data enable >/dev/null 2>&1 || true; }
 trap restore_net EXIT
 
-# Pre-grant notifications (so Android 13's system dialog never covers a shot)
-# and revoke mic (so the sign-in welcome-voice/LiveKit session can't connect).
-adb shell pm grant com.ayma.ayma_flutter android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+# Revoke mic so the sign-in welcome-voice/LiveKit session can't connect.
+# (We do NOT pm-grant POST_NOTIFICATIONS: granting restarts the app process,
+#  which breaks a running test. The watcher below instead dismisses Android 13's
+#  notification permission dialog with BACK whenever it steals focus.)
 adb shell pm revoke com.ayma.ayma_flutter android.permission.RECORD_AUDIO 2>/dev/null || true
 restore_net
 
@@ -48,13 +49,17 @@ restore_net
 ) &
 MON=$!
 
-# `flutter test` reinstalls the APK, which RESETS runtime permissions — so a
-# one-shot grant before the run is wiped. Keep re-granting POST_NOTIFICATIONS in
-# the background so Android 13's system permission dialog never pops over a shot.
+# Android 13's notification permission dialog pops over the app on first launch
+# and sits over screenshots (and can absorb taps). Dismiss it NON-destructively:
+# send BACK only when the permission UI actually has window focus — never a
+# pm-grant (that restarts the app and kills the test), never a blind tap.
 (
   while true; do
-    adb shell pm grant com.ayma.ayma_flutter android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
-    sleep 2
+    if adb shell dumpsys window 2>/dev/null \
+         | grep -i mCurrentFocus | grep -qi "permission"; then
+      adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1 || true
+    fi
+    sleep 1.5
   done
 ) &
 GRANT=$!

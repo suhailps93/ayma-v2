@@ -178,9 +178,9 @@ const bool _shotsEnabled = bool.fromEnvironment('E2E_SHOTS');
 /// behaviour.
 Future<void> shot(WidgetTester tester, String name) async {
   if (!_shotsEnabled) return;
-  // Clear any in-app overlay (feature-tour coach mark, push primer) so it
-  // doesn't sit over the capture, then hold the frame for the host screencap.
-  await dismissTour(tester);
+  // The OS notification-permission dialog (the overlay that was covering shots)
+  // is dismissed host-side by run_e2e.sh; the in-app tour is already dismissed
+  // post-login. Just hold the frame for the host screencap.
   await tester.pump(const Duration(milliseconds: 200));
   emit('E2E_SHOT $name');
   await pumpFor(tester, const Duration(milliseconds: 1600));
