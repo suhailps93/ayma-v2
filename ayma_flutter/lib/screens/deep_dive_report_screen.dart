@@ -133,7 +133,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       );
 
   /// The run target implied by [widget.reportId] when NO report exists yet, so
-  /// the empty state's "Run report" can kick off the dive this screen is
+  /// the empty state's "Run web search" can kick off the dive this screen is
   /// about without any report metadata (which also 404s when never run). A
   /// `uid_<subject>` id names an app user — the common never-run surface
   /// (a public profile / match / app-user chat marker); the server infers
@@ -239,7 +239,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
                     reportId: widget.reportId,
                     apiClient: _api,
                     // A clean 404 means no dive has ever been run for this
-                    // subject — an empty state with a "Run report" action, not
+                    // subject — an empty state with a "Run web search" action, not
                     // the "Couldn't load" error a real fetch failure gets.
                     emptyBuilder: (context) => _NoResearchYet(
                       busy: _reRunning,
@@ -287,7 +287,7 @@ class _NoResearchYet extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             "Nothing has been searched on the open web for this person yet. "
-            "Run a report and I'll message you in chat when it's ready.",
+            "Run a web search and I'll message you in chat when it's ready.",
             textAlign: TextAlign.center,
             style: AymaType.sans(size: 14, color: ac.fgMute),
           ),
@@ -295,7 +295,7 @@ class _NoResearchYet extends StatelessWidget {
           FilledButton.icon(
             onPressed: busy ? null : onRun,
             icon: const Icon(Icons.search, size: 18),
-            label: const Text('Run report'),
+            label: const Text('Run web search'),
           ),
         ],
       ),

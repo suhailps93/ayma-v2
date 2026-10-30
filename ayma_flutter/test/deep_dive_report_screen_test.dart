@@ -171,12 +171,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No web research yet'), findsOneWidget);
-    expect(find.text('Run report'), findsOneWidget);
+    expect(find.text('Run web search'), findsOneWidget);
     expect(find.text("Couldn't load that report."), findsNothing);
   });
 
   testWidgets(
-      '"Run report" on the empty state starts a dive on the subject the '
+      '"Run web search" on the empty state starts a dive on the subject the '
       'uid_<x> report id names', (tester) async {
     final calls = <Map<String, dynamic>>[];
     await tester.pumpWidget(_host(
@@ -185,7 +185,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Run report'));
+    await tester.tap(find.text('Run web search'));
     await tester.pumpAndSettle();
 
     expect(calls, hasLength(1));
