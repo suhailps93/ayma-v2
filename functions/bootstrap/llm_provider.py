@@ -30,6 +30,7 @@ import base64
 import json
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import AsyncIterator
@@ -238,6 +239,59 @@ def _response_format(response_schema: dict | None, name: str) -> dict | None:
     }
 
 
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_CODE_FENCE = re.compile(r"```[A-Za-z0-9_-]*\n(.*?)```", re.DOTALL)
+
+
+def _coerce_json_text(text: str) -> str:
+    """Return just the JSON document embedded in a model reply.
+
+    Muse Spark is a reasoning model and can wrap its JSON in a ```` ```json ````
+    fence, precede it with a ``<think>…</think>`` block, or emit chain-of-thought
+    prose around it. This strips those and returns the first balanced top-level
+    JSON object/array so reasoning text never reaches ``json.loads`` (and so a
+    stray thought can never leak through into a parsed field). When no balanced
+    object is found the stripped original is returned unchanged, so ``json.loads``
+    still raises and the caller's Gemini fallback kicks in."""
+    if not text:
+        return text
+    stripped = _THINK_BLOCK.sub("", text).strip()
+    fence = _CODE_FENCE.search(stripped)
+    if fence:
+        stripped = fence.group(1).strip()
+
+    start = next(
+        (i for i, ch in enumerate(stripped) if ch in "{["), -1
+    )
+    if start == -1:
+        return stripped
+
+    open_ch = stripped[start]
+    close_ch = "}" if open_ch == "{" else "]"
+    depth = 0
+    in_str = False
+    escaped = False
+    for i in range(start, len(stripped)):
+        ch = stripped[i]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return stripped[start : i + 1]
+    return stripped
+
+
 def _strip_keys(obj):
     """Recursively strip whitespace from JSON object keys. Muse Spark
     occasionally emits ``"strengths "`` (trailing space), which would make a
@@ -386,7 +440,10 @@ class MetaProvider(LLMProvider):
             text = (resp.choices[0].message.content or "").strip()
             if not text:
                 raise RuntimeError("Meta returned an empty JSON response.")
-            return _strip_keys(json.loads(text))
+            # Muse Spark can surround the JSON with reasoning / a code fence;
+            # extract just the JSON document so chain-of-thought never leaks
+            # into a parsed field (and a malformed reply still raises → Gemini).
+            return _strip_keys(json.loads(_coerce_json_text(text)))
         except Exception as exc:  # noqa: BLE001 - fall back to Gemini
             if self._fallback is None:
                 raise
