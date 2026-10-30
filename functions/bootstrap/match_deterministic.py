@@ -809,12 +809,20 @@ def _outside_range(lo, hi, age) -> bool:
 
 def _gate_age_range(ta, tb, pa, pb):
     age_a, age_b = _age_of(pa.get("birthdate")), _age_of(pb.get("birthdate"))
-    if _outside_range(
-        ta.get("partner_age_min"), ta.get("partner_age_max"), age_b
-    ) or _outside_range(
-        tb.get("partner_age_min"), tb.get("partner_age_max"), age_a
-    ):
-        return "One is outside the other's stated partner age range."
+    lo_a, hi_a = ta.get("partner_age_min"), ta.get("partner_age_max")
+    lo_b, hi_b = tb.get("partner_age_min"), tb.get("partner_age_max")
+    # Name the real numbers so the report reads "one wants 28–38, the other is
+    # 42" rather than a vague "outside the range" (BUG B report clarity).
+    if _outside_range(lo_a, hi_a, age_b):
+        return (
+            f"Outside a stated partner age range: one wants {lo_a}–{hi_a}, "
+            f"the other is {age_b}."
+        )
+    if _outside_range(lo_b, hi_b, age_a):
+        return (
+            f"Outside a stated partner age range: one wants {lo_b}–{hi_b}, "
+            f"the other is {age_a}."
+        )
     return None
 
 

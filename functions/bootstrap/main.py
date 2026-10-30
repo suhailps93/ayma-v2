@@ -6481,11 +6481,63 @@ def _match_doc_is_complete(d: dict | None) -> bool:
     `method`). The demo seed once wrote score-only "lite" docs (no dimension
     breakdown, no `structured_score`/`method`); those must be treated as a
     cache MISS so the report is recomputed via the full pipeline rather than
-    served half-empty (bugs F/H). A complete doc is served instantly and never
-    recomputed unless the caller forces it (the "Recalculate" button)."""
+    served half-empty (bugs F/H). A complete doc is served instantly and only
+    recomputed when the caller forces it (the "Recalculate" button) OR its
+    inputs changed since it was scored (``_match_doc_is_stale`` — a silent
+    background recompute, bug F staleness invalidation)."""
     if not d or d.get("score") is None:
         return False
     return d.get("structured_score") is not None and bool(d.get("method"))
+
+
+def _latest_ts(*values):
+    """Return the newest timezone-aware datetime among args, ignoring invalid types."""
+    valid = [
+        v for v in values
+        if v is not None and not isinstance(v, str) and hasattr(v, "isoformat")
+    ]
+    return max(valid) if valid else None
+
+
+def _match_inputs_mtime(db, uid: str):
+    """Captures preference + questionnaire changes (partner age range, location, interested_in, relocation radius) so a cached match can detect stale inputs."""
+    stamps = []
+    try:
+        doc = db.collection("users").document(uid).collection("profile").document("main").get()
+        data = doc.to_dict() if doc else None
+        if data and "updated_at" in data:
+            stamps.append(data.get("updated_at"))
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to fetch profile updated_at for %s", uid, exc_info=True)
+
+    try:
+        for doc in db.collection("users").document(uid).collection("questionnaire").stream():
+            data = doc.to_dict()
+            if data and "updated_at" in data:
+                stamps.append(data.get("updated_at"))
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to fetch questionnaire updated_at for %s", uid, exc_info=True)
+
+    return _latest_ts(*stamps)
+
+
+def _match_doc_is_stale(db, d: dict | None, a: str, b: str) -> bool:
+    """Check if a stored match report is stale.
+
+    Conservative (returns False when it can't positively tell) so a fresh doc is
+    never needlessly recomputed. Fixes bug F staleness where input changes (e.g.,
+    narrowing a partner age range adding a dealbreaker that zeroes the score)
+    require recalculation.
+    """
+    try:
+        scored_at = (d.get("updated_at") or d.get("scored_at")) if d else None
+        if not (hasattr(scored_at, "isoformat") and not isinstance(scored_at, str)):
+            return False
+        newest_input = _latest_ts(_match_inputs_mtime(db, a), _match_inputs_mtime(db, b))
+        return newest_input is not None and newest_input > scored_at
+    except Exception:  # noqa: BLE001
+        logger.warning("match staleness check failed", exc_info=True)
+        return False
 
 
 def _match_label(name: str) -> str:
@@ -6609,18 +6661,24 @@ async def check_compatibility(
     match_id = sorted_pair_key(uid, other)
 
     # A match score is deterministic — the same two wikis always produce the
-    # same numbers. So once a pair has a COMPLETE report, "Run match" just
-    # returns that result; only "Recalculate" (force) re-runs it. This also
-    # stops repeated taps from spending credits and spamming notifications. A
-    # stale "lite" doc (score only, no breakdown) is NOT a cache hit — it falls
-    # through to a fresh full score below (bugs F/H).
+    # same numbers. So once a pair has a COMPLETE and still-FRESH report, "Run
+    # match" just returns that result; only "Recalculate" (force) re-runs it.
+    # This also stops repeated taps from spending credits and spamming
+    # notifications. A stale "lite" doc (score only, no breakdown) OR a
+    # complete doc whose inputs changed since it was scored
+    # (``_match_doc_is_stale`` — someone edited a preference/answer) is NOT a
+    # cache hit — it falls through to a fresh full score below (bugs F/H).
     if not req.force:
         try:
             snap = get_db().collection(MATCHES_COLLECTION).document(
                 match_id
             ).get()
             d = snap.to_dict() or {}
-            if snap.exists and _match_doc_is_complete(d):
+            if (
+                snap.exists
+                and _match_doc_is_complete(d)
+                and not _match_doc_is_stale(get_db(), d, uid, other)
+            ):
                 return {
                     "ok": True,
                     "queued": False,
@@ -6654,10 +6712,12 @@ async def match_report(
     doesn't, the note written to the caller, and both people's photos. 404 if
     the pair has never been scored.
 
-    A complete stored report is served as-is (no recompute — bug F). A stale
-    "lite" doc (score only, no dimension breakdown) is served as-is this once
-    but silently recomputed in the background via the full scorer, so the next
-    open shows the full breakdown (bug H)."""
+    A complete, still-fresh stored report is served as-is (no recompute — bug
+    F). A stale "lite" doc (score only, no dimension breakdown), OR a complete
+    doc whose scored inputs changed since it was computed
+    (``_match_doc_is_stale`` — e.g. a party narrowed their age range), is
+    served as-is this once but silently recomputed in the background via the
+    full scorer, so the next open is correct (bugs F/H)."""
     from pair_key import uids_from_pair_key
 
     try:
@@ -6672,9 +6732,11 @@ async def match_report(
     if not snap.exists:
         raise HTTPException(status_code=404, detail="Not scored yet.")
     d = snap.to_dict() or {}
-    if not _match_doc_is_complete(d):
-        # Legacy / demo-seed "lite" doc — backfill the full report in the
-        # background (silent: no chat event or push), bug H.
+    if not _match_doc_is_complete(d) or _match_doc_is_stale(get_db(), d, a, b):
+        # Legacy / demo-seed "lite" doc, OR a complete doc whose inputs changed
+        # since it was scored (bug F staleness) — serve what we have this open
+        # and backfill a fresh full report in the background (silent: no chat
+        # event or push), bugs F/H.
         background.add_task(_match_job, uid, other, notify=False)
 
     def _photo(u: str) -> str:

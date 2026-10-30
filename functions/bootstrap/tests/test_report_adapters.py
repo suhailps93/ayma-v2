@@ -890,3 +890,35 @@ def test_deep_dive_adapter_dedupes_links_vs_socials_and_lists_socials_first(monk
     by_heading = {s["heading"]: s["blocks"] for s in report["sections"]}
     assert len(by_heading["Social profiles"]) == 2
     assert [b["label"] for b in by_heading["Links"]] == ["Article"]
+
+
+def test_match_adapter_why_this_is_zero_for_hard_dealbreaker(monkeypatch):
+    doc = dict(_MATCH_DOC)
+    doc["score"] = 0.0
+    doc["gate_failures"] = [
+        {
+            "node_id": "partner_age_min",
+            "label": "Partner age range",
+            "reason": (
+                "Outside a stated partner age range: one wants 28–38, the other"
+                " is 42."
+            ),
+        },
+        {
+            "node_id": "orientation",
+            "label": "Gender & orientation",
+            "reason": "Their gender is outside what one of you is looking for.",
+        },
+    ]
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: doc)
+    monkeypatch.setattr(
+        deep_dive, "profile_full_name", lambda db, uid: "Bob Bee"
+    )
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    assert any(s["heading"] == "Why this is 0%" for s in report["sections"])
+    blocks = _blocks(report)
+    assert "dealbreaker:lead" in blocks and blocks["dealbreaker:lead"][
+        "text"
+    ].startswith("This is a 0% match because of")
+    assert blocks["dealbreaker:0"]["text"] == doc["gate_failures"][0]["reason"]
+    assert blocks["dealbreaker:1"]["tag"] == "Gender & orientation"

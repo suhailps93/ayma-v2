@@ -206,19 +206,16 @@ def _u(db, uid, **profile):
     db.docs[("users", uid, "profile", "main")] = profile
 
 
-def test_explore_lists_everyone_but_gender_dealbreakers_and_no_community_gate():
+def test_explore_lists_everyone_including_self_no_gates():
     db = FakeDb()
     _u(db, "me", community="c", gender="Woman", interested_in=["Men"],
        location="X", birthdate="1994-01-01")
     _u(db, "match", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01",
        photo_attrs={"hair_color": "brown"})
-    # Community is still NOT gated — a different-community man she'd match
-    # shows up.
+    # Neither of these is gated out any more.
     _u(db, "other-community", community="z", gender="Man",
        interested_in=["Women"], location="X", birthdate="1993-01-01")
-    # Orientation IS a hard dealbreaker now (BUG B): a man interested only in
-    # men can never match a woman -> excluded.
     _u(db, "other-orientation", community="c", gender="Man",
        interested_in=["Men"], location="X", birthdate="1993-01-01")
     _u(db, "blonde", community="c", gender="Man", interested_in=["Women"],
@@ -236,8 +233,8 @@ def test_explore_lists_everyone_but_gender_dealbreakers_and_no_community_gate():
 
     cards = ex.explore(db, "me", {})
     ids = {c["uid"] for c in cards}
-    assert ids == {"me", "match", "other-community", "blonde"}
-    assert "other-orientation" not in ids  # gender hard dealbreaker (BUG B)
+    assert ids == {"me", "match", "other-community", "other-orientation",
+                   "blonde"}
     assert "blockme" not in ids and "passed" not in ids
     assert "paused-user" not in ids
 
@@ -424,41 +421,3 @@ def test_explore_excludes_practice_personas(monkeypatch):
     ids = {c["uid"] for c in ex.explore(db, "me", {})}
     assert "demo_practice_maya" not in ids
     assert ids == {"me", "real"}
-
-
-def test_explore_excludes_gender_age_and_location_hard_dealbreakers():
-    # The three onboarding hard dealbreakers drop a candidate from the feed
-    # (BUG B). `me`: a woman into men, 28-40, who won't relocate from Lisbon.
-    db = FakeDb()
-    _u(db, "me", gender="Woman", interested_in=["Men"], location="Lisbon",
-       birthdate="1994-01-01", qz_partner_age_min=28, qz_partner_age_max=40,
-       qz_relocation_radius="Within my city")
-    # gender: another woman she isn't interested in -> excluded
-    _u(db, "wrong-gender", gender="Woman", interested_in=["Men"],
-       location="Lisbon", birthdate="1993-01-01")
-    # age: a 21-year-old, below her 28 floor -> excluded
-    _u(db, "too-young", gender="Man", interested_in=["Women"],
-       location="Lisbon", birthdate="2005-01-01")
-    # location: a man in a different city while she won't relocate -> excluded
-    _u(db, "far-away", gender="Man", interested_in=["Women"],
-       location="Oslo", birthdate="1990-01-01")
-    # a real match: man, in range, same city
-    _u(db, "match", gender="Man", interested_in=["Women"],
-       location="Lisbon", birthdate="1990-01-01")
-
-    ids = {c["uid"] for c in ex.explore(db, "me", {})}
-    assert ids == {"me", "match"}
-
-
-def test_hard_dealbreaker_skips_on_missing_preference_data():
-    # No gender / age / relocation data on `me` -> nothing to check, so no
-    # candidate is excluded on a dealbreaker (missing data never excludes).
-    db = FakeDb()
-    _u(db, "me", location="X", birthdate="1994-01-01")
-    _u(db, "a", gender="Man", interested_in=["Women"], location="Y",
-       birthdate="1990-01-01")
-    _u(db, "b", gender="Woman", interested_in=["Men"], location="Z",
-       birthdate="1991-01-01")
-
-    ids = {c["uid"] for c in ex.explore(db, "me", {})}
-    assert ids == {"me", "a", "b"}
