@@ -65,39 +65,30 @@ void main() {
       failNow('login failed; cannot run behaviours');
     }
 
-    // ---- Explore: bug B (orientation gating) + bug E (practice persona) ----
+    // ---- Explore: bug B (candidate shows) + bug E (practice persona hidden) ----
     final onExplore = await openExplore(tester);
     if (!onExplore) {
       fail('B', 'Explore screen never loaded');
       fail('E', 'Explore screen never loaded');
     } else {
-      // The live feed is scored server-side and can take ~45s on a cold
-      // backend; wait for a known card before reading the roster, then scroll
-      // to surface any lazily-built cards.
-      await pumpUntil(tester, find.textContaining('Daniel'),
+      // The live feed is scored server-side and can take ~45s on a cold backend.
+      // Per the 2239 product rule Explore SHOWS everyone (dealbreakers surface as
+      // a 0% report, not hidden), so B now just checks a real candidate (Daniel)
+      // appears; the exclusion cases are covered by the edge suite (GATES/ZERO)
+      // and HIDDEN. Practice personas (E) are still filtered out. The feed is
+      // long now, so sweep names across the full scroll.
+      await pumpUntil(tester, find.byType(GridView),
           timeout: const Duration(seconds: 75));
-      await _scrollExplore(tester);
-
-      final danielShown = find.textContaining('Daniel').evaluate().isNotEmpty;
-      final priyaShown = find.textContaining('Priya').evaluate().isNotEmpty;
-      final mayaShown = find.textContaining('Maya').evaluate().isNotEmpty;
+      final seen = await _sweepExploreNames(tester, ['Daniel', 'Maya']);
       await shot(tester, 'B');
       await shot(tester, 'E');
 
-      // Bug B: a valid-orientation candidate (Daniel, a man) is present and the
-      // orientation-incompatible demo account (Priya, a woman) is excluded from
-      // Sofia's feed.
-      if (danielShown && !priyaShown) {
-        pass('B',
-            'Explore (as Sofia) includes Daniel and excludes same-gender Priya');
+      if (seen.contains('Daniel')) {
+        pass('B', 'Explore (as Sofia) shows a real candidate (Daniel)');
       } else {
-        fail('B',
-            'Explore (as Sofia): Daniel present=$danielShown (want true), '
-            'Priya present=$priyaShown (want false)');
+        fail('B', 'Explore (as Sofia) did not show Daniel across the feed');
       }
-
-      // Bug E: no practice persona (e.g. "Maya", uid demo_practice_*) in feed.
-      if (!mayaShown) {
+      if (!seen.contains('Maya')) {
         pass('E', 'practice persona "Maya" absent from Explore');
       } else {
         fail('E', 'practice persona "Maya" appeared in Explore feed');
@@ -343,56 +334,69 @@ void main() {
 // Navigation / inspection helpers specific to this suite.
 // ---------------------------------------------------------------------------
 
-Future<void> _scrollExplore(WidgetTester tester) async {
-  final grid = find.byType(GridView);
-  if (grid.evaluate().isEmpty) return;
-  for (var i = 0; i < 3; i++) {
-    await tester.drag(grid.first, const Offset(0, -400));
-    await pumpFor(tester, const Duration(milliseconds: 600));
+/// Scrolls the Explore grid top-to-bottom collecting which of [names] appear
+/// (the feed is long now that Explore shows everyone; the GridView only builds
+/// visible cards). Leaves the grid scrolled back near the top.
+Future<Set<String>> _sweepExploreNames(
+    WidgetTester tester, List<String> names) async {
+  final found = <String>{};
+  void sweep() {
+    for (final n in names) {
+      if (find.textContaining(n).evaluate().isNotEmpty) found.add(n);
+    }
   }
-  await tester.drag(grid.first, const Offset(0, 1600));
-  await pumpFor(tester, const Duration(milliseconds: 600));
+
+  sweep();
+  final grid = find.byType(GridView);
+  if (grid.evaluate().isNotEmpty) {
+    for (var i = 0; i < 30 && found.length < names.length; i++) {
+      await tester.drag(grid.first, const Offset(0, -220));
+      await pumpFor(tester, const Duration(milliseconds: 420));
+      sweep();
+    }
+  }
+  return found;
 }
 
-/// Explore -> tap Daniel card -> public profile -> tap match glyph -> report.
-Future<bool> _openDanielReport(WidgetTester tester) async {
-  final daniel = find.textContaining('Daniel Reyes');
-  if (!await pumpUntil(tester, daniel, timeout: const Duration(seconds: 20))) {
-    debugPrint('REPORT: Daniel card not found in Explore');
-    return false;
+/// Scrolls the Explore grid until [target] is built + visible; returns whether
+/// it was reached. Drags downward (content up) in steps.
+Future<bool> _scrollToCard(WidgetTester tester, Finder target) async {
+  if (target.evaluate().isNotEmpty) return true;
+  final grid = find.byType(GridView);
+  if (grid.evaluate().isEmpty) return target.evaluate().isNotEmpty;
+  for (var i = 0; i < 34 && target.evaluate().isEmpty; i++) {
+    await tester.drag(grid.first, const Offset(0, -220));
+    await pumpFor(tester, const Duration(milliseconds: 420));
   }
-  // Tap the card and wait for the public profile. Retry a few times: the OS
-  // notification-permission dialog can briefly sit over the feed and swallow a
-  // tap (run_e2e.sh dismisses it host-side, but a tap can race it).
+  return target.evaluate().isNotEmpty;
+}
+
+/// Explore -> scroll to Daniel -> tap card -> public profile -> match glyph ->
+/// report. Retries the tap (the OS notification dialog can race a tap).
+Future<bool> _openDanielReport(WidgetTester tester) async {
   var haveGlyph = false;
-  for (var attempt = 0; attempt < 4 && !haveGlyph; attempt++) {
+  for (var attempt = 0; attempt < 3 && !haveGlyph; attempt++) {
     await dismissTour(tester);
-    if (find.textContaining('Daniel Reyes').evaluate().isEmpty) {
-      // We navigated away (e.g. onto the profile already) — check for the glyph.
-      haveGlyph = await pumpUntil(tester, find.byType(AymaMatchGlyph),
-          timeout: const Duration(seconds: 10));
-      if (haveGlyph) break;
-      // Otherwise go back to Explore and retry.
-      await openExplore(tester);
-      await pumpUntil(tester, find.textContaining('Daniel Reyes'),
-          timeout: const Duration(seconds: 20));
+    await openExplore(tester);
+    final daniel = find.textContaining('Daniel Reyes');
+    if (!await _scrollToCard(tester, daniel)) {
+      debugPrint('REPORT: Daniel card not reached (attempt $attempt)');
+      continue;
     }
-    final card = find.textContaining('Daniel Reyes');
-    if (card.evaluate().isEmpty) continue;
     try {
-      await tester.ensureVisible(card.first);
+      await tester.ensureVisible(daniel.first);
       await tester.pump(const Duration(milliseconds: 300));
     } catch (_) {/* already visible */}
     final tappable = find.ancestor(
-      of: card.first,
+      of: daniel.first,
       matching: find.byWidgetPredicate(
           (w) => w is GestureDetector && w.onTap != null),
     );
     await tester.tap(
-        tappable.evaluate().isNotEmpty ? tappable.first : card.first,
+        tappable.evaluate().isNotEmpty ? tappable.first : daniel.first,
         warnIfMissed: false);
     haveGlyph = await pumpUntil(tester, find.byType(AymaMatchGlyph),
-        timeout: const Duration(seconds: 20));
+        timeout: const Duration(seconds: 25));
     debugPrint('REPORT: tap Daniel attempt $attempt -> glyph=$haveGlyph '
         'texts=${_visibleTexts().take(10).toList()}');
   }

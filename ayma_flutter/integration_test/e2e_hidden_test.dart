@@ -94,8 +94,8 @@ Future<Set<String>> _sweepNames(WidgetTester tester, List<String> names) async {
   sweep();
   final grid = find.byType(GridView);
   if (grid.evaluate().isNotEmpty) {
-    for (var i = 0; i < 18; i++) {
-      await tester.drag(grid.first, const Offset(0, -320));
+    for (var i = 0; i < 30 && found.length < names.length; i++) {
+      await tester.drag(grid.first, const Offset(0, -220));
       await pumpFor(tester, const Duration(milliseconds: 450));
       sweep();
     }

@@ -241,8 +241,8 @@ Future<Set<String>> _collectNamesWhileScrolling(
   sweep();
   final grid = find.byType(GridView);
   if (grid.evaluate().isNotEmpty) {
-    for (var i = 0; i < 18 && found.length < targets.length; i++) {
-      await tester.drag(grid.first, const Offset(0, -320));
+    for (var i = 0; i < 30 && found.length < targets.length; i++) {
+      await tester.drag(grid.first, const Offset(0, -220));
       await pumpFor(tester, const Duration(milliseconds: 450));
       sweep();
     }
