@@ -346,6 +346,7 @@ Future<Set<String>> _sweepExploreNames(
     }
   }
 
+  await scrollGridToTop(tester);
   sweep();
   final grid = find.byType(GridView);
   if (grid.evaluate().isNotEmpty) {
@@ -361,9 +362,9 @@ Future<Set<String>> _sweepExploreNames(
 /// Scrolls the Explore grid until [target] is built + visible; returns whether
 /// it was reached. Drags downward (content up) in steps.
 Future<bool> _scrollToCard(WidgetTester tester, Finder target) async {
-  if (target.evaluate().isNotEmpty) return true;
   final grid = find.byType(GridView);
   if (grid.evaluate().isEmpty) return target.evaluate().isNotEmpty;
+  await scrollGridToTop(tester); // start from the first card, not wherever a prior sweep left it
   for (var i = 0; i < 34 && target.evaluate().isEmpty; i++) {
     await tester.drag(grid.first, const Offset(0, -220));
     await pumpFor(tester, const Duration(milliseconds: 420));

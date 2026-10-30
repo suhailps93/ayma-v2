@@ -85,6 +85,15 @@ void main() {
     ];
     final seenNames = await _collectNamesWhileScrolling(tester, targets);
     final roster = {for (final n in targets) n: seenNames.contains(n)};
+    // Diagnostic: every profile name currently in the tree (bottom of feed).
+    final visible = find
+        .byType(Text)
+        .evaluate()
+        .map((e) => (e.widget as Text).data)
+        .whereType<String>()
+        .where((d) => d.contains(RegExp(r'[A-Z][a-z]+ [A-Z]')))
+        .toList();
+    debugPrint('REPORT: GATES roster=$roster visibleNames=$visible');
     await shot(tester, 'GATES');
     if (roster.values.every((v) => v)) {
       pass('GATES',
@@ -238,6 +247,7 @@ Future<Set<String>> _collectNamesWhileScrolling(
     }
   }
 
+  await scrollGridToTop(tester);
   sweep();
   final grid = find.byType(GridView);
   if (grid.evaluate().isNotEmpty) {

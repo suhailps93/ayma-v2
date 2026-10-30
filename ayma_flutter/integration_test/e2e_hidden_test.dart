@@ -91,6 +91,7 @@ Future<Set<String>> _sweepNames(WidgetTester tester, List<String> names) async {
     }
   }
 
+  await scrollGridToTop(tester);
   sweep();
   final grid = find.byType(GridView);
   if (grid.evaluate().isNotEmpty) {

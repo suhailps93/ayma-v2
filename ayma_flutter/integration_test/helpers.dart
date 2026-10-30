@@ -244,6 +244,17 @@ Future<void> dismissTour(WidgetTester tester) async {
   }
 }
 
+/// Flings the Explore GridView back to the top, so a subsequent downward sweep
+/// starts from the first card (a prior sweep leaves it scrolled to the bottom).
+Future<void> scrollGridToTop(WidgetTester tester) async {
+  final grid = find.byType(GridView);
+  if (grid.evaluate().isEmpty) return;
+  for (var i = 0; i < 8; i++) {
+    await tester.drag(grid.first, const Offset(0, 1400));
+    await pumpFor(tester, const Duration(milliseconds: 250));
+  }
+}
+
 /// Taps the Explore tab in the main shell and waits for the Explore header.
 Future<bool> openExplore(WidgetTester tester) async {
   final exploreTab = find.byTooltip('Explore');

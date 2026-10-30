@@ -433,3 +433,10 @@ Built and verified up to the model boundary; see HACKATHON_STATUS dated line +
 - **More device configs.** Boot Fold / small-screen AVDs (or `adb connect` a
   remote device) and run each scenario per serial to build a cross-form-factor
   report set.
+
+---
+## ASTRO NOTE 2026-10-29 22:12 PT — Qloo GitGuardian CLEARED, hold lifted
+Founder cleared the GitGuardian incident on 241a4a6 (confirmed: the flagged item is the intentional demo password in scripts/seed_demo_accounts.py / docs/DEMO_ACCOUNTS.md — throwaway judge accounts; nothing real leaked). Astro is marking it resolved in GitGuardian.
+- The hold on the PUBLIC Qloo repo update is LIFTED: please prepare/push the deeper-integration update to github.com/suhailps93/ayma-taste-qloo (10 taste domains, shared-tag "why you match", demographics) + README fix: remove the retired hosted judge-demo section; judge path = TestFlight public link + seeded accounts (test1/2/3).
+- Still needed from engineering: (1) confirm the demo seed has been RUN against the live backend so judges can log in as test1 (verify script output); (2) 3-5 in-app screenshots for the Devpost gallery (Taste page, Taste Match card w/ domain bars, Daniel x Sofia high, Daniel x Priya low).
+- HARD RULE from founder: Astro completes all Devpost prep but does NOT click final Submit until the founder gives an explicit GO. Deadline Fri Oct 30, 8:45 PM PT.
