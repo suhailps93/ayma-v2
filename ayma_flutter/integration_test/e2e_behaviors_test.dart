@@ -81,6 +81,8 @@ void main() {
       final danielShown = find.textContaining('Daniel').evaluate().isNotEmpty;
       final priyaShown = find.textContaining('Priya').evaluate().isNotEmpty;
       final mayaShown = find.textContaining('Maya').evaluate().isNotEmpty;
+      await shot(tester, 'B');
+      await shot(tester, 'E');
 
       // Bug B: a valid-orientation candidate (Daniel, a man) is present and the
       // orientation-incompatible demo account (Priya, a woman) is excluded from
@@ -120,6 +122,8 @@ void main() {
       debugPrint('REPORT: body loaded -> dims=${_dimensionBlockKeys()} '
           'tasteCard=${find.byKey(const Key('tasteMatchCard')).evaluate().isNotEmpty} '
           'texts=${_visibleTexts().take(30).toList()}');
+      await shot(tester, 'D'); // report title + top of breakdown
+      await shot(tester, 'H'); // dimension breakdown in view
 
       // Bug D: a non-mutual pair reads "Compatibility" (seed status == scored,
       // not mutual_interest).
@@ -167,6 +171,7 @@ void main() {
       await _scrollReportTo(tester, tasteCard);
       await pumpUntil(tester, find.text('You both listed'),
           timeout: const Duration(seconds: 25));
+      await shot(tester, 'G'); // taste card
       if (tasteCard.evaluate().isEmpty) {
         fail('G', 'taste card (key tasteMatchCard) not rendered in report '
             '(scrolled to bottom; r.taste likely null)');
@@ -230,6 +235,7 @@ void main() {
           debugPrint('REPORT: picker shown=$pickerShown search=$haveSearch '
               'searchHint=$searchHint sendButtons=$perRowSend avatars=$avatars '
               'matchedLabel=$matchedFirst texts=${_visibleTexts().take(20).toList()}');
+          await shot(tester, 'P'); // recipient picker
           if (pickerShown && haveSearch && searchHint && perRowSend >= 1) {
             pass('P',
                 'picker shows search ("Search people"), $perRowSend per-row Send '
@@ -261,6 +267,7 @@ void main() {
         recomputing = await pumpUntil(
             tester, find.textContaining('Recalculating'),
             timeout: const Duration(seconds: 20));
+        await shot(tester, 'F'); // recompute banner
       }
 
       // Cache / instant re-open: pop back to the profile and re-open the report
@@ -310,6 +317,7 @@ void main() {
         find.widgetWithText(FilledButton, 'Run report').evaluate().isNotEmpty;
     final errorShown =
         find.textContaining("Couldn't load").evaluate().isNotEmpty;
+    await shot(tester, 'C'); // web-research empty state
     if (emptyState && runReport && !errorShown) {
       pass('C',
           '"No web research yet" + "Run report" shown for never-run subject '

@@ -3,15 +3,18 @@
 A repeatable, autonomous regression harness that drives the **real app on a
 real device/emulator against the live backend** — no AI vision, no paid APIs.
 It exists to catch regressions in the 8 behaviours shipped in build **2237**
-(bugs B/C/D/E/F/G/H).
+(bugs B/C/D/E/F/G/H/P).
 
 Suite lives in `ayma_flutter/integration_test/`:
 
 | File | What it does |
 |------|--------------|
-| `helpers.dart` | Shared login + navigation + error-draining helpers (no tests). |
+| `helpers.dart` | Shared login + navigation + screenshot + error-draining helpers (no tests). |
 | `smoke_login_test.dart` | Boots the app, signs in as Daniel, confirms the main shell + Explore feed load. Run this first to confirm the device/backend are healthy. |
-| `e2e_behaviors_test.dart` | The 8-behaviour regression run (signed in as Sofia). Records a PASS/FAIL line per behaviour, prints a table, and fails if any behaviour regressed. |
+| `e2e_behaviors_test.dart` | The 8-behaviour regression run (signed in as Sofia). Streams a result marker per behaviour and prints a PASS/FAIL table; fails the run if any behaviour regressed. |
+
+Plus the runner `ayma_flutter/tool/run_e2e.sh` and report generator
+`ayma_flutter/tool/e2e_report.py`.
 
 ## Prerequisites
 
@@ -26,19 +29,48 @@ Suite lives in `ayma_flutter/integration_test/`:
 
 ## Running
 
+One command — runs the suite, captures a screenshot per behaviour and writes
+the report:
+
 ```bash
 cd ayma_flutter
+tool/run_e2e.sh                 # defaults to emulator-5554
+tool/run_e2e.sh emulator-5554   # or name the device
+```
 
-# 1. Health check (login + Explore load).
+This produces, under `ayma_flutter/build/e2e/`:
+
+- `REPORT.md` — a PASS/FAIL table plus one section per behaviour with its
+  detail string and the embedded screenshot (the end-of-run artifact).
+- `screenshots/<bug>.png` — a real-pixel screenshot at each behaviour's key
+  moment.
+- `run.log` — the full console output.
+
+Or run the raw tests directly (no screenshots/report):
+
+```bash
+# Health check (login + Explore load).
 flutter test integration_test/smoke_login_test.dart -d emulator-5554
 
-# 2. Full 8-behaviour regression.
+# Full regression.
 flutter test integration_test/e2e_behaviors_test.dart -d emulator-5554
 ```
 
-The PASS/FAIL table is printed to the test console, bracketed by
-`===== 2237 E2E PASS/FAIL =====`. A failing behaviour prints `FAIL — <detail>`
-with the expected-vs-actual so a regression can be routed to a fix immediately.
+### Live streaming + the report
+
+Results **stream as they resolve**: the instant a behaviour's assertion
+settles, the harness flushes one line to stdout —
+`E2E_RESULT <bug> PASS|FAIL <detail>` — so a `tail -f build/e2e/run.log | grep
+E2E_RESULT` watches verdicts live instead of waiting for the end. A failing
+behaviour's line carries the expected-vs-actual so the real bug can be routed
+to a fix immediately. An end-of-run PASS/FAIL table is also printed, bracketed
+by `===== 2237 E2E PASS/FAIL =====`.
+
+Screenshots use a host-side trigger, not Flutter's `convertFlutterSurfaceToImage`
+(which froze interaction and hung the run): the test prints `E2E_SHOT <name>`
+and holds the frame ~1.5s; `run_e2e.sh` tails the log and runs
+`adb exec-out screencap` on each marker (gated by `--dart-define=E2E_SHOTS=true`,
+which the runner sets — plain `flutter test` leaves `shot()` a no-op).
 
 The first run builds a debug APK (several minutes); later runs are faster.
 

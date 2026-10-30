@@ -156,6 +156,24 @@ Future<void> pumpFor(
   }
 }
 
+/// Screenshots are captured host-side by `tool/run_e2e.sh`, which tails the
+/// test output and runs `adb screencap` whenever it sees an `E2E_SHOT <name>`
+/// marker. The define is set only by that runner, so a plain `flutter test`
+/// run leaves [shot] a no-op (no marker, no extra pump) and the same suite
+/// still runs without the screenshot plumbing. This avoids
+/// `convertFlutterSurfaceToImage`, which froze interaction and hung the run.
+const bool _shotsEnabled = bool.fromEnvironment('E2E_SHOTS');
+
+/// Emits an `E2E_SHOT <name>` marker and holds the frame briefly so the
+/// host-side screencap can grab the current screen. Best-effort; never fails a
+/// behaviour.
+Future<void> shot(WidgetTester tester, String name) async {
+  if (!_shotsEnabled) return;
+  await tester.pump(const Duration(milliseconds: 200));
+  debugPrint('E2E_SHOT $name');
+  await pumpFor(tester, const Duration(milliseconds: 1600));
+}
+
 /// Finalises the harness: releases the app's always-on semantics handle (left
 /// outstanding it fails flutter_test's end-of-test check) and drains any
 /// trailing benign async errors so none is pending at completion. Call once,
@@ -190,6 +208,13 @@ Future<void> dismissTour(WidgetTester tester) async {
   for (var i = 0; i < 8 && next.evaluate().isNotEmpty; i++) {
     await tester.tap(next.first, warnIfMissed: false);
     await pumpFor(tester, const Duration(milliseconds: 500));
+  }
+  // Dismiss the app's own push-notification primer ("Stay in the loop") if it
+  // is up, so it never sits over a later screen.
+  final notNow = find.widgetWithText(TextButton, 'Not now');
+  if (notNow.evaluate().isNotEmpty) {
+    await tester.tap(notNow.first, warnIfMissed: false);
+    await pumpFor(tester, const Duration(milliseconds: 400));
   }
 }
 
