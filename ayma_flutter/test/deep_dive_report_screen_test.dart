@@ -59,6 +59,7 @@ ApiClient _api({
   List<Map<String, dynamic>>? deepDiveCalls,
   int metaStatus = 200,
   int reportStatus = 200,
+  bool capped = false,
 }) {
   final mockHttp = MockClient((request) async {
     if (request.url.path.startsWith('/deep-dive-report/')) {
@@ -79,7 +80,7 @@ ApiClient _api({
     }
     if (request.url.path == '/deep-dive' && request.method == 'POST') {
       deepDiveCalls?.add(jsonDecode(request.body) as Map<String, dynamic>);
-      return http.Response(jsonEncode({'usage_capped': false}), 200,
+      return http.Response(jsonEncode({'usage_capped': capped}), 200,
           headers: const {'content-type': 'application/json; charset=utf-8'});
     }
     return http.Response('{}', 200);
@@ -162,10 +163,11 @@ void main() {
   });
 
   testWidgets(
-      'never-run (404) shows the "No web research yet" empty state, not the '
-      '"Couldn\'t load" error', (tester) async {
+      'never-run (404) shows the "No web research yet" empty state and starts '
+      'no search on open', (tester) async {
+    final calls = <Map<String, dynamic>>[];
     await tester.pumpWidget(_host(
-      _api(metaStatus: 404, reportStatus: 404),
+      _api(metaStatus: 404, reportStatus: 404, deepDiveCalls: calls),
       reportId: 'uid_bob',
     ));
     await tester.pumpAndSettle();
@@ -173,6 +175,8 @@ void main() {
     expect(find.text('No web research yet'), findsOneWidget);
     expect(find.text('Run web search'), findsOneWidget);
     expect(find.text("Couldn't load that report."), findsNothing);
+    // Opening to view must not auto-run the dive.
+    expect(calls, isEmpty);
   });
 
   testWidgets(
@@ -191,6 +195,21 @@ void main() {
     expect(calls, hasLength(1));
     expect(calls.single['target_uid'], 'bob');
     expect(calls.single['force'], true);
+  });
+
+  testWidgets(
+      '"Run web search" shows the out-of-credits sheet when capped',
+      (tester) async {
+    await tester.pumpWidget(_host(
+      _api(metaStatus: 404, reportStatus: 404, capped: true),
+      reportId: 'uid_bob',
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Run web search'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("You're out of credits"), findsOneWidget);
   });
 
   testWidgets(
