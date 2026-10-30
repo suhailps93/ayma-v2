@@ -40,7 +40,7 @@ branch today. Every runtime switch named here is a flag in `config/feature_flags
 ```mermaid
 flowchart LR
   subgraph Phone["Flutter app (ayma_flutter)"]
-    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel<br/>overflow guards + layout matrix test]
+    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel<br/>overflow guards + layout matrix test<br/>E2E harness: integration_test/ on-device vs live backend,<br/>tool/run_e2e.sh -&gt; build/e2e/REPORT.md + screenshots]
     Voice[VoiceSessionController<br/>fresh room per call, no-join auto-retry]
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
@@ -401,6 +401,30 @@ flowchart LR
   not a language switch. The LiveKit Inference gateway ignores the transcription `language` and `prompt` options
   (verified live 2026-10-26), so the agent also refuses any tool call whose triggering line is such a fragment
   (`voices.is_misheard_fragment`, English-language callers only).
+
+### 0.1 Autonomous E2E regression harness
+
+`ayma_flutter/integration_test/` drives the **real app on a real device against
+the live backend** (no AI vision, no paid APIs) to catch regressions in the 8
+fixes shipped in build 2237 plus matching/auth/connectivity corner cases. Run it
+with one command — `ayma_flutter/tool/run_e2e.sh [device]` — which runs every
+suite, captures a real-pixel screenshot per scenario (host-side `adb screencap`
+on `E2E_SHOT` markers), drives offline states (host-side `adb svc wifi/data` on
+`E2E_NET` markers), and assembles `build/e2e/REPORT.md`. Each scenario flushes a
+streaming `E2E_RESULT <id> PASS|FAIL <detail>` line the moment it resolves.
+
+Login is programmatic FirebaseAuth so the sign-in screen's welcome-voice/LiveKit
+session never starts (it is hostile to the test binding). Suites: the 8-fix run
+(`e2e_behaviors_test.dart`, as Sofia), the seeded `demo-edge-*` corner cases
+(`e2e_edge_test.dart`, as Daniel — matching gates, 0-photo, 0% dealbreaker,
+mutual "Match"), signed-out auth (`e2e_auth_test.dart`), and offline+recovery
+(`e2e_net_test.dart`). Fixtures: `scripts/seed_demo_edge_accounts.py`. Full
+runbook + coverage boundaries: `docs/TESTING_E2E.md`. The host-side screenshot /
+radio-toggle approach deliberately avoids `convertFlutterSurfaceToImage` (it
+froze interaction and hung the run) and needs no app seam — the one exception is
+`ScreenCapture.releaseSemanticsForTest()` (`@visibleForTesting`), which releases
+the app's always-on semantics handle so it doesn't trip flutter_test's
+end-of-test leak check.
 
 ---
 
