@@ -121,10 +121,11 @@ void main() {
     // ---- ZERO: hard-dealbreaker pair report scores 0% + lists why ----
     final zeroOpened = await _openReportForUid(tester, _ageover);
     final zeroShown = find.text('0%').evaluate().isNotEmpty;
-    // New behaviour: the 0% report explains itself ("0% because of
-    // dealbreakers" and each reason). Accept either phrasing.
-    final reasons = find.textContaining('dealbreaker').evaluate().isNotEmpty ||
-        find.textContaining('Dealbreaker').evaluate().isNotEmpty;
+    // New behaviour (fix/dealbreakers-show-not-hide): the 0% report explains
+    // itself — a "Why this is 0%" section listing each dealbreaker reason.
+    // Accept any of the expected phrasings.
+    final reasons = const ['Why this is 0%', 'dealbreaker', 'Dealbreaker', 'Deal-breaker']
+        .any((t) => find.textContaining(t).evaluate().isNotEmpty);
     await shot(tester, 'ZERO');
     if (zeroOpened && zeroShown && reasons) {
       pass('ZERO',
