@@ -183,6 +183,11 @@ flowchart LR
   `VOICE_SKILLS`) tool sets, like the other app-control tools. `open_message_thread` now accepts "last" / "most recent"
   (opens the most recently active thread) and a partial/fuzzy person name (best-match against the thread list, with a
   close-spelling fallback); when more than one thread is equally plausible it asks which rather than silently guessing.
+  `open_profile` / `open_match_report` resolve the person through `app_control._resolve_person`, which now carries the
+  same close-spelling **fuzzy fallback** (a `difflib` ratio ≥ `_FUZZY_NAME_THRESHOLD` = 0.72 on the first names / full
+  strings, ranked strictly below every exact/substring tier): a near-identical name like user-said "Sophia" opens
+  profile "Sofia" directly instead of the old "I couldn't find someone called Sophia" reject-then-confirm (founder bug
+  2026-10-29).
   **Chip-on-success:** the navigation tools (`open_message_thread`, `open_screen`, `open_profile`, `open_match_report`,
   `search_explore`) earn their "Opened …" chip only when the tool result starts with `navigated:`. Any other result
   (not found, the app never navigated) returns `tool_labels.NO_CHIP`, which both surfaces honour — text drops it from
@@ -878,7 +883,7 @@ When a user is talking to Ayma about a specific profile, that profile's `ai_expl
 - Automatically, as `viewing_profile_uid`, when the user opens a chat from a specific profile/match card.
 - Explicitly, when the user shares a profile into an ongoing chat (same mechanism as sharing an image).
 
-The shared builder `public_profile._viewing_profile_context` (also reused by voice via the `current_screen` and `open_profile` tools) deliberately ends with an explicit **DATA YOU HAVE** line — their profile completeness %, whether a compatibility `score` has actually been computed for the pair (`has_match_score`), and whether any public wiki/notes exist. With no computed score and no facts it adds a hard instruction not to assert any match score, compatibility, or that interests/background "align", and to offer to run a match or research instead. This is the grounding that stops the "great match on paper with zero data" hallucination (founder bug 2026-10-25); the matching rule it leans on lives in `persona.md` ("Talking about a match or another member"). Honest tool data, not a persona line alone, is what tells the model what it does and doesn't have.
+The shared builder `public_profile._viewing_profile_context` (also reused by voice via the `current_screen` and `open_profile` tools) deliberately ends with an explicit **DATA YOU HAVE** line — their profile completeness %, whether a compatibility `score` has actually been computed for the pair (`has_match_score`), and whether any public wiki/notes exist. With no computed score and no facts it adds a hard instruction not to assert any match score, compatibility, or that interests/background "align", and to offer to run a match or research instead. This is the grounding that stops the "great match on paper with zero data" hallucination (founder bug 2026-10-25); the matching rule it leans on lives in `persona.md` ("Talking about a match or another member"). Honest tool data, not a persona line alone, is what tells the model what it does and doesn't have. **Score scale (founder bug 2026-10-29):** the `matches.score` field is stored on the **0–1** scale (§ matching below; `report_adapters` multiplies by 100 for the UI), so the briefing must render it as `round(score * 100)/100`. It previously formatted the raw 0–1 value as `round(score)/100`, turning a 0.99 (a 99% match) into "1/100 compatibility" — which the voice agent faithfully called "low" / "one out of one hundred". It now emits the real percent (e.g. `99/100 compatibility`) and states the 0–100 scale (100 = best) so the model never calls a high score low.
 
 ### 5.7 Match storage & lifecycle
 
@@ -1716,7 +1721,7 @@ A behavioral instruction inside the base persona prompt: read the user's tone/en
 
 ### 13.4 System prompt storage
 
-Base persona text (character + mood-mirroring instruction) lives as static content in a new `functions/bootstrap/persona.py`/`.md` file — same "static config in the backend repo" convention as `wiki_schema.json`. Changing Ayma's core character means editing this file and redeploying; no admin-editable prompt store, no A/B testing infrastructure, consistent with the manual-deploy decision in §12.4.
+Base persona text (character + mood-mirroring instruction) lives as static content in a new `functions/bootstrap/persona.py`/`.md` file — same "static config in the backend repo" convention as `wiki_schema.json`. Changing Ayma's core character means editing this file and redeploying; no admin-editable prompt store, no A/B testing infrastructure, consistent with the manual-deploy decision in §12.4. The **"Being shown off (demos)"** section (founder bug 2026-10-29) is a deliberate carve-out from the dating-only scope rule: when the user says they're about to demo Ayma (e.g. at a hackathon), Ayma responds enthusiastically ("Yeah, let's do it! Let's show off what I can do") and offers to run a real capability on the spot — it never goes dismissive ("hackathons aren't really my thing"), because a demo is about Ayma and the app and so is in scope.
 
 ### 13.5 Prompt composition
 

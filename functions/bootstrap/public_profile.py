@@ -368,12 +368,14 @@ def _viewing_profile_context(db, uid: str, other: str) -> str:
         score = mdoc.get("score")
         if isinstance(score, (int, float)):
             has_match_score = True
+            pct = round(float(score) * 100)
             parts.append(
                 f"A compatibility score has been computed for you two: "
-                f"{round(float(score))}/100 compatibility (this is a real, "
-                "computed score — you may cite it). This is a compatibility "
-                "preview, not a mutual match — only call it a 'match' if they "
-                "have mutually liked each other."
+                f"{pct}/100 compatibility (this is a real, "
+                "computed score — you may cite it; it is on a 0–100 scale where "
+                "100 is the best possible match — never describe a high number as low). "
+                "This is a compatibility preview, not a mutual match — only "
+                "call it a 'match' if they have mutually liked each other."
             )
         expl = mdoc.get("ai_explanation", "")
         if expl:
