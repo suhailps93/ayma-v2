@@ -584,6 +584,18 @@ class ScreenCapture {
     AppContext.instance.current.addListener(_onContext);
   }
 
+  /// Releases the always-on semantics handle (acquired in [attach]).
+  ///
+  /// Test-only: the integration-test harness boots the real app and must leave
+  /// no outstanding `SemanticsHandle` at teardown (flutter_test fails the run
+  /// otherwise). Never called in production — semantics stays on for the app's
+  /// lifetime so Ayma can always read the screen.
+  @visibleForTesting
+  void releaseSemanticsForTest() {
+    _semantics?.dispose();
+    _semantics = null;
+  }
+
   void _onContext() {
     final c = AppContext.instance.current.value;
     final key = '${c.screen}|${c.subjectUid}|${c.note}';
