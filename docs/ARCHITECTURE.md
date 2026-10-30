@@ -1630,6 +1630,12 @@ Four client-side perceived-performance improvements, all behind no flag (pure UX
   `DeepDiveActivity`. Every other report type passes no `emptyBuilder`, so a 404 still shows the retry error exactly as
   before. A dive that *ran* but found nothing is NOT a 404 — the adapter returns a real report with a "Nothing found
   yet." block, which renders normally (ran ≠ never run).
+  - **Entry from the profile action rail** (`public_profile_screen.dart`) — the web-research (magnifier-with-sparkle)
+    rail icon only **navigates**; it never calls `POST /deep-dive` itself. A profile with an existing report
+    (`deep_dive_id` non-empty) opens `/deep-dive/<id>`; a profile with none opens `/deep-dive/uid_<uid>`, landing on the
+    "No web research yet" + "Run web search" empty state above. The run starts only when the user taps "Run web search"
+    on that screen — opening the screen to *view* never auto-runs (regression fixed: the icon used to fire the run and
+    jump straight to the "Searching the web…" spinner).
 
 - **Optimistic cold start** (`splash_screen.dart`) — the splash no longer blocks on the full bootstrap. When a cached
   entry route exists for the signed-in uid (`ReportCache.readBootRoute`), it paints that last-known UI immediately and
