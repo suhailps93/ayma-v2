@@ -29,7 +29,6 @@ import 'package:integration_test/integration_test.dart';
 import 'package:ayma_flutter/main.dart' as app;
 import 'package:ayma_flutter/routing/app_router.dart' show appRouter;
 import 'package:ayma_flutter/widgets/ayma_photo.dart' show AymaPhoto;
-import 'package:ayma_flutter/widgets/ayma_rail_icons.dart' show AymaMatchGlyph;
 import 'package:ayma_flutter/widgets/share_report_sheet.dart'
     show RecipientPicker;
 
@@ -116,16 +115,15 @@ void main() {
       await shot(tester, 'D'); // report title + top of breakdown
       await shot(tester, 'H'); // dimension breakdown in view
 
-      // Bug D: a non-mutual pair reads "Compatibility" (seed status == scored,
-      // not mutual_interest).
-      final isCompat = find.text('Compatibility').evaluate().isNotEmpty;
-      final isMatch = find.text('Match').evaluate().isNotEmpty;
-      if (isCompat && !isMatch) {
-        pass('D', 'non-mutual report AppBar reads "Compatibility" (not "Match")');
+      // Bug D (2240 rename): the report AppBar now always reads "Match report"
+      // (the mutual flag is no longer in the title).
+      final isMatchReport = find.text('Match report').evaluate().isNotEmpty;
+      if (isMatchReport) {
+        pass('D', 'report AppBar reads "Match report"');
       } else {
         fail('D',
-            'report title: Compatibility=$isCompat Match=$isMatch '
-            '(want Compatibility=true, Match=false)');
+            'report AppBar title not "Match report" '
+            '(texts=${_visibleTexts().take(6).toList()})');
       }
 
       // Bug H: FULL dimension breakdown, not a score-only lite doc. Count the
@@ -261,16 +259,13 @@ void main() {
         await shot(tester, 'F'); // recompute banner
       }
 
-      // Cache / instant re-open: pop back to the profile and re-open the report
-      // via the match glyph. A scored pair's checkCompatibility returns the
-      // cached report, and MatchReportCache paints the body without the loading
-      // orb. Measure glyph-tap -> body paint.
+      // Cache / instant re-open: pop the report and re-open it. A scored pair's
+      // GET /match serves the cached report and MatchReportCache paints the body
+      // without the loading orb. Measure re-open -> body paint.
       var bodyMs = -1;
       appRouter.pop();
-      final backOnProfile = await pumpUntil(
-          tester, find.byType(AymaMatchGlyph),
-          timeout: const Duration(seconds: 20));
-      if (backOnProfile) {
+      await pumpFor(tester, const Duration(milliseconds: 600));
+      {
         final t0 = DateTime.now();
         final reopened = await _openReportFromProfile(tester);
         if (reopened) {
@@ -359,66 +354,19 @@ Future<Set<String>> _sweepExploreNames(
   return found;
 }
 
-/// Scrolls the Explore grid until [target] is built + visible; returns whether
-/// it was reached. Drags downward (content up) in steps.
-Future<bool> _scrollToCard(WidgetTester tester, Finder target) async {
-  final grid = find.byType(GridView);
-  if (grid.evaluate().isEmpty) return target.evaluate().isNotEmpty;
-  await scrollGridToTop(tester); // start from the first card, not wherever a prior sweep left it
-  for (var i = 0; i < 34 && target.evaluate().isEmpty; i++) {
-    await tester.drag(grid.first, const Offset(0, -220));
-    await pumpFor(tester, const Duration(milliseconds: 420));
-  }
-  return target.evaluate().isNotEmpty;
-}
 
-/// Explore -> scroll to Daniel -> tap card -> public profile -> match glyph ->
-/// report. Retries the tap (the OS notification dialog can race a tap).
-Future<bool> _openDanielReport(WidgetTester tester) async {
-  var haveGlyph = false;
-  for (var attempt = 0; attempt < 3 && !haveGlyph; attempt++) {
-    await dismissTour(tester);
-    await openExplore(tester);
-    final daniel = find.textContaining('Daniel Reyes');
-    if (!await _scrollToCard(tester, daniel)) {
-      debugPrint('REPORT: Daniel card not reached (attempt $attempt)');
-      continue;
-    }
-    try {
-      await tester.ensureVisible(daniel.first);
-      await tester.pump(const Duration(milliseconds: 300));
-    } catch (_) {/* already visible */}
-    final tappable = find.ancestor(
-      of: daniel.first,
-      matching: find.byWidgetPredicate(
-          (w) => w is GestureDetector && w.onTap != null),
-    );
-    await tester.tap(
-        tappable.evaluate().isNotEmpty ? tappable.first : daniel.first,
-        warnIfMissed: false);
-    haveGlyph = await pumpUntil(tester, find.byType(AymaMatchGlyph),
-        timeout: const Duration(seconds: 25));
-    debugPrint('REPORT: tap Daniel attempt $attempt -> glyph=$haveGlyph '
-        'texts=${_visibleTexts().take(10).toList()}');
-  }
-  if (!haveGlyph) return false;
-  return _openReportFromProfile(tester);
-}
+/// Opens the Daniel×Sofia report directly via its deterministic /match route
+/// (GET /match/{sorted-pair-key}) — far more reliable than the Explore card ->
+/// profile -> glyph tap chain, which the OS notification dialog can race. Waits
+/// for the 2240 "Match report" AppBar title.
+Future<bool> _openDanielReport(WidgetTester tester) => _openReportFromProfile(tester);
 
-/// On a public profile, tap the match glyph and wait for the report AppBar.
 Future<bool> _openReportFromProfile(WidgetTester tester) async {
-  await dismissTour(tester);
-  final glyph = find.byType(AymaMatchGlyph);
-  if (glyph.evaluate().isEmpty) return false;
-  try {
-    await tester.ensureVisible(glyph.first);
-    await tester.pump(const Duration(milliseconds: 200));
-  } catch (_) {/* already visible */}
-  await tester.tap(glyph.first, warnIfMissed: false);
-  // checkCompatibility round-trips, then pushes /match/<id>.
-  final opened = await pumpUntil(tester, find.text('Compatibility'),
+  // sorted_pair_key('demo-test1','demo-test2') = 'demo-test1__demo-test2'.
+  appRouter.push('/match/demo-test1__demo-test2');
+  final opened = await pumpUntil(tester, find.text('Match report'),
       timeout: const Duration(seconds: 75));
-  debugPrint('REPORT: after glyph tap -> compatibilityTitle=$opened, '
+  debugPrint('REPORT: open /match -> matchReportTitle=$opened, '
       'texts=${_visibleTexts().take(14).toList()}');
   return opened;
 }

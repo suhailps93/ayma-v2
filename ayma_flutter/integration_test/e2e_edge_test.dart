@@ -146,18 +146,18 @@ void main() {
     await pumpUntil(tester, find.byIcon(Icons.search_rounded),
         timeout: const Duration(seconds: 20));
 
-    // ---- MATCH: mutual-like pair report AppBar reads "Match" ----
+    // ---- MATCH: the mutual-like pair's report opens and renders (2240 shows a
+    // uniform "Match report" AppBar; the mutual flag is no longer in the title).
     final matchOpened = await _openReportForUid(tester, _mutual);
-    final isMatch = find.text('Match').evaluate().isNotEmpty;
-    final isCompat = find.text('Compatibility').evaluate().isNotEmpty;
+    final titleOk = find.text('Match report').evaluate().isNotEmpty;
     await shot(tester, 'MATCH');
-    if (matchOpened && isMatch && !isCompat) {
+    if (matchOpened && titleOk) {
       pass('MATCH',
-          'mutual-like pair report AppBar reads "Match" (not "Compatibility")');
+          'mutual-like pair report opens with the "Match report" AppBar');
     } else {
       fail('MATCH',
-          'reportOpened=$matchOpened, Match=$isMatch, Compatibility=$isCompat '
-          '(want Match=true, Compatibility=false)');
+          'reportOpened=$matchOpened, "Match report" title=$titleOk '
+          '(want both true)');
     }
     appRouter.go('/');
     await pumpUntil(tester, find.byIcon(Icons.search_rounded),
@@ -222,8 +222,7 @@ Future<bool> _openReportForUid(WidgetTester tester, String uid) async {
   final end = DateTime.now().add(const Duration(seconds: 75));
   while (DateTime.now().isBefore(end)) {
     await pumpFor(tester, const Duration(milliseconds: 300));
-    if (find.text('Compatibility').evaluate().isNotEmpty ||
-        find.text('Match').evaluate().isNotEmpty) {
+    if (find.text('Match report').evaluate().isNotEmpty) {
       // Let the score block / breakdown stream in.
       await pumpFor(tester, const Duration(seconds: 6));
       return true;

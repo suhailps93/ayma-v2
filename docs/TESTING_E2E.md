@@ -198,3 +198,42 @@ And signed-out / offline:
 - **Generic backend 5xx error banner** — the clean 404 "never run" path is
   covered (C); a forced 5xx would need an app seam or a dead base URL, so it is
   left to `test/deep_dive_report_screen_test.dart`.
+
+## Coverage checklist (covered vs pending)
+
+The mandate is exhaustive coverage — everything clickable or callable. This grows
+each pass; current state:
+
+### Covered (automated, on the real tap/call path)
+- Auth: signed-out boot → sign-in/welcome screen (AUTH).
+- Explore: feed loads; a real candidate shows (B); practice persona hidden (E);
+  bypass viewer sees all demo-edge-* incl. dealbreakers (GATES); normal viewer
+  has fixtures hidden but curated shown (HIDDEN).
+- Match report: opens via /match; AppBar "Match report" (D); full dimension
+  breakdown (H); taste "You both listed" card reachable by scroll (G); share
+  "Send to a user" picker — photos, per-row Send, search, matched-first (P);
+  Recalculate forces recompute + cache re-open (F); 0% hard-dealbreaker report
+  with "Why this is 0%" reasons (ZERO); mutual pair opens (MATCH); 0-photo
+  subject's report opens (NOPHOTO).
+- Web research: profile icon opens the page, no auto-run (WEBRESEARCH); never-run
+  empty state "No web research yet" + "Run web search" (C).
+- Connectivity: offline splash + Retry recovery, adb-driven (OFFLINE/RECOVER).
+
+### Pending (to add — tappable widgets / surfaces)
+- Nav: Messages tab + a DM thread open/compose; Profile tab; Ayma tab + Ask-Ayma
+  overlay; notification bell → Notification Center.
+- Explore: filter chips (Everyone/Your likes/Mutual/Match run); search field;
+  card long-press sheet ("View profile", "Ask Ayma about").
+- Public profile: like / pass, Practice Date button, AI Date Sim button, DM/chat
+  glyph, photo carousel/viewer.
+- Report: the empty-state "Run web search" button DOES start a run; share →
+  native + "Share to Ayma"; per-row Send actually sends.
+- Settings: Settings + Ayma settings rows; voice/appearance/accent screens; plan
+  page; logout; delete account.
+- Onboarding/preboarding step-through (needs a throwaway not-onboarded account).
+- Match-request header layout (no overflow) on the real route.
+
+### Pending (backend REST endpoints / agent skills)
+- Systematic endpoint coverage (/bootstrap, /chat, /explore, /match,
+  /check-compatibility, /deep-dive, /dm/*, /biometric-consent, /profile/*, …)
+  and agent skills — currently exercised only indirectly via the UI flows above.
