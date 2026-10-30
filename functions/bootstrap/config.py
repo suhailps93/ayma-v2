@@ -127,6 +127,9 @@ class Config:
     (``docs/DEMO_ACCOUNTS.md``). Not a secret."""
 
     all_flags_on_uids: tuple[str, ...]
+    # Viewer uids for whom seeded test-fixture hiding in Explore is disabled
+    # (e2e/demo viewers). Real users never match, so they always get fixtures hidden.
+    explore_fixture_bypass_uids: tuple[str, ...]
     """Firebase uids for which every boolean feature flag resolves ON, honored
     inside ``feature_flags.resolve(name, uid=...)`` without flipping any global
     flag. Scoped to the demo/judge accounts so they can exercise every feature.
@@ -1049,6 +1052,9 @@ def _load() -> Config:
         ),
         all_flags_on_uids=_csv(
             "ALL_FLAGS_ON_UIDS", "demo-test1,demo-test2,demo-test3"
+        ),
+        explore_fixture_bypass_uids=_csv(
+            "EXPLORE_FIXTURE_BYPASS_UIDS", "demo-test1,demo-test2,demo-test3"
         ),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
         dev_panel_password=os.getenv("DEV_PANEL_PASSWORD", ""),

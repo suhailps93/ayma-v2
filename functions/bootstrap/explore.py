@@ -5,7 +5,13 @@ with no orientation or community gating (product decision, 2026-08-30). Blocks,
 paused profiles and already-passed users are removed; deleted accounts have no
 profile doc. Practice-date simulator personas (``demo_practice_*``,
 ``practice_seed.is_practice_persona``) are never real accounts and are excluded
-too. Dropdown filters and a once-per-search NL-parsed filter are applied over
+too. Seeded test fixtures — the ``demo-edge-*`` corner-case accounts
+(flagged ``exclude_from_explore`` on their user doc; ``demo-edge-`` uid
+prefix is a secondary safety net) — are likewise hidden from real users,
+EXCEPT for a designated e2e/demo viewer whose uid is in
+``config.explore_fixture_bypass_uids`` (so the e2e harness can still
+verify a real dealbreaker profile renders). The curated demo set
+``demo-test1/2/3`` carries no such flag and stays visible. Dropdown filters and a once-per-search NL-parsed filter are applied over
 the same structured shape; ``matches`` / ``match_candidates`` overlay a score
 when present.
 
@@ -29,6 +35,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
+import config
 import gemini
 import physical_attributes
 import practice_seed
@@ -138,6 +145,17 @@ _GENDER_ALIASES = {
     "non-binary": "non-binary", "nonbinary": "non-binary", "nb": "non-binary",
     "enby": "non-binary",
 }
+
+
+def _is_test_fixture(uid: str, user_doc: dict) -> bool:
+    """True when ``uid`` is a seeded test fixture that must never appear in a
+    real user's Explore feed. The explicit ``exclude_from_explore`` flag on the
+    top-level user doc is authoritative; the ``demo-edge-`` uid prefix is a
+    secondary safety net for any fixture seeded before the flag existed. The
+    curated demo set (``demo-test1/2/3``) carries neither and stays visible."""
+    if (user_doc or {}).get("exclude_from_explore") is True:
+        return True
+    return str(uid or "").startswith("demo-edge-")
 
 
 def _passes_filters(
@@ -347,6 +365,10 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
 
     cards: list[dict] = []
     seen: set[str] = set()
+    # A designated e2e/demo viewer (config.explore_fixture_bypass_uids) sees
+    # seeded test fixtures so the e2e harness can still verify a real
+    # dealbreaker profile renders in Explore; real users never match.
+    bypass_fixtures = uid in set(config.CONFIG.explore_fixture_bypass_uids)
     for user_snap in db.collection("users").stream():
         other = user_snap.id
         # Explore lists everyone with a profile, the caller included — no
@@ -362,6 +384,15 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             continue
         # Practice-date simulator personas are never real people (BUG E).
         if practice_seed.is_practice_persona(other):
+            continue
+        # Seeded test fixtures (demo-edge-*, flagged exclude_from_explore) must
+        # never reach a real user's Explore. A designated e2e/demo viewer still
+        # sees them (bypass_fixtures). Self is always exempt.
+        if (
+            other != uid
+            and not bypass_fixtures
+            and _is_test_fixture(other, user_snap.to_dict() or {})
+        ):
             continue
         seen.add(other)
         try:
