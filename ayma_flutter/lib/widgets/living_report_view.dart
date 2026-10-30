@@ -175,7 +175,7 @@ class LivingReportView extends StatefulWidget {
   /// signal (`report_hub.get_report` -> `KeyError` -> 404), as opposed to a
   /// 5xx / transport failure of an existing report (which still shows the
   /// "Couldn't load that report." retry). Lets a host screen (web research)
-  /// offer a "Run report" call-to-action instead of an error. When null,
+  /// offer a "Run web search" call-to-action instead of an error. When null,
   /// a never-run 404 falls back to the same retry message as any other load
   /// failure — unchanged behaviour for every report type that doesn't supply
   /// one.
@@ -552,7 +552,7 @@ class LivingReportViewState extends State<LivingReportView>
     final report = _report;
     if (report == null) {
       // A never-run 404 with a host-supplied empty state (web research's
-      // "Run report" call-to-action) shows that instead of the error.
+      // "Run web search" call-to-action) shows that instead of the error.
       if (_neverRun && widget.emptyBuilder != null) {
         return widget.emptyBuilder!(context);
       }

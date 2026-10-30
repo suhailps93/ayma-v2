@@ -1620,7 +1620,7 @@ Four client-side perceived-performance improvements, all behind no flag (pure UX
   5xx / connection-class error on a report that may exist. `LivingReportView` branches on this: an `ApiException` with
   `statusCode == 404` sets `_neverRun` (not `_loadFailed`) and, when the host passes an `emptyBuilder`, renders that
   empty state instead of the "Couldn't load that report." + Retry error. The Web research screen supplies a
-  **"No web research yet" + "Run report"** empty state; "Run report" derives the subject from the report id
+  **"No web research yet" + "Run web search"** empty state; "Run web search" derives the subject from the report id
   (`uid_<subject>` → that uid, the server infers `is_self`; `name_<slug>` → that name) and kicks off the same
   `POST /deep-dive` run as the AppBar "Re-run", then shows the in-progress banner and swaps the result in via
   `DeepDiveActivity`. Every other report type passes no `emptyBuilder`, so a 404 still shows the retry error exactly as
