@@ -657,16 +657,17 @@ def test_match_adapter_carries_score_and_viewers_own_explanation(monkeypatch):
         b["text"] for sec in report["sections"] for b in sec["blocks"] if "text" in b
     )
     assert "Bob's own version" not in full_text
-    # A scored pair (no `status: mutual_interest`) is only a compatibility
-    # preview, so the title/score read "Compatibility", never "Match" (§5.3).
-    assert report["title"] == "Compatibility with Bob Bee"
-    assert blocks["score"]["label"] == "Compatibility score"
+    # The report always reads "Match" — the title and score block say
+    # "Match", for mutual and non-mutual pairs alike (founder reverted the
+    # earlier "Compatibility" wording; §5.3).
+    assert report["title"] == "Match with Bob Bee"
+    assert blocks["score"]["label"] == "Match score"
 
 
-def test_match_adapter_says_match_only_for_a_mutual_pair(monkeypatch):
+def test_match_adapter_says_match_for_a_mutual_pair_too(monkeypatch):
     """A genuine mutual match (`status == mutual_interest`, both liked each
-    other) is the ONLY case that reads "Match" rather than "Compatibility"
-    (§5.3)."""
+    other) reads "Match" — same as every other pair now that the
+    "Compatibility" wording was reverted (§5.3)."""
     doc = dict(_MATCH_DOC)
     doc["status"] = "mutual_interest"
     monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: doc)

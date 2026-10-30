@@ -832,6 +832,7 @@ class ProfileBody extends StatelessWidget {
     this.headerLoading = false,
     this.bottomPadding = 0,
     this.editing,
+    this.leading,
   });
 
   final String reportType;
@@ -840,6 +841,11 @@ class ProfileBody extends StatelessWidget {
   final PublicProfile? profile;
   final bool headerLoading;
   final double bottomPadding;
+
+  /// An optional card rendered as the first scrolling item, above the photo
+  /// header (e.g. the match-request screen's "Ayma's case" card). Null
+  /// everywhere else.
+  final Widget? leading;
 
   /// Inline photo editing for the owner's own profile only (null elsewhere —
   /// see [ProfilePhotoHeader.editing]).
@@ -852,6 +858,7 @@ class ProfileBody extends StatelessWidget {
     return ListView(
       padding: EdgeInsets.only(bottom: bottomPadding),
       children: [
+        if (leading != null) leading!,
         if (headerLoading)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 48),

@@ -206,4 +206,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('No new matches yet'), findsOneWidget);
   });
+
+  testWidgets("the match-request header card (score + a long explanation) lays out without overflow at a small screen, above the profile", (WidgetTester tester) async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    binding.platformDispatcher.views.first.physicalSize = const Size(320, 568);
+    addTearDown(() => binding.platformDispatcher.views.first.resetPhysicalSize());
+
+    const longExplain = 'Since you both want a calm home life and value directness, and share a love of the outdoors, late films and slow mornings — this looks like a genuinely strong fit across the dimensions that matter most to each of you. ';
+    final m = MatchView(
+      matchId: 'a__me',
+      otherUid: 'a',
+      otherName: 'Robin',
+      score: 0.0,
+      myExplanation: longExplain,
+      status: 'scored',
+    );
+    final svc = _FakeMatchService(const [], byId: {'a__me': m});
+
+    await tester.pumpWidget(MaterialApp(home: MatchDetailScreen(matchId: 'a__me', service: svc, api: _fakeApi())));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('0% match'), findsOneWidget);
+    expect(find.textContaining('Since you both want a calm home life'), findsWidgets);
+    expect(find.text('Robin'), findsWidgets);
+  });
 }
