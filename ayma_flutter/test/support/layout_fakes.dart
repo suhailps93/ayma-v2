@@ -199,7 +199,10 @@ Object? _bodyFor(String path) {
     };
   }
   if (path == '/explore') {
-    return {'cards': [for (var i = 0; i < 6; i++) _card(i)]};
+    return {
+      'candidates': [for (var i = 0; i < 6; i++) _card(i)],
+      'next_cursor': null,
+    };
   }
   if (path.startsWith('/explore/profile/')) return _profile();
   if (path == '/profiles/mini') {

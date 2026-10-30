@@ -29,6 +29,10 @@ class TourAnchors {
   /// The Explore tab (taste matches / Qloo, date rehearsal).
   static const exploreTab = 'explore_tab';
 
+  /// The "Potential matches" chip inside Explore — toggles the feed from
+  /// Everyone to the viewer's preboarding-heuristic matches.
+  static const exploreModeToggle = 'explore_mode_toggle';
+
   /// The Messages tab (chats + the in-chat coach).
   static const messagesTab = 'messages_tab';
 

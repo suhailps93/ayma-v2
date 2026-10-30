@@ -122,6 +122,15 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.exploreTab,
   ),
   TourFeature(
+    featureId: 'explore_everyone_vs_matches',
+    headline: 'Everyone, or just your matches',
+    subtitle: 'Explore shows everyone by default — tap Potential matches to '
+        'narrow it to people who fit your preferences.',
+    icon: Icons.tune_rounded,
+    anchorId: TourAnchors.exploreModeToggle,
+    tab: 1,
+  ),
+  TourFeature(
     featureId: 'date_sim',
     headline: 'Practice before you meet',
     subtitle: 'In Explore, watch your AIs feel each other out, see the score, '

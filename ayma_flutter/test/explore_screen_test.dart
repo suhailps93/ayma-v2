@@ -14,12 +14,18 @@ import 'package:http/testing.dart';
 ApiClient _api(
   List<Map<String, dynamic>> Function(Uri uri) cards, {
   void Function(String path)? onPost,
+  String? Function(Uri uri)? nextCursor,
 }) {
   return ApiClient(
     auth: MockFirebaseAuth(signedIn: true),
     httpClient: MockClient((req) async {
       if (req.url.path == '/explore') {
-        return http.Response(jsonEncode({'cards': cards(req.url)}), 200);
+        return http.Response(
+            jsonEncode({
+              'candidates': cards(req.url),
+              'next_cursor': nextCursor?.call(req.url),
+            }),
+            200);
       }
       if (req.method == 'POST') {
         onPost?.call(req.url.path);
@@ -162,7 +168,7 @@ void main() {
   });
 
   testWidgets(
-      'tapping a selected filter chip again deselects it back to Everyone',
+      'sub-filter chips toggle over the feed while the mode stays Everyone',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
@@ -181,29 +187,28 @@ void main() {
         find.ancestor(
             of: find.text(label), matching: find.byType(ChoiceChip)));
 
-    // Default: "Everyone" selected, both cards showing.
+    // Default: the "Everyone" mode is selected, no sub-filter, both cards show.
     expect(chipFor('Everyone').selected, isTrue);
+    expect(chipFor('Potential matches').selected, isFalse);
     expect(find.text('Ash'), findsOneWidget);
     expect(find.text('Bo'), findsOneWidget);
 
-    // Tap "Mutual" — selects it and narrows the feed.
+    // Tap "Mutual" — narrows the feed client-side; the mode stays Everyone.
     await tester.tap(find.text('Mutual'));
     await tester.pumpAndSettle();
     expect(chipFor('Mutual').selected, isTrue);
-    expect(chipFor('Everyone').selected, isFalse);
+    expect(chipFor('Everyone').selected, isTrue); // mode is independent
     expect(find.text('Ash'), findsOneWidget);
     expect(find.text('Bo'), findsNothing);
 
-    // Tap "Mutual" again — deselects it, reverting to the Everyone default.
+    // Tap "Mutual" again — clears the sub-filter, whole feed back.
     await tester.tap(find.text('Mutual'));
     await tester.pumpAndSettle();
     expect(chipFor('Mutual').selected, isFalse);
-    expect(chipFor('Everyone').selected, isTrue);
     expect(find.text('Ash'), findsOneWidget);
     expect(find.text('Bo'), findsOneWidget);
 
-    // Re-select "Mutual", then tap a *different* chip directly — it should
-    // switch cleanly without needing to deselect first.
+    // Re-select "Mutual", then tap a *different* sub-filter — switches cleanly.
     await tester.tap(find.text('Mutual'));
     await tester.pumpAndSettle();
     expect(chipFor('Mutual').selected, isTrue);
@@ -214,6 +219,107 @@ void main() {
     expect(chipFor('Your likes').selected, isTrue);
     expect(find.text('Ash'), findsNothing);
     expect(find.text('Bo'), findsOneWidget);
+  });
+
+  testWidgets('the first page loads with mode=everyone and limit=20',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final requests = <Uri>[];
+    final api = _api((uri) {
+      requests.add(uri);
+      return const [];
+    });
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    expect(requests, isNotEmpty);
+    expect(requests.first.queryParameters['mode'], 'everyone');
+    expect(requests.first.queryParameters['limit'], '20');
+    expect(requests.first.queryParameters.containsKey('cursor'), isFalse);
+  });
+
+  testWidgets('tapping "Potential matches" refetches with mode=matches',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final requests = <Uri>[];
+    final api = _api((uri) {
+      requests.add(uri);
+      return const [];
+    });
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+    expect(requests.last.queryParameters['mode'], 'everyone');
+
+    await tester.tap(find.text('Potential matches'));
+    await tester.pumpAndSettle();
+
+    expect(requests.last.queryParameters['mode'], 'matches');
+    final chip = tester.widget<ChoiceChip>(find.ancestor(
+        of: find.text('Potential matches'), matching: find.byType(ChoiceChip)));
+    expect(chip.selected, isTrue);
+  });
+
+  testWidgets(
+      'scrolling to the bottom fetches the next page with the cursor and '
+      'appends it', (tester) async {
+    // A short viewport so the first page overflows and the grid can scroll.
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final requests = <Uri>[];
+    final api = _api(
+      (uri) {
+        requests.add(uri);
+        final cursor = uri.queryParameters['cursor'];
+        if (cursor == null) {
+          // Page 1: a full page of "A" people.
+          return [
+            for (var i = 0; i < 12; i++)
+              {'uid': 'a$i', 'name': 'Alpha$i', 'age': 25, 'location': 'X'},
+          ];
+        }
+        // Page 2 (cursor sent): the "B" people, no further pages.
+        return [
+          for (var i = 0; i < 6; i++)
+            {'uid': 'b$i', 'name': 'Beta$i', 'age': 26, 'location': 'Y'},
+        ];
+      },
+      // Page 1 advertises a next page; page 2 is the last.
+      nextCursor: (uri) =>
+          uri.queryParameters['cursor'] == null ? 'cursor-2' : null,
+    );
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    expect(requests.length, 1);
+    expect(find.text('Alpha0'), findsOneWidget);
+    expect(find.text('Beta0'), findsNothing);
+
+    // Drag the grid to the bottom — fires the infinite-scroll fetch.
+    await tester.drag(
+        find.byType(CustomScrollView), const Offset(0, -6000));
+    await tester.pumpAndSettle();
+
+    expect(requests.length, 2);
+    expect(requests.last.queryParameters['cursor'], 'cursor-2');
+    expect(requests.last.queryParameters['mode'], 'everyone');
+
+    // The second page is appended, not replacing the first: scroll down to the
+    // freshly-appended rows and the first page's people are still reachable.
+    await tester.drag(
+        find.byType(CustomScrollView), const Offset(0, -6000));
+    await tester.pumpAndSettle();
+    expect(find.text('Beta5'), findsOneWidget);
+    // No third fetch — page 2 was the last (next_cursor was null).
+    expect(requests.length, 2);
   });
 
   testWidgets('tapping the card body opens that user\'s profile',

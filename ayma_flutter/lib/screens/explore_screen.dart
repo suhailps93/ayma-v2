@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
+import '../services/tour_anchors.dart';
 import '../theme.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/ayma_photo.dart';
@@ -15,7 +16,12 @@ import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
 /// Explore — the live filtered feed (§6.1, §6.4, §6.11 step 6). Text search is
-/// parsed server-side; the hair-colour chips are exact dropdown filters.
+/// parsed server-side; the feed defaults to "Everyone" (every profile, no
+/// preference filtering) and can be switched to "Potential matches" (the
+/// server applies the viewer's preboarding heuristics — gender/interested_in,
+/// age range, location). The feed is paginated: the first page is 20 cards and
+/// scrolling near the bottom fetches the next page via the opaque cursor, so
+/// load time is independent of the total user count.
 ///
 /// Laid out as the design's two-column card grid: a photo (or a seeded gradient
 /// when there's none), a serif name, and the location in mono.
@@ -34,7 +40,15 @@ class ExploreScreen extends StatefulWidget {
   State<ExploreScreen> createState() => ExploreScreenState();
 }
 
-enum _Filter { all, liked, mutual, scored }
+/// The feed's server-side mode: [everyone] (default — every profile, no
+/// preference filtering) or [matches] (only profiles passing the viewer's
+/// preboarding heuristics). Switching modes refetches from the first page.
+enum _Mode { everyone, matches }
+
+/// A client-side narrowing of the loaded feed, orthogonal to the server
+/// [_Mode]: [none] shows the whole loaded feed; the rest filter it by the
+/// viewer's like state / score.
+enum _SubFilter { none, liked, mutual, scored }
 
 /// Public so [MainShellScreen] — which keeps this screen alive across tab
 /// switches in an `IndexedStack` rather than rebuilding it — can reach in and
@@ -45,25 +59,43 @@ enum _Filter { all, liked, mutual, scored }
 class ExploreScreenState extends State<ExploreScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
   Timer? _debounce;
 
   bool _loading = true;
   String? _error;
   List<ExploreCard> _cards = const [];
-  _Filter _filter = _Filter.all;
+  _Mode _mode = _Mode.everyone;
+  _SubFilter _subFilter = _SubFilter.none;
+
+  /// Opaque pagination token for the next page, or null when the current feed
+  /// has no more pages (first page not yet loaded is also null until [_load]).
+  String? _nextCursor;
+  bool _loadingMore = false;
+  static const _pageSize = 20;
 
   List<ExploreCard> get _visibleCards {
-    if (_filter == _Filter.all) return _cards;
+    if (_subFilter == _SubFilter.none) return _cards;
     return _cards.where((c) {
       if (c.isSelf) return true; // your card always shows
-      return switch (_filter) {
-        _Filter.liked => c.liked,
-        _Filter.mutual => c.mutual,
-        _Filter.scored => c.score != null,
-        _Filter.all => true,
+      return switch (_subFilter) {
+        _SubFilter.liked => c.liked,
+        _SubFilter.mutual => c.mutual,
+        _SubFilter.scored => c.score != null,
+        _SubFilter.none => true,
       };
     }).toList();
   }
+
+  /// The label describing the active view — the sub-filter when one is on,
+  /// otherwise the server mode. Rides along as voice screen context.
+  String get _currentFilterLabel => switch (_subFilter) {
+        _SubFilter.none =>
+          _mode == _Mode.matches ? 'Potential matches' : 'Everyone',
+        _SubFilter.liked => 'Your likes',
+        _SubFilter.mutual => 'Mutual',
+        _SubFilter.scored => 'Match run',
+      };
 
   @override
   void initState() {
@@ -73,18 +105,12 @@ class ExploreScreenState extends State<ExploreScreen> {
         : (AppContext.instance.pendingExploreQuery ?? '').trim();
     AppContext.instance.pendingExploreQuery = null;
     if (seed.isNotEmpty) _searchController.text = seed;
+    _scrollController.addListener(_onScroll);
     _syncContext();
     _load();
   }
 
-  static const _filterLabels = {
-    _Filter.all: 'Everyone',
-    _Filter.liked: 'Your likes',
-    _Filter.mutual: 'Mutual',
-    _Filter.scored: 'Match run',
-  };
-
-  /// Mirrors what the grid shows (query, active chip, the people) into the
+  /// Mirrors what the grid shows (query, active view, the people) into the
   /// screen context Ayma reads, so she can describe the page.
   void _syncContext() {
     AppContext.instance.set(
@@ -94,7 +120,7 @@ class ExploreScreenState extends State<ExploreScreen> {
           ? ''
           : exploreSummary(
               query: _searchController.text,
-              filterLabel: _filterLabels[_filter]!,
+              filterLabel: _currentFilterLabel,
               cards: _visibleCards,
             ),
     );
@@ -104,25 +130,33 @@ class ExploreScreenState extends State<ExploreScreen> {
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  /// Refetch the feed — called by [_load] itself, and by [MainShellScreen]
-  /// each time this tab becomes visible again after the first build (a
-  /// re-selected tab, or Android back landing on it). A fetch already in
-  /// flight is left alone rather than raced against a second one.
+  /// Refetch the feed from the first page — called by [_load] itself, and by
+  /// [MainShellScreen] each time this tab becomes visible again after the
+  /// first build (a re-selected tab, or Android back landing on it). A fetch
+  /// already in flight is left alone rather than raced against a second one.
   Future<void> reload() => _loading ? Future<void>.value() : _load();
 
+  /// Load the first page of the current mode/query, replacing the feed and
+  /// resetting the pagination cursor.
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final cards = await _api.explore(q: _searchController.text.trim());
+      final page = await _api.explore(
+        q: _searchController.text.trim(),
+        mode: _mode == _Mode.matches ? 'matches' : 'everyone',
+        limit: _pageSize,
+      );
       if (!mounted) return;
       setState(() {
-        _cards = cards;
+        _cards = page.cards;
+        _nextCursor = page.nextCursor;
         _loading = false;
       });
       _syncContext();
@@ -130,7 +164,7 @@ class ExploreScreenState extends State<ExploreScreen> {
         query: _searchController.text.trim(),
         summary: exploreSummary(
           query: _searchController.text,
-          filterLabel: _filterLabels[_filter]!,
+          filterLabel: _currentFilterLabel,
           cards: _visibleCards,
         ),
       );
@@ -143,10 +177,67 @@ class ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
+  /// Fires as the grid scrolls; once within 400px of the bottom and there's a
+  /// next page, fetches it.
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    if (pos.pixels >= pos.maxScrollExtent - 400 &&
+        _nextCursor != null &&
+        !_loadingMore &&
+        !_loading) {
+      _loadMore();
+    }
+  }
+
+  /// Fetch and append the next page. A failed page-fetch keeps the feed we
+  /// already have rather than blowing it away.
+  Future<void> _loadMore() async {
+    if (_loadingMore || _loading || _nextCursor == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      final page = await _api.explore(
+        q: _searchController.text.trim(),
+        mode: _mode == _Mode.matches ? 'matches' : 'everyone',
+        limit: _pageSize,
+        cursor: _nextCursor,
+      );
+      if (!mounted) return;
+      setState(() {
+        _cards = [..._cards, ...page.cards];
+        _nextCursor = page.nextCursor;
+        _loadingMore = false;
+      });
+      _syncContext();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
+    }
+  }
+
   void _onSearchChanged(String _) {
     _syncContext();
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), _load);
+  }
+
+  /// Switch the server mode and refetch from the first page. A tap on the
+  /// already-active mode is a no-op (modes are a radio — one is always on).
+  void _setMode(_Mode mode) {
+    if (_mode == mode) return;
+    setState(() {
+      _mode = mode;
+      _subFilter = _SubFilter.none;
+    });
+    _load();
+  }
+
+  /// Toggle a client-side sub-filter over the loaded feed; tapping the active
+  /// one clears it back to the whole feed.
+  void _toggleSubFilter(_SubFilter filter) {
+    setState(() =>
+        _subFilter = _subFilter == filter ? _SubFilter.none : filter);
+    _syncContext();
   }
 
   @override
@@ -186,25 +277,62 @@ class ExploreScreenState extends State<ExploreScreen> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
-                  for (final f in _Filter.values)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(switch (f) {
-                          _Filter.all => 'Everyone',
-                          _Filter.liked => 'Your likes',
-                          _Filter.mutual => 'Mutual',
-                          _Filter.scored => 'Match run',
-                        }),
-                        selected: _filter == f,
-                        onSelected: (_) {
-                          setState(
-                              () => _filter = _filter == f ? _Filter.all : f);
-                          _syncContext();
-                        },
-                        visualDensity: VisualDensity.compact,
-                      ),
+                  // The two server modes (radio): Everyone (default) and
+                  // Potential matches (preboarding heuristics).
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: const Text('Everyone'),
+                      selected: _mode == _Mode.everyone,
+                      onSelected: (_) => _setMode(_Mode.everyone),
+                      visualDensity: VisualDensity.compact,
                     ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      key: TourAnchors.keyFor(TourAnchors.exploreModeToggle),
+                      label: const Text('Potential matches'),
+                      selected: _mode == _Mode.matches,
+                      onSelected: (_) => _setMode(_Mode.matches),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4),
+                    child: SizedBox(
+                      height: 20,
+                      child: VerticalDivider(width: 1),
+                    ),
+                  ),
+                  // Client-side sub-filters over the loaded feed.
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: const Text('Your likes'),
+                      selected: _subFilter == _SubFilter.liked,
+                      onSelected: (_) => _toggleSubFilter(_SubFilter.liked),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: const Text('Mutual'),
+                      selected: _subFilter == _SubFilter.mutual,
+                      onSelected: (_) => _toggleSubFilter(_SubFilter.mutual),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: const Text('Match run'),
+                      selected: _subFilter == _SubFilter.scored,
+                      onSelected: (_) => _toggleSubFilter(_SubFilter.scored),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -222,7 +350,7 @@ class ExploreScreenState extends State<ExploreScreen> {
                   : _visibleCards.isEmpty
                       ? Center(
                           child: Text(
-                              _filter == _Filter.all
+                              _subFilter == _SubFilter.none
                                   ? 'No one matches that yet.'
                                   : 'Nothing here for this filter.',
                               style: AymaType.sans(
@@ -230,29 +358,58 @@ class ExploreScreenState extends State<ExploreScreen> {
                                   soft: true,
                                   color: ac.fgMute)),
                         )
-                      : GridView.builder(
-                          // Search field above: dragging the results
-                          // away dismisses the keyboard (iOS has no
-                          // dismiss key).
+                      : CustomScrollView(
+                          // Search field above: dragging the results away
+                          // dismisses the keyboard (iOS has no dismiss key).
+                          controller: _scrollController,
                           keyboardDismissBehavior:
                               ScrollViewKeyboardDismissBehavior.onDrag,
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                          // Two columns on a phone; more on the Fold's inner
-                          // display, a tablet or landscape, instead of two
-                          // giant cards.
-                          gridDelegate:
-                              const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 240,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 0.66,
-                          ),
-                          itemCount: _visibleCards.length,
-                          itemBuilder: (context, i) => FadeSlideIn(
-                            delay: staggerDelay(i),
-                            child:
-                                _Card(card: _visibleCards[i], api: _api),
-                          ),
+                          slivers: [
+                            SliverPadding(
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                              // Two columns on a phone; more on the Fold's
+                              // inner display, a tablet or landscape, instead
+                              // of two giant cards.
+                              sliver: SliverGrid(
+                                gridDelegate:
+                                    const SliverGridDelegateWithMaxCrossAxisExtent(
+                                  maxCrossAxisExtent: 240,
+                                  mainAxisSpacing: 12,
+                                  crossAxisSpacing: 12,
+                                  childAspectRatio: 0.66,
+                                ),
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, i) => FadeSlideIn(
+                                    delay: staggerDelay(i),
+                                    child: _Card(
+                                        card: _visibleCards[i], api: _api),
+                                  ),
+                                  childCount: _visibleCards.length,
+                                ),
+                              ),
+                            ),
+                            // The infinite-scroll footer: a spinner while the
+                            // next page loads, otherwise just tail padding.
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                                child: _loadingMore
+                                    ? const Center(
+                                        child: Padding(
+                                          padding: EdgeInsets.all(8),
+                                          child: SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2),
+                                          ),
+                                        ),
+                                      )
+                                    : const SizedBox(height: 8),
+                              ),
+                            ),
+                          ],
                         ),
           headerShare: 0.5,
           footerShare: 0.5,

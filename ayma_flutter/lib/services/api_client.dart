@@ -211,13 +211,28 @@ class ApiClient {
     );
   }
 
-  /// `GET /explore` — the live filtered feed (§6.1). [q] is a natural-language
-  /// search parsed once server-side; [filters] are exact dropdown values.
-  Future<List<ExploreCard>> explore({
+  /// `GET /explore` — one page of the live feed (§6.1). [q] is a
+  /// natural-language search parsed once server-side; [mode] is `everyone`
+  /// (default — every profile, no preference filtering) or `matches` (only
+  /// profiles passing the viewer's preboarding heuristics); [cursor] is the
+  /// opaque pagination token from a prior page's [ExplorePage.nextCursor]
+  /// (omit for the first page); [limit] caps the page size; [filters] are
+  /// exact dropdown values. Tolerates the legacy `cards` (no cursor) response
+  /// shape so Explore never breaks mid-rollout of the paginated backend.
+  Future<ExplorePage> explore({
     String q = '',
+    String mode = 'everyone',
+    int limit = 20,
+    String? cursor,
     Map<String, String> filters = const {},
   }) async {
-    final params = <String, String>{if (q.isNotEmpty) 'q': q, ...filters};
+    final params = <String, String>{
+      if (q.isNotEmpty) 'q': q,
+      'mode': mode,
+      'limit': '$limit',
+      if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+      ...filters,
+    };
     final uri = _uri('/explore').replace(queryParameters: params);
     final response = await _http.get(uri, headers: await _headers());
     if (response.statusCode != 200) {
@@ -228,9 +243,14 @@ class ApiClient {
       );
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    return ((decoded['cards'] as List?) ?? [])
-        .map((c) => ExploreCard.fromMap(c as Map<String, dynamic>))
-        .toList();
+    final list =
+        (decoded['candidates'] ?? decoded['cards']) as List? ?? const [];
+    return ExplorePage(
+      cards: list
+          .map((c) => ExploreCard.fromMap(c as Map<String, dynamic>))
+          .toList(),
+      nextCursor: decoded['next_cursor'] as String?,
+    );
   }
 
   /// `GET /explore/profile/{uid}` — another user's public profile: photos,
@@ -2574,6 +2594,15 @@ class BiometricConsentStatus {
   final String consentVersion;
   final DateTime? consentedAt;
   final String region;
+}
+
+/// One page of the Explore feed (§6.4): the [cards] plus the opaque
+/// [nextCursor] to fetch the following page (null = no more pages).
+class ExplorePage {
+  const ExplorePage({required this.cards, this.nextCursor});
+
+  final List<ExploreCard> cards;
+  final String? nextCursor;
 }
 
 /// One Explore feed card (§6.4).
