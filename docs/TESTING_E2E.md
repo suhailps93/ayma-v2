@@ -12,9 +12,13 @@ Suite lives in `ayma_flutter/integration_test/`:
 | `helpers.dart` | Shared login + navigation + screenshot + error-draining helpers (no tests). |
 | `smoke_login_test.dart` | Boots the app, signs in as Daniel, confirms the main shell + Explore feed load. Run this first to confirm the device/backend are healthy. |
 | `e2e_behaviors_test.dart` | The 8-behaviour regression run (signed in as Sofia). Streams a result marker per behaviour and prints a PASS/FAIL table; fails the run if any behaviour regressed. |
+| `e2e_edge_test.dart` | Corner cases against the seeded `demo-edge-*` fixtures (signed in as Daniel): matching gate exclusions, 0-photo profile, 0% hard-dealbreaker report, mutual "Match" title. |
+| `e2e_auth_test.dart` | Signed-out boot lands on the sign-in / welcome screen. |
+| `e2e_net_test.dart` | Offline splash + recovery, driven host-side via `adb svc wifi/data` (only meaningful under `run_e2e.sh`; self-skips standalone). |
 
 Plus the runner `ayma_flutter/tool/run_e2e.sh` and report generator
-`ayma_flutter/tool/e2e_report.py`.
+`ayma_flutter/tool/e2e_report.py`, and the fixture seed
+`scripts/seed_demo_edge_accounts.py`.
 
 ## Prerequisites
 
@@ -26,6 +30,18 @@ Plus the runner `ayma_flutter/tool/run_e2e.sh` and report generator
 - The demo accounts seeded (see `docs/DEMO_ACCOUNTS.md`): `test1@gmail.com`
   (Daniel), `test2@gmail.com` (Sofia), `test3@gmail.com` (Priya), password
   `Test123` for all three. Email verification is bypassed for these.
+- The corner-case fixtures seeded (for `e2e_edge_test.dart`), idempotent and
+  reversible, against live Firestore with ADC (`gcloud auth
+  application-default login`):
+
+  ```bash
+  python3 scripts/seed_demo_edge_accounts.py          # create / update
+  python3 scripts/seed_demo_edge_accounts.py --reset  # wipe demo-edge-* + rebuild
+  ```
+
+  These are six `demo-edge-*` profiles Daniel views: a 0-photo valid account, an
+  age-at-floor pass, and four hard-dealbreaker fails (age-over-max, one-sided
+  orientation, out-of-radius location) plus a mutual-like pair.
 
 ## Running
 
@@ -108,14 +124,32 @@ Signed in as **Sofia (test2)**, the demo data lets one session exercise:
 - **C** — routing to a never-researched subject shows "No web research yet" +
   "Run report" (not the error state).
 
-Branches the seed data cannot produce are **not** driven here and are covered by
-the in-tree widget/unit tests instead:
+The corner cases the three complete demo accounts can't express are driven
+against the seeded `demo-edge-*` fixtures (signed in as Daniel), in
+`e2e_edge_test.dart`:
 
-- **D (mutual → "Match")** — the seeded matches are `status: scored`
-  (non-mutual), so the "Match" title never appears from demo data; see
-  `test/match_report_screen_test.dart`.
-- **B (hard-dealbreaker → 0% report)** — no demo pair violates the
-  gender/age/location gates (Daniel×Priya is a *soft* cap, ~25%, not a 0% hard
-  dealbreaker); see the backend `functions/bootstrap/tests` match tests.
-- **C (real 5xx → error + Retry)** — needs an induced transport failure; see
-  `test/deep_dive_report_screen_test.dart`.
+- **GATES** — Explore excludes the hard-dealbreaker edges (age-over-max,
+  one-sided orientation, out-of-radius location) and includes the valid ones.
+- **NOPHOTO** — a 0-photo but valid profile appears in Explore and its report
+  opens (distinct from the practice-persona exclusion).
+- **ZERO** — a hard-dealbreaker pair's report scores 0% (bug B's 0% path).
+- **MATCH** — a mutual-like pair's report AppBar reads "Match" (bug D's mutual
+  path, which `status: scored` demo data can't show).
+
+And signed-out / offline:
+
+- **AUTH** — signed-out boot lands on the sign-in / welcome screen
+  (`e2e_auth_test.dart`).
+- **OFFLINE / RECOVER** — the splash's "Couldn't connect" + Retry state and its
+  connectivity-return recovery, driven host-side by toggling the device radios
+  with `adb svc wifi/data` (`e2e_net_test.dart`, only under `run_e2e.sh`).
+
+### Known boundaries
+
+- **Preboarding / onboarding step-through** — reaching the interview flow needs a
+  not-yet-onboarded account; the welcome/auth entry is covered (AUTH), but
+  driving the multi-step preboarding itself is a follow-up (it would create and
+  mutate throwaway accounts on every run).
+- **Generic backend 5xx error banner** — the clean 404 "never run" path is
+  covered (C); a forced 5xx would need an app seam or a dead base URL, so it is
+  left to `test/deep_dive_report_screen_test.dart`.

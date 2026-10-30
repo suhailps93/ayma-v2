@@ -183,6 +183,20 @@ Future<void> settleHarness(WidgetTester tester) async {
   await pumpFor(tester, const Duration(seconds: 1));
 }
 
+/// Signs out via FirebaseAuth (for the signed-out auth/onboarding flow). Inits
+/// Firebase first so it works before `app.main()` runs.
+Future<void> signOutForTest() async {
+  try {
+    await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform);
+  } catch (_) {/* already initialised */}
+  try {
+    await FirebaseAuth.instance.signOut();
+  } catch (e) {
+    debugPrint('HARNESS: signOut failed: $e');
+  }
+}
+
 /// Waits for the signed-in main shell (the Explore tab's search icon) to
 /// appear after [bootApp]; returns whether it did within [timeout].
 Future<bool> awaitShell(

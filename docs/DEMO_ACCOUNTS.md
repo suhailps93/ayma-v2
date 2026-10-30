@@ -80,6 +80,16 @@ Both are limited to exactly these accounts and change nothing globally
    reader (`feature_flags.resolve(name, uid=…)`), **without flipping any global
    flag**.
 
+## Corner-case fixtures (E2E harness)
+
+The autonomous E2E harness (`docs/TESTING_E2E.md`) also drives six idempotent,
+reversible `demo-edge-*` accounts that Daniel views, seeded by
+`scripts/seed_demo_edge_accounts.py` (a 0-photo valid account, an age-at-floor
+pass, and age-over-max / one-sided-orientation / out-of-radius / mutual-like
+cases). They are view-only test fixtures, not login accounts, and live only to
+exercise the matching gates, the 0% hard-dealbreaker report and the mutual
+"Match" title. Reset with `--reset`.
+
 ## Rebuilding / resetting
 
 Run from the repo root with Application Default Credentials for `ayma-ai`
