@@ -45,12 +45,12 @@ void main() {
   final results = <String, String>{};
   void pass(String k, String d) {
     results[k] = 'PASS — $d';
-    debugPrint('E2E_RESULT $k PASS $d');
+    emit('E2E_RESULT $k PASS $d');
   }
 
   void fail(String k, String d) {
     results[k] = 'FAIL — $d';
-    debugPrint('E2E_RESULT $k FAIL $d');
+    emit('E2E_RESULT $k FAIL $d');
   }
 
   testWidgets('corner cases GATES/NOPHOTO/ZERO/MATCH (Daniel + demo-edge-*)',
@@ -74,30 +74,31 @@ void main() {
     await _scrollExplore(tester);
 
     bool shown(String name) => find.textContaining(name).evaluate().isNotEmpty;
-    final included = {
-      _nophotoName: shown(_nophotoName),
-      _ageminName: shown(_ageminName),
-      _mutualName: shown(_mutualName),
-    };
-    final excluded = {
-      _ageoverName: shown(_ageoverName),
-      _orientName: shown(_orientName),
-      _locoutName: shown(_locoutName),
+    // Product correction (founder, 2026-10-29): Explore now SHOWS everyone,
+    // including hard-dealbreaker profiles — the score enforces the dealbreaker
+    // (0% + reasons), it is no longer hidden from the feed. So every seeded
+    // edge account (valid AND dealbreaker) must appear; only practice personas
+    // stay excluded (covered by the Sofia suite's E / "Maya"). Depends on the
+    // backend branch fix/dealbreakers-show-not-hide.
+    final roster = {
+      for (final n in [
+        _nophotoName, _ageminName, _mutualName, // valid
+        _ageoverName, _orientName, _locoutName, // dealbreakers (now shown)
+      ])
+        n: shown(n),
     };
     await shot(tester, 'GATES');
-    final allIncluded = included.values.every((v) => v);
-    final noneExcluded = excluded.values.every((v) => !v);
-    if (allIncluded && noneExcluded) {
+    if (roster.values.every((v) => v)) {
       pass('GATES',
-          'Explore includes valid edges $included and excludes '
-          'hard-dealbreaker edges $excluded');
+          'Explore shows all profiles incl. hard-dealbreaker ones (score '
+          'enforces the gate, not hiding): $roster');
     } else {
       fail('GATES',
-          'Explore roster wrong: included=$included (want all true), '
-          'excluded=$excluded (want all false)');
+          'Explore roster incomplete: $roster (want all true — dealbreaker '
+          'profiles must SHOW; pending backend fix/dealbreakers-show-not-hide)');
     }
 
-    if (included[_nophotoName]!) {
+    if (roster[_nophotoName]!) {
       // 0-photo card present; confirm its report opens (profile with no images).
       final opened = await _openReportForUid(tester, _nophoto);
       final notZero = !find.text('0%').evaluate().isNotEmpty;
@@ -117,16 +118,21 @@ void main() {
       fail('NOPHOTO', '0-photo account "$_nophotoName" not in Explore');
     }
 
-    // ---- ZERO: hard-dealbreaker pair report scores 0% ----
+    // ---- ZERO: hard-dealbreaker pair report scores 0% + lists why ----
     final zeroOpened = await _openReportForUid(tester, _ageover);
     final zeroShown = find.text('0%').evaluate().isNotEmpty;
+    // New behaviour: the 0% report explains itself ("0% because of
+    // dealbreakers" and each reason). Accept either phrasing.
+    final reasons = find.textContaining('dealbreaker').evaluate().isNotEmpty ||
+        find.textContaining('Dealbreaker').evaluate().isNotEmpty;
     await shot(tester, 'ZERO');
-    if (zeroOpened && zeroShown) {
+    if (zeroOpened && zeroShown && reasons) {
       pass('ZERO',
-          'hard-dealbreaker (age-over-max) report shows a 0% score');
+          'hard-dealbreaker report shows 0% and lists the dealbreaker reason(s)');
     } else {
       fail('ZERO',
-          'reportOpened=$zeroOpened, "0%" shown=$zeroShown (want both true)');
+          'reportOpened=$zeroOpened, "0%"=$zeroShown, reasonsListed=$reasons '
+          '(want all true; reasons pending fix/dealbreakers-show-not-hide)');
     }
     appRouter.go('/');
     await pumpUntil(tester, find.byIcon(Icons.search_rounded),

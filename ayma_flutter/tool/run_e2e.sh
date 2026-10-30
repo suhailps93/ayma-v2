@@ -48,6 +48,17 @@ restore_net
 ) &
 MON=$!
 
+# `flutter test` reinstalls the APK, which RESETS runtime permissions — so a
+# one-shot grant before the run is wiped. Keep re-granting POST_NOTIFICATIONS in
+# the background so Android 13's system permission dialog never pops over a shot.
+(
+  while true; do
+    adb shell pm grant com.ayma.ayma_flutter android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
+    sleep 2
+  done
+) &
+GRANT=$!
+
 DEFINES="--dart-define=E2E_SHOTS=true --dart-define=E2E_NET=true"
 for f in e2e_behaviors_test e2e_edge_test e2e_auth_test e2e_net_test; do
   echo "== E2E: $f on $DEVICE =="
@@ -55,7 +66,7 @@ for f in e2e_behaviors_test e2e_edge_test e2e_auth_test e2e_net_test; do
 done
 
 sleep 2
-kill "$MON" 2>/dev/null
+kill "$MON" "$GRANT" 2>/dev/null
 restore_net
 
 python3 tool/e2e_report.py "$LOG" build/e2e/screenshots build/e2e/REPORT.md

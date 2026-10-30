@@ -6,6 +6,7 @@ Usage: e2e_report.py <run.log> <screenshots_dir> <out_report.md>
 Parses the streaming `E2E_RESULT <bug> PASS|FAIL <detail>` markers the harness
 prints and embeds the per-behaviour screenshot captured by the driver.
 """
+import base64
 import os
 import re
 import sys
@@ -28,9 +29,9 @@ ORDER = ["B", "C", "D", "E", "F", "G", "H", "P"]
 # signed-out auth, host-driven offline). Any result key not in BUGS or here is
 # still rendered generically.
 EXTRA = {
-    "GATES": "Explore includes valid edge profiles and excludes hard-dealbreaker ones (age/orientation/location)",
+    "GATES": "Explore shows all profiles incl. hard-dealbreaker ones (score enforces the gate, not hiding)",
     "NOPHOTO": "A 0-photo but valid profile appears in Explore and its report opens",
-    "ZERO": "A hard-dealbreaker pair's report scores 0%",
+    "ZERO": "A hard-dealbreaker pair's report scores 0% and lists the dealbreaker reason(s)",
     "MATCH": 'A mutual-like pair\'s report AppBar reads "Match" (vs non-mutual "Compatibility")',
     "AUTH": "Signed-out boot lands on the sign-in / welcome screen",
     "OFFLINE": 'Offline splash shows "Couldn\'t connect" + Retry (adb-driven)',
@@ -121,8 +122,104 @@ def main() -> int:
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"Wrote {out_path} ({passed} pass / {failed} fail)")
+
+    # Self-contained HTML (screenshots base64-embedded) for a shareable link.
+    html_path = os.path.join(os.path.dirname(out_path), "REPORT.html")
+    rows = []
+    for key in ORDER + extra_keys:
+        status, detail = results.get(key, ("NOT RUN", ""))
+        pngs = []
+        for name in (key, f"{key}_FAIL"):
+            p = os.path.join(shots_dir, f"{name}.png")
+            if os.path.exists(p):
+                pngs.append(p)
+        rows.append((key, desc.get(key, key), status, detail, pngs))
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(_render_html(when, passed, failed, rows))
+
+    print(f"Wrote {out_path} + {html_path} ({passed} pass / {failed} fail)")
     return 1 if failed else 0
+
+
+def _data_uri(path: str) -> str:
+    with open(path, "rb") as fh:
+        return "data:image/png;base64," + base64.b64encode(fh.read()).decode("ascii")
+
+
+def _render_html(when: str, passed: int, failed: int, rows) -> str:
+    import html as _h
+
+    def esc(s: str) -> str:
+        return _h.escape(str(s))
+
+    cards = []
+    for key, desc, status, detail, pngs in rows:
+        pill = {"PASS": "pass", "FAIL": "fail"}.get(status, "skip")
+        label = {"PASS": "PASS", "FAIL": "FAIL"}.get(status, "NOT RUN")
+        imgs = "".join(
+            f'<img loading="lazy" alt="{esc(key)}" src="{_data_uri(p)}">'
+            for p in pngs
+        ) or '<div class="noshot">no screenshot captured</div>'
+        cards.append(
+            f'''<section class="card {pill}">
+      <header><span class="key">{esc(key)}</span>
+        <span class="pill {pill}">{label}</span></header>
+      <p class="desc">{esc(desc)}</p>
+      <p class="detail">{esc(detail)}</p>
+      <div class="shots">{imgs}</div>
+    </section>'''
+        )
+
+    total = len(rows)
+    summary = (f'{passed} passed, {failed} failed'
+               f' &middot; {total} scenarios')
+    return f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ayma E2E report</title>
+<style>
+  :root {{ color-scheme: light dark;
+    --bg:#f6f6f4; --fg:#1a1a18; --mute:#6b6b66; --card:#ffffff; --line:#e3e3df;
+    --pass:#1a7f4b; --passbg:#e4f4ea; --fail:#b42318; --failbg:#fbe9e7;
+    --skip:#6b6b66; --skipbg:#ececea; }}
+  @media (prefers-color-scheme: dark) {{ :root {{
+    --bg:#131210; --fg:#ece9e3; --mute:#9a968d; --card:#1d1b18; --line:#2e2b27;
+    --pass:#5fd39a; --passbg:#14301f; --fail:#f1a79c; --failbg:#3a1714;
+    --skip:#9a968d; --skipbg:#26241f; }} }}
+  * {{ box-sizing:border-box; }}
+  body {{ margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:24px 16px; }}
+  .wrap {{ max-width:960px; margin:0 auto; }}
+  h1 {{ font-size:22px; margin:0 0 4px; }}
+  .meta {{ color:var(--mute); margin:0 0 20px; }}
+  .totals {{ font-weight:600; }}
+  .grid {{ display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }}
+  .card {{ background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:14px; }}
+  .card.fail {{ border-color:var(--fail); }}
+  header {{ display:flex; align-items:center; justify-content:space-between; gap:8px; }}
+  .key {{ font-weight:700; letter-spacing:.02em; }}
+  .pill {{ font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; }}
+  .pill.pass {{ color:var(--pass); background:var(--passbg); }}
+  .pill.fail {{ color:var(--fail); background:var(--failbg); }}
+  .pill.skip {{ color:var(--skip); background:var(--skipbg); }}
+  .desc {{ margin:8px 0 2px; font-weight:600; }}
+  .detail {{ margin:0 0 10px; color:var(--mute); font-size:13.5px; }}
+  .shots {{ display:flex; flex-wrap:wrap; gap:8px; }}
+  .shots img {{ width:100%; max-width:220px; border:1px solid var(--line);
+    border-radius:8px; background:#000; }}
+  .noshot {{ color:var(--mute); font-size:13px; font-style:italic; }}
+</style></head>
+<body><div class="wrap">
+  <h1>Ayma E2E regression report</h1>
+  <p class="meta">Generated {esc(when)} &middot; real device, live backend</p>
+  <p class="totals">{summary}</p>
+  <div class="grid">
+    {"".join(cards)}
+  </div>
+</div></body></html>
+'''
 
 
 if __name__ == "__main__":

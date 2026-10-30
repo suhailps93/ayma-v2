@@ -54,6 +54,15 @@ bool _isBenign(Object error) {
   return _benignErrorNeedles.any(s.contains);
 }
 
+/// Emits a harness marker line. Uses `print` (NOT `debugPrint`, which is
+/// throttled and silently drops lines) so `E2E_RESULT` / `E2E_SHOT` markers
+/// always reach stdout even when the signed-out sign-in screen floods the log
+/// with LiveKit/voice records.
+void emit(String line) {
+  // ignore: avoid_print
+  print(line);
+}
+
 /// Signs the demo [email] in via FirebaseAuth *before* `app.main()` runs.
 ///
 /// This is deliberately programmatic, not UI-driven: the sign-in screen starts
@@ -169,8 +178,11 @@ const bool _shotsEnabled = bool.fromEnvironment('E2E_SHOTS');
 /// behaviour.
 Future<void> shot(WidgetTester tester, String name) async {
   if (!_shotsEnabled) return;
+  // Clear any in-app overlay (feature-tour coach mark, push primer) so it
+  // doesn't sit over the capture, then hold the frame for the host screencap.
+  await dismissTour(tester);
   await tester.pump(const Duration(milliseconds: 200));
-  debugPrint('E2E_SHOT $name');
+  emit('E2E_SHOT $name');
   await pumpFor(tester, const Duration(milliseconds: 1600));
 }
 

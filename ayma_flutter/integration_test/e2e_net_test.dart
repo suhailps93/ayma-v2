@@ -25,12 +25,12 @@ void main() {
   final results = <String, String>{};
   void pass(String k, String d) {
     results[k] = 'PASS — $d';
-    debugPrint('E2E_RESULT $k PASS $d');
+    emit('E2E_RESULT $k PASS $d');
   }
 
   void fail(String k, String d) {
     results[k] = 'FAIL — $d';
-    debugPrint('E2E_RESULT $k FAIL $d');
+    emit('E2E_RESULT $k FAIL $d');
   }
 
   testWidgets('offline splash + recovery (OFFLINE / RECOVER)', (tester) async {

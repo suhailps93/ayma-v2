@@ -44,12 +44,12 @@ void main() {
   final results = <String, String>{};
   void pass(String key, String detail) {
     results[key] = 'PASS — $detail';
-    debugPrint('E2E_RESULT $key PASS $detail');
+    emit('E2E_RESULT $key PASS $detail');
   }
 
   void fail(String key, String detail) {
     results[key] = 'FAIL — $detail';
-    debugPrint('E2E_RESULT $key FAIL $detail');
+    emit('E2E_RESULT $key FAIL $detail');
   }
 
   testWidgets('2237 behaviours B/E/H/D/P/C/F/G end-to-end (Sofia)',
