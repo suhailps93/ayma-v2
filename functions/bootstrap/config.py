@@ -764,8 +764,19 @@ class Config:
     meta_open_weights_model: str
     """Open-weights Muse Spark id (Baseten-hostable; the hackathon's
     ``$10k Best Build on Meta Open Weight Models`` target). Override with
-    ``META_OPEN_WEIGHTS_MODEL``. Not wired into a surface yet — exposed so an
-    eval or a self-hosted deployment can select it without a hardcoded id."""
+    ``META_OPEN_WEIGHTS_MODEL``. Wired into the ``open-weights`` provider
+    (``llm_provider.OpenWeightsProvider``) — a surface whose
+    ``LLM_PROVIDER_*`` flag is ``open-weights`` sends its calls to this model
+    id on ``open_weights_api_base_url``."""
+
+    open_weights_api_base_url: str
+    """OpenAI-compatible base URL serving the open-weights Muse Spark model
+    (Baseten-hosted for the hackathon). Non-secret config; the
+    ``OPEN_WEIGHTS_API_KEY`` secret authenticates against it and is read from
+    the environment at the call site in ``llm_provider.py``, never stored
+    here. Env ``OPEN_WEIGHTS_BASE_URL``, default empty = unconfigured: a
+    surface routed to ``open-weights`` then fails with an explicit
+    ``OpenWeightsUnconfiguredError`` and never falls back to a paid route."""
 
     meta_transcribe_model: str
     """Meta Muse Voice Transcribe (STT) id. Listed in the Meta Model API's
@@ -847,10 +858,13 @@ class Config:
     llm_provider_voice: str
     llm_provider_dm_coach: str
     llm_provider_translate: str
-    """Per-surface provider switch, ``gemini`` | ``meta``. Each surface flips
-    and rolls back independently via ``LLM_PROVIDER_<SURFACE>`` (e.g.
-    ``LLM_PROVIDER_CHAT=meta``); ``LLM_PROVIDER`` sets the default for any
-    surface whose own var is unset. All default to ``gemini`` EXCEPT
+    """Per-surface provider switch, ``gemini`` | ``meta`` | ``open-weights``.
+    Each surface flips and rolls back independently via
+    ``LLM_PROVIDER_<SURFACE>`` (e.g. ``LLM_PROVIDER_CHAT=meta``);
+    ``LLM_PROVIDER`` sets the default for any surface whose own var is unset.
+    ``open-weights`` routes the surface to the cheap open-weights Muse Spark
+    endpoint (``open_weights_api_base_url`` + ``OPEN_WEIGHTS_API_KEY``) with
+    no paid fallback. All default to ``gemini`` EXCEPT
     ``llm_provider_dm_coach`` (see below) — production behaviour is unchanged
     until a surface is explicitly flipped. Read by
     ``llm_provider.get_llm_provider(surface)``.
@@ -1215,6 +1229,9 @@ def _load() -> Config:
         ),
         meta_cascade_vad_model=os.getenv("META_CASCADE_VAD_MODEL", "silero"),
         meta_reasoning_effort=os.getenv("META_REASONING_EFFORT", "minimal"),
+        open_weights_api_base_url=os.getenv(
+            "OPEN_WEIGHTS_BASE_URL", ""
+        ).rstrip("/"),
         qloo_api_base_url=os.getenv(
             "QLOO_API_BASE_URL", "https://hackathon.api.qloo.com"
         ).rstrip("/"),

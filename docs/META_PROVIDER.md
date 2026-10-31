@@ -8,7 +8,8 @@ surface is explicitly flipped.
 ## What was built
 
 * **`functions/bootstrap/llm_provider.py`** — an `LLMProvider` abstraction with
-  two implementations:
+  three implementations (`GeminiProvider`, `MetaProvider`, plus the no-fallback
+  `OpenWeightsProvider` cheap path — see "Open-weights cheap path" below):
   * `GeminiProvider` — a thin wrapper over the existing `gemini.py` calls
     (Vertex / Gemini Developer API). The production default.
   * `MetaProvider` — Meta Muse Spark via the **OpenAI-compatible** Meta Model
@@ -85,6 +86,21 @@ Roll back by removing the var (or setting it to `gemini`) and restarting. With
 `LLM_META_FALLBACK=true` (default) a Meta outage or a missing key degrades that
 surface to Gemini automatically; set `LLM_META_FALLBACK=false` only when you
 need to measure Meta on its own (e.g. in the eval).
+
+## Open-weights cheap path (`open-weights`)
+
+A third per-surface value for eligible non-premium calls: `LLM_PROVIDER_<SURFACE>=open-weights`
+(or the global `LLM_PROVIDER=open-weights`) routes that surface to `OpenWeightsProvider`
+— Muse Spark open weights over an OpenAI-compatible chat endpoint (Baseten-hosted,
+model id `config.meta_open_weights_model`, default `meta-models/muse-spark-open-1026`).
+Endpoint and key come ONLY from `OPEN_WEIGHTS_BASE_URL` (non-secret config) and the
+`OPEN_WEIGHTS_API_KEY` secret (Secret Manager → Cloud Run, never committed). Unlike the
+Meta path there is deliberately NO paid fallback: if either var is unset the call raises
+the explicit `OpenWeightsUnconfiguredError`, and any endpoint failure propagates — the
+cheap path can never silently become paid-vendor spend. Same text/JSON/tool capability
+profile as Meta (no vision, no web — those still resolve to Gemini); not in the
+user-facing Brain catalog (backend flag only). Tests: `functions/bootstrap/tests/test_open_weights_provider.py`
+(mocked endpoint, no live HTTP).
 
 ## Status (2026-10-26) — live
 

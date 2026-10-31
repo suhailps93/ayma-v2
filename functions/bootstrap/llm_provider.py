@@ -2,7 +2,7 @@
 
 Ayma's LLM work (chat, matching, reports, practice/coaching, voice) is reached
 through :func:`get_llm_provider`, which returns the provider a *surface* is
-configured for. Two implementations:
+configured for. Three implementations:
 
 * :class:`GeminiProvider` — a thin wrapper over the existing ``gemini.py`` calls
   (Vertex / Gemini Developer API). This is the default for every surface, so the
@@ -12,6 +12,11 @@ configured for. Two implementations:
   Secret Manager). Supports text, event-streamed chat and structured/JSON
   output; on any failure it falls back to Gemini when ``llm_meta_fallback`` is
   on, so a flip can never take a surface down.
+* :class:`OpenWeightsProvider` — the low-cost route: Muse Spark open weights
+  over an OpenAI-compatible chat endpoint (``config.open_weights_api_base_url``,
+  ``OPEN_WEIGHTS_API_KEY`` from the environment / Secret Manager). It carries
+  NO paid fallback — an unconfigured or failing cheap path raises its explicit
+  error instead of silently billing another vendor.
 
 Relationship to ``docs/LIVEKIT_INFERENCE_MIGRATION.md``: that is a *lower*-level
 routing of Gemini traffic (Vertex direct vs the LiveKit Inference gateway) and
@@ -20,8 +25,8 @@ Meta); when the provider is Gemini, whatever Gemini transport ``gemini.py`` uses
 still applies. See ``docs/META_PROVIDER.md``.
 
 Model ids and the per-surface flags come only from ``config.py`` (``AGENTS.md``).
-The ``META_API_KEY`` secret is read from the environment here, never stored in
-config and never hardcoded.
+The ``META_API_KEY`` and ``OPEN_WEIGHTS_API_KEY`` secrets are read from the
+environment here, never stored in config and never hardcoded.
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ logger = logging.getLogger("ayma.llm_provider")
 
 PROVIDER_GEMINI = "gemini"
 PROVIDER_META = "meta"
+PROVIDER_OPEN_WEIGHTS = "open-weights"
 
 # The surfaces that can flip independently (``config.llm_provider_<surface>``).
 SURFACES = (
@@ -54,7 +60,8 @@ SURFACES = (
 #
 # The unified Brain (§13.10) is ONE user-selectable LLM vendor driving ALL text
 # surfaces, with an automatic per-capability fallback to Gemini. A "brain" is a
-# provider VENDOR (``gemini`` | ``meta``), not a model id. Each capability a
+# provider VENDOR (``gemini`` | ``meta`` | ``open-weights``), not a model id.
+# Each capability a
 # surface needs is checked against the chosen brain's set here; if the brain
 # lacks it, the call resolves to Gemini instead (``get_user_brain_provider``).
 # This is the one place the per-brain capabilities are declared.
@@ -74,11 +81,15 @@ ALL_CAPABILITIES = (CAP_TEXT, CAP_JSON, CAP_VISION, CAP_WEB, CAP_TOOLS)
 # grounding on the Meta API). Verified against the working Meta paths in
 # ``MetaProvider`` (generate_json, _meta_reply_events with tools). Web → Gemini
 # and vision → Gemini are therefore forced for every brain here except Gemini.
+# The open-weights Muse Spark shares the Meta profile exactly (same model
+# family, same OpenAI-compatible chat surface, no grounding) — only the
+# endpoint, model id and no-paid-fallback rule differ (``OpenWeightsProvider``).
 BRAIN_CAPABILITIES: dict[str, frozenset[str]] = {
     PROVIDER_GEMINI: frozenset(
         {CAP_TEXT, CAP_JSON, CAP_VISION, CAP_WEB, CAP_TOOLS}
     ),
     PROVIDER_META: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
+    PROVIDER_OPEN_WEIGHTS: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
 }
 
 # User-facing Brain catalog for the "Ayma's models" screen: id (vendor) → short
@@ -626,6 +637,259 @@ class MetaProvider(LLMProvider):
         yield {"type": "reply", "text": text, "tools_used": used}
 
 
+# --- Open-weights cheap path (OpenAI-compatible) --------------------------- #
+
+
+class OpenWeightsUnconfiguredError(RuntimeError):
+    """A surface is routed to ``open-weights`` but the deployment has not set
+    ``OPEN_WEIGHTS_BASE_URL`` and/or ``OPEN_WEIGHTS_API_KEY``. Raised instead
+    of falling back: the cheap path must never silently bill a paid route."""
+
+
+class OpenWeightsProvider(LLMProvider):
+    """Muse Spark open weights over an OpenAI-compatible chat endpoint.
+
+    The low-cost route for eligible non-premium calls: same call shapes as
+    :class:`MetaProvider` (text, event-streamed chat, structured/JSON output),
+    but pointed at ``config.open_weights_api_base_url`` with the
+    ``OPEN_WEIGHTS_API_KEY`` environment secret and the
+    ``config.meta_open_weights_model`` id — and with NO Gemini fallback. Any
+    failure (missing env, transport error, bad response) propagates as an
+    explicit error so it can never silently become paid-vendor spend.
+
+    A ``client`` can be injected for tests; otherwise it is built lazily from
+    the two ``OPEN_WEIGHTS_*`` environment vars. No Meta-Model-API-only knobs
+    (``reasoning_effort``) are sent — a generic OpenAI-compatible endpoint may
+    reject unknown fields.
+    """
+
+    name = PROVIDER_OPEN_WEIGHTS
+    #: Same profile as Meta/Muse Spark: text, JSON, tool-calling; NOT vision,
+    #: NOT web — those resolve to Gemini (:func:`get_user_brain_provider`).
+    capabilities = BRAIN_CAPABILITIES[PROVIDER_OPEN_WEIGHTS]
+
+    def __init__(self, *, client=None) -> None:
+        self._client = client
+
+    def _get_client(self):
+        if self._client is not None:
+            return self._client
+        missing = []
+        if not CONFIG.open_weights_api_base_url:
+            missing.append("OPEN_WEIGHTS_BASE_URL")
+        api_key = os.getenv("OPEN_WEIGHTS_API_KEY", "")
+        if not api_key:
+            missing.append("OPEN_WEIGHTS_API_KEY")
+        if missing:
+            raise OpenWeightsUnconfiguredError(
+                "open-weights LLM is not configured: set "
+                + " and ".join(missing)
+                + " on the service before routing a surface to open-weights "
+                "(see docs/META_PROVIDER.md). Refusing to fall back to a "
+                "paid route."
+            )
+        try:
+            from openai import AsyncOpenAI
+        except ModuleNotFoundError as exc:  # pragma: no cover - dep in reqs
+            raise RuntimeError(
+                "the 'openai' package is required for the open-weights provider"
+            ) from exc
+        self._client = AsyncOpenAI(
+            base_url=CONFIG.open_weights_api_base_url, api_key=api_key
+        )
+        return self._client
+
+    # -- structured / JSON ------------------------------------------------- #
+
+    async def generate_json(
+        self,
+        contents: str,
+        system_prompt: str,
+        response_schema: dict | None = None,
+        image: tuple[bytes, str] | None = None,
+        *,
+        images: list[tuple[bytes, str]] | None = None,
+        uid: str | None = None,
+        feature: str = "misc",
+        enforce_cap: bool = True,
+        temperature: float = 0.2,
+        session_id: str = "",
+    ) -> object:
+        if enforce_cap:
+            token_ledger.check(uid)
+        media = list(images or ([image] if image is not None else []))
+        client = self._get_client()
+        resp = await client.chat.completions.create(
+            model=CONFIG.meta_open_weights_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": _user_content(contents, media)},
+            ],
+            temperature=temperature,
+            max_tokens=4096,
+            response_format=_response_format(response_schema, feature),
+        )
+        token_ledger.record(
+            uid, feature, _MetaResponse(getattr(resp, "usage", None)),
+            model=CONFIG.meta_open_weights_model, session_id=session_id or None,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        if not text:
+            raise RuntimeError("Open-weights returned an empty JSON response.")
+        return _strip_keys(json.loads(_coerce_json_text(text)))
+
+    # -- text (collected) -------------------------------------------------- #
+
+    async def generate_reply(
+        self,
+        message: str,
+        system_prompt: str | None = None,
+        tool_declarations: list[dict] | None = None,
+        tool_fns: dict | None = None,
+        *,
+        image: tuple[bytes, str] | None = None,
+        uid: str | None = None,
+        feature: str = "misc",
+        session_id: str = "",
+    ) -> Reply:
+        text = ""
+        tools: list[str] = []
+        async for ev in self.generate_reply_events(
+            message, system_prompt, tool_declarations, tool_fns,
+            image=image, uid=uid, feature=feature, session_id=session_id,
+        ):
+            if ev["type"] == "reply":
+                text, tools = ev["text"], ev["tools_used"]
+        if not text:
+            raise RuntimeError("Open-weights returned an empty response.")
+        return Reply(text=text, tools_used=tools)
+
+    # -- event-streamed chat ---------------------------------------------- #
+
+    async def generate_reply_events(
+        self,
+        message: str,
+        system_prompt: str | None = None,
+        tool_declarations: list[dict] | None = None,
+        tool_fns: dict | None = None,
+        *,
+        image: tuple[bytes, str] | None = None,
+        uid: str | None = None,
+        feature: str = "misc",
+        session_id: str = "",
+    ) -> AsyncIterator[dict]:
+        token_ledger.check(uid)
+        media = [image] if image is not None else []
+        async for ev in self._open_weights_reply_events(
+            message, system_prompt, tool_declarations, tool_fns,
+            media, uid, feature, session_id,
+        ):
+            yield ev
+
+    async def _open_weights_reply_events(
+        self, message, system_prompt, tool_declarations, tool_fns,
+        media, uid, feature, session_id,
+    ) -> AsyncIterator[dict]:
+        """One open-weights chat turn, mirroring ``gemini.generate_reply_events``:
+        status events then a single ``reply``. Runs at most one tool round
+        (same as the Gemini/Meta paths). No web grounding on this endpoint —
+        that stays Gemini-only."""
+        client = self._get_client()
+        tools = _meta_tools(tool_declarations)
+        messages: list[dict] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append(
+            {"role": "user", "content": _user_content(message, media)}
+        )
+
+        from tool_labels import tool_label as _tool_label
+        from tool_labels import working_label as _working_label
+
+        used: list[str] = []
+        seen: set[str] = set()
+
+        def _note(label: str) -> None:
+            if label not in seen:
+                seen.add(label)
+                used.append(label)
+
+        yield {"type": "status", "label": "Thinking…"}
+        resp = await client.chat.completions.create(
+            model=CONFIG.meta_open_weights_model,
+            messages=messages,
+            temperature=0.9,
+            max_tokens=1024,
+            tools=tools,
+        )
+        token_ledger.record(
+            uid, feature, _MetaResponse(getattr(resp, "usage", None)),
+            model=CONFIG.meta_open_weights_model, session_id=session_id or None,
+        )
+        msg = resp.choices[0].message
+        calls = list(getattr(msg, "tool_calls", None) or [])
+
+        if calls and tool_fns:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": c.id,
+                            "type": "function",
+                            "function": {
+                                "name": c.function.name,
+                                "arguments": c.function.arguments,
+                            },
+                        }
+                        for c in calls
+                    ],
+                }
+            )
+            for c in calls:
+                name = c.function.name
+                _note(_tool_label(name))
+                yield {"type": "status", "label": _working_label(name)}
+                try:
+                    args = json.loads(c.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                fn = tool_fns.get(name)
+                try:
+                    result = fn(**args) if fn else "unknown tool"
+                    import inspect
+                    if inspect.isawaitable(result):
+                        result = await result
+                except Exception as tool_exc:  # noqa: BLE001 - report, don't crash
+                    result = f"error: {tool_exc}"
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": c.id,
+                        "content": str(result),
+                    }
+                )
+            yield {"type": "status", "label": "Writing…"}
+            resp = await client.chat.completions.create(
+                model=CONFIG.meta_open_weights_model,
+                messages=messages,
+                temperature=0.9,
+                max_tokens=1024,
+                tools=tools,
+            )
+            token_ledger.record(
+                uid, feature, _MetaResponse(getattr(resp, "usage", None)),
+                model=CONFIG.meta_open_weights_model, session_id=session_id or None,
+            )
+            msg = resp.choices[0].message
+
+        text = gemini.strip_inline_refs((msg.content or "").strip())
+        if not text:
+            raise RuntimeError("Open-weights returned an empty response.")
+        yield {"type": "reply", "text": text, "tools_used": used}
+
+
 # --- selection ------------------------------------------------------------ #
 
 
@@ -650,9 +914,11 @@ def get_llm_provider(surface: str) -> LLMProvider:
 
     Reads ``config.llm_provider_<surface>`` (env ``LLM_PROVIDER_<SURFACE>``,
     default ``gemini``). ``meta`` returns a :class:`MetaProvider` carrying a
-    Gemini fallback when ``config.llm_meta_fallback`` is on; anything else
-    (including an unknown value, logged once) returns the Gemini default so a
-    typo can never route traffic nowhere.
+    Gemini fallback when ``config.llm_meta_fallback`` is on; ``open-weights``
+    returns an :class:`OpenWeightsProvider`, which deliberately carries NO
+    fallback (an unconfigured or failing cheap path raises instead of silently
+    billing a paid route); anything else (including an unknown value, logged
+    once) returns the Gemini default so a typo can never route traffic nowhere.
     """
     flag = _SURFACE_FLAG.get(surface)
     if flag is None:
@@ -663,9 +929,12 @@ def get_llm_provider(surface: str) -> LLMProvider:
     if choice == PROVIDER_META:
         fallback = _gemini_singleton() if CONFIG.llm_meta_fallback else None
         return MetaProvider(fallback=fallback)
+    if choice == PROVIDER_OPEN_WEIGHTS:
+        return OpenWeightsProvider()
     if choice != PROVIDER_GEMINI:
         logger.warning(
-            "LLM_PROVIDER for %s is %r (not gemini|meta) — using gemini",
+            "LLM_PROVIDER for %s is %r (not gemini|meta|open-weights) — "
+            "using gemini",
             surface, choice,
         )
     return _gemini_singleton()
@@ -698,12 +967,16 @@ def get_vision_provider(surface: str) -> LLMProvider:
 
 
 def _provider_for_name(name: str) -> LLMProvider:
-    """A provider instance for a vendor name (``gemini`` | ``meta``). ``meta``
-    carries the Gemini fallback when ``llm_meta_fallback`` is on; anything else
-    is the Gemini default."""
-    if (name or "").strip().lower() == PROVIDER_META:
+    """A provider instance for a vendor name (``gemini`` | ``meta`` |
+    ``open-weights``). ``meta`` carries the Gemini fallback when
+    ``llm_meta_fallback`` is on; ``open-weights`` carries none (its failures
+    stay explicit); anything else is the Gemini default."""
+    normalized = (name or "").strip().lower()
+    if normalized == PROVIDER_META:
         fallback = _gemini_singleton() if CONFIG.llm_meta_fallback else None
         return MetaProvider(fallback=fallback)
+    if normalized == PROVIDER_OPEN_WEIGHTS:
+        return OpenWeightsProvider()
     return _gemini_singleton()
 
 
