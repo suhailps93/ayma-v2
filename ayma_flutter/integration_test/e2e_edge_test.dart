@@ -296,15 +296,18 @@ Future<Set<String>> _collectNamesWhileScrolling(
       sweep();
     }
     // Bulletproof pass for any still-missing target: reset to the top and use
-    // scrollUntilVisible (small steps, checks after each — never skips a row).
-    final scrollable = find.byType(Scrollable);
+    // scrollUntilVisible on the GRID's own scrollable (NOT find.byType(Scrollable)
+    // .first, which is the horizontal filter-chips row) — small steps, checks
+    // after each, never skips a row.
+    final gridScrollable =
+        find.descendant(of: grid, matching: find.byType(Scrollable));
     for (final n in targets.where((t) => !found.contains(t))) {
-      if (scrollable.evaluate().isEmpty) break;
+      if (gridScrollable.evaluate().isEmpty) break;
       await scrollGridToTop(tester);
       try {
         await tester.scrollUntilVisible(
           find.textContaining(n).first, 140,
-          scrollable: scrollable.first, maxScrolls: 60,
+          scrollable: gridScrollable.first, maxScrolls: 60,
         );
         found.add(n);
       } catch (_) {/* genuinely not in the feed */}
