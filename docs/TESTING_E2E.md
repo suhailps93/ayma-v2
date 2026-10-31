@@ -219,6 +219,7 @@ each pass; current state:
 - Web research: profile icon opens the page, no auto-run (WEBRESEARCH); never-run
   empty state "No web research yet" + "Run web search" (C).
 - Connectivity: offline splash + Retry recovery, adb-driven (OFFLINE/RECOVER).
+- DM: a GIF message renders as an inline animated-gif bubble in a thread (GIF).
 
 ### Pending (to add — tappable widgets / surfaces)
 - Nav: Messages tab + a DM thread open/compose; Profile tab; Ayma tab + Ask-Ayma

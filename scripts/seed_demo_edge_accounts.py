@@ -210,8 +210,46 @@ async def run(reset: bool) -> int:
         sda._log(f"[edge:match] {uid}: score={score} (expected {expect})")
     _set_mutual(db, "demo-edge-mutual")
 
+    sda._log("\n=== EDGE PHASE 4: DM GIF fixture (Daniel↔Sofia thread) ===")
+    _seed_dm_gif(db)
+
     sda._log("\n=== EDGE DONE ===")
     return 0
+
+
+# A recognisable GIF URL so the e2e DM-gif test can find the inline gif bubble
+# (Image.network) by its url, distinct from avatar photos (.jpg/.png).
+_GIF_URL = "https://media.giphy.com/media/l0MYGb1LuZ3n7dRnO/giphy.gif"
+
+
+def _seed_dm_gif(db):
+    """Seed a GIF message in the Daniel↔Sofia DM thread so the e2e harness can
+    assert the inline gif bubble on the real path (DM GIF feature §6.6). Fixed
+    doc id → idempotent. Shape mirrors dm_ops.add_message for a 'gif' type."""
+    from dm_schema import thread_id
+
+    tid = thread_id("demo-test1", "demo-test2")
+    db.collection("dm_threads").document(tid).set(
+        {"uids": ["demo-test1", "demo-test2"], "updated_at": sda._now()},
+        merge=True,
+    )
+    db.collection("dm_threads").document(tid).collection("messages").document(
+        "e2e-gif-fixture"
+    ).set(
+        {
+            "sender_uid": "demo-test1",
+            "type": "gif",
+            "body": "",
+            "attachment_url": _GIF_URL,
+            "attachment_path": "",
+            "mime": "image/gif",
+            "file_name": "e2e-test.gif",
+            "size": 1024,
+            "created_at": sda._now(),
+        },
+        merge=True,
+    )
+    sda._log(f"[edge:dm-gif] seeded gif message in thread {tid}")
 
 
 def main() -> int:

@@ -34,12 +34,13 @@ EXTRA = {
     "NOPHOTO": "A 0-photo but valid profile appears in Explore and its report opens",
     "ZERO": "A hard-dealbreaker pair's report scores 0% and lists the dealbreaker reason(s)",
     "MATCH": 'A MUTUAL pair is recognised (report opens + Messages shows "You matched — say hello")',
+    "GIF": "A GIF message renders as an inline animated-gif bubble in a DM thread (§6.6)",
     "WEBRESEARCH": 'The web-research icon opens the report page ("No web research yet" + "Run web search") and starts no search on tap',
     "AUTH": "Signed-out boot lands on the sign-in / welcome screen",
     "OFFLINE": 'Offline splash shows "Couldn\'t connect" + Retry (adb-driven)',
     "RECOVER": "Network restored + Retry recovers to the signed-in shell",
 }
-EXTRA_ORDER = ["GATES", "HIDDEN", "NOPHOTO", "ZERO", "MATCH", "WEBRESEARCH",
+EXTRA_ORDER = ["GATES", "HIDDEN", "NOPHOTO", "ZERO", "MATCH", "WEBRESEARCH", "GIF",
                "AUTH", "OFFLINE", "RECOVER"]
 
 
