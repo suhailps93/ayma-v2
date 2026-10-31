@@ -171,7 +171,7 @@ Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47
 ## Runtime config and ops  *(all-features-on)*
 - `config/feature_flags`: flat flag keys (`docs/FEATURE_FLAGS.md`) plus `_history`
   (last 20 writes, for `scripts/flags.py rollback`). Backend-only.
-- `app_config/{sentry,meta_integrations,dev_panel}.enabled`: client-readable mirrors
+- `app_config/{sentry,meta_integrations}.enabled`: client-readable mirrors
   of those flags.
 - `dev_panel_attempts/{uid | ip_<sha256 prefix> | _all}`: `{ failures, locked_until }` lockout counters (`_all` also carries `window_start`)
   for `POST /dev/flags`.

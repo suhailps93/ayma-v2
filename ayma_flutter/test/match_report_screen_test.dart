@@ -20,6 +20,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/match_report_cache.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -165,6 +166,9 @@ Future<void> _sendComposer(WidgetTester tester, String text) async {
 
 void main() {
   setUp(() {
+    // BUG F: the session report cache is a singleton — clear it so one case's
+    // cached header never paints in the next (e.g. the never-scored case).
+    MatchReportCache.instance.reset();
     final b = TestWidgetsFlutterBinding.ensureInitialized();
     b.platformDispatcher.views.first.physicalSize = const Size(1200, 3200);
     b.platformDispatcher.views.first.devicePixelRatio = 1.0;
@@ -570,5 +574,70 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining("hasn't been scored"), findsOneWidget);
+  });
+
+  testWidgets("the AppBar title always reads 'Match report'", (WidgetTester tester) async {
+    final api = _api(matchMeta: matchMeta(), livingReport: _livingReport());
+    await tester.pumpWidget(MaterialApp(home: MatchReportScreen(matchId: 'a__me', apiClient: api)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Match report'), findsOneWidget);
+    expect(find.text('Compatibility'), findsNothing);
+  });
+
+  testWidgets("the Qloo taste card is present and reachable in the report scroll (never skipped)", (WidgetTester tester) async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    binding.platformDispatcher.views.first.physicalSize = const Size(400, 800);
+    addTearDown(() => binding.platformDispatcher.views.first.resetPhysicalSize());
+
+    final meta = {
+      ...matchMeta(),
+      'taste': {
+        'status': 'ok',
+        'source': 'qloo',
+        'score': 68,
+        'score_label': 'Good taste overlap',
+        'summary': 'You both lean dreamy psych-rock.',
+        'shared': ['Khruangbin'],
+        'domains': [
+          {'domain': 'music', 'score': 70},
+          {'domain': 'film', 'score': 66},
+        ],
+        'date_ideas': [
+          {'name': 'Tartine', 'kind': 'dining', 'why': 'Ranked by Qloo for both of you.'},
+        ],
+      },
+    };
+    final api = _api(
+      matchMeta: meta,
+      livingReport: _livingReport(
+        extraSections: [
+          for (var i = 0; i < 12; i++)
+            {
+              'heading': 'Dimension $i',
+              'blocks': [
+                {
+                  'block_id': 'dim:x$i',
+                  'type': 'fact',
+                  'editable': false,
+                  'text': 'Rationale $i. ' * 12,
+                },
+              ],
+            },
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: MatchReportScreen(matchId: 'a__me', apiClient: api)));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('tasteMatchCard')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const Key('tasteMatchCard')), findsOneWidget);
+    expect(find.text('powered by Qloo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

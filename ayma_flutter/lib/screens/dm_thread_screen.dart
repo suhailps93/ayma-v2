@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
@@ -12,9 +13,11 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
-import '../widgets/copy_on_long_press.dart';
+import '../widgets/overflow_guards.dart';
+import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/image_viewer.dart';
@@ -24,6 +27,7 @@ import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
 import '../services/screen_capture.dart';
+import '../utils/dm_language.dart';
 
 /// How many of the newest DM messages Ayma's screen context may include.
 const int _kContextMessages = 3;
@@ -32,8 +36,12 @@ const int _kContextMessages = 3;
 /// use the same message pipeline once a file is uploaded (Step 51 ingests them).
 /// Image / file attachments upload to `uploads/{uid}/dm/{threadId}/…` and send
 /// as `image` / `file` messages carrying the download URL + metadata.
-/// Icebreaker chips (§6.9) show above the composer while the thread is empty and
-/// a compatibility check has produced a `matches` doc for the pair.
+///
+/// "Ayma in your DMs" coaching (§6.9) lives above the composer: up-to-2
+/// suggestion chips (tap → drop into the composer) plus an optional one-line
+/// tip. Both come from `POST /dm/assist` and refresh (debounced) as the
+/// conversation grows, so they stay relevant instead of being one-shot
+/// openers. Any load failure degrades silently — never blocks typing/sending.
 class DmThreadScreen extends StatefulWidget {
   const DmThreadScreen({
     super.key,
@@ -45,14 +53,6 @@ class DmThreadScreen extends StatefulWidget {
   });
 
   static const path = '/dm';
-
-  /// The shared_preferences key remembering that this thread's icebreaker
-  /// suggestions were dismissed (the close button on `_IcebreakerBar`).
-  /// Icebreakers are fetched fresh from `GET /dm/{threadId}/icebreakers` on
-  /// every open and have no server-side per-user state, so the dismissal is
-  /// persisted client-side, keyed by thread.
-  static String icebreakersDismissedKey(String threadId) =>
-      'dm_icebreakers_dismissed_$threadId';
 
   final String threadId;
   final String title;
@@ -77,19 +77,83 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   File? _pending;
   String _pendingType = 'file'; // 'image' | 'file'
 
-  List<String> _icebreakers = const [];
+  /// Live DM coaching (chips + tip), refreshed from `POST /dm/assist` as the
+  /// conversation grows. Starts empty so nothing shows until the first fetch.
+  DmAssist _assist = DmAssist.empty;
+
+  /// The exact tip text the user last dismissed. A newly-fetched, different
+  /// tip re-surfaces (auto-updates); the same one stays hidden.
+  String? _dismissedTip;
+
+  /// The exact safety-note text the user last dismissed. A later refresh
+  /// carrying a *different* heads-up re-surfaces it; the same one stays hidden.
+  String? _dismissedSafety;
+
+  /// Debounce for the assist refetch, and the message signature that last
+  /// triggered one — so we refetch only on an actual new sent/received
+  /// message, not on every stream rebuild or keystroke.
+  Timer? _assistDebounce;
+  String? _lastAssistSig;
+
+  /// The first assist load (thread open) fires immediately; later refreshes
+  /// are debounced so a burst of messages collapses into one call.
+  bool _assistLoadedOnce = false;
 
   /// The other person — name + photo + presence, so the header reads like a
   /// real conversation instead of "Conversation".
   MiniProfile? _other;
+
+  /// Cross-language DM translation (§6.12). [_preferredLang] is the language
+  /// incoming messages are translated INTO — the user's saved voice-engine
+  /// language if they have one, else the device locale. [_otherLang] is the
+  /// match's language, learned from the detected source of a message we've
+  /// translated; it's the target for an outgoing "translate before sending".
+  /// [_autoTranslate] auto-translates incoming messages for this thread;
+  /// [_translateOutgoing] is the opt-in "send in their language" control.
+  String _preferredLang = '';
+  String _otherLang = '';
+  bool _autoTranslate = false;
+  bool _translateOutgoing = false;
 
   @override
   void initState() {
     super.initState();
     reassertScreenContext();
     _loadOther();
-    _loadIcebreakers();
+    _preferredLang = _deviceLanguage();
+    _loadPreferredLang();
     _dm.markThreadRead(widget.threadId);
+  }
+
+  /// The device's language tag ("en-US"), the fallback target for incoming
+  /// translation when the user has set no preferred language.
+  String _deviceLanguage() {
+    try {
+      return WidgetsBinding.instance.platformDispatcher.locale.toLanguageTag();
+    } catch (_) {
+      return 'en';
+    }
+  }
+
+  /// Best-effort: prefer the user's saved voice-engine language over the device
+  /// locale as the translation target (the voice switcher is where they pick a
+  /// language). Never blocks the thread — any failure keeps the device locale.
+  Future<void> _loadPreferredLang() async {
+    try {
+      final cat = await _api.voiceEngines();
+      final code = cat.current.languageCode.trim();
+      if (code.isNotEmpty && mounted) setState(() => _preferredLang = code);
+    } catch (_) {
+      // Keep the device-locale default — translation is a nicety, never blocks.
+    }
+  }
+
+  /// Remember the match's language the first time we detect it from a message
+  /// we translated, so "translate before sending" knows the outgoing target.
+  void _onOtherLangDetected(String lang) {
+    final l = lang.trim();
+    if (l.isEmpty || l == _otherLang) return;
+    setState(() => _otherLang = l);
   }
 
   /// Id of the newest incoming message already marked read, so a rebuild
@@ -147,58 +211,81 @@ class _DmThreadScreenState extends State<DmThreadScreen>
 
   @override
   void dispose() {
+    _assistDebounce?.cancel();
     _composer.dispose();
     _composerFocus.dispose();
     super.dispose();
   }
 
-  Future<void> _loadIcebreakers() async {
-    if (await _icebreakersDismissed()) return;
+  /// Schedule an assist refetch for [msgs] if (and only if) the thread tail
+  /// actually changed since the last fetch — a new message sent or received,
+  /// not a mere rebuild. The first load (thread open) fires immediately; later
+  /// ones debounce ~1.5s so a burst collapses into a single call. Called from
+  /// the message [StreamBuilder]; scheduling a timer during build is safe (the
+  /// state change happens later, in [_fetchAssist]).
+  void _scheduleAssist(List<DmMessage> msgs) {
+    final sig = '${msgs.length}:${msgs.isNotEmpty ? msgs.last.id : ''}';
+    if (sig == _lastAssistSig) return;
+    _lastAssistSig = sig;
+    final immediate = !_assistLoadedOnce;
+    _assistLoadedOnce = true;
+    _assistDebounce?.cancel();
+    final snapshot = List<DmMessage>.unmodifiable(msgs);
+    _assistDebounce = Timer(
+      immediate ? Duration.zero : const Duration(milliseconds: 1500),
+      () => _fetchAssist(snapshot),
+    );
+  }
+
+  Future<void> _fetchAssist(List<DmMessage> msgs) async {
     try {
-      final chips = await _dm.icebreakers(widget.threadId);
-      if (mounted) setState(() => _icebreakers = chips);
+      final a = await _dm.assist(widget.threadId, msgs);
+      if (mounted) setState(() => _assist = a);
     } catch (_) {
-      // Icebreakers are a nicety — never surface a failure here.
+      // Coaching is a nicety — degrade silently, never block typing/sending.
     }
   }
 
-  /// Whether this thread's icebreakers were dismissed with the bar's close
-  /// button (see [DmThreadScreen.icebreakersDismissedKey]). Any prefs failure
-  /// reads as "not dismissed" — the suggestions showing again is the safe
-  /// side of that error, and the fetch itself has its own catch.
-  Future<bool> _icebreakersDismissed() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool(
-            DmThreadScreen.icebreakersDismissedKey(widget.threadId),
-          ) ??
-          false;
-    } catch (_) {
-      return false;
-    }
-  }
+  /// Quietly dismiss the current tip. It stays hidden until a *different* tip
+  /// arrives from a later refresh (then it auto-updates back into view).
+  void _dismissTip() => setState(() => _dismissedTip = _assist.tip);
 
-  /// The icebreaker bar's close button: hides the whole suggestion group for
-  /// this thread now, and remembers that persistently so it doesn't reappear
-  /// on reopening the thread or restarting the app.
-  Future<void> _dismissIcebreakers() async {
-    setState(() => _icebreakers = const []);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(
-        DmThreadScreen.icebreakersDismissedKey(widget.threadId),
-        true,
-      );
-    } catch (_) {
-      // Worst case the suggestions return next open — never surface this.
-    }
-  }
+  /// The tip to show right now, or null: the live tip unless the user dismissed
+  /// that exact text.
+  String? get _visibleTip =>
+      (_assist.tip != null && _assist.tip != _dismissedTip)
+          ? _assist.tip
+          : null;
+
+  /// Quietly dismiss the current safety note. It stays hidden until a
+  /// *different* heads-up arrives from a later refresh.
+  void _dismissSafety() =>
+      setState(() => _dismissedSafety = _assist.safety.reason);
+
+  /// The protective safety note to show right now, or null: the live note when
+  /// it's a genuine concern (>= caution) and the user hasn't dismissed that
+  /// exact text. Advisory only — it never affects sending.
+  DmSafety? get _visibleSafety =>
+      (_assist.safety.shouldSurface &&
+              _assist.safety.reason != _dismissedSafety)
+          ? _assist.safety
+          : null;
 
   Future<void> _send() async {
     final text = _composer.text.trim();
     final pending = _pending;
     if (_sending) return;
     if (pending == null && text.isEmpty) return;
+
+    // Opt-in outgoing translation (§6.12), plain text only: translate the draft
+    // into the match's language and show exactly what will be sent before it
+    // goes — never silently alter the user's words.
+    String outgoing = text;
+    if (_translateOutgoing && pending == null && text.isNotEmpty) {
+      final confirmed = await _confirmOutgoingTranslation(text);
+      if (confirmed == null) return; // cancelled / unavailable — keep the draft
+      outgoing = confirmed;
+    }
 
     setState(() => _sending = true);
     try {
@@ -214,7 +301,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           caption: text,
         );
       } else {
-        await _dm.sendText(widget.threadId, text);
+        await _dm.sendText(widget.threadId, outgoing);
       }
       _composer.clear();
       if (mounted) setState(() => _pending = null);
@@ -227,6 +314,102 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  /// For opt-in outgoing translation: returns the text to actually send — the
+  /// translation (after the user confirms the preview), or the original when
+  /// it's already in the match's language — or null to abort (the user
+  /// cancelled, we don't know the match's language yet, or translation failed).
+  Future<String?> _confirmOutgoingTranslation(String text) async {
+    if (_otherLang.isEmpty) {
+      AymaToast.show(
+        context,
+        'Translate one of their messages first so Ayma knows their language.',
+      );
+      return null;
+    }
+    DmTranslation tr;
+    try {
+      tr = await _dm.translate(widget.threadId, text, _otherLang);
+    } catch (_) {
+      if (mounted) {
+        AymaToast.show(
+          context,
+          "Couldn't translate — your message wasn't sent.",
+          kind: AymaToastKind.error,
+        );
+      }
+      return null;
+    }
+    if (!mounted) return null;
+    final translated = tr.translated.trim();
+    if (translated.isEmpty || translated == text) {
+      // Already in their language (or nothing to change): send as typed.
+      return text;
+    }
+    final ok = await _showOutgoingPreview(original: text, translated: translated);
+    return ok == true ? translated : null;
+  }
+
+  /// A confirm sheet showing exactly what will be sent (the translation) with
+  /// the user's original kept visible, so an outgoing translation is never a
+  /// silent change to their words. Returns true to send the translation.
+  Future<bool?> _showOutgoingPreview({
+    required String original,
+    required String translated,
+  }) {
+    final ac = context.ac;
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Send in their language?',
+                style: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.fg),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                "You'll send",
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              const SizedBox(height: 4),
+              Text(translated, style: AymaType.message(color: ac.fg)),
+              const SizedBox(height: 10),
+              Text(
+                'Your original',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                original,
+                style: AymaType.sans(size: 14, soft: true, color: ac.fgDim),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Send'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _askAyma() {
@@ -313,6 +496,43 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     }
   }
 
+  /// A GIF/image inserted from the keyboard's GIF/image button (§6.6). The
+  /// keyboard hands us the bytes directly (no file on disk), so — WhatsApp-style
+  /// — it uploads and sends immediately as a `gif`/`image` message. Keeps any
+  /// text already in the composer untouched; degrades with a toast if the
+  /// keyboard gives only a content URI we can't read, or on an upload failure.
+  Future<void> _onContentInserted(KeyboardInsertedContent content) async {
+    if (_sending) return;
+    final Uint8List? bytes = content.data;
+    if (bytes == null || bytes.isEmpty) {
+      if (mounted) {
+        AymaToast.show(
+          context,
+          "Couldn't read that — tap + to attach it instead.",
+          kind: AymaToastKind.error,
+        );
+      }
+      return;
+    }
+    final mime = content.mimeType;
+    final type = mime.toLowerCase() == 'image/gif' ? 'gif' : 'image';
+    setState(() => _sending = true);
+    try {
+      final att = await _dm.uploadInsertedAttachment(
+        bytes,
+        threadId: widget.threadId,
+        mime: mime,
+      );
+      await _dm.sendAttachment(widget.threadId, type: type, attachment: att);
+    } catch (e) {
+      if (mounted) {
+        AymaToast.show(context, 'Not sent ($e).', kind: AymaToastKind.error);
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   Future<void> _blockAndReport() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -369,18 +589,46 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             onSelected: (v) {
               if (v == 'block') _blockAndReport();
               if (v == 'ask_ayma') _askAyma();
+              if (v == 'auto_translate') {
+                setState(() => _autoTranslate = !_autoTranslate);
+              }
+              if (v == 'translate_outgoing') {
+                setState(() => _translateOutgoing = !_translateOutgoing);
+              }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(
+            itemBuilder: (_) => [
+              const PopupMenuItem(
                 value: 'ask_ayma',
                 child: Text('Share this chat with Ayma'),
               ),
-              PopupMenuItem(value: 'block', child: Text('Block & report')),
+              // Cross-language DM (§6.12): auto-translate incoming messages into
+              // your language, and opt in to translating what you send into
+              // theirs (with a preview before it goes).
+              CheckedPopupMenuItem(
+                value: 'auto_translate',
+                checked: _autoTranslate,
+                child: const Text('Auto-translate their messages'),
+              ),
+              CheckedPopupMenuItem(
+                value: 'translate_outgoing',
+                checked: _translateOutgoing,
+                child: const Text('Translate what I send'),
+              ),
+              const PopupMenuItem(
+                value: 'block',
+                child: Text('Block & report'),
+              ),
             ],
           ),
         ],
       ),
-      body: Column(
+      // LayoutBuilder gives the coaching region a real height to cap against:
+      // in a Column its children get unbounded vertical space, so the chips +
+      // tip would otherwise push the composer off-screen in a short window
+      // (split-screen, landscape, text 2.0). Capped to a share of the viewport
+      // and scrolled past that, the composer always stays reachable.
+      body: LayoutBuilder(
+        builder: (context, constraints) => Column(
         children: [
           Expanded(
             child: StreamBuilder<List<DmMessage>>(
@@ -388,6 +636,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               builder: (context, snap) {
                 final msgs = snap.data ?? const <DmMessage>[];
                 _markReadIfIncoming(msgs);
+                // Refresh the coaching chips/tip as the conversation grows —
+                // debounced, and only on an actual message change (see
+                // `_scheduleAssist`). A transient stream error leaves the last
+                // suggestions in place rather than clearing them.
+                if (!snap.hasError) _scheduleAssist(msgs);
                 // A brand-new thread has no doc yet; the stream can be briefly
                 // empty or (transiently) error — never hang the screen on it.
                 if (msgs.isEmpty) {
@@ -428,7 +681,23 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                   itemCount: msgs.length,
                   itemBuilder: (context, i) {
                     final m = msgs[msgs.length - 1 - i];
-                    final bubble = _Bubble(message: m, mine: m.senderUid == me);
+                    final mine = m.senderUid == me;
+                    final bubble = _Bubble(
+                      message: m,
+                      mine: mine,
+                      // Incoming text bubbles get the translate affordance;
+                      // auto-translate kicks in when the thread toggle is on.
+                      translate: mine
+                          ? null
+                          : (text) => _dm.translate(
+                                widget.threadId,
+                                text,
+                                _preferredLang,
+                              ),
+                      autoTranslate: _autoTranslate,
+                      onDetected: _onOtherLangDetected,
+                      preferredLang: _preferredLang,
+                    );
                     return FadeSlideIn(
                       key: ValueKey(m.id),
                       delay: staggerDelay(i),
@@ -444,17 +713,50 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               },
             ),
           ),
-          if (_icebreakers.isNotEmpty)
-            _IcebreakerBar(
-              chips: _icebreakers,
-              onClose: _dismissIcebreakers,
-              onTap: (text) {
-                _composer.text = text;
-                _composer.selection = TextSelection.collapsed(
-                  offset: _composer.text.length,
-                );
-                _composerFocus.requestFocus();
-              },
+          if (_assist.chips.isNotEmpty ||
+              _visibleTip != null ||
+              _visibleSafety != null)
+            CappedScroll(
+              // Never let coaching take more than half the screen — past that
+              // it is clipped at the cap (never scrolled) rather than squeezing
+              // out the list or the composer.
+              maxHeight: constraints.maxHeight * 0.5,
+              scrollable: false,
+              // Pin the BOTTOM of the coaching region in view. The tip is the
+              // last child and the one the founder most wants visible; without
+              // this the region is top-aligned, so once the keyboard shrinks
+              // the cap the tip scrolls off below the fold ("hidden behind the
+              // keyboard"). Bottom-anchored, the tip sits directly above the
+              // composer — which already rides above the keyboard inset — and
+              // the chips clip off the top instead. No effect when the
+              // content fits (the scroll view is then just its content tall).
+              reverse: true,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // The safety heads-up is the highest-priority note — it sits
+                  // above the coaching chips/tip. Advisory only: it never
+                  // blocks typing or sending.
+                  if (_visibleSafety != null)
+                    _SafetyNote(
+                      safety: _visibleSafety!,
+                      onDismiss: _dismissSafety,
+                    ),
+                  if (_assist.chips.isNotEmpty)
+                    _SuggestionBar(
+                      chips: _assist.chips.take(_maxCoachChips).toList(),
+                      onTap: (text) {
+                        _composer.text = text;
+                        _composer.selection = TextSelection.collapsed(
+                          offset: _composer.text.length,
+                        );
+                        _composerFocus.requestFocus();
+                      },
+                    ),
+                  if (_visibleTip != null)
+                    _CoachTip(tip: _visibleTip!, onDismiss: _dismissTip),
+                ],
+              ),
             ),
           if (_pending != null)
             _PendingAttachment(
@@ -462,6 +764,27 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               isImage: _pendingType == 'image',
               busy: _sending,
               onRemove: _sending ? null : () => setState(() => _pending = null),
+            ),
+          // When "Translate what I send" is on, a quiet one-line banner so it's
+          // never a surprise that an outgoing message will be translated
+          // (§6.12). The actual translation is still previewed before it sends.
+          if (_translateOutgoing)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
+              child: Row(
+                children: [
+                  Icon(Icons.translate, size: 14, color: ac.accent),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Ayma will translate your message to their language — '
+                      "you'll see it before it sends.",
+                      style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                    ),
+                  ),
+                ],
+              ),
             ),
           // No SafeArea here, deliberately: this screen is always wrapped in
           // `NavBarShell`, whose `AymaTabBar` below already consumes the
@@ -508,6 +831,15 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 focusNode: _composerFocus,
                                 minLines: 1,
                                 maxLines: 4,
+                                // Declare rich-content support so Gboard's
+                                // GIF/image button inserts media here instead
+                                // of showing "This app does not support images
+                                // here" — the inserted bytes upload + send as a
+                                // gif/image message (§6.6).
+                                contentInsertionConfiguration:
+                                    ContentInsertionConfiguration(
+                                  onContentInserted: _onContentInserted,
+                                ),
                                 decoration: const InputDecoration(
                                   filled: false,
                                   border: InputBorder.none,
@@ -544,6 +876,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -689,18 +1022,18 @@ class _PendingAttachment extends StatelessWidget {
   }
 }
 
-class _IcebreakerBar extends StatelessWidget {
-  const _IcebreakerBar({
-    required this.chips,
-    required this.onTap,
-    required this.onClose,
-  });
+/// Ayma's live suggestion chips above the composer (§6.9). Tap one to drop its
+/// text into the composer. The set refreshes as the conversation grows — these
+/// are common ground to keep talking about, not one-shot openers, so there's
+/// no manual dismiss; an empty set simply hides the bar.
+/// Most suggestion chips shown above the composer — keeps the coaching region
+/// short enough to sit above the keyboard.
+const int _maxCoachChips = 2;
+
+class _SuggestionBar extends StatelessWidget {
+  const _SuggestionBar({required this.chips, required this.onTap});
   final List<String> chips;
   final void Function(String) onTap;
-
-  /// Dismisses the whole suggestion group for this thread — persistently
-  /// (see `_DmThreadScreenState._dismissIcebreakers`).
-  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -715,61 +1048,163 @@ class _IcebreakerBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Things to talk about',
-                  style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-                ),
-              ),
-              // Same small-X treatment as the Ayma chat's pinned-context chip
-              // (`_Composer`'s pageContextLabel row in chat_screen.dart).
-              IconButton(
-                onPressed: onClose,
-                iconSize: 16,
-                icon: const Icon(Icons.close),
-                color: ac.fgMute,
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Hide suggestions',
-              ),
-            ],
+          Text(
+            'Things to talk about',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
           const SizedBox(height: 6),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 168),
-            child: SingleChildScrollView(
+          for (final c in chips)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: InkWell(
+                onTap: () => onTap(c),
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ac.bgCard,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: ac.lineSoft, width: 0.5),
+                  ),
+                  child: Text(
+                    c,
+                    softWrap: true,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.sans(size: 13, color: ac.fg),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A calm, protective safety heads-up (§6.9.1), visually distinct from the
+/// coaching tip: a shield glyph, a soft tinted card, and a short supportive
+/// line — never an alarmist red full-bleed banner. Shown only for a genuine
+/// concern (level caution/warning) and dismissible. It is advisory only and
+/// never blocks typing or sending; it never shames the user. `warning` reads a
+/// touch stronger than `caution` (a slightly firmer tint + a "Heads up" label),
+/// but both stay quiet and supportive.
+class _SafetyNote extends StatelessWidget {
+  const _SafetyNote({required this.safety, required this.onDismiss});
+  final DmSafety safety;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final isWarning = safety.level == 'warning';
+    // Lean on the theme's warning hue, but muted into a soft card — calm, not
+    // screaming. A warning is a little more present than a caution.
+    final tint = ac.warning.withValues(alpha: isWarning ? 0.12 : 0.08);
+    final line = ac.warning.withValues(alpha: isWarning ? 0.45 : 0.30);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        decoration: BoxDecoration(
+          color: tint,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: line, width: 1),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(
+                Icons.shield_outlined,
+                size: 18,
+                color: ac.warning,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final c in chips)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: InkWell(
-                        onTap: () => onTap(c),
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: ac.bgCard,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: ac.lineSoft, width: 0.5),
-                          ),
-                          child: Text(
-                            c,
-                            softWrap: true,
-                            style: AymaType.sans(size: 13, color: ac.fg),
-                          ),
-                        ),
-                      ),
+                  Text(
+                    'Heads up from Ayma',
+                    style: AymaType.sans(
+                      size: 12,
+                      weight: FontWeight.w600,
+                      color: ac.fg,
                     ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    safety.reason,
+                    softWrap: true,
+                    style: AymaType.sans(size: 13, color: ac.fgDim),
+                  ),
                 ],
               ),
             ),
+            IconButton(
+              onPressed: onDismiss,
+              iconSize: 15,
+              icon: const Icon(Icons.close),
+              color: ac.fgMute,
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Dismiss safety note',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A quiet one-line coaching nudge from Ayma, just above the composer: a small
+/// Ayma glyph, muted text, and a small dismiss button. Shown only when the
+/// assist response carries a tip; kept deliberately low-key so it reads as a
+/// gentle aside, not an alert.
+class _CoachTip extends StatelessWidget {
+  const _CoachTip({required this.tip, required this.onDismiss});
+  final String tip;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: AymaOrb(size: 15, showGlow: false),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              tip,
+              softWrap: true,
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            ),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            iconSize: 15,
+            icon: const Icon(Icons.close),
+            color: ac.fgMute,
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Dismiss tip',
           ),
         ],
       ),
@@ -778,47 +1213,88 @@ class _IcebreakerBar extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.mine});
+  const _Bubble({
+    required this.message,
+    required this.mine,
+    this.translate,
+    this.autoTranslate = false,
+    this.onDetected,
+    this.preferredLang = '',
+  });
   final DmMessage message;
   final bool mine;
+
+  /// Translate this bubble's text into the reader's language (incoming text
+  /// bubbles only; null disables the affordance). [autoTranslate] runs it on
+  /// first display; [onDetected] reports the detected source language up so an
+  /// outgoing translation knows the match's language. [preferredLang] is the
+  /// reader's language, used to decide whether a message is in a different
+  /// writing system (and so reliably foreign).
+  final Future<DmTranslation> Function(String text)? translate;
+  final bool autoTranslate;
+  final void Function(String lang)? onDetected;
+  final String preferredLang;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
 
     final report = message.reportShare;
+    final bool tight;
+    final Widget content;
     if (message.isSharedReport && report != null) {
-      return _wrap(
-        context,
-        tight: true,
-        child: SharedReportCard(
-          share: report,
-          onTap: () => context.push('/s/${report.token}'),
-        ),
+      tight = true;
+      content = SharedReportCard(
+        share: report,
+        onTap: () => context.push('/s/${report.token}'),
       );
-    }
-    if (message.hasImage) {
-      return _wrap(context, tight: true, child: _image(context, ac));
-    }
-    if (message.hasFile) {
-      return _wrap(context, tight: false, child: _file(context, ac));
-    }
-
-    final label = switch (message.type) {
-      'photo' || 'image' => '📷 Photo',
-      'voice' => '🎙 Voice message',
-      'file' => '📎 File',
-      'shared_profile' => '👤 Shared a profile',
-      'shared_report' => '📄 Shared a report',
-      _ => message.body,
-    };
-    return _wrap(
-      context,
-      tight: false,
-      child: Text(
+    } else if (message.hasImage || message.hasGif) {
+      // A GIF renders the same way (Image.network animates it inline); it only
+      // differs in its stored type + label.
+      tight = true;
+      content = _image(context, ac);
+    } else if (message.hasFile) {
+      tight = false;
+      content = _file(context, ac);
+    } else if (!mine &&
+        message.type == 'text' &&
+        message.body.trim().isNotEmpty &&
+        translate != null) {
+      // Incoming text in a (possibly) different language: show the original
+      // with a subtle Translate affordance (§6.12).
+      tight = false;
+      content = _TranslatableText(
+        key: ValueKey('tr-${message.id}'),
+        text: message.body,
+        ink: _ink(ac),
+        translate: translate!,
+        autoTranslate: autoTranslate,
+        onDetected: onDetected,
+        preferredLang: preferredLang,
+      );
+    } else {
+      tight = false;
+      final label = switch (message.type) {
+        'photo' || 'image' => '📷 Photo',
+        'gif' => '📷 GIF',
+        'voice' => '🎙 Voice message',
+        'file' => '📎 File',
+        'shared_profile' => '👤 Shared a profile',
+        'shared_report' => '📄 Shared a report',
+        _ => message.body,
+      };
+      content = Text(
         label,
         style: AymaType.message(color: _ink(ac)),
-      ),
+      );
+    }
+
+    return ChatBubble(
+      mine: mine,
+      tight: tight,
+      flagged: message.moderated,
+      copyText: message.body,
+      child: content,
     );
   }
 
@@ -828,68 +1304,6 @@ class _Bubble extends StatelessWidget {
   /// accent-filled surface — instead of the regular foreground colour.
   Color _ink(AymaTokens ac) =>
       (mine && !message.moderated) ? ac.onAccent : ac.fg;
-
-  Widget _wrap(
-    BuildContext context, {
-    required Widget child,
-    required bool tight,
-  }) {
-    final ac = context.ac;
-    final flagged = message.moderated;
-    return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: CopyOnLongPress(
-        text: message.body,
-        child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: tight
-            ? const EdgeInsets.all(4)
-            : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.78,
-        ),
-        decoration: BoxDecoration(
-          color: flagged
-              ? ac.error.withValues(alpha: 0.12)
-              // Sent bubbles use the full, solid accent (not a washed-out
-              // tint) so they read as clearly "mine" against the received
-              // bubbles' bgCard grey — matching the reference messaging app.
-              : (mine ? ac.accent : ac.bgCard),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: flagged ? ac.error : ac.lineSoft,
-            width: flagged ? 1.25 : 0.5,
-          ),
-        ),
-        child: flagged
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.flag_rounded, size: 14, color: ac.error),
-                      const SizedBox(width: 5),
-                      Text(
-                        'Flagged for review',
-                        style: AymaType.sans(
-                          size: 11,
-                          color: ac.error,
-                          weight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  child,
-                ],
-              )
-            : child,
-      ),
-      ),
-    );
-  }
 
   Widget _image(BuildContext context, AymaTokens ac) {
     final heroTag = 'dm-image-${message.id}';
@@ -1005,6 +1419,244 @@ class _Bubble extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Incoming message text with a subtle "Translate" affordance (§6.12). The
+/// original is always shown; tapping Translate (or the thread's auto-translate
+/// toggle) renders the translation beneath it with a "translated from `lang`"
+/// label and a toggle to hide it again. Any failure degrades to just the
+/// original — translation never blocks reading the message.
+///
+/// Whether to even offer a translation is decided per message, so the reader is
+/// never offered "Translate" on a message already in their own language:
+/// - A DIFFERENT writing system than [preferredLang] (e.g. Malayalam text for
+///   an English reader) is reliably foreign on script alone — the "Translate"
+///   affordance shows immediately, no detection round-trip needed.
+/// - SAME-script text (English, Spanish, French for an English reader) is
+///   ambiguous — especially short messages like "hello" — so we quietly run the
+///   backend detector once: it returns a real translation only when confident
+///   the text is a different language, otherwise the original (so nothing is
+///   offered). The "Translate" affordance appears only for confidently-foreign
+///   same-script messages; the translation is cached and revealed on tap.
+class _TranslatableText extends StatefulWidget {
+  const _TranslatableText({
+    super.key,
+    required this.text,
+    required this.ink,
+    required this.translate,
+    required this.autoTranslate,
+    this.onDetected,
+    this.preferredLang = '',
+  });
+
+  final String text;
+  final Color ink;
+  final Future<DmTranslation> Function(String text) translate;
+  final bool autoTranslate;
+  final void Function(String lang)? onDetected;
+  final String preferredLang;
+
+  @override
+  State<_TranslatableText> createState() => _TranslatableTextState();
+}
+
+class _TranslatableTextState extends State<_TranslatableText> {
+  DmTranslation? _tr;
+  bool _loading = false;
+  bool _failed = false;
+  bool _manual = false; // the user tapped Translate (vs auto/eager detection)
+  bool _show = true; // show the translation block (toggle to hide)
+
+  /// A reliably-foreign message (different writing system than the reader's
+  /// language): offer "Translate" immediately, no detection needed.
+  bool get _foreignByScript =>
+      isForeignScript(widget.text, widget.preferredLang);
+
+  /// Same-script text that must be detected to tell the reader's own language
+  /// (don't offer) from a confidently-foreign one (offer). Script-less noise
+  /// (emoji/numbers) is neither, so it is never detected or offered.
+  bool get _ambiguousSameScript =>
+      dominantScript(widget.text) != 'none' && !_foreignByScript;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-translate runs everything; otherwise quietly detect same-script text
+    // so a message already in the reader's language never shows "Translate".
+    if (widget.autoTranslate || _ambiguousSameScript) _run(manual: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TranslatableText old) {
+    super.didUpdateWidget(old);
+    // The thread's auto-translate toggle flipped on after this bubble appeared.
+    if (widget.autoTranslate &&
+        !old.autoTranslate &&
+        _tr == null &&
+        !_loading) {
+      _run(manual: false);
+    }
+  }
+
+  Future<void> _run({required bool manual}) async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _failed = false;
+      if (manual) {
+        _manual = true;
+        _show = true;
+      }
+    });
+    try {
+      final tr = await widget.translate(widget.text);
+      if (!mounted) return;
+      if (tr.detectedSourceLang.isNotEmpty) {
+        widget.onDetected?.call(tr.detectedSourceLang);
+      }
+      setState(() {
+        _tr = tr;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _failed = true;
+      });
+    }
+  }
+
+  bool get _isTranslated {
+    final t = _tr;
+    return t != null &&
+        t.translated.trim().isNotEmpty &&
+        t.translated.trim() != widget.text.trim();
+  }
+
+  /// Whether the translation block is currently visible — auto-translate shows
+  /// it inline; a manual tap reveals the (possibly already-fetched) translation.
+  bool get _revealed => widget.autoTranslate || _manual;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final muted = AymaType.sans(size: 12, soft: true, color: ac.fgMute);
+
+    final rows = <Widget>[
+      // The original is always present and accessible.
+      Text(widget.text, style: AymaType.message(color: widget.ink)),
+    ];
+
+    // Only surface a spinner when the reader asked (tapped) or auto-translate
+    // is on — the quiet same-script detection must not flash "Translating…" on
+    // every ordinary same-language message.
+    final showLoading = _loading && _revealed;
+
+    if (showLoading) {
+      rows.add(Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 1.6),
+            ),
+            const SizedBox(width: 6),
+            Flexible(child: Text('Translating…', style: muted)),
+          ],
+        ),
+      ));
+    } else if (_isTranslated) {
+      final from = _tr!.detectedSourceLang;
+      if (_revealed && _show) {
+        // Reader is seeing the translation inline (auto-translate or after tap).
+        rows.add(Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            _tr!.translated,
+            style: AymaType.message(color: widget.ink),
+          ),
+        ));
+        rows.add(_affordance(
+          label: from.isEmpty
+              ? 'translated · Show original'
+              : 'translated from $from · Show original',
+          muted: muted,
+          onTap: () => setState(() => _show = false),
+        ));
+      } else if (_revealed) {
+        // Reader hid the translation (manual/auto) — let them bring it back.
+        rows.add(_affordance(
+          label: 'Show translation',
+          muted: muted,
+          onTap: () => setState(() => _show = true),
+        ));
+      } else {
+        // Confidently foreign but not yet revealed: offer the translation
+        // (already fetched for same-script, or fetched on tap for a different
+        // script — either way no extra round-trip is needed to reveal it).
+        rows.add(_affordance(
+          label: 'Translate',
+          muted: muted,
+          onTap: () => _reveal(),
+        ));
+      }
+    } else if (_tr != null) {
+      // Detected and resolved to the reader's own language: offer nothing,
+      // unless the reader explicitly tapped Translate on it.
+      if (_manual) {
+        rows.add(Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('Already in your language', style: muted),
+        ));
+      }
+    } else if (_failed) {
+      rows.add(_affordance(
+        label: "Couldn't translate · Try again",
+        muted: muted,
+        onTap: () => _run(manual: true),
+      ));
+    } else if (_foreignByScript) {
+      // Reliably foreign, not yet fetched (different script, auto-translate off).
+      rows.add(_affordance(
+        label: 'Translate',
+        muted: muted,
+        onTap: () => _run(manual: true),
+      ));
+    }
+    // Otherwise (same-script detection pending, or script-less noise): show just
+    // the original with no affordance.
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: rows,
+    );
+  }
+
+  /// Reveal an already-fetched translation (no new round-trip).
+  void _reveal() => setState(() {
+        _manual = true;
+        _show = true;
+      });
+
+  Widget _affordance({
+    required String label,
+    required TextStyle muted,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 2),
+        child: Text(label, style: muted),
+      ),
     );
   }
 }

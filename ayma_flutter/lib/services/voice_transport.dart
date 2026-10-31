@@ -43,6 +43,7 @@ const _toolUsedTopic = 'tool_used';
 const _callEndingTopic = 'call_ending';
 const _agentMuteTopic = 'agent_mute';
 const _agentMuteControlTopic = 'agent_mute_control';
+const _practiceCoachTopic = 'practice_coach';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -86,6 +87,12 @@ abstract class VoiceTransport {
   /// Emits `true` when the agent has been told to "shut up" and goes quiet,
   /// `false` when she is called back by name (topic `agent_mute`).
   Stream<bool> get agentMute;
+
+  /// Practice Date voice (hackathon B): an out-of-character live coaching nudge
+  /// to the USER (topic `practice_coach`), shown as a side hint — never spoken
+  /// by the simulated persona. Emits only final hint text. Empty on a normal
+  /// (non-practice) call.
+  Stream<String> get practiceCoach;
 
   /// Asks the agent to change its "shut up" state (topic
   /// `agent_mute_control`, payload `{"muted": bool}`). The agent only honours
@@ -135,6 +142,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _toolEvents = StreamController<ToolUsedEvent>.broadcast();
   final _callEnding = StreamController<String>.broadcast();
   final _agentMute = StreamController<bool>.broadcast();
+  final _practiceCoach = StreamController<String>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
   final _agentLevel = StreamController<double>.broadcast();
@@ -192,6 +200,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Stream<bool> get agentMute => _agentMute.stream;
+
+  @override
+  Stream<String> get practiceCoach => _practiceCoach.stream;
 
   @override
   Stream<Object> get closed => _closed.stream;
@@ -294,6 +305,11 @@ class LiveKitVoiceTransport implements VoiceTransport {
       } else if (topic == _agentMuteTopic) {
         if (_agentMute.isClosed) return;
         _agentMute.add(decoded['muted'] == true);
+      } else if (topic == _practiceCoachTopic) {
+        if (_practiceCoach.isClosed) return;
+        final isFinal = decoded['is_final'] as bool? ?? true;
+        final text = decoded['text'] as String? ?? '';
+        if (isFinal && text.isNotEmpty) _practiceCoach.add(text);
       } else if (topic == _agentStateTopic) {
         // Fallback readiness signal: the first agent_state message means the
         // agent's session is live even if its audio track hasn't subscribed yet.
@@ -356,6 +372,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_toolEvents.isClosed) await _toolEvents.close();
     if (!_callEnding.isClosed) await _callEnding.close();
     if (!_agentMute.isClosed) await _agentMute.close();
+    if (!_practiceCoach.isClosed) await _practiceCoach.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();
     if (!_agentLevel.isClosed) await _agentLevel.close();

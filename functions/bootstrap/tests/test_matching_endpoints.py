@@ -223,12 +223,17 @@ def test_match_job_drops_a_match_card_into_the_chat(monkeypatch):
     row = rows[0]
     assert row["role"] == "ayma"
     assert row["text"] == (
-        f"Your match with Dillu Shakeeb is ready: 41%.\n\n[match:{match_id}]"
+        f"Your compatibility report with Dillu Shakeeb is ready: 41%."
+        f"\n\n[match:{match_id}]"
     )
-    assert row["tools"] == ["Checked your match with Dillu Shakeeb"]
+    assert row["tools"] == ["Checked your compatibility with Dillu Shakeeb"]
     assert row["subject_image"] == "https://p/d.jpg"
     assert notified == [
-        ("me", "Your match with Dillu Shakeeb is ready — 41%.", f"match/{match_id}")
+        (
+            "me",
+            "Your compatibility report with Dillu Shakeeb is ready — 41%.",
+            f"match/{match_id}",
+        )
     ]
 
 

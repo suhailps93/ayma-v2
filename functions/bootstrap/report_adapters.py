@@ -56,6 +56,7 @@ from __future__ import annotations
 import appearance
 import deep_dive
 import deep_dive_links
+import match_deterministic
 import matching_skill
 import pair_key
 import public_profile
@@ -691,7 +692,10 @@ def match_blocks(db, viewer_uid: str, match_id: str):
     )
     if not top_blocks:
         top_blocks.append(
-            rb.section_head_block("score:status", "This match hasn't been scored yet.")
+            rb.section_head_block(
+                "score:status",
+                "This match hasn't been scored yet.",
+            )
         )
     sections = [rb.make_section("Match", top_blocks)]
 
@@ -700,16 +704,33 @@ def match_blocks(db, viewer_uid: str, match_id: str):
         if isinstance(g, dict) and str(g.get("reason") or "").strip()
     ]
     if gate_failures:
+        # A HARD dealbreaker (gender/orientation, partner age, location) forces
+        # the score to exactly 0% (§5.4). When that's why, title the section
+        # "Why this is 0%" and open with a plain sentence so the zero never
+        # reads as an unexplained glitch, then list each specific reason.
+        # Soft gate failures (which only cap the score, not zero it) keep the
+        # plain "Dealbreakers" heading.
+        hard = match_deterministic.is_hard_dealbreaker(gate_failures)
+        gate_blocks: list[dict] = []
+        if hard:
+            lead = (
+                "This is a 0% match because of a hard dealbreaker:"
+                if len(gate_failures) == 1
+                else "This is a 0% match because of hard dealbreakers:"
+            )
+            gate_blocks.append(
+                rb.text_block("dealbreaker:lead", lead, editable=False)
+            )
+        gate_blocks.extend(
+            rb.fact_block(
+                f"dealbreaker:{i}", str(g.get("reason") or ""),
+                tag=str(g.get("label") or ""), editable=False,
+            )
+            for i, g in enumerate(gate_failures)
+        )
         sections.append(
             rb.make_section(
-                "Dealbreakers",
-                [
-                    rb.fact_block(
-                        f"dealbreaker:{i}", str(g.get("reason") or ""),
-                        tag=str(g.get("label") or ""), editable=False,
-                    )
-                    for i, g in enumerate(gate_failures)
-                ],
+                "Why this is 0%" if hard else "Dealbreakers", gate_blocks
             )
         )
 

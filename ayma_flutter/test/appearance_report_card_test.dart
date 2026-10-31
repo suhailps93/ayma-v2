@@ -1,6 +1,6 @@
 // The shareable Appearance report card: what it may show (photos capped at
 // four, both scores always, positive findings only), long-text safety, the
-// Share sheet, the 1080x1920 PNG export, and the per-target hand-off.
+// 1080x1920 PNG export, and the single native-share hand-off.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -9,22 +9,64 @@ import 'package:ayma_flutter/models/appearance_card.dart';
 import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/gallery_saver.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/report_card_share.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/appearance_report_card.dart';
-import 'package:ayma_flutter/widgets/report_card_share_sheet.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
+import 'package:file/file.dart' as fs;
+import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:share_plus/share_plus.dart';
 
 final Uint8List _png = File('test/fixtures/tiny.png').readAsBytesSync();
+
+/// Serves one local fixture file for any URL, so the full report's photo
+/// thumbnails (rendered through [AymaPhoto] → [CachedNetworkImage]) run their
+/// real decode pipeline with no sqflite cache database and no network — the
+/// screen tests mount the whole report, so without this the cache manager
+/// would reach for a database that `databaseFactory` never initialises under
+/// test and leave its download future pending at teardown.
+class _FakeCacheManager implements BaseCacheManager {
+  _FakeCacheManager(File ioFile)
+    : file = const LocalFileSystem().file(ioFile.path);
+
+  // flutter_cache_manager's API speaks package:file's File type.
+  final fs.File file;
+
+  @override
+  Stream<FileResponse> getFileStream(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+    bool withProgress = false,
+  }) async* {
+    yield FileInfo(
+      file,
+      FileSource.Cache,
+      DateTime.now().add(const Duration(days: 1)),
+      url,
+    );
+  }
+
+  @override
+  Future<fs.File> getSingleFile(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+  }) async => file;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
 
 Map<String, dynamic> _b(String id, String type, [Map<String, dynamic>? f]) => {
   'block_id': id,
@@ -214,6 +256,17 @@ Future<ui.Image> _decoded(WidgetTester tester) async =>
 }
 
 void main() {
+  // The screen tests mount the whole AppearanceReportScreen, whose embedded
+  // full report draws its photo thumbnails through AymaPhoto/CachedNetworkImage.
+  // Point that at a fake cache manager serving the checked-in fixture so no
+  // sqflite cache database is opened and no download future is left pending.
+  setUp(() {
+    AymaPhoto.debugCacheManager = _FakeCacheManager(
+      File('test/fixtures/tiny.png'),
+    );
+  });
+  tearDown(() => AymaPhoto.debugCacheManager = null);
+
   group('AppearanceCardData', () {
     test('caps photos at four, face photo first, no duplicates', () {
       final d = AppearanceCardData.fromReport(_living(_report(attrPhotos: 6)))!;
@@ -395,6 +448,19 @@ void main() {
       tester,
     ) async {
       final img = await _decoded(tester);
+      final shares = <String?>[];
+      // Tapping Share decodes the logo under runAsync; the report below renders
+      // its own network images through flutter_cache_manager, so stub the
+      // path_provider channel it reaches for (it would otherwise throw a
+      // MissingPluginException inside the runAsync zone).
+      final tmpDir = Directory.systemTemp.createTempSync('appr_screen');
+      addTearDown(() => tmpDir.deleteSync(recursive: true));
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (_) async => tmpDir.path);
+      addTearDown(() => TestDefaultBinaryMessengerBinding
+          .instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null));
       await tester.pumpWidget(
         MaterialApp(
           home: AppearanceReportScreen(
@@ -403,6 +469,7 @@ void main() {
             apiClient: _api(_report()),
             profileService: _Profile(),
             imageFor: (_) => DecodedImage(img),
+            shareService: _CapturingShare(shares),
           ),
         ),
       );
@@ -449,12 +516,24 @@ void main() {
         -300,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.byKey(const ValueKey('reportCardShare')));
+      // Tapping Share goes straight to the native OS share sheet — no Ayma
+      // intermediate sheet, no per-app buttons. (The real render + system
+      // sheet is covered by the service tests; here a capturing fake records
+      // that the button is wired to the native share with the smart-link
+      // caption.)
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const ValueKey('reportCardShare')));
+        for (var i = 0; i < 40 && shares.isEmpty; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
       await tester.pumpAndSettle();
-      final labels = [for (final o in ReportCardShareSheet.options) o.$2];
-      expect(labels, ['WhatsApp', 'Instagram', 'Save image', 'More…']);
-      for (final l in labels) {
-        expect(find.text(l), findsOneWidget);
+      expect(shares, hasLength(1));
+      expect(shares.single, contains('https://justabot.info/get'));
+      // No per-app share buttons / intermediate sheet survive anywhere.
+      for (final gone in ['WhatsApp', 'Instagram', 'Instagram Story', 'More…']) {
+        expect(find.text(gone), findsNothing);
       }
     });
 
@@ -696,92 +775,44 @@ void main() {
     });
   });
 
-  group('ReportCardShare targets', () {
+  group('ReportCardShare native share', () {
     late Directory tmp;
-    late List<MethodCall> shareCalls;
-    late List<MethodCall> saveCalls;
     late List<ShareParams> system;
-    const shareChannel = MethodChannel('ayma/share');
-    const saveChannel = MethodChannel('ayma/media_save');
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
     ReportCardShare svc() => ReportCardShare(
-      shareChannel: shareChannel,
-      gallery: const GallerySaver(channel: saveChannel),
       tempDir: tmp,
       systemShare: (p) async => system.add(p),
     );
 
     setUp(() {
       tmp = Directory.systemTemp.createTempSync('card_share');
-      shareCalls = [];
-      saveCalls = [];
       system = [];
-      messenger.setMockMethodCallHandler(saveChannel, (c) async {
-        saveCalls.add(c);
-        return 'Pictures/Ayma';
-      });
     });
-    tearDown(() {
-      debugDefaultTargetPlatformOverride = null;
-      messenger.setMockMethodCallHandler(shareChannel, null);
-      messenger.setMockMethodCallHandler(saveChannel, null);
-      tmp.deleteSync(recursive: true);
-    });
+    tearDown(() => tmp.deleteSync(recursive: true));
 
-    test('Android WhatsApp sends the image straight to WhatsApp', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      messenger.setMockMethodCallHandler(shareChannel, (c) async {
-        shareCalls.add(c);
-        return true;
-      });
-      expect(await svc().share(CardShareTarget.whatsapp, _png), isNull);
-      final c = shareCalls.single;
-      expect(c.method, 'sendToApp');
-      expect(c.arguments['packages'], ['com.whatsapp', 'com.whatsapp.w4b']);
-      // The caption carries the Ayma smart link so the card lands with it.
-      expect(c.arguments['text'], contains('Get your report on Ayma'));
-      expect(c.arguments['text'], contains('https://justabot.info/get'));
-      expect(File(c.arguments['path'] as String).readAsBytesSync(), _png);
-      expect(system, isEmpty);
-    });
-
-    test('Instagram not installed falls back to the share sheet', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      messenger.setMockMethodCallHandler(shareChannel, (c) async {
-        shareCalls.add(c);
-        return false;
-      });
-      await svc().share(CardShareTarget.instagram, _png);
-      expect(shareCalls.single.arguments['packages'], [
-        'com.instagram.android',
-      ]);
-      expect(system.single.files!.single.mimeType, 'image/png');
-    });
-
-    test(
-      'iOS WhatsApp/Instagram and More use the system share sheet',
-      () async {
-        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-        await svc().share(CardShareTarget.whatsapp, _png);
-        await svc().share(CardShareTarget.more, _png);
-        expect(shareCalls, isEmpty);
-        expect(system, hasLength(2));
-        expect(system.first.text, contains('Get your report on Ayma'));
-        expect(system.first.text, contains('https://justabot.info/get'));
-      },
-    );
-
-    test('Save image writes the PNG to the gallery, nothing else', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      expect(
-        await svc().share(CardShareTarget.save, _png),
-        'Saved to Pictures/Ayma',
+    test('share opens the native sheet with the card image and caption',
+        () async {
+      await svc().share(
+        _png,
+        caption: ReportCardShare.captionFor('AB12cd'),
+        origin: const Rect.fromLTWH(1, 2, 3, 4),
       );
-      expect(saveCalls.single.arguments['mime'], 'image/png');
-      expect(saveCalls.single.arguments['bytes'], _png);
-      expect(system, isEmpty);
+      final p = system.single;
+      // The caption carries the Ayma smart link (with the referral code).
+      expect(p.text, contains('Get your report on Ayma'));
+      expect(p.text, contains('https://justabot.info/get?r=AB12cd'));
+      // The rendered card rides along as a PNG file...
+      final file = p.files!.single;
+      expect(file.mimeType, 'image/png');
+      expect(File(file.path).readAsBytesSync(), _png);
+      // ...and the iPad popover anchors to the Share button's rect.
+      expect(p.sharePositionOrigin, const Rect.fromLTWH(1, 2, 3, 4));
+    });
+
+    test('share falls back to the default caption when none is given',
+        () async {
+      await svc().share(_png);
+      expect(system.single.text, ReportCardShare.caption);
     });
   });
 
@@ -805,4 +836,25 @@ void main() {
       expect(ReportCardShare.captionFor('  '), ReportCardShare.caption);
     });
   });
+
+}
+
+/// A [ReportCardShare] that records a share instead of rendering the card and
+/// opening a real OS share sheet, so the screen test can assert the Share
+/// button is wired to the native share (and the caption) without the heavy
+/// offscreen render. Overrides [shareCard] so no [renderPng] runs.
+class _CapturingShare extends ReportCardShare {
+  _CapturingShare(this.captions);
+
+  final List<String?> captions;
+
+  @override
+  Future<void> shareCard(
+    Widget card, {
+    required ui.FlutterView view,
+    required Size logicalSize,
+    Rect? origin,
+    String? caption,
+  }) async =>
+      captions.add(caption);
 }

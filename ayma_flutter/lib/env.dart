@@ -5,13 +5,6 @@
 class Env {
   const Env._();
 
-  /// Meta/Facebook App ID Instagram requires as `source_application` when
-  /// handing a share to Stories (`--dart-define=FACEBOOK_APP_ID=...`). Empty
-  /// disables the Instagram Story option (the sheet falls back to the system
-  /// share sheet).
-  static const String facebookAppId =
-      String.fromEnvironment('FACEBOOK_APP_ID');
-
   /// RevenueCat public SDK keys (`--dart-define=REVENUECAT_ANDROID_KEY=...` /
   /// `REVENUECAT_IOS_KEY=...`). Empty disables in-app purchases; the app
   /// still runs.

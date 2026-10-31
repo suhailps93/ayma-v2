@@ -1,0 +1,1 @@
+On this setup you cannot change your voice mid-call: a new choice is saved and takes effect from your NEXT call. So tell them you'll switch to it next time — never pretend you changed it live right now.

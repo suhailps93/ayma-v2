@@ -45,7 +45,6 @@ HISTORY_LIMIT = 20
 APP_MIRRORS = {
     "sentry": ("app_config", "sentry"),
     "meta_integrations": ("app_config", "meta_integrations"),
-    "dev_panel": ("app_config", "dev_panel"),
 }
 
 ROUTES = ("vertex", "inference")
@@ -101,8 +100,14 @@ REGISTRY: dict[str, Flag] = {
              "Instagram / Facebook connect, sign-in and photo import (V2; off for V1)"),
         Flag("sentry", "bool", "sentry_enabled",
              "Sentry error reporting (DSN still comes from secrets)"),
-        Flag("dev_panel", "bool", None,
-             "the app's hidden Developer panel and dev-facing AI annotations",
+        Flag("mcp_server", "bool", "mcp_server",
+             "Ayma MCP server (bring-your-own-agent). Default OFF — when off "
+             "every /mcp request answers 503. See docs/MCP_SERVER.md."),
+        Flag("qloo_enabled", "bool", None,
+             "Kill switch for ALL Qloo Taste API calls (billing protection). "
+             "Default ON. When false, NO Qloo HTTP request is made anywhere and "
+             "the taste features degrade to the no-taste empty state. Flip with "
+             "scripts/flags.py set qloo_enabled=false --yes (no redeploy).",
              default=True),
     ]
 }
@@ -210,9 +215,21 @@ def _base(flag: Flag) -> Any:
     return getattr(CONFIG, flag.config_attr)
 
 
-def resolve(name: str) -> tuple[Any, str]:
-    """``(value, source)``; source is ``env``, ``firestore`` or ``default``."""
+def resolve(name: str, uid: str | None = None) -> tuple[Any, str]:
+    """``(value, source)``; source is ``env``, ``firestore``, ``default`` or,
+    for a per-user override, ``user_override``.
+
+    When ``uid`` is one of ``CONFIG.all_flags_on_uids`` (the demo/judge
+    accounts, see ``docs/DEMO_ACCOUNTS.md``) every *boolean* flag resolves ON
+    for that user, without touching any global flag. Non-bool flags (routes,
+    percents, lists, ints) have no meaningful "on" and are resolved normally."""
     flag = REGISTRY[name]
+    if (
+        uid
+        and flag.kind == "bool"
+        and uid in CONFIG.all_flags_on_uids
+    ):
+        return True, "user_override"
     env_text = os.environ.get(ENV_PREFIX + name.upper())
     if env_text is not None and env_text.strip():
         try:
@@ -229,12 +246,12 @@ def resolve(name: str) -> tuple[Any, str]:
     return _base(flag), "default"
 
 
-def get(name: str) -> Any:
-    return resolve(name)[0]
+def get(name: str, uid: str | None = None) -> Any:
+    return resolve(name, uid)[0]
 
 
-def enabled(name: str) -> bool:
-    return bool(get(name))
+def enabled(name: str, uid: str | None = None) -> bool:
+    return bool(get(name, uid))
 
 
 def snapshot() -> dict[str, dict]:

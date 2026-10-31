@@ -48,6 +48,14 @@ service cloud.firestore {
       );
     }
 
+    // True when an update adds, removes or changes `birthdate`. The age gate
+    // only needs to run then: a toggle write (AI Avatar, pause, voice, accent)
+    // leaves `birthdate` untouched, so a stored value the gate cannot parse
+    // must not block it. Creates and any birthdate change still hit the gate.
+    function birthdateTouched() {
+      return 'birthdate' in request.resource.data.diff(resource.data).affectedKeys();
+    }
+
     // ---- users/{uid} account doc -------------------------------------------
     match /users/{uid} {
       allow read: if isOwner(uid);
@@ -68,18 +76,18 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly([
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
-               'paused', 'ayma_voice_name', 'ayma_voice_language',
-               'updated_at', 'onboarding_started'
+               'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
+               'ayma_accent_color', 'seen_tour_features', 'updated_at', 'onboarding_started'
              ])
           && isAdultBirthdate(request.resource.data);
         allow update: if isOwner(uid)
           && changed([
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
-               'paused', 'ayma_voice_name', 'ayma_voice_language',
-               'updated_at', 'onboarding_started'
+               'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
+               'ayma_accent_color', 'seen_tour_features', 'updated_at', 'onboarding_started'
              ])
-          && isAdultBirthdate(request.resource.data);
+          && (!birthdateTouched() || isAdultBirthdate(request.resource.data));
       }
 
       // ---- wiki_pages: read non-ai_only; write user-edit fields, and let
@@ -109,6 +117,15 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
+      // ---- persona/avatar: the persistent AI-avatar snapshot (§18) holds
+      //      the user's FULL private grounding (profile + ALL wiki incl.
+      //      {{private}} spans + their own sent DMs, distilled). It is written
+      //      and read ONLY by the backend (Admin SDK bypasses rules); a client
+      //      never needs it, so DENY all client read and write outright.
+      match /persona/{doc=**} {
+        allow read, write: if false;
+      }
+
       // ---- everything else backend-authored: owner may read, not write --
       match /raw_turns/{id}        { allow read: if isOwner(uid); }
       match /user_media/{id}       { allow read: if isOwner(uid); }
@@ -125,6 +142,17 @@ service cloud.firestore {
       match /app_commands/{id} {
         allow read, delete: if isOwner(uid);
         allow create, update: if isOwner(uid) && id == 'ack';
+      }
+    }
+
+    // ---- AI date simulations (§18): owner READ-only; the transcript is
+    // streamed in by the backend (Admin SDK), the client may never write it.
+    match /users/{uid}/date_sims/{simId} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+      match /messages/{msgId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
       }
     }
 

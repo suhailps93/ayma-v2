@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/meta_integrations.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
+import '../services/tour_anchors.dart';
 import 'plan_screen.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
@@ -80,6 +81,7 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(MyPublicProfileScreen.path),
           ),
           _Item(
+            anchorId: TourAnchors.profileStoryRow,
             icon: Icons.auto_stories_outlined,
             label: 'My story',
             hint: 'Everything, what\'s public, and Ayma\'s own AI notes — with '
@@ -99,6 +101,7 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => _openWebResearch(context),
           ),
           _Item(
+            anchorId: TourAnchors.profileAppearanceRow,
             icon: Icons.auto_awesome_outlined,
             label: 'Appearance',
             hint: 'Your latest appearance report, or run a new one',
@@ -126,6 +129,7 @@ class ProfileTabScreen extends StatelessWidget {
         label: 'Ayma',
         rows: [
           _Item(
+            anchorId: TourAnchors.profileAymaSettingsRow,
             icon: Icons.record_voice_over_outlined,
             label: 'Ayma’s settings',
             hint: 'Her voice, animation, and what she remembers',
@@ -260,6 +264,7 @@ class _Item extends StatelessWidget {
     required this.onTap,
     this.hint,
     this.trailingBefore,
+    this.anchorId,
   });
 
   final IconData icon;
@@ -270,10 +275,15 @@ class _Item extends StatelessWidget {
   /// Optional widget shown just before the chevron (e.g. a live value).
   final Widget? trailingBefore;
 
+  /// Feature-tour anchor id (§11.2a) — when set, this row carries its stable
+  /// [TourAnchors] key so the coach-mark engine can spotlight it as a Profile
+  /// sub-step.
+  final String? anchorId;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return ListTile(
+    final tile = ListTile(
       leading: Icon(icon, color: ac.fgDim, size: 20),
       title: Text(label, style: AymaType.sans(size: 15, color: ac.fg)),
       subtitle: hint == null
@@ -292,6 +302,9 @@ class _Item extends StatelessWidget {
       ),
       onTap: onTap,
     );
+    final id = anchorId;
+    if (id == null) return tile;
+    return KeyedSubtree(key: TourAnchors.keyFor(id), child: tile);
   }
 }
 

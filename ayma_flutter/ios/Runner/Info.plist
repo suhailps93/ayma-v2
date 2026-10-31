@@ -58,6 +58,11 @@
 	     user's city. The app never tracks location in the background. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Ayma uses your location once to detect your city, so it can fill in your profile and match you with people nearby. It is never tracked in the background.</string>
+	<!-- geolocator references the "always" authorization API even though Ayma
+	     only ever does a one-shot foreground lookup; Apple (ITMS-90683) requires
+	     this key whenever that API is referenced, so the string is kept honest. -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Ayma uses your location once to detect your city, so it can fill in your profile and match you with people nearby. It never tracks or uses your location in the background.</string>
 	<!-- image_picker: taking a new profile photo with the camera. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Ayma uses the camera so you can take photos to use as your profile pictures or share in chats.</string>

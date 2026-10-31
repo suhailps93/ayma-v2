@@ -60,10 +60,27 @@ _RESPONSE_SCHEMA = {
                 },
                 "required": ["page_id", "page_type", "visibility", "ai_body"],
             },
-        }
+        },
+        # Named taste favourites the user stated — composed into the structured
+        # public Taste page (Music:/Film:/Food:) the Qloo engine reads, NOT into
+        # a narrative page. See the taste rule in prompts/wiki_ingest.md.
+        "taste": {
+            "type": "object",
+            "properties": {
+                "music": {"type": "array", "items": {"type": "string"}},
+                "film": {"type": "array", "items": {"type": "string"}},
+                "food": {"type": "array", "items": {"type": "string"}},
+            },
+        },
     },
     "required": ["pages"],
 }
+
+# The structured Taste page is owned by the deterministic taste-capture path
+# (skills/questionnaire.py::_sync_taste_page, fed by the `taste` field above);
+# a narrative `taste` page op from the model would overwrite it with prose the
+# Qloo parser can't read, so those ops are dropped here.
+_TASTE_PAGE_TYPE = "taste"
 
 
 @lru_cache(maxsize=1)
@@ -330,12 +347,32 @@ async def ingest(
         if not _valid_op(op):
             logger.warning("skipping invalid wiki op: %r", op)
             continue
+        if op.get("page_type") == _TASTE_PAGE_TYPE:
+            # Owned by the structured taste path — never a narrative overwrite.
+            logger.debug("skipping narrative taste page op: %r", op.get("page_id"))
+            continue
         _write_page(db, uid, session_id, op, source_excerpt=excerpt)
         written += 1
         if op["visibility"] != "ai_only" and (
             op["ai_body"].strip() != existing_bodies.get(op["page_id"], "")
         ):
             changed_pages.append(op["page_id"])
+
+    # Named taste favourites the user stated go on the structured public Taste
+    # page (Music:/Film:/Food:) the Qloo engine reads — never dumped into the
+    # Interests story. Best-effort: a sync failure never breaks ingest, and it
+    # only appends (dedup, cap 5) so it can't clobber a direct taste answer.
+    taste = (result or {}).get("taste") if isinstance(result, dict) else None
+    if isinstance(taste, dict) and any(
+        isinstance(taste.get(d), list) and taste.get(d) for d in ("music", "film", "food")
+    ):
+        try:
+            from skills import questionnaire as questionnaire_skill
+
+            if questionnaire_skill.merge_taste_mentions(db, uid, taste):
+                written += 1
+        except Exception:  # noqa: BLE001 - best-effort; never break ingest
+            logger.debug("taste-mention merge failed", exc_info=True)
 
     if changed_pages:
         # Commit a per-section version for each section whose compiled body
@@ -366,6 +403,18 @@ async def ingest(
             await notify_profile_suggestions(db, uid, new_count)
     except Exception:  # noqa: BLE001
         logger.debug("profile-suggestions notify hook failed", exc_info=True)
+
+    # Persistent AI-avatar snapshot: this user's wiki/own-context just changed
+    # (chat-turn ingest, voice session, Google sync, backfill), so flag their
+    # standing avatar snapshot stale. Cheap, no LLM — the background sweep
+    # rebuilds it at most once an hour and only if the source actually changed.
+    if written:
+        try:
+            import persona_snapshot
+
+            persona_snapshot.mark_persona_stale(db, uid)
+        except Exception:  # noqa: BLE001 - the stale hook must never break ingest
+            logger.debug("persona stale hook failed", exc_info=True)
     return written
 
 

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
-import 'ayma_orb.dart';
+import 'app_loading_indicator.dart';
 import 'face_report_view.dart' show AddToStoryButton, resolvePhotoUrl;
 import 'score_bar.dart';
 
@@ -75,7 +75,7 @@ class _StoredBodyReportSheetState extends State<_StoredBodyReportSheet> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(32),
-                  child: AymaOrb(size: 56, state: AymaOrbState.thinking),
+                  child: AppLoadingIndicator(),
                 ),
               );
             }

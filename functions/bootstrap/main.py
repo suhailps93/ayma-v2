@@ -8,6 +8,7 @@ land in later steps per ``PLAN.md``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import sys
 from pathlib import Path
@@ -43,7 +44,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     Request,
 )
 from fastapi.responses import HTMLResponse, Response, StreamingResponse  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
@@ -57,10 +58,11 @@ from auth import (  # noqa: E402
     require_dev,
     require_uid_and_dev_flag,
 )
-from config import CONFIG  # noqa: E402
+from config import CONFIG, PLAN_TIERS  # noqa: E402
 import agent_wake  # noqa: E402
 import feature_flags  # noqa: E402
 import gemini  # noqa: E402
+from llm_provider import get_user_brain_provider  # noqa: E402
 import billing  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -102,7 +104,8 @@ import dm_ingest  # noqa: E402
 import dm_moderation  # noqa: E402
 import dm_ops  # noqa: E402
 import dm_schema  # noqa: E402
-import icebreakers  # noqa: E402
+import dm_assist  # noqa: E402
+import dm_translate  # noqa: E402
 import notifications_ops  # noqa: E402
 import notifications_triggers  # noqa: E402
 import schema  # noqa: E402
@@ -220,6 +223,78 @@ def _ayma_voice_language(uid: str) -> str:
     except Exception:  # noqa: BLE001
         logger.exception("could not read ayma_voice_language for %s", uid)
         return ""
+
+
+def _ayma_voice_accent(uid: str) -> str:
+    """The user's dedicated ACCENT instruction — free text like "southern
+    American accent" or "Indian who's been in America a while", set on the
+    "Ayma's models" screen or by ``set_voice_preference``. Separate from
+    ``ayma_voice_language`` (WHICH language): this is HOW Ayma sounds. "" = the
+    provider's default accent. Only accent-capable providers honour it
+    (``voice_catalog.provider_supports_accent``)."""
+    try:
+        import voices
+
+        snap = schema.profile_doc(get_db(), uid).get()
+        return str(
+            (snap.to_dict() or {}).get(voices.PF_AYMA_VOICE_ACCENT, "")
+        ).strip()[:200]
+    except Exception:  # noqa: BLE001
+        logger.exception("could not read ayma_voice_accent for %s", uid)
+        return ""
+
+
+def _voice_engine_seed(uid: str) -> dict[str, str]:
+    """Resolve the user's MAIN-voice stack preference (§13.9) into the seed the
+    agent worker needs: the mode (``""`` = deploy default), the realtime model
+    OR cascade brain/STT/TTS ids, the chosen voice and the accent/language.
+
+    ``voice_mode`` empty means the user never picked a stack, so the agent keeps
+    the deploy-time ``CONFIG.llm_provider_voice_main`` behaviour — production is
+    unchanged until a user actually chooses one."""
+    out = {
+        "voice_mode": "",
+        "realtime_model_id": "",
+        "brain_id": "",
+        "stt_id": "",
+        "tts_id": "",
+        "voice_name": _ayma_voice_name(uid),
+        "voice_language": _ayma_voice_language(uid),
+        "voice_accent": _ayma_voice_accent(uid),
+        "tts_voice": "",
+    }
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        prof = snap.to_dict() or {}
+    except Exception:  # noqa: BLE001
+        logger.exception("could not read voice stack preference for %s", uid)
+        return out
+    mode = str(prof.get(schema.PF_AYMA_VOICE_MODE, "")).strip()
+    if not mode:
+        return out
+    out["voice_mode"] = mode
+    out["realtime_model_id"] = str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
+    out["brain_id"] = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "")).strip()
+    out["stt_id"] = str(prof.get(schema.PF_AYMA_CASCADE_STT, "")).strip()
+    out["tts_id"] = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip()
+    out["tts_voice"] = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip()
+    return out
+
+
+def _voice_agent_cloud(uid: str) -> str:
+    """Which cloud serves this user's next voice call (§1.1, dual-cloud agent):
+    ``"livekit"`` (the default — the hosted ``ayma-lk`` worker) or ``"cloudrun"``
+    (opt-out via the Developer screen, ``PF_AYMA_VOICE_CLOUD``). Any
+    unknown/absent value falls back to ``schema.VOICE_AGENT_CLOUD_DEFAULT`` (the
+    one authoritative default); a user who explicitly set ``cloudrun`` still
+    routes to Cloud Run."""
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        val = str((snap.to_dict() or {}).get(schema.PF_AYMA_VOICE_CLOUD, "")).strip()
+    except Exception:  # noqa: BLE001 - never block a voice start on this read
+        logger.exception("could not read voice_agent_cloud for %s", uid)
+        return schema.VOICE_AGENT_CLOUD_DEFAULT
+    return val if val in schema.VOICE_AGENT_CLOUDS else schema.VOICE_AGENT_CLOUD_DEFAULT
 
 
 def _server_ts():
@@ -467,6 +542,53 @@ from ratelimit import RateLimiter  # noqa: E402
 
 app.add_middleware(RateLimiter)
 
+# Practice Date (hackathon deliverable B) — all its routes live in its own
+# module so the feature can be lifted cleanly into the public hackathon repo.
+import practice_date  # noqa: E402
+
+app.include_router(practice_date.router)
+
+# AI Date Simulation (hackathon flagship) — two personas (the user's full own
+# context + the match's public-only profile) hold a bounded conversation,
+# returning a transcript + compatibility read. Its own module for the same
+# clean-lift reason as Practice Date, which it reuses.
+import date_sim  # noqa: E402
+
+app.include_router(date_sim.router)
+
+# Taste match powered by Qloo (Qloo hackathon) — shared-taste score + date ideas
+# for a pair from their public Taste pages, plus the public judge demo page over
+# the seeded demo profiles. Its own module for the same clean-lift reason.
+import taste_match  # noqa: E402
+# Mines the user's existing Story + conversation history for music/film/food
+# favourites to fill the public Taste page the Qloo engine reads — best-effort,
+# triggered when the taste signal is thin (see taste_backfill.py).
+import taste_backfill  # noqa: E402
+
+app.include_router(taste_match.router)
+
+# Ayma MCP server (bring-your-own-agent) — mounted at /mcp. The whole surface is
+# dark behind the `mcp_server` feature flag (default OFF): when off its auth
+# wrapper answers every request 503, so this mount exposes nothing until the
+# founder flips the flag. See docs/MCP_SERVER.md. Self-contained in mcp_server.py
+# /mcp_tools.py/mcp_oauth.py so it stays out of the way of parallel work here.
+import mcp_server  # noqa: E402
+
+app.mount(mcp_server.MOUNT_PATH, mcp_server.asgi_app)
+_mcp_lifespan_stack = contextlib.AsyncExitStack()
+
+
+@app.on_event("startup")
+async def _mcp_startup() -> None:
+    # A mounted sub-app's lifespan is not run by the parent, so start the MCP
+    # streamable-HTTP session manager here.
+    await _mcp_lifespan_stack.enter_async_context(mcp_server.lifespan())
+
+
+@app.on_event("shutdown")
+async def _mcp_shutdown() -> None:
+    await _mcp_lifespan_stack.aclose()
+
 
 @app.on_event("startup")
 async def _warmup() -> None:
@@ -619,11 +741,19 @@ async def bootstrap(
     # (just a signed JWT) so it still happens unconditionally below, keeping
     # this call's response shape unchanged for `splash_screen.dart`.
     if session_id:
-        # Fire the ayma-agent wake ping as early as possible (§ scale-to-zero,
-        # docs/deploy.md §12.2, agent_wake.py) so Cloud Run starts the
-        # container in parallel with the LiveKit token mint + room creation
-        # below, rather than only after the client has already connected.
-        background.add_task(agent_wake.wake_agent)
+        # Dual-cloud dispatch (§1.1): resolve the user's target cloud up front.
+        # Only the Cloud Run worker needs a wake ping — livekit-routed users
+        # (the default) are served by the LiveKit-Cloud-hosted worker, which
+        # LiveKit keeps warm itself. Firing the Cloud Run wake for them would
+        # just cold-start a 2 GB instance that immediately declines the room
+        # (request_fnc guard) — pure wasted Cloud Run spend. So wake Cloud Run
+        # only when this user is actually routed there.
+        agent_cloud = _voice_agent_cloud(uid)
+        if agent_cloud == "cloudrun":
+            # Fire the wake ping as early as possible (§ scale-to-zero,
+            # docs/deploy.md §12.2, agent_wake.py) so the container starts in
+            # parallel with the LiveKit token mint + room creation below.
+            background.add_task(agent_wake.wake_agent)
         voice_language = _ayma_voice_language(uid)
         # Phase 2 voice seed diet (cost program 2026-09-26): the Live API
         # re-bills the whole seeded context on every turn of the call, so at
@@ -688,13 +818,32 @@ async def bootstrap(
             session_id=session_id,
         )
         voice_name = _ayma_voice_name(uid)
+        engine_seed = _voice_engine_seed(uid)
+        # Dual-cloud agent dispatch (§1.1): default "livekit" => route the room
+        # to the LiveKit-Cloud-hosted worker's agent_name (explicit dispatch);
+        # the Cloud Run worker declines it (request_fnc). "cloudrun" => no
+        # explicit agent dispatch (LiveKit auto-dispatches to the Cloud Run
+        # worker, unchanged). `agent_cloud` was resolved at the top of this
+        # block (it also gates the Cloud Run wake ping).
+        dispatch_agent = (
+            CONFIG.agent_name_livekit if agent_cloud == "livekit" else None
+        )
         try:
             await seed_room_context(
                 room,
                 build_room_seed(
                     system_prompt, turns, uid, session_id, voice_name,
                     voice_language=voice_language,
+                    voice_accent=engine_seed["voice_accent"],
+                    voice_mode=engine_seed["voice_mode"],
+                    realtime_model_id=engine_seed["realtime_model_id"],
+                    brain_id=engine_seed["brain_id"],
+                    stt_id=engine_seed["stt_id"],
+                    tts_id=engine_seed["tts_id"],
+                    tts_voice=engine_seed["tts_voice"],
+                    voice_agent_cloud=agent_cloud,
                 ),
+                agent_name=dispatch_agent,
             )
         except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
             logger.exception("failed to seed room context for %s", room)
@@ -792,8 +941,14 @@ async def welcome_token(
     if not CONFIG.livekit_url:
         raise HTTPException(status_code=503, detail="Voice is unavailable.")
 
-    # See the matching call in /bootstrap above — wakes the scale-to-zero
-    # ayma-agent worker as early as possible.
+    # The pre-sign-in welcome room has no uid and no voice_agent_cloud pref, so
+    # it is created with NO explicit agent dispatch — LiveKit auto-dispatches it
+    # to the Cloud Run worker (the LiveKit-hosted worker is explicit-dispatch
+    # only, agent_name "ayma-lk"). So welcome always needs the Cloud Run wake,
+    # unlike authenticated /bootstrap, which wakes Cloud Run only for the
+    # "cloudrun"-routed users. This is the one remaining always-on Cloud Run
+    # consumer (see docs/LIVEKIT_AGENT_MIGRATION.md — full retirement of Cloud
+    # Run requires migrating the welcome flow to explicit ayma-lk dispatch).
     background.add_task(agent_wake.wake_agent)
     room = f"welcome-{secrets.token_urlsafe(9)}"
     try:
@@ -1041,6 +1196,12 @@ class _ChatCtx:
     # chat turn (§ /chat, /chat/stream) and the durable transcript
     # (``_finalize_chat``) learn an edited/generated photo was made this turn.
     photo_edit_result: dict = field(default_factory=dict)
+    # The same pattern for the ``submit_feedback`` tool (skills/submit_feedback.py):
+    # the drafted ``{kind, title, body}`` lands here and the reply carries it to
+    # the client as ``feedback_card`` so the editable confirmation card can
+    # render. NOTHING is persisted until the user taps Send (``POST
+    # /feedback/submit``) — this sink is the whole no-write-until-confirm path.
+    feedback_draft: dict = field(default_factory=dict)
 
 
 async def _prepare_chat(
@@ -1597,6 +1758,7 @@ async def chat(
             "reply": reply.text,
             "tools_used": reply.tools_used,
             "image_url": ctx.photo_edit_result.get("image_url", ""),
+            "feedback_card": ctx.feedback_draft or None,
         }
 
     task = _spawn_turn(_turn(), key=key)
@@ -1613,8 +1775,12 @@ async def chat(
 
 
 async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
-    """The non-streaming Gemini call for one prepared turn."""
-    return await gemini.generate_reply(
+    """The non-streaming chat call for one prepared turn, routed through the
+    user's unified **Brain** (§13.10): the chosen brain for a text/tools turn,
+    but Gemini whenever the turn carries an image (vision → Gemini, since Muse
+    can't read images — it would otherwise hallucinate the photo)."""
+    needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+    return await get_user_brain_provider(ctx.uid, "chat", needs=needs).generate_reply(
         req.message,
         system_prompt=ctx.system_prompt,
         tool_declarations=session_tool_declarations(
@@ -1665,6 +1831,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
             # uses, so the reply's image_url / transcript attach below
             # work unchanged for a generated image.
             image_result=ctx.photo_edit_result,
+            feedback_result=ctx.feedback_draft,
         ),
         image=ctx.image or ctx.photo_image,
         uid=ctx.uid,
@@ -1762,7 +1929,12 @@ async def chat_stream(
         try:
             try:
                 async with asyncio.timeout(_CHAT_TURN_TIMEOUT_SECONDS):
-                    async for ev in gemini.generate_reply_events(
+                    # Unified Brain (§13.10): the user's brain for a text/tools
+                    # turn; Gemini when an image is attached (vision → Gemini).
+                    _needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+                    async for ev in get_user_brain_provider(
+                        ctx.uid, "chat", needs=_needs
+                    ).generate_reply_events(
                         req.message,
                         system_prompt=ctx.system_prompt,
                         tool_declarations=session_tool_declarations(
@@ -1810,6 +1982,7 @@ async def chat_stream(
                                 if ctx.appearance_finding_id else None
                             ),
                             image_result=ctx.photo_edit_result,
+                            feedback_result=ctx.feedback_draft,
                         ),
                             image=ctx.image or ctx.photo_image,
                             uid=ctx.uid,
@@ -1824,11 +1997,13 @@ async def chat_stream(
                                 "image_url": ctx.photo_edit_result.get(
                                     "image_url", ""
                                 ),
+                                "feedback_card": ctx.feedback_draft or None,
                             }
                             result = {
                                 "reply": reply_text,
                                 "tools_used": tools_used,
                                 "image_url": ev["image_url"],
+                                "feedback_card": ev["feedback_card"],
                             }
                         queue.put_nowait(ev)
             except token_ledger.TokenCapExceeded:
@@ -2091,6 +2266,14 @@ async def register_media(
             req.context,
             wiki_uids=[uid] if req.context in ("profile", "chat") else None,
             accompanying_text=req.caption_context,
+            background=background,
+            # A profile-grid upload needs the photo stored, moderated and
+            # tagged before it returns, but nothing on the upload/preview path
+            # consumes the caption — defer the captioning + wiki fold off the
+            # request path so the add returns as soon as the photo is safe to
+            # show. Chat/DM keep it inline so Ayma can reference the image in
+            # the same turn.
+            defer_enrichment=(req.context == "profile"),
         )
     except Exception as exc:  # noqa: BLE001 - surface embed/storage failure
         raise HTTPException(
@@ -3334,10 +3517,11 @@ async def explore_pass(
 
 class DmMessageRequest(BaseModel):
     type: Literal[
-        "text", "photo", "voice", "shared_profile", "image", "file", "shared_report"
+        "text", "photo", "voice", "shared_profile", "image", "file", "gif",
+        "shared_report"
     ]
     # Required for text/photo/voice/shared_profile; an optional caption for
-    # image/file (validated per-type in the handler).
+    # image/gif/file (validated per-type in the handler).
     body: str = Field(default="", max_length=4000)
     # image/file only: the uploaded object under the caller's ``uploads/`` tree.
     attachment_url: str = Field(default="", max_length=2048)
@@ -3512,21 +3696,71 @@ async def _run_dm_ingest(
         logger.exception("DM ingest task failed for %s", thread_id)
 
 
-@app.get("/dm/{thread_id}/icebreakers")
-async def dm_icebreakers(
-    thread_id: str, uid: str = Depends(require_adult_uid)
+class DmAssistMessage(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from", max_length=16)
+    text: str = Field(max_length=4000)
+
+
+class DmAssistRequest(BaseModel):
+    other: str = Field(min_length=1, max_length=128)
+    messages: list[DmAssistMessage] = Field(default_factory=list, max_length=200)
+
+
+@app.post("/dm/assist")
+async def dm_assist_endpoint(
+    req: DmAssistRequest, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
-    """Suggested opener chips for this thread (§6.9). Empty until a
-    compatibility check has produced a ``matches`` doc for the pair."""
+    """Ayma in your DMs (§6.9). Empty ``messages`` → ``mode: "opener"`` (opener
+    chips grounded in the pair's compatibility analysis); non-empty →
+    ``mode: "coach"`` (suggested next lines + a one-line coaching ``tip``). A
+    nicety that never blocks the thread: on any failure, empty chips + null
+    tip."""
+    if req.other == uid:
+        raise HTTPException(status_code=400, detail="Not a valid thread.")
+    messages = [{"from": m.from_, "text": m.text} for m in req.messages]
+    return await dm_assist.assist(get_db(), uid, req.other, messages)
+
+
+class DmTranslateRequest(BaseModel):
+    # The thread whose message/draft is being translated — used only to verify
+    # the caller is a participant (pair-only, like every other /dm endpoint).
+    thread_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=dm_translate.MAX_TEXT_CHARS)
+    # Language code or name to translate INTO (the reader's preferred language
+    # for an incoming message, or the match's language for an outgoing draft).
+    target_lang: str = Field(min_length=1, max_length=32)
+    # Optional hint for the source language; the model detects the real one.
+    source_lang: str = Field(default="", max_length=32)
+
+
+@app.post("/dm/translate")
+async def dm_translate_endpoint(
+    req: DmTranslateRequest, uid: str = Depends(require_adult_uid)
+) -> dict[str, str]:
+    """Cross-language DM translation (§6.12). Translates ``text`` into
+    ``target_lang`` and reports the detected source language, so two people who
+    speak different languages can connect: an incoming message shown in the
+    reader's language (original kept), or the reader's draft rendered in the
+    match's language before sending.
+
+    Pair-only + 18+/consent: the caller must be an adult participant of
+    ``thread_id``. A nicety that never blocks the thread — on any model failure
+    the original text comes back with an empty ``detected_source_lang`` so the
+    client simply shows the original."""
+    from pair_key import uids_from_pair_key
+
     try:
-        a, b = uids_from_pair_key(thread_id)
+        a, b = uids_from_pair_key(req.thread_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if uid not in (a, b):
         raise HTTPException(status_code=403, detail="Not your thread.")
-    other = b if uid == a else a
-    chips = await icebreakers.suggest(get_db(), uid, other)
-    return {"icebreakers": chips}
+
+    return await dm_translate.translate(
+        req.text, req.target_lang, req.source_lang or None, uid=uid
+    )
 
 
 class ProfileShareRequest(BaseModel):
@@ -4755,23 +4989,6 @@ async def credits_topup(
     return await asyncio.to_thread(token_ledger.usage, uid)
 
 
-class DevFlagsRequest(BaseModel):
-    """Body of ``POST /dev/flags`` — only ``dev_panel`` may be written."""
-
-    model_config = {"extra": "forbid"}
-
-    password: str = Field(min_length=1, max_length=256)
-    dev_panel: bool
-
-
-@app.get("/dev/flags")
-async def dev_flags_get(uid: str = Depends(require_uid)) -> dict[str, bool]:
-    """The effective ``dev_panel`` flag (the app's Developer panel gate)."""
-    import dev_flags
-
-    return {"dev_panel": await asyncio.to_thread(dev_flags.current)}
-
-
 class DevVerifyRequest(BaseModel):
     """Body of ``POST /dev/verify`` — the Developer panel's unlock check."""
 
@@ -4784,10 +5001,10 @@ class DevVerifyRequest(BaseModel):
 async def dev_verify(
     request: Request, body: DevVerifyRequest, uid: str = Depends(require_uid)
 ) -> dict[str, bool]:
-    """Verify the Developer-panel password server-side without changing any
-    flag. The app calls this to unlock the panel's contents; the same
-    constant-time compare and Firestore-backed lockout as ``POST /dev/flags``
-    apply, and the password is never logged."""
+    """Verify the Developer-panel password server-side. The app calls this to
+    unlock the panel's contents; a constant-time compare against
+    ``DEV_PANEL_PASSWORD`` with a Firestore-backed lockout (see ``dev_flags``)
+    applies, and the password is never logged."""
     import dev_flags
 
     try:
@@ -4809,37 +5026,6 @@ async def dev_verify(
     except dev_flags.BadPassword as exc:
         raise HTTPException(status_code=403, detail="Wrong password.") from exc
     return {"ok": True}
-
-
-@app.post("/dev/flags")
-async def dev_flags_set(
-    request: Request, body: DevFlagsRequest, uid: str = Depends(require_uid)
-) -> dict[str, bool]:
-    """Switch ``dev_panel`` live from the app's Developer panel. The password
-    is checked server-side against ``DEV_PANEL_PASSWORD`` with a Firestore-backed
-    lockout (see ``dev_flags``); the write lands in ``config/feature_flags`` and
-    its ``app_config/dev_panel`` mirror, which the app listens to."""
-    import dev_flags
-
-    try:
-        value = await asyncio.to_thread(
-            dev_flags.set_dev_panel,
-            get_db(), uid, body.password, body.dev_panel,
-            ip=ratelimit.trusted_client_ip(request),
-        )
-    except dev_flags.NotConfigured as exc:
-        raise HTTPException(
-            status_code=503, detail="Developer flag switching is not configured."
-        ) from exc
-    except dev_flags.LockedOut as exc:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many wrong passwords. Try again later.",
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from exc
-    except dev_flags.BadPassword as exc:
-        raise HTTPException(status_code=403, detail="Wrong password.") from exc
-    return {"dev_panel": value}
 
 
 @app.post("/webhooks/revenuecat", dependencies=[Depends(require_revenuecat)])
@@ -4919,6 +5105,45 @@ async def billing_sync(
     return {"sync_status": status_text, **view}
 
 
+class DevTestUpgradeRequest(BaseModel):
+    """Body of ``POST /dev/test-upgrade``: which paid tier to simulate."""
+
+    model_config = {"extra": "forbid"}
+
+    plan: str = Field(max_length=16)
+
+
+@app.post("/dev/test-upgrade")
+async def dev_test_upgrade(
+    body: DevTestUpgradeRequest, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """DEV/TEST ONLY — grant the chosen paid tier's monthly credit pool to the
+    caller WITHOUT a real purchase, so the credit-grant path can be exercised in
+    a build where RevenueCat is off (the Test key native-kills in release). It
+    builds a synthetic entitlement for ``plan`` ("plus" | "pro" | "max") and runs
+    it through the SAME ``billing.sync_entitlement`` logic a real entitlement
+    uses, so the pool granted is the genuine per-plan pool. ``require_dev``-gated
+    (dev-view allowlist) — a 403 for everyone else; this is a free-credits cheat,
+    never a revenue bypass. Credits-only, like the real path. Returns the
+    refreshed usage view plus ``sync_status``."""
+    if body.plan not in PLAN_TIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown plan: {body.plan!r}. Expected one of "
+            f"{sorted(PLAN_TIERS)}.",
+        )
+    entitlement = billing.dev_plan_entitlement(body.plan)
+    try:
+        status_text = await asyncio.to_thread(
+            billing.sync_entitlement, get_db(), uid, entitlement, CONFIG
+        )
+    except billing.UnknownUser as exc:
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    logger.info("dev test-upgrade uid=%s plan=%s -> %s", uid, body.plan, status_text)
+    view = await asyncio.to_thread(token_ledger.usage, uid)
+    return {"sync_status": status_text, **view}
+
+
 class FeedbackRequest(BaseModel):
     category: str = Field(default="thumbs_down", max_length=40)
     note: str = Field(default="", max_length=4000)
@@ -4941,32 +5166,94 @@ async def submit_feedback(
     return {"ok": fid is not None, "id": fid}
 
 
-class ProductFeedbackRequest(BaseModel):
-    kind: Literal["bug", "idea"] = "bug"
-    text: str = Field(min_length=1, max_length=4000)
-    image_paths: list[str] = Field(default_factory=list, max_length=6)
+class FeedbackSubmissionRequest(BaseModel):
+    kind: Literal["feature", "bug"] = "feature"
+    title: str = Field(default="", max_length=120)
+    body: str = Field(min_length=1, max_length=4000)
+    screenshot_paths: list[str] = Field(default_factory=list, max_length=6)
+    screen: str = Field(default="", max_length=128)
     app_version: str = Field(default="", max_length=64)
+    platform: str = Field(default="", max_length=32)
+    source: Literal["chat_card", "settings_form"] = "chat_card"
 
 
-@app.post("/product-feedback")
-async def submit_product_feedback(
-    req: ProductFeedbackRequest, uid: str = Depends(require_uid)
+@app.post("/feedback/submit")
+async def submit_feedback_submission(
+    req: FeedbackSubmissionRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
-    """Bug reports and feature requests from the Profile screen (§15). Ayma
-    never reads this bucket — the dev team triages it by hand. Screenshots must
-    already be uploaded under the caller's ``uploads/`` tree."""
-    for p in req.image_paths:
+    """Persist one product-feedback row (bug / feature request) to the unified
+    ``feedback`` collection — the in-chat feedback catcher's confirmation card
+    (``source="chat_card"``) and the Settings "Send feedback" form
+    (``source="settings_form"``) both land here (§15). Nothing is written until
+    the user confirms; Ayma never reads these rows. Screenshots must already be
+    uploaded under the caller's own ``uploads/`` tree (access-controlled — the
+    admin view resolves them to short-lived signed URLs)."""
+    for p in req.screenshot_paths:
         if p and not p.startswith(f"uploads/{uid}/"):
             raise HTTPException(
                 status_code=403,
-                detail="image_paths must be under the caller's uploads/ tree.",
+                detail="screenshot_paths must be under the caller's uploads/ tree.",
             )
     fid = await asyncio.to_thread(
-        feedback_ops.record_product,
-        get_db(), uid, req.kind, req.text, req.image_paths,
+        feedback_ops.record_submission,
+        get_db(), uid, req.kind, req.title, req.body,
+        source=req.source,
+        screenshot_paths=req.screenshot_paths,
+        screen=req.screen,
         app_version=req.app_version,
+        platform=req.platform,
     )
     return {"ok": fid is not None, "id": fid}
+
+
+@app.get("/admin/feedback")
+async def admin_list_feedback(
+    limit: int = 100, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """Product-feedback triage list for the in-app Developer → Feedback view
+    (§15). Gated by the dev-view allowlist (``require_dev``) — the same gate the
+    Developer panel's privileged data uses — so a normal user can never read
+    other people's feedback. Returns both sources (``chat_card`` +
+    ``settings_form``) newest first."""
+    limit = max(1, min(limit, 300))
+    rows = await asyncio.to_thread(
+        feedback_ops.list_submissions, get_db(), limit=limit
+    )
+    return {"feedback": rows}
+
+
+class FeedbackStatusRequest(BaseModel):
+    status: Literal["new", "triaged", "done"]
+
+
+@app.post("/admin/feedback/{fid}")
+async def admin_set_feedback_status(
+    fid: str, req: FeedbackStatusRequest, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """Set a product-feedback row's triage status (§15). Dev-allowlist gated;
+    refuses to touch a conversational-conduct row."""
+    ok = await asyncio.to_thread(
+        feedback_ops.set_submission_status, get_db(), fid, req.status
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such feedback row.")
+    return {"ok": True, "id": fid, "status": req.status}
+
+
+@app.get("/admin/feedback/media")
+async def admin_feedback_media(
+    path: str, uid: str = Depends(require_dev)
+) -> dict[str, object]:
+    """Resolve a feedback screenshot's Storage path to a viewable URL for the
+    Developer → Feedback view (§15). Dev-allowlist gated, and restricted to the
+    ``uploads/`` tree so it can only ever surface a user-submitted screenshot,
+    never arbitrary Storage. Reuses the app's own photo-URL scheme."""
+    from public_profile import _photo_url
+
+    if not path or not path.startswith("uploads/"):
+        raise HTTPException(status_code=400, detail="bad screenshot path.")
+    url = await asyncio.to_thread(_photo_url, path)
+    return {"path": path, "url": url}
 
 
 @app.get("/voice/presets")
@@ -4989,6 +5276,265 @@ async def voice_presets(uid: str = Depends(require_uid)) -> dict[str, object]:
         "current_language": _ayma_voice_language(uid),
         "language_examples": list(voices.LANGUAGE_EXAMPLES),
     }
+
+
+@app.get("/voice/engines")
+async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The selectable voice STACK (§13.9) for the developer "Voice engine"
+    control and the user-facing "Ayma's voice" screen: the two modes, the
+    realtime models (each with its voices + languages), and the cascade brains /
+    STT / TTS (TTS carrying its voices + languages), plus the user's current
+    selection. Catalog-only — no LLM spend; cached server-side
+    (``voice_catalog``). Cascade TTS voices are LiveKit-sourced when LiveKit
+    ships a catalog API, else a documented fallback
+    (``voice_catalog._TTS_FALLBACK_VOICES``)."""
+    import voice_catalog
+    import voices as _voices
+
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        prof = snap.to_dict() or {}
+    except Exception:  # noqa: BLE001
+        prof = {}
+    cat = voice_catalog.catalog()
+    default = cat["default"]  # type: ignore[index]
+    mode = str(prof.get(schema.PF_AYMA_VOICE_MODE, "")).strip() or default["mode"]
+    realtime_id = (
+        str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
+        or default["realtime_model_id"]
+    )
+    brain_id = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "")).strip() or default["brain_id"]
+    stt_id = str(prof.get(schema.PF_AYMA_CASCADE_STT, "")).strip() or default["stt_id"]
+    tts_id = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip() or default["tts_id"]
+    # The chosen voice: a Gemini preset lives in ayma_voice_name; every other
+    # voice (cascade TTS, OpenAI realtime) in ayma_tts_voice.
+    # Empty = no saved voice. Fall back to the catalog default voice
+    # (``default["voice_id"]``) ONLY when the user's resolved stack matches the
+    # default's stack, so a no-pref user sees the real default (Hannah on the
+    # Meta cascade) pre-selected — never a cross-stack id (a fishaudio voice must
+    # not leak into a Gemini realtime slot, or vice versa).
+    on_default_stack = mode == str(default.get("mode", ""))
+    default_voice = str(default.get("voice_id", "")).strip() if on_default_stack else ""
+    if mode == voice_catalog.MODE_REALTIME and realtime_id == voice_catalog.REALTIME_GEMINI:
+        voice_id = str(prof.get(schema.PF_AYMA_VOICE, "")).strip() or default_voice
+    else:
+        voice_id = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip() or default_voice
+    lang_text = str(prof.get(_voices.PF_AYMA_VOICE_LANGUAGE, "")).strip()
+    lang_code = (_voices.bcp47_hint(lang_text) or "") if lang_text else ""
+    accent_text = str(prof.get(_voices.PF_AYMA_VOICE_ACCENT, "")).strip()
+    return {
+        **cat,
+        "current": {
+            "mode": mode,
+            "realtime_model_id": realtime_id,
+            "brain_id": brain_id,
+            "stt_id": stt_id,
+            "tts_id": tts_id,
+            "voice_id": voice_id,
+            "language_code": lang_code if voice_catalog.is_valid_language(lang_code) else "",
+            # Dedicated free-text ACCENT (§13.9), separate from the language
+            # selector above — HOW Ayma sounds, honoured only by accent-capable
+            # providers (each catalog entry carries ``supports_accent``).
+            "accent": accent_text,
+        },
+    }
+
+
+class VoicePreferenceBody(BaseModel):
+    mode: str = Field(min_length=1, max_length=32)
+    realtime_model_id: str = Field(default="", max_length=64)
+    brain_id: str = Field(default="", max_length=64)
+    stt_id: str = Field(default="", max_length=128)
+    tts_id: str = Field(default="", max_length=128)
+    voice_id: str = Field(default="", max_length=128)
+    language_code: str = Field(default="", max_length=32)
+    # Dedicated free-text ACCENT (§13.9) — HOW Ayma sounds, separate from the
+    # language selector. Honoured only by accent-capable providers; saved
+    # verbatim and routed at session boot (``agent._accent_block``).
+    accent: str = Field(default="", max_length=200)
+
+
+@app.post("/voice/preference")
+async def set_voice_preference_endpoint(
+    body: VoicePreferenceBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist the per-user MAIN-voice stack on ``users/{uid}/profile/main``
+    (§13.9): ``{mode, realtime_model_id?, brain_id?, stt_id?, tts_id?, voice_id,
+    language_code}``. The agent reads it at the next voice session
+    (``main._voice_engine_seed`` → room seed → ``agent._run_session``); the dev
+    screen may also trigger a reconnect so a switch feels real-time."""
+    from firebase_admin import firestore
+    import voice_catalog
+    import voices as _voices
+
+    mode = body.mode.strip()
+    if mode not in voice_catalog.MODES:
+        raise HTTPException(status_code=422, detail="Unknown voice mode.")
+    if not voice_catalog.is_valid_language(body.language_code):
+        raise HTTPException(status_code=422, detail="Unknown language.")
+    voice_id = body.voice_id.strip()
+
+    payload: dict[str, object] = {
+        schema.PF_AYMA_VOICE_MODE: mode,
+        _voices.PF_AYMA_VOICE_LANGUAGE: voice_catalog.language_label(body.language_code),
+        # Dedicated free-text ACCENT (§13.9), saved verbatim. It applies only on
+        # an accent-capable provider at the next call; a fixed-voice stack keeps
+        # the saved text but ignores it (``agent._accent_block``).
+        _voices.PF_AYMA_VOICE_ACCENT: body.accent.strip()[:200],
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    if mode == voice_catalog.MODE_REALTIME:
+        rid = body.realtime_model_id.strip()
+        if not voice_catalog.is_valid_realtime_model(rid):
+            raise HTTPException(status_code=422, detail="Unknown realtime model.")
+        if voice_id and voice_id not in voice_catalog.realtime_voice_ids(rid):
+            raise HTTPException(status_code=422, detail="Voice not available for this model.")
+        payload[schema.PF_AYMA_REALTIME_MODEL] = rid
+        # A Gemini preset is the hot-swappable ayma_voice_name; every other
+        # realtime voice lives in ayma_tts_voice.
+        if rid == voice_catalog.REALTIME_GEMINI:
+            if voice_id:
+                payload[schema.PF_AYMA_VOICE] = voice_id
+            payload[schema.PF_AYMA_TTS_VOICE] = ""
+        else:
+            payload[schema.PF_AYMA_TTS_VOICE] = voice_id
+    else:  # cascade
+        brain_id = body.brain_id.strip()
+        stt_id = body.stt_id.strip()
+        tts_id = body.tts_id.strip()
+        if not voice_catalog.is_valid_brain(brain_id):
+            raise HTTPException(status_code=422, detail="Unknown brain.")
+        if not voice_catalog.is_valid_stt(stt_id):
+            raise HTTPException(status_code=422, detail="Unknown STT model.")
+        if not voice_catalog.is_valid_tts(tts_id):
+            raise HTTPException(status_code=422, detail="Unknown TTS model.")
+        if voice_id and voice_id not in voice_catalog.tts_voice_ids(tts_id):
+            raise HTTPException(status_code=422, detail="Voice not available for this TTS.")
+        payload[schema.PF_AYMA_CASCADE_BRAIN] = brain_id
+        payload[schema.PF_AYMA_CASCADE_STT] = stt_id
+        payload[schema.PF_AYMA_CASCADE_TTS] = tts_id
+        payload[schema.PF_AYMA_TTS_VOICE] = voice_id
+
+    try:
+        schema.profile_doc(get_db(), uid).set(payload, merge=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not save voice preference for %s", uid)
+        raise HTTPException(status_code=502, detail="Could not save preference.") from exc
+    return {
+        "ok": True,
+        "current": {
+            "mode": mode,
+            "realtime_model_id": body.realtime_model_id.strip(),
+            "brain_id": body.brain_id.strip(),
+            "stt_id": body.stt_id.strip(),
+            "tts_id": body.tts_id.strip(),
+            "voice_id": voice_id,
+            "language_code": body.language_code,
+            "accent": body.accent.strip()[:200],
+        },
+    }
+
+
+@app.get("/voice/agent-cloud")
+async def get_voice_agent_cloud(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Which cloud serves this user's voice agent (§1.1, dual-cloud agent):
+    ``{current, default, options}``. ``current`` is the saved
+    ``voice_agent_cloud`` (``livekit`` by default). Dev-only control on the
+    Developer screen; no LLM spend."""
+    return {
+        "current": _voice_agent_cloud(uid),
+        "default": schema.VOICE_AGENT_CLOUD_DEFAULT,
+        "options": list(schema.VOICE_AGENT_CLOUDS),
+    }
+
+
+class VoiceAgentCloudBody(BaseModel):
+    cloud: str = Field(min_length=1, max_length=32)
+
+
+@app.post("/voice/agent-cloud")
+async def set_voice_agent_cloud(
+    body: VoiceAgentCloudBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist which cloud serves this user's next voice call on
+    ``users/{uid}/profile/main`` (``voice_agent_cloud``, §1.1). ``livekit``
+    (the default) routes the next room explicitly to the LiveKit-Cloud-hosted
+    worker; ``cloudrun`` routes to the Cloud Run worker via automatic dispatch.
+    Takes effect on the next voice session."""
+    from firebase_admin import firestore
+
+    cloud = body.cloud.strip().lower()
+    if cloud not in schema.VOICE_AGENT_CLOUDS:
+        raise HTTPException(status_code=422, detail="Unknown voice agent cloud.")
+    try:
+        schema.profile_doc(get_db(), uid).set(
+            {schema.PF_AYMA_VOICE_CLOUD: cloud, "updated_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not save voice_agent_cloud for %s", uid)
+        raise HTTPException(status_code=502, detail="Could not save preference.") from exc
+    return {"ok": True, "current": cloud}
+
+
+@app.get("/brain/preference")
+async def get_brain_preference(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The unified **Brain** catalog + the user's current choice (§13.10). The
+    brain is ONE vendor (`gemini` | `meta`) that drives ALL text surfaces (chat,
+    matching, DM coach, translation), with a per-capability fallback to Gemini
+    (web + vision are always Gemini). Shape:
+    ``{brains:[{id,label,description,available,capabilities}], current, default}``
+    — ``current`` is the saved ``ayma_brain_model`` ("" when unset) and
+    ``default`` is the hackathon default (``config.brain_default``) the UI
+    pre-selects when nothing is saved. No LLM spend."""
+    import llm_provider
+
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        current = str((snap.to_dict() or {}).get(schema.PF_AYMA_BRAIN_MODEL, "")).strip().lower()
+    except Exception:  # noqa: BLE001 - never block the settings screen on a read
+        logger.exception("could not read ayma_brain_model for %s", uid)
+        current = ""
+    if current not in llm_provider.BRAINS:
+        current = ""
+    default = CONFIG.brain_default if CONFIG.brain_default in llm_provider.BRAINS else "gemini"
+    return {
+        "brains": llm_provider.available_brains(),
+        "current": current,
+        "default": default,
+    }
+
+
+class BrainPreferenceBody(BaseModel):
+    brain: str = Field(min_length=1, max_length=32)
+
+
+@app.post("/brain/preference")
+async def set_brain_preference(
+    body: BrainPreferenceBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist the user's unified **Brain** on ``users/{uid}/profile/main``
+    (``ayma_brain_model``, §13.10). It drives every text surface from the next
+    call; web/vision stay on Gemini regardless (capability map). Only a known
+    brain vendor is accepted."""
+    import llm_provider
+    from firebase_admin import firestore
+
+    brain = body.brain.strip().lower()
+    if brain not in llm_provider.BRAINS:
+        raise HTTPException(status_code=422, detail="Unknown brain.")
+    try:
+        schema.profile_doc(get_db(), uid).set(
+            {
+                schema.PF_AYMA_BRAIN_MODEL: brain,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not save ayma_brain_model for %s", uid)
+        raise HTTPException(status_code=502, detail="Could not save preference.") from exc
+    return {"ok": True, "current": brain}
 
 
 @app.get("/voice/preview/{voice_name}")
@@ -5812,6 +6358,9 @@ async def completeness_get(uid: str = Depends(require_uid)) -> dict[str, object]
     ``intent`` branch, per-section progress, and the top unanswered nodes to
     pursue next. Served from the cached
     ``profile/main.completeness`` map, recomputed when absent or stale."""
+    # Fill the public Taste page from the user's existing Story + conversations
+    # when their taste signal is thin — best-effort, never blocks this read.
+    taste_backfill.schedule(get_db(), uid)
     return await completeness.get_or_recompute(get_db(), uid)
 
 
@@ -5820,6 +6369,9 @@ async def questionnaire_get(uid: str = Depends(require_uid)) -> dict[str, object
     """The caller's full intent-routed question tree with per-node coverage —
     ``{intent, intent_set, score, nodes: [{...node..., status, value,
     source}]}``. Drives the Flutter "Complete your profile" screen."""
+    # Same best-effort taste backfill as /completeness — fills Film/Food from
+    # existing context so the taste questions reflect what they've already said.
+    taste_backfill.schedule(get_db(), uid)
     return await completeness.questionnaire_view(get_db(), uid)
 
 
@@ -5923,21 +6475,98 @@ class CompatibilityRequest(BaseModel):
     force: bool = False
 
 
+def _match_doc_is_complete(d: dict | None) -> bool:
+    """A stored ``matches/{id}`` doc counts as a COMPLETE, cacheable report
+    only when the full scorer (`matching_skill.score_pair` via `_match_job`)
+    wrote it — a score *plus* the structured breakdown (`structured_score`,
+    `method`). The demo seed once wrote score-only "lite" docs (no dimension
+    breakdown, no `structured_score`/`method`); those must be treated as a
+    cache MISS so the report is recomputed via the full pipeline rather than
+    served half-empty (bugs F/H). A complete doc is served instantly and only
+    recomputed when the caller forces it (the "Recalculate" button) OR its
+    inputs changed since it was scored (``_match_doc_is_stale`` — a silent
+    background recompute, bug F staleness invalidation)."""
+    if not d or d.get("score") is None:
+        return False
+    return d.get("structured_score") is not None and bool(d.get("method"))
+
+
+def _latest_ts(*values):
+    """Return the newest timezone-aware datetime among args, ignoring invalid types."""
+    valid = [
+        v for v in values
+        if v is not None and not isinstance(v, str) and hasattr(v, "isoformat")
+    ]
+    return max(valid) if valid else None
+
+
+def _match_inputs_mtime(db, uid: str):
+    """Captures preference + questionnaire changes (partner age range, location, interested_in, relocation radius) so a cached match can detect stale inputs."""
+    stamps = []
+    try:
+        doc = db.collection("users").document(uid).collection("profile").document("main").get()
+        data = doc.to_dict() if doc else None
+        if data and "updated_at" in data:
+            stamps.append(data.get("updated_at"))
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to fetch profile updated_at for %s", uid, exc_info=True)
+
+    try:
+        for doc in db.collection("users").document(uid).collection("questionnaire").stream():
+            data = doc.to_dict()
+            if data and "updated_at" in data:
+                stamps.append(data.get("updated_at"))
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to fetch questionnaire updated_at for %s", uid, exc_info=True)
+
+    return _latest_ts(*stamps)
+
+
+def _match_doc_is_stale(db, d: dict | None, a: str, b: str) -> bool:
+    """Check if a stored match report is stale.
+
+    Conservative (returns False when it can't positively tell) so a fresh doc is
+    never needlessly recomputed. Fixes bug F staleness where input changes (e.g.,
+    narrowing a partner age range adding a dealbreaker that zeroes the score)
+    require recalculation.
+    """
+    try:
+        scored_at = (d.get("updated_at") or d.get("scored_at")) if d else None
+        if not (hasattr(scored_at, "isoformat") and not isinstance(scored_at, str)):
+            return False
+        newest_input = _latest_ts(_match_inputs_mtime(db, a), _match_inputs_mtime(db, b))
+        return newest_input is not None and newest_input > scored_at
+    except Exception:  # noqa: BLE001
+        logger.warning("match staleness check failed", exc_info=True)
+        return False
+
+
 def _match_label(name: str) -> str:
-    return f"Checked your match with {name}"
+    return f"Checked your compatibility with {name}"
 
 
 def _match_chat_text(name: str, pct: int, match_id: str) -> str:
-    """The chat event for a finished match: a one-line teaser with the score
-    and the `[match:<id>]` sentinel (the client strips it and shows the match
-    card that opens `/match/<id>`). Never the report itself (§ founder: keep
-    report-result chat messages to a teaser + link)."""
-    return f"Your match with {name} is ready: {pct}%.\n\n[match:{match_id}]"
+    """The chat event for a finished compatibility score: a one-line teaser
+    with the score and the `[match:<id>]` sentinel (a code token the client
+    strips to show the card that opens `/match/<id>` — do not translate it).
+    Phrased "compatibility", never "match": a computed score is only a
+    compatibility preview, not a mutual match (both liked each other). Never
+    the report itself (§ founder: keep report-result chat to a teaser +
+    link)."""
+    return (
+        f"Your compatibility report with {name} is ready: {pct}%."
+        f"\n\n[match:{match_id}]"
+    )
 
 
-async def _match_job(uid: str, other: str) -> None:
+async def _match_job(uid: str, other: str, *, notify: bool = True) -> None:
     """Score one pair and persist ``matches/{matchId}``, then push. Runs as a
-    background task so it completes even if the app leaves. Never raises."""
+    background task so it completes even if the app leaves. Never raises.
+
+    ``notify`` — when False, the score is computed and persisted but the chat
+    event + push are skipped. Used by the report-open recompute path (bug H),
+    which silently backfills a stale "lite" doc without spamming a "match
+    ready" message every time the report is opened."""
     db = get_db()
     try:
         result = await matching_skill.score_pair(db, uid, other)
@@ -5983,12 +6612,17 @@ async def _match_job(uid: str, other: str) -> None:
         # block the match result itself from landing.
         logger.exception("match job: stale candidate cleanup failed for %s x %s", uid, other)
 
+    if not notify:
+        # Silent backfill (report-open recompute of a stale "lite" doc, bug H):
+        # the full report is now persisted; no chat event / push.
+        return
+
     pct = round(float(result["score"]) * 100)
     try:
-        name = _profile_full_name(other) or "your match"
+        name = _profile_full_name(other) or "them"
     except Exception:  # noqa: BLE001 - a name read must not lose the result
         logger.exception("match job: name read failed for %s", other)
-        name = "your match"
+        name = "them"
     # Drop the result into the Ayma conversation as an event, the same way a
     # finished deep dive does (`_finish_deep_dive`): a short line plus the
     # `[match:<id>]` sentinel the chat renders as a tappable match-score card.
@@ -6006,7 +6640,7 @@ async def _match_job(uid: str, other: str) -> None:
         logger.exception("match chat event failed for %s", uid)
     try:
         await notifications_triggers.notify_skill_done(
-            db, uid, f"Your match with {name} is ready — {pct}%.",
+            db, uid, f"Your compatibility report with {name} is ready — {pct}%.",
             f"match/{match_id}",
         )
     except Exception:  # noqa: BLE001
@@ -6028,16 +6662,24 @@ async def check_compatibility(
     match_id = sorted_pair_key(uid, other)
 
     # A match score is deterministic — the same two wikis always produce the
-    # same numbers. So once a pair is scored, "Run match" just returns that
-    # result; only "Recalculate" (force) re-runs it. This also stops repeated
-    # taps from spending credits and spamming notifications.
+    # same numbers. So once a pair has a COMPLETE and still-FRESH report, "Run
+    # match" just returns that result; only "Recalculate" (force) re-runs it.
+    # This also stops repeated taps from spending credits and spamming
+    # notifications. A stale "lite" doc (score only, no breakdown) OR a
+    # complete doc whose inputs changed since it was scored
+    # (``_match_doc_is_stale`` — someone edited a preference/answer) is NOT a
+    # cache hit — it falls through to a fresh full score below (bugs F/H).
     if not req.force:
         try:
             snap = get_db().collection(MATCHES_COLLECTION).document(
                 match_id
             ).get()
             d = snap.to_dict() or {}
-            if snap.exists and d.get("score") is not None:
+            if (
+                snap.exists
+                and _match_doc_is_complete(d)
+                and not _match_doc_is_stale(get_db(), d, uid, other)
+            ):
                 return {
                     "ok": True,
                     "queued": False,
@@ -6063,11 +6705,20 @@ async def check_compatibility(
 
 @app.get("/match/{match_id}")
 async def match_report(
-    match_id: str, uid: str = Depends(require_adult_uid)
+    match_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """The shareable match report for one pair — score, what lines up / what
     doesn't, the note written to the caller, and both people's photos. 404 if
-    the pair has never been scored."""
+    the pair has never been scored.
+
+    A complete, still-fresh stored report is served as-is (no recompute — bug
+    F). A stale "lite" doc (score only, no dimension breakdown), OR a complete
+    doc whose scored inputs changed since it was computed
+    (``_match_doc_is_stale`` — e.g. a party narrowed their age range), is
+    served as-is this once but silently recomputed in the background via the
+    full scorer, so the next open is correct (bugs F/H)."""
     from pair_key import uids_from_pair_key
 
     try:
@@ -6082,13 +6733,44 @@ async def match_report(
     if not snap.exists:
         raise HTTPException(status_code=404, detail="Not scored yet.")
     d = snap.to_dict() or {}
+    if not _match_doc_is_complete(d) or _match_doc_is_stale(get_db(), d, a, b):
+        # Legacy / demo-seed "lite" doc, OR a complete doc whose inputs changed
+        # since it was scored (bug F staleness) — serve what we have this open
+        # and backfill a fresh full report in the background (silent: no chat
+        # event or push), bugs F/H.
+        background.add_task(_match_job, uid, other, notify=False)
 
     def _photo(u: str) -> str:
         return story._photo_url_safe(_primary_profile_photo_path(u)) or ""
 
+    # Lazily fill either person's public Taste page from their OWN existing
+    # Story + conversations when a domain is still empty, so the card renders
+    # full rather than with blank Film/Food. Best-effort and idempotent (a cheap
+    # no-op once all three domains are populated); each person's own stated
+    # favourites, onto their own public page — the same rule wiki_ingest uses.
+    try:
+        await asyncio.gather(
+            taste_backfill.backfill(get_db(), uid),
+            taste_backfill.backfill(get_db(), other),
+        )
+    except Exception:  # noqa: BLE001 - the report must render regardless
+        logger.warning("taste backfill before match report failed", exc_info=True)
+
+    # "Taste match · powered by Qloo" — the shared-taste section between the
+    # two users, from both people's PUBLIC Taste pages only (§13 Qloo taste
+    # engine). None ⇒ the section is omitted; a {"status": "no_taste", …}
+    # marker ⇒ the client shows the empty state; never raises here.
+    taste = await taste_match.report_section(get_db(), uid, other)
+
     return {
         "match_id": match_id,
         "score": d.get("score"),
+        # A "match" in Ayma means a MUTUAL like (both people liked each other,
+        # `status == mutual_interest`). Until then this report is only a
+        # compatibility preview, so the client reads this flag to say
+        # "Compatibility" rather than "Match" (§5.3).
+        "mutual": d.get("status") == MATCH_STATUS_MUTUAL,
+        "taste": taste,
         "structured_score": d.get("structured_score"),
         "dimensions": d.get("dimensions") or [],
         "shared": d.get("shared") or [],
@@ -6229,3 +6911,17 @@ async def cron_persona_evolution(window_days: int = persona_evolution.WINDOW_DAY
     gate passes), or holds it on ``/admin/persona-changes`` for review
     (critical, or the eval gate fails it)."""
     return await persona_evolution.run(get_db(), window_days=window_days)
+
+
+@app.post("/cron/persona-snapshot", dependencies=[Depends(require_cron)])
+async def cron_persona_snapshot(user_limit: int | None = None) -> dict:
+    """Background refresh of the persistent AI-avatar snapshots (§18, founder
+    directive 2026-10-27). Cloud Scheduler hits this periodically with the
+    ``X-Cron-Secret`` header. Walks up to ``user_limit`` users
+    (``PERSONA_SNAPSHOT_SWEEP_LIMIT``) and rebuilds each stale/missing avatar —
+    strictly rate-limited to at most one LLM rebuild per hour per user
+    (``PERSONA_SNAPSHOT_MIN_INTERVAL_SECONDS``) and skipped entirely when the
+    user's source content (profile + wiki + style exemplars) is unchanged."""
+    import persona_snapshot
+
+    return await persona_snapshot.run_sweep(get_db(), user_limit)

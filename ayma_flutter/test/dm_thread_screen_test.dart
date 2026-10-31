@@ -7,13 +7,13 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ayma_flutter/widgets/chat_composer.dart'
     show kComposerBarPadding;
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// A stub ApiClient whose `/profiles/mini` returns [profiles] keyed by uid.
 ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
@@ -29,23 +29,33 @@ ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
 }
 
 class _FakeDm extends DmService {
-  _FakeDm(this._msgs, {this.chips = const []})
-    : super(
+  _FakeDm(this._msgs, {DmAssist Function(List<DmMessage>)? assist})
+    : _assistFn = assist,
+      super(
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
       );
 
   final StreamController<List<DmMessage>> _msgs;
   final List<String> sent = [];
   final List<String> blocked = [];
-  final List<String> chips;
+
+  /// Produces the coaching response for a given message tail; null → empty.
+  final DmAssist Function(List<DmMessage>)? _assistFn;
+
+  /// The message tails the screen asked [assist] about, in order.
+  final List<List<DmMessage>> assistCalls = [];
   final List<File> uploaded = [];
+  final List<({Uint8List bytes, String mime})> insertedUploads = [];
   final List<({String type, String caption})> attachmentsSent = [];
 
   @override
   Stream<List<DmMessage>> watchMessages(String threadId) => _msgs.stream;
 
   @override
-  Future<List<String>> icebreakers(String threadId) async => chips;
+  Future<DmAssist> assist(String threadId, List<DmMessage> messages) async {
+    assistCalls.add(messages);
+    return _assistFn?.call(messages) ?? DmAssist.empty;
+  }
 
   @override
   Future<void> block(String otherUid) async => blocked.add(otherUid);
@@ -83,6 +93,22 @@ class _FakeDm extends DmService {
   }
 
   @override
+  Future<DmAttachment> uploadInsertedAttachment(
+    Uint8List bytes, {
+    required String threadId,
+    required String mime,
+  }) async {
+    insertedUploads.add((bytes: bytes, mime: mime));
+    return const DmAttachment(
+      storagePath: 'uploads/me/dm/a__me/inserted_1.gif',
+      downloadUrl: 'https://example.invalid/inserted_1.gif',
+      contentType: 'image/gif',
+      sizeBytes: 3,
+      name: 'inserted_1.gif',
+    );
+  }
+
+  @override
   Future<void> sendAttachment(
     String threadId, {
     required String type,
@@ -100,11 +126,6 @@ Finder _composerPadding() => find.byWidgetPredicate(
 );
 
 void main() {
-  // The icebreaker dismissal persists via shared_preferences (see
-  // `DmThreadScreen.icebreakersDismissedKey`) — give every test a clean,
-  // in-memory store.
-  setUp(() => SharedPreferences.setMockInitialValues({}));
-
   testWidgets(
     'the composer uses the shared Ayma-chat padding and adds no extra '
     'bottom safe-area inset (the nav bar below already pads that in)',
@@ -206,15 +227,23 @@ void main() {
   });
 
   testWidgets(
-    'the icebreaker close button hides the suggestions and the dismissal '
-    'survives rebuilding the screen — but only for that thread',
+    'opener-mode chips render on a brand-new (empty) thread, with no tip',
     (tester) async {
       tester.view.physicalSize = const Size(1200, 2600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(ctrl, chips: ['Ask about the dog park']);
+      final dm = _FakeDm(
+        ctrl,
+        // Opener for an empty tail; a coach reply only once messages exist.
+        assist: (msgs) => msgs.isEmpty
+            ? const DmAssist(
+                mode: 'opener',
+                chips: ['Ask about the dog park', 'What trail do you run?'],
+              )
+            : const DmAssist(mode: 'coach', chips: ['x'], tip: 'keep going'),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: DmThreadScreen(
@@ -228,50 +257,350 @@ void main() {
       ctrl.add(const []);
       await tester.pumpAndSettle();
 
+      // Opener chips show above the composer; no tip for an empty thread.
       expect(find.text('Things to talk about'), findsOneWidget);
-      await tester.tap(find.byTooltip('Hide suggestions'));
-      await tester.pumpAndSettle();
-      expect(find.text('Things to talk about'), findsNothing);
-      expect(find.text('Ask about the dog park'), findsNothing);
+      expect(find.text('Ask about the dog park'), findsOneWidget);
+      expect(find.byTooltip('Dismiss tip'), findsNothing);
+      // The first fetch was made with an empty tail.
+      expect(dm.assistCalls.first, isEmpty);
+    },
+  );
 
-      // A brand-new screen for the same thread (reopen / app restart): the
-      // service still offers chips, but the persisted dismissal wins. Tear the
-      // old tree down first — otherwise pumpWidget reuses the same State and
-      // initState (the dismissal read) never re-runs.
-      await tester.pumpWidget(const SizedBox());
-      final ctrl2 = StreamController<List<DmMessage>>.broadcast();
-      final dm2 = _FakeDm(ctrl2, chips: ['Ask about the dog park']);
+  testWidgets(
+    'coach-mode chips + tip render once messages exist, and the tip is '
+    'dismissible',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (msgs) => msgs.isEmpty
+            ? const DmAssist(mode: 'opener', chips: ['opener chip'])
+            : const DmAssist(
+                mode: 'coach',
+                chips: ['Ask what she liked about it'],
+                tip: 'She just opened up — match her energy.',
+              ),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: DmThreadScreen(
             threadId: 'a__me',
-            dmService: dm2,
+            dmService: dm,
             apiClient: _api(),
           ),
         ),
       );
       await tester.pump();
-      ctrl2.add(const []);
-      await tester.pumpAndSettle();
-      expect(find.text('Things to talk about'), findsNothing);
 
-      // A different thread is untouched by that dismissal.
-      await tester.pumpWidget(const SizedBox());
-      final ctrl3 = StreamController<List<DmMessage>>.broadcast();
-      final dm3 = _FakeDm(ctrl3, chips: ['Ask about the dog park']);
+      ctrl.add([
+        DmMessage(
+          id: 'm1',
+          senderUid: 'a',
+          type: 'text',
+          body: 'hey!',
+          createdAt: DateTime.now(),
+        ),
+      ]);
+      await tester.pump(); // deliver the message
+      // The refresh is debounced ~1.5s — advance past it so the coach reply
+      // lands, then settle the resulting rebuild.
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ask what she liked about it'), findsOneWidget);
+      expect(
+        find.text('She just opened up — match her energy.'),
+        findsOneWidget,
+      );
+
+      // The tip is dismissible and stays gone until a different tip arrives.
+      await tester.tap(find.byTooltip('Dismiss tip'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('She just opened up — match her energy.'),
+        findsNothing,
+      );
+      // Chips are unaffected by dismissing the tip.
+      expect(find.text('Ask what she liked about it'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'with the keyboard open the coach tip stays visible directly above the '
+    'composer, not clipped behind the keyboard',
+    (tester) async {
+      // A short window with a tall keyboard, so the coaching region (several
+      // chips + a tip) is taller than its cap and must scroll inside it.
+      const double screenH = 700, keyboard = 400;
+      tester.view.physicalSize = const Size(400, screenH);
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.padding = const FakeViewPadding(bottom: 0);
+      tester.view.viewInsets = const FakeViewPadding(bottom: keyboard);
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: [
+            'Ask what she liked most about the trip',
+            'Share the playlist you mentioned',
+            'Suggest the coffee place downtown',
+            'Ask how the half-marathon training is going',
+          ],
+          tip: "You're sending a lot in a row — give them space to reply first.",
+        ),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: DmThreadScreen(
-            threadId: 'b__me',
-            dmService: dm3,
+            threadId: 'a__me',
+            dmService: dm,
             apiClient: _api(),
           ),
         ),
       );
       await tester.pump();
-      ctrl3.add(const []);
+      ctrl.add(const []);
       await tester.pumpAndSettle();
-      expect(find.text('Things to talk about'), findsOneWidget);
+
+      final tip = find.byTooltip('Dismiss tip');
+      expect(tip, findsOneWidget);
+
+      // The keyboard occupies the bottom [keyboard] px; the tip must sit above
+      // that line — i.e. it is not hidden behind the keyboard.
+      final tipRect = tester.getRect(tip);
+      expect(tipRect.bottom, lessThanOrEqualTo(screenH - keyboard),
+          reason: 'the tip must render above the keyboard, not behind it');
+      expect(tipRect.top, greaterThanOrEqualTo(0.0));
+
+      // …and it is pinned directly above the composer (the chips, not the tip,
+      // are what scrolls off when space is tight).
+      final composerTop = tester.getTopLeft(_composerPadding()).dy;
+      expect(tipRect.bottom, lessThanOrEqualTo(composerTop));
+
+      // Dismiss still works with the keyboard up.
+      await tester.tap(tip);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Dismiss tip'), findsNothing);
+    },
+  );
+
+  testWidgets('the tip row is hidden entirely when the tip is null', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(
+      ctrl,
+      // Coach chips but no tip — the tip row must not appear.
+      assist: (msgs) =>
+          const DmAssist(mode: 'coach', chips: ['a chip'], tip: null),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(
+          threadId: 'a__me',
+          dmService: dm,
+          apiClient: _api(),
+        ),
+      ),
+    );
+    await tester.pump();
+    ctrl.add(const []);
+    await tester.pumpAndSettle();
+
+    expect(find.text('a chip'), findsOneWidget);
+    expect(find.byTooltip('Dismiss tip'), findsNothing);
+  });
+
+  // --- safety red-flag coach (§6.9.1) ------------------------------------ //
+
+  testWidgets(
+    'a safety note renders at warning (distinct from the coach tip) and is '
+    'dismissible, without affecting the chips or tip',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (msgs) => const DmAssist(
+          mode: 'coach',
+          chips: ['let\'s slow down'],
+          tip: 'Trust your gut here.',
+          safety: DmSafety(
+            level: 'warning',
+            reason: 'They keep asking for money — that\'s a common scam '
+                'pattern. Be careful.',
+            flags: ['money_request'],
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      // The protective heads-up shows, visually distinct from the coach tip:
+      // its own shield glyph + label + its own dismiss tooltip.
+      expect(find.text('Heads up from Ayma'), findsOneWidget);
+      expect(find.byIcon(Icons.shield_outlined), findsOneWidget);
+      expect(
+        find.textContaining('common scam pattern'),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('Dismiss safety note'), findsOneWidget);
+      // The normal coach tip + chips coexist (safety is an additional note).
+      expect(find.text('Trust your gut here.'), findsOneWidget);
+      expect(find.byTooltip('Dismiss tip'), findsOneWidget);
+      expect(find.text('let\'s slow down'), findsOneWidget);
+
+      // Dismissing the safety note hides only it — chips + tip remain.
+      await tester.tap(find.byTooltip('Dismiss safety note'));
+      await tester.pumpAndSettle();
+      expect(find.text('Heads up from Ayma'), findsNothing);
+      expect(find.textContaining('common scam pattern'), findsNothing);
+      expect(find.text('Trust your gut here.'), findsOneWidget);
+      expect(find.text('let\'s slow down'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a safety note renders at caution too',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: ['x'],
+          safety: DmSafety(
+            level: 'caution',
+            reason: 'Heads up — they\'re pushing to meet really fast. It\'s '
+                'okay to take your time.',
+            flags: ['rushing_to_meet'],
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Heads up from Ayma'), findsOneWidget);
+      expect(find.textContaining('take your time'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'no safety note at level none (the common, false-positive-free case)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        // Normal flirting: chips + tip, but safety stays silent (none).
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: ['haha same'],
+          tip: 'You\'re vibing — keep it light.',
+          safety: DmSafety.none,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Heads up from Ayma'), findsNothing);
+      expect(find.byIcon(Icons.shield_outlined), findsNothing);
+      expect(find.byTooltip('Dismiss safety note'), findsNothing);
+      // The normal coaching is unaffected.
+      expect(find.text('You\'re vibing — keep it light.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a safety note never blocks sending (advisory only)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) => const DmAssist(
+          mode: 'coach',
+          chips: ['x'],
+          safety: DmSafety(
+            level: 'warning',
+            reason: 'Be careful here.',
+            flags: ['money_request'],
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+      expect(find.text('Heads up from Ayma'), findsOneWidget);
+
+      // Typing + sending still works with the note on screen.
+      await tester.enterText(find.byType(TextField), 'I am not comfortable');
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pumpAndSettle();
+      expect(dm.sent, contains('I am not comfortable'));
     },
   );
 
@@ -468,6 +797,85 @@ void main() {
     expect(find.text('2.0 MB'), findsOneWidget);
   });
 
+  testWidgets('renders a GIF attachment inline (animated via Image.network)', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+      ),
+    );
+    await tester.pump();
+    ctrl.add([
+      DmMessage(
+        id: 'g1',
+        senderUid: 'a',
+        type: 'gif',
+        body: '',
+        createdAt: DateTime.now(),
+        attachmentUrl: 'https://example.invalid/party.gif',
+        attachmentPath: 'uploads/a/dm/a__me/party.gif',
+        mime: 'image/gif',
+        fileName: 'party.gif',
+        size: 65536,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    // Rendered inline as an image thumbnail (not the '📷 GIF' text fallback)…
+    expect(find.byType(Image), findsWidgets);
+    expect(find.text('📷 GIF'), findsNothing);
+    // …and tappable to the full-screen viewer.
+    await tester.tap(find.byType(Image).first);
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.close), findsOneWidget);
+  });
+
+  testWidgets(
+    'the composer accepts keyboard-inserted media, uploading + sending it as '
+    'a gif message',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      // The composer declares rich-content support (so Gboard's GIF/image
+      // button inserts here instead of the "not supported" toast)…
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.contentInsertionConfiguration, isNotNull);
+
+      // …and inserting a GIF uploads its bytes and sends it as a `gif` message.
+      field.contentInsertionConfiguration!.onContentInserted(
+        KeyboardInsertedContent(
+          mimeType: 'image/gif',
+          uri: 'content://gif/1',
+          data: Uint8List.fromList(const [1, 2, 3]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(dm.insertedUploads.single.mime, 'image/gif');
+      expect(dm.attachmentsSent.single.type, 'gif');
+    },
+  );
+
   testWidgets('the attach button opens the Photo / Camera / File sheet', (
     tester,
   ) async {
@@ -501,7 +909,11 @@ void main() {
       addTearDown(tester.view.reset);
 
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(ctrl, chips: ['What trail do you run?']);
+      final dm = _FakeDm(
+        ctrl,
+        assist: (_) =>
+            const DmAssist(mode: 'opener', chips: ['What trail do you run?']),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: DmThreadScreen(

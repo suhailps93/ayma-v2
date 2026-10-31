@@ -138,13 +138,20 @@ def _mocks(monkeypatch):
         lambda fields: "Physical profile — eyes: brown.",
     )
 
-    async def _face_run(b, m, *, uid=None, source_path=None):
-        seen["face"] += 1
-        return {**_FACE, "source_photos": [source_path] if source_path else []}
+    def _src_photos(image_or_images, source_path):
+        # Mirror face_report/body_report.run's own source_photos derivation for
+        # both call forms: single (bytes, source_path=…) and multi ([(b,m,p),…]).
+        if isinstance(image_or_images, (bytes, bytearray)):
+            return [source_path] if source_path else []
+        return [str(p) for _b, _m, p in (image_or_images or []) if p]
 
-    async def _body_run(b, m, *, uid=None, source_path=None):
+    async def _face_run(image_or_images, m=None, *, uid=None, source_path=None):
+        seen["face"] += 1
+        return {**_FACE, "source_photos": _src_photos(image_or_images, source_path)}
+
+    async def _body_run(image_or_images, m=None, *, uid=None, source_path=None):
         seen["body"] += 1
-        return {**_BODY, "source_photos": [source_path] if source_path else []}
+        return {**_BODY, "source_photos": _src_photos(image_or_images, source_path)}
 
     monkeypatch.setattr(appearance.face_report, "run", _face_run)
     monkeypatch.setattr(appearance.body_report, "run", _body_run)
@@ -373,6 +380,62 @@ def test_explicit_selection_never_falls_back_to_a_chat_attachment(monkeypatch, _
     assert _mocks["body"] == 0
 
 
+def test_rerun_face_only_keeps_the_previous_body_so_the_card_survives(_mocks):
+    # § founder 2026-10-28 "after Ayma reran I don't see the report card": a
+    # first full run scores both axes; a rerun that only runs face (body
+    # skipped) must NOT wipe the body section back to needs_body_photo — the
+    # unified face+body score (and thus the shareable card) must survive.
+    db = FakeDb()
+    first = _run(appearance.run_appearance(db, "u1"))
+    assert first["score"] == {"value": 6.8, "basis": "face+body"}
+
+    rep = _run(appearance.run_appearance(db, "u1", want_body=False))
+    assert rep["face"]["overall_score"] == 7.1
+    assert rep["body"]["overall_score"] == 6.4  # reused, not wiped
+    assert rep["score"] == {"value": 6.8, "basis": "face+body"}
+    # the reused axis reads as a produced section, not an add-photo prompt.
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+    assert _mocks["body"] == 1  # body_report ran once (first run only)
+
+
+def test_rerun_keeps_previous_axis_when_wanted_but_no_eligible_photo(monkeypatch, _mocks):
+    # body wanted but nothing eligible feeds it on the rerun — still must keep
+    # the previously-produced body rather than regress it.
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": False,
+                       "shot_type": "face"}},
+        ],
+    )
+    rep = _run(appearance.run_appearance(db, "u1", want_body=True))
+    assert rep["body"]["overall_score"] == 6.4  # reused
+    assert rep["score"]["basis"] == "face+body"
+
+
+def test_explicit_selection_of_an_untagged_photo_is_honoured(monkeypatch, _mocks):
+    # § founder 2026-10-28: a freshly-added, not-yet-classified photo the user
+    # picked for an axis is still read — the user's choice drives the analysis.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"new", "mime": "image/jpeg", "path": "uploads/u1/new.jpg",
+             "media_id": "mnew", "attrs": {}},  # untagged
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mnew"], body_media_ids=["mnew"],
+    ))
+    assert rep["face"]["source_photos"] == ["uploads/u1/new.jpg"]
+    assert rep["body"]["source_photos"] == ["uploads/u1/new.jpg"]
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+
+
 def test_returns_none_and_records_skipped_without_photos(monkeypatch, _mocks):
     monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: [])
     db = FakeDb()
@@ -507,6 +570,176 @@ def test_rerun_with_unchanged_photo_set_skips_gemini_and_reuses_report(_mocks):
 
     led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
     assert led["last_status"] == "skipped" and led["detail"] == "unchanged_photos"
+
+
+def test_explicit_selection_of_a_different_in_grid_photo_forces_a_fresh_run(
+    monkeypatch, _mocks
+):
+    # § founder 2026-10-28 (4th broken handoff): "selects specific photos -> Run
+    # analysis -> 'report updated' -> but it's the SAME old report". The grid set
+    # is UNCHANGED between the two runs, so the whole-grid "nothing changed"
+    # dedup WOULD short-circuit and re-share the prior report. But the user
+    # explicitly picked a DIFFERENT already-in-grid photo -> that selection must
+    # drive a FRESH analysis of THAT photo, never a reuse of the previous report.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"f1", "mime": "image/jpeg", "path": "uploads/u1/f1.jpg",
+             "media_id": "m1",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+            {"bytes": b"f2", "mime": "image/jpeg", "path": "uploads/u1/f2.jpg",
+             "media_id": "m2",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        ],
+    )
+
+    # attributes.source_photos reflects the WHOLE grid (both photos) on every
+    # run -- so the photo set the old dedup keys on is identical across the two
+    # runs, which is exactly the condition that falsely reused the report.
+    async def _pa_refresh_grid(db, uid, *, persist_report=False, **kw):
+        _mocks["pa"] += 1
+        return {
+            "fields": _PA_FIELDS, "report_id": "pr1", "photo_count": 2,
+            "photo_paths": ["uploads/u1/f1.jpg", "uploads/u1/f2.jpg"],
+        }
+
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_refresh_grid)
+
+    # The produced read varies by the photo(s) actually analysed -- so a fresh
+    # run is provable from the output score, not just the source_photos echo.
+    async def _face_by_path(image_or_images, m=None, *, uid=None, source_path=None):
+        _mocks["face"] += 1
+        paths = [str(p) for _b, _m, p in (image_or_images or []) if p]
+        score = 9.9 if "uploads/u1/f2.jpg" in paths else 3.3
+        return {**_FACE, "overall_score": score, "source_photos": paths}
+
+    monkeypatch.setattr(appearance.face_report, "run", _face_by_path)
+
+    db = FakeDb()
+    # First run: user explicitly analyses photo m1 (f1.jpg).
+    first = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["m1"], want_body=False,
+    ))
+    assert first["face"]["source_photos"] == ["uploads/u1/f1.jpg"]
+    assert first["face"]["overall_score"] == 3.3
+    assert _mocks["face"] == 1
+
+    # Rerun selecting the OTHER in-grid photo m2 (f2.jpg). Grid set unchanged ->
+    # the old whole-grid dedup would reuse `first` (the bug). It must instead run
+    # a SECOND, fresh face pass on f2 and the report must reflect f2.
+    second = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["m2"], want_body=False,
+    ))
+    assert _mocks["face"] == 2                                   # a second real vision pass
+    assert second["face"]["source_photos"] == ["uploads/u1/f2.jpg"]  # the picked photo
+    assert second["face"]["overall_score"] == 9.9               # f2's read, not f1's
+    assert second["face"]["source_photos"] != first["face"]["source_photos"]
+    # a real run, never recorded as the "unchanged_photos" skip.
+    led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
+    assert led["last_status"] == "ok" and led["detail"] != "unchanged_photos"
+
+
+def test_single_explicit_selection_analyses_exactly_that_photo(monkeypatch, _mocks):
+    # The client is single-select: it sends exactly ONE media id per axis. The
+    # backend must analyse precisely that photo -- regardless of its position in
+    # grid order -- and no other grid photo. Here the sole pick (m2) is NOT the
+    # first grid photo, proving grid order never overrides the explicit pick.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"f1", "mime": "image/jpeg", "path": "uploads/u1/f1.jpg",
+             "media_id": "m1",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+            {"bytes": b"f2", "mime": "image/jpeg", "path": "uploads/u1/f2.jpg",
+             "media_id": "m2",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+            {"bytes": b"f3", "mime": "image/jpeg", "path": "uploads/u1/f3.jpg",
+             "media_id": "m3",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        ],
+    )
+
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["m2"], want_body=False,
+    ))
+    # Exactly one face vision pass, on exactly the picked photo (f2), not the
+    # first-in-grid (f1) and not all three.
+    assert _mocks["face"] == 1
+    assert rep["face"]["source_photos"] == ["uploads/u1/f2.jpg"]
+    led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
+    assert led["last_status"] == "ok"
+
+
+def _multi_face_body_grid():
+    return [
+        {"bytes": b"f1", "mime": "image/jpeg", "path": "uploads/u1/f1.jpg",
+         "media_id": "mf1",
+         "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        {"bytes": b"f2", "mime": "image/jpeg", "path": "uploads/u1/f2.jpg",
+         "media_id": "mf2",
+         "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        {"bytes": b"b1", "mime": "image/jpeg", "path": "uploads/u1/b1.jpg",
+         "media_id": "mb1",
+         "attrs": {"usable_for_face": False, "usable_for_body": True}},
+        {"bytes": b"b2", "mime": "image/jpeg", "path": "uploads/u1/b2.jpg",
+         "media_id": "mb2",
+         "attrs": {"usable_for_face": False, "usable_for_body": True}},
+    ]
+
+
+def test_multiple_selected_photos_feed_one_combined_report(monkeypatch, _mocks):
+    # Tick two face photos + two body photos. Each axis is analysed ONCE (one
+    # combined vision call), and its source_photos lists every ticked photo in
+    # grid order -- not just the first (the old stale-report bug).
+    monkeypatch.setattr(
+        appearance, "_grid_photos", lambda db, uid: _multi_face_body_grid()
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1",
+        face_media_ids=["mf1", "mf2"],
+        body_media_ids=["mb1", "mb2"],
+    ))
+    assert rep["face"]["source_photos"] == ["uploads/u1/f1.jpg", "uploads/u1/f2.jpg"]
+    assert rep["body"]["source_photos"] == ["uploads/u1/b1.jpg", "uploads/u1/b2.jpg"]
+    assert (_mocks["face"], _mocks["body"]) == (1, 1)  # ONE call per axis
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+
+
+def test_changing_the_multi_selection_yields_a_fresh_report(monkeypatch, _mocks):
+    # Same grid both runs, a DIFFERENT ticked set the second time -> a fresh
+    # combined read reflecting the new set, never a stale reuse.
+    monkeypatch.setattr(
+        appearance, "_grid_photos", lambda db, uid: _multi_face_body_grid()
+    )
+    db = FakeDb()
+    rep1 = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mf1"], want_body=False,
+    ))
+    assert rep1["face"]["source_photos"] == ["uploads/u1/f1.jpg"]
+    assert _mocks["face"] == 1
+    rep2 = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mf1", "mf2"], want_body=False,
+    ))
+    assert _mocks["face"] == 2  # a fresh pass, not reused
+    assert rep2["face"]["source_photos"] == ["uploads/u1/f1.jpg", "uploads/u1/f2.jpg"]
+
+
+def test_selection_is_capped_at_max_photos(monkeypatch, _mocks):
+    # More than _MAX_PHOTOS ticked for an axis -> capped, bounding vision cost.
+    grid = [
+        {"bytes": f"f{i}".encode(), "mime": "image/jpeg",
+         "path": f"uploads/u1/f{i}.jpg", "media_id": f"mf{i}",
+         "attrs": {"usable_for_face": True, "usable_for_body": False}}
+        for i in range(9)
+    ]
+    monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: grid)
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=[f"mf{i}" for i in range(9)], want_body=False,
+    ))
+    assert len(rep["face"]["source_photos"]) == appearance._MAX_PHOTOS
 
 
 def test_rerun_after_a_photo_is_added_runs_analysis_again(monkeypatch, _mocks):
@@ -896,3 +1129,67 @@ def test_clear_finding_no_report_yet_raises_keyerror():
     db = FakeDb()
     with pytest.raises(KeyError):
         _run(appearance.clear_finding(db, "u1", "eye_color"))
+
+
+# --- completion notification (§ report ready) ------------------------------
+
+
+@pytest.fixture
+def _notif_capture(monkeypatch):
+    """Capture report-ready notifications fired from `run_appearance`, without
+    touching the real FCM/dispatch path."""
+    import notifications_triggers
+
+    calls = []
+
+    async def _fake(db, uid, report_id, *, body_only=False):
+        calls.append({"uid": uid, "report_id": report_id, "body_only": body_only})
+
+    monkeypatch.setattr(notifications_triggers, "notify_report_ready", _fake)
+    return calls
+
+
+def test_completing_a_report_fires_exactly_one_ready_notification(
+    _mocks, _notif_capture
+):
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(db, "u1", source="endpoint"))
+    assert len(_notif_capture) == 1
+    c = _notif_capture[0]
+    assert c["uid"] == "u1"
+    assert c["report_id"] == rep["id"] == "current"
+    assert c["body_only"] is False
+
+
+def test_body_only_run_flags_the_notification_as_body_only(_mocks, _notif_capture):
+    db = FakeDb()
+    _run(
+        appearance.run_appearance(
+            db, "u1", want_face=False, want_body=True, source="endpoint"
+        )
+    )
+    assert len(_notif_capture) == 1
+    assert _notif_capture[0]["body_only"] is True
+
+
+def test_background_auto_run_fires_no_notification(_mocks, _notif_capture):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1", source="auto"))
+    assert _notif_capture == []
+
+
+def test_unchanged_rerun_does_not_refire_the_notification(_mocks, _notif_capture):
+    # First run persists + notifies once. A rerun over the SAME photos skips the
+    # vision passes and returns the stored report without persisting, so it must
+    # not fire a second "ready" notification.
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1", source="endpoint"))
+    _run(appearance.run_appearance(db, "u1", source="endpoint"))
+    assert len(_notif_capture) == 1
+
+
+def test_no_photo_run_fires_no_notification(monkeypatch, _mocks, _notif_capture):
+    monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: [])
+    db = FakeDb()
+    assert _run(appearance.run_appearance(db, "u1", source="endpoint")) is None
+    assert _notif_capture == []

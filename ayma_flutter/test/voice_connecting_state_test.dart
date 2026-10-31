@@ -64,8 +64,8 @@ void main() {
   tearDown(() => VoiceSessionController.active = null);
 
   testWidgets(
-    'chat composer mic: connecting shows "Connecting/Waking" + spinner, '
-    'not "Listening"; agent join flips to "Listening"',
+    'chat composer mic: connecting shows "Connecting/Waking" + animated logo '
+    'loader, not "Listening"; agent join flips to "Listening"',
     (tester) async {
       final transport = FakeVoiceTransport();
       final voice = VoiceSessionController(
@@ -90,7 +90,7 @@ void main() {
       expect(_composerMode(tester), ComposerMode.connecting);
       expect(find.text('Waking Ayma…'), findsOneWidget);
       expect(find.text('Listening…'), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
       // The lit capturing mic (listening) must be absent while connecting.
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
 
@@ -102,7 +102,7 @@ void main() {
       expect(voice.phase, VoiceSessionPhase.live);
       expect(_composerMode(tester), ComposerMode.listening);
       expect(find.text('Listening…'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byIcon(Icons.mic_none_rounded), findsNothing);
 
       // Tear down the live session cleanly: `stop()` is fire-and-forget (its
       // awaited teardown only advances under `pump`, never a bare `await`, so
@@ -153,7 +153,7 @@ void main() {
       expect(_composerMode(tester), ComposerMode.connecting);
       expect(find.text('Waking Ayma…'), findsOneWidget);
       expect(find.text('Listening…'), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
 
       transport.markAgentReady();
       await tester.pump();
@@ -161,7 +161,7 @@ void main() {
 
       expect(_composerMode(tester), ComposerMode.listening);
       expect(find.text('Listening…'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byIcon(Icons.mic_none_rounded), findsNothing);
     },
   );
 }

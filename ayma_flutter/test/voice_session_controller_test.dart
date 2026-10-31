@@ -84,8 +84,12 @@ void main() {
     bootstrapCalls = 0;
     voiceContextCalls.clear();
     AppContext.instance.clear();
+    VoiceSessionController.active = null;
   });
-  tearDown(AppContext.instance.clear);
+  tearDown(() {
+    AppContext.instance.clear();
+    VoiceSessionController.active = null;
+  });
 
   test('entering `live` posts the current screen context to the backend',
       () async {
@@ -1032,5 +1036,232 @@ void main() {
     await c.stop();
     expect(c.micLevel.value, 0);
     expect(c.aymaLevel.value, 0);
+  });
+
+  // --- Practice Date voice (hackathon B) ----------------------------------- //
+  group('practice voice', () {
+    final voicePostTurns = <Map<String, dynamic>>[];
+    ApiClient practiceApi() {
+      voicePostTurns.clear();
+      return ApiClient(
+        auth: MockFirebaseAuth(signedIn: true),
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/practice/voice/start') {
+            return http.Response(
+              jsonEncode({
+                'session_id': 'practice_v1',
+                'simulation': true,
+                'persona': {'name': 'Dana', 'age': 30, 'location': 'Berlin'},
+                'banner': 'Practice mode — simulated Dana.',
+                'livekit': {
+                  'token': 'tok-practice',
+                  'url': 'wss://example.livekit.cloud',
+                  'room': 'ayma-her',
+                },
+              }),
+              200,
+              headers: const {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          if (request.url.path == '/post-turn') {
+            voicePostTurns.add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.url.path == '/voice/context') {
+            voiceContextCalls.add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+    }
+
+    test('start() calls /practice/voice/start, goes live, captures the session '
+        'id + persona, and surfaces coach hints', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: practiceApi(),
+        transportFactory: () => transport,
+      );
+
+      await _startLive(c, transport);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(c.isPractice, isTrue);
+      expect(c.practiceSessionId, 'practice_v1');
+      expect(c.practicePersona?.name, 'Dana');
+      expect(transport.connectedToken, 'tok-practice');
+
+      // The out-of-character live coach nudge surfaces to the user.
+      transport.emitPracticeCoach('Ask an open question back.');
+      await Future<void>.delayed(Duration.zero);
+      expect(c.coachHint, 'Ask an open question back.');
+
+      await c.stop();
+    });
+
+    test('a practice call never mirrors the screen nor posts raw_turns (a '
+        'simulation never touches the user\'s real memory)', () async {
+      AppContext.instance.set(screen: 'ayma');
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: practiceApi(),
+        transportFactory: () => transport,
+      );
+
+      await _startLive(c, transport);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await c.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(voiceContextCalls, isEmpty); // no screen mirroring for the persona
+      expect(voicePostTurns, isEmpty); // no raw_turns persistence
+      AppContext.instance.clear();
+    });
+  });
+
+  // --- Single-active-voice-session invariant ------------------------------- //
+  // Only ONE voice session may ever be live at a time across every surface.
+  // Each surface is a separate controller with its own LiveKit room, so
+  // starting one must first fully tear down any other active one — otherwise
+  // two personas (e.g. main Ayma + a Practice Date persona) talk over each
+  // other (founder report 2026-10-26).
+  group('mutual exclusion', () {
+    /// An API that answers both the main `/bootstrap` and the practice
+    /// `/practice/voice/start` token endpoints with distinct LiveKit creds.
+    ApiClient mutexApi() => ApiClient(
+          auth: MockFirebaseAuth(signedIn: true),
+          httpClient: MockClient((request) async {
+            if (request.url.path == '/bootstrap') {
+              return http.Response(
+                jsonEncode({
+                  'session_mode': 'marketing',
+                  'uid': 'u1',
+                  'livekit': {
+                    'token': 'tok-main',
+                    'url': 'wss://example.livekit.cloud',
+                    'room': 'ayma-u1',
+                  },
+                }),
+                200,
+              );
+            }
+            if (request.url.path == '/practice/voice/start') {
+              return http.Response(
+                jsonEncode({
+                  'session_id': 'practice_v1',
+                  'simulation': true,
+                  'persona': {'name': 'Dana', 'age': 30, 'location': 'Berlin'},
+                  'livekit': {
+                    'token': 'tok-practice',
+                    'url': 'wss://example.livekit.cloud',
+                    'room': 'ayma-her',
+                  },
+                }),
+                200,
+                headers: const {
+                  'content-type': 'application/json; charset=utf-8'
+                },
+              );
+            }
+            if (request.url.path == '/post-turn' ||
+                request.url.path == '/voice/context') {
+              return http.Response(jsonEncode({'ok': true}), 200);
+            }
+            return http.Response('not found', 404);
+          }),
+        );
+
+    test('starting a practice call disconnects an active main Ayma call',
+        () async {
+      final mainTransport = FakeVoiceTransport();
+      final main = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: mutexApi(),
+        transportFactory: () => mainTransport,
+      );
+      final practiceTransport = FakeVoiceTransport();
+      final practice = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: mutexApi(),
+        transportFactory: () => practiceTransport,
+      );
+
+      await _startLive(main, mainTransport);
+      expect(main.phase, VoiceSessionPhase.live);
+      expect(VoiceSessionController.active, same(main));
+
+      // Starting the practice call must tear the main call down first.
+      await practice.start();
+
+      expect(main.phase, VoiceSessionPhase.idle);
+      expect(main.isActive, isFalse);
+      expect(mainTransport.disconnectCalls, 1); // its room was closed
+      expect(mainTransport.disposeCalls, 1);
+      expect(practice.isActive, isTrue);
+      expect(VoiceSessionController.active, same(practice));
+      // Only the practice room is connected now — no overlap.
+      expect(practiceTransport.connectedToken, 'tok-practice');
+
+      await practice.stop();
+    });
+
+    test('starting the main Ayma call disconnects an active practice call',
+        () async {
+      final practiceTransport = FakeVoiceTransport();
+      final practice = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: mutexApi(),
+        transportFactory: () => practiceTransport,
+      );
+      final mainTransport = FakeVoiceTransport();
+      final main = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: mutexApi(),
+        transportFactory: () => mainTransport,
+      );
+
+      await _startLive(practice, practiceTransport);
+      expect(practice.phase, VoiceSessionPhase.live);
+      expect(VoiceSessionController.active, same(practice));
+
+      await main.start();
+
+      expect(practice.phase, VoiceSessionPhase.idle);
+      expect(practice.isActive, isFalse);
+      expect(practiceTransport.disconnectCalls, 1);
+      expect(practiceTransport.disposeCalls, 1);
+      expect(main.isActive, isTrue);
+      expect(VoiceSessionController.active, same(main));
+      expect(mainTransport.connectedToken, 'tok-main');
+
+      await main.stop();
+    });
+
+    test('restarting the same controller does not tear itself down', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: mutexApi(),
+        transportFactory: () => transport,
+      );
+
+      await _startLive(c, transport);
+      // Already active: start() is a no-op, never a self-teardown.
+      await c.start();
+
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(transport.disconnectCalls, 0);
+      expect(VoiceSessionController.active, same(c));
+
+      await c.stop();
+    });
   });
 }

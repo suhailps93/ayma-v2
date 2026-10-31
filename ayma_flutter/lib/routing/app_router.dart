@@ -1,11 +1,16 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
+import '../dev_mode.dart';
+import '../features/date_sim/date_sim_screen.dart';
+import '../features/practice_date/practice_debrief_screen.dart';
+import '../features/practice_date/practice_screen.dart';
 import '../services/api_client.dart';
 import '../services/meta_integrations.dart';
 import '../services/app_context.dart';
 import '../services/screen_capture.dart';
 import '../services/biometric_consent.dart';
+import '../services/dev_panel_session.dart';
 import '../screens/biometric_consent_screen.dart';
 import '../screens/biometric_consent_settings_screen.dart';
 import '../screens/biometric_info_screen.dart';
@@ -24,6 +29,7 @@ import '../screens/matches_screen.dart';
 import '../screens/messages_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
+import '../screens/connect_agent_screen.dart';
 import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
 import '../screens/invite_friends_screen.dart';
@@ -46,6 +52,7 @@ import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/plan_screen.dart';
 import '../screens/developer_screen.dart';
+import '../screens/admin_feedback_screen.dart';
 import '../screens/trial_paywall_screen.dart';
 import '../services/revenuecat_service.dart';
 import '../screens/voice_preference_screen.dart';
@@ -132,6 +139,10 @@ final appRouter = GoRouter(
       path: UnderageScreen.path,
       builder: (context, state) => const UnderageScreen(),
     ),
+    // The feature tour (§11.2a) is no longer a route: it's an interactive
+    // coach-mark overlay the main shell hosts over its own live UI (so it can
+    // spotlight the real composer, orb and tabs). The shell's gate auto-shows
+    // it; Settings/Dev replay via `TourRequest` + `context.go('/')`.
     GoRoute(
       path: SignInScreen.path,
       builder: (context, state) => const SignInScreen(),
@@ -219,6 +230,38 @@ final appRouter = GoRouter(
       builder: (context, state) =>
           PublicProfileScreen(uid: state.pathParameters['uid']!),
     ),
+    // Practice Date (hackathon deliverable B). The debrief route is listed
+    // first; go_router matches the 3-segment pattern before the 2-segment one.
+    GoRoute(
+      path: PracticeDebriefScreen.path,
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? const {};
+        return PracticeDebriefScreen(
+          sessionId: (extra['session_id'] as String?) ?? '',
+          name: (extra['name'] as String?) ?? '',
+        );
+      },
+    ),
+    GoRoute(
+      path: PracticeScreen.path,
+      builder: (context, state) => PracticeScreen(
+        uid: state.pathParameters['uid']!,
+        name: state.extra is String ? state.extra as String : '',
+      ),
+    ),
+    // AI Date Simulation (hackathon flagship): the two-persona conversation
+    // preview. Entered from a match's profile with their name + DM pair id.
+    GoRoute(
+      path: DateSimScreen.path,
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? const {};
+        return DateSimScreen(
+          uid: state.pathParameters['uid']!,
+          name: (extra['name'] as String?) ?? '',
+          threadId: extra['thread_id'] as String?,
+        );
+      },
+    ),
     GoRoute(
       path: ExploreScreen.path,
       builder: (context, state) => NavBarShell(
@@ -277,6 +320,11 @@ final appRouter = GoRouter(
           const NavBarShell(child: GoogleAccountScreen()),
     ),
     GoRoute(
+      path: ConnectAgentScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: ConnectAgentScreen()),
+    ),
+    GoRoute(
       path: InstagramScreen.path,
       redirect: (context, state) =>
           MetaIntegrations.enabled.value ? null : MainShellScreen.path,
@@ -310,10 +358,42 @@ final appRouter = GoRouter(
             : const NavBarShell(child: PlanScreen());
       },
     ),
+    // Dev-only routes. They stay in the table (so the app-registry invariant
+    // holds), but every one is hard-gated by the compile-time dev-mode flag:
+    // when dev mode is off (`kDevModeEnabled == false` — every customer /
+    // store build, the fail-safe default), each redirects to the main shell,
+    // so even a deep link or stale link cannot reach the Developer panel or
+    // anything behind it. The seven-tap unlock gesture is a no-op then too
+    // (settings_screen.dart). Internal / dev builds opt in with
+    // `--dart-define=ENABLE_DEV_MODE=true` (scripts/build-apk.sh).
     GoRoute(
       path: DeveloperScreen.path,
+      redirect: (context, state) =>
+          devModeEnabled ? null : MainShellScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: DeveloperScreen()),
+    ),
+    GoRoute(
+      // "Ayma's Notes" — the full analytical picture ("the intelligence
+      // beneath the portrait"). Dev-only on purpose: reached only from the
+      // unlocked Developer panel, and this redirect bounces anyone who tries
+      // to deep-link it unless dev mode is on AND the panel is unlocked, so no
+      // normal-user path (and no stale link) can surface the analysis layer
+      // (§11.2).
+      path: AymaNotesScreen.path,
+      redirect: (context, state) =>
+          devModeEnabled && DevPanelSession.instance.unlocked.value
+              ? null
+              : MainShellScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: AymaNotesScreen()),
+    ),
+    GoRoute(
+      path: AdminFeedbackScreen.path,
+      redirect: (context, state) =>
+          devModeEnabled ? null : MainShellScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: AdminFeedbackScreen()),
     ),
     GoRoute(
       path: FeedbackScreen.path,

@@ -341,12 +341,29 @@ def test_viewing_profile_context_cites_a_real_computed_score():
     db.docs[("users", "her", "profile", "main")] = {
         "name": "Dana", "completeness": {"score": 80},
     }
+    # The matches `score` field is stored 0–1 (report_adapters multiplies by
+    # 100 for the UI); 0.734 is a 73% match.
     db.docs[("matches", sorted_pair_key("me", "her"))] = {
-        "score": 73.4,
+        "score": 0.734,
         "ai_explanation": "Shared love of the outdoors; different paces.",
     }
     out = pp._viewing_profile_context(db, "me", "her")
     assert "73/100 compatibility" in out
     assert "a compatibility score HAS been computed" in out
     # With a real score, the "not enough" guard must NOT fire.
+    assert "do NOT have enough" not in out
+
+
+def test_viewing_profile_context_scales_a_fractional_score_to_percent():
+    # Founder bug 2026-10-29: a 99% match is stored as 0.99 on the 0–1 scale.
+    # The briefing must read "99/100", never round it to "1/100" and let the
+    # voice agent call a top match "low".
+    db = FakeDb()
+    db.docs[("users", "her", "profile", "main")] = {
+        "name": "Sofia", "completeness": {"score": 90},
+    }
+    db.docs[("matches", sorted_pair_key("me", "her"))] = {"score": 0.99}
+    out = pp._viewing_profile_context(db, "me", "her")
+    assert "99/100 compatibility" in out
+    assert "1/100" not in out
     assert "do NOT have enough" not in out

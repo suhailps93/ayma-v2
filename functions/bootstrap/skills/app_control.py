@@ -46,6 +46,7 @@ tool path here can delete the account, withdraw consent or buy anything.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
 import re
 import time
@@ -58,7 +59,6 @@ import app_registry
 import public_profile
 from pair_key import sorted_pair_key
 
-from . import read_dm_thread
 from ._base import Skill, last_user_quote
 
 logger = logging.getLogger("ayma.app_control")
@@ -95,6 +95,15 @@ _NOT_APPLIED = "The app did NOT apply that — tell the user it didn't work."
 # (auth/onboarding, hidden Google/Instagram linking, the developer panel, …)
 # are listed with their reason under ``non_navigable`` in the registry.
 _SCREENS = tuple(d["key"] for d in app_registry.destinations())
+
+# The list the model actually reads to pick a destination. Bare keys left the
+# mapping under-determined over the Meta API (founder bug 2026-10-27: "open the
+# appearance report" went to Notifications, then Chat, before landing on
+# my_appearance), so each key carries its own label — "appearance report" now
+# has one unambiguous key to match (my_appearance), never a guess.
+_SCREEN_LINES = "; ".join(
+    f"{d['key']} ({d['label']})" for d in app_registry.destinations()
+)
 
 _PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 
@@ -303,6 +312,14 @@ def _describe_screen(ctx: dict) -> str:
     return _NOTHING_OPEN
 
 
+# A difflib ratio at/above this makes a near-identical spelling (user's
+# "Sophia" vs profile "Sofia", ratio 0.727) resolve to that profile directly
+# instead of the reject-then-confirm path (founder bug 2026-10-29). It sits
+# below every exact/substring tier, so it only decides when nothing better
+# matches, and the closest fuzzy candidate wins.
+_FUZZY_NAME_THRESHOLD = 0.72
+
+
 def _resolve_person(db, uid: str, name: str) -> tuple[str | None, str]:
     """Best profile-name match for ``name`` across the roster (same scan Explore
     uses). Returns ``(uid, full_name)`` or ``(None, "")``."""
@@ -313,7 +330,8 @@ def _resolve_person(db, uid: str, name: str) -> tuple[str | None, str]:
         users = list(db.collection("users").stream())
     except Exception:  # noqa: BLE001
         return None, ""
-    best: tuple[int, str, str] | None = None  # (strength, uid, full name)
+    best: tuple[float, str, str] | None = None  # (strength, uid, full name)
+    want_first = want.split(" ")[0]
     for u in users:
         other = u.id
         if other == uid:
@@ -334,15 +352,170 @@ def _resolve_person(db, uid: str, name: str) -> tuple[str | None, str]:
         if not low:
             continue
         first = low.split(" ")[0]
-        strength = (
-            3 if low == want
-            else 2 if first == want
-            else 1 if (want in low or low in want)
-            else 0
-        )
+        if low == want:
+            strength = 3.0
+        elif first == want:
+            strength = 2.0
+        elif want in low or low in want:
+            strength = 1.0
+        else:
+            ratio = max(
+                difflib.SequenceMatcher(None, first, want_first).ratio(),
+                difflib.SequenceMatcher(None, low, want).ratio(),
+            )
+            strength = ratio if ratio >= _FUZZY_NAME_THRESHOLD else 0.0
         if strength and (best is None or strength > best[0]):
             best = (strength, other, full)
     return (best[1], best[2]) if best else (None, "")
+
+
+# "open the last / most recent conversation" — a request to open the most
+# recently active thread rather than name a person.
+_LAST_INTENT = re.compile(
+    r"^(the\s+|my\s+)?(last|latest|most[\s-]*recent|newest|previous)"
+    r"(\s+(one|conversation|chat|thread|message|messages|dm|dms))?$"
+)
+
+
+def _epoch(ts) -> float:
+    """Seconds-since-epoch for a Firestore ``Timestamp``/``datetime``; ``0.0``
+    when it is missing or not a timestamp (sorts such a thread oldest)."""
+    try:
+        return ts.timestamp()
+    except AttributeError:
+        return 0.0
+
+
+def _ago(ts) -> str:
+    """A short relative age for a thread's last-message time (no exact time, no
+    message text — just recency for Ayma to relay)."""
+    secs = _epoch(ts)
+    if not secs:
+        return "recently"
+    delta = time.time() - secs
+    if delta < 90:
+        return "just now"
+    mins = int(delta // 60)
+    if mins < 60:
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+    hours = int(delta // 3600)
+    if hours < 24:
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(delta // 86400)
+    if days < 2:
+        return "yesterday"
+    if days < 7:
+        return f"{days} days ago"
+    weeks = days // 7
+    if weeks < 5:
+        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+    months = days // 30
+    return f"{months} month{'s' if months != 1 else ''} ago"
+
+
+def _dm_threads(db, uid: str) -> list[dict]:
+    """The signed-in user's own DM threads, most-recent first. Each entry is
+    ``{other, name, last_at, unread}`` — the other person's uid and profile
+    name, the last-message timestamp, and whether this user has unread messages
+    in it. Scoped to this uid's own threads (``participants`` contains them) and
+    excludes threads they've hidden (a block). No message bodies are read —
+    privacy-safe by construction (§6.6, §6.8)."""
+    try:
+        snaps = list(
+            db.collection("dm_threads")
+            .where("participants", "array_contains", uid)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("listing dm threads failed for %s", uid)
+        return []
+    out: list[dict] = []
+    for t in snaps:
+        d = t.to_dict() or {}
+        if uid in (d.get("hidden_for") or []):
+            continue
+        parts = d.get("participants") or []
+        other = next((p for p in parts if p != uid), None)
+        if not other:
+            continue
+        try:
+            prof = (
+                db.collection("users").document(other)
+                .collection("profile").document("main").get().to_dict()
+            ) or {}
+        except Exception:  # noqa: BLE001
+            prof = {}
+        name = str(prof.get("name") or "").strip() or "Someone"
+        unread = int((d.get("unread") or {}).get(uid, 0) or 0) > 0
+        out.append({
+            "other": other,
+            "name": name,
+            "last_at": d.get("last_message_at"),
+            "unread": unread,
+        })
+    out.sort(key=lambda t: _epoch(t["last_at"]), reverse=True)
+    return out
+
+
+def _thread_strength(name: str, want: str) -> int:
+    """How strongly a thread's person name matches what the user said: 3 exact
+    full name, 2 exact first name, 1 substring or a close fuzzy match (typos /
+    near-spellings), 0 no match."""
+    low = name.strip().lower()
+    if not low:
+        return 0
+    first = low.split(" ")[0]
+    if low == want:
+        return 3
+    if first == want:
+        return 2
+    if want in low or low in want:
+        return 1
+    if difflib.SequenceMatcher(None, first, want).ratio() >= 0.8:
+        return 1
+    return 0
+
+
+def _best_thread(
+    threads: list[dict], asked: str
+) -> tuple[dict | None, list[dict]]:
+    """Best fuzzy match for ``asked`` among ``threads``. Returns
+    ``(thread, [])`` for a single clear winner, ``(None, candidates)`` when
+    more than one is equally plausible (the caller asks which), or
+    ``(None, [])`` when nothing matches."""
+    want = asked.strip().lower()
+    scored = [(_thread_strength(t["name"], want), t) for t in threads]
+    best = max((s for s, _ in scored), default=0)
+    if best == 0:
+        return None, []
+    top = [t for s, t in scored if s == best]
+    return (top[0], []) if len(top) == 1 else (None, top)
+
+
+def _bind_list_conversations(db, uid: str) -> Callable[..., str]:
+    async def list_conversations() -> str:
+        threads = await asyncio.to_thread(_dm_threads, db, uid)
+        if not threads:
+            return (
+                "The user has no message threads yet — no one is in their "
+                "conversations. Don't invent names."
+            )
+        lines = [
+            f"{t['name']} (last message {_ago(t['last_at'])}"
+            + (", unread)" if t["unread"] else ")")
+            for t in threads
+        ]
+        n = len(lines)
+        unread = sum(1 for t in threads if t["unread"])
+        head = (
+            f"The user's {n} conversation{'s' if n != 1 else ''}, most recent "
+            "first"
+        )
+        if unread:
+            head += f" ({unread} with unread messages)"
+        return head + ": " + "; ".join(lines) + "."
+
+    return list_conversations
 
 
 def _bind_current_screen(db, uid: str) -> Callable[..., str]:
@@ -379,8 +552,9 @@ def _bind_current_screen(db, uid: str) -> Callable[..., str]:
 
 def _not_a_page(asked: str) -> str:
     """The honest answer for a request that matches no destination (known
-    unavailable things are answered before this): a pointer to the right tool
-    when it's a setting/action, otherwise "doesn't exist" with the real list."""
+    unavailable things, and report re-runs, are handled before this): a pointer
+    to the right tool when it's a setting/action, otherwise "doesn't exist"
+    with the real list."""
     act = app_registry.find_account_action(asked)
     if act:
         return (
@@ -460,14 +634,83 @@ async def _unavailable_reply(db, uid: str, gone: dict) -> str:
     return f"Not available: {gone['say']}"
 
 
+async def _run_report_action(db, uid: str, report: dict) -> str:
+    """Actually (re)run the report a navigation/app_action request named, by
+    invoking the same chat/voice tool (``report['via']``) that runs it — then
+    return its real result (the ``[appearance:<id>]`` / ``[deep_dive:<id>]``
+    card marker), not a text pointer telling the user to go use a tool.
+
+    The app-driving path must DO the re-run, not deflect it (founder bug
+    2026-10-28: "rerun the appearance report" either opened the existing report
+    or returned "use the run_appearance_report tool", never re-running). The
+    tool is bound here on ``(db, uid)`` alone, so it only ever touches this
+    authenticated user's own report — no attachment, no third party."""
+    via = report.get("via")
+    if via == "run_appearance_report":
+        from . import run_appearance_report as _report
+
+        return await _report.SKILL.bind(db, uid)()
+    if via == "deep_dive":
+        from . import deep_dive as _report
+
+        # A re-run of the user's own web research — self only (never a third
+        # party from an app-control phrase); the bind resolves their profile
+        # name, so no name is passed.
+        return await _report.SKILL.bind(db, uid)(full_name="", subject="self")
+    logger.error("report action %r has no runnable via (%r)", report.get("key"), via)
+    return _NOT_APPLIED
+
+
+def _story_edit_redirect(action: dict) -> str:
+    """The directive handed back when an open_screen request is really a story
+    edit/remove intent: do NOT navigate into the Story editor or its "Ask
+    Ayma" passage popup — call the direct tool, which changes the user's own
+    story straight from here (founder bug 2026-10-28)."""
+    if action.get("via") == "remove_story_entry":
+        return (
+            "That's a story REMOVAL, not a page to open — do NOT navigate to "
+            "the Story editor or open any passage popup. Call remove_story_entry "
+            "with the section they mean; it soft-removes it directly (reversible) "
+            "and you confirm from its result."
+        )
+    return (
+        "That's a story EDIT, not a page to open — do NOT navigate to the Story "
+        "editor or open any passage popup. Call edit_story_entry with the section, "
+        "find_text (the one line they mean, quoted or closely paraphrased) and "
+        "new_text (the corrected wording for ONLY that line — ask them for it if "
+        "you don't have it yet). It changes just that one line in place, never the "
+        "whole section, and you confirm the precise before -> after from its result."
+    )
+
+
 def _bind_open_screen(db, uid: str) -> Callable[..., str]:
     async def open_screen(screen: str = "") -> str:
+        asked = screen.strip()
+        # A "change / fix / reword / remove / delete … my story" request edits
+        # the story in place via edit_story_entry / remove_story_entry — it must
+        # NOT navigate into the Story editor's "Ask Ayma" passage popup, even
+        # though its words also match the `story` destination (founder bug
+        # 2026-10-28: "it shouldn't open that pop-up, it should just update it
+        # directly"). Checked before find_destination so the direct edit wins; a
+        # bare "open my story" (an open) doesn't match and still navigates below.
+        story_edit = app_registry.find_story_edit_action(asked)
+        if story_edit:
+            return _story_edit_redirect(story_edit)
+        # A re-run request ("rerun / regenerate / recalculate the appearance
+        # report") must RUN the report, even though its words also match the
+        # my_appearance destination — opening the old report is not re-running
+        # it. Checked before find_destination so the re-run wins; a bare
+        # "appearance report" (an open) does not match find_report_action and
+        # still navigates below.
+        report = app_registry.find_report_action(asked)
+        if report:
+            return await _run_report_action(db, uid, report)
         dest = app_registry.find_destination(screen)
         if dest is None:
-            gone = app_registry.find_unavailable(screen.strip())
+            gone = app_registry.find_unavailable(asked)
             if gone:
                 return await _unavailable_reply(db, uid, gone)
-            return _not_a_page(screen.strip())
+            return _not_a_page(asked)
         path, label = await asyncio.to_thread(_resolve_path, db, uid, dest)
         return await _navigate(db, uid, dest["key"], path, label)
 
@@ -560,24 +803,39 @@ def _bind_open_profile(db, uid: str) -> Callable[..., str]:
 
 def _bind_open_message_thread(db, uid: str) -> Callable[..., str]:
     async def open_message_thread(name: str = "") -> str:
-        # Reuses `read_dm_thread`'s own name resolution, which is scoped to
-        # people this user already has a `dm_threads` doc with — so this only
-        # ever opens a real, existing conversation. For someone new (no
-        # thread yet) that's `open_profile` instead.
-        other = read_dm_thread._resolve_other_uid(db, uid, name)
-        if not other:
-            return (
-                f"I couldn't find an existing conversation with "
-                f"{name.strip() or 'that person'}."
-            )
+        # Scoped to the people this user already has a `dm_threads` doc with —
+        # so this only ever opens a real, existing conversation. For someone
+        # new (no thread yet) that's `open_profile` instead.
+        threads = await asyncio.to_thread(_dm_threads, db, uid)
+        if not threads:
+            return "I couldn't find any existing conversations to open."
+        asked = name.strip()
+        if not asked or _LAST_INTENT.match(asked.lower()):
+            # "the last / most recent conversation" — threads are most-recent
+            # first, so the head is the one they mean.
+            target = threads[0]
+        else:
+            target, ambiguous = _best_thread(threads, asked)
+            if ambiguous:
+                names = ", ".join(t["name"] for t in ambiguous)
+                return (
+                    f"There's more than one conversation that could be "
+                    f"'{asked}': {names}. Ask the user which one they mean — "
+                    "don't guess."
+                )
+            if target is None:
+                return (
+                    f"I couldn't find an existing conversation with "
+                    f"{asked}."
+                )
         cmd_id = _queue_command(
-            db, uid, {"action": "open_dm_thread", "uid": other}
+            db, uid, {"action": "open_dm_thread", "uid": target["other"]}
         )
         ack = await _await_ack(db, uid, cmd_id)
         if ack and ack.get("ok"):
             return (
                 f"navigated: screen=dm — the conversation with "
-                f"{name.strip()} is open."
+                f"{target['name']} is open."
             )
         return _NOT_NAVIGATED
 
@@ -713,6 +971,12 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
             return await _unavailable_reply(db, uid, gone)
         setting = app_registry.find_setting(a)
         if setting is None:
+            report = app_registry.find_report_action(a)
+            if report:
+                # A re-run request routed here instead of to the tool: run it
+                # ourselves (don't deflect) so the user gets the refreshed
+                # report, not a pointer.
+                return await _run_report_action(db, uid, report)
             act = app_registry.find_account_action(a)
             if act and act["handler"] == "navigate_only":
                 return await _navigate_only(db, uid, act["destination"], act["say"])
@@ -1003,7 +1267,7 @@ _OPEN_SCREEN = {
     "name": "open_screen",
     "description": _prompt(
         "app_control_open_screen",
-        DESTINATIONS=", ".join(_SCREENS),
+        DESTINATIONS=_SCREEN_LINES,
     ),
     "parameters": {
         "type": "object",
@@ -1049,13 +1313,30 @@ _OPEN_PROFILE = {
 }
 
 
+_LIST_CONVERSATIONS = {
+    "name": "list_conversations",
+    "description": (
+        "List the user's own existing DM conversations — who they are talking "
+        "to, how recently, and which have unread messages — most recent first. "
+        "Use it to answer 'who has messaged me?', 'who's in my conversations?', "
+        "or before opening 'the last conversation'. It returns names and "
+        "recency only, never message text (use read_dm_thread for the "
+        "messages). If it says there are none, tell the user that plainly — "
+        "never invent names."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
 _OPEN_MESSAGE_THREAD = {
     "name": "open_message_thread",
     "description": (
-        "Open the user's existing DM thread with a match, by "
-        "name. If they haven't messaged that person yet, use open_profile "
-        "instead. The return says whether the app actually navigated — "
-        "relay it honestly."
+        "Open the user's existing DM thread with a match. Pass the person's "
+        "name as the user said it (a partial or slightly-off name is matched "
+        "to their conversations), or 'last' / 'most recent' to open their most "
+        "recently active conversation. If they haven't messaged that person "
+        "yet, use open_profile instead. If more than one conversation could "
+        "match, the return asks you to check which — don't guess. The return "
+        "says whether the app actually navigated — relay it honestly."
     ),
     "parameters": {
         "type": "object",
@@ -1142,6 +1423,7 @@ COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_OPEN_SCREEN, bind=_bind_open_screen),
     Skill(declaration=_SEARCH_EXPLORE, bind=_bind_search_explore),
     Skill(declaration=_OPEN_PROFILE, bind=_bind_open_profile),
+    Skill(declaration=_LIST_CONVERSATIONS, bind=_bind_list_conversations),
     Skill(declaration=_OPEN_MESSAGE_THREAD, bind=_bind_open_message_thread),
     Skill(declaration=_OPEN_MATCH_REPORT, bind=_bind_open_match_report),
     Skill(declaration=_APP_ACTION, bind=_bind_app_action),

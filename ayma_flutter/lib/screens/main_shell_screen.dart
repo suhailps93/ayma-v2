@@ -1,11 +1,17 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/app_context.dart';
+import '../services/feature_tour_store.dart';
 import '../services/screen_capture.dart';
 import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
 import '../services/chat_inbox.dart';
 import '../services/tab_request.dart';
+import '../services/tour_anchors.dart';
+import '../services/tour_content.dart';
+import '../services/tour_controller.dart';
+import '../services/tour_request.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../widgets/ask_ayma_overlay.dart';
@@ -47,6 +53,7 @@ class MainShellScreen extends StatefulWidget {
     super.key,
     this.voiceController,
     this.transcriptStore,
+    this.featureTourStore,
   });
 
   static const path = '/';
@@ -56,6 +63,10 @@ class MainShellScreen extends StatefulWidget {
   /// shell fall through to the shared [AymaSession].
   final VoiceSessionController? voiceController;
   final TranscriptStore? transcriptStore;
+
+  /// Test-only: the per-user feature-tour seen-state store. Production uses the
+  /// shared [featureTourStoreGlobal].
+  final FeatureTourStore? featureTourStore;
 
   @override
   State<MainShellScreen> createState() => _MainShellScreenState();
@@ -70,6 +81,8 @@ class _MainShellScreenState extends State<MainShellScreen>
       widget.transcriptStore ?? AymaSession.instance.store;
   late final VoiceSessionController _voice =
       widget.voiceController ?? AymaSession.instance.voice;
+  late final FeatureTourStore _tourStore =
+      widget.featureTourStore ?? featureTourStoreGlobal;
 
   int _index = 0;
   // Which tabs the user has visited, oldest first, no consecutive repeats. The
@@ -79,7 +92,22 @@ class _MainShellScreenState extends State<MainShellScreen>
   // Tabs are built on first visit and then kept alive — a not-yet-visited tab
   // is an empty box, so nothing touches its services until the user goes there.
   late final List<Widget?> _built = List<Widget?>.filled(4, null)
-    ..[0] = ChatScreen(transcriptStore: _store, voiceController: _voice);
+    ..[0] = ChatScreen(
+      transcriptStore: _store,
+      voiceController: _voice,
+      // Feature-tour anchor for the "say hi to Ayma" composer (§11.2a).
+      composerAnchorKey: TourAnchors.keyFor(TourAnchors.homeComposer),
+    );
+
+  /// The nav-bar tour anchors, by tab slot — only the shell's OWN bar takes
+  /// these (not the page-context popup's copy); see [AymaTabBar.anchorKeys].
+  Map<int, GlobalKey> get _tourAnchorKeys => {
+    0: TourAnchors.keyFor(TourAnchors.homeOrb),
+    1: TourAnchors.keyFor(TourAnchors.exploreTab),
+    2: TourAnchors.keyFor(TourAnchors.messagesTab),
+    3: TourAnchors.keyFor(TourAnchors.profileTab),
+    AymaTabBar.kBellAnchor: TourAnchors.keyFor(TourAnchors.notificationsBell),
+  };
 
   // Explore stays alive (see [_built]) rather than rebuilding each visit, so
   // its data can go stale while you're elsewhere — recalculating a match
@@ -119,7 +147,7 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// including a tap on it expanding the popup rather than opening a second
   /// one. That copy highlights the orb while the popup is expanded to full
   /// screen.
-  Widget _navBar(BuildContext context) {
+  Widget _navBar(BuildContext context, {bool anchored = false}) {
     final expanded =
         AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;
     return ListenableBuilder(
@@ -129,6 +157,9 @@ class _MainShellScreenState extends State<MainShellScreen>
         voice: _voice,
         onSelected: _onTabTap,
         onOrbLongPress: () => toggleVoiceCall(context, _voice),
+        // Only the shell's own bar carries the tour anchors — the popup's copy
+        // must not, or two live widgets share a GlobalKey (a Flutter error).
+        anchorKeys: anchored ? _tourAnchorKeys : null,
       ),
     );
   }
@@ -218,6 +249,18 @@ class _MainShellScreenState extends State<MainShellScreen>
     // into the Ayma tab".
     TabRequest.instance.pending.addListener(_consumeTabRequest);
     _consumeTabRequest();
+    // A full-tour replay (Settings "How to use Ayma" / Dev preview) sets a
+    // TourRequest and `go('/')`. When this shell is already mounted, `go('/')`
+    // just pops back to it without rebuilding, so the initState gate below never
+    // re-runs — listen for the request here too so a replay shows the tour even
+    // over the live shell. A request that landed before this shell existed is
+    // still handled by the first-frame gate ([_maybeShowFeatureTour]).
+    TourRequest.instance.pending.addListener(_consumeTourRequest);
+    // Rebuild when the tour starts/ends so this shell's PopScope `canPop`
+    // reflects it: back while the tour is up skips it (the overlay is hosted at
+    // the app root and owns no navigation, and a root `BackButtonListener`
+    // can't reach the Router — so back is handled here, where there is one).
+    TourController.instance.addListener(_onTourChanged);
     // F4: backgrounding during a live call surfaces a real OS call UI — an
     // ongoing notification with Hang Up / Mute on Android, a CallKit call on
     // iOS — so the call is always visible and controllable, never silently
@@ -225,6 +268,56 @@ class _MainShellScreenState extends State<MainShellScreen>
     // Shared, ref-counted per voice controller: two shells can be mounted
     // at once, and one disposing must not unhook the other's Hang Up / Mute.
     _callBackground = CallBackgroundService.acquire(_voice);
+    // Feature tour (§11.2): the shell is the first-chat surface, so this is the
+    // pre-boarding → first-chat gate. First run (no features seen) shows the
+    // full walkthrough; a later open with only some ids seen spotlights just
+    // the new features. Deferred to after the first frame so it never blocks
+    // the shell building, and never shows at sign-in or before pre-boarding —
+    // only a signed-in user who has reached their own chat lands here.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowFeatureTour());
+  }
+
+  /// Decides whether to auto-show the tour and in which mode, from the
+  /// per-user seen-state. Best-effort: any failure silently leaves the shell
+  /// untouched rather than blocking the first chat.
+  Future<void> _maybeShowFeatureTour() async {
+    // Only ever for a signed-in user who has reached their own chat — this is
+    // the pre-boarding → first-chat gate, never before sign-in. Also makes it
+    // a clean no-op in widget tests / contexts without a Firebase session.
+    try {
+      if (FirebaseAuth.instance.currentUser == null) return;
+    } catch (_) {
+      return;
+    }
+    try {
+      // Only when the shell is actually the visible route — a deep link may
+      // have pushed another screen on top during startup.
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+      // An explicit replay (Settings "How to use Ayma" / Dev preview) runs the
+      // FULL tour, ignoring the seen-state; otherwise the per-user gate decides.
+      if (TourRequest.instance.consume()) {
+        _startTour(tourFeatures, spotlight: false);
+        return;
+      }
+      final decision = decideTour(await _tourStore.loadSeen());
+      if (!decision.show || !mounted) return;
+      _startTour(decision.features, spotlight: decision.spotlight);
+    } catch (_) {/* never block the shell on the tour */}
+  }
+
+  /// Starts the interactive coach-mark tour. The shell only DECIDES to start it
+  /// (this gate); the overlay itself is hosted at the app root by [TourHost]
+  /// (above the Navigator) so it survives route pushes — see
+  /// [TourController]. Passes the shell's (possibly test-injected) store so
+  /// seen-state is written through the same double in tests.
+  void _startTour(List<TourFeature> features, {required bool spotlight}) {
+    if (features.isEmpty || !mounted) return;
+    TourController.instance.start(
+      features,
+      spotlight: spotlight,
+      store: _tourStore,
+    );
   }
 
   void _toAymaTab() {
@@ -238,10 +331,43 @@ class _MainShellScreenState extends State<MainShellScreen>
     if (target != null && target != _index) _selectTab(target);
   }
 
+  /// The tour started or ended — rebuild so the [PopScope] below reflects it.
+  void _onTourChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// A replay was requested while this shell is already mounted — run the full
+  /// walkthrough (never stacking a second tour on top of a running one). The
+  /// replay fires `go('/')` to pop the Settings/Dev screen it was launched from;
+  /// starting (and measuring the first anchor) before that pop finishes would
+  /// spotlight the wrong widget — the shell is still offstage/mid-transition —
+  /// so defer until this shell is the current, on-screen route.
+  void _consumeTourRequest() {
+    if (!mounted || TourController.instance.active) return;
+    if (!TourRequest.instance.consume()) return;
+    _startTourWhenCurrent(attempt: 0);
+  }
+
+  void _startTourWhenCurrent({required int attempt}) {
+    if (!mounted || TourController.instance.active) return;
+    final route = ModalRoute.of(context);
+    // Wait out the launching screen's pop animation (capped so a never-current
+    // shell can't loop forever — then start anyway rather than drop the replay).
+    if (route != null && !route.isCurrent && attempt < 90) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _startTourWhenCurrent(attempt: attempt + 1),
+      );
+      return;
+    }
+    _startTour(tourFeatures, spotlight: false);
+  }
+
   @override
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
     TabRequest.instance.pending.removeListener(_consumeTabRequest);
+    TourRequest.instance.pending.removeListener(_consumeTourRequest);
+    TourController.instance.removeListener(_onTourChanged);
     _callBackground.release();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,
@@ -252,26 +378,37 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   @override
   Widget build(BuildContext context) {
+    // The feature tour is no longer hosted here: it lives in a single root
+    // overlay above the Navigator ([TourHost]) so it survives route pushes
+    // (§11.2a). But back while the tour is up is handled HERE — this is the
+    // nearest `PopScope` with a `Router` ancestor — and skips the tour (marking
+    // its features seen) rather than popping a tab. Otherwise this PopScope just
+    // walks the tab history.
+    final tourActive = TourController.instance.active;
     return PopScope<Object?>(
-      canPop: _tabHistory.length <= 1,
+      canPop: !tourActive && _tabHistory.length <= 1,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _popTab();
+        if (didPop) return;
+        if (TourController.instance.active) {
+          TourController.instance.skipFromBack();
+        } else {
+          _popTab();
+        }
       },
+      // A live call keeps running (in this app, not backgrounded to the OS —
+      // that's CallBackgroundService) no matter which tab is on screen.
+      // Returning to it needs no dedicated "tap to return" pill here: the Ayma
+      // tab's own orb below already reflects live call state (glow/pulse) and is
+      // the one tap back to it, from this shell or, via `NavBarShell`'s
+      // identical-looking bar, from anywhere else in the app.
       child: Scaffold(
-        // A live call keeps running (in this app, not backgrounded to the
-        // OS — that's CallBackgroundService) no matter which tab is on
-        // screen. Returning to it needs no dedicated "tap to return" pill
-        // here: the Ayma tab's own orb below already reflects live call
-        // state (glow/pulse) and is the one tap back to it, from this shell
-        // or, via `NavBarShell`'s identical-looking bar, from anywhere else
-        // in the app.
         body: IndexedStack(
           index: _index,
           children: [
             for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
           ],
         ),
-        bottomNavigationBar: _navBar(context),
+        bottomNavigationBar: _navBar(context, anchored: true),
       ),
     );
   }

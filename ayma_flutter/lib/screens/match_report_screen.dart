@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/match_activity.dart';
+import '../services/match_report_cache.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/report_progress.dart';
+import '../widgets/taste_match_card.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/share_report_sheet.dart';
 import '../theme.dart';
@@ -74,7 +76,12 @@ class MatchReportScreen extends StatefulWidget {
 class _MatchReportScreenState extends State<MatchReportScreen>
     with ScreenContextReasserter<MatchReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
-  late Future<MatchReport?> _future = _api.matchReport(widget.matchId);
+
+  /// BUG F: a report Ayma already opened this session shows instantly from the
+  /// in-memory cache (no heavy spinner), while a cache-aware GET quietly
+  /// refreshes it in the background. Only a genuinely uncached report shows the
+  /// loading state. The Recalculate button still forces a fresh recompute.
+  late Future<MatchReport?> _future = _initialLoad();
   bool _sendingRecalc = false;
   bool _wasRecalculating = false;
   String _subjectUid = '';
@@ -88,6 +95,41 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 
   bool get _recalculating =>
       _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
+
+  /// First load: serve the cached report instantly if we have one (and refresh
+  /// it quietly in the background), otherwise do the normal GET with a spinner.
+  Future<MatchReport?> _initialLoad() {
+    final cached = MatchReportCache.instance.get(widget.matchId);
+    if (cached != null) {
+      unawaited(_refreshInBackground());
+      return Future.value(cached);
+    }
+    return _fetch();
+  }
+
+  /// A plain cache-aware GET of the stored report (never a forced recompute),
+  /// writing whatever comes back into the shared [MatchReportCache].
+  Future<MatchReport?> _fetch() async {
+    final r = await _api.matchReport(widget.matchId);
+    if (r != null) MatchReportCache.instance.put(r);
+    return r;
+  }
+
+  /// Re-GETs the report behind an already-shown cached copy and swaps it in if
+  /// it still differs; failures are swallowed so the cached view stays put.
+  Future<void> _refreshInBackground() async {
+    try {
+      final r = await _fetch();
+      if (r != null && mounted) {
+        setState(() {
+          _future = Future.value(r);
+          _reportKey.currentState?.reload();
+        });
+      }
+    } catch (_) {
+      // Keep the cached report on screen; a manual Recalculate can retry.
+    }
+  }
 
   @override
   void initState() {
@@ -125,7 +167,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     _wasRecalculating = now;
     setState(() {
       if (justFinished) {
-        _future = _api.matchReport(widget.matchId);
+        _future = _fetch();
         _reportKey.currentState?.reload();
       }
     });
@@ -149,11 +191,11 @@ class _MatchReportScreenState extends State<MatchReportScreen>
         unawaited(MatchActivity.instance
             .start(widget.matchId, previousScore: before?.score, api: _api));
       } else {
-        setState(() => _future = _api.matchReport(widget.matchId));
+        setState(() => _future = _fetch());
         _reportKey.currentState?.reload();
       }
     } catch (_) {
-      _snack("Couldn't recalculate that match.", kind: AymaToastKind.error);
+      _snack("Couldn't recalculate that report.", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _sendingRecalc = false);
     }
@@ -168,8 +210,9 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
-        
-        title: const Text('Match'),
+        // Screen always reads "Match report"; `mutual` flag kept for other
+        // callers, no longer swaps title.
+        title: const Text('Match report'),
         actions: [
           FutureBuilder<MatchReport?>(
             future: _future,
@@ -205,19 +248,18 @@ class _MatchReportScreenState extends State<MatchReportScreen>
           final r = snap.data;
           if (snap.hasError) {
             return _Message(
-              text: "Couldn't load this match.",
-              onRetry: () => setState(
-                  () => _future = _api.matchReport(widget.matchId)),
+              text: "Couldn't load this report.",
+              onRetry: () => setState(() => _future = _fetch()),
             );
           }
           if (r == null) {
             return const _Message(
-                text: 'This match hasn\'t been scored yet.');
+                text: 'This compatibility hasn\'t been scored yet.');
           }
           return Column(
             children: [
               if (_recalculating)
-                const ReportProgressBanner(message: 'Recalculating this match…'),
+                const ReportProgressBanner(message: 'Recalculating this report…'),
               Expanded(
                 child: _Report(r: r, apiClient: _api, reportKey: _reportKey),
               ),
@@ -239,64 +281,83 @@ class _Report extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    // ONE scrolling list for the whole screen (§ class doc: "don't keep this
-    // part frozen") — the avatar-row chrome below is just its first item,
-    // the same embedded-inline pattern `my_public_profile_screen.dart` /
-    // `story_editor_screen.dart` use for their own bespoke chrome ahead of
-    // [LivingReportView]. Nothing here is `Expanded`/pinned above a
-    // separately-scrolling body any more.
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-          // A soft accent-tinted card behind the two avatars — the ONLY
-          // piece of bespoke screen chrome this screen keeps (§ class doc):
-          // photos aren't a block type, so there's nothing to converge onto
-          // in the Living Report. It deliberately shows NO score digit and
-          // NO confidence text any more — both now come exactly once, from
-          // the report body's own "Match score" stat block just below.
-          child: Container(
-            key: const ValueKey('matchHeaderCard'),
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-            decoration: BoxDecoration(
-              color: ac.accentFaint,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: ac.lineSoft),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _Avatar(url: r.myPhoto, label: 'You'),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 22),
-                  child: Icon(Icons.favorite_rounded,
-                      size: 20, color: ac.accent),
-                ),
-                _Avatar(
-                    url: r.otherPhoto,
-                    label: r.otherName.isEmpty
-                        ? 'Them'
-                        : r.otherName.split(' ').first),
-              ],
+    // ONE scrolling column for the whole screen (§ class doc: "don't keep
+    // this part frozen") — the avatar-row chrome below is just its first
+    // item, ahead of the embedded [LivingReportView] and the Qloo taste card.
+    // A `SingleChildScrollView` + `Column` (not a lazy `ListView`) so every
+    // child is fully laid out: an exact scroll extent, smooth scrolling both
+    // ways, and the trailing taste card always reachable (§ BUG: the lazy
+    // list overshot and could skip it). Nothing here is `Expanded`/pinned
+    // above a separately-scrolling body.
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+            // A soft accent-tinted card behind the two avatars — the ONLY
+            // piece of bespoke screen chrome this screen keeps (§ class doc):
+            // photos aren't a block type, so there's nothing to converge onto
+            // in the Living Report. It deliberately shows NO score digit and
+            // NO confidence text any more — both now come exactly once, from
+            // the report body's own "Match score" stat block just below.
+            child: Container(
+              key: const ValueKey('matchHeaderCard'),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              decoration: BoxDecoration(
+                color: ac.accentFaint,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: ac.lineSoft),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _Avatar(url: r.myPhoto, label: 'You'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    child: Icon(Icons.favorite_rounded,
+                        size: 20, color: ac.accent),
+                  ),
+                  _Avatar(
+                      url: r.otherPhoto,
+                      label: r.otherName.isEmpty
+                          ? 'Them'
+                          : r.otherName.split(' ').first),
+                ],
+              ),
             ),
           ),
-        ),
-        // `shrinkWrap: true` — embedded as one item of the outer `ListView`
-        // above rather than given the whole screen (§ class doc; see
-        // [LivingReportView.shrinkWrap]'s own doc for why). This is where
-        // the score, confidence band, and narrative actually render — do
-        // not re-add them to the header card above.
-        LivingReportView(
-          key: reportKey,
-          reportType: 'match',
-          reportId: r.matchId,
-          apiClient: apiClient,
-          emptyMessage: "Nothing to show for this match yet.",
-          shrinkWrap: true,
-        ),
-      ],
+          // `shrinkWrap: true` — embedded as one item of the outer scroll
+          // (a `SingleChildScrollView` + `Column`, NOT a lazy `ListView`:
+          // the lazy list mis-estimated the scroll extent of this
+          // variable-height embedded report and let the trailing Qloo taste
+          // card below be overshot / skipped — § BUG). Fully laying every
+          // child out gives an exact extent, smooth scrolling both ways, and
+          // a taste card that's always reachable. This is where the score,
+          // confidence band, and narrative actually render — do not re-add
+          // them to the header card above.
+          LivingReportView(
+            key: reportKey,
+            reportType: 'match',
+            reportId: r.matchId,
+            apiClient: apiClient,
+            emptyMessage: "Nothing to show for this report yet.",
+            shrinkWrap: true,
+          ),
+          // "Taste match · powered by Qloo" — the shared-taste section between
+          // the two people (score + domain reads + date ideas), or its
+          // no-Taste-page empty state. Omitted entirely when the backend sent
+          // no taste section (`r.taste == null`). Reuses the same card the
+          // date-sim result uses; data is already resolved in the report
+          // payload, so it renders with no pending state.
+          if (r.taste != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: TasteMatchCard.resolved(r.taste!),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -89,9 +89,9 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
 
   void _setPrimary(GridPhoto photo) => _photos.setPrimary(photo);
 
-  /// Tapping a thumbnail's X: block if it's the only public photo, otherwise
-  /// confirm — the primary action removes it from the public profile (kept
-  /// privately for Ayma), with a secondary "Delete everywhere".
+  /// Tapping the opened image's delete button: block if it's the only public
+  /// photo, otherwise confirm — the primary action removes it from the public
+  /// profile (kept privately for Ayma), with a secondary "Delete everywhere".
   Future<void> _confirmRemove(GridPhoto photo) async {
     if (_photos.photos.length <= 1) {
       AymaToast.show(
@@ -216,20 +216,13 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
         leading: const AymaBackButton(),
         title: const Text('My public profile'),
         actions: [
-          // Capped so at large text or on a narrow window the label
-          // ellipsizes instead of pushing the app bar past the screen edge.
-          ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.sizeOf(context).width * 0.4,
-            ),
-            child: TextButton(
-              onPressed: _editManually,
-              child: const Text(
-                'Edit manually',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
+          // A pencil icon, consistent with the adjacent camera icon (§ founder
+          // 2026-10-28) — it can't crowd the app bar at large text the way the
+          // old "Edit manually" label could.
+          IconButton(
+            tooltip: 'Edit manually',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: _editManually,
           ),
           IconButton(
             tooltip: 'Add photo',

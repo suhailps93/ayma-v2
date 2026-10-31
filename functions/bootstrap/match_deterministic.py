@@ -29,8 +29,20 @@ pet clash, a partner-age-range miss, a stated no-to-children-of-a-partner,
 a required-shared-faith or required-shared-politics mismatch, marriage
 within a year vs. not wanting to marry, and — only when both users route to the ``nikah`` tree — sect, halal
 diet, riba-free finance, partner-modesty expectation, polygyny stance and
-salah. Any gate failure caps the overall score low (``_gate_cap``: 25, minus 5
-per additional failure, floor 10) and is surfaced as an explicit dealbreaker.
+salah. Most gate failures cap the overall score low (``_gate_cap``: 25, minus 5
+per additional failure, floor 10) and are surfaced as explicit dealbreakers.
+
+**Hard dealbreakers (gender/orientation, partner age range, location) drive
+the score to exactly 0.0** (``HARD_DEALBREAKER_GATES`` / :func:`is_hard_dealbreaker`),
+not the 10–25 floor — these are the onboarding preferences a candidate can
+never be surfaced against: the gender/orientation gate (``interested_in`` vs
+``gender``, a mutual :func:`matching.orientation_match`), the partner-age gate
+(strict, no tolerance), and the location/relocation gate (different places +
+*either* side unwilling to relocate far). Explore excludes these candidates
+outright (``explore._hard_dealbreaker``); here they simply zero the report
+(founder decision, 2026-10-29, reversing the "no orientation/community gating"
+decision of 2026-08-30).
+
 **Missing data on a gate is never a failure** — it just lowers
 ``coverage.gate_data_complete``, which feeds the match-confidence measure.
 
@@ -47,6 +59,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import matching
 import question_tree
 
 # The seven-dimension rubric shared with :mod:`matching_skill` — key, display
@@ -599,6 +612,23 @@ def _fmt(v) -> str:
 # --- gates ---------------------------------------------------------------------
 
 
+def _gate_orientation(ta, tb, pa, pb):
+    """Hard dealbreaker: each side's ``interested_in`` must cover the other's
+    ``gender`` (a mutual :func:`matching.orientation_match` over the two
+    ``profile/main`` records). A man can never surface to someone whose stated
+    preference excludes men. Missing gender / ``interested_in`` on either side
+    is not a failure (it just can't be checked)."""
+    ga = str(pa.get("gender") or "").strip()
+    gb = str(pb.get("gender") or "").strip()
+    ia = pa.get("interested_in") or []
+    ib = pb.get("interested_in") or []
+    if not (ga and gb and ia and ib):
+        return None
+    if not matching.orientation_match(ga, ia, gb, ib):
+        return "Their gender is outside what one of you is looking for."
+    return None
+
+
 def _gate_relationship_intent(ta, tb, pa, pb):
     va, vb = ta.get("relationship_intent"), tb.get("relationship_intent")
     if not (va and vb):
@@ -627,6 +657,11 @@ def _gate_procreation(ta, tb, pa, pb):
     return None
 
 
+# Relocation radii that mean "I won't move far for this." A one-sided refusal
+# is enough to make a different-city pair a hard dealbreaker (BUG B).
+STAY_PUT_RADII = frozenset({"Within my city", "Within ~50 km"})
+
+
 def _gate_relocation(ta, tb, pa, pb):
     va, vb = ta.get("relocation_radius"), tb.get("relocation_radius")
     if not (va and vb):
@@ -637,11 +672,11 @@ def _gate_relocation(ta, tb, pa, pb):
         return None
     if la == lb or la in lb or lb in la:
         return None
-    stay_put = {"Within my city", "Within ~50 km"}
-    if va in stay_put and vb in stay_put:
+    # Hard dealbreaker: different places and *either* side won't relocate far.
+    if va in STAY_PUT_RADII or vb in STAY_PUT_RADII:
         return (
             f"They live in different places ({pa.get('location') or la} vs "
-            f"{pb.get('location') or lb}) and neither will relocate far."
+            f"{pb.get('location') or lb}) and one of them won't relocate far."
         )
     return None
 
@@ -745,7 +780,9 @@ def _gate_salah(ta, tb, pa, pb):
     return None
 
 
-_AGE_TOLERANCE_YEARS = 3
+# Partner age range is a hard dealbreaker (BUG B): no slack. A candidate whose
+# age falls outside the other's stated [min, max] is excluded / scores 0.
+_AGE_TOLERANCE_YEARS = 0
 
 
 def _age_of(birthdate) -> int | None:
@@ -772,12 +809,20 @@ def _outside_range(lo, hi, age) -> bool:
 
 def _gate_age_range(ta, tb, pa, pb):
     age_a, age_b = _age_of(pa.get("birthdate")), _age_of(pb.get("birthdate"))
-    if _outside_range(
-        ta.get("partner_age_min"), ta.get("partner_age_max"), age_b
-    ) or _outside_range(
-        tb.get("partner_age_min"), tb.get("partner_age_max"), age_a
-    ):
-        return "One is outside the other's stated partner age range."
+    lo_a, hi_a = ta.get("partner_age_min"), ta.get("partner_age_max")
+    lo_b, hi_b = tb.get("partner_age_min"), tb.get("partner_age_max")
+    # Name the real numbers so the report reads "one wants 28–38, the other is
+    # 42" rather than a vague "outside the range" (BUG B report clarity).
+    if _outside_range(lo_a, hi_a, age_b):
+        return (
+            f"Outside a stated partner age range: one wants {lo_a}–{hi_a}, "
+            f"the other is {age_b}."
+        )
+    if _outside_range(lo_b, hi_b, age_a):
+        return (
+            f"Outside a stated partner age range: one wants {lo_b}–{hi_b}, "
+            f"the other is {age_a}."
+        )
     return None
 
 
@@ -879,6 +924,22 @@ _GATE_SPECS = [
 ]
 
 
+# Gates that are HARD dealbreakers — their failure forces the overall score to
+# exactly 0.0 (not the soft 10–25 cap). These are the onboarding preferences a
+# candidate must never be surfaced against (BUG B): gender/orientation, partner
+# age range, and location/relocation radius.
+HARD_DEALBREAKER_GATES = frozenset(
+    {"orientation", "partner_age_min", "relocation_radius"}
+)
+
+
+def is_hard_dealbreaker(gate_failures) -> bool:
+    """``True`` when any failed gate is a hard dealbreaker (score → 0.0)."""
+    return any(
+        g.get("node_id") in HARD_DEALBREAKER_GATES for g in (gate_failures or [])
+    )
+
+
 def _gate_cap(n_failures: int) -> float:
     """Overall-score ceiling (0..100) once ``n_failures`` gates have failed."""
     return max(10.0, 25.0 - 5.0 * (n_failures - 1))
@@ -940,6 +1001,20 @@ def score_structured(
                 {"node_id": node_id, "label": label, "reason": reason}
             )
 
+    # Gender/orientation is a profile-level hard dealbreaker, not a
+    # question_tree node, so it's always evaluated (never tree-gated). It does
+    # not count toward gate_total/gate_with_data — those track questionnaire
+    # gate-data coverage for the confidence measure.
+    orient_reason = _gate_orientation(ta, tb, profile_a, profile_b)
+    if orient_reason:
+        gate_failures.append(
+            {
+                "node_id": "orientation",
+                "label": "Gender & orientation",
+                "reason": orient_reason,
+            }
+        )
+
     # --- graded dimensions ---
     per_dim: dict[str, dict] = {
         k: {"weighted": 0.0, "weight": 0.0, "covered_nodes": [], "evidence": []}
@@ -992,9 +1067,12 @@ def score_structured(
     else:
         structured_overall = 0.0
     if gate_failures:
-        structured_overall = min(
-            structured_overall, _gate_cap(len(gate_failures))
-        )
+        if is_hard_dealbreaker(gate_failures):
+            structured_overall = 0.0
+        else:
+            structured_overall = min(
+                structured_overall, _gate_cap(len(gate_failures))
+            )
 
     return {
         "gate_failures": gate_failures,

@@ -407,3 +407,17 @@ def test_explore_drops_profiles_with_no_name():
 
     ids = {c["uid"] for c in ex.explore(db, "me", {})}
     assert ids == {"me", "real"}  # self is exempt; nameless are gated out
+
+
+def test_explore_excludes_practice_personas(monkeypatch):
+    # Practice-date simulator personas (demo_practice_*) are never real
+    # accounts and must never surface in the live feed (BUG E).
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "real", location="X", birthdate="1993-01-01", name="Dana")
+    _u(db, "demo_practice_maya", location="X", birthdate="1993-01-01",
+       name="Maya")
+
+    ids = {c["uid"] for c in ex.explore(db, "me", {})}
+    assert "demo_practice_maya" not in ids
+    assert ids == {"me", "real"}

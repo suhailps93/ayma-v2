@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/mcp_connect_service.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
@@ -73,6 +74,42 @@ Map<String, dynamic> _profile() => {
   'deep_dive_id': '',
 };
 
+/// A fully-populated "Taste match · powered by Qloo" payload (long strings so
+/// the matrix stresses wrapping). Served for `/taste/pair` and embedded as the
+/// match report's `taste` section.
+Map<String, dynamic> _tastePayload() => {
+  'source': 'fixture',
+  'a': {'name': 'Sam'},
+  'b': {'name': 'Maya'},
+  'score': 72,
+  'score_label': 'Strong overlap with a very long label to wrap',
+  'summary': kLongText,
+  'shared': [for (var i = 0; i < 6; i++) 'A long shared taste name $i'],
+  'shared_tags': [
+    for (var i = 0; i < 6; i++) 'A long why-you-match descriptor $i',
+  ],
+  'demographics': {
+    'a': {'top_age': '24 & under'},
+    'b': {'top_age': '45–54'},
+    'note': 'Maya\'s tastes index 24 & under, while Leo\'s index much older '
+        'at 45–54 — a wide age span worth a mention in the write-up.',
+  },
+  'domains': [
+    {'domain': 'music', 'score': 72},
+    {'domain': 'film', 'score': 64},
+    {'domain': 'dining', 'score': 81},
+  ],
+  'date_ideas': [
+    for (var i = 0; i < 3; i++)
+      {
+        'name': 'A very long venue name for the date idea $i',
+        'kind': 'dining',
+        'why': kLongText,
+        'address': i.isEven ? '1234 Some Very Long Street Name, City' : null,
+      },
+  ],
+};
+
 Map<String, dynamic> _report() => {
   'title': 'Report on $kLongName',
   'subject_name': kLongName,
@@ -141,10 +178,41 @@ Map<String, dynamic> _report() => {
 };
 
 Object? _bodyFor(String path) {
+  if (path == '/dm/assist') {
+    // Coach mode with the longest plausible chips + tip, so the matrix holds
+    // the suggestion bar and the tip row to every viewport/scale/RTL variant.
+    return {
+      'mode': 'coach',
+      'chips': [for (var i = 0; i < 4; i++) '$kLongText (chip $i)'],
+      'tip': kLongText,
+    };
+  }
+  if (path == '/appearance/eligibility') {
+    // Populated Face and Body buckets so the matrix covers the pre-run sheet's
+    // selectable thumbnails + the always-present Add photo tile (not just the
+    // empty-group prompts).
+    return {
+      'face': [for (var i = 0; i < 3; i++) {'media_id': 'f$i', 'url': 'https://cdn/f$i.jpg'}],
+      'body': [for (var i = 0; i < 3; i++) {'media_id': 'b$i', 'url': 'https://cdn/b$i.jpg'}],
+      'has_face_photo': true,
+      'has_body_photo': true,
+    };
+  }
   if (path == '/explore') {
     return {'cards': [for (var i = 0; i < 6; i++) _card(i)]};
   }
   if (path.startsWith('/explore/profile/')) return _profile();
+  if (path == '/profiles/mini') {
+    // Names + photos for the "send to a user" recipient picker. Long name so
+    // the row's name ellipsizes rather than overflowing next to the avatar
+    // and Send button at scale 2.0.
+    return {
+      'profiles': {
+        'her': {'name': kLongName, 'photo': 'https://cdn/her.jpg', 'online': true},
+        'bob': {'name': 'Bob', 'photo': '', 'online': false},
+      },
+    };
+  }
   if (path == '/chat/history') {
     return {
       'messages': [
@@ -166,10 +234,115 @@ Object? _bodyFor(String path) {
       ],
     };
   }
+  if (path == '/brain/preference') {
+    return {
+      'brains': [
+        {
+          'id': 'gemini',
+          'label': 'Gemini',
+          'description':
+              'Google Gemini — reads images, does live web research, and uses '
+                  'tools. The most capable all-round brain.',
+          'available': true,
+          'capabilities': ['text', 'json', 'vision', 'web', 'tools'],
+        },
+        {
+          'id': 'meta',
+          'label': 'Meta Muse Spark',
+          'description':
+              'Meta’s Muse Spark — fast reasoning for chat, matching and '
+                  'coaching. Image reading and web research fall back to Gemini.',
+          'available': true,
+          'capabilities': ['text', 'json', 'tools'],
+        },
+      ],
+      'current': '',
+      'default': 'meta',
+    };
+  }
+  if (path == '/voice/engines') {
+    final gemVoices = [
+      for (final n in ['Aoede', 'Kore', 'Puck', 'Charon'])
+        {'id': n, 'label': n, 'description': 'a long descriptive voice character'},
+    ];
+    final ttsVoices = [
+      {'id': '', 'label': 'Default voice'},
+      {'id': 'Ashley', 'label': 'Ashley', 'description': 'warm and bright voice'},
+      {'id': 'Hades', 'label': 'Hades', 'description': 'deep and intense voice'},
+    ];
+    final langs = [
+      {'code': '', 'label': 'Default (English)'},
+      {'code': 'ml-IN', 'label': 'Malayalam'},
+      {'code': 'es-ES', 'label': 'Spanish'},
+    ];
+    return {
+      'modes': ['realtime', 'cascade'],
+      'source': 'livekit',
+      'realtime_models': [
+        {
+          'id': 'gemini-live',
+          'label': 'Gemini Live (native audio)',
+          'provider': 'gemini',
+          'available': true,
+          'requires_secret': '',
+          'voices': gemVoices,
+          'languages': langs,
+        },
+        {
+          'id': 'openai-realtime',
+          'label': 'OpenAI Realtime',
+          'provider': 'openai',
+          'available': true,
+          'requires_secret': 'OPENAI_API_KEY',
+          'voices': [
+            {'id': 'alloy', 'label': 'Alloy'},
+          ],
+          'languages': langs,
+        },
+      ],
+      'brains': [
+        {'id': 'meta-muse-spark', 'label': 'Meta Muse Spark', 'provider': 'meta', 'available': true},
+        {'id': 'google/gemini-3.7-flash', 'label': 'google/gemini-3.7-flash', 'provider': 'google', 'available': true},
+      ],
+      'stt': [
+        {'id': 'deepgram/nova-3', 'label': 'deepgram/nova-3', 'provider': 'deepgram', 'available': true},
+      ],
+      'tts': [
+        {
+          'id': 'inworld/inworld-tts-1',
+          'label': 'inworld/inworld-tts-1',
+          'provider': 'inworld',
+          'available': true,
+          'voices': ttsVoices,
+          'languages': langs,
+        },
+      ],
+      'default': {
+        'mode': 'realtime',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'meta-muse-spark',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'inworld/inworld-tts-1',
+      },
+      'current': {
+        'mode': 'realtime',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'meta-muse-spark',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'inworld/inworld-tts-1',
+        'voice_id': 'Aoede',
+        'language_code': '',
+      },
+    };
+  }
+  if (path.startsWith('/match/')) {
+    // The match report carries the embedded "Taste match · powered by Qloo"
+    // section so the matrix exercises it on the match-report route.
+    return {..._report(), 'taste': {..._tastePayload(), 'status': 'ok'}};
+  }
   if (path.startsWith('/report/') ||
       path.startsWith('/deep-dive-report/') ||
       path.startsWith('/skills/report/') ||
-      path.startsWith('/match/') ||
       path.startsWith('/s/') ||
       path == '/appearance/report' ||
       path == '/body-report' ||
@@ -214,6 +387,35 @@ Object? _bodyFor(String path) {
       ],
     };
   }
+  if (path == '/admin/feedback') {
+    return {
+      'feedback': [
+        for (var i = 0; i < 4; i++)
+          {
+            'id': 'f$i',
+            'uid': 'a-very-long-user-identifier-$i',
+            'source': i.isEven ? 'chat_card' : 'settings_form',
+            'kind': i.isEven ? 'bug' : 'feature',
+            'title': 'A long feedback title that should wrap on narrow $i',
+            'body': kLongText,
+            'screenshot_paths': i.isEven
+                ? ['uploads/a/feedback_$i.png']
+                : const <String>[],
+            'screen': 'messages',
+            'app_version': '1.30.0',
+            'platform': 'android',
+            'status': ['new', 'triaged', 'done'][i % 3],
+            'created_at': '2026-10-2${i}T10:00:00Z',
+          },
+      ],
+    };
+  }
+  if (path == '/admin/feedback/media') {
+    return {'path': 'uploads/a/feedback_0.png', 'url': ''};
+  }
+  if (path == '/taste/pair') {
+    return _tastePayload();
+  }
   if (path == '/usage') {
     return {
       'total': 33000,
@@ -243,6 +445,38 @@ ApiClient layoutApi() => ApiClient(
   auth: kLayoutAuth,
 );
 
+/// Like [layoutApi] but the report reads 404 — the server's "never run"
+/// signal. Drives the web-research screen's "No web research yet" empty
+/// state (not the "Couldn't load" error) for the layout matrix.
+ApiClient layoutApi404() => ApiClient(
+  httpClient: MockClient((request) async {
+    final path = request.url.path;
+    if (path.contains('/report/') || path.contains('/deep-dive-report/')) {
+      return http.Response(
+        jsonEncode({'detail': 'No such report.'}),
+        404,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.Response(
+      jsonEncode(_bodyFor(path)),
+      200,
+      headers: const {'content-type': 'application/json; charset=utf-8'},
+    );
+  }),
+  auth: kLayoutAuth,
+);
+
+/// A fake "Connect an agent" service: no network, no connected agents.
+McpConnectService layoutMcpConnect() => McpConnectService(
+  client: MockClient((request) async => http.Response(
+    '{"connections": []}',
+    200,
+    headers: const {'content-type': 'application/json; charset=utf-8'},
+  )),
+  auth: kLayoutAuth,
+);
+
 /// A voice controller that never connects (no LiveKit, no network).
 class LayoutFakeVoice extends VoiceSessionController {
   /// [quiet]: a live call where Ayma was told to "shut up" (the quiet chip
@@ -258,6 +492,9 @@ class LayoutFakeVoice extends VoiceSessionController {
 
   @override
   bool get isActive => quiet;
+
+  @override
+  bool get isListening => quiet;
 
   @override
   bool get aymaQuiet => quiet;

@@ -9,9 +9,9 @@
 
 Every write needs ``--yes`` (otherwise it prints what it would do). Each write
 appends the previous flag values to the doc's ``_history`` (last 20), and
-``rollback`` restores the most recent entry in one command. ``sentry``, ``meta_integrations`` and
-``dev_panel`` are also mirrored to ``app_config/<flag>.enabled``, the docs the
-mobile client reads. Credentials: your gcloud / ADC identity; nothing is stored here.
+``rollback`` restores the most recent entry in one command. ``sentry`` and
+``meta_integrations`` are also mirrored to ``app_config/<flag>.enabled``, the docs
+the mobile client reads. Credentials: your gcloud / ADC identity; nothing is stored here.
 Docs: docs/FEATURE_FLAGS.md.
 """
 

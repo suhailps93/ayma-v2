@@ -175,7 +175,8 @@ void main() {
     }
 
     testWidgets(
-      'shows a spinner and the connecting label, never the live mic',
+      'shows a dimmed, unlit mic and the connecting label, never a spinner '
+      'or the live mic',
       (tester) async {
         await pumpComposer(
           tester,
@@ -183,7 +184,10 @@ void main() {
           statusLabel: 'Connecting…',
         );
         expect(find.text('Connecting…'), findsOneWidget);
-        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        // The connecting slot stays a visible microphone, just dimmed/unlit.
+        expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+        // Not a spinner (founder: no CircularProgressIndicator).
+        expect(find.byType(CircularProgressIndicator), findsNothing);
         // The lit "capturing" mic (listening) must not be shown while
         // connecting — that is exactly what read as "Listening" too early.
         expect(find.byIcon(Icons.mic_rounded), findsNothing);
@@ -200,11 +204,11 @@ void main() {
         statusLabel: 'Waking Ayma…',
       );
       expect(find.text('Waking Ayma…'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
     });
 
-    testWidgets('reduced motion swaps the spinner for a static unlit mic', (
+    testWidgets('reduced motion still shows the dimmed static mic, no spinner', (
       tester,
     ) async {
       await pumpComposer(
@@ -214,6 +218,7 @@ void main() {
         reduceMotion: true,
       );
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      // The dimmed mic is identical in the reduced-motion case.
       expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
       expect(find.text('Connecting…'), findsOneWidget);
     });

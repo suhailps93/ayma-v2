@@ -54,7 +54,13 @@ ENVIRONMENT=development
 [[ "$MODE" == "--release" ]] && ENVIRONMENT=phone-release
 
 cd "$ROOT/ayma_flutter"
+# ENABLE_DEV_MODE=true: this is our INTERNAL / development build path, so dev
+# mode (seven-tap unlock → Developer panel) stays available. Customer / store
+# releases (codemagic.yaml, Play) OMIT this define, so dev mode compiles out
+# (kDevModeEnabled defaults to false → completely unreachable). See
+# docs/ARCHITECTURE.md and lib/dev_mode.dart.
 flutter build apk "$MODE" \
+  --dart-define=ENABLE_DEV_MODE=true \
   --dart-define=REVENUECAT_TEST_KEY="$REVENUECAT_TEST_KEY" \
   --dart-define=SENTRY_DSN="$SENTRY_DSN" \
   --dart-define=SENTRY_ENVIRONMENT="$ENVIRONMENT" \

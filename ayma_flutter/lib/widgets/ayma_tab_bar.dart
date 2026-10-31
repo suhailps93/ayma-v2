@@ -71,9 +71,21 @@ class AymaTabBar extends StatelessWidget {
     required this.onSelected,
     this.onOrbLongPress,
     this.notificationsActive = false,
+    this.anchorKeys,
   });
 
   final int index;
+
+  /// Feature-tour anchor keys, by tab index (0 Ayma orb, 1 Explore, 2 Messages,
+  /// 3 Profile) plus the sentinel [kBellAnchor] for the notification bell. Only
+  /// the shell's OWN bar passes these (so the coach-mark engine can spotlight a
+  /// real tab); the on-top copy the page-context popup renders passes none,
+  /// since two live widgets with the same [GlobalKey] is a Flutter error.
+  final Map<int, GlobalKey>? anchorKeys;
+
+  /// Sentinel key into [anchorKeys] for the notification bell (not a real tab
+  /// index).
+  static const kBellAnchor = -2;
 
   /// True when the screen hosting this bar IS the Notifications screen, so
   /// re-tapping the Notifications tab is a no-op instead of pushing a second
@@ -214,7 +226,15 @@ class AymaTabBar extends StatelessWidget {
     final compact = isCompact(context);
     final orbBox = compact ? _compactOrbBoxSize : _orbBoxSize;
     final quiet = _quiet;
-    Widget tab(int i) => _AymaTab(
+    // Wrap a tour target in its anchor key (shell bar only — see [anchorKeys]).
+    Widget anchored(int slot, Widget child) {
+      final key = anchorKeys?[slot];
+      return key == null ? child : KeyedSubtree(key: key, child: child);
+    }
+
+    Widget tab(int i) => anchored(
+      i,
+      _AymaTab(
       label: _labels[i],
       semanticsLabel: i == 0 && quiet ? quietSemanticsLabel : null,
       onTap: () {
@@ -238,7 +258,12 @@ class AymaTabBar extends StatelessWidget {
                 size: orbBox,
                 state: _orbState,
                 amplitudeListenable: _orbAmplitude,
-                voiceLive: voice?.isActive ?? false,
+                // The "connected" glow lights up only once Ayma is genuinely
+                // listening (same single source of truth as the call
+                // notification), never during connecting/waking — the orb
+                // stays in its `thinking` connecting visual (see [_orbState])
+                // until the live state, then switches.
+                voiceLive: voice?.isListening ?? false,
                 // Scopes the user's "Wing flutter in nav bar"
                 // setting to exactly these orbs — see
                 // `OrbAnimationSettings`.
@@ -255,6 +280,7 @@ class AymaTabBar extends StatelessWidget {
               size: 22,
               color: index == i ? ac.fg : ac.fgMute,
             ),
+    ),
     );
     return Container(
       decoration: BoxDecoration(
@@ -270,20 +296,23 @@ class AymaTabBar extends StatelessWidget {
             children: [
               for (final i in _visualOrder.take(_visualOrder.length - 1))
                 tab(i),
-              _AymaTab(
-                label: 'Notifications',
-                onTap: () {
-                  if (notificationsActive) return;
-                  context.push(NotificationCenterScreen.path);
-                },
-                boxSize: _iconBoxSize,
-                padding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: compact ? 8 : 12,
-                ),
-                icon: NotificationBellButton(
-                  compact: true,
-                  iconColor: ac.fgMute,
+              anchored(
+                kBellAnchor,
+                _AymaTab(
+                  label: 'Notifications',
+                  onTap: () {
+                    if (notificationsActive) return;
+                    context.push(NotificationCenterScreen.path);
+                  },
+                  boxSize: _iconBoxSize,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: compact ? 8 : 12,
+                  ),
+                  icon: NotificationBellButton(
+                    compact: true,
+                    iconColor: ac.fgMute,
+                  ),
                 ),
               ),
               tab(_visualOrder.last),

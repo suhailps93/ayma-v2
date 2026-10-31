@@ -1,5 +1,4 @@
-"""Bug/crash report capture — distinct from ``feedback_ops.record`` and
-``feedback_ops.record_product``.
+"""Bug/crash report capture — distinct from the ``feedback`` collection.
 
 ``bug_reports/{id}`` — a user reporting something broken about the APP
 itself: a crash, a button that doesn't work, lost data, and so on. Written
@@ -7,18 +6,19 @@ by Ayma's ``report_bug`` tool (``skills/report_bug.py``) the moment the user
 tells her about it in a normal chat turn — text or voice — optionally with
 a screenshot attached the same turn.
 
-This is a third, separate bucket from the other two feedback paths already
-in this app:
+This is a separate bucket from the unified ``feedback`` paths in this app:
 
-* ``feedback/{id}`` (``feedback_ops.record``) — conversational-conduct
-  feedback about how AYMA herself is handling the conversation. Not this.
-* ``product_feedback/{id}`` (``feedback_ops.record_product``) — bugs/ideas
-  submitted through the Profile screen's own form. Ayma never touches it.
-* ``bug_reports/{id}`` (this module) — the "just tell Ayma directly,
+* ``feedback/{id}`` (``feedback_ops.record``, ``source: ayma|thumbs_down``) —
+  conversational-conduct feedback about how AYMA herself is handling the
+  conversation. Not this.
+* ``feedback/{id}`` (``feedback_ops.record_submission``,
+  ``source: chat_card|settings_form``) — product bugs/feature requests from
+  the in-chat feedback catcher and the Settings form (§15). Ayma never touches
+  these rows.
+* ``bug_reports/{id}`` (this module) — the older "just tell Ayma directly,
   mid-chat" path (founder request 2026-09-16). Kept as its own top-level
-  collection rather than folded into ``product_feedback`` since it's a
-  different kind of intake (free-form chat capture vs. a structured form)
-  and the two shouldn't get tangled together.
+  collection; the user-facing flow is now the ``submit_feedback`` catcher
+  (confirm-before-send, into ``feedback``), but this intake is left intact.
 
 A top-level collection written only via the Admin SDK (clients can't write
 it directly — see ``firestore.rules``). Writes are best-effort and never

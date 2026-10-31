@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/deep_dive_activity.dart';
+import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/report_progress.dart';
 import '../widgets/share_report_sheet.dart';
 import '../widgets/ayma_back_button.dart';
@@ -124,13 +126,44 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
   /// about you or someone else; a forced dive always skips the reuse cache.
   /// The fresh result lands in chat when it's ready (same as any other
   /// dive), and reopening this report afterwards picks up the update.
-  Future<void> _reRun(DeepDiveReport r) async {
+  Future<void> _reRun(DeepDiveReport r) => _startRun(
+        targetUid: r.isSelf ? '' : r.otherUid,
+        name: r.name,
+        firstRun: false,
+      );
+
+  /// The run target implied by [widget.reportId] when NO report exists yet, so
+  /// the empty state's "Run web search" can kick off the dive this screen is
+  /// about without any report metadata (which also 404s when never run). A
+  /// `uid_<subject>` id names an app user — the common never-run surface
+  /// (a public profile / match / app-user chat marker); the server infers
+  /// `is_self` when that subject is the caller. A `name_<slug>` id (a
+  /// free-text lookup) runs by that name.
+  ({String targetUid, String name}) _runTarget() {
+    final id = widget.reportId;
+    if (id.startsWith('uid_') && id.length > 'uid_'.length) {
+      return (targetUid: id.substring('uid_'.length), name: '');
+    }
+    if (id.startsWith('name_') && id.length > 'name_'.length) {
+      return (targetUid: '', name: id.substring('name_'.length).replaceAll('-', ' '));
+    }
+    return (targetUid: '', name: '');
+  }
+
+  /// Kicks off a web-research run (a first run from the empty state, or a
+  /// forced re-run) and tracks its progress via [DeepDiveActivity] so the
+  /// banner + spinner show and the report swaps in when it lands.
+  Future<void> _startRun({
+    required String targetUid,
+    required String name,
+    required bool firstRun,
+  }) async {
     if (_reRunning) return;
     setState(() => _reRunning = true);
     try {
       final res = await _api.deepDive(
-        targetUid: r.isSelf ? '' : r.otherUid,
-        name: r.name,
+        targetUid: targetUid,
+        name: name,
         force: true,
       );
       if (!mounted) return;
@@ -142,11 +175,12 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
         _wasSearching = true;
         unawaited(DeepDiveActivity.instance.start(widget.reportId, api: _api));
       }
+      final again = firstRun ? '' : ' again';
       AymaToast.show(
           context,
-          r.isSelf
-              ? "Searching again — I'll message you in chat when it's ready."
-              : "Searching again for ${r.name.isEmpty ? 'them' : r.name} — "
+          res.isSelf
+              ? "Searching$again — I'll message you in chat when it's ready."
+              : "Searching$again for ${name.isEmpty ? 'them' : name} — "
                   "I'll message you in chat when it's ready.");
     } catch (_) {
       if (!mounted) return;
@@ -204,7 +238,64 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
                     reportType: 'deep_dive',
                     reportId: widget.reportId,
                     apiClient: _api,
+                    // A clean 404 means no dive has ever been run for this
+                    // subject — an empty state with a "Run web search" action, not
+                    // the "Couldn't load" error a real fetch failure gets.
+                    emptyBuilder: (context) => _NoResearchYet(
+                      busy: _reRunning,
+                      onRun: () {
+                        final t = _runTarget();
+                        _startRun(
+                          targetUid: t.targetUid,
+                          name: t.name,
+                          firstRun: true,
+                        );
+                      },
+                    ),
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when the web-research report has never been run for this subject
+/// (a clean 404, not a load failure): an empty state inviting the owner to
+/// start the first run, rather than an error that implies something broke.
+class _NoResearchYet extends StatelessWidget {
+  const _NoResearchYet({required this.onRun, required this.busy});
+
+  final VoidCallback onRun;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return CenteredScroll(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.travel_explore, size: 40, color: ac.fgMute),
+          const SizedBox(height: 16),
+          Text(
+            'No web research yet',
+            textAlign: TextAlign.center,
+            style: AymaType.serif(size: 20, color: ac.fg),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Nothing has been searched on the open web for this person yet. "
+            "Run a web search and I'll message you in chat when it's ready.",
+            textAlign: TextAlign.center,
+            style: AymaType.sans(size: 14, color: ac.fgMute),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: busy ? null : onRun,
+            icon: const Icon(Icons.search, size: 18),
+            label: const Text('Run web search'),
           ),
         ],
       ),

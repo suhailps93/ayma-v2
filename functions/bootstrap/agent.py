@@ -57,6 +57,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     ConversationItemAddedEvent,
     JobContext,
     JobProcess,
+    JobRequest,
     MetricsCollectedEvent,
     RoomOutputOptions,
     UserInputTranscribedEvent,
@@ -81,13 +82,19 @@ from db import get_db  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
 from prompt import (  # noqa: E402
     compose_system_prompt,
+    load_practice_greeting,
     load_voice_opener,
+    load_voice_session_seed,
+    load_voice_tool_use,
+    voice_accent_directive,
     voice_swap_confirm,
     voice_swap_failed,
     voice_swap_note,
+    voice_vocab_directive,
 )
 import skills  # noqa: E402
 import voices  # noqa: E402
+from tool_labels import NO_CHIP as _NO_CHIP  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
@@ -122,6 +129,10 @@ TOPIC_AGENT_MUTE = "agent_mute"
 # nav-bar orb, or the call notification's "Unmute Ayma" action). Payload:
 # {"muted": false}. Only unmuting is accepted; muting stays a spoken command.
 TOPIC_AGENT_MUTE_CONTROL = "agent_mute_control"
+# Practice Date voice (hackathon B): an out-of-character live coaching nudge to
+# the USER as they talk to the simulated persona — shown as a side hint, never
+# spoken by the persona (immersion is preserved). Payload: {"text", "is_final"}.
+TOPIC_PRACTICE_COACH = "practice_coach"
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -255,8 +266,12 @@ def _turn_detection_config() -> types.RealtimeInputConfig | None:
     return types.RealtimeInputConfig(automatic_activity_detection=aad)
 
 
-def build_inference_realtime_model(voice: str):
+def build_inference_realtime_model(voice: str, model: str | None = None):
     """Gemini Live through LiveKit Inference (``VOICE_PROVIDER=inference``).
+
+    ``model`` overrides ``CONFIG.inference_live_model`` so a per-user realtime
+    selection (§13.9, a non-Gemini/non-OpenAI realtime model from the live
+    LiveKit catalog) runs on the same gateway path.
 
     ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
     gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
@@ -290,7 +305,7 @@ def build_inference_realtime_model(voice: str):
     if silence is not None:
         vad["silence_duration_ms"] = silence
     return realtime_cls(
-        model=CONFIG.inference_live_model,
+        model=model or CONFIG.inference_live_model,
         voice=voice,
         turn_detection=ServerVad(**vad),
     )
@@ -441,6 +456,226 @@ def build_realtime_model(
     return RealtimeModel(**kwargs)
 
 
+def _cascade_tts_voice_for_gender(gender: str | None) -> str:
+    """The cascade (Inworld) TTS voice preset for a persona ``gender``: the
+    gender-matched config voice when set, else the configured default
+    (``CONFIG.meta_cascade_tts_voice``). The vendor voice ids live in
+    ``config.py`` (AGENTS.md: no voice ids in ``agent.py``); an unset gender
+    voice falls back safely so a flip can never pick a broken voice."""
+    g = (gender or "").strip().lower()
+    if g in voices._FEMALE_GENDER_WORDS and CONFIG.meta_cascade_tts_voice_female:
+        return CONFIG.meta_cascade_tts_voice_female
+    if g in voices._MALE_GENDER_WORDS and CONFIG.meta_cascade_tts_voice_male:
+        return CONFIG.meta_cascade_tts_voice_male
+    return CONFIG.meta_cascade_tts_voice
+
+
+def _build_cascade_brain(brain_id: str):
+    """Build the cascade LLM leg for ``brain_id`` (§13.9). Two routes:
+
+    * ``meta`` — Meta Muse Spark via ``livekit-plugins-openai`` pointed at the
+      OpenAI-compatible Meta Model API (``CONFIG.meta_api_base_url`` +
+      ``META_API_KEY``). Muse Spark is reasoning-only, so ``reasoning_effort`` is
+      pinned to ``CONFIG.meta_reasoning_effort`` (``minimal``) — without it
+      replies come back empty.
+    * ``inference`` — any LiveKit-Inference-hosted LLM (``inference.LLM``),
+      LiveKit-credit covered, no extra key.
+
+    Model ids come from ``voice_catalog.brain_route`` (which reads ``config.py``),
+    never hardcoded here. Raises ``RuntimeError`` when the brain, its key or its
+    plugin is missing, so :func:`build_cascade_session`'s caller falls back to
+    Gemini Live and a selection can never take the main voice down."""
+    import voice_catalog
+
+    route_model = voice_catalog.brain_route(brain_id)
+    if route_model is None:
+        raise RuntimeError(f"unknown cascade brain {brain_id!r}")
+    route, model = route_model
+    if route == voice_catalog.ROUTE_META:
+        api_key = os.getenv("META_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(
+                "META_API_KEY is not set — cannot run the Meta cascade brain "
+                "(see docs/META_PROVIDER.md)"
+            )
+        try:
+            from livekit.plugins import openai as lk_openai
+        except ModuleNotFoundError as exc:  # pragma: no cover - dep in requirements
+            raise RuntimeError(
+                "livekit-plugins-openai is required for the Meta cascade brain"
+            ) from exc
+        return lk_openai.LLM(
+            model=model,
+            base_url=CONFIG.meta_api_base_url,
+            api_key=api_key,
+            temperature=0.9,
+            reasoning_effort=CONFIG.meta_reasoning_effort,
+        )
+    from livekit.agents import inference
+
+    return inference.LLM(model=model)
+
+
+def build_cascade_session(
+    brain_id: str,
+    stt_id: str,
+    tts_id: str,
+    tts_voice: str | None = None,
+    voice_language: str | None = None,
+) -> AgentSession:
+    """A LiveKit pipeline (cascade) ``AgentSession`` — STT + brain(LLM) + TTS +
+    VAD — with each component independently selected (§13.9), instead of a single
+    speech-to-speech ``RealtimeModel``:
+
+    * **STT** — ``stt_id`` through the LiveKit Inference gateway
+      (``inference.STT``), LiveKit-credit covered. ``voice_language`` biases its
+      language when given.
+    * **brain (LLM)** — :func:`_build_cascade_brain` for ``brain_id``.
+    * **TTS** — ``tts_id`` through the same gateway (``inference.TTS``);
+      ``tts_voice`` (else ``CONFIG.meta_cascade_tts_voice``, else the vendor
+      default) picks the voice.
+    * **VAD** — bundled Silero (``inference.VAD``), local turn segmentation (the
+      cascade has no server-side turn detection).
+
+    Raises ``RuntimeError`` (missing key/plugin/model) so the caller falls back
+    to Gemini Live. Model ids come from the catalog/config, never hardcoded."""
+    # Brain first: its key/plugin checks fail fast (before any Inference call),
+    # so an unavailable brain cleanly falls the caller back to Gemini Live.
+    brain = _build_cascade_brain(brain_id)
+    from livekit.agents import inference
+
+    stt_kwargs: dict[str, object] = {"model": stt_id}
+    if voice_language:
+        lang = voices.bcp47_hint(voice_language)
+        if lang:
+            # Inference STT language is the primary subtag (e.g. "en"), not a
+            # full BCP-47 region tag.
+            stt_kwargs["language"] = lang.split("-")[0]
+    stt = inference.STT(**stt_kwargs)
+    tts_kwargs: dict[str, object] = {"model": tts_id}
+    chosen_tts_voice = (tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    if chosen_tts_voice:
+        tts_kwargs["voice"] = chosen_tts_voice
+    tts = inference.TTS(**tts_kwargs)
+    vad = inference.VAD(model=CONFIG.meta_cascade_vad_model)
+    return AgentSession(stt=stt, llm=brain, tts=tts, vad=vad, allow_interruptions=True)
+
+
+def build_meta_cascade_session(
+    voice_name: str | None = None,
+    voice_language: str | None = None,
+    tts_voice: str | None = None,
+) -> AgentSession:
+    """The default Meta cascade (Deliverable A / Practice Date voice): Muse Spark
+    brain + ``CONFIG.meta_cascade_stt_model`` STT + ``CONFIG.meta_cascade_tts_model``
+    TTS. A thin wrapper over :func:`build_cascade_session` kept for the practice
+    path; the voice-engine picker calls ``build_cascade_session`` directly with
+    per-user component ids. ``voice_name`` (a Gemini preset) is unused here."""
+    import voice_catalog
+
+    return build_cascade_session(
+        voice_catalog.BRAIN_META,
+        CONFIG.meta_cascade_stt_model,
+        CONFIG.meta_cascade_tts_model,
+        tts_voice,
+        voice_language,
+    )
+
+
+def build_openai_realtime_model(voice: str | None = None):
+    """OpenAI Realtime speech-to-speech model for REALTIME mode (§13.9), or
+    ``None`` when inert — the flag ``voice_openai_realtime_enabled`` is off, the
+    ``OPENAI_API_KEY`` secret is missing, or ``livekit-plugins-openai`` is
+    absent. ``None`` makes the caller fall back to Gemini Live, so selecting
+    OpenAI Realtime before the secret exists can never take the main voice down.
+    The model id is ``CONFIG.openai_realtime_model`` (config, per AGENTS.md)."""
+    if not CONFIG.voice_openai_realtime_enabled:
+        return None
+    key = os.getenv("OPENAI_API_KEY", "")
+    if not key:
+        logger.warning(
+            "OpenAI Realtime is enabled but OPENAI_API_KEY is unset — the "
+            "founder must add the secret (see docs/FEATURE_FLAGS.md)"
+        )
+        return None
+    try:
+        from livekit.plugins import openai as lk_openai
+    except ModuleNotFoundError:  # pragma: no cover - dep in requirements
+        logger.warning("livekit-plugins-openai is required for OpenAI Realtime")
+        return None
+    kwargs: dict[str, object] = {"model": CONFIG.openai_realtime_model, "api_key": key}
+    v = (voice or "").strip()
+    if v:
+        kwargs["voice"] = v
+    return lk_openai.realtime.RealtimeModel(**kwargs)
+
+
+def relay_cascade_usage(
+    session: AgentSession,
+    uid: str,
+    *,
+    session_id: str = "",
+    model: str = "",
+    on_credits_exhausted: Callable[[], Awaitable[None]] | None = None,
+) -> None:
+    """Meter the Meta voice cascade's LLM turns against the user's token ledger.
+
+    A cascade emits per-component ``LLMMetrics`` / ``STTMetrics`` / ``TTSMetrics``
+    rather than the single ``RealtimeModelMetrics`` a Gemini Live session emits
+    (which :func:`relay_token_usage` records), so the lifetime credit cap would
+    otherwise never see a Meta-cascade call. This records the Muse Spark LLM
+    tokens under ``FEATURE_VOICE`` so the cap stays honest. Best-effort — a
+    failed write never affects the call. (Real-dollar pricing for the Meta model
+    is a separate Deliverable-A gap; tokens still drive the cap regardless.)
+
+    ``on_credits_exhausted``, when given (the MAIN voice cascade passes it;
+    Practice leaves it unset), mirrors :func:`relay_token_usage`'s §F3 mid-call
+    credit-cap stop: right after each turn's usage is recorded, re-read the live
+    balance via ``token_ledger.check`` and fire the callback once the moment it
+    comes back exhausted, so a cascade call can no longer run unbounded past
+    zero."""
+    if not uid:
+        return
+    from livekit.agents.metrics import LLMMetrics
+
+    # Guards the callback to fire at most once (see relay_token_usage).
+    cap_triggered = {"done": False}
+
+    @session.on("metrics_collected")
+    def _on_metrics(ev: MetricsCollectedEvent) -> None:
+        m = ev.metrics
+        if not isinstance(m, LLMMetrics):
+            return
+        in_tok = int(getattr(m, "prompt_tokens", 0) or 0)
+        out_tok = int(getattr(m, "completion_tokens", 0) or 0)
+        total = int(getattr(m, "total_tokens", 0) or 0) or (in_tok + out_tok)
+        if total <= 0:
+            return
+        logger.info(
+            "cascade-usage uid=%s session=%s model=%s in=%d out=%d total=%d",
+            uid, session_id or "?", model or "?", in_tok, out_tok, total,
+        )
+        token_ledger.add(
+            uid,
+            token_ledger.FEATURE_VOICE,
+            total,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            model=model or None,
+            session_id=session_id,
+        )
+
+        if on_credits_exhausted is None or cap_triggered["done"]:
+            return
+        try:
+            token_ledger.check(uid)
+        except token_ledger.TokenCapExceeded:
+            cap_triggered["done"] = True
+            asyncio.create_task(on_credits_exhausted())
+        except Exception:  # noqa: BLE001 - a failed check must not kill the call
+            logger.exception("mid-call credit check failed for %s", uid)
+
+
 def _publish_transcript(
     ctx: JobContext, topic: str, text: str, is_final: bool
 ) -> None:
@@ -473,6 +708,11 @@ def _publish_tool_event(
     did (``tool_labels.outcome_label``)."""
     if phase == "start":
         label = _working_label(name)
+    elif label == _NO_CHIP:
+        # The tool ran but did not do the visible thing its chip would claim
+        # (e.g. the app never navigated). An empty end-label clears the live
+        # "…ing" indicator on the client and queues no settled chip.
+        label = ""
     else:
         label = label or _tool_label(name)
     payload = json.dumps({"name": name, "label": label, "phase": phase}).encode()
@@ -1047,9 +1287,40 @@ class RoomSeed:
     seed_turns: list[Turn] = field(default_factory=list)
     voice_name: str = ""
     voice_language: str = ""
+    # The user's dedicated free-text ACCENT (``ayma_voice_accent``, §13.9) — HOW
+    # Ayma should sound, separate from ``voice_language`` (WHICH language). Fed
+    # into the session instructions at boot ONLY on an accent-capable provider
+    # (``voice_catalog.provider_supports_accent``); fixed-voice providers ignore
+    # it. Empty = the provider's default accent.
+    voice_accent: str = ""
+    # Per-user MAIN-voice STACK selection (§13.9), resolved in
+    # ``main._voice_engine_seed`` from the saved preference. ``voice_mode`` empty
+    # → use the deploy-time ``CONFIG.llm_provider_voice_main`` default (unchanged
+    # behaviour). "realtime" → ``realtime_model_id``; "cascade" → ``brain_id`` /
+    # ``stt_id`` / ``tts_id``. ``tts_voice`` is the chosen non-Gemini-preset voice
+    # id (cascade TTS or OpenAI realtime; "" = the provider default).
+    voice_mode: str = ""
+    realtime_model_id: str = ""
+    brain_id: str = ""
+    stt_id: str = ""
+    tts_id: str = ""
+    tts_voice: str = ""
     # When set, the agent speaks first with these instructions (the pre-sign-in
     # "welcome" room). Empty for a normal session where the caller opens.
     greeting_instructions: str = ""
+    # Practice Date voice (hackathon B): when True this room is a simulated-match
+    # practice session — ``system_prompt`` is the persona prompt, and the agent
+    # runs the practice path (no Ayma tools, no memory flush, a side-channel
+    # live coach) instead of a normal Ayma call. ``persona_name`` / ``target_uid``
+    # drive the live coach + practice-transcript persistence without the worker
+    # ever re-reading the target's profile.
+    practice: bool = False
+    persona_name: str = ""
+    # The simulated match's profile gender ("woman"/"man"/"non-binary"/…). Drives
+    # the gender-matched practice TTS voice and the live coach's pronouns; empty
+    # falls back to the session default voice and they/them.
+    persona_gender: str = ""
+    target_uid: str = ""
 
 
 def relay_token_usage(
@@ -1214,7 +1485,18 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         seed_turns=turns,
         voice_name=str(seed.get("voice_name", "")),
         voice_language=str(seed.get("voice_language", "")),
+        voice_accent=str(seed.get("voice_accent", "")),
+        voice_mode=str(seed.get("voice_mode", "")),
+        realtime_model_id=str(seed.get("realtime_model_id", "")),
+        brain_id=str(seed.get("brain_id", "")),
+        stt_id=str(seed.get("stt_id", "")),
+        tts_id=str(seed.get("tts_id", "")),
+        tts_voice=str(seed.get("tts_voice", "")),
         greeting_instructions=str(seed.get("greeting_instructions", "")),
+        practice=bool(seed.get("practice", False)),
+        persona_name=str(seed.get("persona_name", "")),
+        persona_gender=str(seed.get("persona_gender", "")),
+        target_uid=str(seed.get("target_uid", "")),
     )
 
 
@@ -1285,6 +1567,7 @@ def _session_tools(
     uid: str,
     on_activity: Callable[[], None] | None = None,
     on_voice_change: Callable[[str | None, str], tuple[bool, str]] | None = None,
+    voice_pref: object | None = None,
     guard: Callable[[], str | None] | None = None,
     session_id: str = "",
     window: list[Turn] | None = None,
@@ -1295,7 +1578,10 @@ def _session_tools(
     the text chat's status -> reply kicker already does. ``guard`` (see
     :func:`misheard_fragment_guard`) can refuse a call before it runs.
     ``session_id`` and ``window`` (the call's live turn list) let
-    ``send_dm_message`` keep its pending send and check the caller's own yes."""
+    ``send_dm_message`` keep its pending send and check the caller's own yes.
+    ``voice_pref`` (a ``voice_catalog.RuntimeVoices``) makes
+    ``set_voice_preference`` stack-aware on a cascade / non-Gemini realtime call
+    (the Gemini path uses ``on_voice_change`` instead)."""
     if not uid:
         return []
 
@@ -1306,7 +1592,7 @@ def _session_tools(
 
     return skills.make_livekit_tools(
         get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change,
-        guard=guard, session_id=session_id,
+        voice_pref=voice_pref, guard=guard, session_id=session_id,
         turns=(lambda: list(window)) if window is not None else None,
     )
 
@@ -1696,6 +1982,15 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     await ctx.connect()
     seed = await _await_room_seed(ctx)
 
+    # Practice Date voice (hackathon B): a simulated-match room runs an entirely
+    # separate, deliberately smaller path — no Ayma tools, no memory flush/wiki
+    # ingest (a simulation must never touch the user's real data), a
+    # side-channel live coach. Gated strictly on the room-metadata flag so every
+    # normal voice call below is untouched.
+    if seed.practice:
+        await _run_practice_session(ctx, seed)
+        return
+
     # The full session window = the turns carried in from /bootstrap plus every
     # finalized voice turn from here on. Persisted to raw_turns AND folded into
     # the wiki on shutdown — the room can close for any reason (a clean hang
@@ -1724,10 +2019,262 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     ctx.add_shutdown_callback(flush.run)
     keepalive.hold_for(flush.run)
 
+    # MAIN voice STACK selection (§13.9). The user's saved ``voice_mode`` wins
+    # over the deploy-time default; empty keeps exactly today's behaviour
+    # (``CONFIG.llm_provider_voice_main``: ``meta`` → cascade, else Gemini Live).
+    #
+    #  * CASCADE → STT + brain(LLM) + TTS as selected
+    #    (:func:`build_cascade_session`). Two fallbacks keep it from ever taking
+    #    the main voice down: a cascade that can't be *built* (no key, missing
+    #    plugin) falls through to Gemini Live here, and one that dies at *runtime*
+    #    switches to a fresh Gemini Live session on the same room
+    #    (:func:`_arm_main_cascade_fallback`).
+    #  * REALTIME → one native-audio model: Gemini Live (the LOCKED model, the
+    #    default) or OpenAI Realtime (:func:`build_openai_realtime_model`, inert
+    #    without the flag + ``OPENAI_API_KEY`` — falls back to Gemini Live).
+    # Every path shares the one ``flush``/``window`` so memory is never doubled.
+    from llm_provider import PROVIDER_META
+    import voice_catalog
+
+    mode = seed.voice_mode
+    if not mode:
+        mode = (
+            voice_catalog.MODE_CASCADE
+            if CONFIG.llm_provider_voice_main == PROVIDER_META
+            else voice_catalog.MODE_REALTIME
+        )
+
+    if mode == voice_catalog.MODE_CASCADE:
+        brain_id = seed.brain_id or voice_catalog.BRAIN_META
+        stt_id = seed.stt_id or CONFIG.meta_cascade_stt_model
+        tts_id = seed.tts_id or CONFIG.meta_cascade_tts_model
+        try:
+            session = build_cascade_session(
+                brain_id, stt_id, tts_id, seed.tts_voice, seed.voice_language
+            )
+        except Exception as exc:  # noqa: BLE001 - never take the main voice down
+            logger.warning(
+                "cascade voice unavailable (%s: %s) — falling back to Gemini Live",
+                type(exc).__name__, exc,
+            )
+            capture_exception(exc)
+        else:
+            logger.info(
+                "main-voice cascade uid=%s session=%s brain=%s stt=%s tts=%s",
+                seed.uid, seed.session_id or "?", brain_id, stt_id, tts_id,
+            )
+            _arm_main_cascade_fallback(
+                ctx, seed, session,
+                flush=flush, window=window, route=route,
+                use_inference=use_inference, voice_provider=voice_provider,
+            )
+            await _start_main_cascade_session(
+                ctx, seed, session, flush=flush, window=window,
+            )
+            return
+    elif seed.realtime_model_id == voice_catalog.REALTIME_OPENAI:
+        realtime = build_openai_realtime_model(seed.tts_voice)
+        if realtime is not None:
+            logger.info(
+                "main-voice OpenAI Realtime uid=%s session=%s model=%s",
+                seed.uid, seed.session_id or "?", CONFIG.openai_realtime_model,
+            )
+            await _start_main_gemini_session(
+                ctx, seed,
+                flush=flush, window=window, route=route,
+                use_inference=use_inference, voice_provider=voice_provider,
+                llm=realtime, enable_hot_swap=False,
+            )
+            return
+        logger.warning(
+            "OpenAI Realtime selected but unavailable (flag/OPENAI_API_KEY) — "
+            "falling back to Gemini Live",
+        )
+    elif seed.realtime_model_id and seed.realtime_model_id != voice_catalog.REALTIME_GEMINI:
+        # A non-canonical realtime model from the live LiveKit catalog — run it
+        # on the Inference gateway. Any failure falls back to Gemini Live below.
+        try:
+            realtime = build_inference_realtime_model(
+                seed.tts_voice or seed.voice_name, model=seed.realtime_model_id
+            )
+        except Exception as exc:  # noqa: BLE001 - never take the main voice down
+            logger.warning(
+                "inference realtime %s unavailable (%s) — falling back to "
+                "Gemini Live", seed.realtime_model_id, exc,
+            )
+        else:
+            logger.info(
+                "main-voice inference realtime uid=%s session=%s model=%s",
+                seed.uid, seed.session_id or "?", seed.realtime_model_id,
+            )
+            await _start_main_gemini_session(
+                ctx, seed,
+                flush=flush, window=window, route=route,
+                use_inference=use_inference, voice_provider=voice_provider,
+                llm=realtime, enable_hot_swap=False,
+            )
+            return
+
+    await _start_main_gemini_session(
+        ctx, seed,
+        flush=flush, window=window, route=route,
+        use_inference=use_inference, voice_provider=voice_provider,
+    )
+
+
+async def _open_main_call(
+    session: AgentSession,
+    seed: RoomSeed,
+    *,
+    window: list[Turn],
+    opener_chat_ctx: NotGivenOr[object] = NOT_GIVEN,
+    seed_user_turn: bool = False,
+) -> None:
+    """Open a started main voice call the same way on both the Gemini Live and
+    Meta cascade paths: a pre-sign-in "welcome" room has Ayma greet first; every
+    other call lets Ayma open only if the caller stays silent
+    (:func:`maybe_open_conversation`), which — when there is prior context —
+    greets and offers the choice to continue or switch rather than resuming the
+    old topic (founder behaviour, 2026-10-28).
+
+    ``opener_chat_ctx`` is forwarded to the silent-caller opener as a secondary
+    guard scoping the opener's generation context (the cascade passes a
+    history-free context); NOT_GIVEN leaves it against the agent's full context
+    for Gemini Live / every other path.
+
+    ``seed_user_turn`` is set only on the cascade (text-LLM) path: an
+    agent-initiated greeting/opener on a chat LLM must carry at least one user
+    turn, or the OpenAI-compatible gateway (incl. LiveKit Inference) rejects the
+    system-only message list with HTTP 400. A benign synthetic user turn
+    (:func:`load_voice_session_seed`) is seeded so the opener generates normally.
+    Realtime models (Gemini Live / Inference RealtimeModel) never hit that path,
+    so they leave it False."""
+    if seed.greeting_instructions:
+        reply_kwargs: dict = {"instructions": seed.greeting_instructions}
+        if seed_user_turn:
+            reply_kwargs["user_input"] = load_voice_session_seed()
+        try:
+            await session.generate_reply(**reply_kwargs)
+        except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
+            logger.exception("welcome greeting failed")
+    else:
+        await maybe_open_conversation(
+            session, seed, window=window, opener_chat_ctx=opener_chat_ctx,
+            seed_user_turn=seed_user_turn,
+        )
+
+
+def _voice_vocab(
+    *,
+    mode: str,
+    realtime_model_id: str = "",
+    tts_id: str = "",
+    current_voice_id: str = "",
+):
+    """The running stack's voice vocabulary and the instruction block injected
+    so the agent reports the voices/current voice of the stack it is ACTUALLY
+    running, not the Gemini presets (§13.9). Returns ``(runtime_voices,
+    directive)``: the directive is appended to the session instructions, and
+    ``runtime_voices`` (``None`` on the Gemini hot-swap path, which keeps its
+    preset tool) makes ``set_voice_preference`` resolve within the active set."""
+    import voice_catalog
+
+    rv = voice_catalog.runtime_voices(
+        mode=mode,
+        realtime_model_id=realtime_model_id,
+        tts_id=tts_id,
+        current_voice_id=current_voice_id,
+    )
+    directive = voice_vocab_directive(
+        voice_catalog.current_label(rv),
+        voice_catalog.vocab_lines(rv),
+        rv.hot_swap,
+    )
+    return rv, directive
+
+
+def _accent_block(rv, accent: str) -> str:
+    """The boot-time ACCENT instruction for this session, or ``""`` (§13.9).
+
+    Routed ONLY to an accent-capable provider (``rv.supports_accent`` — Gemini
+    Live / OpenAI Realtime): the saved ``ayma_voice_accent`` becomes a style
+    instruction so the voice speaks that way from the first word and never
+    reverts to the provider's default accent. A fixed-voice provider (every
+    cascade TTS here) gets ``""`` and ignores the accent gracefully — nothing is
+    passed to it, so there is no crash and no wrong-accent effect."""
+    accent = (accent or "").strip()
+    if not accent or rv is None or not rv.supports_accent:
+        return ""
+    return voice_accent_directive(accent)
+
+
+def _compose_instructions(
+    system_prompt: str, accent_block: str, vocab: str, tool_use: str = ""
+) -> str:
+    """The session instructions: the composed system prompt, then the boot-time
+    accent block (when the provider supports accent), then the stack-aware voice
+    vocabulary, then the voice tool-use directive — skipping any empty part.
+
+    ``tool_use`` (``prompts/voice_tool_use.md`` via :func:`load_voice_tool_use`)
+    is appended on the Meta cascade path to force call-before-confirm tool use;
+    left ``""`` on Gemini Live, whose instructions stay byte-identical."""
+    return "\n\n".join(
+        p for p in (system_prompt, accent_block, vocab, tool_use) if p
+    )
+
+
+def _cascade_seed_chat_ctx(chat_ctx):
+    """The seeded history for a MAIN cascade session, with any trailing run of
+    USER turns dropped (founder bug, 2026-10-27).
+
+    At session start the whole seeded ``chat_ctx`` is prior-session history
+    (``/bootstrap``'s ``recent_turns``) — every genuinely new turn arrives live
+    through STT, never through the seed. On the Meta cascade, a trailing
+    *unanswered* user message left in the model's context makes the pipeline
+    answer that STALE turn (or fire a tool on it) the instant the call connects,
+    before the caller says anything — the exact bug reported. Gemini Live does
+    not (its realtime context only replies on server-side turn detection), so its
+    path keeps the full history unchanged. Dropping only the trailing user
+    message(s) for the cascade leaves all prior context intact (and the full
+    window is still persisted / summarised), so the cascade now greets via the
+    normal opener and waits for real input instead of acting on history."""
+    if chat_ctx is None:
+        return None
+    items = list(chat_ctx.items)
+    while items and getattr(items[-1], "role", None) == "user":
+        items.pop()
+    if len(items) == len(chat_ctx.items):
+        return chat_ctx
+    return llm.ChatContext(items)
+
+
+async def _start_main_gemini_session(
+    ctx: JobContext,
+    seed: RoomSeed,
+    *,
+    flush: SessionFlush,
+    window: list[Turn],
+    route: str,
+    use_inference: bool,
+    voice_provider: str,
+    llm: object | None = None,
+    enable_hot_swap: bool = True,
+) -> None:
+    """Build and start the normal (default) Ayma voice call on a native-audio
+    realtime model.
+
+    Default: Gemini Live (the LOCKED model) — the unchanged main-voice path, also
+    reused as the cascade runtime fallback (:func:`_arm_main_cascade_fallback`),
+    reusing the caller's ``flush``/``window`` so a fallback never double-persists.
+    ``llm`` overrides the model (OpenAI Realtime, §13.9); ``enable_hot_swap``
+    False disables the mid-call Gemini voice swap (``VoiceSwapper``), which only
+    rebuilds Gemini Live, so a non-Gemini realtime model keeps the right voice."""
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
     session = AgentSession(
-        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
+        llm=llm or build_realtime_model(
+            seed.voice_name, seed.voice_language, route=route
+        ),
         allow_interruptions=True,
     )
     relay_transcripts(ctx, session, collector=window)
@@ -1749,29 +2296,71 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
         ),
     )
     watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
-    swapper = VoiceSwapper(
-        session,
-        system_prompt=seed.system_prompt,
-        route=route,
-        voice_name=seed.voice_name,
-        voice_language=seed.voice_language,
-        session_id=seed.session_id,
-        provider=voice_provider,
-        is_muted=lambda: mute.muted,
+    # Stack-aware voice vocabulary (§13.9): ``llm is None`` is the Gemini Live
+    # realtime path (also the cascade build/runtime fallback — which is why the
+    # vocabulary correctly reflects Gemini then); any other ``llm`` is a
+    # non-Gemini realtime model whose voices are its own. The current voice is
+    # resolved exactly as the model builder picks it.
+    import voice_catalog
+
+    if llm is None:
+        realtime_model_id = voice_catalog.REALTIME_GEMINI
+        current_voice_id = (
+            seed.voice_name
+            if seed.voice_name and voices.is_valid_voice(seed.voice_name)
+            else CONFIG.gemini_live_voice
+        )
+    else:
+        realtime_model_id = seed.realtime_model_id
+        current_voice_id = seed.tts_voice or seed.voice_name
+    rv, vocab = _voice_vocab(
+        mode=voice_catalog.MODE_REALTIME,
+        realtime_model_id=realtime_model_id,
+        current_voice_id=current_voice_id,
+    )
+    # Boot-time accent (§13.9): fed into the instructions only on an accent-capable
+    # realtime provider (Gemini Live / OpenAI Realtime). Folded into the base
+    # prompt the hot-swapper reuses too, so a mid-call voice swap keeps the accent
+    # instead of rebuilding without it.
+    accent_block = _accent_block(rv, seed.voice_accent)
+    base_prompt = (
+        f"{seed.system_prompt}\n\n{accent_block}" if accent_block else seed.system_prompt
+    )
+    _instructions = _compose_instructions(seed.system_prompt, accent_block, vocab)
+    # Mid-call voice hot-swap (``VoiceSwapper``) only rebuilds Gemini Live, so it
+    # is wired only on the Gemini path; a non-Gemini realtime model
+    # (``enable_hot_swap=False``) just saves the preference for the next call,
+    # resolving it within that model's own voices (``voice_pref``).
+    swapper = (
+        VoiceSwapper(
+            session,
+            system_prompt=base_prompt,
+            route=route,
+            voice_name=seed.voice_name,
+            voice_language=seed.voice_language,
+            session_id=seed.session_id,
+            provider=voice_provider,
+            is_muted=lambda: mute.muted,
+        )
+        if enable_hot_swap
+        else None
     )
     tools = _session_tools(
         ctx,
         seed.uid,
         on_activity=watchdog.touch if watchdog else None,
-        on_voice_change=swapper.request,
+        on_voice_change=swapper.request if swapper else None,
+        voice_pref=None if swapper else rv,
         guard=misheard_fragment_guard(
-            window, len(window), lambda: swapper.language
+            window, len(window),
+            (lambda: swapper.language) if swapper else (lambda: seed.voice_language),
         ),
         session_id=seed.session_id,
         window=window,
     )
-    swapper.tools = tools
-    agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
+    if swapper:
+        swapper.tools = tools
+    agent_kwargs: dict = {"instructions": _instructions, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
     agent = Agent(**agent_kwargs)
@@ -1780,18 +2369,468 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+    await _open_main_call(session, seed, window=window)
 
-    # Pre-sign-in "welcome" room: Ayma opens the call instead of waiting for
-    # the caller to speak first.
-    if seed.greeting_instructions:
+
+async def _start_main_cascade_session(
+    ctx: JobContext,
+    seed: RoomSeed,
+    session: AgentSession,
+    *,
+    flush: SessionFlush,
+    window: list[Turn],
+) -> None:
+    """Start the normal Ayma voice call on the Meta cascade (Deliverable A).
+
+    Wires the same session-agnostic relays the Gemini Live path uses — transcript
+    relay into the raw_turns ``window`` (so memory persistence, barge-in, the
+    idle watchdog, mute control, keepalive and the greeting/opener behave exactly
+    as on a normal call) — and meters usage through :func:`relay_cascade_usage`
+    (the cascade emits ``LLMMetrics``, not ``RealtimeModelMetrics``), passing the
+    same §F3 mid-call credit-cap stop as Gemini Live. Tools are kept so Ayma can
+    still drive the app; mid-call voice hot-swap (``VoiceSwapper``) is Gemini
+    Live-only, so ``set_voice_preference`` here saves the preference for the next
+    call rather than reconnecting (``on_voice_change`` is unset). The memory
+    flush is NOT started on an ERROR close here — the runtime fallback continues
+    the call on a fresh Gemini Live session on the same window, which flushes at
+    its own close."""
+    relay_transcripts(ctx, session, collector=window)
+    session.on("close", _flush_on_non_error_close(flush))
+    relay_agent_state(ctx, session)
+    mute = MuteState()
+    relay_mute_control(session, mute, ctx)
+    relay_cascade_usage(
+        session,
+        seed.uid,
+        session_id=seed.session_id,
+        model=CONFIG.meta_chat_model,
+        on_credits_exhausted=lambda: end_call_out_of_credits(
+            ctx, session, seed.uid, flush.run
+        ),
+    )
+    watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
+    # Stack-aware voice vocabulary (§13.9): the active TTS provider's voices and
+    # the real current voice, resolved exactly as ``build_cascade_session``
+    # picked them (``seed.tts_voice`` else the configured default). This is what
+    # replaces the Gemini-preset knowledge on a cascade (e.g. fishaudio → list
+    # fishaudio voices, current = Hannah).
+    import voice_catalog
+
+    tts_id = seed.tts_id or CONFIG.meta_cascade_tts_model
+    current_voice_id = (seed.tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    rv, vocab = _voice_vocab(
+        mode=voice_catalog.MODE_CASCADE,
+        tts_id=tts_id,
+        current_voice_id=current_voice_id,
+    )
+    # Boot-time accent (§13.9): on the cascade this is normally "" — the TTS
+    # providers here ship fixed voices (``rv.supports_accent`` False), so the
+    # accent is not routed to them and the voice is unaffected. Honoured only if
+    # a cascade TTS is ever marked accent-capable in config.
+    accent_block = _accent_block(rv, seed.voice_accent)
+    tools = _session_tools(
+        ctx,
+        seed.uid,
+        on_activity=watchdog.touch if watchdog else None,
+        voice_pref=rv,
+        guard=misheard_fragment_guard(
+            window, len(window), lambda: seed.voice_language
+        ),
+        session_id=seed.session_id,
+        window=window,
+    )
+    agent_kwargs: dict = {
+        # The voice tool-use directive is appended HERE (cascade only): Meta Muse
+        # Spark's tool-calling is probabilistic in voice and would otherwise
+        # narrate an app action as done without ever firing the tool (founder
+        # voice bug, 2026-10-28). Gemini Live's instructions stay unchanged.
+        "instructions": _compose_instructions(
+            seed.system_prompt, accent_block, vocab, load_voice_tool_use()
+        ),
+        "tools": tools,
+    }
+    # A trailing stale user turn in the seeded history is dropped here so the
+    # cascade greets/waits (like Gemini Live) instead of immediately answering a
+    # message from the previous conversation (founder bug, 2026-10-27).
+    cascade_ctx = _cascade_seed_chat_ctx(seed.chat_ctx)
+    if cascade_ctx is not None:
+        agent_kwargs["chat_ctx"] = cascade_ctx
+    agent = Agent(**agent_kwargs)
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_output_options=RoomOutputOptions(transcription_enabled=False),
+    )
+    # Cold-start opener (founder behaviour, 2026-10-28): when there is prior
+    # context the opener GREETS and OFFERS A CHOICE ("pick up where we left off
+    # about X, or something else?") instead of resuming the old topic. That is
+    # driven by the opener instruction + the has-prior/last-topic-hint signal in
+    # :func:`maybe_open_conversation` (the real fix — an earlier attempt that only
+    # passed an empty chat_ctx here still continued the topic, because the rolling
+    # summary rides in the SYSTEM PROMPT, not chat_ctx, and the old opener prompt
+    # told Ayma to "pick the thread back up"). The empty ``chat_ctx`` below stays
+    # as a secondary guard so the chat LLM has no previous-turn object to answer
+    # the instant it opens; the agent's own ``chat_ctx`` keeps the full window for
+    # every later real turn, so "yeah, continue" still works. Gemini Live is left
+    # NOT_GIVEN and gets the same greet+choice from the opener instruction.
+    await _open_main_call(
+        session, seed, window=window, opener_chat_ctx=llm.ChatContext.empty(),
+        seed_user_turn=True,
+    )
+
+
+def _flush_on_non_error_close(flush: SessionFlush) -> Callable[[object], None]:
+    """A session ``close`` handler that starts ``flush`` on every close EXCEPT an
+    ERROR one. On an ERROR close the main-voice Meta cascade hands off to a fresh
+    Gemini Live session on the same ``window`` (:func:`_arm_main_cascade_fallback`),
+    so starting the flush now would snapshot a half-finished conversation; the
+    fallback session flushes at its own close (and the job's shutdown callback is
+    the final backstop)."""
+    from livekit.agents.voice.events import CloseReason
+
+    def _on_close(ev: object) -> None:
+        if getattr(ev, "reason", None) == CloseReason.ERROR:
+            return
+        flush.start()
+
+    return _on_close
+
+
+def _arm_main_cascade_fallback(
+    ctx: JobContext,
+    seed: RoomSeed,
+    session: AgentSession,
+    *,
+    flush: SessionFlush,
+    window: list[Turn],
+    route: str,
+    use_inference: bool,
+    voice_provider: str,
+) -> None:
+    """Fall a *running* main-voice Meta cascade back to Gemini Live if it dies
+    mid-call (same pattern as :func:`_arm_practice_cascade_fallback`).
+
+    A leg (STT/LLM/TTS) can still fail at runtime — e.g. the Meta LLM 404s — and
+    livekit-agents then closes the session with ``CloseReason.ERROR``, which
+    would otherwise leave the caller in dead air. On that close we rebuild the
+    full Gemini Live main session on the SAME room, reusing the shared
+    ``flush``/``window`` so the conversation so far carries into its persistence.
+    Fires at most once: a Gemini fallback that also errors just closes."""
+    from livekit.agents.voice.events import CloseReason
+
+    fired = False
+
+    @session.on("close")
+    def _on_close(ev) -> None:  # noqa: ANN001 - CloseEvent
+        nonlocal fired
+        if fired or getattr(ev, "reason", None) != CloseReason.ERROR:
+            return
+        fired = True
+        err = getattr(ev, "error", None)
+        logger.warning(
+            "main-voice fallback uid=%s session=%s — Meta cascade failed at "
+            "runtime (%s), switching to Gemini Live",
+            seed.uid, seed.session_id or "?",
+            getattr(err, "error", err),
+        )
+        if err is not None:
+            capture_exception(getattr(err, "error", err))
+
+        async def _switch() -> None:
+            try:
+                await _start_main_gemini_session(
+                    ctx, seed,
+                    flush=flush, window=window, route=route,
+                    use_inference=use_inference, voice_provider=voice_provider,
+                )
+            except Exception as exc:  # noqa: BLE001 - fallback must not crash the job
+                logger.exception("main-voice Gemini Live fallback failed")
+                capture_exception(exc)
+
+        asyncio.create_task(_switch())
+
+
+def relay_practice_coach(
+    ctx: JobContext,
+    session: AgentSession,
+    *,
+    uid: str,
+    session_id: str,
+    persona_name: str,
+    persona_gender: str,
+    target_uid: str,
+) -> None:
+    """Practice Date voice live coach (hackathon B).
+
+    As the user talks to the simulated persona, surface an out-of-character
+    coaching nudge to the USER over the data channel (``practice_coach``) — a
+    side text hint the client shows separately, never spoken by the persona, so
+    the roleplay immersion is preserved. Each finalized turn is also appended to
+    the practice session store so the end-of-call debrief
+    (``POST /practice/debrief``) has the transcript.
+
+    Reuses ``practice_date.coach_hint`` (best-effort, never raises). The coach
+    context is rebuilt from ``persona_name`` / ``persona_gender`` alone via
+    ``persona_context_for_coach`` — the worker never re-reads the target's
+    profile, so no never-load data path is opened here. The gender is carried so
+    the coach refers to the match with the right pronouns (founder bug
+    2026-10-27: a she/her persona was coached as "him"). Imports ``practice_core``
+    (not ``practice_date``) because the agent worker's runtime carries no
+    fastapi — the core holds the practice primitives with no web-stack deps."""
+    import practice_core
+
+    db = get_db()
+    coach_ctx = practice_core.persona_context_for_coach(
+        persona_name, target_uid, persona_gender
+    )
+    turns: list[dict] = []
+
+    def _persist(turn: dict) -> None:
+        if not (uid and session_id):
+            return
         try:
-            await session.generate_reply(
-                instructions=seed.greeting_instructions
+            practice_core.append_turns(db, uid, session_id, [turn])
+        except Exception:  # noqa: BLE001 - persistence is best-effort
+            logger.warning("practice voice: append turn failed", exc_info=True)
+
+    @session.on("user_input_transcribed")
+    def _on_user(ev: UserInputTranscribedEvent) -> None:
+        text = (ev.transcript or "").strip()
+        if not ev.is_final or not text:
+            return
+        turn = {"role": practice_core.ROLE_USER, "text": text}
+        turns.append(turn)
+
+        async def _coach() -> None:
+            await asyncio.to_thread(_persist, turn)
+            hint = await practice_core.coach_hint(coach_ctx, list(turns), uid=uid)
+            if hint:
+                _publish_transcript(ctx, TOPIC_PRACTICE_COACH, hint, True)
+
+        asyncio.create_task(_coach())
+
+    @session.on("conversation_item_added")
+    def _on_item(ev: ConversationItemAddedEvent) -> None:
+        if getattr(ev.item, "role", None) != "assistant":
+            return
+        text = (ev.item.text_content or "").strip()
+        if not text:
+            return
+        turn = {"role": practice_core.ROLE_MATCH, "text": text}
+        turns.append(turn)
+        asyncio.create_task(asyncio.to_thread(_persist, turn))
+
+
+async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
+    """One Practice Date voice session (hackathon B).
+
+    The room was seeded by ``POST /practice/voice/start`` with a persona system
+    prompt built ONLY from the match's viewer-visible profile
+    (``practice_date.build_persona_context`` — the same query-level never-load
+    exclusions as the text path). The persona speaks as that person and deflects
+    extraction in-character. Deliberately smaller than a normal Ayma call:
+
+    * No session tools — the persona cannot drive the app or run Ayma's skills.
+    * No ``SessionFlush`` — a simulated conversation is never persisted to the
+      user's ``raw_turns`` nor ingested into their wiki memory.
+    * A side-channel live coach (:func:`relay_practice_coach`) nudges the user
+      out-of-character and persists the transcript for the debrief.
+
+    Voice model path: Gemini Live by default. When ``LLM_PROVIDER_VOICE=meta``
+    (``CONFIG.llm_provider_voice``) the session instead runs as a LiveKit
+    **Meta cascade** — LiveKit Inference STT -> Meta Muse Spark LLM (OpenAI-
+    compatible Meta Model API) -> Inworld TTS via the LiveKit Inference gateway,
+    with local Silero VAD (:func:`build_meta_cascade_session`). (Meta serves no
+    working REST STT, so only the LLM leg runs on Meta — the hackathon "runs on
+    Meta" story.) Two fallbacks keep a flip from ever taking practice voice
+    down: if the cascade can't be *built* (no ``META_API_KEY``, missing plugin)
+    the session starts on Gemini Live instead; and if a built cascade dies at
+    *runtime* (an STT/LLM/TTS error closes it) it switches to a fresh Gemini
+    Live session on the same room (:func:`_arm_practice_cascade_fallback`). The
+    default voice behaviour is unchanged, and only the persona/coaching CONTENT
+    comes from the practice module.
+
+    The simulated match greets first on both paths — they "pick up the phone"
+    and open in character (``prompts/practice_greeting.md``) rather than waiting
+    for the user. Voice tokens are metered either way (Gemini Live via
+    :func:`relay_token_usage`, the cascade LLM via :func:`relay_cascade_usage`)."""
+    from llm_provider import PROVIDER_META
+
+    if CONFIG.llm_provider_voice == PROVIDER_META:
+        try:
+            session = build_meta_cascade_session(
+                seed.voice_name,
+                seed.voice_language,
+                _cascade_tts_voice_for_gender(seed.persona_gender),
             )
-        except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
-            logger.exception("welcome greeting failed")
+        except Exception as exc:  # noqa: BLE001 - never take practice voice down
+            logger.warning(
+                "Meta voice cascade unavailable (%s: %s) — falling back to "
+                "Gemini Live", type(exc).__name__, exc,
+            )
+            capture_exception(exc)
+        else:
+            logger.info(
+                "practice-voice Meta cascade uid=%s session=%s stt=%s llm=%s tts=%s",
+                seed.uid, seed.session_id or "?", CONFIG.meta_cascade_stt_model,
+                CONFIG.meta_chat_model, CONFIG.meta_cascade_tts_model,
+            )
+            _arm_practice_cascade_fallback(ctx, seed, session)
+            await _start_practice_session(
+                ctx, seed, session, meta_cascade=True, use_inference=False
+            )
+            return
+
+    session, use_inference = _build_practice_gemini_session(seed)
+    await _start_practice_session(
+        ctx, seed, session, meta_cascade=False, use_inference=use_inference
+    )
+
+
+def _build_practice_gemini_session(seed: RoomSeed) -> tuple[AgentSession, bool]:
+    """Build the Gemini Live practice ``AgentSession`` — the default voice path
+    and the Meta-cascade fallback. Returns the session and whether it routes
+    through LiveKit Inference (so usage is metered against the right provider).
+
+    The simulated match speaks in a voice matching their profile gender: a
+    female persona gets a feminine-leaning preset, male a masculine one
+    (``voices.voice_for_gender``). Non-binary / unknown gender returns ``""`` and
+    falls back to the user's own ``voice_name`` preference, then the configured
+    default (``build_realtime_model``) — never a wrong-gender guess."""
+    route = llm_routing.route_for("voice", uid=seed.uid)
+    use_inference = route == "inference"
+    voice = voices.voice_for_gender(seed.persona_gender) or seed.voice_name
+    session = AgentSession(
+        llm=build_realtime_model(voice, seed.voice_language, route=route),
+        allow_interruptions=True,
+    )
+    return session, use_inference
+
+
+async def _start_practice_session(
+    ctx: JobContext,
+    seed: RoomSeed,
+    session: AgentSession,
+    *,
+    meta_cascade: bool,
+    use_inference: bool,
+) -> None:
+    """Wire the transcript/state/usage relays and live coach onto a practice
+    session, start it on the room, and have the simulated match greet first."""
+    relay_transcripts(ctx, session)
+    relay_agent_state(ctx, session)
+    if meta_cascade:
+        relay_cascade_usage(
+            session, seed.uid, session_id=seed.session_id,
+            model=CONFIG.meta_chat_model,
+        )
     else:
-        await maybe_open_conversation(session, seed, window=window)
+        relay_token_usage(
+            session, seed.uid, session_id=seed.session_id, ctx=ctx,
+            inference=use_inference,
+        )
+    relay_practice_coach(
+        ctx,
+        session,
+        uid=seed.uid,
+        session_id=seed.session_id,
+        persona_name=seed.persona_name,
+        persona_gender=seed.persona_gender,
+        target_uid=seed.target_uid,
+    )
+    # No tools, no chat_ctx: the persona only knows the whitelisted facts the
+    # seeded prompt carries.
+    agent = Agent(instructions=seed.system_prompt)
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_output_options=RoomOutputOptions(transcription_enabled=False),
+    )
+    # The simulated match "picks up the phone" and opens in character instead of
+    # waiting for the user (they are rehearsing their opener either way). On the
+    # Meta cascade (text chat LLM) a greeting with no prior user turn would reach
+    # the OpenAI-compatible gateway as a system-only message list and 400, so a
+    # benign synthetic user turn is seeded; the Gemini Live / Inference realtime
+    # path does not hit that request shape and is left unseeded.
+    greeting_kwargs: dict = {"instructions": load_practice_greeting()}
+    if meta_cascade:
+        greeting_kwargs["user_input"] = load_voice_session_seed()
+    try:
+        await session.generate_reply(**greeting_kwargs)
+    except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
+        logger.exception("practice greeting failed")
+
+
+def _arm_practice_cascade_fallback(
+    ctx: JobContext, seed: RoomSeed, session: AgentSession
+) -> None:
+    """Fall a *running* Meta cascade back to Gemini Live if it dies mid-call.
+
+    The cascade builds fine, but a leg (STT/LLM/TTS) can still fail at runtime
+    — e.g. the Meta LLM 404s — and livekit-agents then closes the session with
+    ``CloseReason.ERROR``, which would otherwise leave the caller in dead air.
+    On that close we start a fresh Gemini Live practice session on the SAME
+    room so the user keeps a working call. Fires at most once: a Gemini
+    fallback that also errors just closes (no further switch)."""
+    from livekit.agents.voice.events import CloseReason
+
+    fired = False
+
+    @session.on("close")
+    def _on_close(ev) -> None:  # noqa: ANN001 - CloseEvent
+        nonlocal fired
+        if fired or getattr(ev, "reason", None) != CloseReason.ERROR:
+            return
+        fired = True
+        err = getattr(ev, "error", None)
+        logger.warning(
+            "practice-voice fallback uid=%s session=%s — Meta cascade failed at "
+            "runtime (%s), switching to Gemini Live",
+            seed.uid, seed.session_id or "?",
+            getattr(err, "error", err),
+        )
+        if err is not None:
+            capture_exception(getattr(err, "error", err))
+
+        async def _switch() -> None:
+            try:
+                gemini, use_inference = _build_practice_gemini_session(seed)
+                await _start_practice_session(
+                    ctx, seed, gemini, meta_cascade=False,
+                    use_inference=use_inference,
+                )
+            except Exception as exc:  # noqa: BLE001 - fallback must not crash the job
+                logger.exception("practice-voice Gemini Live fallback failed")
+                capture_exception(exc)
+
+        asyncio.create_task(_switch())
+
+
+# A one-line last-topic hint for the opener is capped at this many characters so
+# the opener gets just enough to reference ("where we left off about X") without
+# the full prior turn being dumped back into the opening generation.
+_OPENER_HINT_MAX_CHARS = 200
+
+
+def _opener_prior_context(seed_turns: list[Turn]) -> tuple[bool, str]:
+    """Whether this caller has a prior conversation the opener can offer to pick
+    back up, and a short one-line hint at the last topic (founder behaviour,
+    2026-10-28).
+
+    ``has_prior`` is True when the seeded window carries any real (non-empty)
+    prior turn; the hint is the most recent such turn's text, whitespace-collapsed
+    and truncated to :data:`_OPENER_HINT_MAX_CHARS`. The hint is only a reference
+    for the greeting ("want to pick up where we left off about …?") — the FULL
+    context still rides in the agent's own ``chat_ctx`` for every later turn, so
+    if the caller says "yeah, continue" it works; the opener just must not dump or
+    continue that context itself."""
+    real = [t for t in seed_turns if t.text.strip()]
+    if not real:
+        return False, ""
+    hint = " ".join(real[-1].text.split()).strip()
+    if len(hint) > _OPENER_HINT_MAX_CHARS:
+        hint = hint[:_OPENER_HINT_MAX_CHARS].rstrip() + "…"
+    return bool(hint), hint
 
 
 async def maybe_open_conversation(
@@ -1800,6 +2839,8 @@ async def maybe_open_conversation(
     *,
     window: list[Turn],
     grace_seconds: float | None = None,
+    opener_chat_ctx: NotGivenOr[object] = NOT_GIVEN,
+    seed_user_turn: bool = False,
 ) -> bool:
     """Ayma speaks first on a normal call when the caller stays silent.
 
@@ -1811,7 +2852,32 @@ async def maybe_open_conversation(
     ``metrics_collected`` ledger relay). Returns True if the opener fired.
     Skipped for the welcome room (it has its own greeting), when the last
     seeded turn is the caller's (a resumed call mid-turn), or when the opener
-    is disabled by config. Runs at most once per session by construction."""
+    is disabled by config. Runs at most once per session by construction.
+
+    Opener behaviour (founder, 2026-10-28): when this caller HAS prior
+    conversation context, the opener is a GREET + a choice — "pick up where we
+    left off about X, or something else?" — and explicitly does NOT continue the
+    old topic itself; with no prior context it is a plain fresh warm opener. The
+    has-prior flag and a short one-line last-topic hint (never the full
+    transcript) are computed from ``seed.seed_turns`` and passed into the opener
+    instruction (:func:`prompt.load_voice_opener`). The full context still rides
+    in the agent's own ``chat_ctx``, so if the caller then says "continue" it
+    works. This applies on BOTH the Meta cascade and Gemini Live.
+
+    ``opener_chat_ctx`` is a secondary guard that scopes the history the opener's
+    ``generate_reply`` generates against, WITHOUT touching the agent's own
+    ``chat_ctx`` (which keeps the full window for every later real turn). The Meta
+    cascade passes a history-free context so the chat LLM has no previous-turn
+    object to answer the instant it opens (the greet+choice is driven by the
+    instruction above regardless); left NOT_GIVEN (Gemini Live / every other
+    path), the opener generates against the agent's full context.
+
+    ``seed_user_turn`` is the cascade (text-LLM) guard: the opener's
+    ``generate_reply`` carries a synthetic opening user turn
+    (:func:`load_voice_session_seed`) so the chat LLM never receives a system-only
+    message list — which the OpenAI-compatible gateway (incl. LiveKit Inference)
+    rejects with HTTP 400. Realtime paths leave it False (they don't hit that
+    LLM request shape), so their opener is byte-identical to before."""
     grace = (
         CONFIG.voice_opener_grace_seconds if grace_seconds is None else grace_seconds
     )
@@ -1839,8 +2905,16 @@ async def maybe_open_conversation(
         pass
     if user_started.is_set() or _has_new_turns(window, seeded):
         return False
+    has_prior, last_topic_hint = _opener_prior_context(seed.seed_turns)
+    reply_kwargs: dict = {
+        "instructions": load_voice_opener(has_prior, last_topic_hint)
+    }
+    if opener_chat_ctx is not NOT_GIVEN:
+        reply_kwargs["chat_ctx"] = opener_chat_ctx
+    if seed_user_turn:
+        reply_kwargs["user_input"] = load_voice_session_seed()
     try:
-        await session.generate_reply(instructions=load_voice_opener())
+        await session.generate_reply(**reply_kwargs)
     except Exception:  # noqa: BLE001 - a missed opener shouldn't kill the call
         logger.exception("voice opener failed")
         return False
@@ -1871,10 +2945,70 @@ def prewarm(proc: JobProcess) -> None:
             logger.warning("prewarm import of %s failed", name, exc_info=True)
 
 
+def _this_runtime_cloud() -> str:
+    """Which cloud THIS worker process is: ``livekit`` when ``AGENT_RUNTIME`` is
+    ``livekit`` (the LiveKit-Cloud-hosted deployment), else ``cloudrun`` (GCP
+    Cloud Run — the default and all of production)."""
+    return "livekit" if CONFIG.agent_runtime == "livekit" else "cloudrun"
+
+
+def _room_target_cloud(metadata: str | None) -> str:
+    """The ``voice_agent_cloud`` marker ``POST /bootstrap`` left on the room
+    metadata, or ``cloudrun`` when absent/unreadable — so a room with no marker
+    (and any room whose metadata can't be parsed yet) is served by Cloud Run
+    exactly as today."""
+    raw = (metadata or "").strip()
+    if not raw:
+        return "cloudrun"
+    try:
+        target = str(json.loads(raw).get("voice_agent_cloud", "")).strip()
+    except (ValueError, AttributeError):
+        return "cloudrun"
+    return target if target in ("cloudrun", "livekit") else "cloudrun"
+
+
+async def _request_fnc(req: JobRequest) -> None:
+    """Dual-cloud dispatch guard (ARCHITECTURE §1.1).
+
+    LiveKit still offers EVERY new room to the Cloud Run worker's automatic
+    dispatch — including rooms explicitly routed to the LiveKit-Cloud-hosted
+    worker (``agent_name``). Without this guard both deployments would join a
+    ``livekit``-routed room and contend. Each worker accepts only the rooms
+    whose ``voice_agent_cloud`` marker matches its own runtime; the other
+    declines. A room with no marker is ``cloudrun`` (unchanged production).
+
+    Fail-open: any error reading the marker ends in ``accept`` on the Cloud Run
+    worker so a guard bug can never take production voice down; the LiveKit
+    worker (explicit dispatch only ever receives its own rooms) also accepts."""
+    mine = _this_runtime_cloud()
+    try:
+        target = _room_target_cloud(req.room.metadata if req.room else None)
+    except Exception:  # noqa: BLE001 - never drop a job on a guard error
+        logger.exception("dispatch guard failed to read room target; accepting")
+        await req.accept()
+        return
+    if target != mine:
+        logger.info(
+            "declining room %s: target=%s this=%s",
+            req.room.name if req.room else "?", target, mine,
+        )
+        await req.reject()
+        return
+    await req.accept()
+
+
 def worker_options() -> WorkerOptions:
+    # Explicit agent dispatch on the LiveKit-Cloud-hosted worker (it registers
+    # under this name and is dispatched only to rooms that request it);
+    # AUTOMATIC dispatch (no agent_name) on Cloud Run, exactly as production.
+    agent_name = (
+        CONFIG.agent_name_livekit if CONFIG.agent_runtime == "livekit" else ""
+    )
     return WorkerOptions(
         entrypoint_fnc=entrypoint,
         prewarm_fnc=prewarm,
+        request_fnc=_request_fnc,
+        agent_name=agent_name,
         # The Cloud Run port ($PORT) belongs to AymaAgentServer's keep-alive
         # server (routes can't be added to the worker's own health server,
         # which is built and started inside AgentServer.run), so the worker's

@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'report_events.dart';
+
 enum TurnRole { user, ayma }
 
 enum TurnSource { voice, text }
@@ -25,6 +27,9 @@ class TranscriptTurn {
     this.sharedName = '',
     this.sharedPhoto = '',
     this.sharedRefId = '',
+    this.feedbackKind = '',
+    this.feedbackTitle = '',
+    this.feedbackBody = '',
     this.createdAt,
   });
 
@@ -80,6 +85,14 @@ class TranscriptTurn {
   /// A DM thread id (`conversation`) or a match id (`match`) for the card's tap
   /// target. Empty for `profile` (uses [sharedUid]).
   final String sharedRefId;
+
+  /// When this Ayma turn drafted a feedback card (the `submit_feedback` tool):
+  /// `'feature'` / `'bug'`, plus the drafted title/body. The chat renders an
+  /// editable confirmation card the user reviews and sends — nothing is filed
+  /// until they tap Send. Empty on every other turn.
+  final String feedbackKind;
+  final String feedbackTitle;
+  final String feedbackBody;
 }
 
 /// The single rolling window of conversation turns, voice and text interleaved
@@ -259,6 +272,9 @@ class TranscriptStore extends ChangeNotifier {
     String reportKind = '',
     String reportId = '',
     String? imageUrl,
+    String feedbackKind = '',
+    String feedbackTitle = '',
+    String feedbackBody = '',
   }) {
     final tail = _turns.isNotEmpty ? _turns.last : null;
     if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
@@ -280,7 +296,12 @@ class TranscriptStore extends ChangeNotifier {
       reportKind: reportKind,
       reportId: reportId,
       imageUrl: (imageUrl == null || imageUrl.isEmpty) ? null : imageUrl,
+      feedbackKind: feedbackKind,
+      feedbackTitle: feedbackTitle,
+      feedbackBody: feedbackBody,
     );
+    // A chat turn that edited the story must live-refresh any open Story page.
+    signalStoryEditFromTools(tools);
     notifyListeners();
   }
 
@@ -351,6 +372,9 @@ class TranscriptStore extends ChangeNotifier {
     } else {
       _turns.add(turn);
     }
+    // A finalized voice turn that edited the story live-refreshes the open
+    // Story page (tool labels are meaningful only on the final segment).
+    if (isFinal) signalStoryEditFromTools(tools);
     _trim();
     notifyListeners();
   }

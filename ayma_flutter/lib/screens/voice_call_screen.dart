@@ -108,13 +108,18 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         amplitudeListenable: speaking
                             ? voice.aymaLevel
                             : voice.micLevel,
-                        // This screen only ever exists for a genuinely
-                        // live-or-connecting call (see the class doc), so the
-                        // "connected" filament glow (founder ask: present for
-                        // the whole call, not just while Ayma is talking —
-                        // see `AymaOrbPainter._connectedGlowIntensity`)
-                        // belongs here at every phase this screen shows.
-                        voiceLive: true,
+                        // The "connected" filament glow (founder ask: present
+                        // for the whole call once connected, not just while
+                        // Ayma is talking — see
+                        // `AymaOrbPainter._connectedGlowIntensity`) lights up
+                        // only once Ayma is genuinely listening, the same
+                        // single source of truth the call notification gates
+                        // on. During connecting/waking the orb holds its
+                        // `thinking` connecting visual (see `orbState` above)
+                        // with no connected glow, then switches at the live
+                        // state — it must not read as an active call before
+                        // Ayma can actually hear the caller.
+                        voiceLive: voice.isListening,
                       ),
                       const SizedBox(height: 32),
                       Text(

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -11,12 +10,12 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/profile_service.dart';
 import '../services/report_card_share.dart';
+import '../services/report_events.dart';
 import '../theme.dart';
 import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
-import '../widgets/report_card_share_sheet.dart';
 import 'skills_screen.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
@@ -88,6 +87,12 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   /// Best-effort: null when unknown (offline, no referral, or no API).
   String? _refCode;
 
+  /// True while the card image is being rendered for a share, so the Share
+  /// button shows a spinner and a second tap can't start a second render.
+  bool _sharing = false;
+
+  late final ReportCardShare _share = widget.shareService ?? ReportCardShare();
+
   ImageProvider _image(String url) =>
       widget.imageFor?.call(url) ?? CachedNetworkImageProvider(url);
 
@@ -112,12 +117,19 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     for (final p in _shownPool()) (_decoded[p.url]!, p.label),
   ];
 
+  /// Rebuilds the screen when an appearance run starts/stops so the Re-run
+  /// control and the "Updating…" banner reflect the live run state.
+  void _onReportEvents() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     reassertScreenContext();
     _loadName();
     _loadReferralCode();
+    ReportEvents.instance.addListener(_onReportEvents);
   }
 
   Future<void> _loadReferralCode() async {
@@ -271,6 +283,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
 
   @override
   void dispose() {
+    ReportEvents.instance.removeListener(_onReportEvents);
     _release(_decoded);
     _logo?.image.dispose();
     super.dispose();
@@ -311,16 +324,6 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     onRemovePhoto: onRemove,
   );
 
-  Future<Uint8List> _renderPng(AppearanceCardData card, Color accent) async {
-    final view = View.of(context);
-    final logo = await _ensureLogo();
-    return ReportCardShare.renderPng(
-      _cardWidget(card, accent, logo: logo),
-      view: view,
-      logicalSize: AppearanceReportCard.size,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final resolvedMyUid = widget.myUid ?? _liveUid() ?? '';
@@ -331,6 +334,10 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     // no-photo rule.
     final showCard = card != null && _shownPool().isNotEmpty;
     final ac = context.ac;
+    // A run fired from here (or the Skills screen) is in flight: show it IS
+    // running — a spinner in place of the Re-run icon and an "Updating…" banner
+    // over the (still-visible) current report (founder 2026-10-29).
+    final running = ReportEvents.instance.isRunning('appearance');
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
@@ -338,17 +345,27 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
         actions: [
           // Re-run opens the same pre-run sheet the Skills screen uses: your
           // current photos grouped into Face / Body, with a per-group skip and
-          // an add-photo prompt for an empty group.
+          // an add-photo prompt for an empty group. While a run is in flight the
+          // control shows a spinner and is disabled so a second run can't stack.
           IconButton(
-            tooltip: 'Re-run',
-            onPressed: () => runAppearanceFromPreRunSheet(
-              context, widget.apiClient ?? ApiClient()),
-            icon: const Icon(Icons.refresh),
+            tooltip: running ? 'Running your analysis…' : 'Re-run',
+            onPressed: running
+                ? null
+                : () => runAppearanceFromPreRunSheet(
+                    context, widget.apiClient ?? ApiClient()),
+            icon: running
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
           ),
         ],
       ),
       body: ListView(
         children: [
+          if (running) const _UpdatingBanner(),
           if (showCard) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -398,13 +415,20 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                 label: 'Share',
                 hint: 'Share your report card image',
                 excludeSemantics: true,
-                onTap: () => _openShare(card, ac.accent),
+                onTap: _sharing ? null : () => _openShare(card, ac.accent),
                 child: SizedBox(
                   height: 48,
                   child: FilledButton.icon(
                     key: const ValueKey('reportCardShare'),
-                    onPressed: () => _openShare(card, ac.accent),
-                    icon: const Icon(Icons.ios_share),
+                    onPressed:
+                        _sharing ? null : () => _openShare(card, ac.accent),
+                    icon: _sharing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.ios_share),
                     label: const Text('Share'),
                   ),
                 ),
@@ -430,13 +454,71 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     );
   }
 
-  void _openShare(AppearanceCardData card, Color accent) =>
-      showReportCardShareSheet(
-        context,
-        renderPng: () => _renderPng(card, accent),
+  /// Renders the card image and opens the native OS share sheet directly —
+  /// the one share path that always worked. The user picks the destination
+  /// (WhatsApp, Instagram, Messages, save-to-photos, …) there; Ayma targets no
+  /// single app itself.
+  Future<void> _openShare(AppearanceCardData card, Color accent) async {
+    if (_sharing) return;
+    final toast = AymaToast.of(context);
+    // iPad share-popover anchor: the Share button's rect, read before awaits.
+    final box = context.findRenderObject() as RenderBox?;
+    final origin =
+        box != null ? box.localToGlobal(Offset.zero) & box.size : null;
+    final view = View.of(context);
+    setState(() => _sharing = true);
+    try {
+      final logo = await _ensureLogo();
+      await _share.shareCard(
+        _cardWidget(card, accent, logo: logo),
+        view: view,
+        logicalSize: AppearanceReportCard.size,
         caption: ReportCardShare.captionFor(_refCode),
-        service: widget.shareService,
+        origin: origin,
       );
+    } catch (_) {
+      toast.show("Couldn't share that right now.", kind: AymaToastKind.error);
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+}
+
+/// A slim banner shown at the top of the report while a background run is in
+/// flight, so the current (soon-to-be-replaced) report doesn't just sit there
+/// looking static. Pairs with the spinning Re-run control (founder 2026-10-29).
+class _UpdatingBanner extends StatelessWidget {
+  const _UpdatingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Semantics(
+      liveRegion: true,
+      label: 'Updating your appearance report',
+      child: Container(
+        width: double.infinity,
+        color: ac.bgElev,
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: ac.accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Updating your report…',
+                style: AymaType.sans(size: 13, color: ac.fg),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// The recommendations, privately, under the card. Never on the card.

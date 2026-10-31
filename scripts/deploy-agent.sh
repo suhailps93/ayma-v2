@@ -27,8 +27,22 @@ IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/ayma-agent:
 # AYMA_AGENT_URL is this service's own URL: each active call holds a
 # keep-alive request open against it (agent_keepalive.py) so Cloud Run does
 # not scale the instance down mid-call.
-ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true"
-SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SENTRY_DSN=SENTRY_DSN_AGENT:latest"
+# Voice/TTS model + voice ids are NOT set here (AGENTS.md: no model/voice ids
+# outside config.py). The gender-matched cascade voices and the default TTS
+# model/voice are the committed config.py defaults (Fish Audio s2.1-pro, voice
+# Hannah; gender-matched Hannah/Adrian) — the single source of truth. A
+# `--release` dropping these off the revision is correct: config.py supplies the
+# same values, so female personas sound female and male male without any env pin.
+#
+# LLM_PROVIDER_VOICE_MAIN is deliberately NOT pinned here: the MAIN voice
+# provider flows from config.py, whose QLOO-PHASE default is ``gemini``
+# (best-experience Gemini Live native-audio voice, flips back to ``meta`` post-
+# Qloo). Set LLM_PROVIDER_VOICE_MAIN=meta on the revision only for a one-off
+# override. LLM_PROVIDER_VOICE (the per-surface practice/secondary voice) is
+# pinned to gemini to match the live agent and keep a --full redeploy from
+# snapping back to meta.
+ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LLM_PROVIDER_VOICE=gemini"
+SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SENTRY_DSN=SENTRY_DSN_AGENT:latest,META_API_KEY=META_API_KEY:latest"
 
 # min-instances=0 is the PERMANENT intended config (founder decision,
 # 2026-09-19, docs/deploy.md §12.2) — ayma-agent scales to zero when idle

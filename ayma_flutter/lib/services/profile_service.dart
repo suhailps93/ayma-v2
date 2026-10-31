@@ -180,6 +180,23 @@ class ProfileService {
     );
   }
 
+  /// Whether an AI version of the user may be built (date simulation and other
+  /// agent features). On unless the user explicitly opted out.
+  Stream<bool> watchAiAvatar() => _profileDoc
+      .snapshots()
+      .map((s) => s.data()?['ai_avatar_enabled'] != false);
+
+  /// Opt in or out of having an AI version of me ("AI Avatar").
+  Future<void> setAiAvatar(bool enabled) {
+    return _profileDoc.set(
+      {
+        'ai_avatar_enabled': enabled,
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
   /// Sets `ayma_voice_name` (§13.3). Takes effect from the next voice session.
   Future<void> setVoicePreference(String presetName) {
     return _profileDoc.set(
@@ -239,6 +256,44 @@ class ProfileService {
     final rgb = int.tryParse(cleaned, radix: 16);
     if (rgb == null || cleaned.length != 6) return null;
     return Color(0xFF000000 | rgb);
+  }
+
+  /// Reads the set of feature-tour `feature_id`s this user has already been
+  /// shown (`users/{uid}/profile/main.seen_tour_features`). Empty before the
+  /// first-run walkthrough, or on any read failure / signed-out state — an
+  /// empty set means "never seen", which shows the tour rather than hiding it.
+  Future<Set<String>> readSeenTourFeatures() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return <String>{};
+    final snap = await _profileDoc.get();
+    final raw = snap.data()?['seen_tour_features'];
+    return raw is List ? raw.whereType<String>().toSet() : <String>{};
+  }
+
+  /// Adds [featureIds] to the user's seen set (idempotent `arrayUnion`), so the
+  /// new-feature spotlight only ever shows an id once. Merges — never clobbers
+  /// other profile fields.
+  Future<void> markTourFeaturesSeen(Iterable<String> featureIds) {
+    final ids = featureIds.toList();
+    if (ids.isEmpty) return Future<void>.value();
+    return _profileDoc.set(
+      {
+        'seen_tour_features': FieldValue.arrayUnion(ids),
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  /// Developer-only: clears the seen set so the full tour shows again.
+  Future<void> resetTourFeatures() {
+    return _profileDoc.set(
+      {
+        'seen_tour_features': FieldValue.delete(),
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
   }
 
   static String _extension(String path) {

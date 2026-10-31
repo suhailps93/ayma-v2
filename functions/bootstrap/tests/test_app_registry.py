@@ -21,7 +21,7 @@ _SCREENS = _REPO / "ayma_flutter" / "lib" / "screens"
 def _screen_paths() -> dict[str, str]:
     """``{"XScreen.path": "/x", ...}`` from every ``static const`` path."""
     out: dict[str, str] = {}
-    for f in _SCREENS.glob("*.dart"):
+    for f in _SCREENS.parent.rglob("*.dart"):
         current = ""
         for line in f.read_text(encoding="utf-8").splitlines():
             m = re.match(r"\s*class (\w+)\b", line)
@@ -183,6 +183,83 @@ def test_ui_denial_blocks_the_denylist(label, ctype, route, dialog):
 ])
 def test_ui_denial_allows_everything_else(label, ctype, route, dialog):
     assert app_registry.ui_denial(label, ctype, route, dialog) is None, label
+
+
+def test_appearance_report_destination_is_deterministic():
+    # Founder bug 2026-10-27: "open the appearance report" misrouted to
+    # Notifications then Chat. Every natural phrasing must land on exactly one
+    # key, my_appearance — never Notifications, Chat or anything else.
+    for words in (
+        "appearance report", "the appearance report", "my appearance",
+        "looks report", "my looks report", "report card", "my report card",
+        "face report", "body report", "share my appearance report",
+    ):
+        d = app_registry.find_destination(words)
+        assert d and d["key"] == "my_appearance", f"{words!r} -> {d}"
+
+
+def test_open_screen_description_lists_each_key_with_its_label():
+    # The model reads this; bare keys left "appearance report" under-determined.
+    from skills import app_control
+
+    desc = app_control._OPEN_SCREEN["description"]
+    for d in app_registry.destinations():
+        assert f"{d['key']} ({d['label']})" in desc, d["key"]
+
+
+def test_report_actions_resolve_uniquely_and_name_a_real_tool():
+    import skills
+
+    tools = {d["name"] for d in skills.session_tool_declarations()} | {
+        s.name for s in skills.app_control.VOICE_SKILLS
+    }
+    seen: dict[str, str] = {}
+    for a in app_registry.report_actions():
+        assert a["via"] in tools, f"report_action {a['key']} -> unknown tool {a['via']}"
+        for name in app_registry._names(a):
+            owner = seen.setdefault(name, a["key"])
+            assert owner == a["key"], f"'{name}' names both {owner} and {a['key']}"
+        assert app_registry.find_report_action(a["key"])["key"] == a["key"]
+
+
+def test_rerun_appearance_resolves_to_the_run_tool():
+    for words in ("rerun appearance report", "regenerate appearance report",
+                  "recalculate appearance report", "run my appearance report again"):
+        a = app_registry.find_report_action(words)
+        assert a and a["key"] == "rerun_appearance" and a["via"] == "run_appearance_report", words
+
+
+def test_story_edit_actions_resolve_uniquely_and_name_a_real_tool():
+    import skills
+
+    tools = {d["name"] for d in skills.session_tool_declarations()}
+    seen: dict[str, str] = {}
+    for a in app_registry.story_edit_actions():
+        assert a["via"] in tools, f"story_edit_action {a['key']} -> unknown tool {a['via']}"
+        for name in app_registry._names(a):
+            owner = seen.setdefault(name, a["key"])
+            assert owner == a["key"], f"'{name}' names both {owner} and {a['key']}"
+        assert app_registry.find_story_edit_action(a["key"])["key"] == a["key"]
+
+
+def test_story_edit_intent_routes_to_the_direct_tool_not_navigation():
+    # A change/reword request -> edit_story_entry; a remove request ->
+    # remove_story_entry. Never the Story page.
+    for words in ("change my story", "fix my story", "reword my story section",
+                  "edit my wiki"):
+        a = app_registry.find_story_edit_action(words)
+        assert a and a["via"] == "edit_story_entry", words
+    for words in ("remove from my story", "take that off my story",
+                  "delete my story section"):
+        a = app_registry.find_story_edit_action(words)
+        assert a and a["via"] == "remove_story_entry", words
+
+
+def test_bare_open_my_story_is_still_a_navigation_not_an_edit():
+    # Opening the story to look at it must NOT be captured as an edit intent.
+    for words in ("open my story", "my story", "show me my story", "go to my story"):
+        assert app_registry.find_story_edit_action(words) is None, words
+        assert app_registry.find_destination(words)["key"] == "story", words
 
 
 def test_profile_completeness_card_resolves_to_complete_profile():

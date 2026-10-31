@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/overflow_guards.dart';
@@ -210,7 +211,7 @@ class ExploreScreenState extends State<ExploreScreen> {
             const SizedBox(height: 4),
           ],
           body: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const AppLoadingIndicator()
               : _error != null
                   ? CenteredScroll(
                       padding: const EdgeInsets.all(24),

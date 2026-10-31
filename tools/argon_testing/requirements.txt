@@ -1,0 +1,7 @@
+# Argon emulator-testing harness (dev tool only — NOT shipped in the app).
+google-genai>=1.0.0
+imageio>=2.30.0
+Pillow>=10.0.0
+PyYAML>=6.0
+# ADB (Android platform-tools) and the gcloud CLI are external prerequisites,
+# not pip packages — see README.md.

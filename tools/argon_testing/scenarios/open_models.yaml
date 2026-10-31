@@ -1,0 +1,10 @@
+name: open_models
+description: >
+  From the signed-in app, open Ayma's models / AI model selection screen.
+goal: >
+  Starting from the Ayma main screen, navigate to the screen where the AI
+  model (or voice/brain) can be chosen. This is usually reached from Settings
+  or a profile/menu entry labelled with something like "Models", "AI model",
+  "Brain", or "Voice". Open that screen.
+success_condition: >
+  A screen listing selectable AI models (or voices) is visible on screen.

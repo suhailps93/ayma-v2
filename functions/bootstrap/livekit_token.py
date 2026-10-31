@@ -75,12 +75,34 @@ def build_room_seed(
     session_id: str,
     voice_name: str = "",
     voice_language: str = "",
+    voice_accent: str = "",
     greeting_instructions: str = "",
+    practice: bool = False,
+    persona_name: str = "",
+    persona_gender: str = "",
+    target_uid: str = "",
+    voice_mode: str = "",
+    realtime_model_id: str = "",
+    brain_id: str = "",
+    stt_id: str = "",
+    tts_id: str = "",
+    tts_voice: str = "",
+    voice_agent_cloud: str = "cloudrun",
 ) -> str:
     """JSON the agent worker reads from room metadata: the caller's system
     prompt + recent-turns window (§1.4, §1.5), the ids it needs to persist the
     session's ``raw_turns`` on shutdown (§1.7 step 8), and the user's
-    ``ayma_voice_name`` / ``ayma_voice_language`` preferences (§13.3)."""
+    ``ayma_voice_name`` / ``ayma_voice_language`` preferences (§13.3).
+
+    ``practice`` (Practice Date voice, hackathon B) flags a *simulated-match*
+    room: ``system_prompt`` is then the persona prompt
+    (``practice_date.compose_persona_prompt``) and the agent runs the practice
+    path (no Ayma tools, no memory flush/wiki ingest, a side-channel live
+    coach) instead of a normal Ayma call. ``persona_name`` / ``persona_gender`` /
+    ``target_uid`` let the agent drive the live coach (with the right pronouns),
+    pick a gender-matched TTS voice, and persist the practice transcript for the
+    debrief, WITHOUT ever re-reading the target's profile (the persona prompt
+    already carries only the viewer-visible, never-load-filtered facts)."""
     return json.dumps(
         {
             "system_prompt": system_prompt,
@@ -91,29 +113,71 @@ def build_room_seed(
             "session_id": session_id,
             "voice_name": voice_name,
             "voice_language": voice_language,
+            # Dedicated free-text ACCENT (``ayma_voice_accent``, §13.9): fed to an
+            # accent-capable provider at session boot (``agent._accent_block``).
+            "voice_accent": voice_accent,
+            # Per-user MAIN-voice STACK selection (§13.9). Empty ``voice_mode`` =
+            # use the deploy-time CONFIG.llm_provider_voice_main default; set it
+            # ("realtime"/"cascade") and the component ids override it for this
+            # call only (``agent._run_session``).
+            "voice_mode": voice_mode,
+            "realtime_model_id": realtime_model_id,
+            "brain_id": brain_id,
+            "stt_id": stt_id,
+            "tts_id": tts_id,
+            "tts_voice": tts_voice,
             "greeting_instructions": greeting_instructions,
+            "practice": practice,
+            "persona_name": persona_name,
+            "persona_gender": persona_gender,
+            "target_uid": target_uid,
+            # Dual-cloud agent dispatch marker (§1.1): which cloud's worker
+            # should serve this room. The Cloud Run worker (automatic dispatch,
+            # which LiveKit still offers EVERY room including explicitly-routed
+            # ones) reads this in its ``request_fnc`` and declines a room marked
+            # ``livekit`` so the two deployments never both join; "" / absent /
+            # ``cloudrun`` is served by Cloud Run exactly as today.
+            "voice_agent_cloud": voice_agent_cloud or "cloudrun",
         }
     )
 
 
-async def seed_room_context(room: str, seed_json: str) -> None:
+async def seed_room_context(
+    room: str, seed_json: str, agent_name: str | None = None
+) -> None:
     """Attach ``seed_json`` to the LiveKit room as metadata before the client
-    joins, so the auto-dispatched agent (§1.2) can read it in ``entrypoint``.
+    joins, so the dispatched agent (§1.2) can read it in ``entrypoint``.
+
+    ``agent_name`` picks the dispatch model for this room (§1.1, dual-cloud
+    agent):
+
+    * ``None`` (the default, all of production) — the room is created with NO
+      explicit agent dispatch, so LiveKit's AUTOMATIC dispatch hands it to the
+      Cloud Run worker exactly as today.
+    * a name (e.g. ``"ayma-lk"``) — the room is created with EXPLICIT dispatch
+      to that agent, so the LiveKit-Cloud-hosted worker (registered under that
+      ``agent_name``) serves it. The Cloud Run worker is still offered the room
+      by automatic dispatch and declines it via its ``request_fnc`` guard
+      (``agent._should_serve``), so the two never both join.
 
     Best-effort: a failure here must not block a voice session from starting —
     the agent falls back to the base persona with no history.
     """
     lk = api.LiveKitAPI()
     try:
+        create = api.CreateRoomRequest(
+            name=room,
+            metadata=seed_json,
+            empty_timeout=CONFIG.livekit_room_empty_timeout_seconds,
+            departure_timeout=CONFIG.livekit_room_departure_timeout_seconds,
+        )
+        if agent_name:
+            # Explicit agent dispatch: attach the named agent at room creation
+            # so the LiveKit-hosted worker is dispatched the moment the room
+            # exists (same trigger point as today's automatic dispatch).
+            create.agents.append(api.RoomAgentDispatch(agent_name=agent_name))
         try:
-            await lk.room.create_room(
-                api.CreateRoomRequest(
-                    name=room,
-                    metadata=seed_json,
-                    empty_timeout=CONFIG.livekit_room_empty_timeout_seconds,
-                    departure_timeout=CONFIG.livekit_room_departure_timeout_seconds,
-                )
-            )
+            await lk.room.create_room(create)
         except api.TwirpError:
             pass  # room already exists — the update below carries the metadata
         await lk.room.update_room_metadata(

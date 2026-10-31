@@ -1,0 +1,1 @@
+[The voice call just connected and the microphone is open. The person on the line has not said anything yet. This line is a system cue, not something the person said — do not quote it, read it aloud, or answer it as if it were speech. Simply open the conversation now, exactly as your instructions for this turn tell you to.]

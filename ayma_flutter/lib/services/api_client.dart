@@ -5,6 +5,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
+import '../features/date_sim/date_sim_models.dart';
+import '../widgets/taste_models.dart';
+import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
@@ -29,6 +32,15 @@ class ApiClient {
   final Duration chatStreamConnectTimeout;
   final Duration chatStreamIdleTimeout;
 
+  /// Startup deadlines (§11.2). The splash's `/bootstrap` is the first network
+  /// the app does, so it gets explicit timeouts: a transient DNS/connectivity
+  /// blip must surface as a connection-class [ApiException] the splash can
+  /// retry, never an endless spinner. [_bootstrapTokenTimeout] caps the
+  /// Firebase ID-token refresh (a silent network call that can otherwise hang
+  /// forever); [_bootstrapPostTimeout] caps the POST itself.
+  static const _bootstrapTokenTimeout = Duration(seconds: 12);
+  static const _bootstrapPostTimeout = Duration(seconds: 15);
+
   final http.Client _http;
   final FirebaseAuth _auth;
 
@@ -52,18 +64,57 @@ class ApiClient {
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
   }) async {
+    // Refresh the ID token under a deadline. A hang here (flaky DNS reaching
+    // Firebase) or a network-level Firebase failure is transient, so it
+    // surfaces as a connection-class ApiException (no statusCode) the splash
+    // retries — never a stale-token 401 that would wrongly bounce a signed-in
+    // user to sign-in.
+    final Map<String, String> headers;
+    try {
+      headers = await _headers().timeout(_bootstrapTokenTimeout);
+    } on TimeoutException {
+      // A token refresh that never returns is almost always flaky DNS reaching
+      // Firebase — a network blip the splash retries. The splash's own overall
+      // startup watchdog guarantees this can never spin forever.
+      throw ApiException('Network timed out preparing the request.');
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'network-request-failed') {
+        throw ApiException('Network error: ${e.message ?? e.code}');
+      }
+      // Any other auth error for a supposedly signed-in user (expired /
+      // invalid / revoked token, disabled user) means the restored session is
+      // unusable — not a network blip. The splash signs out and routes to
+      // sign-in rather than retrying forever.
+      throw AuthSessionException('Auth session rejected: ${e.code}');
+    } on ApiException {
+      // `_headers` own "Not signed in." (null token) — pass it through
+      // unchanged so the splash's 401 handling sends them to sign-in.
+      rethrow;
+    } catch (e) {
+      // The Android keystore / decrypt failures that follow an Auto Backup
+      // restore onto a wiped keystore ("FirebearStorageCryptoHelper: Exception
+      // while decrypting bytes", PlatformException) surface here: the persisted
+      // credential can't be read, so the session is broken. Sign out and
+      // re-authenticate — never retry, never hang.
+      throw AuthSessionException('Auth token unreadable: $e');
+    }
+
     final http.Response response;
     try {
-      response = await _http.post(
-        _uri('/bootstrap'),
-        headers: await _headers(),
-        body: jsonEncode({
-          'session_id': sessionId,
-          'recent_turns': recentTurns,
-        }),
-      );
+      response = await _http
+          .post(
+            _uri('/bootstrap'),
+            headers: headers,
+            body: jsonEncode({
+              'session_id': sessionId,
+              'recent_turns': recentTurns,
+            }),
+          )
+          .timeout(_bootstrapPostTimeout);
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
+    } on TimeoutException {
+      throw ApiException('Network timed out reaching Ayma.');
     }
 
     if (response.statusCode != 200) {
@@ -661,24 +712,43 @@ class ApiClient {
     if (size > 0) 'size': size,
   });
 
-  /// `GET /dm/{threadId}/icebreakers` — suggested opener chips (§6.9). Empty
-  /// until a compatibility check has produced a `matches` doc for the pair.
-  Future<List<String>> dmIcebreakers(String threadId) async {
-    final r = await _http.get(
-      _uri('/dm/$threadId/icebreakers'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException(
-        'icebreakers failed.',
-        statusCode: r.statusCode,
-        body: r.body,
-      );
-    }
-    final decoded = jsonDecode(r.body) as Map<String, dynamic>;
-    return ((decoded['icebreakers'] as List?) ?? [])
-        .map((e) => e.toString())
-        .toList();
+  /// `POST /dm/assist` — live DM coaching (§6.9): up-to-4 suggestion chips that
+  /// refresh as the conversation grows, plus an optional one-line nudge.
+  /// [other] is the other participant's uid; [messages] is the recent thread
+  /// tail (up to the last 12, oldest-first, each `{from: me|them, text}`) and
+  /// may be empty for a brand-new thread (opener mode).
+  Future<DmAssist> dmAssist({
+    required String other,
+    required List<Map<String, String>> messages,
+  }) async {
+    final decoded = await _sendJson('POST', '/dm/assist', {
+      'other': other,
+      'messages': messages,
+    });
+    return DmAssist.fromJson(decoded);
+  }
+
+  /// `POST /dm/translate` — cross-language DM translation (§6.12): translate
+  /// [text] into [targetLang] (a language code or name), returning the
+  /// translation plus the detected source language. [threadId] scopes the call
+  /// to a thread the caller is a participant of (pair-only, like every /dm
+  /// endpoint); [sourceLang] is an optional hint the model may override with
+  /// its own detection. A nicety that never blocks the thread — the backend
+  /// returns the original text on any model failure, so callers always get a
+  /// usable [DmTranslation].
+  Future<DmTranslation> dmTranslate({
+    required String threadId,
+    required String text,
+    required String targetLang,
+    String sourceLang = '',
+  }) async {
+    final decoded = await _sendJson('POST', '/dm/translate', {
+      'thread_id': threadId,
+      'text': text,
+      'target_lang': targetLang,
+      if (sourceLang.isNotEmpty) 'source_lang': sourceLang,
+    });
+    return DmTranslation.fromJson(decoded);
   }
 
   /// `POST /wiki/reset` — wipe what Ayma has learned (`wiki_pages` /
@@ -1019,6 +1089,28 @@ class ApiClient {
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /dev/test-upgrade` — DEV/TEST ONLY. Grant the chosen paid tier's
+  /// monthly credit pool to the caller WITHOUT a real purchase, exercising the
+  /// same server-side grant path a real entitlement uses (so it's a faithful
+  /// test of "credits per plan" in a build where RevenueCat is off). The server
+  /// gates it on its dev-view allowlist — a non-dev caller gets 403. [plan] is
+  /// `plus`, `pro` or `max`. Returns the refreshed usage view.
+  Future<UsageSummary> testUpgrade(String plan) async {
+    final r = await _http.post(
+      _uri('/dev/test-upgrade'),
+      headers: await _headers(),
+      body: jsonEncode({'plan': plan}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'test upgrade failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   /// `POST /usage/reset-real-money` — zero the Real money tab's "since last
   /// reset" tracker. A marker, not a wipe: the all-time dollar figure and the
   /// per-conversation history keep counting. Returns the refreshed usage view.
@@ -1038,26 +1130,26 @@ class ApiClient {
   }
 
   /// `POST /dev/verify` — verify the developer password to unlock the
-  /// Developer panel's contents, without changing any flag. The server checks
-  /// [password] against its own secret; throws [ApiException] with status 403
-  /// (wrong password), 429 (locked out) or 503 (not configured).
+  /// Developer panel's contents. The server checks [password] against its own
+  /// secret; throws [ApiException] with status 403 (wrong password), 429
+  /// (locked out) or 503 (not configured).
   Future<void> verifyDevPassword(String password) async {
     await _sendJson('POST', '/dev/verify', {'password': password});
   }
 
-  /// `POST /dev/flags` — switch the `dev_panel` feature flag. The server
-  /// checks [password] against its own secret; throws [ApiException] with
-  /// status 403 (wrong password), 429 (locked out) or 503 (not configured).
-  /// Returns the new value.
-  Future<bool> setDevPanelFlag({
-    required String password,
-    required bool enabled,
-  }) async {
-    final m = await _sendJson('POST', '/dev/flags', {
-      'password': password,
-      'dev_panel': enabled,
-    });
-    return m['dev_panel'] == true;
+  /// `GET /voice/agent-cloud` — which cloud serves this user's voice agent
+  /// (`cloudrun` | `livekit`). Dev-only control; `cloudrun` is the default and
+  /// all of production.
+  Future<String> voiceAgentCloud() async {
+    final m = await _getJson('/voice/agent-cloud');
+    return (m['current'] as String?) ?? 'cloudrun';
+  }
+
+  /// `POST /voice/agent-cloud` — persist which cloud serves the next voice
+  /// call. Returns the saved value.
+  Future<String> setVoiceAgentCloud(String cloud) async {
+    final m = await _sendJson('POST', '/voice/agent-cloud', {'cloud': cloud});
+    return (m['current'] as String?) ?? cloud;
   }
 
   static String _upgradeMessage(String body) {
@@ -1160,6 +1252,195 @@ class ApiClient {
       );
     }
     return MatchReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  // --- Practice Date (hackathon deliverable B) ----------------------------- //
+
+  /// `POST /practice/start` — open a practice simulator against [otherUid]'s
+  /// viewer-visible profile. 404 → null (no simulatable profile).
+  Future<PracticeStart?> practiceStart(String otherUid) async {
+    final r = await _http.post(
+      _uri('/practice/start'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid}),
+    );
+    if (r.statusCode == 404) return null;
+    if (r.statusCode != 200) {
+      throw ApiException('Could not start practice.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeStart.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /practice/chat` — one practice turn: the simulated match's reply and
+  /// an optional live coach nudge. HTTP 402 surfaces as `usageCapped`.
+  Future<PracticeTurn> practiceChat(String sessionId, String message) async {
+    final r = await _http.post(
+      _uri('/practice/chat'),
+      headers: await _headers(),
+      body: jsonEncode({'session_id': sessionId, 'message': message}),
+    );
+    if (r.statusCode == 402) return const PracticeTurn(usageCapped: true);
+    if (r.statusCode != 200) {
+      throw ApiException('Practice reply failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeTurn.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /practice/voice/start` — open a practice VOICE session against
+  /// [otherUid]'s viewer-visible profile (hackathon B). Returns the practice
+  /// session id, persona, banner and LiveKit credentials for the existing voice
+  /// pipeline. 404 → null (no simulatable profile); a body with
+  /// `usage_capped:true` surfaces as [PracticeVoiceSession.usageCapped].
+  Future<PracticeVoiceSession?> practiceVoiceStart(String otherUid) async {
+    final r = await _http.post(
+      _uri('/practice/voice/start'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid}),
+    );
+    if (r.statusCode == 404) return null;
+    if (r.statusCode != 200) {
+      throw ApiException('Could not start voice practice.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeVoiceSession.fromMap(
+        jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /practice/debrief` — end the session and return the coaching
+  /// debrief (what worked / suggested next lines / what to avoid).
+  Future<PracticeDebrief> practiceDebrief(String sessionId) async {
+    final r = await _http.post(
+      _uri('/practice/debrief'),
+      headers: await _headers(),
+      body: jsonEncode({'session_id': sessionId}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('Debrief failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeDebrief.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /date-sim` — run an AI date simulation against [otherUid] under the
+  /// client-chosen [simId]. The transcript streams into Firestore as it is
+  /// generated (read it with `DateSimService`), so the response body is not
+  /// used; this future completes when the run ends. Throws [ApiException]:
+  /// 402 out of credits, 403 AI-Avatar opt-out (message from the server),
+  /// 404 no simulatable profile.
+  Future<void> dateSim(String simId, String otherUid, int maxMessages) async {
+    final r = await _http.post(
+      _uri('/date-sim'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'other_uid': otherUid,
+        'max_messages': maxMessages,
+        'sim_id': simId,
+      }),
+    );
+    if (r.statusCode == 200) return;
+    throw ApiException(
+      r.statusCode == 403
+          ? _dateSimOptOutMessage(r.body)
+          : 'Date simulation failed.',
+      statusCode: r.statusCode,
+      body: r.body,
+    );
+  }
+
+  /// `POST /date-sim/{simId}/continue` — continue an existing simulation with
+  /// [moreMessages] more turns, resuming from where it left off (never a
+  /// restart) and re-scoring over the full transcript. The new turns stream
+  /// into the same Firestore doc the client is already watching, so the body is
+  /// not used; this future completes when the continuation ends. Throws
+  /// [ApiException]: 402 out of credits, 403 AI-Avatar opt-out, 404 no sim.
+  Future<void> dateSimContinue(String simId, int moreMessages) async {
+    final r = await _http.post(
+      _uri('/date-sim/$simId/continue'),
+      headers: await _headers(),
+      body: jsonEncode({'more_messages': moreMessages}),
+    );
+    if (r.statusCode == 200) return;
+    throw ApiException(
+      r.statusCode == 403
+          ? _dateSimOptOutMessage(r.body)
+          : 'Continuing the simulation failed.',
+      statusCode: r.statusCode,
+      body: r.body,
+    );
+  }
+
+  /// The AI-Avatar opt-out message from a 403 `/date-sim` body
+  /// (`{"detail": {"code", "message"}}`).
+  static String _dateSimOptOutMessage(String body) {
+    try {
+      final detail = (jsonDecode(body) as Map<String, dynamic>)['detail'];
+      final message = detail is Map ? detail['message'] : null;
+      if (message is String && message.isNotEmpty) return message;
+    } catch (_) {}
+    return 'Date simulation isn’t available for this profile.';
+  }
+
+  /// `POST /taste/pair` — the taste overlap (Qloo) between the user and
+  /// [otherUid], shown on the date-sim result. Throws [NoTasteException] when
+  /// either person has no public Taste page (404 `no_taste`), else
+  /// [ApiException] on any other failure.
+  Future<TasteMatch> tastePair(String otherUid) async {
+    final r = await _http.post(
+      _uri('/taste/pair'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid}),
+    );
+    if (r.statusCode == 404) {
+      final detail = _errorDetail(r.body);
+      if (detail?['code'] == 'no_taste') {
+        final message = detail?['message'];
+        throw NoTasteException(message is String && message.isNotEmpty
+            ? message
+            : 'Add a public "Taste" page (e.g. "Music: ...") to see your '
+                'taste match.');
+      }
+    }
+    if (r.statusCode != 200) {
+      throw ApiException('Taste match failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return TasteMatch.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// The `detail` object of a FastAPI error body, or null when absent.
+  static Map<String, dynamic>? _errorDetail(String body) {
+    try {
+      final detail = (jsonDecode(body) as Map<String, dynamic>)['detail'];
+      return detail is Map<String, dynamic> ? detail : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// `GET /date-sim/estimate` — approximate credits per message count (both
+  /// agents are billed to the user). When [otherUid] is given, also carries the
+  /// match's avatar `readiness` block so the setup screen can warn when the
+  /// match has little context. Empty credits when unavailable.
+  Future<DateSimEstimate> dateSimEstimate({String? otherUid}) async {
+    final uri = (otherUid != null && otherUid.isNotEmpty)
+        ? _uri('/date-sim/estimate')
+            .replace(queryParameters: {'other_uid': otherUid})
+        : _uri('/date-sim/estimate');
+    final r = await _http.get(uri, headers: await _headers());
+    if (r.statusCode != 200) return const DateSimEstimate();
+    final body = jsonDecode(r.body) as Map<String, dynamic>;
+    final raw =
+        (body['credits_by_messages'] as Map<String, dynamic>?) ?? const {};
+    final readiness = body['readiness'] as Map<String, dynamic>?;
+    return DateSimEstimate(
+      credits: {
+        for (final e in raw.entries) int.parse(e.key): (e.value as num).toInt(),
+      },
+      readiness:
+          readiness == null ? null : DateSimReadiness.fromMap(readiness),
+    );
   }
 
   /// `POST /profiles/mini` — name + resolved photo URL for a batch of users
@@ -1336,6 +1617,32 @@ class ApiClient {
     }
     return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
   }
+
+  /// `GET /voice/engines` — the selectable voice STACK (§13.9): modes, realtime
+  /// models, and cascade brains/STT/TTS (sourced live from LiveKit Inference,
+  /// config fallback otherwise), plus the user's current selection.
+  Future<VoiceCatalog> voiceEngines() async {
+    final m = await _getJson('/voice/engines');
+    return VoiceCatalog.fromMap(m);
+  }
+
+  /// `POST /voice/preference` — persist the user's voice stack (§13.9). Takes
+  /// effect on the next voice call.
+  Future<void> saveVoicePreference(VoiceSelection sel) =>
+      _postJsonOk('/voice/preference', sel.toMap());
+
+  /// `GET /brain/preference` — the unified **Brain** catalog + the user's
+  /// current choice (§13.10): the ONE LLM that drives every text surface, with
+  /// web/vision always on Gemini.
+  Future<BrainCatalog> brainPreference() async {
+    final m = await _getJson('/brain/preference');
+    return BrainCatalog.fromMap(m);
+  }
+
+  /// `POST /brain/preference` — persist the user's unified Brain (§13.10). Takes
+  /// effect on the next text turn.
+  Future<void> saveBrainPreference(String brain) =>
+      _postJsonOk('/brain/preference', {'brain': brain});
 
   /// `GET /media/photos` — the current profile-photo grid (§8.3). Returns the
   /// list of `{media_id, order}` maps, order ascending.
@@ -1575,20 +1882,52 @@ class ApiClient {
     'session_id': sessionId,
   });
 
-  /// `POST /product-feedback` — a bug report or feature request from the
-  /// Profile screen (§15). `imagePaths` are storage paths already uploaded
-  /// under `uploads/{uid}/`.
-  Future<void> submitProductFeedback({
+  /// `POST /feedback/submit` — file a reviewed product-feedback card into the
+  /// unified `feedback` collection (§15). Used by the in-chat feedback catcher
+  /// (`source: 'chat_card'`) and the Settings "Send feedback" form
+  /// (`source: 'settings_form'`). `screenshotPaths` are storage paths already
+  /// uploaded under `uploads/{uid}/`. Nothing is filed until the user confirms.
+  Future<void> submitFeedbackCard({
     required String kind,
-    required String text,
-    List<String> imagePaths = const [],
+    required String title,
+    required String body,
+    List<String> screenshotPaths = const [],
+    String screen = '',
     String appVersion = '',
-  }) => _postJsonOk('/product-feedback', {
+    String platform = '',
+    String source = 'chat_card',
+  }) => _postJsonOk('/feedback/submit', {
     'kind': kind,
-    'text': text,
-    'image_paths': imagePaths,
+    'title': title,
+    'body': body,
+    'screenshot_paths': screenshotPaths,
+    'screen': screen,
     'app_version': appVersion,
+    'platform': platform,
+    'source': source,
   });
+
+  /// `GET /admin/feedback` — the product-feedback triage list for the in-app
+  /// Developer → Feedback view (§15). Dev-allowlist gated server-side.
+  Future<List<FeedbackRow>> adminListFeedback({int limit = 100}) async {
+    final m = await _getJson('/admin/feedback', {'limit': '$limit'});
+    return [
+      for (final r in (m['feedback'] as List? ?? const []))
+        FeedbackRow.fromMap(r as Map<String, dynamic>),
+    ];
+  }
+
+  /// `POST /admin/feedback/{id}` — set a feedback row's triage status
+  /// (`new` / `triaged` / `done`).
+  Future<void> adminSetFeedbackStatus(String id, String status) =>
+      _postJsonOk('/admin/feedback/$id', {'status': status});
+
+  /// `GET /admin/feedback/media` — a viewable URL for a feedback screenshot's
+  /// Storage path (dev-allowlist gated).
+  Future<String> adminFeedbackMediaUrl(String path) async {
+    final m = await _getJson('/admin/feedback/media', {'path': path});
+    return (m['url'] as String?) ?? '';
+  }
 
   /// `POST /notifications/token` — register/refresh this device's FCM token
   /// (§7.2, §7.9 step 2).
@@ -2471,6 +2810,7 @@ class ChatResult {
     this.usageCapped = false,
     this.toolsUsed = const [],
     this.imageUrl = '',
+    this.feedbackCard,
   });
 
   factory ChatResult.fromMap(Map<String, dynamic> m) => ChatResult(
@@ -2484,6 +2824,10 @@ class ChatResult {
         .map((e) => e.toString())
         .toList(),
     imageUrl: m['image_url'] as String? ?? '',
+    feedbackCard: m['feedback_card'] is Map
+        ? FeedbackCard.fromMap(
+            (m['feedback_card'] as Map).cast<String, dynamic>())
+        : null,
   );
 
   final String reply;
@@ -2503,6 +2847,84 @@ class ChatResult {
   /// A download URL for a photo Ayma generated this turn (the `edit_photo`
   /// tool, "Chat about it" photo flow) — empty for a plain text reply.
   final String imageUrl;
+
+  /// A feedback card Ayma drafted this turn (the `submit_feedback` tool) for
+  /// the user to review, edit and send — null for a normal turn. Nothing is
+  /// filed until the user taps Send on the card.
+  final FeedbackCard? feedbackCard;
+}
+
+/// A product-feedback card Ayma drafted mid-chat (the `submit_feedback` tool).
+/// It is NOT yet filed — the user reviews/edits it and sends it themselves
+/// (`POST /feedback/submit`). See [FeedbackDraftCard].
+class FeedbackCard {
+  const FeedbackCard({
+    required this.kind,
+    required this.title,
+    required this.body,
+  });
+
+  factory FeedbackCard.fromMap(Map<String, dynamic> m) => FeedbackCard(
+        kind: (m['kind'] as String?) ?? 'feature',
+        title: (m['title'] as String?) ?? '',
+        body: (m['body'] as String?) ?? '',
+      );
+
+  /// `'feature'` or `'bug'`.
+  final String kind;
+  final String title;
+  final String body;
+}
+
+/// One triaged product-feedback row for the Developer → Feedback admin view
+/// (`GET /admin/feedback`). [screenshotPaths] are `uploads/{uid}/…` Storage
+/// paths the client resolves to view.
+class FeedbackRow {
+  const FeedbackRow({
+    required this.id,
+    required this.uid,
+    required this.source,
+    required this.kind,
+    required this.title,
+    required this.body,
+    required this.screenshotPaths,
+    required this.screen,
+    required this.appVersion,
+    required this.platform,
+    required this.status,
+    required this.createdAt,
+  });
+
+  factory FeedbackRow.fromMap(Map<String, dynamic> m) => FeedbackRow(
+        id: (m['id'] as String?) ?? '',
+        uid: (m['uid'] as String?) ?? '',
+        source: (m['source'] as String?) ?? '',
+        kind: (m['kind'] as String?) ?? '',
+        title: (m['title'] as String?) ?? '',
+        body: (m['body'] as String?) ?? '',
+        screenshotPaths: [
+          for (final p in (m['screenshot_paths'] as List? ?? const []))
+            p.toString(),
+        ],
+        screen: (m['screen'] as String?) ?? '',
+        appVersion: (m['app_version'] as String?) ?? '',
+        platform: (m['platform'] as String?) ?? '',
+        status: (m['status'] as String?) ?? 'new',
+        createdAt: DateTime.tryParse((m['created_at'] as String?) ?? ''),
+      );
+
+  final String id;
+  final String uid;
+  final String source;
+  final String kind;
+  final String title;
+  final String body;
+  final List<String> screenshotPaths;
+  final String screen;
+  final String appVersion;
+  final String platform;
+  final String status;
+  final DateTime? createdAt;
 }
 
 /// One frame of [ApiClient.chatStream].
@@ -2855,6 +3277,102 @@ class MatchScoreResult {
   final String? matchId;
 }
 
+/// Live DM coaching for a thread (§6.9), from `POST /dm/assist`: suggestion
+/// chips plus an optional one-line nudge, and a protective [safety] read on the
+/// other person (§6.9.1). [mode] is `opener` for a brand-new thread or `coach`
+/// once the conversation is underway; the UI treats both the same way. An empty
+/// result (no chips, null tip, `none` safety) is the silent-degrade case.
+class DmAssist {
+  const DmAssist({
+    this.mode = 'opener',
+    this.chips = const [],
+    this.tip,
+    this.safety = DmSafety.none,
+  });
+
+  final String mode; // opener | coach
+  final List<String> chips; // up to 4
+  final String? tip; // short nudge above the composer, or null
+  final DmSafety safety; // protective heads-up about the other person
+
+  static const empty = DmAssist();
+
+  factory DmAssist.fromJson(Map<String, dynamic> m) {
+    final rawTip = (m['tip'] as String?)?.trim();
+    return DmAssist(
+      mode: (m['mode'] as String?)?.trim().isNotEmpty == true
+          ? m['mode'] as String
+          : 'opener',
+      chips: ((m['chips'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .take(4)
+          .toList(),
+      tip: (rawTip == null || rawTip.isEmpty) ? null : rawTip,
+      safety: DmSafety.fromJson(m['safety']),
+    );
+  }
+}
+
+/// A calm, protective read on how the *other* person is behaving in a DM
+/// thread (§6.9.1). Advisory only — it never blocks sending. [level] is
+/// `none` (nothing concerning — stay silent), `caution` (a gentle heads-up), or
+/// `warning` (a clear concern). [reason] is a short supportive sentence written
+/// to the user; [flags] are short pattern tags. The UI surfaces a safety note
+/// only when [shouldSurface] (level is caution or warning). Parsing fails quiet:
+/// anything missing or malformed, or a non-`none` level without a reason,
+/// becomes a silent `none` so the app never shows an empty or invented alarm.
+class DmSafety {
+  const DmSafety({this.level = 'none', this.reason = '', this.flags = const []});
+
+  final String level; // none | caution | warning
+  final String reason; // short supportive heads-up, or '' when none
+  final List<String> flags; // short pattern tags
+
+  static const none = DmSafety();
+
+  /// Show the safety note only for a genuine concern (>= caution) that carries
+  /// something to say.
+  bool get shouldSurface => level != 'none' && reason.isNotEmpty;
+
+  factory DmSafety.fromJson(Object? raw) {
+    if (raw is! Map) return none;
+    final level = (raw['level'] as String?)?.trim().toLowerCase() ?? 'none';
+    if (level != 'caution' && level != 'warning') return none;
+    final reason = (raw['reason'] as String?)?.trim() ?? '';
+    if (reason.isEmpty) return none;
+    return DmSafety(
+      level: level,
+      reason: reason,
+      flags: ((raw['flags'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .take(6)
+          .toList(),
+    );
+  }
+}
+
+/// One cross-language DM translation, from `POST /dm/translate` (§6.12).
+/// [translated] is the text rendered in the requested target language (or the
+/// original, unchanged, when the backend could not translate — translation
+/// never blocks the thread). [detectedSourceLang] is the language the original
+/// was written in, as detected by the model; empty when unknown. When
+/// [detectedSourceLang] equals the target (or [translated] equals the
+/// original) the message was already in the reader's language and needs no
+/// translation.
+class DmTranslation {
+  const DmTranslation({required this.translated, this.detectedSourceLang = ''});
+
+  final String translated;
+  final String detectedSourceLang;
+
+  factory DmTranslation.fromJson(Map<String, dynamic> m) => DmTranslation(
+        translated: (m['translated'] as String?)?.trim() ?? '',
+        detectedSourceLang: (m['detected_source_lang'] as String?)?.trim() ?? '',
+      );
+}
+
 /// Name + resolved photo URL for a user, from `POST /profiles/mini`.
 class MiniProfile {
   const MiniProfile({
@@ -2945,10 +3463,12 @@ class MatchReport {
     required this.otherName,
     required this.otherPhoto,
     required this.myPhoto,
+    this.mutual = false,
     this.scoreConfidence,
     this.confidenceNote = '',
     this.gateFailures = const [],
     this.method = '',
+    this.taste,
   });
 
   final String matchId;
@@ -2966,6 +3486,11 @@ class MatchReport {
   final String otherPhoto;
   final String myPhoto;
 
+  /// A genuine MUTUAL match — both people liked each other
+  /// (`matches/{id}.status == "mutual_interest"`). When false, this screen is
+  /// only a compatibility preview and reads "Compatibility", not "Match".
+  final bool mutual;
+
   /// 0..1 — how much to trust the number. High when both profiles are
   /// detailed and the dealbreaker gates had their data.
   final double? scoreConfidence;
@@ -2977,6 +3502,11 @@ class MatchReport {
 
   /// One-line note on how the score was built (structured vs. LLM).
   final String method;
+
+  /// "Taste match · powered by Qloo" section between the two people (Qloo
+  /// taste overlap + date ideas), or a no-Taste-page empty state. Null when
+  /// the backend omitted the section (unexpected failure / unavailable).
+  final TasteMatchLoad? taste;
 
   /// `high` / `medium` / `low`, from [scoreConfidence]. Empty when unknown.
   String get confidenceBand {
@@ -3010,6 +3540,7 @@ class MatchReport {
       otherName: other['name'] as String? ?? '',
       otherPhoto: other['photo'] as String? ?? '',
       myPhoto: me['photo'] as String? ?? '',
+      mutual: m['mutual'] == true,
       scoreConfidence: (m['score_confidence'] as num?)?.toDouble(),
       confidenceNote: m['confidence_note'] as String? ?? '',
       gateFailures: (m['gate_failures'] as List? ?? const [])
@@ -3018,6 +3549,7 @@ class MatchReport {
           )
           .toList(),
       method: m['method'] as String? ?? '',
+      taste: TasteMatchLoad.fromReportValue(m['taste']),
     );
   }
 }
@@ -3568,17 +4100,50 @@ class AppearanceCoverage {
   final bool hasFittedBodyPhoto;
 }
 
-/// One grid photo eligible for an Appearance axis — its `user_media` id and a
-/// directly-loadable thumbnail URL. Returned by `GET /appearance/eligibility`.
+/// One grid photo eligible for an Appearance axis — its `user_media` id, a
+/// directly-loadable thumbnail URL, and the per-photo people/shot signals the
+/// pre-run sheet uses to decide its pre-check. Returned by
+/// `GET /appearance/eligibility`.
 class EligiblePhoto {
-  const EligiblePhoto({required this.mediaId, required this.url});
+  const EligiblePhoto({
+    required this.mediaId,
+    required this.url,
+    this.personCount = 0,
+    this.multiPerson = false,
+    this.showsFace = false,
+    this.showsBody = false,
+    this.autoSelect = true,
+  });
 
   final String mediaId;
   final String url;
 
+  /// Coarse people count from the server: 1 = solo shot of the user, 2 = a
+  /// group (two or more people), 0 = unknown / untagged.
+  final int personCount;
+
+  /// True when the photo has more than one person — such a photo is never
+  /// pre-checked (analysis needs solo shots of the user).
+  final bool multiPerson;
+
+  final bool showsFace;
+  final bool showsBody;
+
+  /// Whether the sheet should PRE-CHECK this photo for its axis. Server-driven
+  /// (`person_count == 1` and the photo actually shows that axis). Photos the
+  /// user adds in-sheet default to `true`. The user can still toggle any photo.
+  final bool autoSelect;
+
   factory EligiblePhoto.fromMap(Map<String, dynamic> m) => EligiblePhoto(
         mediaId: m['media_id'] as String? ?? '',
         url: m['url'] as String? ?? '',
+        personCount: (m['person_count'] as num?)?.toInt() ?? 0,
+        multiPerson: m['multi_person'] == true,
+        showsFace: m['shows_face'] == true,
+        showsBody: m['shows_body'] == true,
+        // Default true so a payload without the field (older server) keeps the
+        // old "all pre-checked" behaviour; the server now sends it explicitly.
+        autoSelect: m['auto_select'] as bool? ?? true,
       );
 }
 
@@ -4156,6 +4721,311 @@ class VoicePresets {
   String get effective => current.isNotEmpty ? current : defaultName;
 }
 
+// --- Voice ENGINE catalog (§13.9) ---------------------------------------
+// The developer "Voice engine" control + the user-facing "Ayma's voice"
+// screen read this from `GET /voice/engines`. Parsers tolerate missing fields.
+
+/// One selectable voice (a realtime model's or a TTS provider's).
+class CatalogVoice {
+  const CatalogVoice({
+    required this.id,
+    required this.label,
+    this.description = '',
+    this.gender = '',
+  });
+  final String id;
+  final String label;
+  final String description;
+  final String gender;
+
+  factory CatalogVoice.fromMap(Map m) => CatalogVoice(
+        id: m['id'] as String? ?? '',
+        label: (m['label'] as String?)?.isNotEmpty == true
+            ? m['label'] as String
+            : (m['id'] as String? ?? ''),
+        description: m['description'] as String? ?? '',
+        gender: m['gender'] as String? ?? '',
+      );
+}
+
+/// A language/accent option (empty code = plain English default).
+class CatalogLanguage {
+  const CatalogLanguage({required this.code, required this.label});
+  final String code;
+  final String label;
+  factory CatalogLanguage.fromMap(Map m) => CatalogLanguage(
+        code: m['code'] as String? ?? '',
+        label: m['label'] as String? ?? (m['code'] as String? ?? ''),
+      );
+}
+
+/// A realtime model (Gemini Live, OpenAI Realtime, …) with its own voices.
+class RealtimeModel {
+  const RealtimeModel({
+    required this.id,
+    required this.label,
+    this.provider = '',
+    this.available = true,
+    this.requiresSecret = '',
+    this.supportsAccent = false,
+    this.voices = const [],
+    this.languages = const [],
+  });
+  final String id;
+  final String label;
+  final String provider;
+  final bool available;
+  final String requiresSecret;
+
+  /// Whether this model honours a free-text accent (§13.9).
+  final bool supportsAccent;
+  final List<CatalogVoice> voices;
+  final List<CatalogLanguage> languages;
+
+  factory RealtimeModel.fromMap(Map m) => RealtimeModel(
+        id: m['id'] as String? ?? '',
+        label: m['label'] as String? ?? (m['id'] as String? ?? ''),
+        provider: m['provider'] as String? ?? '',
+        available: m['available'] as bool? ?? true,
+        requiresSecret: m['requires_secret'] as String? ?? '',
+        supportsAccent: m['supports_accent'] as bool? ?? false,
+        voices: ((m['voices'] as List?) ?? const [])
+            .map((e) => CatalogVoice.fromMap(e as Map))
+            .toList(),
+        languages: ((m['languages'] as List?) ?? const [])
+            .map((e) => CatalogLanguage.fromMap(e as Map))
+            .toList(),
+      );
+}
+
+/// A cascade component (brain/STT/TTS). TTS carries its voices + languages.
+class VoiceComponent {
+  const VoiceComponent({
+    required this.id,
+    required this.label,
+    this.provider = '',
+    this.available = true,
+    this.requiresSecret = '',
+    this.supportsAccent = false,
+    this.voices = const [],
+    this.languages = const [],
+  });
+  final String id;
+  final String label;
+  final String provider;
+  final bool available;
+  final String requiresSecret;
+
+  /// Whether this component's provider honours a free-text accent (TTS only;
+  /// §13.9). Fixed-voice cascade TTS providers report false.
+  final bool supportsAccent;
+  final List<CatalogVoice> voices;
+  final List<CatalogLanguage> languages;
+
+  factory VoiceComponent.fromMap(Map m) => VoiceComponent(
+        id: m['id'] as String? ?? '',
+        label: m['label'] as String? ?? (m['id'] as String? ?? ''),
+        provider: m['provider'] as String? ?? '',
+        available: m['available'] as bool? ?? true,
+        requiresSecret: m['requires_secret'] as String? ?? '',
+        supportsAccent: m['supports_accent'] as bool? ?? false,
+        voices: ((m['voices'] as List?) ?? const [])
+            .map((e) => CatalogVoice.fromMap(e as Map))
+            .toList(),
+        languages: ((m['languages'] as List?) ?? const [])
+            .map((e) => CatalogLanguage.fromMap(e as Map))
+            .toList(),
+      );
+}
+
+/// The user's current/selected voice stack.
+class VoiceSelection {
+  const VoiceSelection({
+    required this.mode,
+    this.realtimeModelId = '',
+    this.brainId = '',
+    this.sttId = '',
+    this.ttsId = '',
+    this.voiceId = '',
+    this.languageCode = '',
+    this.accent = '',
+  });
+  final String mode; // 'realtime' | 'cascade'
+  final String realtimeModelId;
+  final String brainId;
+  final String sttId;
+  final String ttsId;
+  final String voiceId;
+  final String languageCode;
+
+  /// Dedicated free-text ACCENT (§13.9) — HOW Ayma sounds, separate from the
+  /// language selector. Honoured only by accent-capable voice models.
+  final String accent;
+
+  factory VoiceSelection.fromMap(Map m) => VoiceSelection(
+        mode: m['mode'] as String? ?? 'realtime',
+        realtimeModelId: m['realtime_model_id'] as String? ?? '',
+        brainId: m['brain_id'] as String? ?? '',
+        sttId: m['stt_id'] as String? ?? '',
+        ttsId: m['tts_id'] as String? ?? '',
+        voiceId: m['voice_id'] as String? ?? '',
+        languageCode: m['language_code'] as String? ?? '',
+        accent: m['accent'] as String? ?? '',
+      );
+
+  Map<String, dynamic> toMap() => {
+        'mode': mode,
+        'realtime_model_id': realtimeModelId,
+        'brain_id': brainId,
+        'stt_id': sttId,
+        'tts_id': ttsId,
+        'voice_id': voiceId,
+        'language_code': languageCode,
+        'accent': accent,
+      };
+
+  VoiceSelection copyWith({
+    String? mode,
+    String? realtimeModelId,
+    String? brainId,
+    String? sttId,
+    String? ttsId,
+    String? voiceId,
+    String? languageCode,
+    String? accent,
+  }) =>
+      VoiceSelection(
+        mode: mode ?? this.mode,
+        realtimeModelId: realtimeModelId ?? this.realtimeModelId,
+        brainId: brainId ?? this.brainId,
+        sttId: sttId ?? this.sttId,
+        ttsId: ttsId ?? this.ttsId,
+        voiceId: voiceId ?? this.voiceId,
+        languageCode: languageCode ?? this.languageCode,
+        accent: accent ?? this.accent,
+      );
+}
+
+/// The full `/voice/engines` catalog.
+class VoiceCatalog {
+  const VoiceCatalog({
+    this.modes = const ['realtime', 'cascade'],
+    this.source = '',
+    this.realtimeModels = const [],
+    this.brains = const [],
+    this.stt = const [],
+    this.tts = const [],
+    required this.current,
+    required this.defaultSelection,
+  });
+  final List<String> modes;
+  final String source; // 'livekit' | 'fallback'
+  final List<RealtimeModel> realtimeModels;
+  final List<VoiceComponent> brains;
+  final List<VoiceComponent> stt;
+  final List<VoiceComponent> tts;
+  final VoiceSelection current;
+  final VoiceSelection defaultSelection;
+
+  factory VoiceCatalog.fromMap(Map<String, dynamic> m) => VoiceCatalog(
+        modes: ((m['modes'] as List?) ?? const ['realtime', 'cascade'])
+            .map((e) => e.toString())
+            .toList(),
+        source: m['source'] as String? ?? '',
+        realtimeModels: ((m['realtime_models'] as List?) ?? const [])
+            .map((e) => RealtimeModel.fromMap(e as Map))
+            .toList(),
+        brains: ((m['brains'] as List?) ?? const [])
+            .map((e) => VoiceComponent.fromMap(e as Map))
+            .toList(),
+        stt: ((m['stt'] as List?) ?? const [])
+            .map((e) => VoiceComponent.fromMap(e as Map))
+            .toList(),
+        tts: ((m['tts'] as List?) ?? const [])
+            .map((e) => VoiceComponent.fromMap(e as Map))
+            .toList(),
+        current: VoiceSelection.fromMap(
+            (m['current'] as Map?) ?? const {'mode': 'realtime'}),
+        defaultSelection: VoiceSelection.fromMap(
+            (m['default'] as Map?) ?? const {'mode': 'realtime'}),
+      );
+
+  RealtimeModel? realtimeById(String id) {
+    for (final r in realtimeModels) {
+      if (r.id == id) return r;
+    }
+    return null;
+  }
+
+  VoiceComponent? ttsById(String id) {
+    for (final t in tts) {
+      if (t.id == id) return t;
+    }
+    return null;
+  }
+}
+
+// --- Unified Brain (§13.10) ---------------------------------------------
+
+/// One selectable **Brain** (an LLM vendor) from `GET /brain/preference`.
+class BrainOption {
+  const BrainOption({
+    required this.id,
+    required this.label,
+    this.description = '',
+    this.available = true,
+    this.capabilities = const [],
+  });
+
+  final String id; // 'gemini' | 'meta'
+  final String label;
+  final String description;
+  final bool available;
+  final List<String> capabilities; // 'text','json','vision','web','tools'
+
+  factory BrainOption.fromMap(Map m) => BrainOption(
+        id: m['id'] as String? ?? '',
+        label: m['label'] as String? ?? '',
+        description: m['description'] as String? ?? '',
+        available: m['available'] as bool? ?? true,
+        capabilities: ((m['capabilities'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+}
+
+/// The `/brain/preference` payload: the Brain list, the saved choice (empty when
+/// unset), and the default the UI pre-selects when nothing is saved.
+class BrainCatalog {
+  const BrainCatalog({
+    this.brains = const [],
+    this.current = '',
+    this.defaultBrain = '',
+  });
+
+  final List<BrainOption> brains;
+  final String current; // '' when unset
+  final String defaultBrain;
+
+  /// The id the dropdown should show: the saved choice if any, else the default,
+  /// else the first available brain (never null when the list is non-empty).
+  String get effectiveId {
+    if (current.isNotEmpty && brains.any((b) => b.id == current)) return current;
+    if (defaultBrain.isNotEmpty && brains.any((b) => b.id == defaultBrain)) {
+      return defaultBrain;
+    }
+    return brains.isNotEmpty ? brains.first.id : '';
+  }
+
+  factory BrainCatalog.fromMap(Map<String, dynamic> m) => BrainCatalog(
+        brains: ((m['brains'] as List?) ?? const [])
+            .map((e) => BrainOption.fromMap(e as Map))
+            .toList(),
+        current: m['current'] as String? ?? '',
+        defaultBrain: m['default'] as String? ?? '',
+      );
+}
+
 // --- Your Story editor models -------------------------------------------
 
 /// One section of the Your Story document. On a `GET /story` read the flags are
@@ -4474,6 +5344,23 @@ class UpgradeRequiredException implements Exception {
 
   @override
   String toString() => 'UpgradeRequiredException($message)';
+}
+
+/// Thrown by [ApiClient.bootstrap] when the signed-in user's credential cannot
+/// be turned into an ID token for a reason that is NOT a transient network
+/// failure: an Android keystore / decrypt failure after an Auto Backup restore
+/// ("FirebearStorageCryptoHelper"), or a rejected / disabled / revoked user.
+/// The persisted session is unusable, so the splash signs the user out and
+/// routes to sign-in instead of retrying (§11.2). Distinct from [ApiException]
+/// precisely so a genuine network failure (which IS an [ApiException]) still
+/// retries and never discards a signed-in session.
+class AuthSessionException implements Exception {
+  AuthSessionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'AuthSessionException($message)';
 }
 
 class ApiException implements Exception {

@@ -2,8 +2,13 @@
 
 Scores how much of the user's intent-routed question tree
 (:mod:`question_tree`) is answered — from the ``users/{uid}/questionnaire``
-store, from derivable ``profile/main`` fields, and, for the open-ended narrative
-nodes, from a single cached LLM pass over the user's wiki text.
+store, from derivable ``profile/main`` fields, and, for every node not covered
+by those, from a single cached LLM pass over the user's wiki text (the
+free-text "story"). That story pass marks a narrative node covered/partial and,
+for a structured node (enum/scale/...), marks it covered when the story states
+a concrete answer — so an answer the user gave in chat that ``wiki_ingest``
+folded into the story, but that was never written to the questionnaire store,
+still counts as answered and the question stops being re-asked.
 
 The result is persisted to ``users/{uid}/profile/main.completeness`` (a map) and
 surfaced by ``GET /completeness`` and ``GET /questionnaire``. :func:`recompute`
@@ -89,6 +94,14 @@ def _profile_derived_field(node_id: str, profile: dict) -> str | None:
     ):
         return None
     return field
+
+
+def _profile_answered(node_id: str, profile: dict) -> bool:
+    """True when a preboarding ``profile/main`` field currently answers
+    ``node_id`` — i.e. the node is both profile-derivable (see
+    :func:`_profile_derived_field`) and that field holds a non-blank value."""
+    field = _profile_derived_field(node_id, profile)
+    return bool(field) and not _blank(profile.get(field))
 
 _NARRATIVE_COVERAGE = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 
@@ -383,8 +396,9 @@ async def _run_narrative_llm(uid: str, wiki_text: str, topics: list[dict]) -> di
 
 
 async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, str]:
-    """``{node_id: "covered"|"partial"|"missing"}`` for the narrative nodes in
-    ``targets``. Cached on ``users/{uid}/completeness_cache/narrative`` keyed by
+    """``{node_id: "covered"|"partial"|"missing"}`` for the nodes in ``targets``
+    (narrative *and* structured) judged against the user's free-text story.
+    Cached on ``users/{uid}/completeness_cache/narrative`` keyed by
     a hash of the wiki text + the target id set, so an unchanged wiki never
     re-hits Gemini."""
     if not targets:
@@ -462,14 +476,23 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
         "nikah" if branch == "nikah" else branch
     )
 
-    narrative_targets = [
+    # Nodes whose answer may already live in the user's free-text story (the
+    # wiki) rather than in the structured questionnaire store: every open node
+    # not already answered by a preboarding profile field or a recorded
+    # questionnaire entry. Narrative nodes have always been judged this way;
+    # structured nodes (enum/scale/multi/bool) are included too — see the
+    # per-node branch below. The routing node is excluded: its branch is
+    # resolved separately (`_resolve_intent`) and set through its own skill, so
+    # a passing story mention must never silently "cover" it out of the intent
+    # gate.
+    story_targets = [
         n
         for n in nodes
-        if n["kind"] == "narrative"
-        and n["id"] not in _PROFILE_DERIVABLE
+        if n["id"] != _ROUTING_ID
         and n["id"] not in store
+        and not _profile_answered(n["id"], profile)
     ]
-    narr = await _narrative_status(db, uid, narrative_targets)
+    story = await _narrative_status(db, uid, story_targets)
 
     evaluated: list[dict] = []
     for n in nodes:
@@ -483,13 +506,27 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
             cov = 0.7 if raw_src == "inferred" else 1.0
             src = raw_src if raw_src in ("stated", "inferred") else "stated"
             val = entry.get("value")
-        elif n["kind"] == "narrative":
-            st = narr.get(nid, "missing")
-            cov = _NARRATIVE_COVERAGE.get(st, 0.0)
+        else:
+            # Answer not in the structured store — check the free-text story.
+            # Founder bug (2026-10): `wiki_ingest` reliably folds every chat
+            # answer into the story each turn, but `record_answer` (the only
+            # writer of the questionnaire store) fires only when the model
+            # remembers to call it. Scoring structured nodes against the store
+            # alone left a story-captured answer invisible here, so
+            # `next_questions` re-selected the same question forever ("it keeps
+            # updating the story but asks the same thing again and again"). A
+            # narrative node keeps its graded coverage (covered 1.0 /
+            # partial 0.5); a structured node needs a concrete answer, so only
+            # a `covered` story verdict satisfies it — a vague/partial mention
+            # leaves the exact value unknown and the question still worth
+            # asking.
+            st = story.get(nid, "missing")
+            if n["kind"] == "narrative":
+                cov = _NARRATIVE_COVERAGE.get(st, 0.0)
+            else:
+                cov = 1.0 if st == "covered" else 0.0
             src = "wiki" if cov > 0 else None
             val = None
-        else:
-            cov, src, val = 0.0, None, None
         evaluated.append(
             {
                 "node": n,
@@ -536,6 +573,18 @@ _ROUTING_ID = "relationship_intent"
 # above — i.e. covered (1.0) or a confident inference / partial (0.7).
 _UNLOCK_COVERAGE = 0.7
 
+# Promoted sections: always reachable regardless of how far the user has got in
+# the sequential core-first flow, and never gating the sections that follow
+# them in priority order. `taste` (music/film/food — the public Qloo Taste page
+# that `taste_match.parse_taste` reads) is promoted here so its questions
+# surface near the top of `next` for a user who hasn't answered them yet and
+# show as a fillable topic on the complete-profile screen, rather than staying
+# buried behind every earlier section's core. Its high node weights
+# (`taste_music` is weight 5) then rank it among the first items offered. The
+# normal identity -> personality -> ... progression is untouched. See
+# docs/QLOO_TASTE.md and ARCHITECTURE.md (questionnaire / taste priority).
+_EARLY_PAGE_TYPES = frozenset({"taste"})
+
 
 def _visible(evaluated: list[dict], intent_set: bool) -> list[dict]:
     """The evaluated nodes the client sees. Until the user has picked a
@@ -552,7 +601,9 @@ def _section_gating(
     """``(ordered_page_types, meta)`` where ``meta[page_type]`` is
     ``{unlocked, core_total, core_answered, core_ok}``. Sections are walked in
     :func:`question_tree.sections_for_intent` order; a section is unlocked when
-    it is the first, or every core node of every earlier section is answered.
+    it is the first, a promoted :data:`_EARLY_PAGE_TYPES` section, or every core
+    node of every earlier non-promoted section is answered. A promoted section
+    is also transparent to the gate — it never locks the sections after it.
     While the intent is unset the routing section is represented by its own
     always-on prompt and is dropped from the section list."""
     present = {e["node"]["page_type"] for e in visible}
@@ -581,13 +632,18 @@ def _section_gating(
         core_total = len(core)
         core_answered = sum(1 for e in core if e["coverage"] >= _UNLOCK_COVERAGE)
         core_ok = core_answered >= core_total  # vacuously true with no core
+        early = pt in _EARLY_PAGE_TYPES
         meta[pt] = {
-            "unlocked": i == 0 or earlier_core_ok,
+            "unlocked": early or i == 0 or earlier_core_ok,
             "core_total": core_total,
             "core_answered": core_answered,
             "core_ok": core_ok,
         }
-        earlier_core_ok = earlier_core_ok and core_ok
+        # A promoted ("early") section is always open and is transparent to the
+        # sequential gate: leaving it unanswered must not lock the sections
+        # that follow it in priority order. See _EARLY_PAGE_TYPES.
+        if not early:
+            earlier_core_ok = earlier_core_ok and core_ok
     return ordered, meta
 
 

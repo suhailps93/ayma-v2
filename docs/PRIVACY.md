@@ -124,6 +124,27 @@ Where GDPR-style law applies, the legal bases are noted in plain terms.
 - **To suggest matches and rank compatibility.**
   _Basis: performance of our contract; legitimate interest in making the
   product work well._
+- **To make your own AI persona sound like you** — when you run features that
+  simulate a chat on your behalf (such as the AI date simulation), your persona
+  may be grounded in a small, recent sample of **your own sent messages** so it
+  matches your texting style. We only ever use **messages you yourself sent**;
+  the other person's messages are never used to build your persona, and your
+  messages are never used to build anyone else's. A persona is grounded only in
+  your own data, and is built to reflect your style without disclosing your
+  private details. To make this instant, we keep a single standing "AI avatar"
+  snapshot of your persona on our servers (built from **your own** profile,
+  your personal notes, and that sample of your own sent messages). **This
+  snapshot is stored on our servers only — it is never readable by other users
+  or by your own app, and it is used solely to run your avatar.** Before your
+  avatar ever speaks in a simulated chat, two safeguards keep your private
+  details in: a disclosure filter that forbids it from stating sensitive
+  specifics, and an automatic scrub that strips obvious contact details,
+  addresses and ID numbers out of the stored persona summary. You can turn your
+  AI avatar off at any time with the "AI Avatar" setting in Settings; if you do,
+  we stop maintaining the snapshot and delete it. The snapshot is deleted when you
+  delete your account, and cleared when you delete what Ayma knows about you.
+  _Basis: performance of our contract; legitimate interest in providing an
+  authentic AI matchmaking product._
 - **For safety and integrity** — review reports, investigate abuse, enforce
   the Terms, prevent fraud, and protect users.
   _Basis: legitimate interest in protecting users and the service; compliance
@@ -181,6 +202,26 @@ choose to send them. They do not see your private wiki notes, your raw
 facial/physique analyses, your voice transcripts, or your web-search summary
 unless you have deliberately added that content to your public profile or a
 message.
+
+#### Appearance analysis photos stay private
+
+When you run the **Appearance** analysis (your face and physique report), the
+photos you pick or add for that run are used for **the analysis only**. Adding
+a photo in the analysis sheet uploads it to your own **private** storage and
+feeds it into that one analysis — it does **not** publish the photo to your
+public profile, your photo grid, or any collection other people can see, and
+selecting a photo in that sheet only chooses it for the run (it never posts it
+anywhere). Making an analysis photo public is always a **separate, deliberate**
+action you take in your profile's photo editor. The analysis itself is stored
+privately to your account.
+
+_2026-10-28:_ The analysis sheet now **pre-selects only solo photos of you** —
+a photo with **more than one person** is never auto-checked for face or body
+analysis (a photo is only auto-selected when it is a single-person shot that
+actually shows that part of you). This keeps the analysis to photos of **you**
+and avoids analysing other people who appear in a group shot. You can still
+manually choose any photo, but nothing that shows other people is checked for
+you by default.
 
 ### Advertising partners (once ads launch)
 

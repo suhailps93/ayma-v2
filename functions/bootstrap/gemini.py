@@ -22,6 +22,7 @@ import feature_flags
 import llm_routing
 import token_ledger
 from config import CONFIG
+from tool_labels import NO_CHIP as _NO_CHIP
 from tool_labels import TOOL_LABELS as _TOOL_LABELS
 from tool_labels import WORKING_LABELS as _WORKING_LABELS
 from tool_labels import outcome_label as _outcome_label
@@ -266,6 +267,8 @@ async def _reply_events_inference(
     seen: set[str] = set()
 
     def _note(name: str, label: str | None = None) -> None:
+        if label == _NO_CHIP:
+            return
         key = label or name
         if key not in seen:
             seen.add(key)
@@ -406,6 +409,8 @@ async def generate_reply_events(
     seen: set[str] = set()
 
     def _note(name: str, label: str | None = None) -> None:
+        if label == _NO_CHIP:
+            return
         key = label or name
         if key not in seen:
             seen.add(key)

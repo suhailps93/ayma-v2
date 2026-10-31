@@ -50,12 +50,23 @@ def _in_cooldown(last, now: datetime) -> bool:
     return (now - last) < timedelta(seconds=CONFIG.push_cooldown_seconds)
 
 
-def _deliver(tokens: list[str], title: str, body: str, deep_link: str):
-    """Send one multicast push. Split out so tests patch here, not the SDK."""
+def _deliver(
+    tokens: list[str], title: str, body: str, deep_link: str, notif_id: str = ""
+):
+    """Send one multicast push. Split out so tests patch here, not the SDK.
+
+    ``notif_id`` — the notification-centre doc id this push mirrors, carried in
+    the data payload so a tap can mark that exact in-app notification read and
+    keep the bell/OS badge in sync with the shade (§7.6)."""
+    data = {}
+    if deep_link:
+        data["deep_link"] = deep_link
+    if notif_id:
+        data["notif_id"] = notif_id
     msg = messaging.MulticastMessage(
         tokens=tokens,
         notification=messaging.Notification(title=title, body=body),
-        data={"deep_link": deep_link} if deep_link else {},
+        data=data,
         # High priority so a closed/idle device is woken promptly (Android
         # otherwise batches normal-priority pushes in Doze); the APNs
         # equivalent is priority 10 + an audible alert. The channel id pins
@@ -79,8 +90,13 @@ def _deliver(tokens: list[str], title: str, body: str, deep_link: str):
 def _deliver_data(tokens: list[str], title: str, body: str, data: dict):
     """Send one multicast push whose Android payload is **data-only**, so the
     app's own service builds the notification (a chat-style one with the
-    sender's avatar). iOS has no such hook, so APNs still carries a plain
-    alert. Split out so tests patch here, not the SDK."""
+    sender's avatar). On iOS the APNs alert carries ``mutable-content: 1`` so
+    the Notification Service Extension (ios/NotificationService) can download
+    ``sender_photo_url`` from the data payload and attach it as the
+    notification's image/avatar (UNNotificationAttachment); the data values are
+    copied into the APNs payload (FCM delivers them in ``userInfo``). If the
+    extension is absent or the download fails it falls back to the plain alert.
+    Split out so tests patch here, not the SDK."""
     msg = messaging.MulticastMessage(
         tokens=tokens,
         data={k: str(v) for k, v in data.items()},
@@ -91,6 +107,7 @@ def _deliver_data(tokens: list[str], title: str, body: str, data: dict):
                 aps=messaging.Aps(
                     alert=messaging.ApsAlert(title=title, body=body),
                     sound="default",
+                    mutable_content=True,
                 )
             ),
         ),
@@ -105,10 +122,11 @@ def _dead_token(exc: Exception | None) -> bool:
 
 
 def _push(db, uid: str, user_ref, tokens: list[str], title: str,
-          body: str, deep_link: str, push_data: dict | None = None) -> bool:
+          body: str, deep_link: str, push_data: dict | None = None,
+          notif_id: str = "") -> bool:
     try:
         if push_data is None:
-            resp = _deliver(tokens, title, body, deep_link)
+            resp = _deliver(tokens, title, body, deep_link, notif_id)
         else:
             resp = _deliver_data(tokens, title, body, push_data)
     except Exception:  # noqa: BLE001
@@ -184,6 +202,7 @@ async def dispatch(
     actor_uid: str = "",
     push_data: dict | None = None,
     push_body: str | None = None,
+    dedup_id: str = "",
 ) -> dict:
     """Run the pipeline for one (user, event). Returns a small status dict
     (``muted`` / ``doc`` / ``pushed`` / ``cooldown`` / ``no_tokens``).
@@ -191,6 +210,12 @@ async def dispatch(
     ``actor_uid`` — the other person the notification is about (the DM sender,
     the matched user). The notification centre groups by it and shows their
     face + name.
+
+    ``dedup_id`` — a stable centre-doc id for an event that must collapse to a
+    single rolling entry (public-profile-update suggestions), instead of the
+    default auto-id. Concurrent writers then land on one doc rather than
+    stacking duplicates, and a later fire overwrites it with the latest count
+    (resetting read/dismissed so the refreshed entry resurfaces).
 
     ``push_data`` — send the push as an Android data-only message carrying this
     payload (the app renders it, e.g. a per-sender conversation notification).
@@ -214,9 +239,12 @@ async def dispatch(
     }
     if actor_uid:
         record["actor_uid"] = actor_uid
-    db.collection("users").document(uid).collection(
+    centre = db.collection("users").document(uid).collection(
         NOTIFICATIONS_COLLECTION
-    ).document().set(record)
+    )
+    doc_ref = centre.document(dedup_id) if dedup_id else centre.document()
+    doc_ref.set(record)
+    notif_id = doc_ref.id
 
     user_ref = db.collection("users").document(uid)
     data = user_ref.get().to_dict() or {}
@@ -234,11 +262,13 @@ async def dispatch(
         text = push_body or preview
         pushed = _push(
             db, uid, user_ref, tokens, title, text, deep_link,
-            {**push_data, "title": title, "body": text},
+            {**push_data, "title": title, "body": text, "notif_id": notif_id},
         )
         return {"muted": False, "doc": True, "pushed": pushed}
 
-    pushed = _push(db, uid, user_ref, tokens, title, preview, deep_link)
+    pushed = _push(
+        db, uid, user_ref, tokens, title, preview, deep_link, notif_id=notif_id
+    )
     if pushed:
         user_ref.set(
             {LAST_PUSH_AT_FIELD: firestore.SERVER_TIMESTAMP}, merge=True

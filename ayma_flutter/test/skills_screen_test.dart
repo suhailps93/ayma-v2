@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/skills_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -42,9 +43,18 @@ ApiClient _api({
   List<Map<String, dynamic>> history = const [],
   Map<String, dynamic>? mine,
   Map<String, dynamic>? usage,
+  void Function(Map<String, dynamic> body)? onAppearanceRun,
 }) {
   final mockHttp = MockClient((request) async {
     const jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
+    if (request.url.path == '/appearance/report') {
+      onAppearanceRun?.call(jsonDecode(request.body) as Map<String, dynamic>);
+      return http.Response(
+          jsonEncode(
+              {'report_id': 'rid', 'report': null, 'usage_capped': false}),
+          200,
+          headers: jsonUtf8);
+    }
     if (request.url.path == '/appearance/coverage') {
       return http.Response(
           jsonEncode(coverage ??
@@ -186,56 +196,72 @@ void main() {
     expect(find.text('Face analysis'), findsOneWidget);
     expect(find.text('Body analysis'), findsOneWidget);
     expect(find.text('Run analysis'), findsOneWidget);
-    // The face group has an eligible photo (a thumbnail); the body group is
-    // empty, so it asks for the missing kind with an add-photo action.
+    // The empty body group still asks for the missing kind.
     expect(find.text('Add a full-body photo for a body report.'),
         findsOneWidget);
-    expect(find.text('Add photo'), findsOneWidget);
+    // An Add photo tile now sits in BOTH groups (§ founder ISSUE 3), labelled
+    // "Add", not just the empty one.
+    expect(find.text('Add'), findsNWidgets(2));
+    expect(find.byIcon(Icons.add_a_photo_outlined), findsNWidgets(2));
     // The old photo-source sheet is gone.
     expect(find.text('Use the photos I already have'), findsNothing);
   });
 
   testWidgets(
-      '"Run analysis" pushes an appearance kickoff with the chosen face photo, '
-      'body skipped (no eligible photo), and navigates to the shell',
+      '"Run analysis" POSTs the appearance run with the chosen face photo, '
+      'body skipped (no eligible photo), in the BACKGROUND — no blocking '
+      'dialog, no chat shell, no forced navigation (§ founder 2026-10-28)',
       (tester) async {
     bigView(tester);
-    await tester.pumpWidget(_app());
+    Map<String, dynamic>? ran;
+    final api = _api(onAppearanceRun: (b) => ran = b);
+    await tester.pumpWidget(_app(api: api));
     await tester.pumpAndSettle();
 
     await openSheet(tester);
     await tester.tap(find.text('Run analysis'));
-    // Sheet dismisses and the router navigates to the shell.
+    // Sheet dismisses and the run fires in the background — the user is NOT
+    // held behind a modal and is NOT navigated to the report.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
-    final k = ChatInbox.instance.pending.value;
-    expect(k, isNotNull);
-    expect(k!.kind, 'appearance');
-    expect(k.wantFace, true); // an eligible face photo was chosen
-    expect(k.wantBody, false); // no eligible body photo -> not run
-    expect(k.faceMediaIds, ['m1']);
-    expect(k.bodyMediaIds, isNull);
-    expect(k.attachmentPaths, isEmpty);
-    expect(find.text('SHELL'), findsOneWidget);
+    // The run actually happened over HTTP with the chosen ids...
+    expect(ran, isNotNull);
+    expect(ran!['want_face'], true); // an eligible face photo was chosen
+    expect(ran!['want_body'], false); // no eligible body photo -> not run
+    expect(ran!['face_media_ids'], ['m1']);
+    expect(ran!.containsKey('body_media_ids'), false);
+    expect(ran!['image_paths'], isEmpty);
+    // ...and nothing navigated: no chat kickoff, no chat shell, no report push
+    // (the background run surfaces via the report card refresh + a toast).
+    expect(ChatInbox.instance.pending.value, isNull);
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.text('APPEARANCE rid'), findsNothing);
+    // We stayed on the Skills screen.
+    expect(find.text('Appearance'), findsOneWidget);
   });
 
   testWidgets(
       'tapping Skip on a group with photos excludes that axis from the run',
       (tester) async {
     bigView(tester);
+    Map<String, dynamic>? ran;
     // Both axes have an eligible photo this time.
-    final api = _api(eligibility: {
-      'face': [
-        {'media_id': 'm1', 'url': 'https://example.invalid/f.png'}
-      ],
-      'body': [
-        {'media_id': 'm2', 'url': 'https://example.invalid/b.png'}
-      ],
-      'has_face_photo': true,
-      'has_body_photo': true,
-    });
+    final api = _api(
+      eligibility: {
+        'face': [
+          {'media_id': 'm1', 'url': 'https://example.invalid/f.png'}
+        ],
+        'body': [
+          {'media_id': 'm2', 'url': 'https://example.invalid/b.png'}
+        ],
+        'has_face_photo': true,
+        'has_body_photo': true,
+      },
+      onAppearanceRun: (b) => ran = b,
+    );
     await tester.pumpWidget(_app(api: api));
     await tester.pumpAndSettle();
 
@@ -245,12 +271,83 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Run analysis'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
 
-    final k = ChatInbox.instance.pending.value;
-    expect(k!.wantFace, true);
-    expect(k.wantBody, false); // skipped
-    expect(k.faceMediaIds, ['m1']);
-    expect(k.bodyMediaIds, isNull);
+    expect(ran, isNotNull);
+    expect(ran!['want_face'], true);
+    expect(ran!['want_body'], false); // skipped
+    expect(ran!['face_media_ids'], ['m1']);
+    expect(ran!.containsKey('body_media_ids'), false);
+  });
+
+  testWidgets(
+      'multi-select: all eligible face photos are selected by default, and '
+      'deselecting one drops it from the run', (tester) async {
+    bigView(tester);
+    Map<String, dynamic>? ran;
+    final api = _api(
+      eligibility: {
+        'face': [
+          {'media_id': 'f0', 'url': 'https://example.invalid/f0.png'},
+          {'media_id': 'f1', 'url': 'https://example.invalid/f1.png'},
+          {'media_id': 'f2', 'url': 'https://example.invalid/f2.png'},
+        ],
+        'body': const [],
+        'has_face_photo': true,
+        'has_body_photo': false,
+      },
+      onAppearanceRun: (b) => ran = b,
+    );
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    await openSheet(tester);
+    // All three face thumbnails render and start selected (auto-select).
+    expect(find.byType(AymaPhoto), findsNWidgets(3));
+
+    // Deselect the first photo (f0), leaving f1 + f2. The tap lands on the
+    // tile's gesture handler (the check badge sits over the photo).
+    await tester.tap(find.byType(AymaPhoto).first, warnIfMissed: false);
+    await tester.pump();
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    expect(ran, isNotNull);
+    expect(ran!['want_face'], true);
+    expect(ran!['face_media_ids'], ['f1', 'f2']); // f0 removed, grid order kept
+  });
+
+  testWidgets('multi-select caps a section at six photos', (tester) async {
+    bigView(tester);
+    Map<String, dynamic>? ran;
+    final api = _api(
+      eligibility: {
+        'face': [
+          for (var i = 0; i < 9; i++)
+            {'media_id': 'f$i', 'url': 'https://example.invalid/f$i.png'},
+        ],
+        'body': const [],
+        'has_face_photo': true,
+        'has_body_photo': false,
+      },
+      onAppearanceRun: (b) => ran = b,
+    );
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    await openSheet(tester);
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    // The default selection is capped at the per-axis max, not all nine.
+    expect(ran, isNotNull);
+    expect((ran!['face_media_ids'] as List).length,
+        AppearancePreRunSheetState.kMaxPerAxis);
   });
 
   testWidgets('a persistent credits row shows the balance and taps through to '

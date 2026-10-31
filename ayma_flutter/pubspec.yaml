@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.30.0+2212
+version: 1.30.0+2242
 
 environment:
   sdk: ^3.13.4
@@ -51,6 +51,10 @@ dependencies:
   flutter_cache_manager: ^3.4.1
   google_fonts: ^6.3.2
   http: ^1.6.0
+  # Startup resilience (splash §11.2): retry /bootstrap the moment the network
+  # comes back. Already in the tree transitively via livekit_client; declared
+  # directly so the splash can import it — no new download/weight.
+  connectivity_plus: ^7.3.1
   livekit_client: ^2.6.4
   geolocator: ^14.0.2
   geocoding: ^5.0.0

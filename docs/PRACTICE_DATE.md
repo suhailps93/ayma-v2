@@ -1,0 +1,332 @@
+# Practice Date (hackathon deliverable B)
+
+**What it is.** On a match's or Explore profile, a **Practice** button opens a
+clearly-labelled *simulator* conversation where Ayma plays a persona built from
+THAT person, so the user can rehearse talking to them before messaging for real.
+Ayma coaches live (a short nudge after each of the user's messages) and gives a
+**debrief** when the session ends: what worked, what to say next, and what to
+avoid. It is a feature of the dating product — "practice with a simulated version
+of this match" — not a generic coach app.
+
+It works in **text and voice**. All of it is NEW code (Oct 2026), isolated in
+clearly-named files so it can be lifted into the public hackathon repo:
+
+| Layer | Files |
+|---|---|
+| Domain core (fastapi-free; shared by the API and the voice agent worker) | `functions/bootstrap/practice_core.py` |
+| HTTP API (text + voice-start) | `functions/bootstrap/practice_date.py` (re-exports `practice_core`) |
+| Provider seam | `functions/bootstrap/practice_llm.py` (uses the shared `llm_provider.get_llm_provider("practice")`) |
+| Voice agent path | `functions/bootstrap/agent.py` (`_run_practice_session`, `relay_practice_coach`), seeded via `functions/bootstrap/livekit_token.py` (`build_room_seed(practice=True, …)`) |
+| Prompts (never inline) | `functions/bootstrap/prompts/practice_persona.md`, `practice_coach.md`, `practice_debrief.md` |
+| Demo seed | `functions/bootstrap/practice_seed.py`, `scripts/seed_practice_profiles.py` |
+| Tests | `functions/bootstrap/tests/test_practice_date.py`, `test_practice_extraction.py`, `test_agent.py` |
+| Flutter | `ayma_flutter/lib/features/practice_date/` (text screen, **voice screen**, debrief, models), a Practice button in `screens/public_profile_screen.dart`, voice-practice via `services/voice_session_controller.dart` + `voice_transport.dart`, routes in `routing/app_router.dart`, client methods in `services/api_client.dart` |
+| Flutter tests | `ayma_flutter/test/practice_date_test.dart` |
+
+**Why the `practice_core` / `practice_date` split.** The LiveKit voice agent
+worker (`agent.py`) runs in a deliberately lean runtime that carries no web
+stack (no fastapi — see `requirements-agent.txt`), yet it needs the practice
+primitives (persona context, the coach, the session store) to run the voice
+session. So the fastapi-free domain logic lives in `practice_core.py`;
+`practice_date.py` is the thin `/practice/*` router that re-exports it. The
+feature's public surface and the text path are unchanged.
+
+## The privacy design (headline judging asset)
+
+The simulated persona is built **only from the viewer-visible profile** — the
+exact serializer the profile screen uses, `public_profile.build`. The never-load
+exclusion is enforced **at query level**, so the forbidden data is never
+*fetched* into the persona context, not merely omitted from the prompt:
+
+- `public_profile._public_pages` reads wiki pages with
+  `.where("visibility", "==", "public")` — private and `ai_only` pages are never
+  streamed from Firestore.
+- `story.strip_private_spans` removes inline `{{private}}` / `{{ai_only}}` spans
+  from the public bodies that remain.
+- `practice_date.build_persona_context` then **whitelists** only name, age
+  (computed, never the birthdate), coarse city (never coordinates), public wiki
+  pages, a photo count, and the primary public photo URL (`photo_url`, for the
+  voice-call avatar — photos are public). It reads nothing else about the
+  target — no raw `profile/main` doc, no matches/likes, no contact fields, no
+  other users.
+
+The never-load categories (`practice_date.NEVER_LOAD`): exact
+location/coordinates; contact info (phone, email, street address, social
+handles); other matches / people they're seeing; private or ai-only wiki spans;
+internal/admin data; any other user's data.
+
+The persona prompt (`prompts/practice_persona.md`) additionally instructs the
+simulated person to **deflect** extraction attempts in character without
+revealing anything — a second line of defence on top of context starvation.
+
+### Origin / hometown / background ("where are you from")
+
+There is **no structured origin/hometown/"from" field** in the profile schema
+(`schema.py` `profile/main` carries only name, birthdate, gender, interested_in,
+`location`, photos). `location` is the person's **coarse current city** (e.g.
+"San Francisco"), not where they are originally from. So the only way an origin
+like "from Kerala" reaches the persona is through the person's own **public**
+wiki text — e.g. an About page that says "grew up in …" (the Maya demo does
+exactly this: "Grew up in Chicago, moved west"). Every public wiki page is
+injected into the persona block in full (`PersonaContext.to_prompt_block` loops
+all pages with no truncation), so any origin a user has written publicly already
+reaches the persona. **This is a data problem, not a code problem:** if a match
+never wrote their hometown into a public page (and it isn't their current city),
+the persona genuinely has no basis for it — and the prompt forbids inventing
+location detail. Surfacing origin more richly would require a new public profile
+field, which is out of scope here (no field was invented).
+
+### The extraction test (`tests/test_practice_extraction.py`)
+
+The headline test runs a scripted battery of extraction attempts (address,
+phone, email, exact location/coordinates, other matches, private notes, plus
+jailbreak framings like "ignore your instructions" and "I'm your developer")
+against every demo persona and asserts NONE of the never-load data leaks, on two
+axes:
+
+1. **Context starvation (structural):** the needles are never present in the
+   loaded persona context.
+2. **Response leakage (worst case):** the persona is driven by a deliberately
+   *maximally leaky* stand-in model that echoes back everything it was handed —
+   and still cannot reveal a secret, because the secret was never in its
+   context. This proves the defence does not depend on the model behaving, so it
+   survives the flip from Gemini to Meta Muse Spark unchanged.
+
+Run it:
+```
+cd functions/bootstrap
+python -m pytest tests/test_practice_extraction.py tests/test_practice_date.py -q
+```
+The extraction test also covers the **voice** path: it builds the exact JSON
+seeded onto a practice voice room (`livekit_token.build_room_seed(practice=True,
+…)` wrapping `compose_persona_prompt`) and asserts no needle is present — the
+voice equivalent of the text context-starvation guarantee. Result: **all green**
+(16 practice tests + 2 new agent tests). The full backend suite stays green.
+
+## How to demo
+
+1. **Seed demo profiles** (judges need someone to practice with):
+   ```
+   python3 scripts/seed_practice_profiles.py
+   ```
+   Seeds four profiles (Maya, Leo, Aisha, Noah), each carrying planted
+   never-load needles (address, phone, email, coordinates, other people,
+   private notes) so you can show, live, that none of it leaks.
+2. In the app, open one of those profiles and tap **Practice** (the rail button
+   with the practice glyph).
+3. The **simulator** opens with a persistent banner: "Practice mode — you're
+   talking to a simulated version of <name>, not the real person." Chat with the
+   persona. A coach nudge appears under the composer after each message.
+4. **Try to extract private data** ("what's your address / phone / who else are
+   you seeing?") — the persona deflects in character; nothing leaks.
+5. Tap **End** to open the **debrief**: what worked / try saying next / what to
+   avoid. The header overflow menu (⋮) has **Restart simulation**, which (after a
+   confirm) clears the transcript and opens a fresh session with the same match
+   so you can rehearse the opener again.
+
+The text bubbles are the shared `widgets/chat_bubble.dart` `ChatBubble` — the
+same widget the DM thread (`screens/dm_thread_screen.dart`) uses, so practice
+and real chat read identically (soft 0.5px border, long-press-to-copy, accent
+fill for the user).
+
+Text practice runs end-to-end on the current model. **Voice practice** reuses
+the existing LiveKit pipeline seeded with `compose_persona_prompt(ctx)`:
+
+6. On the simulator, tap the **voice** button (the waveform glyph in the header)
+   to rehearse out loud. The same persona (built only from the viewer-visible
+   profile) now *speaks*, deflecting extraction in character. A live coach
+   nudge appears as a side hint (never spoken by the persona), and ending the
+   call opens the same debrief. The call shows the **match's photo** as the
+   central avatar with a small Ayma orb badge (bottom-right) carrying the
+   speaking/amplitude animation, to signal it's a simulation; personas with no
+   photo (`persona.photo_url` null/absent — e.g. seeded demos) fall back to the
+   full-size orb.
+
+### How voice practice is seeded + gated
+
+- `POST /practice/voice/start {other_uid}` builds the persona with the SAME
+  `build_persona_context` / `compose_persona_prompt` the text path uses (the
+  privacy boundary is crossed exactly once, here), creates a practice session,
+  mints a LiveKit token, and seeds the room metadata with
+  `build_room_seed(persona_prompt, …, practice=True, persona_name, persona_gender, target_uid)`.
+  The persona prompt is composed with `voice=True` and the **caller's first
+  name**, so it frames a live phone call from a known caller (see below); the
+  **persona gender** rides along so the worker picks a gender-matched voice.
+- The agent worker gates strictly on that `practice` flag
+  (`agent._run_session` → `_run_practice_session`): it runs the persona with
+  **no Ayma tools**, **no `SessionFlush`** (a simulation never touches the
+  user's `raw_turns`/wiki memory), and **no Ayma voice opener** (the user opens
+  — they're rehearsing their opener). Every normal voice call is untouched.
+- **Coach in voice:** `relay_practice_coach` fires after each finalized user
+  turn, calls `practice_core.coach_hint` (reusing the text coach), and publishes
+  the nudge on the `practice_coach` data-channel topic — an out-of-character
+  side hint to the user, not spoken by the persona. Each turn is appended to the
+  practice session store so `POST /practice/debrief` works unchanged after the
+  call. The coach context is rebuilt from the persona *name + gender* alone
+  (`persona_context_for_coach`); the worker never re-reads the target's profile.
+
+### Voice realism: gender-matched voice, call framing, coach pronouns
+
+Three fixes make the simulated match sound and behave like a real person
+answering a phone call (founder reports, Oct 2026):
+
+- **Gender-matched TTS voice.** The match speaks in a voice matching their
+  profile gender — a female persona gets a feminine-leaning voice, a male
+  persona a masculine one. On the default **Gemini Live** path the voice is a
+  built-in preset chosen by `voices.voice_for_gender(gender)` (feminine: Aoede…;
+  masculine: Charon…); on the **Meta cascade** path it is the Inworld voice
+  `agent._cascade_tts_voice_for_gender` reads from `config.meta_cascade_tts_voice_female`
+  / `_male` (env `META_CASCADE_TTS_VOICE_FEMALE` / `_MALE`). These default to the
+  real Inworld voices **`Ashley`** (feminine) and **`Alex`** (masculine) so the
+  cascade path is gender-matched out of the box — before this, both defaulted to
+  empty and every persona fell back to the single vendor-default voice, so gender
+  was effectively ignored on the cascade. Non-binary / unknown gender (or an env
+  var explicitly blanked) falls back safely to the session default voice — never a
+  wrong-gender guess, and no voice id is hardcoded outside `voices.py` /
+  `config.py`.
+- **Live-voice-call framing (not a chatbot, not texting).** On the voice path the
+  persona prompt appends `prompts/practice_persona_voice.md`: the match is
+  *answering a live phone call* from `{{USER_NAME}}` (the caller's first name),
+  already knows who is calling because they matched — so it **never asks the
+  user's name**, never greets them as a stranger, and never uses texting phrasing
+  (no "thanks for your message", no emoji, no stage directions). It speaks
+  conversationally, like on the phone. The text practice path is unchanged (it
+  keeps the message/DM framing). The greeting (`practice_greeting.md`) reinforces
+  the same on pick-up.
+- **Coach pronouns.** The live coach is given the persona's pronouns
+  (`practice_core.pronouns_for_gender` → `she/her` / `he/him` / `they/them`, and
+  the coach prompt instructs faithfulness), so a she/her match is never coached
+  as "him". `they/them` is used only when gender is genuinely unknown — never a
+  "him" default. This applies to **both text and voice** practice coaching.
+
+## Provider seam — what flips to Meta later
+
+Every Practice Date model call goes through `practice_llm`, which calls the
+shared per-surface provider `llm_provider.get_llm_provider("practice")`
+(Deliverable A). Today that resolves to **Gemini** (so it runs tonight). Set
+`LLM_PROVIDER_PRACTICE=meta` to route Practice Date to **Meta Muse Spark** (with
+Gemini fallback via `LLM_META_FALLBACK`), with no change to Practice Date code.
+Model ids live only in `config.py`; no model name appears in the feature code.
+
+**Voice provider — the Meta cascade (built, behind a flag).** By default voice
+practice uses Gemini Live (the current `llm_routing` route) for the spoken
+persona. When the **`voice` surface flag** `LLM_PROVIDER_VOICE=meta`
+(`config.llm_provider_voice`) is set, `_run_practice_session` instead builds a
+LiveKit pipeline (cascade) `AgentSession` via `agent.build_meta_cascade_session`:
+
+- **LLM** Meta Muse Spark `muse-spark-1.3` via `livekit-plugins-openai` pointed
+  at the OpenAI-compatible Meta Model API (`META_API_KEY`,
+  `reasoning_effort=minimal`) — this is the "runs on Meta" leg;
+- **STT** Deepgram Nova-3 via the LiveKit Inference gateway (`inference.STT`,
+  config `meta_cascade_stt_model`). Meta's `muse-voice-transcribe-1.0` is listed
+  but serves no working REST STT (every endpoint 404s), so STT runs on Inference;
+- **TTS** Inworld via the LiveKit Inference gateway (`inference.TTS`, config
+  `meta_cascade_tts_model`/`_voice`; Rime/Fish are config A/B alternatives). The
+  TTS voice is **gender-matched** to the persona via
+  `meta_cascade_tts_voice_female`/`_male` (default Inworld `Ashley`/`Alex`; falls
+  back to `_voice` only when explicitly blanked);
+- **VAD** bundled Silero (`inference.VAD`) to segment turns.
+
+The simulated match greets first on both paths (`prompts/practice_greeting.md`).
+On a build failure (no key, missing plugin) it starts on Gemini Live, and if a
+built cascade dies mid-call it switches to a fresh Gemini Live session on the
+same room (a `practice-voice fallback` log line), so a flip can never take
+practice voice down; normal Ayma voice calls are untouched.
+Only the persona/coaching *content* still routes through `practice_llm`
+(`LLM_PROVIDER_PRACTICE`). Full detail and the flip/rollback steps:
+`docs/META_PROVIDER.md` → "Voice cascade". Model ids live only in `config.py`.
+A live Meta voice call bills the card until the $150 credit posts, so the flag
+stays OFF until billing is gated.
+
+## API
+
+- `POST /practice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count,photo_url}, banner, simulation:true}`
+- `POST /practice/chat {session_id, message}` → `{reply, coach_hint, simulation:true}` (402 when out of credits). The persona reply and the live coach nudge are two independent model calls run **concurrently** (`asyncio.gather`): the coach critiques the user's just-sent message and doesn't depend on the persona's reply, so the send spinner waits ≈ `max(persona, coach)`, not their sum. The coach sees the transcript **through the user's latest message** (the message being coached), never the persona's new reply.
+- `POST /practice/voice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count,photo_url}, banner, livekit{token,url,room}, simulation:true}` (404 no profile; `usage_capped:true` when out of credits; 503 if LiveKit unconfigured) — seeds the voice room with the persona prompt
+- `POST /practice/debrief {session_id}` → `{what_worked[], suggested_next_lines[], avoid[], simulation:true}` (used by both text and voice)
+
+`persona.photo_url` is the match's **primary public photo URL** (first of the viewer-visible grid) or `null` — photos are public, so no privacy concern; it feeds the voice-call avatar (Flutter falls back to the orb when `null`, which the seeded demo matches always are). It is **not** injected into the persona prompt (it isn't persona knowledge).
+
+The **coach** and **debrief** read a transcript where the real user is labelled `User:` and the simulated match by their name, so the coaching critiques the *user's* lines — never the persona's. (The persona-reply prompt is the mirror image: there the model plays the match, labelled `Me`.)
+
+All three are 18+-gated (`require_not_underage_uid`) and authed
+(`require_caller`), metered under `token_ledger.FEATURE_PRACTICE`. Sessions live
+at `users/{uid}/practice_sessions/{session_id}` (Firestore only).
+
+## Related: AI Date Simulation (ai-date-sim)
+
+AI Date Simulation (hackathon flagship) reuses this feature's persona machinery
+to run a simulated first chat between TWO personas — the user's and a match's —
+then shows the user the transcript plus a 0–100 compatibility score and a short
+summary. Crucially it does **not** share this feature's grounding rule on both
+sides: the MATCH persona is still `build_persona_context` (public-only), but the
+USER persona is grounded in the user's **full own context**
+(`practice_core.build_self_persona_context` — profile + every wiki page,
+private spans kept, **plus a capped sample of the user's own recent sent DM
+messages as texting-STYLE exemplars** so the agent sounds like how the user
+actually texts), because a user's own agent authentically represents them.
+
+**Texting-style exemplars (own messages only).** `build_self_persona_context`
+additionally reads a bounded set of the user's **own outgoing** DM messages
+(`_gather_self_style_exemplars`): only messages whose `sender_uid` is the user,
+`type == "text"`, short enough to show casual voice, deduped, newest-first, and
+hard-capped (`_SELF_STYLE_MAX_MESSAGES = 40`, `_SELF_STYLE_MAX_MSG_CHARS = 200`,
+`_SELF_STYLE_MAX_TOTAL_CHARS = 2000`; scan caps `_SELF_STYLE_THREAD_SCAN = 40`,
+`_SELF_STYLE_MSGS_PER_THREAD = 60`). The **other participant's** messages are
+another user's private content and are **never** ingested. Reads are
+defensive — a missing/unreadable thread just yields fewer exemplars. They land
+on `PersonaContext.style_exemplars` and render under a "How this user texts —
+STYLE ONLY" block; the MATCH persona (`build_persona_context`) never carries
+them and never reads any DM content.
+
+A **disclosure filter** in `prompts/date_sim.md` keeps both personas from
+*emitting* private/sensitive specifics even when grounded in full context
+(grounded-but-filtered) — the agent mirrors the user's texting **style/voice**
+but must never leak the exemplars' wording or any private specifics. Full
+design, the endpoint and the privacy reasoning: `docs/ARCHITECTURE.md` §18.
+Engine: `functions/bootstrap/date_sim.py`.
+
+## Persistent AI-avatar snapshot (how the avatar is now spawned)
+
+The AI avatar is **no longer assembled ad hoc at sim-spawn time.** Each opted-in
+user has one standing, server-only snapshot at `users/{uid}/persona/avatar`
+(`functions/bootstrap/persona_snapshot.py`) that date-sims spawn from instantly:
+
+- `build_self_persona_context` now *produces* the snapshot during a **background
+  refresh**, not on the sim hot path. The snapshot holds the full private
+  grounding + style exemplars, an LLM-distilled persona `brief` + story
+  highlights, `gender`, an avatar `readiness_score`, and `source_hash`/`stale`/
+  `version`/`updated_at`.
+- **Cost cap (strict):** source writes (profile edit, wiki/chat/voice ingest, DM
+  send) only flip `stale=true` via `mark_persona_stale` — no LLM. The LLM rebuild
+  runs ONLY in the `/cron/persona-snapshot` sweep, **at most once per hour per
+  user** (`CONFIG.persona_snapshot_min_interval_seconds`) and is **skipped when
+  `source_hash` is unchanged**.
+- **Spawn:** `run_simulation` reads the SELF snapshot (`get_persona_snapshot`;
+  seeded once, LLM-free, if missing). For the MATCH it spawns THEIR own
+  private-grounded snapshot when present, else falls back to the public-only
+  `build_persona_context`. One snapshot, both uses — AI↔AI today and human↔AI
+  voice later (a documented follow-up in `docs/TODO_QUEUE.md`).
+- **Server-only:** `firestore.rules` denies all client access to
+  `users/{uid}/persona/**`. Defence-in-depth: `redact_private_leaks` scrubs
+  obvious contact/address patterns out of the distilled brief before storage.
+
+### Avatar readiness score (0–100)
+
+`readiness_score = round(100 · (0.80·profile_completeness + 0.20·conversation_volume))`
+(weights LOCKED in `config.py`), recomputed on every rebuild.
+`profile_completeness` is the fraction of six signals filled — name, age,
+gender, location, ≥1 photo, and wiki pages vs
+`persona_readiness_wiki_page_target` (the last is fractional). `conversation_volume`
+is the count of the user's own captured texting-style exemplars vs
+`persona_readiness_conversation_target`, capped at 1.0 (a cheap proxy using the
+already-gathered sample; a true uncapped own-message count is a follow-up).
+`low_context = readiness_score < persona_readiness_low_context_threshold` (20).
+The sim preflight `GET /date-sim/estimate?other_uid=…` returns a `readiness`
+block `{name, readiness_score, low_context, message?}` for the match so the
+setup screen can warn before spending credits (copy: *"<name> doesn't have much
+context yet — a simulated chat with their AI won't be an accurate reflection of
+them."*). Config keys: `persona_snapshot_min_interval_seconds`,
+`persona_snapshot_sweep_limit`, `persona_readiness_profile_weight`,
+`persona_readiness_conversation_weight`, `persona_readiness_low_context_threshold`,
+`persona_readiness_wiki_page_target`, `persona_readiness_conversation_target`.

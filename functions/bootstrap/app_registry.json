@@ -29,6 +29,7 @@
     {"key": "delete_account", "path": "/settings/delete-account", "label": "Delete account", "aliases": ["delete account", "delete my account", "close my account", "remove my account", "account deletion"], "found_on": "settings"},
     {"key": "biometric_consent", "path": "/settings/biometric-consent", "label": "Face matching consent", "aliases": ["face matching consent", "biometric consent", "my consent", "consent settings", "consent page", "what i agreed to"], "found_on": "settings"},
     {"key": "biometric_info", "path": "/legal/biometric", "label": "Biometric information (face matching) policy", "aliases": ["biometric policy", "biometric information", "face matching policy", "face data policy"]},
+    {"key": "connect_agent", "path": "/settings/connect-agent", "label": "Connect an agent", "aliases": ["connect an agent", "connect agent", "mcp", "connect an ai", "connect claude", "link an agent", "bring your own agent"], "found_on": "settings"},
     {"key": "release_notes", "path": "/whats-new", "label": "What's new", "aliases": ["whats new", "what's new", "release notes", "changelog", "updates", "new features"], "found_on": "settings"}
   ],
   "parameterized": [
@@ -41,6 +42,9 @@
     {"route": "/physical-attributes/:id", "via": "open_screen my_appearance", "reason": "a legacy physical-profile report, folded into the Appearance report history"}
   ],
   "non_navigable": [
+    {"route": "/practice/:uid", "reason": "Practice Date simulator; opened only from the Practice button on a profile, never on request"},
+    {"route": "/practice/:uid/debrief", "reason": "Practice Date debrief; reached only by ending a practice session"},
+    {"route": "/date-sim/:uid", "reason": "AI Date Simulation; opened only from the Simulate button on a profile, never on request"},
     {"route": "/consent", "reason": "biometric consent gate; the router forces it while consent is required and it must only ever be answered by the user's own tap"},
     {"route": "/splash", "reason": "app start-up bootstrap; re-running it mid-session would restart the app flow"},
     {"route": "/under-18", "reason": "age-gate outcome screen (18+ gate); never opened on request"},
@@ -52,7 +56,9 @@
     {"route": "/profile/usage/trial", "reason": "trial paywall needs a server-issued offer; payment pages open as the Plan page only"},
     {"route": "/settings/google-account", "reason": "Google account linking is hidden from the v1 UI"},
     {"route": "/settings/instagram", "reason": "Instagram is V2, behind the meta_integrations flag (default off)"},
-    {"route": "/settings/developer", "reason": "hidden developer panel (tap the build stamp in Settings seven times)"}
+    {"route": "/settings/developer", "reason": "hidden developer panel (tap the build stamp in Settings seven times)"},
+    {"route": "/settings/developer/feedback", "reason": "dev-only feedback triage view, reached from the hidden developer panel"},
+    {"route": "/settings/developer/ayma-notes", "reason": "dev-only Ayma's Notes view, reached from the hidden developer panel"}
   ],
   "settings": [
     {"key": "theme", "label": "Theme", "kind": "enum", "values": ["light", "dark", "system"], "aliases": ["dark mode", "light mode", "system theme", "match system", "night mode", "appearance mode"], "handler": "client", "client_command": {"light": "light_mode", "dark": "dark_mode", "system": "system_theme"}, "done": {"light": "Switched you to light mode.", "dark": "Switched you to dark mode.", "system": "Matched the app's theme to your system setting."}, "found_on": "settings"},
@@ -78,6 +84,14 @@
     {"key": "delete_account", "label": "Delete account (navigate only: the user deletes it themselves)", "aliases": ["delete my account", "close my account", "remove my account"], "handler": "navigate_only", "destination": "delete_account", "say": "I can't delete your account for you, but I've opened the Delete account page. Tap Delete account there when you're ready.", "found_on": "settings"},
     {"key": "withdraw_consent", "label": "Withdraw face matching consent (navigate only: it deletes the account, so the user does it themselves)", "aliases": ["withdraw consent", "revoke consent", "withdraw my consent", "withdraw biometric consent", "revoke biometric consent"], "handler": "navigate_only", "destination": "biometric_consent", "say": "I can't withdraw your consent for you, since that also deletes your account, but I've opened the Face matching consent page. You can withdraw it there yourself.", "found_on": "biometric_consent"},
     {"key": "wipe_memory", "label": "Wipe what Ayma has learned (wiki + history; account stays)", "aliases": ["reset wiki", "forget everything", "wipe memory", "reset memory", "clear what you know"], "confirm_phrase": "yes, wipe it", "question": "Wipe everything I've learned about you (your wiki and our history)? Your account, profile and photos stay. This can't be undone.", "handler": "wipe_memory", "found_on": "ayma_settings"}
+  ],
+  "report_actions": [
+    {"key": "rerun_appearance", "label": "Re-run the Appearance report", "via": "run_appearance_report", "aliases": ["rerun appearance report", "re-run appearance report", "regenerate appearance report", "recalculate appearance report", "recalculate appearance", "redo appearance report", "refresh appearance report", "run appearance report again", "run my appearance report", "update my appearance report", "rerun my looks report", "rerun looks report", "rerun report card", "redo my report card"]},
+    {"key": "rerun_web_research", "label": "Re-run the web-research report", "via": "deep_dive", "aliases": ["rerun web research", "re-run web research", "regenerate web research", "rerun deep dive", "redo deep dive", "rerun my web report", "search the web about me again", "update my web research", "run my web research again"]}
+  ],
+  "story_edit_actions": [
+    {"key": "edit_story", "label": "Change the wording of a story section", "via": "edit_story_entry", "aliases": ["edit my story", "edit my story section", "change my story", "change my story section", "change my story entry", "change my story line", "update my story", "update my story section", "fix my story", "correct my story", "reword my story", "rewrite my story", "edit the story", "change the story", "change what my story says", "change my wiki", "edit my wiki", "update my wiki", "fix my wiki"]},
+    {"key": "remove_story", "label": "Take a section off the story", "via": "remove_story_entry", "aliases": ["remove from my story", "remove this from my story", "remove that from my story", "take this off my story", "take that off my story", "delete from my story", "delete my story section", "delete this story entry", "remove my story section", "remove a story section", "take out of my story", "remove from my wiki", "delete from my wiki"]}
   ],
   "unavailable": [
     {"key": "purchase", "aliases": ["buy", "purchase", "pay", "pay for", "checkout", "buy credits", "buy more credits", "purchase credits", "subscribe for me", "upgrade for me", "buy a plan"], "navigate": "credits", "say": "I can't buy or subscribe for you, but I've opened the Plan page. Pick a plan there yourself when you're ready."},

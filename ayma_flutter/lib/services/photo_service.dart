@@ -84,31 +84,51 @@ class PhotoService {
   /// into [PhotoUploadBatch.rejected] with a reason, rather than throwing —
   /// the caller adds whatever passed with [addToGridBatch].
   Future<PhotoUploadBatch> uploadAndProcessAll(List<File> files) async {
+    // Upload and register every picked file concurrently rather than one at a
+    // time — each is an independent Storage put + pipeline round-trip, so the
+    // batch finishes in roughly the time of the slowest photo instead of their
+    // sum. [Future.wait] preserves input order, so the results stay in the
+    // order the user picked them (index 0 = would-be primary).
+    final uid = _uid;
+    final outcomes = await Future.wait([
+      for (var i = 0; i < files.length; i++) _uploadOne(uid, files[i], i),
+    ]);
     final mediaIds = <String>[];
     final storagePaths = <String>[];
     final rejected = <String>[];
-    for (final file in files) {
-      try {
-        final ext = file.path.contains('.')
-            ? file.path.substring(file.path.lastIndexOf('.'))
-            : '.jpg';
-        final path = 'uploads/$_uid/photo_'
-            '${DateTime.now().millisecondsSinceEpoch}_'
-            '${mediaIds.length + rejected.length}$ext';
-        await _storage.ref(path).putFile(file);
-        final media = await _api.registerMedia(path, context: 'profile');
-        if (media.published && media.mediaId.isNotEmpty) {
-          mediaIds.add(media.mediaId);
-          storagePaths.add(path);
-        } else {
-          rejected.add(media.reason.isEmpty ? "can't be used" : media.reason);
-        }
-      } catch (_) {
-        rejected.add('upload failed');
+    for (final o in outcomes) {
+      if (o.mediaId != null) {
+        mediaIds.add(o.mediaId!);
+        storagePaths.add(o.storagePath!);
+      } else {
+        rejected.add(o.reason ?? "can't be used");
       }
     }
     return PhotoUploadBatch(
       mediaIds: mediaIds, storagePaths: storagePaths, rejected: rejected);
+  }
+
+  /// Upload one picked file to `uploads/{uid}/…` and run the §8.5 pipeline on
+  /// it. Never throws — a failure (upload or moderation reject) comes back as
+  /// an [_UploadOutcome] with a reason, so one bad photo can't sink the batch.
+  /// [index] makes the storage path unique within a concurrent batch.
+  Future<_UploadOutcome> _uploadOne(String uid, File file, int index) async {
+    try {
+      final ext = file.path.contains('.')
+          ? file.path.substring(file.path.lastIndexOf('.'))
+          : '.jpg';
+      final path = 'uploads/$uid/photo_'
+          '${DateTime.now().millisecondsSinceEpoch}_$index$ext';
+      await _storage.ref(path).putFile(file);
+      final media = await _api.registerMedia(path, context: 'profile');
+      if (media.published && media.mediaId.isNotEmpty) {
+        return _UploadOutcome.added(media.mediaId, path);
+      }
+      return _UploadOutcome.rejected(
+          media.reason.isEmpty ? "can't be used" : media.reason);
+    } catch (_) {
+      return _UploadOutcome.rejected('upload failed');
+    }
   }
 
   /// `POST /media/photos/batch` — add several already-processed photos to
@@ -142,6 +162,24 @@ class PhotoService {
   Future<int> instagramConnect(String code) => _api.instagramConnect(code);
 
   Future<void> instagramDisconnect() => _api.instagramDisconnect();
+}
+
+/// Outcome of a single file's upload+register within
+/// [PhotoService.uploadAndProcessAll]. Exactly one of ([mediaId]/[storagePath])
+/// or [reason] is set: added photos carry their ids, a rejected or failed one
+/// carries why.
+class _UploadOutcome {
+  const _UploadOutcome._({this.mediaId, this.storagePath, this.reason});
+
+  factory _UploadOutcome.added(String mediaId, String storagePath) =>
+      _UploadOutcome._(mediaId: mediaId, storagePath: storagePath);
+
+  factory _UploadOutcome.rejected(String reason) =>
+      _UploadOutcome._(reason: reason);
+
+  final String? mediaId;
+  final String? storagePath;
+  final String? reason;
 }
 
 /// Result of [PhotoService.uploadAndProcessAll] — one batch of photos picked

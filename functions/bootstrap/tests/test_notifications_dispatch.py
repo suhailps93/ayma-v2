@@ -15,6 +15,10 @@ class _Doc:
         self._s = store
         self._k = key
 
+    @property
+    def id(self):
+        return self._k[-1]
+
     def get(self):
         data = self._s.get(self._k)
         outer = self
@@ -105,8 +109,8 @@ def test_writes_doc_and_pushes_with_truncated_preview(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         nd, "_deliver",
-        lambda tokens, title, body, dl: seen.update(
-            tokens=tokens, body=body, dl=dl) or _Resp(),
+        lambda tokens, title, body, dl, notif_id="": seen.update(
+            tokens=tokens, body=body, dl=dl, notif_id=notif_id) or _Resp(),
     )
 
     res = _run(nd.dispatch(db, "u1", "dm_message", body=long,
@@ -117,6 +121,12 @@ def test_writes_doc_and_pushes_with_truncated_preview(monkeypatch):
     assert doc["type"] == "dm_message" and doc["read"] is False
     assert len(doc["body"]) == CONFIG.push_preview_len and doc["body"].endswith("…")
     assert seen["tokens"] == ["tok-a", "tok-b"]
+    # The push carries the centre doc id so a tap can mark that exact in-app
+    # notification read and keep the bell/OS badge in sync (§7.6).
+    notif_keys = [
+        k[-1] for k in db.store if k[:3] == ("users", "u1", "notifications")
+    ]
+    assert seen["notif_id"] and seen["notif_id"] in notif_keys
     assert db.store[("users", "u1")]["last_push_at"] == "TS"
     assert "actor_uid" not in doc  # only written when given
 
@@ -170,6 +180,35 @@ def test_no_tokens_writes_doc_only(monkeypatch):
     assert res == {"muted": False, "doc": True, "pushed": False, "no_tokens": True}
 
 
+def test_dedup_id_collapses_to_one_rolling_centre_doc(monkeypatch):
+    # Two fires with the same dedup_id land on one centre doc (the second
+    # overwrites the first with the latest count), where auto-ids would stack
+    # two rows — the public-profile-update duplicate-notification fix.
+    db = _Db({("users", "u1"): {}})
+    monkeypatch.setattr(nd, "_push", lambda *a, **k: False)
+    _run(nd.dispatch(db, "u1", "profile_suggestions",
+                     fixed_preview="Ayma suggests 1 update to your public profile.",
+                     dedup_id="profile_suggestions_pending"))
+    _run(nd.dispatch(db, "u1", "profile_suggestions",
+                     fixed_preview="Ayma suggests 2 updates to your public profile.",
+                     dedup_id="profile_suggestions_pending"))
+    docs = _notif_docs(db, "u1")
+    assert len(docs) == 1
+    assert docs[0]["body"] == "Ayma suggests 2 updates to your public profile."
+    assert docs[0]["read"] is False
+    # A stable id reuses one doc key, not an auto-generated one.
+    keys = [k for k in db.store if k[:3] == ("users", "u1", "notifications")]
+    assert keys == [("users", "u1", "notifications", "profile_suggestions_pending")]
+
+
+def test_without_dedup_id_two_fires_stack_two_docs(monkeypatch):
+    db = _Db({("users", "u1"): {}})
+    monkeypatch.setattr(nd, "_push", lambda *a, **k: False)
+    _run(nd.dispatch(db, "u1", "mutual_match", fixed_preview="a"))
+    _run(nd.dispatch(db, "u1", "mutual_match", fixed_preview="b"))
+    assert len(_notif_docs(db, "u1")) == 2
+
+
 def test_unknown_type_raises():
     with pytest.raises(ValueError):
         _run(nd.dispatch(_Db(), "u1", "bogus"))
@@ -186,16 +225,18 @@ def test_push_only_sends_without_centre_doc_cooldown_or_last_push(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         nd, "_deliver",
-        lambda tokens, title, body, dl: seen.update(
-            tokens=tokens, title=title, body=body, dl=dl) or _Resp(),
+        lambda tokens, title, body, dl, notif_id="": seen.update(
+            tokens=tokens, title=title, body=body, dl=dl,
+            notif_id=notif_id) or _Resp(),
     )
 
     res = _run(nd.push_only(db, "u1", "ayma_reply", body="hello  there",
                             deep_link="chat"))
 
     assert res == {"muted": False, "pushed": True}
+    # push_only writes no centre doc, so there is no notif_id to carry.
     assert seen == {"tokens": ["tok-a"], "title": "Ayma",
-                    "body": "hello there", "dl": "chat"}
+                    "body": "hello there", "dl": "chat", "notif_id": ""}
     assert _notif_docs(db, "u1") == []
     assert db.store[("users", "u1")]["last_push_at"] == recent
 
@@ -253,8 +294,12 @@ def test_push_data_sends_data_only_bypasses_cooldown(monkeypatch):
 
     assert res["pushed"] is True
     assert seen["title"] == "Dillu" and seen["body"] == "Photo"
+    notif_id = next(
+        k[-1] for k in db.store if k[:3] == ("users", "u1", "notifications")
+    )
     assert seen["data"] == {
-        "type": "dm", "thread_id": "t", "title": "Dillu", "body": "Photo"}
+        "type": "dm", "thread_id": "t", "title": "Dillu", "body": "Photo",
+        "notif_id": notif_id}
     assert db.store[("users", "u1")]["last_push_at"] == recent
 
 
@@ -284,3 +329,34 @@ def test_deliver_sends_notification_payload_on_heads_up_channel(monkeypatch):
     assert msg.android.notification.channel_id == nd.ANDROID_DEFAULT_CHANNEL
     # iOS still gets an audible alert at APNs priority 10.
     assert msg.apns.headers["apns-priority"] == "10"
+
+
+def test_deliver_data_is_android_data_only_and_ios_mutable_for_avatar(monkeypatch):
+    """A DM push is Android data-only (the native service draws the chat-style
+    notification with the sender's avatar) and carries an APNs alert marked
+    ``mutable-content: 1`` so the iOS Notification Service Extension can
+    download ``sender_photo_url`` and attach it. The avatar URL and sender
+    identity ride in the data payload, copied into APNs ``userInfo``."""
+    sent = {}
+    monkeypatch.setattr(
+        nd.messaging, "send_each_for_multicast",
+        lambda msg: sent.update(msg=msg) or type("R", (), {"responses": []})(),
+    )
+
+    nd._deliver_data(
+        ["tok-a"], "Dillu", "hey there",
+        {"type": "dm", "thread_id": "t", "sender_photo_url": "https://x/p.jpg"},
+    )
+
+    msg = sent["msg"]
+    # Android: data-only, no notification payload (native service renders it).
+    assert msg.notification is None
+    assert msg.android.notification is None
+    assert msg.android.priority == "high"
+    assert msg.data["sender_photo_url"] == "https://x/p.jpg"
+    assert msg.data["type"] == "dm"
+    # iOS: alert + mutable-content so the service extension can attach the image.
+    assert msg.apns.headers["apns-priority"] == "10"
+    assert msg.apns.payload.aps.mutable_content is True
+    assert msg.apns.payload.aps.alert.title == "Dillu"
+    assert msg.apns.payload.aps.alert.body == "hey there"

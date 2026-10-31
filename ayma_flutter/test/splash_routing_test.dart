@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 ApiClient _api(String sessionMode) {
   final auth = MockFirebaseAuth(signedIn: true);
@@ -72,6 +73,8 @@ class _Marker extends StatelessWidget {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   for (final (mode, marker) in const [
     ('marketing', 'screen:chat'),
     ('interview', 'screen:preboarding'),
@@ -97,5 +100,18 @@ void main() {
     await tester.pump();
     expect(AppContext.instance.current.value.screen, 'splash');
     await tester.pumpAndSettle();
+  });
+
+  // The feature tour is no longer gated at the splash (§11.2): it now runs
+  // after pre-boarding, from the main-shell gate — see
+  // `feature_tour_gate_test.dart`. A signed-in user routes straight past the
+  // splash to their session with no tour detour.
+  testWidgets('no tour detour at the splash for a signed-in user',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp.router(routerConfig: _router('active')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('screen:shell'), findsOneWidget);
   });
 }

@@ -118,6 +118,20 @@ def post_message(
         },
         merge=True,
     )
+
+    # Persistent AI-avatar snapshot: the sender's own sent DMs feed their
+    # avatar's texting-style exemplars, so flag their standing snapshot stale.
+    # Cheap, no LLM; the background sweep rebuilds it at most once an hour and
+    # only if the source content actually changed. Only the SENDER's avatar is
+    # affected (never the recipient's — their content isn't in the sender's
+    # snapshot). Best-effort: it must never break the send.
+    try:
+        import persona_snapshot
+
+        persona_snapshot.mark_persona_stale(db, sender_uid)
+    except Exception:  # noqa: BLE001 - the stale hook must never break a send
+        pass
+
     return msg_ref.id
 
 

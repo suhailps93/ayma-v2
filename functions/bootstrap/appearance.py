@@ -11,10 +11,13 @@ single report with three parts:
   own ``photo_ids`` (:func:`physical_attributes.merge`) — the photo(s) that
   are the basis for it.
 * **face** — the :mod:`face_report` shape (overall score, features, strengths,
-  recommendations), computed from the best ``usable_for_face`` photo. No usable
-  photo → ``{"status": "needs_face_photo"}``.
-* **body** — the :mod:`body_report` shape, from the best ``usable_for_body``
-  photo. None → ``{"status": "needs_body_photo"}``.
+  recommendations). When the pre-run sheet names an explicit selection, ALL the
+  ticked eligible photos are fed to one combined :func:`face_report.run` read of
+  the same person; otherwise the single best ``usable_for_face`` photo (auto/chat
+  path). No usable photo → ``{"status": "needs_face_photo"}``.
+* **body** — the :mod:`body_report` shape, likewise: all the ticked eligible
+  photos combined, or the single best ``usable_for_body`` photo on the auto path.
+  None → ``{"status": "needs_body_photo"}``.
 
 ONE doc, forever: ``users/{uid}/appearance_reports/current`` — a fixed id,
 always overwritten in place, never a fresh auto-id per run (that was the bug:
@@ -160,32 +163,59 @@ def _attributes_payload(pa_doc: dict | None) -> dict:
     }
 
 
-def _pick(
+def _bucket_eligible(attrs: dict, flag: str) -> bool:
+    """Whether ``attrs`` lands a photo in the pre-run sheet's ``flag`` bucket —
+    the SAME auto-categorisation :func:`photo_attrs.eligibility` uses, so the
+    backend honours exactly the photos the sheet could have offered and no
+    others. A photo clearly for one axis (e.g. a face-only crop) is never
+    eligible for the other; an untagged/ambiguous photo is eligible for both,
+    so a freshly-added, not-yet-classified photo the user picked is still read.
+    """
+    uf = bool(attrs.get("usable_for_face"))
+    ub = bool(attrs.get("usable_for_body"))
+    return (uf or not ub) if flag == "usable_for_face" else (ub or not uf)
+
+
+def _pick_all(
     photos: list[dict],
     extra: list[tuple[bytes, str, str]],
     flag: str,
     *,
     only_media_ids: set[str] | None = None,
-):
-    """The first grid photo whose shot-type tag ``flag`` is set — restricted to
-    ``only_media_ids`` when the caller named an explicit selection — else the
-    first attached ``extra`` image (user-supplied, single-subject intent),
-    else ``None``. Returns ``(bytes, mime, storage_path)`` or ``None``.
+) -> list[tuple[bytes, str, str]]:
+    """Every photo to feed this axis, as ``[(bytes, mime, storage_path), …]`` —
+    all fed together to :func:`face_report.run` / :func:`body_report.run` for
+    ONE combined read of the same person.
 
     When ``only_media_ids`` is given (an explicit, grid-based selection from the
-    pre-run sheet) the ``extra`` fallback is deliberately NOT taken: an explicit
-    selection names grid photos, and a chat attachment is never silently
-    substituted for one — the grid is the source of truth so a category with no
-    eligible *selected* photo resolves to "not available", never a bogus read
-    off some other photo."""
+    pre-run sheet) ALL *selected* grid photos that are bucket-eligible for the
+    axis (:func:`_bucket_eligible`) are returned, in grid order, capped at
+    :data:`_MAX_PHOTOS` — honouring the user's own pick, including an
+    untagged/freshly-added photo, while still refusing a photo clearly meant for
+    the other axis (§ founder 2026-10-28: all photos selectable, the user's
+    choice drives the read). The ``extra`` fallback is deliberately NOT taken for
+    an explicit selection: a chat attachment is never silently substituted for a
+    named grid photo — so a selection that matches nothing eligible resolves to
+    "not available", never a bogus read.
+
+    With no explicit selection (``only_media_ids is None`` — the chat/auto path)
+    the legacy behaviour stands: the single best photo — the first grid photo
+    whose shot-type ``flag`` is set, else the first attached ``extra`` image — as
+    a one-item list, so the auto path spends on just one photo. Empty list when
+    nothing qualifies."""
+    if only_media_ids is not None:
+        out: list[tuple[bytes, str, str]] = []
+        for p in photos:
+            attrs = p.get("attrs") or {}
+            if p.get("media_id") in only_media_ids and _bucket_eligible(attrs, flag):
+                out.append((p["bytes"], p["mime"], p.get("path", "")))
+        return out[:_MAX_PHOTOS]
     for p in photos:
-        if only_media_ids is not None and p.get("media_id") not in only_media_ids:
-            continue
         if (p.get("attrs") or {}).get(flag):
-            return p["bytes"], p["mime"], p.get("path", "")
-    if only_media_ids is None and extra:
-        return extra[0]
-    return None
+            return [(p["bytes"], p["mime"], p.get("path", ""))]
+    if extra:
+        return [extra[0]]
+    return []
 
 
 def _axis_ran(axis) -> bool:
@@ -288,13 +318,17 @@ async def run_appearance(
     :func:`body_report.run`. Propagates :class:`token_ledger.TokenCapExceeded`.
 
     ``face_media_ids`` / ``body_media_ids`` — when the caller (the pre-run
-    sheet) names an explicit, grid-based selection — restrict each axis to
-    those grid photos. ``None`` means "auto" (the first eligible grid photo, or
-    an ``extra_images`` fallback), preserving the legacy/chat behaviour. A named
-    selection is validated on the way in: only the caller's OWN current grid
-    photos that are actually eligible for the axis survive — an id that isn't in
-    the grid or isn't shot-type-eligible is dropped, so a mis-specified or
-    stale id can never feed a bogus read.
+    sheet) names an explicit, grid-based selection — restrict each axis to those
+    grid photos, and ALL of the selected eligible photos for an axis are analysed
+    together in ONE combined :func:`face_report.run` / :func:`body_report.run`
+    read of the same person (capped at :data:`_MAX_PHOTOS`), not just the first
+    (that first-photo-only read was the old "stale report" bug). ``None`` means
+    "auto" (the single best eligible grid photo, or an ``extra_images``
+    fallback), preserving the legacy/chat behaviour. A named selection is
+    validated on the way in: only the caller's OWN current grid photos that are
+    actually eligible for the axis survive — an id that isn't in the grid or
+    isn't shot-type-eligible is dropped, so a mis-specified or stale id can never
+    feed a bogus read.
 
     The returned/persisted report carries a ``category_status`` map
     (``{"face": ran|skipped|no_eligible_photo, "body": ...}``): ``skipped`` when
@@ -304,14 +338,19 @@ async def run_appearance(
     when it produced a real read.
 
     Founder's call: "if user rerun the Photo analysis without adding new
-    photos just share the last aggregated one" — when every photo this run
-    would analyse (grid + ``extra_images``, by storage path) is exactly the
-    set already reflected on the persisted report, all three Gemini vision
-    passes (:func:`physical_attributes.refresh`, :func:`face_report.run`,
-    :func:`body_report.run`) are skipped entirely and the existing persisted
-    report is returned unchanged (see :func:`_unchanged_since_last_run`). Any
-    addition or removal — or a photo that can't be reliably identified by
-    storage path — falls through to a normal run.
+    photos just share the last aggregated one" — on the NO-SELECTION rerun path
+    (``face_media_ids``/``body_media_ids`` both ``None`` — chat / auto
+    reconcile), when every photo this run would analyse (grid + ``extra_images``,
+    by storage path) is exactly the set already reflected on the persisted
+    report, all three Gemini vision passes (:func:`physical_attributes.refresh`,
+    :func:`face_report.run`, :func:`body_report.run`) are skipped entirely and
+    the existing persisted report is returned unchanged (see
+    :func:`_unchanged_since_last_run`). This dedup does NOT apply when the caller
+    names an explicit grid selection: a deliberate "analyse THESE photos" pick
+    always drives a fresh read (§ founder 2026-10-28), so selecting different
+    already-in-grid photos yields a report reflecting them, never the prior one.
+    Any addition or removal — or a photo that can't be reliably identified by
+    storage path — also falls through to a normal run.
     """
     if not uid:
         return None
@@ -321,8 +360,23 @@ async def run_appearance(
         _record(db, uid, "skipped", source, "no_photo")
         return None
 
+    # Whole-grid "nothing changed, re-share the last report" dedup applies ONLY
+    # to the no-selection rerun path (chat / auto reconcile), where the caller
+    # named no photos and the grid set is the sole input. An EXPLICIT grid
+    # selection (``face_media_ids`` / ``body_media_ids`` from the pre-run sheet)
+    # is a deliberate "analyse THESE photos" action: it must always drive a
+    # fresh read, even when the overall grid set is unchanged — otherwise
+    # picking different already-in-grid photos silently re-shows the prior
+    # report (§ founder 2026-10-28: "Run analysis says updated but it's the SAME
+    # old report"). A prior axis is then reused ONLY when that axis was genuinely
+    # skipped (``want_*=False`` / nothing eligible) — see the per-axis merge
+    # below, never because the grid set as a whole looked unchanged.
+    explicit_selection = face_media_ids is not None or body_media_ids is not None
     current_paths = _identified_paths(photos, extra)
-    prev = _unchanged_since_last_run(db, uid, current_paths)
+    prev = (
+        None if explicit_selection
+        else _unchanged_since_last_run(db, uid, current_paths)
+    )
     if prev is not None:
         _record(db, uid, "skipped", source, "unchanged_photos")
         prev_face = prev.get("face") or dict(NEEDS_FACE)
@@ -358,33 +412,50 @@ async def run_appearance(
         pa_doc = None
     attributes = _attributes_payload(pa_doc)
 
-    # --- face
+    # --- face: ALL ticked face photos -> ONE combined read of the same person
     face: dict = dict(NEEDS_FACE)
     if want_face:
-        pick = _pick(photos, extra, "usable_for_face", only_media_ids=face_sel)
-        if pick is not None:
-            report = await face_report.run(
-                pick[0], pick[1], uid=uid, source_path=pick[2]
-            )
+        picks = _pick_all(photos, extra, "usable_for_face", only_media_ids=face_sel)
+        if picks:
+            report = await face_report.run(picks, uid=uid)
             if isinstance(report, dict) and report.get("usable", True):
                 face = report
                 skill_memory.save_face_analysis(db, uid, report)
                 skill_memory.promote(db, uid, "face_analysis")
 
-    # --- body
+    # --- body: ALL ticked body photos -> ONE combined read of the same person
     body: dict = dict(NEEDS_BODY)
     if want_body:
-        pick = _pick(photos, extra, "usable_for_body", only_media_ids=body_sel)
-        if pick is not None:
-            report = await body_report.run(
-                pick[0], pick[1], uid=uid, source_path=pick[2]
-            )
+        picks = _pick_all(photos, extra, "usable_for_body", only_media_ids=body_sel)
+        if picks:
+            report = await body_report.run(picks, uid=uid)
             if isinstance(report, dict) and report.get("usable", True):
                 body = report
                 skill_memory.save_body_analysis(db, uid, report)
                 skill_memory.promote(db, uid, "body_analysis")
 
-    category_status = _category_status(want_face, want_body, face, body)
+    # Preserve any axis this run did not freshly produce. A rerun that runs
+    # only one axis — the other skipped (``want_*=False``) or wanted but with
+    # no eligible photo — must NOT wipe the previously-produced section back to
+    # NEEDS_*: that drops the unified face+body score and makes the shareable
+    # report card vanish (§ founder 2026-10-28: "after Ayma reran I don't see
+    # the report card anymore"). Mirrors :func:`record_background_result`'s
+    # reuse; the previous doc is read once here.
+    prev_doc = _read_report_doc(db, uid)
+    if not _axis_ran(face) and _axis_ran(prev_doc.get("face")):
+        face = prev_doc["face"]
+    if not _axis_ran(body) and _axis_ran(prev_doc.get("body")):
+        body = prev_doc["body"]
+    if isinstance(attributes, dict) and attributes.get("status"):
+        prev_attrs = prev_doc.get("attributes")
+        if isinstance(prev_attrs, dict) and not prev_attrs.get("status"):
+            attributes = prev_attrs
+
+    # A reused real read displays as a produced section, not an add-photo
+    # prompt, so category_status is derived from the MERGED values.
+    category_status = _category_status(
+        want_face or _axis_ran(face), want_body or _axis_ran(body), face, body
+    )
     photo_count = len(photos) + len(extra)
     doc = _persist_report(
         db, uid,
@@ -404,6 +475,28 @@ async def run_appearance(
         db, uid, "ok", source,
         f"produced={'+'.join(produced) or 'none'} photos={photo_count}",
     )
+    # Completion notification: a user-initiated run is fired unawaited by the
+    # client (POST /appearance/report), so the open report screen can't learn
+    # it landed once the user navigates away. Fire an in-app "report ready"
+    # notification here — where the report is persisted — so it works even if
+    # the client backgrounded/left (as long as the request completed). NOT for
+    # the silent background reconcile (``source == "auto"``), which the user
+    # never asked for and shouldn't be pinged about. Best-effort: never let a
+    # notification failure sink the report the request returns.
+    # TODO(durable-bg): if the app is KILLED mid-request this synchronous run
+    # may not finish; a fully durable server-side background job is a larger
+    # follow-up (see docs/TODO_QUEUE.md).
+    if source != "auto" and doc.get("id"):
+        try:
+            import notifications_triggers
+
+            await notifications_triggers.notify_report_ready(
+                db, uid, str(doc["id"]), body_only=(want_body and not want_face)
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "appearance: report-ready notification failed for %s", uid
+            )
     return doc
 
 

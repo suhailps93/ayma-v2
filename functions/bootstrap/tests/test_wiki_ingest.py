@@ -721,3 +721,61 @@ def test_ingest_or_defer_still_marks_pending_on_a_genuine_ingest_failure(
 
     assert written == 0
     assert marked == [("u1", "sess-voice-3")]
+
+
+def test_ingest_routes_named_taste_to_the_taste_page_not_interests(monkeypatch):
+    """A model `taste` block composes the structured public Taste page the Qloo
+    engine reads; named favourites do NOT also land in the Interests story, and
+    a narrative `taste` page op is dropped (the structured path owns it)."""
+    db = FakeDb()
+
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
+        return {
+            "pages": [
+                {
+                    "page_id": "interests",
+                    "page_type": "interests",
+                    "visibility": "public",
+                    "ai_body": "They watch a lot of sci-fi and action films.",
+                },
+                # A narrative taste page op must be ignored — the structured
+                # taste field owns that page.
+                {
+                    "page_id": "taste",
+                    "page_type": "taste",
+                    "visibility": "public",
+                    "ai_body": "She loves Marvel movies.",
+                },
+            ],
+            "taste": {
+                "music": ["Billie Eilish", "Bruno Mars"],
+                "film": ["Iron Man", "WALL-E", "Terminator"],
+                "food": ["ramen"],
+            },
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+
+    written = _run(
+        wiki_ingest.ingest(
+            db, "u1", "sess-t", [Turn("user", "I love Iron Man and WALL-E")]
+        )
+    )
+
+    assert written == 2  # the interests page + the taste merge
+
+    # Structured taste page composed in the shape the Qloo parser reads.
+    import taste_match
+
+    taste_page = db.docs[("users", "u1", "wiki_pages", "taste")]
+    assert taste_page["page_type"] == "taste"
+    parsed = taste_match.parse_taste(taste_page["ai_body"])
+    assert parsed["film"] == ["Iron Man", "WALL-E", "Terminator"]
+    assert parsed["dining"] == ["ramen"]
+    # The narrative "She loves Marvel movies." op never reached the page.
+    assert "Marvel" not in taste_page["ai_body"]
+
+    # Interests keeps the general narrative but NOT the named-favourites list.
+    interests = db.docs[("users", "u1", "wiki_pages", "interests")]
+    assert "sci-fi" in interests["ai_body"]
+    assert "Iron Man" not in interests["ai_body"]

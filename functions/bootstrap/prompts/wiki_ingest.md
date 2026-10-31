@@ -58,6 +58,32 @@ Rules:
   (e.g. `{"age": 29, "city": "Lisbon", "wants_kids": true}`) — omit or leave
   empty when there is nothing structured to record.
 
+Taste favourites are captured separately, NOT as a narrative page:
+- When the user names their own favourite **music** (artists/bands), **films or
+  TV shows**, or **food** (cuisines, dishes, restaurants or cafés) — e.g. "I
+  love Iron Man, WALL-E and the Marvel movies", "big AC/DC and Bruno Mars fan",
+  "I could eat ramen every day" — those named favourites are TASTE data. Put
+  them in the top-level `taste` object, NOT in any narrative page:
+  `"taste": {"music": ["AC/DC", "Bruno Mars"], "film": ["Iron Man", "WALL-E"],
+  "food": ["ramen"]}`. Use the bare name only (no sentence), up to 5 per domain,
+  and ONLY names the user stated as their OWN favourites — never a match's, a
+  web-report subject's, or something Ayma merely mentioned. Omit a domain with
+  nothing new; omit the whole `taste` object when the user named no favourites.
+  The system folds these onto the user's public Taste page itself — never write
+  a `taste` page in `pages`, and do NOT also copy these named favourites into
+  the `interests` page (that would duplicate them and is wrong).
+- **Capture ALL THREE domains, not just music.** Film and food matter as much as
+  music to the taste match, and they are the ones most often missed. Scan every
+  turn for a named film, show, franchise, director, cuisine, dish, restaurant or
+  café, even in passing ("we always get Thai", "obsessed with Succession", "huge
+  Ghibli person", "best tacos are at La Taquería"), and put each under the right
+  domain. A favourite mentioned once still counts. If the user named a film but
+  no music this turn, return `film` and omit `music` — never skip the whole
+  object just because one domain is empty.
+- `interests` stays for how they spend their time — hobbies, activities,
+  passions, pursuits ("rock climbing most weekends", "plays bass", "runs half
+  marathons") — not lists of favourite songs, films/shows, dishes or eateries.
+
 Every page is about the ACCOUNT HOLDER — never about anyone else:
 - Transcript stretches where Ayma is reporting on *another person* — a web or
   deep-dive report on a match, a shared profile card, a match-report
@@ -92,4 +118,6 @@ pattern is visible:
   armchair-diagnose, and drop it entirely when the exchange is too thin to
   tell.
 
-Output JSON only, matching the provided schema: `{ "pages": [ ... ] }`.
+Output JSON only, matching the provided schema: `{ "pages": [ ... ],
+"taste": { "music": [...], "film": [...], "food": [...] } }` — `taste` optional,
+include it only when the user named their own favourites (see the taste rule).

@@ -46,11 +46,18 @@ _WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
 _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
 _VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
+_VOICE_TOOL_USE_PATH = _DIR / "prompts" / "voice_tool_use.md"
+_PRACTICE_GREETING_PATH = _DIR / "prompts" / "practice_greeting.md"
+_VOICE_SESSION_SEED_PATH = _DIR / "prompts" / "voice_session_seed.md"
 _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
+_VOICE_ACCENT_PATH = _DIR / "prompts" / "voice_accent.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 _VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
+_VOICE_VOCAB_PATH = _DIR / "prompts" / "voice_vocab.md"
+_VOICE_VOCAB_LIVE_PATH = _DIR / "prompts" / "voice_vocab_live.md"
+_VOICE_VOCAB_NEXT_CALL_PATH = _DIR / "prompts" / "voice_vocab_next_call.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
 _LESSONS_CONFIG_DOC = "ayma_persona"
@@ -207,10 +214,81 @@ def load_mode_prompt(session_mode: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def load_voice_opener() -> str:
-    """Instruction for Ayma's own opening line on a call the caller hasn't
-    spoken in yet (``prompts/voice_opener.md``)."""
+def _voice_opener_raw() -> str:
     return _VOICE_OPENER_PATH.read_text(encoding="utf-8").strip()
+
+
+_OPENER_PRIOR_MARK = ("<!-- OPENER:PRIOR -->", "<!-- /OPENER:PRIOR -->")
+_OPENER_FRESH_MARK = ("<!-- OPENER:FRESH -->", "<!-- /OPENER:FRESH -->")
+
+
+def _opener_block(raw: str, keep: tuple[str, str], drop: tuple[str, str]) -> str:
+    """Return ``raw`` with the ``keep`` block's markers stripped and the ``drop``
+    block (markers included) removed, then whitespace tidied."""
+    for mark in (keep[0], keep[1]):
+        raw = raw.replace(mark, "")
+    start, end = raw.find(drop[0]), raw.find(drop[1])
+    if start != -1 and end != -1:
+        raw = raw[:start] + raw[end + len(drop[1]):]
+    return re.sub(r"\n{3,}", "\n\n", raw).strip()
+
+
+def load_voice_opener(has_prior_conversation: bool, last_topic_hint: str = "") -> str:
+    """Instruction for Ayma's own opening line on a call the caller hasn't spoken
+    in yet (``prompts/voice_opener.md``), scoped to whether this caller has a
+    prior conversation to offer (founder behaviour, 2026-10-28).
+
+    When ``has_prior_conversation`` is True the opener is a GREET + a choice —
+    "pick up where we left off about X, or something else?" — and explicitly does
+    NOT continue the previous topic itself; ``last_topic_hint`` is a short,
+    one-line reference to the last thing discussed (never the full transcript),
+    substituted into that offer. When False it is a plain fresh warm opener. All
+    the instructional prose lives in the prompt file; this only selects the right
+    block and injects the hint value."""
+    raw = _voice_opener_raw()
+    hint = " ".join((last_topic_hint or "").split()).strip()
+    if has_prior_conversation and hint:
+        block = _opener_block(raw, _OPENER_PRIOR_MARK, _OPENER_FRESH_MARK)
+        return block.replace("{last_topic_hint}", hint)
+    return _opener_block(raw, _OPENER_FRESH_MARK, _OPENER_PRIOR_MARK)
+
+
+@lru_cache(maxsize=1)
+def load_voice_tool_use() -> str:
+    """Voice tool-use directive (``prompts/voice_tool_use.md``): the agent MUST
+    call the matching tool for any app action and may only confirm it from the
+    tool's actual result — never narrate an action as done without invoking it.
+
+    Appended to the voice session instructions. It especially hardens the Meta
+    cascade path, where the chat LLM's tool-calling is probabilistic and would
+    otherwise sometimes say "rerunning that now" or "opened that" without firing
+    any tool (founder voice bug, 2026-10-28)."""
+    return _VOICE_TOOL_USE_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def load_practice_greeting() -> str:
+    """Instruction for the simulated match's own opening line on a Practice Date
+    voice call — they "pick up the phone" and greet in character instead of
+    waiting for the user (``prompts/practice_greeting.md``)."""
+    return _PRACTICE_GREETING_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def load_voice_session_seed() -> str:
+    """The synthetic opening USER turn seeded on a cascade (text-LLM) call so an
+    agent-initiated greeting/opener never reaches the chat LLM as a system-only
+    message list (``prompts/voice_session_seed.md``).
+
+    On a cascade session (STT -> chat LLM -> TTS, incl. the LiveKit-Inference
+    brain) ``generate_reply(instructions=...)`` adds the instruction as a SYSTEM
+    message; with no prior user turn the request carries only system messages and
+    the OpenAI-compatible gateway rejects it with HTTP 400 ("messages must
+    contain at least one message with role user or tool"). Passing this as
+    ``generate_reply(user_input=...)`` inserts one benign user turn so the opener
+    generates normally. Realtime models (Gemini Live / Inference RealtimeModel)
+    do not go through that path and are never seeded."""
+    return _VOICE_SESSION_SEED_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)
@@ -229,6 +307,26 @@ def voice_swap_note(change: str) -> str:
     )
 
 
+def voice_vocab_directive(current: str, voices: str, hot_swap: bool) -> str:
+    """The stack-aware voice-vocabulary section appended to a voice session's
+    instructions (``prompts/voice_vocab.md``): the voice the session is actually
+    running (``current``), the voices its active stack can use (``voices``, a
+    bulleted list), and whether a change can happen mid-call (``hot_swap``, true
+    only on Gemini Live) or only from the next call. This is what makes the agent
+    answer "what voices do you have" / "which are you on" for the ACTIVE stack
+    (e.g. a fishaudio cascade) instead of the Gemini Live presets (§13.9)."""
+    swap_rule = (
+        _VOICE_VOCAB_LIVE_PATH if hot_swap else _VOICE_VOCAB_NEXT_CALL_PATH
+    ).read_text(encoding="utf-8").strip()
+    return (
+        _VOICE_VOCAB_PATH.read_text(encoding="utf-8")
+        .strip()
+        .replace("{current}", current)
+        .replace("{voices}", voices)
+        .replace("{swap_rule}", swap_rule)
+    )
+
+
 def voice_language_directive(preference: str) -> str:
     """The voice-call language section appended to the session instructions
     (``prompts/voice_language.md``), on both voice providers: speak the
@@ -239,6 +337,19 @@ def voice_language_directive(preference: str) -> str:
     lever there."""
     return _VOICE_LANGUAGE_PATH.read_text(encoding="utf-8").strip().replace(
         "{language}", preference.strip() or "English"
+    )
+
+
+def voice_accent_directive(accent: str) -> str:
+    """The voice-call ACCENT section appended to the session instructions
+    (``prompts/voice_accent.md``), fed ONLY to an accent-capable provider at
+    session boot (Gemini Live / OpenAI Realtime — ``voice_catalog.
+    provider_supports_accent``). It tells the model to speak in the user's saved
+    ``ayma_voice_accent`` from the first word and hold it for the whole call, so
+    the voice never reverts to the provider's default accent. Callers must not
+    pass this to a fixed-voice provider (the agent routes it per capability)."""
+    return _VOICE_ACCENT_PATH.read_text(encoding="utf-8").strip().replace(
+        "{accent}", accent.strip()
     )
 
 

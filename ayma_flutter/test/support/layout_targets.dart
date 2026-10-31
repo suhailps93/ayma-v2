@@ -9,12 +9,17 @@ import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
 import 'package:ayma_flutter/screens/biometric_info_screen.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/complete_profile_screen.dart';
+import 'package:ayma_flutter/screens/connect_agent_screen.dart';
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/screens/delete_account_screen.dart';
+import 'package:ayma_flutter/screens/admin_feedback_screen.dart';
 import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/screens/feedback_screen.dart';
+import 'package:ayma_flutter/services/tour_anchors.dart';
+import 'package:ayma_flutter/services/tour_content.dart';
+import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
 import 'package:ayma_flutter/screens/google_account_screen.dart';
 import 'package:ayma_flutter/screens/instagram_screen.dart';
 import 'package:ayma_flutter/screens/invite_friends_screen.dart';
@@ -32,6 +37,12 @@ import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
 import 'package:ayma_flutter/screens/privacy_screen.dart';
 import 'package:ayma_flutter/screens/profile_settings_screen.dart';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
+import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
+import 'package:ayma_flutter/services/date_sim_service.dart';
+import 'package:ayma_flutter/widgets/taste_match_card.dart';
+import 'package:ayma_flutter/widgets/taste_models.dart';
+import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
+import 'package:ayma_flutter/features/practice_date/practice_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/screens/recovery_screen.dart';
 import 'package:ayma_flutter/screens/release_notes_screen.dart';
@@ -96,6 +107,15 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
   Widget shell(Widget child) => NavBarShell(child: child);
   return {
     SplashScreen.path: () => SplashScreen(apiClient: api, auth: kLayoutAuth),
+    // The splash's distinct "couldn't connect" state (startup retries spent),
+    // pumped directly so the matrix holds its message + Retry to every size,
+    // scale and direction. Not an appRouter path — a synthetic target.
+    'splash (connection error)': () => Scaffold(
+      body: SplashErrorView(
+        message: "Couldn't connect. Check your connection and try again.",
+        onRetry: () {},
+      ),
+    ),
     UnderageScreen.path: () => UnderageScreen(signOut: () async {}),
     SignInScreen.path: () => SignInScreen(
       auth: AuthService(auth: kLayoutAuth, profileService: profiles),
@@ -137,12 +157,29 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     ),
     DeepDiveReportScreen.path: () =>
         shell(DeepDiveReportScreen(reportId: 'r1', apiClient: api)),
+    // The web-research screen's "never run" empty state (a clean 404, not a
+    // load failure): "No web research yet" + a "Run web search" action. A
+    // synthetic target — same screen, a 404 api. Not an appRouter path.
+    'web research (never run)': () => shell(
+      DeepDiveReportScreen(reportId: 'uid_her', apiClient: layoutApi404()),
+    ),
     PhysicalAttributesReportScreen.path: () =>
         shell(PhysicalAttributesReportScreen(reportId: 'r1', apiClient: api)),
     AppearanceReportScreen.path: () => shell(
       AppearanceReportScreen(reportId: 'r1', apiClient: api, myUid: 'me'),
     ),
     PublicProfileScreen.path: () => PublicProfileScreen(uid: 'her', api: api),
+    PracticeScreen.path: () =>
+        PracticeScreen(uid: 'her', name: 'Dana', api: api),
+    PracticeDebriefScreen.path: () =>
+        PracticeDebriefScreen(sessionId: 'p1', name: 'Dana', api: api),
+    DateSimScreen.path: () => DateSimScreen(
+      uid: 'her',
+      name: 'Dana',
+      threadId: 'her__me',
+      api: api,
+      profiles: profiles,
+    ),
     ExploreScreen.path: () => shell(
       ExploreScreen(apiClient: api, initialQuery: 'climbers in Denver'),
     ),
@@ -165,6 +202,8 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         shell(ProfileProposalsScreen(apiClient: api)),
     GoogleAccountScreen.path: () =>
         shell(GoogleAccountScreen(service: GoogleAccountService(api: api))),
+    ConnectAgentScreen.path: () =>
+        shell(ConnectAgentScreen(service: layoutMcpConnect())),
     InstagramScreen.path: () => shell(
       InstagramScreen(
         service: InstagramService(api: api, auth: kLayoutAuth, firestore: fs),
@@ -172,8 +211,7 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     ),
     InviteFriendsScreen.path: () =>
         shell(InviteFriendsScreen(api: api, share: (_) async {})),
-    VoicePreferenceScreen.path: () =>
-        shell(VoicePreferenceScreen(api: api, profileService: profiles)),
+    VoicePreferenceScreen.path: () => shell(VoicePreferenceScreen(api: api)),
     AccentColorScreen.path: () =>
         shell(
       AccentColorScreen(
@@ -199,7 +237,12 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         session: DevPanelSession.instance..unlock('layout'),
       ),
     ),
+    // The dev-only "Ayma's Notes" page (pumped directly — the appRouter
+    // redirect that gates it on an unlocked DevPanelSession is bypassed here,
+    // same as any other target).
+    AymaNotesScreen.path: () => shell(AymaNotesScreen(api: api, myUid: 'me')),
     FeedbackScreen.path: () => shell(FeedbackScreen(api: api)),
+    AdminFeedbackScreen.path: () => shell(AdminFeedbackScreen(api: api)),
     SettingsScreen.path: () => shell(
       SettingsScreen(
         controller: ThemeController(),
@@ -290,6 +333,40 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         apiClient: api,
       ),
     ),
+    // The Instagram-DM-style "send to a user" picker (BUG P): avatar + name
+    // rows with a per-row Send button and a search box, mutual matches first.
+    // Seeded with one mutual match and one DM-only thread so both the matched
+    // badge and a plain row, plus the search field and keyboard, lay out
+    // cleanly at every size, scale and direction.
+    'send-to-user recipient picker': (context) async {
+      final fs = FakeFirebaseFirestore();
+      await fs.doc('users/her/profile/main').set({'name': kLongName});
+      await fs.doc('users/bob/profile/main').set({'name': 'Bob'});
+      await fs.doc('matches/her__me').set({
+        'uids': ['her', 'me'],
+        'status': 'mutual_interest',
+        'score': 0.9,
+      });
+      await fs.doc('dm_threads/her__me').set({
+        'participants': ['her', 'me'],
+        'unread': {'me': 0},
+      });
+      await fs.doc('dm_threads/bob__me').set({
+        'participants': ['bob', 'me'],
+        'unread': {'me': 0},
+      });
+      if (!context.mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => RecipientPicker(
+          dmService: DmService(auth: kLayoutAuth, firestore: fs, api: api),
+          matchService:
+              MatchService(auth: kLayoutAuth, firestore: fs, api: api),
+          api: api,
+        ),
+      );
+    },
     'OAuth code dialog': (context) => promptForOAuthCode(context),
     // No Firebase in tests: the permission read fails, which the primer
     // treats as "not asked yet" — so the dialog shows.
@@ -299,15 +376,154 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         openStoredBodyReport(context, api: api, reportId: 'r1'),
     'face report sheet': (context) =>
         openStoredFaceReport(context, api: api, reportId: 'r1'),
-    // The Appearance pre-run sheet: the Face/Body photo groups (empty here, so
-    // the add-the-missing-kind prompts and the Run action show) must lay out
-    // cleanly at every size, scale and direction.
+    // The Appearance pre-run sheet: the Face/Body photo groups (populated via
+    // the fake eligibility, so the selectable thumbnails, the always-present
+    // Add photo tile, the skip toggles and the Run action all show) must lay
+    // out cleanly at every size, scale and direction.
     'appearance pre-run sheet': (context) => showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) => AppearancePreRunSheet(api: api),
     ),
+    // The date-sim result's Qloo taste-match card (long strings, sample chip),
+    // on a page of its own since the matrix pumps DateSimScreen pre-run.
+    'date-sim taste match card': (context) {
+      final taste = loadTasteMatch(api, 'her');
+      return Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [TasteMatchCard(load: taste)],
+            ),
+          ),
+        ),
+      );
+    },
+    // The taste-match section's no-Taste-page empty state (long hint to wrap),
+    // as the match report / date-sim render it when one person has no public
+    // Taste page.
+    'taste match card (no taste)': (context) {
+      return Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                TasteMatchCard.resolved(
+                  const TasteMatchLoad.note(
+                    'Maya hasn\'t added a public Taste page yet — add one with '
+                    'lines like "Music: …", "Film: …", "Food: …" to see a '
+                    'taste match between the two of you.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+    // The live date-sim states (a run in progress with the typing row, a
+    // finished run with the verdict, a failed run with its partial
+    // transcript), read from seeded Firestore exactly as the screen does.
+    for (final status in ['running', 'done', 'error'])
+      'date-sim live ($status)': (context) async {
+        final fs = FakeFirebaseFirestore();
+        final sim = fs
+            .collection('users')
+            .doc('me')
+            .collection('date_sims')
+            .doc('sim1');
+        await sim.set({
+          'status': status,
+          'persona': {'name': kLongName},
+          'banner': 'Simulated — not sent to $kLongName.',
+          'max_messages': 6,
+          if (status == 'done')
+            'verdict': {
+              'score': 78,
+              'score_label': 'A promising start worth a real message',
+              'summary': '$kLongName and you kept it light and curious. ' * 4,
+            },
+          if (status == 'error')
+            'error': {'code': 'failed', 'message': 'The simulation failed.'},
+        });
+        for (var i = 0; i < 3; i++) {
+          await sim.collection('messages').doc('00$i').set({
+            'seq': i,
+            'speaker': i.isEven ? 'you' : 'them',
+            'text':
+                'A fairly long simulated chat line number $i that wraps '
+                    'across several lines on a narrow screen. ' *
+                2,
+          });
+        }
+        if (!context.mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => DateSimScreen(
+              uid: 'her',
+              name: kLongName,
+              api: api,
+              simId: 'sim1',
+              service: DateSimService(auth: kLayoutAuth, firestore: fs),
+              profiles: ProfileService(auth: kLayoutAuth, firestore: fs),
+            ),
+          ),
+        );
+      },
+    // The interactive feature-tour coach-mark overlay (§11.2a): a dimming
+    // scrim + spotlight cutout around a (dummy) target near the bottom, with
+    // its anchored callout above. Long copy + scale 2.0 stress the callout's
+    // wrap/scroll safety; the always-animating pulse ring means the matrix
+    // never `pumpAndSettle`s it.
+    'feature tour coach-mark (spotlight + callout)': (context) =>
+        Navigator.of(context).push(
+          PageRouteBuilder<void>(
+            opaque: false,
+            pageBuilder: (_, __, ___) => Stack(
+              children: [
+                Positioned(
+                  left: 24,
+                  bottom: 24,
+                  child: SizedBox(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    width: 64,
+                    height: 64,
+                  ),
+                ),
+                Positioned.fill(
+                  child: CoachMarkOverlay(
+                    onFinish: () {},
+                    features: const [
+                      TourFeature(
+                        featureId: 'matrix_anchored',
+                        headline:
+                            'A deliberately long coach-mark headline that must '
+                            'wrap gracefully at text scale 2.0',
+                        subtitle:
+                            'Press and hold the orb to start a voice chat — a '
+                            'long one-liner to stress wrapping on a narrow '
+                            'screen in both directions.',
+                        icon: Icons.graphic_eq_rounded,
+                        anchorId: TourAnchors.homeOrb,
+                      ),
+                      TourFeature(
+                        featureId: 'matrix_centered',
+                        headline: 'A centered step with no spotlight',
+                        subtitle:
+                            '18+, consent-first, private. You are always in '
+                            'control.',
+                        icon: Icons.shield_outlined,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

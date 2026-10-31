@@ -30,7 +30,7 @@ def _livekit_env(monkeypatch, *, url="wss://test.livekit.cloud"):
     monkeypatch.setenv("LIVEKIT_API_SECRET", _SECRET)
     seeds = []
 
-    async def _fake_seed(room, seed_json):
+    async def _fake_seed(room, seed_json, agent_name=None):
         seeds.append((room, seed_json))
 
     monkeypatch.setattr(main, "seed_room_context", _fake_seed)
@@ -306,18 +306,23 @@ def test_bootstrap_schedules_the_one_time_web_self_dive(monkeypatch):
     assert seen == ["test-uid-123"]
 
 
-def test_bootstrap_wakes_the_scale_to_zero_agent(monkeypatch):
-    """ayma-agent runs min-instances=0 (docs/deploy.md §12.2) — a real
-    voice-start /bootstrap call (a non-empty session_id — see
-    `newSessionId()`) must fire the wake ping so Cloud Run starts the
-    container in parallel with the LiveKit token mint, not leave it to
-    LiveKit dispatch alone. (The routing-only, empty-session_id call
-    `splash_screen.dart` makes deliberately skips this — see
+def test_bootstrap_wakes_cloud_run_only_for_cloudrun_users(monkeypatch):
+    """ayma-agent (Cloud Run) runs min-instances=0 (docs/deploy.md §12.2), but
+    the DEFAULT voice routing is now "livekit" — served by the
+    LiveKit-Cloud-hosted worker, which LiveKit keeps warm itself. So a real
+    voice-start /bootstrap (a non-empty session_id — see `newSessionId()`) for a
+    livekit-routed user must NOT fire the Cloud Run wake ping: that would
+    cold-start a 2 GB instance only for it to decline the room (request_fnc
+    guard) — pure wasted spend. Only a user explicitly on "cloudrun" wakes it.
+    (The routing-only, empty-session_id call `splash_screen.dart` makes never
+    touches the voice room at all — see
     `test_bootstrap_without_a_session_id_never_touches_the_voice_room`.)"""
     _livekit_env(monkeypatch)
     woken = []
     monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
 
+    # Default routing ("livekit") → no Cloud Run wake.
+    monkeypatch.setattr(main, "_voice_agent_cloud", lambda _uid: "livekit")
     resp = client.post(
         "/bootstrap",
         headers=_valid_auth(monkeypatch),
@@ -325,6 +330,16 @@ def test_bootstrap_wakes_the_scale_to_zero_agent(monkeypatch):
     )
     assert resp.status_code == 200
     # TestClient drains background tasks after the response.
+    assert woken == []
+
+    # Explicit "cloudrun" routing → wake the Cloud Run worker.
+    monkeypatch.setattr(main, "_voice_agent_cloud", lambda _uid: "cloudrun")
+    resp = client.post(
+        "/bootstrap",
+        headers=_valid_auth(monkeypatch),
+        json={"session_id": "s-real-voice-session-2"},
+    )
+    assert resp.status_code == 200
     assert woken == [1]
 
 

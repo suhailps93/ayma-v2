@@ -657,7 +657,25 @@ def test_match_adapter_carries_score_and_viewers_own_explanation(monkeypatch):
         b["text"] for sec in report["sections"] for b in sec["blocks"] if "text" in b
     )
     assert "Bob's own version" not in full_text
+    # The report always reads "Match" — the title and score block say
+    # "Match", for mutual and non-mutual pairs alike (founder reverted the
+    # earlier "Compatibility" wording; §5.3).
     assert report["title"] == "Match with Bob Bee"
+    assert blocks["score"]["label"] == "Match score"
+
+
+def test_match_adapter_says_match_for_a_mutual_pair_too(monkeypatch):
+    """A genuine mutual match (`status == mutual_interest`, both liked each
+    other) reads "Match" — same as every other pair now that the
+    "Compatibility" wording was reverted (§5.3)."""
+    doc = dict(_MATCH_DOC)
+    doc["status"] = "mutual_interest"
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: doc)
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    blocks = _blocks(report)
+    assert report["title"] == "Match with Bob Bee"
+    assert blocks["score"]["label"] == "Match score"
 
 
 def test_match_adapter_shows_the_other_participants_explanation_for_them(monkeypatch):
@@ -873,3 +891,35 @@ def test_deep_dive_adapter_dedupes_links_vs_socials_and_lists_socials_first(monk
     by_heading = {s["heading"]: s["blocks"] for s in report["sections"]}
     assert len(by_heading["Social profiles"]) == 2
     assert [b["label"] for b in by_heading["Links"]] == ["Article"]
+
+
+def test_match_adapter_why_this_is_zero_for_hard_dealbreaker(monkeypatch):
+    doc = dict(_MATCH_DOC)
+    doc["score"] = 0.0
+    doc["gate_failures"] = [
+        {
+            "node_id": "partner_age_min",
+            "label": "Partner age range",
+            "reason": (
+                "Outside a stated partner age range: one wants 28–38, the other"
+                " is 42."
+            ),
+        },
+        {
+            "node_id": "orientation",
+            "label": "Gender & orientation",
+            "reason": "Their gender is outside what one of you is looking for.",
+        },
+    ]
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: doc)
+    monkeypatch.setattr(
+        deep_dive, "profile_full_name", lambda db, uid: "Bob Bee"
+    )
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    assert any(s["heading"] == "Why this is 0%" for s in report["sections"])
+    blocks = _blocks(report)
+    assert "dealbreaker:lead" in blocks and blocks["dealbreaker:lead"][
+        "text"
+    ].startswith("This is a 0% match because of")
+    assert blocks["dealbreaker:0"]["text"] == doc["gate_failures"][0]["reason"]
+    assert blocks["dealbreaker:1"]["tag"] == "Gender & orientation"

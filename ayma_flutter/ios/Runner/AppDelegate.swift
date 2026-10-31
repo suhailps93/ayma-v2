@@ -1,6 +1,7 @@
 import Flutter
 import Photos
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -23,6 +24,26 @@ import UIKit
       callKitManager = manager
       channel.setMethodCallHandler { call, result in
         manager.handle(call, result: result)
+      }
+
+      // Mirrors the in-app notification unread count onto the app-icon badge
+      // (§7.6) — set when a tap marks a notification read so the red icon
+      // badge stays in sync with the in-app bell. 0 clears it.
+      FlutterMethodChannel(
+        name: "ayma/badge",
+        binaryMessenger: controller.binaryMessenger
+      ).setMethodCallHandler { call, result in
+        guard call.method == "setBadge" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let count = (call.arguments as? [String: Any])?["count"] as? Int ?? 0
+        if #available(iOS 16.0, *) {
+          UNUserNotificationCenter.current().setBadgeCount(max(0, count))
+        } else {
+          UIApplication.shared.applicationIconBadgeNumber = max(0, count)
+        }
+        result(nil)
       }
 
       // "Save image" for the report card: add-only Photos access, the

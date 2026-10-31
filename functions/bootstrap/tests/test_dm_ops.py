@@ -369,3 +369,65 @@ def test_post_message_writes_attachment_fields():
     assert msg["attachment_path"] == "uploads/a/dm/a__b/9.pdf"
     assert msg["file_name"] == "r.pdf"
     assert msg["size"] == 2048
+
+
+def test_gif_is_a_known_attachment_type():
+    """A GIF is its own message type and carries an attachment (url/path/…)."""
+    import dm_schema
+
+    assert "gif" in dm_schema.MESSAGE_TYPES
+    assert "gif" in dm_schema.ATTACHMENT_MESSAGE_TYPES
+
+
+def test_post_message_stores_a_gif_attachment():
+    """A GIF message sends, stores and reads back with its url + type (§6.6)."""
+    db = FakeDb()
+    mid = dm_ops.post_message(
+        db,
+        "a",
+        "b",
+        "gif",
+        "",
+        {
+            "attachment_url": "https://example.com/party.gif",
+            "attachment_path": "uploads/a/dm/a__b/inserted_1.gif",
+            "mime": "image/gif",
+            "file_name": "inserted_1.gif",
+            "size": 65536,
+        },
+    )
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert msg["type"] == "gif"
+    assert msg["attachment_url"] == "https://example.com/party.gif"
+    assert msg["mime"] == "image/gif"
+    assert msg["size"] == 65536
+
+
+def test_dm_send_gif_passes_attachment(monkeypatch):
+    """The endpoint accepts type `gif` and forwards the attachment (url/type)."""
+    seen = {}
+    monkeypatch.setattr(
+        main.dm_ops, "post_message",
+        lambda db, s, o, t, b, att=None, mod=None, rs=None: seen.update(
+            t=t, b=b, att=att
+        )
+        or "mgif",
+    )
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={
+            "type": "gif",
+            "attachment_url": "https://example.com/party.gif",
+            "attachment_path": "uploads/aaa/dm/aaa__bbb/inserted_1.gif",
+            "mime": "image/gif",
+            "file_name": "inserted_1.gif",
+            "size": 65536,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["message_id"] == "mgif"
+    assert seen["t"] == "gif"
+    assert seen["att"]["attachment_url"] == "https://example.com/party.gif"
+    assert seen["att"]["mime"] == "image/gif"

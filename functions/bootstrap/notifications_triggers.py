@@ -22,6 +22,7 @@ from notifications_schema import (
     NOTIF_MUTUAL,
     NOTIF_NEW_SCORED,
     NOTIF_PROFILE_SUGGESTIONS,
+    NOTIF_REPORT_READY,
     NOTIF_SKILL_DONE,
 )
 
@@ -33,6 +34,7 @@ _MARKER = re.compile(r"\[[a-z_]+:[\w-]*\]")
 _DM_BODY = {
     "photo": "📷 Photo",
     "image": "📷 Photo",
+    "gif": "📷 GIF",
     "voice": "🎙 Voice message",
     "file": "📎 File",
     "shared_profile": "👤 Shared a profile",
@@ -44,6 +46,7 @@ _DM_BODY = {
 _DM_PUSH_BODY = {
     "photo": "Photo",
     "image": "Photo",
+    "gif": "GIF",
     "voice": "Voice message",
     "file": "File",
     "shared_profile": "Shared a profile",
@@ -176,12 +179,21 @@ async def notify_skill_done(
         logger.exception("skill-done notification failed for %s", uid)
 
 
+# One stable centre-doc id for the public-profile-update entry, so two ingests
+# finishing at once (chat-turn + voice, say) can't stack two identical "Ayma
+# suggests 1 update…" rows (founder bug 2026-10-27): concurrent writers land
+# on this same doc, and each later fire overwrites it with the current count.
+_PROFILE_SUGGESTIONS_DEDUP_ID = "profile_suggestions_pending"
+
+
 async def notify_profile_suggestions(db, uid: str, count: int) -> None:
     """Tell the user Ayma has new pending updates for their PUBLIC profile to
     review. ``count`` is the number of changes currently awaiting a decision.
     Deep-links to the "Public profile updates" review screen. The caller
-    (``profile_manual.consume_new_suggestions``) dedupes, so this only fires
-    for a genuinely new pending set. Best-effort."""
+    (``profile_manual.consume_new_suggestions``) dedupes a re-run over an
+    unchanged set; this collapses to a single rolling centre entry via
+    ``dedup_id`` so a genuinely-new set never shows as two identical rows, and
+    the one entry always carries the current count. Best-effort."""
     if count <= 0:
         return
     plural = "" if count == 1 else "s"
@@ -194,9 +206,48 @@ async def notify_profile_suggestions(db, uid: str, count: int) -> None:
                 f"Ayma suggests {count} update{plural} to your public profile."
             ),
             deep_link="profile_suggestions",
+            dedup_id=_PROFILE_SUGGESTIONS_DEDUP_ID,
         )
     except Exception:  # noqa: BLE001
         logger.exception("profile-suggestions notification failed for %s", uid)
+
+
+# One stable centre-doc id for the "report ready" entry: there is only ever ONE
+# current appearance report per user, so every completion collapses onto this
+# single rolling entry (resurfacing it) rather than stacking a new row per run —
+# the §7.9 dedup approach, same as the profile-suggestions entry above. Idempotent
+# for a single run (a re-fire for the same report overwrites, never duplicates).
+_REPORT_READY_DEDUP_ID = "appearance_report_ready"
+
+
+async def notify_report_ready(
+    db, uid: str, report_id: str, *, body_only: bool = False
+) -> None:
+    """Tell the user their user-initiated appearance/body report finished
+    generating server-side (§ report completion). Fired where the report is
+    persisted, so it reaches a user who navigated away or backgrounded the app
+    before the (unawaited) request returned. Deep-links to that report
+    (``appearance/{report_id}``) so the read-on-tap + bell badge work, and
+    carries only a neutral "ready" preview — never any report content.
+    Collapses to one rolling centre entry via ``dedup_id``. Best-effort."""
+    if not uid or not report_id:
+        return
+    preview = (
+        "Your body analysis is ready."
+        if body_only
+        else "Your appearance report is ready."
+    )
+    try:
+        await dispatch(
+            db,
+            uid,
+            NOTIF_REPORT_READY,
+            fixed_preview=preview,
+            deep_link=f"appearance/{report_id}",
+            dedup_id=_REPORT_READY_DEDUP_ID,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("report-ready notification failed for %s", uid)
 
 
 async def notify_new_scored_matches(

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -8,7 +6,6 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
-import '../services/deep_dive_activity.dart';
 import '../services/match_activity.dart';
 import '../services/tab_request.dart';
 import '../theme.dart';
@@ -166,37 +163,6 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       }
     } finally {
       if (mounted) setState(() => _liking = false);
-    }
-  }
-
-  bool _startingSearch = false;
-
-  /// Web search on someone with no report yet: start the search right here
-  /// (no detour through chat) and open the report screen, which shows the
-  /// in-progress banner and fills in when [DeepDiveActivity] sees it land.
-  /// The report id of a cross-user dive is the subject's uid.
-  Future<void> _runWebSearch(PublicProfile p) async {
-    if (_startingSearch) return;
-    setState(() => _startingSearch = true);
-    try {
-      final res = await _api.deepDive(targetUid: p.uid, name: p.name);
-      if (!mounted) return;
-      if (res.usageCapped) {
-        showOutOfCreditsSheet(context);
-        return;
-      }
-      final reportId = res.reportId.isNotEmpty ? res.reportId : p.uid;
-      if (res.queued) {
-        unawaited(DeepDiveActivity.instance.start(reportId, api: _api));
-      }
-      context.push('/deep-dive/${Uri.encodeComponent(reportId)}');
-    } catch (_) {
-      if (mounted) {
-        AymaToast.show(context, "Couldn't start that web search.",
-            kind: AymaToastKind.error);
-      }
-    } finally {
-      if (mounted) setState(() => _startingSearch = false);
     }
   }
 
@@ -398,12 +364,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     liked: _isLiked(p),
                     liking: _liking,
                     scoring: _scoring,
-                    searching: _startingSearch,
                     score: _score ?? p.score,
                     onLike: _like,
                     onUnlike: _unlike,
                     onRunMatch: _runMatch,
-                    onWebSearch: _runWebSearch,
                   ),
                 ),
               // Persistent tab bar even though this screen is a pushed route,
@@ -507,11 +471,11 @@ class ProfilePhotoHeader extends StatefulWidget {
   /// no overlay.
   final Widget? actions;
 
-  /// Non-null ONLY on the owner's own "My public profile": turns the thumbnail
-  /// strip into the inline editor (add tile, per-photo star + delete,
-  /// drag-reorder). Null everywhere else keeps photos display-only. When set,
-  /// the carousel renders the controller's live [GridPhoto] list rather than
-  /// [photos].
+  /// Non-null ONLY on the owner's own "My public profile": enables inline
+  /// photo editing — the set-primary (star) and delete controls overlaid on
+  /// the opened/enlarged image, plus the strip's add tile and drag-reorder.
+  /// Null everywhere else keeps photos display-only. When set, the carousel
+  /// renders the controller's live [GridPhoto] list rather than [photos].
   final InlinePhotoEditing? editing;
 
   @override
@@ -696,6 +660,44 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
               // screen-wide inset).
               if (widget.actions != null)
                 Positioned(right: 16, bottom: 16, child: widget.actions!),
+              // Set-primary (star) and delete controls for the owner's own
+              // profile live on the opened/enlarged image itself, acting on the
+              // photo currently shown in the carousel. The thumbnail strip
+              // below stays clean (just the photos, primary star-badged).
+              if (_editable && photos.isNotEmpty) ...[
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: PhotoControlChip(
+                    tooltip: page == 0 ? 'Primary photo' : 'Make primary',
+                    icon: page == 0
+                        ? Icons.star_rounded
+                        : Icons.star_outline_rounded,
+                    iconColor: page == 0 ? ac.accent : Colors.white,
+                    onTap: () {
+                      final grid = widget.editing!.controller.photos;
+                      if (page >= 0 && page < grid.length) {
+                        widget.editing!.onSetPrimary(grid[page]);
+                      }
+                    },
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: PhotoControlChip(
+                    tooltip: 'Delete photo',
+                    icon: Icons.delete_outline_rounded,
+                    iconColor: Colors.white,
+                    onTap: () {
+                      final grid = widget.editing!.controller.photos;
+                      if (page >= 0 && page < grid.length) {
+                        widget.editing!.onRemove(grid[page]);
+                      }
+                    },
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -705,7 +707,8 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
         // show instead (founder reference screenshot).
         if (_editable)
           // Inline editor: always shown (even with 0–1 photos, so the add tile
-          // is reachable), with per-thumb star + delete and drag-reorder.
+          // is reachable), with a clean thumbnail strip (primary star-badged)
+          // and drag-reorder; set-primary + delete are on the opened image.
           InlinePhotoStrip(
             photos: photos,
             fallback: fallback,
@@ -713,18 +716,6 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
             busy: widget.editing!.controller.busy,
             onSelect: _goToPage,
             onAddPhoto: widget.editing!.onAddPhoto,
-            onSetPrimary: (i) {
-              final grid = widget.editing!.controller.photos;
-              if (i >= 0 && i < grid.length) {
-                widget.editing!.onSetPrimary(grid[i]);
-              }
-            },
-            onRemove: (i) {
-              final grid = widget.editing!.controller.photos;
-              if (i >= 0 && i < grid.length) {
-                widget.editing!.onRemove(grid[i]);
-              }
-            },
             onReorder: widget.editing!.controller.reorder,
           )
         else if (photos.length > 1)
@@ -841,6 +832,7 @@ class ProfileBody extends StatelessWidget {
     this.headerLoading = false,
     this.bottomPadding = 0,
     this.editing,
+    this.leading,
   });
 
   final String reportType;
@@ -849,6 +841,11 @@ class ProfileBody extends StatelessWidget {
   final PublicProfile? profile;
   final bool headerLoading;
   final double bottomPadding;
+
+  /// An optional card rendered as the first scrolling item, above the photo
+  /// header (e.g. the match-request screen's "Ayma's case" card). Null
+  /// everywhere else.
+  final Widget? leading;
 
   /// Inline photo editing for the owner's own profile only (null elsewhere —
   /// see [ProfilePhotoHeader.editing]).
@@ -861,6 +858,7 @@ class ProfileBody extends StatelessWidget {
     return ListView(
       padding: EdgeInsets.only(bottom: bottomPadding),
       children: [
+        if (leading != null) leading!,
         if (headerLoading)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 48),
@@ -929,6 +927,7 @@ class ProfileBody extends StatelessWidget {
 /// the persistent tab bar.
 class _RailButton extends StatelessWidget {
   const _RailButton({
+    super.key,
     required this.icon,
     required this.active,
     required this.onPressed,
@@ -999,19 +998,16 @@ class _Actions extends StatelessWidget {
     required this.liked,
     required this.liking,
     required this.scoring,
-    required this.searching,
     required this.score,
     required this.onLike,
     required this.onUnlike,
     required this.onRunMatch,
-    required this.onWebSearch,
   });
 
   final PublicProfile p;
   final bool liked;
   final bool liking;
   final bool scoring;
-  final bool searching;
 
   /// The current match score (local override or the profile's), or null when
   /// this pair has never been scored.
@@ -1019,7 +1015,6 @@ class _Actions extends StatelessWidget {
   final void Function(PublicProfile) onLike;
   final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
-  final void Function(PublicProfile) onWebSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -1051,12 +1046,13 @@ class _Actions extends StatelessWidget {
         const SizedBox(height: 16),
         _RailButton(
           active: p.deepDiveId.isNotEmpty,
-          onPressed: p.deepDiveId.isNotEmpty
-              ? () => context
-                  .push('/deep-dive/${Uri.encodeComponent(p.deepDiveId)}')
-              : searching
-                  ? null
-                  : () => onWebSearch(p),
+          // Tapping opens the report screen, which shows the existing report or
+          // the never-run empty state with its own "Run web search" button —
+          // tapping the icon itself starts no search.
+          onPressed: () {
+            final id = p.deepDiveId.isNotEmpty ? p.deepDiveId : 'uid_${p.uid}';
+            context.push('/deep-dive/${Uri.encodeComponent(id)}');
+          },
           icon: AymaSearchGlyph(
               accent: accent, filled: p.deepDiveId.isNotEmpty),
         ),
@@ -1080,6 +1076,32 @@ class _Actions extends StatelessWidget {
                   : AymaMatchGlyph(accent: accent, filled: hasScore),
             );
           },
+        ),
+        const SizedBox(height: 16),
+        // Practice Date (hackathon deliverable B): rehearse talking to this
+        // person against a simulated persona built only from their public
+        // profile. Opens the clearly-labelled simulator.
+        _RailButton(
+          key: const Key('profilePracticeButton'),
+          active: false,
+          onPressed: () => context.push(
+            '/practice/${p.uid}',
+            extra: p.name,
+          ),
+          icon: Icon(Icons.model_training_outlined, color: accent),
+        ),
+        const SizedBox(height: 16),
+        // AI Date Simulation (hackathon flagship): watch your AI and theirs
+        // feel each other out before messaging — a preview conversation plus a
+        // compatibility read. Nothing is sent to this person.
+        _RailButton(
+          key: const Key('profileDateSimButton'),
+          active: false,
+          onPressed: () => context.push(
+            '/date-sim/${p.uid}',
+            extra: {'name': p.name, 'thread_id': p.threadId},
+          ),
+          icon: Icon(Icons.auto_awesome_outlined, color: accent),
         ),
       ],
     );

@@ -66,6 +66,37 @@ def test_realtime_model_falls_back_for_an_unknown_voice(monkeypatch):
     assert captured["voice"] == CONFIG.gemini_live_voice
 
 
+def test_cascade_tts_voice_matches_persona_gender(monkeypatch):
+    # With default config the cascade (Fish Audio) TTS must pick a gender-matched
+    # voice: female personas sound female, male personas sound male. Load a
+    # fresh config with the override env vars cleared so we exercise the
+    # config.py defaults (Hannah / Adrian), not whatever the ambient env sets.
+    # Fish Audio voices are addressed by id, so these are the documented ids.
+    import config as config_module
+
+    hannah = "9a9cf47702da476aa4629e2506d4a857"  # feminine
+    adrian = "bf322df2096a46f18c579d0baa36f41d"  # masculine
+
+    for var in (
+        "META_CASCADE_TTS_VOICE",
+        "META_CASCADE_TTS_VOICE_FEMALE",
+        "META_CASCADE_TTS_VOICE_MALE",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    default_cfg = config_module._load()
+    monkeypatch.setattr(agent, "CONFIG", default_cfg)
+
+    assert agent._cascade_tts_voice_for_gender("female") == hannah
+    assert agent._cascade_tts_voice_for_gender("woman") == hannah
+    assert agent._cascade_tts_voice_for_gender("male") == adrian
+    assert agent._cascade_tts_voice_for_gender("man") == adrian
+    # Non-binary / unknown / unset gender falls back to the base default voice,
+    # which now defaults to Hannah (the founder's selected default voice).
+    assert agent._cascade_tts_voice_for_gender("non-binary") == hannah
+    assert agent._cascade_tts_voice_for_gender("") == hannah
+    assert agent._cascade_tts_voice_for_gender(None) == hannah
+
+
 def test_room_seed_carries_the_voice_name():
     seed_json = json.dumps({
         "system_prompt": "p",
@@ -612,9 +643,16 @@ def test_session_tools_come_from_the_shared_registry():
     assert agent._session_tools(_NullCtx(), "") == []  # no uid -> no tools
 
     tools = agent._session_tools(_NullCtx(), "u1")
-    # The shared text registry plus the voice-only screen-awareness tools.
-    assert len(tools) == len(skills.all_skills()) + len(app_control.VOICE_SKILLS)
+    # The shared text registry, the always-on story edit/remove tools, plus the
+    # voice-only screen-awareness tools.
+    assert len(tools) == (
+        len(skills.all_skills())
+        + len(skills._STORY_MANAGE_REGISTRY)
+        + len(app_control.VOICE_SKILLS)
+    )
     assert all(llm.is_function_tool(t) for t in tools)
+    # Ayma can edit/soft-remove the user's own story on a call, not only in text.
+    assert {"edit_story_entry", "remove_story_entry"} <= {t.info.name for t in tools}
 
 
 def test_voice_tools_include_recall_only_at_level_3(monkeypatch):
@@ -731,8 +769,8 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
     captured = {}
 
     def _fake_make_livekit_tools(
-        db, uid, *, on_call=None, on_voice_change=None, guard=None,
-        session_id="", turns=None,
+        db, uid, *, on_call=None, on_voice_change=None, voice_pref=None,
+        guard=None, session_id="", turns=None,
     ):
         captured["on_call"] = on_call
         captured["session_id"] = session_id
@@ -1955,13 +1993,21 @@ def test_end_call_out_of_credits_still_ends_the_call_if_the_flush_fails():
     assert shutdown_calls == ["out_of_credits"]
 
 
+_UNSET = object()
+
+
 class _OpenerSession(_FakeMuteSession):
     def __init__(self):
         super().__init__()
         self.replies = []
+        self.reply_chat_ctxs = []
+        self.reply_user_inputs = []
 
-    async def generate_reply(self, instructions=None):
+    async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
+                             user_input=_UNSET):
         self.replies.append(instructions)
+        self.reply_chat_ctxs.append(chat_ctx)
+        self.reply_user_inputs.append(user_input)
 
 
 class _StateEv:
@@ -2068,6 +2114,175 @@ def test_opener_disabled_by_zero_grace():
         )
 
     assert asyncio.run(go()) is False
+
+
+def test_opener_uses_agent_context_by_default():
+    """Gemini Live / default path: no opener_chat_ctx is passed, so the opener's
+    generate_reply is NOT given a chat_ctx and generates against the agent's own
+    full seeded history exactly as before (path unchanged)."""
+    import asyncio
+
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    assert len(s.replies) == 1 and s.replies[0]
+    # chat_ctx kwarg was never forwarded -> generate_reply falls back to the
+    # agent's full context, the pre-fix behaviour for Gemini Live.
+    assert s.reply_chat_ctxs == [_UNSET]
+
+
+def test_cascade_opener_generates_against_history_free_context():
+    """Cascade cold-start fix (founder bug 2026-10-28): when a history-free
+    opener_chat_ctx is supplied, the opener's generate_reply generates against
+    THAT context (no previous-conversation turns), so the chat LLM has no old
+    message to answer/continue when it opens the call."""
+    import asyncio
+    from livekit.agents import llm
+
+    s = _OpenerSession()
+    fresh = llm.ChatContext.empty()
+
+    async def go():
+        return await agent.maybe_open_conversation(
+            s, _opener_seed(), window=[], grace_seconds=0.05,
+            opener_chat_ctx=fresh,
+        )
+
+    assert asyncio.run(go()) is True
+    assert len(s.reply_chat_ctxs) == 1
+    passed = s.reply_chat_ctxs[0]
+    assert passed is fresh
+    # The opener generates with ZERO prior turns in context, so it cannot reply
+    # to the previous conversation's last message.
+    assert list(passed.items) == []
+
+
+def test_cascade_opener_seeds_user_turn_so_inference_never_gets_system_only():
+    """Regression (Sentry ayma-agent inference HTTP 400, first seen Oct 26 2026:
+    ``messages must contain at least one message with role user or tool``).
+
+    On the cascade (text chat LLM, incl. the LiveKit-Inference brain) an
+    agent-initiated opener with no prior user turn produced a SYSTEM-ONLY message
+    list — LiveKit's OpenAI provider format does not inject a dummy user message —
+    and the gateway rejected it with 400. ``seed_user_turn`` now carries one
+    benign synthetic user turn. Asserts the opener seeds a non-empty user_input
+    AND that replaying the framework's generate_reply composition (user turn, then
+    the opener instruction as a system message) over the OpenAI provider format
+    yields a message list with >= 1 user/tool message."""
+    import asyncio
+    from livekit.agents import llm
+    from prompt import load_voice_session_seed
+
+    s = _OpenerSession()
+    fresh = llm.ChatContext.empty()
+
+    async def go():
+        return await agent.maybe_open_conversation(
+            s, _opener_seed(), window=[], grace_seconds=0.05,
+            opener_chat_ctx=fresh, seed_user_turn=True,
+        )
+
+    assert asyncio.run(go()) is True
+    seed_text = load_voice_session_seed()
+    assert seed_text.strip()
+    assert s.reply_user_inputs == [seed_text]
+
+    composed = llm.ChatContext.empty()
+    composed.add_message(role="user", content=[s.reply_user_inputs[0]])
+    composed.add_message(role="system", content=[s.replies[0]])
+    messages, _ = composed.to_provider_format("openai")
+    assert any(m.get("role") in ("user", "tool") for m in messages), messages
+
+
+def test_realtime_opener_is_not_seeded():
+    """Realtime paths (Gemini Live / Inference RealtimeModel) do not reach the
+    chat-completions request shape, so the opener is left unseeded — byte-for-byte
+    the pre-fix behaviour."""
+    import asyncio
+
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    assert s.reply_user_inputs == [_UNSET]
+
+
+def test_welcome_greeting_seeds_user_turn_on_cascade():
+    """The pre-sign-in welcome greeting takes the same cascade guard: its
+    generate_reply carries the synthetic user turn so it is never a system-only
+    request, while its instruction is unchanged."""
+    import asyncio
+    from prompt import load_voice_session_seed
+
+    s = _OpenerSession()
+    seed = _opener_seed(greeting_instructions="greet warmly")
+    asyncio.run(
+        agent._open_main_call(s, seed, window=[], seed_user_turn=True)
+    )
+    assert s.replies == ["greet warmly"]
+    assert s.reply_user_inputs == [load_voice_session_seed()]
+
+
+def test_welcome_greeting_not_seeded_on_realtime():
+    """Welcome greeting on a realtime session (seed_user_turn left False) stays
+    unseeded — the realtime protocol accepts an opener with no user turn."""
+    import asyncio
+
+    s = _OpenerSession()
+    seed = _opener_seed(greeting_instructions="greet warmly")
+    asyncio.run(agent._open_main_call(s, seed, window=[]))
+    assert s.replies == ["greet warmly"]
+    assert s.reply_user_inputs == [_UNSET]
+
+
+def test_opener_prior_context_helper():
+    """has-prior / last-topic-hint derivation for the opener signal."""
+    assert agent._opener_prior_context([]) == (False, "")
+    # Blank-text turns don't count as prior conversation.
+    assert agent._opener_prior_context(
+        [agent.Turn(role=agent.ROLE_AYMA, text="   ")]
+    ) == (False, "")
+    # The hint is the most recent real turn, whitespace-collapsed.
+    has_prior, hint = agent._opener_prior_context(
+        [
+            agent.Turn(role=agent.ROLE_USER, text="tell me about her"),
+            agent.Turn(role=agent.ROLE_AYMA, text="Priya  seemed\n keen"),
+        ]
+    )
+    assert has_prior is True and hint == "Priya seemed keen"
+    # A very long last turn is truncated to a one-line hint, not dumped whole.
+    long_turn = [agent.Turn(role=agent.ROLE_AYMA, text="x " * 400)]
+    has_prior, hint = agent._opener_prior_context(long_turn)
+    assert has_prior is True
+    assert len(hint) <= agent._OPENER_HINT_MAX_CHARS + 1  # +1 for the ellipsis
+
+
+def test_opener_offers_choice_when_prior_context_exists():
+    """New call WITH prior context: the opener instruction greets + offers the
+    continue-or-switch choice and references the last topic, rather than
+    continuing it (founder behaviour, 2026-10-28)."""
+    import asyncio
+
+    s = _OpenerSession()
+    seed = _opener_seed(
+        seed_turns=[
+            agent.Turn(role=agent.ROLE_USER, text="should I text Priya back"),
+            agent.Turn(role=agent.ROLE_AYMA, text="whether to text Priya back"),
+        ]
+    )
+    assert asyncio.run(_run_opener(s, seed, [])) is True
+    instr = s.replies[0].lower()
+    assert "whether to text priya back" in instr
+    assert "do not" in instr and ("continue" in instr or "resume" in instr)
+    assert "no particular prior conversation" not in instr
+
+
+def test_opener_is_fresh_when_no_prior_context():
+    """New call with NO prior context: a plain fresh warm opener, no choice."""
+    import asyncio
+
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    instr = s.replies[0].lower()
+    assert "no particular prior conversation" in instr
+    assert "pick up where we left off" not in instr
 
 
 def test_opener_swallows_generate_failure():
@@ -2304,3 +2519,930 @@ def test_entrypoint_starts_keepalive_and_releases_it_on_shutdown(monkeypatch):
     assert ctx.callbacks == [keepalive.release]
     asyncio.run(ctx.callbacks[0]())
     assert events == ["start", "release"]
+
+
+# --- Practice Date voice (hackathon B) ------------------------------------- #
+def test_read_room_seed_parses_practice_flag_and_persona():
+    """The practice gate + persona identity travel on the room metadata; a
+    normal (non-practice) seed leaves the flag off so the standard path runs."""
+    raw = json.dumps(
+        {
+            "system_prompt": "PERSONA PROMPT",
+            "uid": "u1",
+            "session_id": "practice_abc",
+            "recent_turns": [],
+            "practice": True,
+            "persona_name": "Maya",
+            "persona_gender": "woman",
+            "target_uid": "demo_practice_maya",
+        }
+    )
+    seed = agent._read_room_seed(_FakeCtx(raw))
+    assert seed.practice is True
+    assert seed.persona_name == "Maya"
+    assert seed.persona_gender == "woman"
+    assert seed.target_uid == "demo_practice_maya"
+
+    normal = agent._read_room_seed(
+        _FakeCtx(json.dumps({"system_prompt": "AYMA", "uid": "u1", "recent_turns": []}))
+    )
+    assert normal.practice is False
+    assert normal.persona_name == "" and normal.target_uid == ""
+    assert normal.persona_gender == ""
+
+
+def test_relay_practice_coach_publishes_a_side_hint_and_persists_turns(monkeypatch):
+    """As the user speaks, an out-of-character coach nudge is published on the
+    dedicated ``practice_coach`` topic (never spoken by the persona), and each
+    finalized turn is appended to the practice session store for the debrief."""
+    import practice_core
+    import practice_llm
+    import practice_seed
+    from fake_firestore import FakeDb
+
+    db = FakeDb()
+    practice_seed.seed(db)
+    session_id = practice_core.start_session(db, "viewer_uid", "demo_practice_maya")
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+
+    async def fake_json(system, contents, schema, uid, feature):
+        assert "Maya" in contents  # the name-only coach context is used
+        return {"hint": "warm opener — now ask about her ceramics"}
+
+    practice_llm.set_override(json=fake_json)
+
+    handlers = {}
+    published = []
+
+    class _FakeSession:
+        def on(self, name):
+            def _register(fn):
+                handlers[name] = fn
+                return fn
+
+            return _register
+
+    class _FakeLocalParticipant:
+        async def publish_data(self, payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _FakeCtxRoom:
+        class room:  # noqa: N801
+            local_participant = _FakeLocalParticipant()
+
+    class _UserEv:
+        transcript = "hey, your pottery is gorgeous"
+        is_final = True
+
+    class _Item:
+        role = "assistant"
+        text_content = "haha thanks!"
+
+    class _ItemEv:
+        item = _Item()
+
+    try:
+        async def _run():
+            agent.relay_practice_coach(
+                _FakeCtxRoom(),
+                _FakeSession(),
+                uid="viewer_uid",
+                session_id=session_id,
+                persona_name="Maya",
+                persona_gender="woman",
+                target_uid="demo_practice_maya",
+            )
+            handlers["user_input_transcribed"](_UserEv())
+            handlers["conversation_item_added"](_ItemEv())
+            await asyncio.sleep(0.05)  # let the fire-and-forget coach task run
+
+        asyncio.run(_run())
+    finally:
+        practice_llm.clear_override()
+
+    coach = [p for t, p in published if t == agent.TOPIC_PRACTICE_COACH]
+    assert coach and "ceramics" in coach[0]["text"]
+
+    stored = (
+        db.collection("users")
+        .document("viewer_uid")
+        .collection(practice_core.PRACTICE_SESSIONS_COLLECTION)
+        .document(session_id)
+        .get()
+        .to_dict()["turns"]
+    )
+    roles = [t["role"] for t in stored]
+    assert practice_core.ROLE_USER in roles and practice_core.ROLE_MATCH in roles
+
+
+# --- Practice-voice Meta cascade (LLM_PROVIDER_VOICE=meta, off by default) --- #
+
+
+def _install_fake_cascade_plugins(monkeypatch):
+    """Patch the livekit openai plugin + inference module the cascade builder
+    imports, plus ``agent.AgentSession``, with constructor-recording fakes.
+    Returns the dict every fake writes its kwargs into."""
+    from livekit.plugins import openai as lk_openai
+    from livekit.agents import inference
+
+    captured: dict = {}
+
+    class _FakeSTT:
+        def __init__(self, **kwargs):
+            captured["stt"] = kwargs
+
+    class _FakeLLM:
+        def __init__(self, **kwargs):
+            captured["llm"] = kwargs
+
+    class _FakeTTS:
+        def __init__(self, **kwargs):
+            captured["tts"] = kwargs
+
+    class _FakeVAD:
+        def __init__(self, **kwargs):
+            captured["vad"] = kwargs
+
+    class _FakeSession:
+        def __init__(self, **kwargs):
+            captured["session"] = kwargs
+
+    # STT, TTS and VAD all ride the LiveKit Inference gateway; only the LLM leg
+    # is Meta (via livekit-plugins-openai).
+    monkeypatch.setattr(lk_openai, "LLM", _FakeLLM)
+    monkeypatch.setattr(inference, "STT", _FakeSTT)
+    monkeypatch.setattr(inference, "TTS", _FakeTTS)
+    monkeypatch.setattr(inference, "VAD", _FakeVAD)
+    # The inference-route brain (§13.9) builds via inference.LLM; capture it too.
+    monkeypatch.setattr(inference, "LLM", _FakeLLM)
+    monkeypatch.setattr(agent, "AgentSession", _FakeSession)
+    return captured
+
+
+def test_meta_cascade_requires_the_api_key(monkeypatch):
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="META_API_KEY"):
+        agent.build_meta_cascade_session()
+
+
+def test_meta_cascade_wires_config_models_and_reasoning(monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    agent.build_meta_cascade_session()
+
+    # STT rides LiveKit Inference (Meta serves no working REST STT) with the
+    # config model id — no Meta base_url/key, never Gemini.
+    assert captured["stt"]["model"] == CONFIG.meta_cascade_stt_model
+    assert "base_url" not in captured["stt"]
+    assert "api_key" not in captured["stt"]
+    # The LLM leg points at the Meta Model API with the config model id (no
+    # hardcoded strings) and the real key; never Gemini.
+    assert captured["llm"]["model"] == CONFIG.meta_chat_model
+    assert captured["llm"]["base_url"] == CONFIG.meta_api_base_url
+    assert captured["llm"]["api_key"] == "test-key"
+    # Muse Spark is reasoning-only — minimal effort must be passed or replies
+    # come back empty.
+    assert captured["llm"]["reasoning_effort"] == CONFIG.meta_reasoning_effort
+    # TTS vendor + VAD come from config, so the flag can reach them.
+    assert captured["tts"]["model"] == CONFIG.meta_cascade_tts_model
+    assert captured["vad"]["model"] == CONFIG.meta_cascade_vad_model
+    # A full cascade: STT + LLM + TTS + VAD, not a RealtimeModel.
+    assert set(captured["session"]) == {
+        "stt", "llm", "tts", "vad", "allow_interruptions"
+    }
+
+
+def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
+    import config
+
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    # Explicitly empty voice → no "voice" key is added (the vendor default).
+    # CONFIG is a frozen dataclass — reload it from env and swap agent.CONFIG.
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "")
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    agent.build_meta_cascade_session()
+    assert "voice" not in captured["tts"]
+
+    # The config default voice (Hannah) IS passed through when the env is unset.
+    monkeypatch.delenv("META_CASCADE_TTS_VOICE", raising=False)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    agent.build_meta_cascade_session()
+    assert captured["tts"]["voice"] == "9a9cf47702da476aa4629e2506d4a857"
+
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Ashley")
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    agent.build_meta_cascade_session()
+    assert captured["tts"]["voice"] == "Ashley"
+
+
+def test_meta_cascade_picks_the_gender_matched_tts_voice(monkeypatch):
+    """A Practice Date persona's gender selects the matching cascade TTS voice
+    from config (never a voice id hardcoded in agent.py); the MAIN path (no
+    gender) and an unset gender voice both fall back to the configured default."""
+    import config
+
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Default")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE_FEMALE", "Olivia")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE_MALE", "Mark")
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    # Mirrors the entrypoint wiring: the persona gender resolves to a voice via
+    # ``_cascade_tts_voice_for_gender`` which is forwarded as ``tts_voice``.
+    def _session_for_gender(gender):
+        return agent.build_meta_cascade_session(
+            tts_voice=agent._cascade_tts_voice_for_gender(gender)
+        )
+
+    _session_for_gender("woman")
+    assert captured["tts"]["voice"] == "Olivia"
+    _session_for_gender("man")
+    assert captured["tts"]["voice"] == "Mark"
+    # Non-binary / unknown and the MAIN path (no gender) → the default voice.
+    _session_for_gender("non-binary")
+    assert captured["tts"]["voice"] == "Default"
+    agent.build_meta_cascade_session()
+    assert captured["tts"]["voice"] == "Default"
+
+
+def test_meta_cascade_gender_voice_falls_back_when_unconfigured(monkeypatch):
+    """When the gender-specific voice is explicitly blanked, gender matching
+    falls back safely to the configured default voice rather than an invented
+    id. (The config.py defaults are non-empty — Hannah / Adrian — so "unset"
+    here means the operator cleared the env var to force the fallback.)"""
+    import config
+
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Default")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE_FEMALE", "")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE_MALE", "")
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    agent.build_meta_cascade_session(
+        tts_voice=agent._cascade_tts_voice_for_gender("woman")
+    )
+    assert captured["tts"]["voice"] == "Default"
+
+
+def test_practice_gemini_session_uses_a_gender_matched_voice(monkeypatch):
+    """The default (Gemini Live) practice path speaks in a voice matching the
+    persona's gender; unknown gender falls back to the user's preference."""
+    import voices
+
+    captured = {}
+
+    def _fake_build_realtime_model(voice_name=None, voice_language=None, route=None):
+        captured["voice_name"] = voice_name
+        return object()
+
+    monkeypatch.setattr(agent, "build_realtime_model", _fake_build_realtime_model)
+    monkeypatch.setattr(agent, "AgentSession", lambda **kw: kw)
+    monkeypatch.setattr(agent.llm_routing, "route_for", lambda *a, **k: "gemini")
+
+    female_seed = agent.RoomSeed(system_prompt="P", persona_gender="woman", practice=True)
+    agent._build_practice_gemini_session(female_seed)
+    assert captured["voice_name"] == voices.voice_for_gender("woman")
+
+    # Unknown gender → fall back to the user's own saved preference.
+    unknown_seed = agent.RoomSeed(
+        system_prompt="P", persona_gender="", voice_name="Kore", practice=True
+    )
+    agent._build_practice_gemini_session(unknown_seed)
+    assert captured["voice_name"] == "Kore"
+
+
+class _FakePracticeSession:
+    """A practice ``AgentSession`` stand-in: records the greeting and the
+    ``close`` handler so a test can fire it."""
+
+    def __init__(self):
+        self._handlers = {}
+        self.started = False
+        self.greetings = []
+        self.greeting_user_inputs = []
+
+    def on(self, name, callback=None):
+        def _register(fn):
+            self._handlers[name] = fn
+            return fn
+
+        return _register(callback) if callback else _register
+
+    async def start(self, **_kwargs):
+        self.started = True
+
+    async def generate_reply(self, instructions=None, user_input=None):
+        self.greetings.append(instructions)
+        self.greeting_user_inputs.append(user_input)
+
+    def close(self, ev):
+        self._handlers["close"](ev)
+
+
+def _practice_ctx():
+    class _Room:
+        pass
+
+    class _Ctx:
+        room = _Room()
+
+    return _Ctx()
+
+
+def _stub_practice_relays(monkeypatch):
+    for name in (
+        "relay_transcripts", "relay_agent_state", "relay_cascade_usage",
+        "relay_token_usage", "relay_practice_coach",
+    ):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+
+def test_start_practice_session_greets_first_in_character(monkeypatch):
+    """The simulated match "picks up the phone" — an initial agent turn fires
+    from the practice-greeting prompt file, not a hardcoded string."""
+    _stub_practice_relays(monkeypatch)
+    session = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="persona", uid="u1", practice=True)
+
+    asyncio.run(
+        agent._start_practice_session(
+            _practice_ctx(), seed, session, meta_cascade=True, use_inference=False
+        )
+    )
+
+    assert session.started is True
+    from prompt import load_practice_greeting, load_voice_session_seed
+    assert session.greetings == [load_practice_greeting()]
+    # Cascade (text LLM): the greeting carries a synthetic user turn so it is
+    # never a system-only inference request (Sentry 400 regression).
+    assert session.greeting_user_inputs == [load_voice_session_seed()]
+
+
+def test_start_practice_session_greeting_not_seeded_on_realtime(monkeypatch):
+    """On the Gemini Live / Inference realtime practice path the greeting is left
+    unseeded — the realtime protocol accepts an opener with no prior user turn."""
+    _stub_practice_relays(monkeypatch)
+    session = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="persona", uid="u1", practice=True)
+
+    asyncio.run(
+        agent._start_practice_session(
+            _practice_ctx(), seed, session, meta_cascade=False, use_inference=True
+        )
+    )
+
+    from prompt import load_practice_greeting
+    assert session.greetings == [load_practice_greeting()]
+    assert session.greeting_user_inputs == [None]
+
+
+def test_cascade_runtime_error_falls_back_to_gemini_live(monkeypatch):
+    """A built cascade that dies mid-call (CloseReason.ERROR) switches to a
+    fresh Gemini Live practice session on the same room — no dead air."""
+    from livekit.agents.voice.events import CloseEvent, CloseReason
+
+    gemini = _FakePracticeSession()
+    monkeypatch.setattr(
+        agent, "_build_practice_gemini_session", lambda seed: (gemini, False)
+    )
+    started = []
+
+    async def _fake_start(ctx, seed, session, *, meta_cascade, use_inference):
+        started.append((session, meta_cascade))
+
+    monkeypatch.setattr(agent, "_start_practice_session", _fake_start)
+
+    cascade = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="persona", uid="u1", practice=True)
+    ctx = _practice_ctx()
+    agent._arm_practice_cascade_fallback(ctx, seed, cascade)
+
+    async def _drive(reason):
+        cascade.close(CloseEvent(reason=reason))
+        await asyncio.sleep(0)  # let the scheduled fallback task run
+
+    # A clean close (user hung up) must NOT spin up a fallback.
+    asyncio.run(_drive(CloseReason.USER_INITIATED))
+    assert started == []
+
+    # An error close switches to Gemini Live exactly once.
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == [(gemini, False)]
+
+    # A second error close does not fire a second fallback.
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == [(gemini, False)]
+
+
+def test_relay_cascade_usage_meters_llm_turns(monkeypatch):
+    import token_ledger
+    from livekit.agents.metrics import LLMMetrics
+
+    recorded: dict = {}
+
+    def _fake_add(uid, feature, tokens, **kwargs):
+        recorded.update(
+            uid=uid, feature=feature, tokens=tokens,
+            model=kwargs.get("model"), session_id=kwargs.get("session_id"),
+        )
+
+    monkeypatch.setattr(token_ledger, "add", _fake_add)
+
+    handlers: dict = {}
+
+    class _FakeSession:
+        def on(self, name):
+            def _reg(fn):
+                handlers[name] = fn
+                return fn
+            return _reg
+
+    agent.relay_cascade_usage(
+        _FakeSession(), "viewer_uid", session_id="s-practice", model="muse-spark-x",
+    )
+
+    class _Ev:
+        metrics = LLMMetrics(
+            type="llm_metrics", label="meta", request_id="r1",
+            timestamp=0.0, duration=0.1, ttft=0.05, cancelled=False,
+            completion_tokens=12, prompt_tokens=30, prompt_cached_tokens=0,
+            total_tokens=42, tokens_per_second=10.0,
+        )
+
+    handlers["metrics_collected"](_Ev())
+    assert recorded["feature"] == token_ledger.FEATURE_VOICE
+    assert recorded["tokens"] == 42
+    assert recorded["model"] == "muse-spark-x"
+    assert recorded["session_id"] == "s-practice"
+
+
+# --- MAIN voice provider switch (LLM_PROVIDER_VOICE_MAIN, default gemini) --- #
+
+
+def _drive_main_run_session(
+    monkeypatch, provider, *, build_raises=False, seed=None
+):
+    """Drive ``_run_session`` for a normal (non-practice) call with the MAIN
+    voice flag set to ``provider``, stubbing the shared setup + both path
+    builders so the test observes only which stack is selected. ``seed`` lets a
+    test drive a per-user voice-stack selection (§13.9) instead of the flag."""
+    import config
+    import llm_routing
+    import token_ledger
+
+    monkeypatch.setenv("LLM_PROVIDER_VOICE_MAIN", provider)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+
+    if seed is None:
+        seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
+
+    async def _fake_seed(_ctx):
+        return seed
+
+    monkeypatch.setattr(agent, "_await_room_seed", _fake_seed)
+    monkeypatch.setattr(agent, "get_db", lambda: object())
+    monkeypatch.setattr(llm_routing, "route_for", lambda *a, **k: "vertex")
+    monkeypatch.setattr(
+        token_ledger, "provider_for", lambda _f: "google_live"
+    )
+
+    class _FakeFlush:
+        def __init__(self, *a, **k):
+            pass
+
+        async def run(self):
+            pass
+
+    monkeypatch.setattr(agent, "SessionFlush", _FakeFlush)
+
+    calls: dict = {}
+
+    def _build_cascade(*a, **_k):
+        calls["built"] = True
+        calls["cascade_args"] = a
+        if build_raises:
+            raise RuntimeError("META_API_KEY is not set")
+        return "CASCADE_SESSION"
+
+    monkeypatch.setattr(agent, "build_cascade_session", _build_cascade)
+    monkeypatch.setattr(
+        agent, "_arm_main_cascade_fallback",
+        lambda *a, **k: calls.__setitem__("armed", True),
+    )
+
+    async def _fake_cascade_start(ctx, s, session, **k):
+        calls["started"] = "cascade"
+        calls["cascade_session"] = session
+
+    async def _fake_gemini_start(ctx, s, **k):
+        calls["started"] = "gemini"
+
+    monkeypatch.setattr(agent, "_start_main_cascade_session", _fake_cascade_start)
+    monkeypatch.setattr(agent, "_start_main_gemini_session", _fake_gemini_start)
+
+    class _Ctx:
+        async def connect(self):
+            pass
+
+        def add_shutdown_callback(self, _cb):
+            pass
+
+    class _KeepAlive:
+        def hold_for(self, _cb):
+            pass
+
+    asyncio.run(agent._run_session(_Ctx(), _KeepAlive()))
+    return calls
+
+
+def test_main_voice_defaults_to_gemini_live(monkeypatch):
+    """Default flag (gemini) → the main call still builds the Gemini Live path
+    and never touches the Meta cascade: zero behaviour change."""
+    calls = _drive_main_run_session(monkeypatch, "gemini")
+    assert calls["started"] == "gemini"
+    assert "built" not in calls
+    assert "armed" not in calls
+
+
+def test_main_voice_meta_builds_the_cascade(monkeypatch):
+    """LLM_PROVIDER_VOICE_MAIN=meta → the main call builds the Meta cascade,
+    arms the runtime fallback, and starts on the cascade session."""
+    calls = _drive_main_run_session(monkeypatch, "meta")
+    assert calls["built"] is True
+    assert calls.get("armed") is True
+    assert calls["started"] == "cascade"
+    assert calls["cascade_session"] == "CASCADE_SESSION"
+
+
+def test_main_voice_meta_build_failure_falls_back_to_gemini(monkeypatch):
+    """A cascade that can't be built (no META_API_KEY) falls through to Gemini
+    Live at start — a flip can never take the main voice down."""
+    calls = _drive_main_run_session(monkeypatch, "meta", build_raises=True)
+    assert calls["built"] is True
+    assert calls["started"] == "gemini"
+    assert "armed" not in calls
+
+
+def test_start_main_cascade_session_meters_and_opens(monkeypatch):
+    """The main cascade start meters via relay_cascade_usage (with the mid-call
+    credit-cap callback), starts the session, and opens the call."""
+    used: dict = {}
+
+    def _fake_cascade_usage(session, uid, *, session_id="", model="",
+                            on_credits_exhausted=None):
+        used["model"] = model
+        used["cap"] = on_credits_exhausted is not None
+
+    monkeypatch.setattr(agent, "relay_cascade_usage", _fake_cascade_usage)
+    for name in (
+        "relay_transcripts", "relay_agent_state", "relay_mute_control",
+        "watch_for_idle", "_session_tools",
+    ):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+    async def _fake_open(*_a, **_k):
+        used["opened"] = True
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    monkeypatch.setattr(agent, "Agent", lambda **k: object())
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    session = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
+
+    asyncio.run(
+        agent._start_main_cascade_session(
+            _practice_ctx(), seed, session, flush=_FakeFlush(), window=[],
+        )
+    )
+
+    assert session.started is True
+    assert used["model"] == CONFIG.meta_chat_model
+    assert used["cap"] is True
+    assert used["opened"] is True
+
+
+def test_voice_stack_seed_cascade_overrides_default_flag(monkeypatch):
+    """A per-user cascade selection (§13.9) builds the cascade with the user's
+    component ids even though the deploy default (gemini) would be realtime."""
+    seed = agent.RoomSeed(
+        system_prompt="sys", uid="u1", session_id="s1",
+        voice_mode="cascade", brain_id="google/gemini-3.7-flash",
+        stt_id="deepgram/nova-3", tts_id="cartesia/sonic-3", tts_voice="Olivia",
+    )
+    calls = _drive_main_run_session(monkeypatch, "gemini", seed=seed)
+    assert calls["started"] == "cascade"
+    # build_cascade_session(brain, stt, tts, tts_voice, voice_language)
+    assert calls["cascade_args"][:4] == (
+        "google/gemini-3.7-flash", "deepgram/nova-3", "cartesia/sonic-3", "Olivia",
+    )
+
+
+def test_voice_stack_seed_realtime_openai_inert_falls_back(monkeypatch):
+    """Selecting OpenAI Realtime while it's inert (flag off / no key) falls back
+    to Gemini Live — a selection can never take the main voice down."""
+    seed = agent.RoomSeed(
+        system_prompt="sys", uid="u1", session_id="s1",
+        voice_mode="realtime", realtime_model_id="openai-realtime",
+    )
+    calls = _drive_main_run_session(monkeypatch, "gemini", seed=seed)
+    assert calls["started"] == "gemini"
+    assert "built" not in calls
+
+
+def test_build_openai_realtime_model_inert_without_flag_or_key(monkeypatch):
+    import config
+
+    monkeypatch.delenv("VOICE_OPENAI_REALTIME", raising=False)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    assert agent.build_openai_realtime_model("echo") is None  # flag off
+
+    monkeypatch.setenv("VOICE_OPENAI_REALTIME", "true")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+    assert agent.build_openai_realtime_model("echo") is None  # key missing
+
+
+def test_build_cascade_session_inference_brain_needs_no_meta_key(monkeypatch):
+    """An inference-route brain builds via inference.LLM with no META_API_KEY —
+    so the Gemini/LiveKit brains work on the project's LiveKit credits alone."""
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    agent.build_cascade_session(
+        "google/gemini-3.7-flash", "deepgram/nova-3", "inworld/inworld-tts-1",
+    )
+    # LLM leg is the inference model id, with no Meta base_url/key.
+    assert captured["llm"]["model"] == "google/gemini-3.7-flash"
+    assert "base_url" not in captured["llm"]
+    assert "api_key" not in captured["llm"]
+    assert captured["stt"]["model"] == "deepgram/nova-3"
+    assert captured["tts"]["model"] == "inworld/inworld-tts-1"
+
+
+def test_main_cascade_runtime_error_falls_back_to_gemini(monkeypatch):
+    """A built main cascade that dies mid-call (CloseReason.ERROR) switches to a
+    fresh Gemini Live main session on the same room — no dead air — exactly
+    once, and never on a clean (user-initiated) close."""
+    from livekit.agents.voice.events import CloseEvent, CloseReason
+
+    started = []
+
+    async def _fake_gemini_start(ctx, seed, **kwargs):
+        started.append(kwargs.get("voice_provider"))
+
+    monkeypatch.setattr(agent, "_start_main_gemini_session", _fake_gemini_start)
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    cascade = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
+    agent._arm_main_cascade_fallback(
+        _practice_ctx(), seed, cascade,
+        flush=_FakeFlush(), window=[], route="vertex",
+        use_inference=False, voice_provider="google_live",
+    )
+
+    async def _drive(reason):
+        cascade.close(CloseEvent(reason=reason))
+        await asyncio.sleep(0)
+
+    asyncio.run(_drive(CloseReason.USER_INITIATED))
+    assert started == []
+
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == ["google_live"]
+
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == ["google_live"]
+
+
+# --- boot-time accent routing (§13.9) ----------------------------------------
+def _rv(mode, **kw):
+    import voice_catalog
+    return voice_catalog.runtime_voices(mode=mode, **kw)
+
+
+def test_accent_block_only_for_accent_capable_provider():
+    import voice_catalog
+    gemini = _rv(voice_catalog.MODE_REALTIME,
+                 realtime_model_id=voice_catalog.REALTIME_GEMINI)
+    block = agent._accent_block(gemini, "a southern American accent")
+    assert "southern American accent" in block  # routed into the instruction
+
+    fish = _rv(voice_catalog.MODE_CASCADE, tts_id="fishaudio/s2.1-pro")
+    # Fixed-voice cascade: accent is NOT routed (ignored gracefully, no effect).
+    assert agent._accent_block(fish, "a southern American accent") == ""
+    # Empty accent -> nothing, even on an accent-capable provider.
+    assert agent._accent_block(gemini, "") == ""
+
+
+def test_gemini_session_instructions_carry_accent_cascade_does_not(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_token_usage", "relay_cascade_usage", "watch_for_idle",
+                 "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+    async def _fake_open(*_a, **_k):
+        pass
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    monkeypatch.setattr(agent, "build_realtime_model", lambda *a, **k: object())
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    class _Sess:
+        def __init__(self):
+            self._h = {}
+
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    # Gemini realtime path (llm=None) with a saved accent -> accent in the prompt.
+    monkeypatch.setattr(agent, "AgentSession", lambda **k: _Sess())
+    seed = agent.RoomSeed(system_prompt="SYS", uid="u1", session_id="s1",
+                          voice_accent="a southern American accent")
+    asyncio.run(agent._start_main_gemini_session(
+        _practice_ctx(), seed, flush=_FakeFlush(), window=[], route="vertex",
+        use_inference=False, voice_provider="p"))
+    assert "a southern American accent" in captured["instructions"]
+
+    # Cascade (fishaudio TTS) with the same saved accent -> NOT in the prompt.
+    captured.clear()
+    seed_c = agent.RoomSeed(system_prompt="SYS", uid="u1", session_id="s1",
+                            voice_accent="a southern American accent",
+                            tts_id="fishaudio/s2.1-pro")
+    asyncio.run(agent._start_main_cascade_session(
+        _practice_ctx(), seed_c, _Sess(), flush=_FakeFlush(), window=[]))
+    assert "a southern American accent" not in captured["instructions"]
+
+
+# --- cascade must not act on a stale seeded user turn (founder bug 2026-10-27)-
+def _ctx_with(*turns):
+    from livekit.agents import llm
+    c = llm.ChatContext.empty()
+    for role, text in turns:
+        c.add_message(role=role, content=text)
+    return c
+
+
+def test_cascade_seed_chat_ctx_drops_trailing_user_turns():
+    ctx = _ctx_with(("user", "earlier"), ("assistant", "reply"),
+                    ("user", "stale tail"))
+    out = agent._cascade_seed_chat_ctx(ctx)
+    roles = [getattr(i, "role", None) for i in out.items]
+    assert roles == ["user", "assistant"]  # trailing stale user turn removed
+    # A context already ending in assistant is returned unchanged.
+    ok = _ctx_with(("user", "hi"), ("assistant", "yo"))
+    assert agent._cascade_seed_chat_ctx(ok) is ok
+    assert agent._cascade_seed_chat_ctx(None) is None
+
+
+def test_cascade_start_does_not_seed_a_trailing_stale_user_turn(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_cascade_usage", "watch_for_idle", "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+    opened: dict = {}
+
+    async def _fake_open(*_a, **_k):
+        opened["via_opener"] = True
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+
+    class _Sess:
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    seed = agent.RoomSeed(
+        system_prompt="SYS", uid="u1", session_id="s1",
+        chat_ctx=_ctx_with(("assistant", "prev reply"), ("user", "stale tail")),
+    )
+    asyncio.run(agent._start_main_cascade_session(
+        _practice_ctx(), seed, _Sess(), flush=_FakeFlush(), window=[]))
+    # The cascade is seeded WITHOUT the trailing stale user turn, so the pipeline
+    # cannot answer it on connect; the call opens via the normal opener instead.
+    seeded = captured["chat_ctx"]
+    assert [getattr(i, "role", None) for i in seeded.items] == ["assistant"]
+    assert opened.get("via_opener") is True
+
+
+def test_cascade_cold_start_opener_runs_against_history_free_context(monkeypatch):
+    """Founder cold-start bug, 2026-10-28 (path B — the opener).
+
+    The previous conversation ended with Ayma's reply, so the opener fires on a
+    silent caller. The cascade forwards a history-free chat_ctx to the opener as a
+    SECONDARY guard (the greet+choice behaviour itself is driven by the opener
+    instruction + has-prior signal; see the opener-path tests above), while the
+    agent's own chat_ctx still carries the whole prior exchange for later turns so
+    "yeah, continue" works."""
+    captured: dict = {}
+    monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_cascade_usage", "watch_for_idle", "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+    opener_calls: dict = {}
+
+    async def _fake_open(session, seed, *, window, opener_chat_ctx,
+                         seed_user_turn=False):
+        opener_calls["opener_chat_ctx"] = opener_chat_ctx
+        opener_calls["seed_user_turn"] = seed_user_turn
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+
+    class _Sess:
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    seed = agent.RoomSeed(
+        system_prompt="SYS", uid="u1", session_id="s1",
+        chat_ctx=_ctx_with(("user", "I had a date last night"),
+                           ("assistant", "ooh, tell me everything")),
+    )
+    asyncio.run(agent._start_main_cascade_session(
+        _practice_ctx(), seed, _Sess(), flush=_FakeFlush(), window=[]))
+
+    # The agent keeps the full prior exchange for genuine later turns ...
+    assert [getattr(i, "role", None) for i in captured["chat_ctx"].items] == [
+        "user", "assistant",
+    ]
+    # ... but the cold-start opener is generated against a history-free context,
+    # so there is no "I had a date last night" turn for the LLM to answer first.
+    opener_ctx = opener_calls["opener_chat_ctx"]
+    assert opener_ctx is not agent.NOT_GIVEN
+    assert list(opener_ctx.items) == []
+    # The cascade is a text chat LLM, so the opener is seeded a synthetic user
+    # turn (Sentry inference 400 fix) rather than sent system-only.
+    assert opener_calls["seed_user_turn"] is True
+
+
+def test_voice_tool_use_prompt_has_call_before_confirm_directive():
+    """Voice tool-use directive (founder voice bug, 2026-10-28): the prompt must
+    tell the agent to CALL the tool for an app action and only confirm from its
+    actual result — never narrate an action as done without invoking the tool."""
+    text = agent.load_voice_tool_use()
+    assert text  # loaded from prompts/voice_tool_use.md, not inline
+    low = text.lower()
+    assert "must call" in low
+    assert "never" in low  # never claim an action that wasn't actually taken
+    # the result-grounded confirm rule
+    assert "returned" in low or "result" in low
+
+
+def test_cascade_instructions_append_the_tool_use_directive():
+    """The cascade session's instructions carry the tool-use directive; the
+    Gemini Live path (empty tool_use) stays byte-identical to the composed base.
+    """
+    directive = agent.load_voice_tool_use()
+    cascade = agent._compose_instructions("SYS", "ACCENT", "VOCAB", directive)
+    assert directive in cascade
+    # Default (Gemini Live) omits it entirely — unchanged behaviour.
+    gemini = agent._compose_instructions("SYS", "ACCENT", "VOCAB")
+    assert directive not in gemini
+    assert gemini == "SYS\n\nACCENT\n\nVOCAB"

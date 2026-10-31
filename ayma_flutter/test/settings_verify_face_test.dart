@@ -42,6 +42,9 @@ class _FakeProfiles extends ProfileService {
   int uploadCalls = 0;
 
   @override
+  Stream<bool> watchAiAvatar() => Stream.value(true);
+
+  @override
   Stream<bool> watchPaused() => Stream.value(false);
 
   @override

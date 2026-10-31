@@ -1,0 +1,20 @@
+# Never commit secrets or any local key cache.
+.env
+.env.local
+*.key
+key.txt
+secret*.txt
+
+# Generated run artifacts. The reports/ directory itself is tracked (via
+# .gitkeep); generated runs are ignored by default. Committed sample runs are
+# force-added explicitly (git add -f) — see README.
+reports/*.gif
+reports/*.md
+reports/*_frames/
+!reports/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

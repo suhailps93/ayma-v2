@@ -1,8 +1,8 @@
-"""Live toggle of the ``dev_panel`` feature flag from the app's Developer panel.
+"""Server-side check of the Developer-panel password (``POST /dev/verify``).
 
-``POST /dev/flags`` lets a signed-in caller who knows ``DEV_PANEL_PASSWORD``
-(Secret Manager) switch ``dev_panel`` on or off without a deploy. Only that one
-flag can be written here; every other flag stays CLI-only (``scripts/flags.py``).
+A signed-in caller who knows ``DEV_PANEL_PASSWORD`` (Secret Manager) unlocks
+the app's hidden Developer panel for the session. No flag is written here —
+every feature flag stays CLI-only (``scripts/flags.py``).
 
 The password is compared in constant time and never logged (neither is any
 guess). Failed attempts are counted in Firestore so the lockout holds across
@@ -25,7 +25,6 @@ import hmac
 import logging
 import time
 
-import feature_flags
 from config import CONFIG
 
 logger = logging.getLogger("ayma.dev_flags")
@@ -36,7 +35,6 @@ MAX_FAILURES_PER_UID = 5
 MAX_FAILURES_PER_IP = 10
 MAX_FAILURES_GLOBAL = 200
 LOCKOUT_SECONDS = 15 * 60
-FLAG = "dev_panel"
 
 
 class NotConfigured(Exception):
@@ -90,11 +88,6 @@ def _ip_doc_id(ip: str) -> str:
     return "ip_" + hashlib.sha256(ip.encode("utf-8")).hexdigest()[:32]
 
 
-def current() -> bool:
-    """The effective ``dev_panel`` value."""
-    return feature_flags.enabled(FLAG)
-
-
 def _check_password(
     db, uid: str, password: str, *, ip: str, now: float | None, action: str
 ) -> None:
@@ -126,7 +119,7 @@ def _check_password(
         if ip_ref:
             _record_failure(ip_ref, ip_state, MAX_FAILURES_PER_IP, t)
         _record_global_failure(global_ref, global_state, t)
-        logger.warning("dev_panel %s: wrong password from uid=%s", action, uid)
+        logger.warning("dev-panel %s: wrong password from uid=%s", action, uid)
         raise BadPassword()
     if user_state.get("failures"):
         user_ref.set({"failures": 0, "locked_until": 0}, merge=True)
@@ -143,16 +136,3 @@ def verify(
     :class:`NotConfigured`, :class:`LockedOut` or :class:`BadPassword`."""
     _check_password(db, uid, password, ip=ip, now=now, action="unlock")
     return True
-
-
-def set_dev_panel(
-    db, uid: str, password: str, value: bool, *, ip: str = "", now: float | None = None
-) -> bool:
-    """Verify ``password`` and write ``dev_panel = value``. ``ip`` is the
-    caller's address (empty when unknown: only the account and global limits
-    then apply). Raises :class:`NotConfigured`, :class:`LockedOut` or
-    :class:`BadPassword`."""
-    _check_password(db, uid, password, ip=ip, now=now, action="toggle")
-    feature_flags.write(db, {FLAG: value}, by=f"app:{uid}")
-    logger.info("dev_panel set to %s by uid=%s", value, uid)
-    return value

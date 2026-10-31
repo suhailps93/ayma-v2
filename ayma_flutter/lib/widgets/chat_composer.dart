@@ -70,7 +70,13 @@ class ChatComposer extends StatefulWidget {
     required this.userAmplitude,
     required this.aiAmplitude,
     this.statusLabel,
+    this.rootKey,
   });
+
+  /// Feature-tour anchor for the whole composer (the "say hi to Ayma" box the
+  /// coach-mark engine spotlights). Only the main shell's chat passes it, so it
+  /// never collides with the second composer the Ask-Ayma popup builds.
+  final Key? rootKey;
 
   final ComposerMode mode;
   final TextEditingController controller;
@@ -283,6 +289,7 @@ class _ChatComposerState extends State<ChatComposer>
     // firing Send repeatedly with the keyboard up is core chat UX. Pure
     // registry marker, changes nothing about hit testing.
     return KeepKeyboardOnTap(
+      key: widget.rootKey,
       child: RepaintBoundary(
         child: AnimatedSize(
           duration: const Duration(milliseconds: 220),
@@ -353,16 +360,13 @@ class _ChatComposerState extends State<ChatComposer>
 
   Widget _voiceRow(AymaTokens ac) {
     // While connecting/waking the mic is NOT yet being captured, so the
-    // leading slot shows a connecting indicator rather than the lit, tappable
-    // "capturing" mic (tapping which would be a no-op mute before the call is
-    // live anyway) — the one visual that otherwise made the composer read as
-    // "listening" before it genuinely is.
+    // leading slot shows a dimmed, unlit microphone — still clearly a mic, just
+    // muted/inactive — rather than the lit, tappable "capturing" mic (tapping
+    // which would be a no-op mute before the call is live anyway). A static
+    // dimmed mic reads as "not listening yet" without implying the composer is
+    // already capturing audio.
     final leading = widget.mode == ComposerMode.connecting
-        ? _ConnectingLead(
-            color: ac.fgMute,
-            reduceMotion:
-                MediaQuery.maybeOf(context)?.disableAnimations ?? false,
-          )
+        ? _ConnectingLead(color: ac.fgMute)
         : _RoundIconButton(
             icon: widget.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
             tooltip: widget.muted ? 'Unmute' : 'Mute',
@@ -444,16 +448,16 @@ class _RoundIconButton extends StatelessWidget {
 }
 
 /// The leading slot of the voice row while a session is still being
-/// established ([ComposerMode.connecting]): a small spinner sized to match
-/// [_RoundIconButton]'s 44px touch slot so the row height never jumps when it
-/// swaps to the real mic button once live. Non-interactive — there is nothing
-/// to mute yet. Respects reduced motion by falling back to a static, dimmed
-/// (unlit) mic glyph, which still reads as "not listening yet".
+/// established ([ComposerMode.connecting]): a dimmed, unlit microphone glyph
+/// (founder: the mic should stay visible, just clearly not-yet-listening — not
+/// an orb and not a spinner) sized to match [_RoundIconButton]'s 44px touch
+/// slot so the row height never jumps when it swaps to the real mic button once
+/// live. Non-interactive — there is nothing to mute yet. Static in every case,
+/// including reduced motion, which still reads as "not listening yet".
 class _ConnectingLead extends StatelessWidget {
-  const _ConnectingLead({required this.color, required this.reduceMotion});
+  const _ConnectingLead({required this.color});
 
   final Color color;
-  final bool reduceMotion;
 
   @override
   Widget build(BuildContext context) {
@@ -461,16 +465,7 @@ class _ConnectingLead extends StatelessWidget {
       width: 44,
       height: 44,
       child: Center(
-        child: reduceMotion
-            ? Icon(Icons.mic_none_rounded, size: 20, color: color)
-            : SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(color),
-                ),
-              ),
+        child: Icon(Icons.mic_none_rounded, size: 20, color: color),
       ),
     );
   }

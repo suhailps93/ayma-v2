@@ -161,6 +161,110 @@ def test_record_answer_narrative_just_marks_addressed():
     assert db.docs[_q("casual_perfect_night_narrative")]["value"]
 
 
+def _taste_page(db):
+    return db.docs.get(("users", "u1", "wiki_pages", "taste"))
+
+
+def test_taste_answers_compose_public_taste_wiki_page():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+
+    assert "recorded" in fn(
+        "taste_music", "Khruangbin, Bon Iver, Phoebe Bridgers", "stated"
+    )
+    page = _taste_page(db)
+    assert page is not None
+    assert page["page_type"] == "taste"
+    assert page["visibility"] == "public"
+    assert page["ai_body"] == "Music: Khruangbin, Bon Iver, Phoebe Bridgers"
+
+    fn("taste_film", "Arrival, Amélie, Spirited Away", "stated")
+    fn("taste_food", "Tartine Bakery, Zuni Café", "stated")
+    body = _taste_page(db)["ai_body"]
+    assert body == (
+        "Music: Khruangbin, Bon Iver, Phoebe Bridgers\n"
+        "Film: Arrival, Amélie, Spirited Away\n"
+        "Food: Tartine Bakery, Zuni Café"
+    )
+
+    # The composed body is exactly what the Qloo engine's parser reads.
+    import taste_match
+
+    assert taste_match.parse_taste(body) == {
+        "music": ["Khruangbin", "Bon Iver", "Phoebe Bridgers"],
+        "film": ["Arrival", "Amélie", "Spirited Away"],
+        "dining": ["Tartine Bakery", "Zuni Café"],
+    }
+
+
+def test_taste_page_preserves_user_chosen_visibility_on_reanswer():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    fn("taste_music", "Khruangbin", "stated")
+    # the user later hides the page themselves
+    db.docs[("users", "u1", "wiki_pages", "taste")]["visibility"] = "private"
+    fn("taste_music", "Khruangbin, Bon Iver", "stated")
+    page = _taste_page(db)
+    assert page["visibility"] == "private"
+    assert page["ai_body"] == "Music: Khruangbin, Bon Iver"
+
+
+def test_merge_taste_mentions_fills_film_and_food_from_free_chat():
+    """Named films/food the user mentions in free chat populate the TASTE page's
+    Film:/Food: lines (not Interests), appending to any direct answer; Music is
+    left working. This is the extraction half of taste capture (wiki_ingest)."""
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    # Music came in as a direct taste answer.
+    fn("taste_music", "Billie Eilish, Bruno Mars", "stated")
+
+    changed = questionnaire.merge_taste_mentions(
+        db,
+        "u1",
+        {
+            "music": ["Billie Eilish", "Russ"],  # dupe dropped, Russ appended
+            "film": ["Iron Man", "WALL-E", "Terminator"],
+            "food": ["ramen"],
+        },
+    )
+    assert set(changed) == {"music", "film", "food"}
+    assert db.docs[_q("taste_film")]["value"] == "Iron Man, WALL-E, Terminator"
+    assert db.docs[_q("taste_food")]["value"] == "ramen"
+    assert db.docs[_q("taste_music")]["value"] == "Billie Eilish, Bruno Mars, Russ"
+
+    import taste_match
+
+    parsed = taste_match.parse_taste(_taste_page(db)["ai_body"])
+    assert parsed["film"] == ["Iron Man", "WALL-E", "Terminator"]
+    assert parsed["dining"] == ["ramen"]
+
+
+def test_merge_taste_mentions_caps_dedupes_and_drops_prose():
+    db = FakeDb({_PROF: {}})
+    changed = questionnaire.merge_taste_mentions(
+        db,
+        "u1",
+        {
+            "film": [
+                "Iron Man", "iron man", "WALL-E", "Terminator", "Friends",
+                "Marvel", "Dune",  # 6th+ unique over the cap of 5 is dropped
+                "a long sentence the model mistakenly put here as a title okay",
+            ]
+        },
+    )
+    assert changed == ["film"]
+    names = db.docs[_q("taste_film")]["value"].split(", ")
+    assert len(names) == 5  # capped
+    assert "iron man" not in [n for n in names if n != "Iron Man"]  # dedup kept first
+
+
+def test_merge_taste_mentions_noop_returns_empty():
+    db = FakeDb({_PROF: {}})
+    assert questionnaire.merge_taste_mentions(db, "u1", {}) == []
+    assert questionnaire.merge_taste_mentions(db, "u1", {"film": []}) == []
+    assert _taste_page(db) is None
+
+
 def test_record_answer_bad_node_and_bad_value():
     db = FakeDb({_PROF: {}})
     fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
@@ -261,6 +365,19 @@ def test_next_questions_returns_highest_weight_unanswered_first():
         "id", "label", "kind", "options", "scale", "ayma_prompt", "weight",
         "sensitive",
     } == set(qs[0])
+
+
+def test_next_questions_offers_taste_early_for_a_user_without_taste():
+    # Founder directive (meta-hackathon): taste must be asked EARLY so the
+    # public Taste page / Qloo "Taste match" gets populated. `taste_music` is a
+    # promoted, top-weight node, so it rides near the top of the short list the
+    # conversational agent is handed, for a user who hasn't answered it yet.
+    import json
+
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["next_questions"]
+    ids = [q["id"] for q in json.loads(_run(fn()))["questions"]]
+    assert "taste_music" in ids
 
 
 def test_next_questions_drops_answered_nodes():

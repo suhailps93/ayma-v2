@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -5,10 +9,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/living_report.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
-import '../services/dev_panel_flag.dart';
+import '../services/report_cache.dart';
+import '../services/report_events.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
-import 'ayma_orb.dart';
+import 'app_loading_indicator.dart';
 import 'ayma_photo.dart';
 import 'overflow_guards.dart';
 import 'score_bar.dart';
@@ -114,11 +119,18 @@ class LivingReportView extends StatefulWidget {
     this.showTitle = true,
     this.loader,
     this.hideBlock,
+    this.myUid,
+    this.emptyBuilder,
   });
 
   final String reportType;
   final String reportId;
   final ApiClient? apiClient;
+
+  /// The signed-in uid the stale-while-revalidate cache is scoped to.
+  /// Injectable for tests; production reads the live Firebase uid. Empty /
+  /// null disables caching (nothing is read or written).
+  final String? myUid;
 
   /// Shown in place of the section list when the report has no sections at
   /// all.
@@ -158,6 +170,17 @@ class LivingReportView extends StatefulWidget {
   /// its blocks is dropped) — for a host screen that shows them elsewhere.
   final bool Function(ReportBlock block)? hideBlock;
 
+  /// Rendered in place of the retry error ONLY when the fetch came back a
+  /// clean 404 — the server's unambiguous "this report has never been run"
+  /// signal (`report_hub.get_report` -> `KeyError` -> 404), as opposed to a
+  /// 5xx / transport failure of an existing report (which still shows the
+  /// "Couldn't load that report." retry). Lets a host screen (web research)
+  /// offer a "Run web search" call-to-action instead of an error. When null,
+  /// a never-run 404 falls back to the same retry message as any other load
+  /// failure — unchanged behaviour for every report type that doesn't supply
+  /// one.
+  final WidgetBuilder? emptyBuilder;
+
   @override
   State<LivingReportView> createState() => LivingReportViewState();
 }
@@ -168,9 +191,38 @@ class LivingReportViewState extends State<LivingReportView>
 
   /// The last successfully loaded report, kept mounted across a reload
   /// (§ `reload` doc: stale-while-revalidate, not swap-for-a-spinner) —
-  /// `null` only before the very first load resolves.
+  /// `null` only before the very first load resolves AND no cached copy was
+  /// restored.
   LivingReport? _report;
   bool _loadFailed = false;
+
+  /// The fetch came back a clean 404 — the server's "nothing has ever been
+  /// run for this subject" signal, distinct from [_loadFailed] (a 5xx /
+  /// transport error on a report that may well exist). Drives [emptyBuilder]
+  /// instead of the retry error.
+  bool _neverRun = false;
+
+  /// The signed-in uid the report cache is scoped to (own-data only). Empty
+  /// in tests / signed out, which disables caching gracefully.
+  String get _uid {
+    final injected = widget.myUid;
+    if (injected != null) return injected;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      // No Firebase app configured (unit tests): no caching, just fetch.
+      return '';
+    }
+  }
+
+  /// Only the user's OWN report (the default network fetch) is cached — the
+  /// read-only public-snapshot path ([LivingReportView.loader]) is someone
+  /// else's data keyed differently, so it's never cached here.
+  bool get _cacheable => widget.loader == null;
+
+  /// The last [ReportEvents] revision for this report type we've already
+  /// reacted to, so a background completion triggers exactly one reload.
+  int _handledRevision = 0;
 
   /// Ad-hoc multi-select (§ founder point 4): every block id the user has
   /// checked, across any section, any combination. Non-empty <=> selection
@@ -195,31 +247,95 @@ class LivingReportViewState extends State<LivingReportView>
   void initState() {
     super.initState();
     reassertScreenContext();
+    _handledRevision = ReportEvents.instance.revisionFor(widget.reportType);
+    ReportEvents.instance.addListener(_onReportEvent);
+    // Stale-while-revalidate (founder: the heavy report pages "take time to
+    // load, should we cache them? — yes"): paint the last cached copy
+    // instantly if there is one, then always fetch fresh in the background.
+    _restoreFromCache();
     _load();
+  }
+
+  @override
+  void dispose() {
+    ReportEvents.instance.removeListener(_onReportEvent);
+    super.dispose();
+  }
+
+  /// A background run of this report type finished elsewhere in the app
+  /// (§ `report_events.dart`) — re-fetch so the open report shows the fresh
+  /// result without the user reloading by hand (founder 2026-10-28 bug).
+  /// Fires at most once per completion by tracking the handled revision.
+  void _onReportEvent() {
+    final rev = ReportEvents.instance.revisionFor(widget.reportType);
+    if (rev == _handledRevision) return;
+    _handledRevision = rev;
+    _load();
+  }
+
+  /// Best-effort synchronous-feeling restore of the last cached payload. Only
+  /// fills `_report` when nothing has loaded yet, so a fresh fetch that has
+  /// already landed (or a reload's in-place content) is never clobbered by
+  /// stale cache.
+  Future<void> _restoreFromCache() async {
+    if (!_cacheable) return;
+    try {
+      final raw = await ReportCache.instance
+          .readReport(_uid, widget.reportType, widget.reportId);
+      if (raw == null || !mounted || _report != null) return;
+      final report =
+          LivingReport.fromMap(jsonDecode(raw) as Map<String, dynamic>);
+      if (!mounted || _report != null) return;
+      setState(() => _report = report);
+      widget.onLoaded?.call(report);
+    } catch (_) {
+      // A corrupt / unreadable cache entry just means we wait for the network
+      // fetch — never surface it.
+    }
   }
 
   Future<void> _load() async {
     try {
       final r = await (widget.loader?.call() ??
           _api.getReport(widget.reportType, widget.reportId));
+      if (_cacheable && r.source.isNotEmpty) {
+        // Refresh the cache so the next open paints this instantly, and so the
+        // background auto-refresh keeps the cache current too. `source` is the
+        // exact server JSON this report was parsed from.
+        unawaited(ReportCache.instance.writeReport(
+            _uid, widget.reportType, widget.reportId, jsonEncode(r.source)));
+      }
       if (!mounted) return;
       setState(() {
         _report = r;
         _loadFailed = false;
+        _neverRun = false;
       });
       widget.onLoaded?.call(r);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       // A background reload failing leaves the still-good `_report` on
       // screen rather than blanking it out; only the very first load
-      // surfaces the retry screen (§ build: `_ErrorMessage` only shows when
-      // `_report` is still null).
-      setState(() => _loadFailed = true);
+      // surfaces the retry / empty screen (§ build: both only show when
+      // `_report` is still null). A clean 404 is the server's "never run"
+      // signal — route it to [emptyBuilder], NOT the error retry; anything
+      // else (5xx, a connection-class `ApiException` with no statusCode) is a
+      // genuine load failure.
+      final neverRun = e is ApiException && e.statusCode == 404;
+      setState(() {
+        if (neverRun) {
+          _neverRun = true;
+          _loadFailed = false;
+        } else {
+          _loadFailed = true;
+        }
+      });
     }
   }
 
   /// Re-fetches the whole report — called once the Ask Ayma overlay closes
-  /// on a turn that actually changed something. Deliberately does NOT tear
+  /// on a turn that actually changed something, and when a background run of
+  /// this report type completes ([_onReportEvent]). Deliberately does NOT tear
   /// down and rebuild the section list while the fetch is in flight (no
   /// `FutureBuilder`-style loading state once there's already a `_report` on
   /// screen — § bug: that swap used to unmount the `ListView` and reset its
@@ -435,9 +551,20 @@ class LivingReportViewState extends State<LivingReportView>
   Widget build(BuildContext context) {
     final report = _report;
     if (report == null) {
-      if (_loadFailed) return _ErrorMessage(onRetry: reload);
+      // A never-run 404 with a host-supplied empty state (web research's
+      // "Run web search" call-to-action) shows that instead of the error.
+      if (_neverRun && widget.emptyBuilder != null) {
+        return widget.emptyBuilder!(context);
+      }
+      if (_loadFailed || _neverRun) return _ErrorMessage(onRetry: reload);
+      // No cached copy to show yet: the standard page/report loader (shown
+      // only when there's NO cache — a cached report paints instantly above
+      // via `_restoreFromCache`, with the fresh fetch swapping in silently).
       return const Center(
-        child: AymaOrb(size: 64, state: AymaOrbState.thinking),
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: AppLoadingIndicator(),
+        ),
       );
     }
     return _buildReport(context, report);
@@ -457,6 +584,38 @@ class LivingReportViewState extends State<LivingReportView>
             ],
           ),
     ];
+  }
+
+  /// A subtle `Updated <relative time>` line from the report's own generation
+  /// timestamp (`meta.updated_at`, falling back to `created_at`). Returns a
+  /// zero-size box when the report carries no parseable timestamp, so it never
+  /// adds empty chrome. Uses `ValueKey('reportFreshness')` so a widget test can
+  /// find it.
+  Widget _buildFreshnessStamp(AymaTokens ac, LivingReport report) {
+    final raw = (report.meta.updatedAt?.isNotEmpty ?? false)
+        ? report.meta.updatedAt
+        : report.meta.createdAt;
+    final when = raw == null ? null : DateTime.tryParse(raw);
+    if (when == null) return const SizedBox.shrink();
+    return Padding(
+      key: const ValueKey('reportFreshness'),
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Text(
+        'Updated ${_relativeTime(when)}',
+        style: AymaType.mono(size: 11, color: ac.fgMute)
+            .copyWith(letterSpacing: 0.5),
+      ),
+    );
+  }
+
+  /// Short relative age for the freshness stamp — "just now", "5m ago",
+  /// "3h ago", "2d ago" (same scale as the Messages list's "Last activity").
+  static String _relativeTime(DateTime t) {
+    final d = DateTime.now().difference(t.toLocal());
+    if (d.isNegative || d.inMinutes < 1) return 'just now';
+    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+    if (d.inHours < 24) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
   }
 
   Widget _buildReport(BuildContext context, LivingReport report) {
@@ -479,6 +638,14 @@ class LivingReportViewState extends State<LivingReportView>
               ),
               const SizedBox(height: 24),
             ],
+            // Freshness stamp (founder 2026-10-28: a background rerun gave no
+            // signal it finished). Shows when the Appearance report was last
+            // generated so the user can SEE it ran/refreshed even when the
+            // content looks similar. Only on the Appearance report — the one
+            // report that reruns in the background from elsewhere.
+            if (widget.reportType == 'appearance') ...[
+              _buildFreshnessStamp(ac, report),
+            ],
             if (report.sections.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 24),
@@ -492,6 +659,10 @@ class LivingReportViewState extends State<LivingReportView>
                 section: section,
                 report: report,
                 canEdit: canEdit,
+                // Dev-facing per-fact annotations (tag/confidence) render only
+                // inside the password-gated Ayma's-notes screen
+                // (`story_ai_notes`), never in the normal UI any viewer sees.
+                showDevAnnotations: widget.reportType == 'story_ai_notes',
                 selected: _selected,
                 selecting: _selecting,
                 onHeadingTap: _selecting || section.blockIds.isEmpty
@@ -567,6 +738,7 @@ class _SectionView extends StatelessWidget {
     required this.section,
     required this.report,
     required this.canEdit,
+    required this.showDevAnnotations,
     required this.selected,
     required this.selecting,
     required this.onHeadingTap,
@@ -577,6 +749,10 @@ class _SectionView extends StatelessWidget {
   final ReportSection section;
   final LivingReport report;
   final bool canEdit;
+
+  /// Whether a fact's raw tag/confidence annotation is shown — true only for
+  /// the dev-only Ayma's-notes report (`story_ai_notes`).
+  final bool showDevAnnotations;
   final Set<String> selected;
   final bool selecting;
   final VoidCallback? onHeadingTap;
@@ -610,6 +786,7 @@ class _SectionView extends StatelessWidget {
       flush();
       rows.add(_BlockRow(
         block: b,
+        showDevAnnotations: showDevAnnotations,
         selected: selected.contains(b.blockId),
         selecting: selecting,
         onTap: () => onBlockTap(b),
@@ -742,6 +919,7 @@ class _Sentence extends StatelessWidget {
 class _BlockRow extends StatelessWidget {
   const _BlockRow({
     required this.block,
+    required this.showDevAnnotations,
     required this.selected,
     required this.selecting,
     required this.onTap,
@@ -749,6 +927,7 @@ class _BlockRow extends StatelessWidget {
   });
 
   final ReportBlock block;
+  final bool showDevAnnotations;
   final bool selected;
   final bool selecting;
   final VoidCallback onTap;
@@ -760,7 +939,8 @@ class _BlockRow extends StatelessWidget {
     final child = switch (block.type) {
       kBlockSectionHead => Text(block.text,
           style: AymaType.sans(size: 13, soft: true, color: ac.fgMute)),
-      kBlockFact => _FactRow(block: block),
+      kBlockFact =>
+        _FactRow(block: block, showDevAnnotations: showDevAnnotations),
       kBlockAttribute => _AttributeRow(block: block),
       kBlockStat => _StatRow(block: block),
       kBlockLink => _LinkRow(block: block),
@@ -800,8 +980,13 @@ class _BlockRow extends StatelessWidget {
 }
 
 class _FactRow extends StatelessWidget {
-  const _FactRow({required this.block});
+  const _FactRow({required this.block, required this.showDevAnnotations});
   final ReportBlock block;
+
+  /// Whether the model's raw tag/confidence annotation is shown — true only in
+  /// the dev-only, password-gated Ayma's-notes screen (`story_ai_notes`), never
+  /// in the normal UI any viewer sees.
+  final bool showDevAnnotations;
 
   @override
   Widget build(BuildContext context) {
@@ -812,19 +997,12 @@ class _FactRow extends StatelessWidget {
       children: [
         _LinkifiedText('• ${block.text}',
             style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
-        // The model's raw tag / confidence label is a dev-facing annotation:
-        // shown only while the `dev_panel` flag is on.
-        if (block.tag.isNotEmpty || conf.isNotEmpty)
-          ValueListenableBuilder<bool>(
-            valueListenable: DevPanelFlag.instance.enabled,
-            builder: (context, dev, _) => !dev
-                ? const SizedBox.shrink()
-                : Padding(
-                    key: const ValueKey('fact-dev-annotation'),
-                    padding: const EdgeInsets.only(left: 14, top: 2),
-                    child: Text('${block.tag}$conf',
-                        style: AymaType.mono(size: 9, color: ac.fgMute)),
-                  ),
+        if (showDevAnnotations && (block.tag.isNotEmpty || conf.isNotEmpty))
+          Padding(
+            key: const ValueKey('fact-dev-annotation'),
+            padding: const EdgeInsets.only(left: 14, top: 2),
+            child: Text('${block.tag}$conf',
+                style: AymaType.mono(size: 9, color: ac.fgMute)),
           ),
       ],
     );

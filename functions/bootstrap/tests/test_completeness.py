@@ -271,6 +271,79 @@ def test_narrative_pass_mapped_and_cached(monkeypatch):
     assert by_id["casual_hill_to_die_on_narrative"]["status"] == "partial"
 
 
+def test_story_captured_structured_answer_is_not_re_asked(monkeypatch):
+    """Founder bug (2026-10): Ayma asked the same onboarding question (e.g.
+    "how many kids") again and again even though the user answered and the
+    story updated. Root cause: `wiki_ingest` reliably folds every chat answer
+    into the free-text story each turn, but `record_answer` — the only writer
+    of the questionnaire store — fires only when the model remembers to call
+    it. Structured nodes (enum/scale/...) used to be scored against that store
+    alone, so a story-captured answer never marked them covered and
+    `next_questions` re-selected the same node forever. The story-coverage
+    pass now judges structured nodes too: a concrete (`covered`) story answer
+    satisfies the node (coverage 1.0 -> excluded from `next`), while a vague
+    (`partial`) mention does not, so a genuinely-unanswered node is still
+    asked."""
+    monkeypatch.setattr(
+        completeness.wiki_query, "read_wiki_context",
+        lambda db, uid, **k: "Has two children who live with them full time.",
+    )
+    _stub_narrative(monkeypatch, {
+        "existing_children": "covered",   # concrete answer stated in the story
+        "children_count": "partial",      # merely touched, no concrete count
+    })
+    db = FakeDb({
+        _profile_key(): {"relationship_intent": "Long-term", **_PREBOARD},
+    })
+
+    _, _, ev = _run(completeness._evaluate(db, "u1"))
+    by_id = {e["node"]["id"]: e for e in ev}
+
+    # existing_children is an enum, not in the questionnaire store and not a
+    # preboarding field — before the fix it stayed `missing` forever. A
+    # concrete story answer now satisfies it at full coverage, so `_next`
+    # (which only offers nodes with coverage < 1.0) cannot re-select it.
+    assert by_id["existing_children"]["node"]["kind"] == "enum"
+    assert by_id["existing_children"]["coverage"] == 1.0
+    assert by_id["existing_children"]["status"] == "covered"
+    assert by_id["existing_children"]["source"] == "wiki"
+
+    # a merely-partial story mention of a structured node does NOT satisfy it:
+    # the exact value is still unknown, so it stays open and askable.
+    assert by_id["children_count"]["coverage"] == 0.0
+    assert by_id["children_count"]["status"] == "missing"
+
+    res = _run(completeness.compute(db, "u1"))
+    next_ids = {n["id"] for n in res["next"]}
+    assert "existing_children" not in next_ids
+    # normal behaviour intact: still-unanswered nodes are still offered.
+    assert res["next"]
+
+
+def test_story_coverage_does_not_cover_the_routing_node(monkeypatch):
+    """The routing (`relationship_intent`) node is resolved separately and set
+    through its own skill, so a passing story mention must not silently mark it
+    covered and drop it out of the intent gate. With no intent recorded it
+    stays open and keeps leading `next`, even if the story pass would call it
+    `covered`."""
+    monkeypatch.setattr(
+        completeness.wiki_query, "read_wiki_context",
+        lambda db, uid, **k: "Mentioned wanting something long-term one day.",
+    )
+    _stub_narrative(monkeypatch, {"relationship_intent": "covered"})
+    db = FakeDb({_profile_key(): {}})
+
+    _, intent_set, ev = _run(completeness._evaluate(db, "u1"))
+    routing = next(e for e in ev if e["node"]["id"] == "relationship_intent")
+    assert intent_set is False
+    assert routing["coverage"] == 0.0
+    assert routing["source"] is None
+
+    res = _run(completeness.compute(db, "u1"))
+    assert res["intent_set"] is False
+    assert res["next"][0]["id"] == "relationship_intent"
+
+
 def test_narrative_pass_ignores_interactions_and_steering_churn(monkeypatch):
     """Root-caused against a real account (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2,
     2026-09-26): a session of pure small talk still triggered a wiki_ingest
@@ -445,10 +518,12 @@ def test_intent_unset_returns_only_the_global_core(monkeypatch):
     # only `all` sections, and the routing section folds into its own CTA.
     # Family-of-origin and friends are universal getting-to-know-you basics
     # (unlike future-facing family-planning), so they're visible pre-intent
-    # too, same as identity/personality/lifestyle.
+    # too, same as identity/personality/lifestyle. `taste` (music/film/food —
+    # the Qloo Taste page) is a branch-`all` section, so it also shows
+    # pre-intent, like interests.
     assert section_pts <= {
         "identity", "personality", "lifestyle", "family", "social_circle",
-        "career", "values", "interests", "dealbreakers", "sensitive",
+        "career", "values", "interests", "taste", "dealbreakers", "sensitive",
     }
     assert not section_pts & {"goals", "relationships", "finances"}
 
@@ -513,6 +588,131 @@ def test_score_is_full_tree_not_just_unlocked(monkeypatch):
     _, _, ev = _run(completeness._evaluate(db, "u1"))
     assert res["score"] == completeness._score(ev)
     assert res["score"] < 100
+
+
+# --- taste promoted early (Qloo Taste page population) ------------------
+
+
+def test_taste_section_is_unlocked_and_offered_early_without_finishing_earlier(
+    monkeypatch,
+):
+    # Founder directive (meta-hackathon): the taste questions must be asked
+    # EARLY so the public Taste page / Qloo "Taste match" gets populated,
+    # rather than staying buried behind every earlier section's core. `taste`
+    # is a promoted (always-unlocked) section and `taste_music` is top weight,
+    # so it surfaces near the top of `next` for a user who hasn't answered it —
+    # even though the identity/personality/... cores are still open.
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    db = FakeDb({_profile_key(): dict(prof)})
+    res = _run(completeness.compute(db, "u1"))
+    by_pt = {s["page_type"]: s for s in res["sections"]}
+
+    # promoted: open from the start, highest priority tier, yet earlier
+    # sections' cores are NOT all done (personality stays locked).
+    assert by_pt["taste"]["unlocked"] is True
+    assert by_pt["taste"]["priority"] == 5
+    assert by_pt["personality"]["unlocked"] is False
+
+    next_ids = [n["id"] for n in res["next"]]
+    assert "taste_music" in next_ids
+    # near the top of the flow — within the first handful offered.
+    assert next_ids.index("taste_music") <= 2
+    # a locked-section high-weight node is still kept out.
+    assert "attachment_style" not in next_ids
+
+
+def test_taste_surfaces_for_a_bare_user_with_no_preboarding(monkeypatch):
+    # Even with nothing filled in at all (intent unset), the taste question is
+    # offered right after the routing node — not buried.
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({_profile_key(): {}})
+    res = _run(completeness.compute(db, "u1"))
+    next_ids = [n["id"] for n in res["next"]]
+    assert "taste_music" in next_ids
+    assert next_ids.index("taste_music") <= 2
+
+
+def test_promoted_taste_does_not_lock_sections_after_it(monkeypatch):
+    # The taste section is transparent to the sequential gate: an unanswered
+    # `taste_music` must never lock the sections that follow taste in priority
+    # order. With identity's core complete, the next core-first section unlocks
+    # regardless of taste being unanswered.
+    _stub_narrative(monkeypatch, {})
+    prof = {
+        "relationship_intent": "Long-term",
+        "relocation_radius": "Within my city",
+        "partner_age_min": "28",
+        "partner_age_max": "38",
+        "geographic_flexibility": "Rooted - staying where I live",
+        **_PREBOARD,
+    }
+    docs = {_profile_key(): dict(prof)}
+    for nid in ("relocation_radius", "partner_age_min", "partner_age_max",
+                "geographic_flexibility"):
+        docs[_q_key("u1", nid)] = {
+            "node_id": nid, "value": prof[nid], "source": "stated",
+        }
+    db = FakeDb(docs)
+    res = _run(completeness.compute(db, "u1"))
+    by_pt = {s["page_type"]: s for s in res["sections"]}
+    # identity core is complete -> the first gated section opens, and taste
+    # being unanswered did not stand in the way.
+    assert by_pt["identity"]["core_answered"] == by_pt["identity"]["core_total"]
+    assert by_pt["personality"]["unlocked"] is True
+    assert by_pt["taste"]["unlocked"] is True
+
+
+def test_taste_film_food_unlock_once_music_answered(monkeypatch):
+    # Progressive disclosure within the taste section: the deep film/food nodes
+    # open once the section's single core node (`taste_music`) is answered.
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    docs = {
+        _profile_key(): dict(prof),
+        _q_key("u1", "taste_music"): {
+            "node_id": "taste_music", "value": "Khruangbin, Bon Iver",
+            "source": "stated",
+        },
+    }
+    db = FakeDb(docs)
+    view = _run(completeness.questionnaire_view(db, "u1"))
+    unlocked = {
+        n["id"]: n["unlocked"] for n in view["nodes"]
+        if n["page_type"] == "taste"
+    }
+    assert unlocked == {
+        "taste_music": True, "taste_film": True, "taste_food": True,
+    }
+
+
+def test_music_answered_still_surfaces_film_and_food_high(monkeypatch):
+    # Founder directive (Qloo demo): answering one taste domain must NOT suppress
+    # the other two. A user with Music filled but Film/Food empty still gets both
+    # Film and Food offered, ranked high (all three taste nodes are weight 5, so
+    # they sit near the top of `next` once the section's core — taste_music — is
+    # answered; see question_tree.json taste weights).
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    docs = {
+        _profile_key(): dict(prof),
+        _q_key("u1", "taste_music"): {
+            "node_id": "taste_music",
+            "value": "Billie Eilish, Bruno Mars, Russ, AC/DC",
+            "source": "stated",
+        },
+    }
+    db = FakeDb(docs)
+    res = _run(completeness.compute(db, "u1"))
+    next_ids = [n["id"] for n in res["next"]]
+    # both still-empty taste domains are offered...
+    assert "taste_film" in next_ids
+    assert "taste_food" in next_ids
+    # ...and ranked high (within the handful returned), not buried.
+    assert next_ids.index("taste_film") <= 3
+    assert next_ids.index("taste_food") <= 3
+    # the answered domain is NOT re-offered.
+    assert "taste_music" not in next_ids
 
 
 # --- endpoints ----------------------------------------------------------

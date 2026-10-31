@@ -1,16 +1,19 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/developer_screen.dart';
+import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
+import 'package:ayma_flutter/services/tour_request.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> _usage({
   bool isDev = true,
@@ -53,7 +56,7 @@ Future<void> _pump(WidgetTester tester, Widget page) async {
 
 void main() {
   setUp(() {
-    DevPanelFlag.instance.enabled.value = true;
+    SharedPreferences.setMockInitialValues({});
     DevPanelSession.instance.lock();
   });
   tearDown(() => DevPanelSession.instance.lock());
@@ -73,8 +76,49 @@ void main() {
     expect(find.text('BUILD'), findsNothing);
     expect(find.textContaining('spent for real'), findsNothing);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
-    expect(find.byKey(const ValueKey('dev-panel-switch')), findsNothing);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsNothing);
+    // The dev-only "Ayma's notes" entry is gated behind the unlock too — a
+    // locked panel never exposes the analysis layer's entry point.
+    expect(find.byKey(const ValueKey('dev-ayma-notes')), findsNothing);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-pro')), findsNothing);
+  });
+
+  testWidgets("unlocked: the Ayma's notes entry opens the dev-only notes page",
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    final api = _usageApi(_usage());
+    final router = GoRouter(
+      initialLocation: '/dev',
+      routes: [
+        GoRoute(
+          path: '/dev',
+          builder: (_, __) => DeveloperScreen(
+            auth: MockFirebaseAuth(signedIn: true),
+            api: api,
+          ),
+        ),
+        // The real route is dev-gated in `app_router.dart`; here a sentinel
+        // proves the entry pushes exactly AymaNotesScreen.path.
+        GoRoute(
+          path: AymaNotesScreen.path,
+          builder: (_, __) => const Scaffold(body: Text('AYMA NOTES PAGE')),
+        ),
+      ],
+    );
+    tester.view.physicalSize = const Size(900, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp.router(routerConfig: router, theme: AymaTheme.light),
+    );
+    await tester.pumpAndSettle();
+
+    final entry = find.byKey(const ValueKey('dev-ayma-notes'));
+    expect(entry, findsOneWidget);
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(find.text('AYMA NOTES PAGE'), findsOneWidget);
   });
 
   testWidgets('correct password unlocks and shows the contents', (
@@ -122,8 +166,14 @@ void main() {
     expect(find.text('u1'), findsOneWidget);
     expect(find.text('\$1.08'), findsOneWidget);
     expect(find.text('Voice call · 6 turns'), findsOneWidget);
+    // The voice-stack control moved to user-facing Ayma settings; the dev panel
+    // no longer carries it.
+    expect(find.text('Voice engine'), findsNothing);
+    expect(find.byKey(const ValueKey('voice-engine-control')), findsNothing);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsOneWidget);
-    expect(find.byKey(const ValueKey('dev-panel-switch')), findsOneWidget);
+    // The AI-notes flag toggle was retired (dev AI notes are now dev-only in
+    // the password-gated Ayma's-notes screen); its switch no longer exists.
+    expect(find.byKey(const ValueKey('dev-panel-switch')), findsNothing);
     expect(find.byKey(const ValueKey('dev-release-notes')), findsOneWidget);
   });
 
@@ -175,31 +225,7 @@ void main() {
     expect(find.byKey(const ValueKey('dev-spend-unavailable')), findsOneWidget);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
     expect(find.textContaining('spent for real'), findsNothing);
-  });
-
-  testWidgets('the AI-notes toggle sends the stored password to the server', (
-    tester,
-  ) async {
-    DevPanelSession.instance.unlock('pw');
-    final posts = <Map<String, dynamic>>[];
-    final api = _api((req) async {
-      if (req.method == 'POST' && req.url.path == '/dev/flags') {
-        final body = jsonDecode(req.body) as Map<String, dynamic>;
-        posts.add(body);
-        return http.Response(jsonEncode({'dev_panel': body['dev_panel']}), 200);
-      }
-      return http.Response(jsonEncode(_usage()), 200);
-    });
-    await _pump(
-      tester,
-      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
-    );
-    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
-    await tester.pumpAndSettle();
-    expect(posts, [
-      {'password': 'pw', 'dev_panel': false},
-    ]);
-    expect(DevPanelFlag.instance.enabled.value, isFalse);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-pro')), findsNothing);
   });
 
   testWidgets('free reload calls topup and shows the new balance', (
@@ -294,5 +320,95 @@ void main() {
     expect(resets, 1);
     expect(find.text('\$0.00'), findsOneWidget);
     expect(find.text('Since your reset on Sep 26.'), findsOneWidget);
+  });
+
+  testWidgets('unlocked + dev view: all three test-upgrade tiers show', (
+    tester,
+  ) async {
+    DevPanelSession.instance.unlock('pw');
+    await _pump(
+      tester,
+      DeveloperScreen(
+        auth: MockFirebaseAuth(signedIn: true),
+        api: _usageApi(_usage()),
+      ),
+    );
+    expect(find.byKey(const ValueKey('dev-test-upgrade-plus')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-pro')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dev-test-upgrade-max')), findsOneWidget);
+  });
+
+  testWidgets('tapping a tier calls /dev/test-upgrade and refreshes the balance',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    final posts = <Map<String, dynamic>>[];
+    final api = _api((req) async {
+      if (req.method == 'POST' && req.url.path == '/dev/test-upgrade') {
+        posts.add(jsonDecode(req.body) as Map<String, dynamic>);
+        return http.Response(
+          jsonEncode({..._usage(remaining: 1400), 'plan': 'pro'}),
+          200,
+        );
+      }
+      return http.Response(jsonEncode(_usage()), 200);
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
+    await tester.tap(find.byKey(const ValueKey('dev-test-upgrade-pro')));
+    await tester.pumpAndSettle();
+    expect(posts, [
+      {'plan': 'pro'},
+    ]);
+    expect(
+      find.textContaining('Test upgrade: pro plan — 1400 credits'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('reset & preview feature tour returns to the shell and requests '
+      'the full tour', (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    TourRequest.instance.consume(); // start clean
+    addTearDown(() => TourRequest.instance.consume());
+    // The interactive coach-mark tour runs over the live shell, so the dev tile
+    // no longer pushes a tour screen — it sets a TourRequest and go('/')s back
+    // to the shell, whose gate consumes it. The seen-state reset() is a
+    // best-effort Firestore clear that no-ops without Firebase here.
+    final router = GoRouter(
+      initialLocation: DeveloperScreen.path,
+      routes: [
+        GoRoute(
+          path: DeveloperScreen.path,
+          builder: (_, __) => DeveloperScreen(
+            auth: MockFirebaseAuth(signedIn: true),
+            api: _usageApi(_usage()),
+          ),
+        ),
+        GoRoute(
+          path: '/',
+          builder: (_, __) => const Scaffold(body: Text('screen:shell')),
+        ),
+      ],
+    );
+    tester.view.physicalSize = const Size(900, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp.router(theme: AymaTheme.light, routerConfig: router),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('dev-reset-feature-tour')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('dev-reset-feature-tour')));
+    await tester.pumpAndSettle();
+
+    // Navigated back to the shell with a pending full-tour request for its gate.
+    expect(find.text('screen:shell'), findsOneWidget);
+    expect(TourRequest.instance.pending.value, isTrue);
   });
 }

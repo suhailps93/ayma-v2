@@ -29,6 +29,7 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
+import '../widgets/feedback_draft_card.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/markdown_text.dart';
@@ -67,9 +68,16 @@ class ChatScreen extends StatefulWidget {
     this.voiceApiClient,
     this.voiceTransportFactory,
     this.pendingQueue,
+    this.composerAnchorKey,
   });
 
   static const path = '/chat';
+
+  /// Feature-tour anchor for the message composer (the "say hi to Ayma" box).
+  /// Only the main shell's embedded chat passes it, so the coach-mark engine
+  /// can spotlight the real text box without colliding with the popup/marketing
+  /// chat instances.
+  final Key? composerAnchorKey;
 
   final ApiClient? apiClient;
   final VoiceSessionController? voiceController;
@@ -883,6 +891,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         tools: result.toolsUsed,
         capped: result.usageCapped,
         imageUrl: result.imageUrl,
+        feedbackKind: result.feedbackCard?.kind ?? '',
+        feedbackTitle: result.feedbackCard?.title ?? '',
+        feedbackBody: result.feedbackCard?.body ?? '',
       );
       if (result.usageCapped) {
         if (_canQueue && rec.queueable) {
@@ -1972,6 +1983,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         tools: result.toolsUsed,
         capped: result.usageCapped,
         imageUrl: result.imageUrl,
+        feedbackKind: result.feedbackCard?.kind ?? '',
+        feedbackTitle: result.feedbackCard?.title ?? '',
+        feedbackBody: result.feedbackCard?.body ?? '',
       );
       if (result.usageCapped && _canQueue && !skipUserTurn) {
         _holdForCredits(
@@ -2490,6 +2504,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ListenableBuilder(
                     listenable: _voice,
                     builder: (context, _) => _capped(h * 0.5, reverse: true, _Composer(
+                      anchorKey: widget.composerAnchorKey,
                       controller: _composerController,
                       focusNode: _composerFocus,
                       canSend: (_canSend || _pendingImage != null) && !_sending,
@@ -3055,6 +3070,17 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   api: widget.api,
                 ),
               ),
+            if (turn.feedbackKind.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FeedbackDraftCard(
+                  key: ValueKey('feedback-${turn.feedbackTitle}-${turn.text.hashCode}'),
+                  kind: turn.feedbackKind,
+                  title: turn.feedbackTitle,
+                  body: turn.feedbackBody,
+                  api: widget.api,
+                ),
+              ),
             if (widget.onThumbsDown != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -3526,6 +3552,7 @@ class _InlineReportCardState extends State<_InlineReportCard> {
 
 class _Composer extends StatelessWidget {
   const _Composer({
+    this.anchorKey,
     required this.controller,
     required this.focusNode,
     required this.canSend,
@@ -3550,6 +3577,9 @@ class _Composer extends StatelessWidget {
     required this.micLevel,
     required this.aymaLevel,
   });
+
+  /// Feature-tour anchor for the whole composer; forwarded to [ChatComposer].
+  final Key? anchorKey;
 
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -3754,6 +3784,7 @@ class _Composer extends StatelessWidget {
                 child: AymaQuietChip(onUnmute: () => onUnmuteAyma()),
               ),
             ChatComposer(
+              rootKey: anchorKey,
               mode: mode,
               controller: controller,
               focusNode: focusNode,

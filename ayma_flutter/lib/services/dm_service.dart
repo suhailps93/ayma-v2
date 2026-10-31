@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -60,6 +61,7 @@ class DmMessage {
   bool get isSharedReport => type == 'shared_report' && reportShare != null;
 
   bool get hasImage => type == 'image' && attachmentUrl.isNotEmpty;
+  bool get hasGif => type == 'gif' && attachmentUrl.isNotEmpty;
   bool get hasFile => type == 'file' && attachmentUrl.isNotEmpty;
 
   /// Build a message from a Firestore doc id + its raw data map.
@@ -201,9 +203,63 @@ class DmService {
     return threadId.split('__').firstWhere((p) => p != me, orElse: () => '');
   }
 
-  /// Suggested opener chips for a thread (§6.9); empty when none apply.
-  Future<List<String>> icebreakers(String threadId) =>
-      _api.dmIcebreakers(threadId);
+  /// Live DM coaching for a thread (§6.9): suggestion chips + an optional
+  /// one-line tip, derived from the recent [messages] tail (oldest-first, as
+  /// delivered by [watchMessages]). Sends up to the last 12 messages; an empty
+  /// list asks for opener suggestions on a brand-new thread.
+  Future<DmAssist> assist(String threadId, List<DmMessage> messages) {
+    final me = uid;
+    final start = messages.length > 12 ? messages.length - 12 : 0;
+    final tail = <Map<String, String>>[
+      for (final m in messages.skip(start))
+        {'from': m.senderUid == me ? 'me' : 'them', 'text': _assistText(m)},
+    ];
+    return _api.dmAssist(other: otherUidOf(threadId), messages: tail);
+  }
+
+  /// The text the coach sees for a message. Text and attachment captions carry
+  /// the user's own words; typed, body-less messages (a bare photo, a voice
+  /// note, a shared card) send a short placeholder so the turn still counts in
+  /// the back-and-forth without leaking a raw storage path.
+  String _assistText(DmMessage m) {
+    final body = m.body.trim();
+    switch (m.type) {
+      case 'text':
+        return body;
+      case 'image':
+      case 'file':
+        return body; // caption, if any
+      case 'gif':
+        return body.isNotEmpty ? body : '[gif]';
+      case 'photo':
+        return '[photo]';
+      case 'voice':
+        return '[voice message]';
+      case 'shared_profile':
+        return '[shared a profile]';
+      case 'shared_report':
+        return '[shared a report]';
+      default:
+        return body;
+    }
+  }
+
+  /// Cross-language DM translation (§6.12): translate [text] into [targetLang]
+  /// (a language code or name), scoped to this thread. Returns the translation
+  /// plus the detected source language. Never blocks the thread — the backend
+  /// returns the original text on any model failure.
+  Future<DmTranslation> translate(
+    String threadId,
+    String text,
+    String targetLang, {
+    String sourceLang = '',
+  }) =>
+      _api.dmTranslate(
+        threadId: threadId,
+        text: text,
+        targetLang: targetLang,
+        sourceLang: sourceLang,
+      );
 
   /// Block & report the other participant (§6.5); hides the thread for us.
   Future<void> block(String otherUid) => _api.block(otherUid);
@@ -257,8 +313,33 @@ class DmService {
     );
   }
 
-  /// Send an already-uploaded [attachment] as an `image` or `file` message,
-  /// with an optional [caption].
+  /// Upload raw [bytes] that came from the keyboard's GIF/image button
+  /// (rich-content insertion, §6.6) — which hands the app bytes, not a file on
+  /// disk — to `uploads/{myUid}/dm/{threadId}/inserted_{ts}{ext}` and return the
+  /// attachment for [sendAttachment]. [mime] is the content type the keyboard
+  /// reported (e.g. `image/gif`); the extension is derived from it.
+  Future<DmAttachment> uploadInsertedAttachment(
+    Uint8List bytes, {
+    required String threadId,
+    required String mime,
+  }) async {
+    final ext = _extForMime(mime);
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final name = 'inserted_$ts$ext';
+    final path = 'uploads/$uid/dm/$threadId/$name';
+    final ref = _storage.ref(path);
+    await ref.putData(bytes, SettableMetadata(contentType: mime));
+    return DmAttachment(
+      storagePath: path,
+      downloadUrl: await ref.getDownloadURL(),
+      contentType: mime,
+      sizeBytes: bytes.length,
+      name: name,
+    );
+  }
+
+  /// Send an already-uploaded [attachment] as an `image`, `gif` or `file`
+  /// message, with an optional [caption].
   Future<void> sendAttachment(
     String threadId, {
     required String type,
@@ -318,5 +399,24 @@ String _mimeForExt(String ext) {
       return 'video/mp4';
     default:
       return 'application/octet-stream';
+  }
+}
+
+/// The file extension (with leading dot) for a keyboard-inserted media MIME
+/// type, used to name the uploaded object. Covers what Gboard/keyboards insert
+/// (GIF, PNG, JPEG, WebP); an unknown type gets no extension.
+String _extForMime(String mime) {
+  switch (mime.toLowerCase()) {
+    case 'image/gif':
+      return '.gif';
+    case 'image/png':
+      return '.png';
+    case 'image/jpeg':
+    case 'image/jpg':
+      return '.jpg';
+    case 'image/webp':
+      return '.webp';
+    default:
+      return '';
   }
 }

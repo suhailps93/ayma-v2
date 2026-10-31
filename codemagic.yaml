@@ -113,6 +113,11 @@ workflows:
           # app_config/sentry. Never commit the DSN.
           VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
           test -n "$REVENUECAT_ANDROID_KEY" || { echo "REVENUECAT_ANDROID_KEY is not set"; exit 1; }
+          # Dev mode is intentionally OFF here: this is a customer-facing
+          # distribution build, so it must NOT pass --dart-define=ENABLE_DEV_MODE=true.
+          # Omitting it leaves kDevModeEnabled at its false default, so the
+          # seven-tap unlock and the whole Developer panel compile out. Only the
+          # internal scripts/build-apk.sh opts in. (See lib/dev_mode.dart.)
           flutter build apk --release \
             --dart-define=REVENUECAT_ANDROID_KEY="$REVENUECAT_ANDROID_KEY" \
             --dart-define=SENTRY_DSN="$SENTRY_DSN" \
@@ -215,7 +220,17 @@ workflows:
         script: |
           set -e
           keychain initialize
+          # The app itself.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          # The Notification Service Extension is its own target with its own
+          # bundle id (sender-avatar DM pushes — see docs/ARCHITECTURE.md §7.10
+          # and ios/NotificationServiceExtension/). It needs its own App ID +
+          # provisioning profile or the archive fails to sign the .appex.
+          # --create registers the App ID on first run; the App ID must exist in
+          # the Apple Developer portal (docs/IOS_DEPLOY.md §2).
+          app-store-connect fetch-signing-files "$BUNDLE_ID.NotificationServiceExtension" \
             --type IOS_APP_STORE \
             --create
           keychain add-certificates
@@ -232,6 +247,11 @@ workflows:
           # app_config/sentry. Never commit the DSN.
           VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
           test -n "$REVENUECAT_IOS_KEY" || { echo "REVENUECAT_IOS_KEY is not set"; exit 1; }
+          # Dev mode is intentionally OFF here: this is the customer-facing
+          # App Store / TestFlight build, so it must NOT pass
+          # --dart-define=ENABLE_DEV_MODE=true. Omitting it leaves
+          # kDevModeEnabled at its false default, so the seven-tap unlock and
+          # the whole Developer panel compile out. (See lib/dev_mode.dart.)
           flutter build ipa --release \
             --dart-define=REVENUECAT_IOS_KEY="$REVENUECAT_IOS_KEY" \
             --dart-define=SENTRY_DSN="$SENTRY_DSN" \
@@ -256,6 +276,65 @@ workflows:
       email:
         recipients:
           - suhailps@gmail.com     # TODO: your address, or delete this block
+        notify:
+          success: true
+          failure: true
+
+  android-play:
+    name: Android - build AAB for Google Play
+    max_build_duration: 60
+    instance_type: linux
+    working_directory: ayma_flutter
+
+    environment:
+      flutter: 3.47.5
+      java: 17
+      groups:
+        - firebase_credentials
+      android_signing:
+        - ayma_upload_keystore
+
+    scripts:
+      - name: Flutter pub get
+        script: flutter pub get
+
+      - name: Analyze
+        script: flutter analyze
+
+      - name: Test
+        script: flutter test
+
+      - name: Build signed release AAB
+        script: |
+          set -e
+          VERSION_NAME=$(grep "^version:" pubspec.yaml | sed "s/version: *//; s/+.*//")
+          BUILD_NUMBER=$(grep "^version:" pubspec.yaml | sed "s/.*+//")
+          test -n "$REVENUECAT_ANDROID_KEY" || { echo "REVENUECAT_ANDROID_KEY is not set"; exit 1; }
+          # No --build-number override: the AAB must carry the pubspec
+          # versionCode (2242) so Play accepts it above the existing 2236.
+          flutter build appbundle --release \
+            --dart-define=REVENUECAT_ANDROID_KEY="$REVENUECAT_ANDROID_KEY" \
+            --dart-define=SENTRY_DSN="$SENTRY_DSN" \
+            --dart-define=SENTRY_ENABLED="${SENTRY_ENABLED:-true}" \
+            --dart-define=SENTRY_ENVIRONMENT=production \
+            --dart-define=SENTRY_RELEASE="ayma@$VERSION_NAME+$BUILD_NUMBER" \
+            --dart-define=SENTRY_DIST="$BUILD_NUMBER"
+          AAB=build/app/outputs/bundle/release/app-release.aab
+          keytool -printcert -jarfile "$AAB" | grep -i "SHA1" || true
+          if keytool -printcert -jarfile "$AAB" | grep -q "Android Debug"; then
+            echo "ERROR: $AAB is debug-signed" >&2
+            exit 1
+          fi
+          echo "OK: release-signed AAB"
+
+    artifacts:
+      - build/app/outputs/bundle/release/app-release.aab
+      - build/app/outputs/mapping/**/mapping.txt
+
+    publishing:
+      email:
+        recipients:
+          - suhailps@gmail.com
         notify:
           success: true
           failure: true

@@ -8,6 +8,14 @@ and where they live.** Never add any.
 Read order: `AGENTS.md` -> `PLAN.md` (Progress Log) -> this file -> `docs/deploy.md`, `docs/agent.md`,
 `docs/ARCHITECTURE.md` as needed.
 
+**QLOO-PHASE default stack (2026-10-29, founder directive — Qloo is judged BEFORE Meta).** The app-wide
+default model stack for new/unset users is **Gemini**, temporarily overriding the standing "default everything
+to Muse" rule: `config.brain_default` = `gemini` (text Brain) and `config.llm_provider_voice_main` = `gemini`
+(main voice → Realtime mode / Gemini Live native audio / voice Aoede). This **flips back to `meta` (Muse)
+post-Qloo for the Meta hackathon** — see the "POST-QLOO" item in `docs/TODO_QUEUE.md`. The per-surface
+`dm_coach`/`translate` surfaces stay on `meta`; `deploy-agent.sh` no longer pins `LLM_PROVIDER_VOICE_MAIN`
+(config default governs). Deployed: ayma-api (brain) + ayma-agent `--release` (voice).
+
 ---
 
 ## 1. Product and architecture
@@ -47,11 +55,11 @@ voice context compression.
 and `app_config/sentry` > code default. Flag keys: `llm_route_json|vision|chat` (`inference`/`vertex`),
 `voice_provider` (`inference`/`google`), `llm_percent_*`, `llm_allowlist_*`, `llm_fallback_to_google`,
 `maps_grounding`, `deepdive_public_profiles`, `deepdive_blocked_regions`, `vertex_ai_search`,
-`vertex_ai_search_daily_cap`, `meta_integrations` (V2, off), `sentry`, `dev_panel` (on; now gates only the dev-facing
-AI annotations in the normal UI — turn off at store release. It no longer gates the Developer panel, whose contents are
-always password-gated via `POST /dev/verify` against `DEV_PANEL_PASSWORD`; its toggle lives inside the unlocked panel
-and `POST /dev/flags` writes it). `sentry`, `meta_integrations` and
-`dev_panel` are mirrored to `app_config/<flag>.enabled` for the app.
+`vertex_ai_search_daily_cap`, `meta_integrations` (V2, off), `sentry`, `mcp_server`. The former `dev_panel` flag was
+retired in APK 2228: dev-facing AI annotations (fact tag / confidence) now render only inside the password-gated,
+dev-only **Ayma's notes** screen, never in the normal UI. The Developer panel is still password-gated via
+`POST /dev/verify` against `DEV_PANEL_PASSWORD` (that unlock was never this flag). `sentry` and `meta_integrations`
+are mirrored to `app_config/<flag>.enabled` for the app.
 
 ```
 python3 scripts/flags.py list                       # effective values + source   (branch all-features-on)
@@ -152,6 +160,17 @@ Repo and release rules (also in `AGENTS.md`; do not diverge)
 - Versioning: bump `pubspec.yaml` build number on each shipped APK; `versionCode` must never go down.
 - `AGENTS.md` "test, commit, log" per-step process applies to `PLAN.md` steps. For ad-hoc founder requests,
   follow the flow above (agent -> merge -> push -> deploy -> install).
+- **Feature tour entry per feature.** Every new user-facing feature must add/update its entry in the feature
+  tour (`ayma_flutter/lib/services/tour_content.dart` — a stable `feature_id` + short how-to + **its UI anchor
+  key**: `anchorId` from `tour_anchors.dart` (+ the `tab` it lives on), with that `GlobalKey` attached to the
+  real target widget). The tour is an interactive coach-mark walkthrough: it auto-shows after pre-boarding and
+  spotlights the real UI element for any unseen feature on next open (ARCHITECTURE §11.2a).
+  - The overlay is hosted at the **app root, above the Navigator** (`TourHost` in `main.dart`'s
+    `MaterialApp.router` builder, driven by the `TourController` singleton), so the single floating callout
+    **stays open across page/route pushes** and each step navigates itself to where its anchor lives (pop back
+    to the shell + switch tab via `TabRequest`). The shell only *decides* to start the tour; it no longer hosts
+    it. Don't re-mount `CoachMarkOverlay` inside a screen — add the entry + anchor key and the root host handles
+    the rest.
 
 ---
 
@@ -256,6 +275,20 @@ section; until it exists only dev-view/debug test purchases credit via sync). Mo
 `scripts/deploy-api.sh` / `deploy-agent.sh`; rotation procedure in `docs/deploy.md`. Local dev secrets: gitignored
 `.env.local`. The founder keeps off-repo key backups in `~/.ayma-keys/` (not for agents to read or copy).
 Cloud Scheduler jobs `ayma-cron-*` call `/cron/*` with `X-Cron-Secret`.
+
+### Demo/judge accounts (test1/test2/test3)
+Three complete demo logins for judges — see `docs/DEMO_ACCOUNTS.md` (the shareable
+guide). Built/kept by an idempotent seed; needs ADC for `ayma-ai`.
+```
+python3 scripts/seed_demo_accounts.py            # create / upsert (idempotent)
+python3 scripts/seed_demo_accounts.py --reset    # wipe the 3 accounts + rebuild
+python3 scripts/verify_demo_accounts.py          # print evidence for every requirement
+```
+Logins `test1/test2/test3@gmail.com` / `Test123` (public demo creds, in DEMO_ACCOUNTS.md).
+Two scoped overrides power them, both committed defaults (no env/secret, no global
+flag flip): `CONFIG.test_bypass_emails` (skip the start-grant email check for those
+3 emails only) and `CONFIG.all_flags_on_uids` (all bool flags on for those 3 uids
+only). Activated by a normal code-only `scripts/deploy-api.sh`.
 
 ---
 

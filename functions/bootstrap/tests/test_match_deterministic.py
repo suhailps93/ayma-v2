@@ -169,7 +169,8 @@ def test_procreation_childfree_vs_wants_kids_is_a_gate():
     assert res["structured_overall"] <= 25.0
 
 
-def test_relocation_gate_needs_incompatible_radius_and_different_cities():
+def test_relocation_gate_is_a_one_sided_hard_dealbreaker():
+    # both refuse to move + different cities -> fail
     fail = md.score_structured(
         {"location": "Lisbon"},
         _q(relocation_radius="Within my city"),
@@ -178,16 +179,44 @@ def test_relocation_gate_needs_incompatible_radius_and_different_cities():
         "long-term",
     )
     assert any(g["node_id"] == "relocation_radius" for g in fail["gate_failures"])
+    assert md.is_hard_dealbreaker(fail["gate_failures"]) is True
+    assert fail["structured_overall"] == 0.0
 
-    ok = md.score_structured(
+    # ONE side refuses to move + different cities -> now ALSO a fail (strict:
+    # a one-sided location miss is enough — BUG B).
+    one_sided = md.score_structured(
         {"location": "Lisbon"},
         _q(relocation_radius="Globally open / digital nomad"),
         {"location": "Oslo"},
         _q(relocation_radius="Within my city"),
         "long-term",
     )
+    assert any(
+        g["node_id"] == "relocation_radius" for g in one_sided["gate_failures"]
+    )
+
+    # both flexible + different cities -> no failure
+    ok = md.score_structured(
+        {"location": "Lisbon"},
+        _q(relocation_radius="Globally open / digital nomad"),
+        {"location": "Oslo"},
+        _q(relocation_radius="Anywhere in my country"),
+        "long-term",
+    )
     assert not any(
         g["node_id"] == "relocation_radius" for g in ok["gate_failures"]
+    )
+
+    # same city -> never a failure, whatever the radius
+    same = md.score_structured(
+        {"location": "Lisbon"},
+        _q(relocation_radius="Within my city"),
+        {"location": "Lisbon"},
+        _q(relocation_radius="Within my city"),
+        "long-term",
+    )
+    assert not any(
+        g["node_id"] == "relocation_radius" for g in same["gate_failures"]
     )
 
 
@@ -330,19 +359,32 @@ def _gates(pa, qa, pb, qb, intent="long-term"):
     return {g["node_id"] for g in res["gate_failures"]}
 
 
-def test_age_range_gate_fires_either_way_with_tolerance():
+def test_age_range_gate_is_a_strict_hard_dealbreaker():
     older = {"birthdate": _born(45)}
     younger = {"birthdate": _born(30)}
     wants = dict(partner_age_min=25, partner_age_max=35)
     assert "partner_age_min" in _gates(younger, wants, older, {})
     assert "partner_age_min" in _gates(older, {}, younger, wants)
-    # within the 3-year tolerance of the stated maximum -> no failure
-    assert "partner_age_min" not in _gates(
+    # STRICT now (no tolerance, BUG B): age 30 is outside a 25-28 range -> fail
+    assert "partner_age_min" in _gates(
         younger, dict(partner_age_min=25, partner_age_max=28),
+        {"birthdate": _born(30)}, {},
+    )
+    # exactly on the boundary still passes
+    assert "partner_age_min" not in _gates(
+        younger, dict(partner_age_min=25, partner_age_max=30),
         {"birthdate": _born(30)}, {},
     )
     # unknown ages never fail a gate
     assert "partner_age_min" not in _gates({}, wants, {}, {})
+    # a partner-age miss is a hard dealbreaker -> score forced to 0.0
+    res = md.score_structured(
+        younger, _q(partner_age_min=25, partner_age_max=35,
+                    attachment_style="Secure"),
+        older, _q(attachment_style="Secure"), "long-term",
+    )
+    assert md.is_hard_dealbreaker(res["gate_failures"]) is True
+    assert res["structured_overall"] == 0.0
 
 
 def test_partner_with_children_gate():
@@ -413,6 +455,53 @@ def test_declined_answer_is_not_a_matching_signal():
         {}, _q(religion_affiliation="Hindu"), "long-term",
     )
     assert res["dimensions"]["values"] is None
+
+
+# --- hard dealbreakers: gender/orientation, age, location -> 0% (BUG B) ------
+
+
+def test_orientation_gate_is_a_hard_dealbreaker_scoring_zero():
+    # A man surfaced to a woman interested only in women: the mutual
+    # orientation check fails -> hard dealbreaker -> score forced to 0.0, not
+    # the 10-25 soft floor.
+    pa = {"gender": "Woman", "interested_in": ["Women"]}
+    pb = {"gender": "Man", "interested_in": ["Women"]}
+    res = md.score_structured(
+        pa, _q(attachment_style="Secure"), pb, _q(attachment_style="Secure"),
+        "long-term",
+    )
+    assert any(g["node_id"] == "orientation" for g in res["gate_failures"])
+    assert md.is_hard_dealbreaker(res["gate_failures"]) is True
+    assert res["structured_overall"] == 0.0
+
+
+def test_orientation_gate_passes_mutual_and_skips_on_missing_data():
+    pa = {"gender": "Woman", "interested_in": ["Men"]}
+    pb = {"gender": "Man", "interested_in": ["Women"]}
+    ok = md.score_structured(
+        pa, _q(attachment_style="Secure"), pb, _q(attachment_style="Secure"),
+        "long-term",
+    )
+    assert not any(g["node_id"] == "orientation" for g in ok["gate_failures"])
+    # Missing gender / interested_in on either side is never a failure.
+    none = md.score_structured(
+        {}, _q(attachment_style="Secure"), {}, _q(attachment_style="Secure"),
+        "long-term",
+    )
+    assert not any(g["node_id"] == "orientation" for g in none["gate_failures"])
+
+
+def test_soft_gate_only_floors_while_a_hard_gate_zeroes():
+    # A soft gate (relationship intent) caps at 25, never 0.
+    soft = md.score_structured(
+        {}, _q(relationship_intent="Casual"),
+        {}, _q(relationship_intent="Marriage"), "long-term",
+    )
+    assert md.is_hard_dealbreaker(soft["gate_failures"]) is False
+    assert soft["structured_overall"] == 25.0
+    assert md.HARD_DEALBREAKER_GATES == frozenset(
+        {"orientation", "partner_age_min", "relocation_radius"}
+    )
 
 
 def test_new_nodes_all_have_a_scoring_home_or_are_intentionally_text_only():

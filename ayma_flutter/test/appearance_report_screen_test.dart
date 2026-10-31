@@ -13,6 +13,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/report_events.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -142,6 +143,36 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Brown'), findsOneWidget);
+  });
+
+  testWidgets(
+      'shows a LOADING STATE (spinning Re-run + "Updating…" banner) while an '
+      'appearance run is in progress, then clears it when the run lands',
+      (tester) async {
+    addTearDown(() => ReportEvents.instance.stopped('appearance'));
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(
+          reportId: 'current', myUid: 'u1', apiClient: _api()),
+    ));
+    await tester.pumpAndSettle();
+
+    // Idle: the Re-run icon is shown, no updating banner.
+    expect(find.byTooltip('Re-run'), findsOneWidget);
+    expect(find.text('Updating your report…'), findsNothing);
+
+    // A background run starts -> the control spins and the banner appears.
+    ReportEvents.instance.started('appearance');
+    await tester.pump();
+    expect(find.byTooltip('Running your analysis…'), findsOneWidget);
+    expect(find.byTooltip('Re-run'), findsNothing);
+    expect(find.text('Updating your report…'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+    // The run lands -> back to the idle Re-run control, banner gone.
+    ReportEvents.instance.stopped('appearance');
+    await tester.pump();
+    expect(find.byTooltip('Re-run'), findsOneWidget);
+    expect(find.text('Updating your report…'), findsNothing);
   });
 
   testWidgets('shows a retry message when the report fails to load',

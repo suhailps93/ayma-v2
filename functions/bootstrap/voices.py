@@ -26,6 +26,43 @@ VOICE_PRESETS: dict[str, str] = {
 }
 
 
+# Gender -> default built-in voice preset, used by Practice Date voice so a
+# simulated match sounds like their profile gender (female persona -> a
+# feminine-leaning voice, male -> masculine). The chosen presets are members of
+# ``VOICE_PRESETS`` above (asserted below), so this never introduces a voice id
+# that isn't in the catalog. Non-binary / unknown gender falls through to the
+# session default (``CONFIG.gemini_live_voice``) — see :func:`voice_for_gender`.
+_GENDER_VOICE: dict[str, str] = {"female": "Aoede", "male": "Charon"}
+
+_FEMALE_GENDER_WORDS = frozenset(
+    {"female", "woman", "women", "f", "girl", "lady", "she", "her", "feminine"}
+)
+_MALE_GENDER_WORDS = frozenset(
+    {"male", "man", "men", "m", "guy", "boy", "he", "him", "masculine"}
+)
+
+assert all(v in VOICE_PRESETS for v in _GENDER_VOICE.values()), (
+    "gender->voice mapping must only name presets defined in VOICE_PRESETS"
+)
+
+
+def voice_for_gender(gender: str | None) -> str:
+    """Built-in voice preset matching a persona's ``gender`` for Practice Date.
+
+    ``female``/``woman`` → a feminine-leaning preset, ``male``/``man`` → a
+    masculine one. Returns ``""`` for non-binary, other, blank or unrecognised
+    gender so the caller falls back to its own default voice
+    (``CONFIG.gemini_live_voice``) — never a wrong-gender guess."""
+    g = (gender or "").strip().lower()
+    if not g:
+        return ""
+    if g in _FEMALE_GENDER_WORDS:
+        return _GENDER_VOICE["female"]
+    if g in _MALE_GENDER_WORDS:
+        return _GENDER_VOICE["male"]
+    return ""
+
+
 def voice_names() -> list[str]:
     return list(VOICE_PRESETS)
 
@@ -66,6 +103,25 @@ LANGUAGE_EXAMPLES = (
     "British RP",
     "Hindi",
     "Australian English",
+)
+
+# The user's saved ACCENT instruction — a dedicated free-text field, separate
+# from the language selector (``ayma_voice_language``) above: HOW Ayma should
+# sound, not WHICH language she speaks. "southern American accent", "California
+# accent", "internet accent", "Indian who's been in America a while". Lives in
+# ``ayma_voice_accent`` on ``profile/main``, set on the "Ayma's models" screen
+# or by ``set_voice_preference``. It is handed to accent-capable providers at
+# session boot (Gemini Live / OpenAI Realtime, via the instruction/style text);
+# providers that ship only fixed voices ignore it (``voice_catalog.
+# provider_supports_accent``). Empty = the provider's default accent.
+PF_AYMA_VOICE_ACCENT = "ayma_voice_accent"
+
+# Placeholder / helper examples for the accent text field.
+ACCENT_EXAMPLES = (
+    "southern American accent",
+    "California accent",
+    "British accent",
+    "Indian who's been in America a while",
 )
 
 _BCP47 = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$")

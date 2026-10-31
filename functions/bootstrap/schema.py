@@ -120,6 +120,7 @@ BODY_REPORTS = "body_reports"  # legacy, still read/written by /body-report
 DEEP_DIVES = "deep_dives"  # deep_dive.py — self dives + dives run on others
 DEEP_DIVE_RUNS = "deep_dive_runs"  # deep_dive.py — queued-search status per report
 OAUTH_TOKENS = "oauth_tokens"  # google_account.py import token
+PERSONA = "persona"  # persona_snapshot.py — the AI-avatar snapshot (doc "avatar")
 
 # --- archive manifests (account_ops.py, account_purge.py, knowledge_wipe.py,
 # admin_lookup.py) -----------------------------------------------------------
@@ -154,6 +155,7 @@ ACCOUNT_SUBCOLLECTIONS = (
     MATCH_CANDIDATES,
     LIKES,
     EXPLORE_PASSED,
+    PERSONA,
 )
 # One known two-level nesting: users/{uid}/wiki_pages/{pageId}/versions/{id}
 # (story.py SECTION_VERSIONS). A plain single-level subcollection copy misses
@@ -185,6 +187,7 @@ KNOWLEDGE_SUBCOLLECTIONS = (
     BODY_REPORTS,
     DEEP_DIVES,
     SKILL_RUNS,
+    PERSONA,
 )
 # KNOWLEDGE_FIELDS (small users/{uid} scalar/array fields the knowledge wipe
 # also resets) is defined further down, after FIELD_TRUST_FLAGS /
@@ -250,7 +253,40 @@ PF_PHOTOS = "photos"  # [{media_id, order}] — the public profile grid
 PF_HIDDEN_PHOTOS = "hidden_photos"
 PF_PHOTO_ATTRS = "photo_attrs"
 PF_PAUSED = "paused"
+# "AI Avatar" consent: absent/True = allowed; False = opted out of any AI
+# persona built from this user (date simulation, practice, MCP).
+PF_AI_AVATAR = "ai_avatar_enabled"
 PF_AYMA_VOICE = "ayma_voice_name"
+# Voice STACK preference (§13.9, voice_catalog). "" = deploy-time default.
+PF_AYMA_VOICE_MODE = "ayma_voice_mode"        # "realtime" | "cascade"
+PF_AYMA_REALTIME_MODEL = "ayma_realtime_model"  # realtime-mode model id
+PF_AYMA_CASCADE_BRAIN = "ayma_cascade_brain"    # cascade LLM id
+PF_AYMA_CASCADE_STT = "ayma_cascade_stt"        # cascade STT model id
+PF_AYMA_CASCADE_TTS = "ayma_cascade_tts"        # cascade TTS model id
+# Chosen voice id for a non-Gemini-preset voice (cascade TTS voice, or OpenAI
+# realtime voice). Gemini-preset realtime voices use PF_AYMA_VOICE instead.
+# "" = the provider's default voice.
+PF_AYMA_TTS_VOICE = "ayma_tts_voice"
+# Unified Brain preference (§13.10): the ONE user-selectable LLM vendor that
+# drives ALL text surfaces (chat, matching, DM coach, translation), with a
+# per-capability fallback to Gemini (web/vision always Gemini). ``gemini`` |
+# ``meta`` (vendor name, not a model id). "" / absent = fall back to the
+# per-surface ``LLM_PROVIDER_*`` env default (``config.brain_default`` is shown
+# pre-selected in the UI). This is the TEXT brain; the voice stack above is a
+# separate, unchanged preference. Read/written by ``/brain/preference``.
+PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
+# Which cloud hosts the voice agent for THIS user's next call (dual-cloud agent,
+# ARCHITECTURE §1.1): "livekit" (LiveKit Cloud Agents — now the default, served
+# by the hosted ``ayma-lk`` worker) or "cloudrun" (GCP Cloud Run, opt-out via
+# the Developer screen). Read by ``main._voice_agent_cloud`` and threaded into
+# the room dispatch; "" / absent = the default below. A user who explicitly set
+# "cloudrun" still routes to Cloud Run. Written by ``/voice/agent-cloud``.
+# ROLLBACK: flip VOICE_AGENT_CLOUD_DEFAULT back to "cloudrun" and redeploy
+# ayma-api (global), or set a user's ``voice_agent_cloud`` pref (instant, no
+# deploy). This single constant is the one authoritative default.
+PF_AYMA_VOICE_CLOUD = "voice_agent_cloud"
+VOICE_AGENT_CLOUDS = ("cloudrun", "livekit")
+VOICE_AGENT_CLOUD_DEFAULT = "livekit"
 # The user's own LinkedIn profile URL, given with their consent (§ Your Story
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.

@@ -127,7 +127,7 @@ def test_new_account_gets_500_credit_start_grant_and_daily_allowance(db):
     c = token_ledger.credits("u1")
     assert c["remaining"] == 500
     assert c["plan"] == "free"
-    assert c["daily_credits_remaining"] == 25
+    assert c["daily_credits_remaining"] == 100
     assert c["grant"] == 500 and c["used"] == 0
     assert c["period_end"] is None
     token_ledger.check("u1")
@@ -135,21 +135,21 @@ def test_new_account_gets_500_credit_start_grant_and_daily_allowance(db):
 
 def test_start_grant_is_one_time_then_daily_allowance_applies(db):
     _spend(db, 5.0)  # start grant exhausted
-    token_ledger.check("u1")  # today's 25 credits still usable
-    assert token_ledger.credits("u1")["remaining"] == 25
-    _spend(db, 0.25)
+    token_ledger.check("u1")  # today's 100 credits still usable
+    assert token_ledger.credits("u1")["remaining"] == 100
+    _spend(db, 1.0)
     with pytest.raises(token_ledger.TokenCapExceeded):
         token_ledger.check("u1")
     assert token_ledger.credits("u1")["remaining"] == 0
 
 
 def test_daily_reset_uncaps_the_user(db):
-    _spend(db, 5.25)
+    _spend(db, 6.0)  # $5 start grant + $1 daily allowance both exhausted
     with pytest.raises(token_ledger.TokenCapExceeded):
         token_ledger.check("u1")
     _set_day(1)
     token_ledger.check("u1")
-    assert token_ledger.credits("u1")["remaining"] == 25
+    assert token_ledger.credits("u1")["remaining"] == 100
 
 
 def test_daily_allowance_does_not_roll_over(db):
@@ -157,13 +157,40 @@ def test_daily_allowance_does_not_roll_over(db):
     token_ledger.check("u1")  # day 0: marker stored
     _spend(db, 0.10)
     _set_day(1)
-    assert token_ledger.credits("u1")["remaining"] == 25
+    assert token_ledger.credits("u1")["remaining"] == 100
     _set_day(2)  # a whole untouched day banks nothing
-    assert token_ledger.credits("u1")["remaining"] == 25
+    assert token_ledger.credits("u1")["remaining"] == 100
     _set_day(3)
     token_ledger.check("u1")  # first call of the day stamps the day marker
     _spend(db, 0.05)
+    assert token_ledger.credits("u1")["remaining"] == 95
+
+
+def test_zero_credit_free_user_gets_the_daily_pool_on_a_new_day(db):
+    """Founder bug 2026-10-27: a free account at 0 credits must get its full
+    daily pool back the next UTC day (the "daily credits refresh every day"
+    promise). Exhaust the start grant AND today's allowance, confirm 0, then
+    roll the day and confirm the whole pool is back."""
+    _spend(db, 6.0)  # $5 start grant + $1 daily allowance
+    assert token_ledger.credits("u1")["remaining"] == 0
+    with pytest.raises(token_ledger.TokenCapExceeded):
+        token_ledger.check("u1")
+    _set_day(1)
+    assert token_ledger.credits("u1")["remaining"] == 100
+    token_ledger.check("u1")  # no longer capped
+
+
+def test_daily_pool_is_not_regranted_within_the_same_day(db):
+    """The allowance must not top itself back up on a second read the same
+    day — it is a bounded daily pool, not per-request. Spend part of it, read
+    again the same day, and confirm the remainder only shrinks."""
+    _spend(db, 5.0)  # start grant gone; full daily pool available
+    assert token_ledger.credits("u1")["remaining"] == 100
+    _spend(db, 0.40)
+    assert token_ledger.credits("u1")["remaining"] == 60
+    _spend(db, 0.40)  # same day, no rollover
     assert token_ledger.credits("u1")["remaining"] == 20
+    assert token_ledger.credits("u1")["remaining"] == 20  # re-read: still 20
 
 
 def test_grandfathered_account_keeps_its_balance_and_gets_the_grant(db):
@@ -197,7 +224,7 @@ def test_credit_override_is_honoured_in_grandfathering(db):
 
 
 def test_topup_gives_at_least_amount_credits(db):
-    _spend(db, 5.25)
+    _spend(db, 6.0)  # $5 start grant + $1 daily allowance both exhausted
     with pytest.raises(token_ledger.TokenCapExceeded):
         token_ledger.check("u1")
     assert token_ledger.topup("u1", 100)["remaining"] >= 100
@@ -249,9 +276,9 @@ def test_unused_paid_tokens_expire_to_free_plan_lazily(db):
     _set_day(31, timedelta(hours=2))  # past period_end + grace, no webhook
     c = token_ledger.credits("u1")
     assert c["plan"] == "free"
-    assert c["remaining"] == 25  # daily allowance only; $5 not re-granted
+    assert c["remaining"] == 100  # daily allowance only; $5 not re-granted
     assert c["period_end"] is None
-    _spend(db, 0.25)
+    _spend(db, 1.0)
     with pytest.raises(token_ledger.TokenCapExceeded):
         token_ledger.check("u1")
 
@@ -277,7 +304,7 @@ def test_expiration_event_falls_back_to_free(db):
     exp = T0 + timedelta(days=30)
     assert _handle(db, _event("EXPIRATION", eid="b", expires=exp), now=exp) == "expired_to_free"
     c = token_ledger.credits("u1")
-    assert c["plan"] == "free" and c["remaining"] == 25
+    assert c["plan"] == "free" and c["remaining"] == 100
 
 
 def test_cancellation_does_not_revoke_until_period_end(db):
@@ -464,14 +491,14 @@ def _new_user_db(monkeypatch, status):
 
 def test_ineligible_account_gets_only_the_daily_allowance(monkeypatch):
     d = _new_user_db(monkeypatch, [token_ledger.GRANT_PENDING])
-    assert token_ledger.credits("n1")["remaining"] == 25
+    assert token_ledger.credits("n1")["remaining"] == 100
     assert d.docs[("users", "n1")]["billing"]["start_grant_unlocked"] is False
 
 
 def test_becoming_eligible_later_unlocks_the_start_grant(monkeypatch):
     st = [token_ledger.GRANT_PENDING]
     d = _new_user_db(monkeypatch, st)
-    assert token_ledger.credits("n1")["remaining"] == 25
+    assert token_ledger.credits("n1")["remaining"] == 100
     st[0] = token_ledger.GRANT_OK
     assert token_ledger.credits("n1")["remaining"] == 500
     assert d.docs[("users", "n1")]["billing"]["start_grant_unlocked"] is True
@@ -480,14 +507,14 @@ def test_becoming_eligible_later_unlocks_the_start_grant(monkeypatch):
 def test_duplicate_face_is_blocked_permanently_without_rechecks(monkeypatch):
     st = [token_ledger.GRANT_DUPLICATE]
     d = _new_user_db(monkeypatch, st)
-    assert token_ledger.credits("n1")["remaining"] == 25
+    assert token_ledger.credits("n1")["remaining"] == 100
     b = d.docs[("users", "n1")]["billing"]
     assert b["start_grant_unlocked"] is False and b["start_grant_blocked"] is True
     monkeypatch.setattr(
         token_ledger, "_grant_status",
         lambda uid, data: pytest.fail("blocked accounts are not re-checked"),
     )
-    assert token_ledger.credits("n1")["remaining"] == 25
+    assert token_ledger.credits("n1")["remaining"] == 100
 
 
 def test_unlocked_account_is_not_relocked_and_skips_lookup(monkeypatch):
@@ -964,3 +991,55 @@ def test_sync_endpoint_rest_error_is_502(db, monkeypatch):
 
     monkeypatch.setattr(billing, "fetch_active_entitlement", _boom)
     assert c.post("/billing/sync", json={}, headers=headers).status_code == 502
+
+
+# --- dev-only test upgrade (no real billing) ---------------------------------
+
+@pytest.mark.parametrize("plan,credits", [
+    ("plus", 700),
+    ("pro", 1400),
+    ("max", 8000),
+])
+def test_dev_test_upgrade_grants_the_tier_pool(db, monkeypatch, plan, credits):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    r = c.post("/dev/test-upgrade", json={"plan": plan}, headers=headers)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["sync_status"] == f"synced_{plan}"
+    assert j["plan"] == plan
+    assert j["credits"]["remaining"] == credits
+    # No dollar/payment fields leak to the client.
+    assert "$" not in repr(j)
+
+
+def test_dev_test_upgrade_rejects_non_dev(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=False)
+    r = c.post("/dev/test-upgrade", json={"plan": "pro"}, headers=headers)
+    assert r.status_code == 403
+    # Nothing was granted — the account is still free.
+    assert token_ledger.credits("u1")["plan"] == "free"
+
+
+def test_dev_test_upgrade_requires_auth(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    assert c.post("/dev/test-upgrade", json={"plan": "pro"}).status_code in (401, 403)
+
+
+def test_dev_test_upgrade_rejects_unknown_plan(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    r = c.post("/dev/test-upgrade", json={"plan": "free"}, headers=headers)
+    assert r.status_code == 400
+    assert token_ledger.credits("u1")["plan"] == "free"
+
+
+def test_dev_test_upgrade_can_switch_tiers(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    assert c.post("/dev/test-upgrade", json={"plan": "plus"},
+                  headers=headers).json()["credits"]["remaining"] == 700
+    # Switching tier refreshes the pool to the new plan (not additive).
+    j = c.post("/dev/test-upgrade", json={"plan": "max"}, headers=headers).json()
+    assert j["plan"] == "max" and j["credits"]["remaining"] == 8000

@@ -5,15 +5,18 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../dev_mode.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
+import '../services/tour_request.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import 'accent_color_screen.dart';
 import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
 import 'developer_screen.dart';
+import 'main_shell_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -63,6 +66,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   DateTime? _lastBuildTap;
 
   void _onBuildTap() {
+    // Customer / store builds compile with dev mode off (kDevModeEnabled ==
+    // false): the unlock gesture is a complete no-op and the Developer panel
+    // is unreachable.
+    if (!devModeEnabled) return;
     final now = DateTime.now();
     final last = _lastBuildTap;
     _buildTaps = last != null && now.difference(last) < _tapWindow
@@ -73,6 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _openDeveloper() {
+    if (!devModeEnabled) return;
     _buildTaps = 0;
     _lastBuildTap = null;
     context.push(DeveloperScreen.path);
@@ -247,6 +255,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Divider(color: ac.lineSoft),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Privacy',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          StreamBuilder<bool>(
+            stream: _profiles.watchAiAvatar(),
+            builder: (context, snap) => SwitchListTile(
+              key: const Key('settings_ai_avatar'),
+              title: Text('AI Avatar',
+                  style: AymaType.sans(size: 15, color: ac.fg)),
+              subtitle: Text(
+                'Allow an AI version of me. Ayma builds an AI agent from your '
+                'profile for simulated dates and agent features. Turn off to '
+                'opt out: you can’t run simulated dates, and no one can '
+                'simulate one with you.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              value: snap.data ?? true,
+              onChanged: (v) => _profiles.setAiAvatar(v),
+            ),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Text('Verification',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
@@ -291,6 +322,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(BiometricConsentSettingsScreen.path),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Help',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          ListTile(
+            key: const ValueKey('settings-feature-tour'),
+            leading: Icon(Icons.explore_outlined, color: ac.fgDim),
+            title: Text('How to use Ayma',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text('Replay the feature tour any time.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            // Full replay on demand (not a spotlight): the interactive
+            // coach-mark tour runs over the live shell, so return to it and ask
+            // it to run the full walkthrough (re-marks every feature seen —
+            // harmless, they've now seen them again).
+            onTap: () {
+              TourRequest.instance.requestFull();
+              context.go(MainShellScreen.path);
+            },
           ),
           Divider(color: ac.lineSoft),
           Padding(

@@ -35,8 +35,10 @@ logger = logging.getLogger("ayma.skills")
 DESCRIPTION = (
     "Change how Ayma sounds, on an explicit request only (never just because "
     "they spoke another language). Voice CHARACTER incl. gender → `request` "
-    f"(presets — {voices.presets_by_lean()}); ACCENT/LANGUAGE → "
-    "`accent_language`. Both saved as default; relay the result truthfully."
+    f"(presets — {voices.presets_by_lean()}); which LANGUAGE she speaks → "
+    "`accent_language`; her ACCENT / way of speaking (e.g. 'southern American "
+    "accent', 'British accent', 'Indian who's been in America a while') → "
+    "`accent`. All saved as default; relay the result truthfully."
 )
 
 DECLARATION = {
@@ -55,12 +57,29 @@ DECLARATION = {
             },
             "accent_language": {
                 "type": "string",
-                "description": "language/accent only, never gender "
-                "(that's `request`), or ''",
+                "description": "the LANGUAGE to speak (e.g. 'Malayalam', "
+                "'Spanish'), never gender (that's `request`) and never an "
+                "accent (that's `accent`), or ''",
+            },
+            "accent": {
+                "type": "string",
+                "description": "the ACCENT / way of speaking in their words "
+                "(e.g. 'southern American accent', 'British accent'), or ''",
             },
         },
     },
 }
+
+# Returned when the user asks for an accent change but the active (or saved)
+# voice model ships only fixed voices and cannot speak a different accent — so
+# the agent says so clearly and points at the fix, instead of silently saving a
+# setting that does nothing (which reads as broken). §13.9.
+_ACCENT_NOT_SUPPORTED = (
+    "this voice can't change its accent — it only speaks its one built-in "
+    "accent. To change the accent, switch to an accent-capable voice model "
+    "(like Gemini Live or OpenAI Realtime) in “Ayma’s models”, "
+    "then set the accent there"
+)
 
 # Ordered most-specific first: the first group with a whole-word hit wins.
 # Gendered descriptors come before the timbre words so "female" resolves to a
@@ -160,30 +179,91 @@ def _persist(
     return preset, accent
 
 
+def _persist_accent(db, uid: str, accent: str) -> None:
+    """Save the dedicated free-text ACCENT (``ayma_voice_accent``) verbatim.
+    Routed to accent-capable providers at the next session boot
+    (``agent._accent_block``); fixed-voice providers ignore it."""
+    (
+        db.collection("users").document(uid).collection("profile").document("main")
+    ).set(
+        {voices.PF_AYMA_VOICE_ACCENT: accent, "updated_at": firestore.SERVER_TIMESTAMP},
+        merge=True,
+    )
+
+
+def _accent_clause(db, uid: str, accent: str, *, supports_accent: bool) -> str:
+    """Handle a dedicated ACCENT request (§13.9). Returns a clause for the tool
+    reply, or ``""`` when no accent was asked for. When the active/saved model
+    cannot change accent, nothing is saved and the clause is the clear
+    "switch models" message (:data:`_ACCENT_NOT_SUPPORTED`)."""
+    accent = (accent or "").strip()[:200]
+    if not accent:
+        return ""
+    if not supports_accent:
+        return _ACCENT_NOT_SUPPORTED
+    _persist_accent(db, uid, accent)
+    return (
+        f"accent → {accent} — saved as your default; it takes effect from your "
+        "next voice call"
+    )
+
+
+def _combine(base: str, accent_clause: str) -> str:
+    """Join the voice/language result with the accent result, where ``base`` may
+    be :data:`_UNCLEAR` (nothing recognised). An accent clause always wins over a
+    lone _UNCLEAR, so an accent-only request never reads as "couldn't tell"."""
+    if accent_clause and base and base != _UNCLEAR:
+        return f"{base}; {accent_clause}"
+    if accent_clause:
+        return accent_clause
+    return base
+
+
+def _profile(db, uid: str) -> dict:
+    try:
+        snap = db.collection("users").document(uid).collection("profile").document(
+            "main"
+        ).get()
+        return snap.to_dict() or {}
+    except Exception:  # noqa: BLE001 - a read failure must not break the tool
+        logger.exception("could not read voice stack for accent gating (%s)", uid)
+        return {}
+
+
 def _bind(db, uid: str) -> Callable[..., str]:
     def set_voice_preference(
-        request: str = "", voice_name: str = "", accent_language: str = ""
+        request: str = "", voice_name: str = "", accent_language: str = "",
+        accent: str = "",
     ) -> str:
-        """Persist the voice character and/or the accent/language (text
-        chat: the voice character applies from the next voice call)."""
-        preset, accent = _persist(db, uid, request, voice_name, accent_language)
-        if not preset and not accent:
-            return _UNCLEAR
-        if accent and not preset:
-            return (
-                f"accent/language → {accent} — switching now and saved as "
-                "your default"
+        """Persist the voice character, language, and/or accent (text chat: all
+        apply from the next voice call)."""
+        acc_clause = ""
+        if accent.strip():
+            import voice_catalog
+
+            acc_clause = _accent_clause(
+                db, uid, accent,
+                supports_accent=voice_catalog.accent_supported(_profile(db, uid)),
             )
-        if preset and not accent:
-            return (
+        preset, lang = _persist(db, uid, request, voice_name, accent_language)
+        if not preset and not lang:
+            base = _UNCLEAR
+        elif lang and not preset:
+            base = (
+                f"accent/language → {lang} — switching now and saved as your default"
+            )
+        elif preset and not lang:
+            base = (
                 f"voice → {preset} ({voices.VOICE_PRESETS[preset]}) — saved; "
                 "it takes effect from your next voice call"
             )
-        return (
-            f"accent/language → {accent} (switching now); voice → {preset} "
-            f"({voices.VOICE_PRESETS[preset]}) from your next voice call — "
-            "both saved as your default"
-        )
+        else:
+            base = (
+                f"accent/language → {lang} (switching now); voice → {preset} "
+                f"({voices.VOICE_PRESETS[preset]}) from your next voice call — "
+                "both saved as your default"
+            )
+        return _combine(base, acc_clause)
 
     return set_voice_preference
 
@@ -200,17 +280,142 @@ def bind_live(db, uid: str, on_change: VoiceChangeHook) -> Callable[..., str]:
     what really happened."""
 
     def set_voice_preference(
-        request: str = "", voice_name: str = "", accent_language: str = ""
+        request: str = "", voice_name: str = "", accent_language: str = "",
+        accent: str = "",
     ) -> str:
         """Persist the voice character and/or the accent/language and apply
-        it to this call right now."""
-        preset, accent = _persist(db, uid, request, voice_name, accent_language)
-        if not preset and not accent:
-            return _UNCLEAR
-        reconnecting, detail = on_change(preset, accent)
+        it to this call right now. The dedicated ACCENT (``accent``) is always
+        accent-capable here — Gemini Live is instruction-driven — and takes
+        effect at the next session boot (``agent._accent_block``)."""
+        acc_clause = _accent_clause(db, uid, accent, supports_accent=True)
+        preset, lang = _persist(db, uid, request, voice_name, accent_language)
+        if not preset and not lang:
+            return _combine(_UNCLEAR, acc_clause)
+        reconnecting, detail = on_change(preset, lang)
         if reconnecting:
-            return f"{detail}. Saved as their default. {prompt.load_voice_swap_heads_up()}"
-        return f"{detail}. Saved as their default."
+            base = f"{detail}. Saved as their default. {prompt.load_voice_swap_heads_up()}"
+        else:
+            base = f"{detail}. Saved as their default."
+        return _combine(base, acc_clause)
+
+    return set_voice_preference
+
+
+# --- Stack-aware (cascade / non-Gemini-realtime) live path (§13.9) ----------
+#
+# On a cascade (e.g. Muse-Spark brain + fishaudio TTS) or a non-Gemini realtime
+# model, the switchable voices are NOT the Gemini Live presets — they are the
+# active provider's voices (``voice_catalog.runtime_voices``). This path resolves
+# the request within THAT set and persists the chosen voice id to
+# ``ayma_tts_voice`` (the field the agent reads for every non-Gemini-preset
+# voice). A mid-call hot-swap is Gemini-Live-only, so here the change is saved
+# for the NEXT call and the result says exactly that.
+
+
+def stack_description(runtime_voices) -> str:
+    """The ``set_voice_preference`` tool description for a non-Gemini stack:
+    names the active provider's voices instead of the Gemini presets, so the
+    model never offers a voice the running stack can't produce."""
+    names = ", ".join(v.label for v in runtime_voices.voices if v.id)
+    names = names or "the provider's default voice"
+    accent_rule = (
+        "ACCENT (how she sounds) → `accent`. "
+        if runtime_voices.supports_accent
+        else "This voice CANNOT change its accent (fixed voice): if they ask for "
+        "a different accent, tell them to pick an accent-capable model in "
+        "“Ayma’s models”. "
+    )
+    return (
+        "Change how Ayma sounds, on an explicit request only (never just "
+        "because they spoke another language). Voice CHARACTER incl. gender → "
+        f"`request`; the voices available on this call are: {names}. "
+        f"LANGUAGE → `accent_language`. {accent_rule}A voice change applies from "
+        "the NEXT call (this stack can't hot-swap mid-call); relay the result "
+        "truthfully."
+    )
+
+
+def _persist_stack(
+    db, uid: str, request: str, voice_name: str, accent_language: str, runtime_voices
+) -> tuple[object | None, str]:
+    """Resolve the voice within the ACTIVE provider's set and save it to
+    ``ayma_tts_voice`` (plus the accent/language verbatim). Returns
+    ``(voice, accent)``; ``(None, "")`` — nothing written — when nothing
+    recognisable was asked for."""
+    import schema
+    import voice_catalog
+
+    voice = None
+    if voice_name.strip():
+        voice = voice_catalog.resolve_voice(voice_name, runtime_voices.voices)
+    if voice is None and request.strip():
+        voice = voice_catalog.resolve_voice(request, runtime_voices.voices)
+    if voice is None:
+        # The live model sometimes puts gender in `accent_language` ("a male
+        # voice … American English"); match only the gender there, never a
+        # timbre word, so an accent request alone never changes the voice.
+        voice = voice_catalog.resolve_voice(
+            accent_language, runtime_voices.voices, gender_only=True
+        )
+    accent = accent_language.strip()[:200]
+    if voice is None and not accent:
+        return None, ""
+
+    payload: dict = {"updated_at": firestore.SERVER_TIMESTAMP}
+    if voice is not None:
+        payload[schema.PF_AYMA_TTS_VOICE] = voice.id
+    if accent:
+        payload[voices.PF_AYMA_VOICE_LANGUAGE] = accent
+    (
+        db.collection("users").document(uid).collection("profile").document("main")
+    ).set(payload, merge=True)
+    return voice, accent
+
+
+def bind_stack(db, uid: str, runtime_voices) -> Callable[..., str]:
+    """The cascade / non-Gemini-realtime voice-call variant. Same accent/language
+    handling as the Gemini path, but the voice CHARACTER is matched within
+    ``runtime_voices`` (the active provider's set) and saved for the next call —
+    there is no mid-call hot-swap on this stack."""
+
+    def set_voice_preference(
+        request: str = "", voice_name: str = "", accent_language: str = "",
+        accent: str = "",
+    ) -> str:
+        """Persist the voice character (within the active stack's voices, from
+        the next call), the language, and/or the dedicated ACCENT. The accent is
+        only accepted when this stack's provider is accent-capable
+        (``runtime_voices.supports_accent``); otherwise the reply says so and
+        points at an accent-capable model in “Ayma’s models”."""
+        acc_clause = _accent_clause(
+            db, uid, accent, supports_accent=runtime_voices.supports_accent
+        )
+        voice, lang = _persist_stack(
+            db, uid, request, voice_name, accent_language, runtime_voices
+        )
+        if voice is None and not lang:
+            base = _UNCLEAR
+        elif lang and voice is None:
+            base = (
+                f"accent/language → {lang} — speaking that way now and saved "
+                "as your default"
+            )
+        else:
+            label = f"{voice.label}" + (
+                f" ({voice.description})" if voice.description else ""
+            )
+            if voice is not None and not lang:
+                base = (
+                    f"voice → {label} — saved; I'll switch to it on our next call "
+                    "(this call's setup can't change voice mid-call)"
+                )
+            else:
+                base = (
+                    f"accent/language → {lang} (speaking that way now); voice → "
+                    f"{label} from our next call (this call's setup can't change "
+                    "voice mid-call) — both saved as your default"
+                )
+        return _combine(base, acc_clause)
 
     return set_voice_preference
 

@@ -5,43 +5,31 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'gallery_saver.dart';
-
-/// Where the Share sheet can send the report card image.
-enum CardShareTarget { whatsapp, instagram, save, more }
-
-/// Turns the Appearance report card into a 1080x1920 PNG on the device and
-/// hands it to WhatsApp, Instagram, the gallery or the system share sheet.
-/// The image is never uploaded by us: it is rendered locally, written to the
-/// app's temp directory and given straight to the app the user picked.
+/// Renders the Appearance report card into a 1080x1920 PNG on the device and
+/// hands it to the native OS share sheet. The image is never uploaded by us:
+/// it is rendered locally, written to the app's temp directory and shared
+/// through `share_plus`, exactly the path that always worked.
 ///
 /// The caption carries the Ayma smart link (`justabot.info/get`, the free
 /// static Firebase-hosted redirect page — see `public/get.html` and
-/// `docs/SMART_LINK.md`) so every card that lands in WhatsApp or the system
-/// share sheet comes with a one-tap way into the app (open it, else the
-/// right app store). Instagram strips shared text, so there the link rides
-/// only on whatever the user adds.
+/// `docs/SMART_LINK.md`) so every card that leaves the app comes with a
+/// one-tap way into it (open it, else the right app store). The user picks the
+/// destination (WhatsApp, Instagram, Messages, save-to-photos, …) from the
+/// native sheet; Ayma no longer targets any single app itself.
 class ReportCardShare {
   ReportCardShare({
-    MethodChannel? shareChannel,
-    GallerySaver? gallery,
     Directory? tempDir,
     Future<void> Function(ShareParams params)? systemShare,
-  }) : _channel = shareChannel ?? const MethodChannel('ayma/share'),
-       _gallery = gallery ?? const GallerySaver(),
-       _tempDir = tempDir ?? Directory.systemTemp,
+  }) : _tempDir = tempDir ?? Directory.systemTemp,
        _systemShare =
            systemShare ??
            ((p) async {
              await SharePlus.instance.share(p);
            });
 
-  final MethodChannel _channel;
-  final GallerySaver _gallery;
   final Directory _tempDir;
   final Future<void> Function(ShareParams params) _systemShare;
 
@@ -63,9 +51,6 @@ class ReportCardShare {
   }
 
   static const pixelRatio = 3.0;
-
-  static const _whatsappPackages = ['com.whatsapp', 'com.whatsapp.w4b'];
-  static const _instagramPackages = ['com.instagram.android'];
 
   /// Longest side, in pixels, a card photo is decoded at: the largest
   /// polaroid is 188x222 logical px, 564x666 px in the 3x export.
@@ -189,55 +174,38 @@ class ReportCardShare {
     '${_tempDir.path}/ayma_report_card_${DateTime.now().millisecondsSinceEpoch}.png',
   ).writeAsBytes(png, flush: true);
 
-  /// Sends [png] to [target]. Returns a short confirmation to show the user,
-  /// or null when the app the user picked takes over. Throws on failure
-  /// (a declined gallery permission is a [PlatformException] `PERMISSION`).
-  /// [origin] anchors the share popover on iPad.
-  Future<String?> share(
-    CardShareTarget target,
+  /// Renders [card] (at [logicalSize], via [view]) into a PNG and opens the
+  /// native share sheet with it — the single entry point the Appearance screen
+  /// uses. Split from [share] only so tests can capture the share without a
+  /// real offscreen render.
+  Future<void> shareCard(
+    Widget card, {
+    required ui.FlutterView view,
+    required Size logicalSize,
+    Rect? origin,
+    String? caption,
+  }) async {
+    final png = await renderPng(card, view: view, logicalSize: logicalSize);
+    await share(png, origin: origin, caption: caption);
+  }
+
+  /// Writes [png] to the app's temp directory and opens the native OS share
+  /// sheet with the card image and [caption] (the Ayma smart link). The user
+  /// chooses the destination — WhatsApp, Instagram, Messages, save-to-photos,
+  /// anything the device offers. [origin] anchors the share popover on iPad.
+  Future<void> share(
     Uint8List png, {
     Rect? origin,
     String? caption,
   }) async {
-    final text = caption ?? ReportCardShare.caption;
-    if (target == CardShareTarget.save) {
-      final where = await _gallery.save(
-        png,
-        'ayma_report_card_${DateTime.now().millisecondsSinceEpoch}.png',
-        'image/png',
-      );
-      return 'Saved to $where';
-    }
     final file = await _write(png);
-    // WhatsApp and Instagram are targeted directly on Android (a plain
-    // image send to that app; Instagram then offers Stories). iOS has no
-    // reliable way to hand an image to one app without its SDK, so the
-    // system share sheet is used, where both apps appear.
-    final packages = switch (target) {
-      CardShareTarget.whatsapp => _whatsappPackages,
-      CardShareTarget.instagram => _instagramPackages,
-      _ => const <String>[],
-    };
-    if (packages.isNotEmpty &&
-        !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.android) {
-      final sent = await _channel.invokeMethod<bool>('sendToApp', {
-        'path': file.path,
-        'packages': packages,
-        // Instagram strips EXTRA_TEXT from an image share; only WhatsApp keeps
-        // the caption (and its link), so only send it there.
-        'text': target == CardShareTarget.whatsapp ? text : '',
-      });
-      if (sent == true) return null;
-    }
     await _systemShare(
       ShareParams(
-        text: text,
+        text: caption ?? ReportCardShare.caption,
         files: [XFile(file.path, mimeType: 'image/png')],
         sharePositionOrigin: origin,
       ),
     );
-    return null;
   }
 }
 

@@ -384,6 +384,29 @@ def test_open_screen_rejects_an_unknown_screen():
     assert _PENDING not in db.store
 
 
+def test_open_screen_routes_a_story_edit_to_the_direct_tool_not_navigation():
+    # Founder bug 2026-10-28: a "change my story" request must edit in place via
+    # edit_story_entry, not navigate into the Story editor's passage popup.
+    db = _Db()
+    out = _run(app_control._bind_open_screen(db, "me")("change my story"))
+    assert "edit_story_entry" in out and "do NOT navigate" in out
+    assert _PENDING not in db.store  # nothing was queued — no navigation
+
+
+def test_open_screen_routes_a_story_removal_to_the_direct_tool_not_navigation():
+    db = _Db()
+    out = _run(app_control._bind_open_screen(db, "me")("remove that from my story"))
+    assert "remove_story_entry" in out and "do NOT navigate" in out
+    assert _PENDING not in db.store
+
+
+def test_open_screen_still_navigates_to_the_story_page_for_a_plain_open():
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("open my story"))
+    assert out.startswith("navigated: screen=story")
+    assert db.store[_PENDING]["path"] == "/profile/wiki"
+
+
 def test_search_explore_queues_the_query(monkeypatch):
     _fast_acks(monkeypatch, timeout=0.5)
     monkeypatch.setattr(app_control, "_RESULT_TIMEOUT_SECONDS", 0.05)
@@ -452,11 +475,33 @@ def test_open_profile_reports_when_nobody_matches():
     assert _PENDING not in db.store
 
 
+def test_resolve_person_fuzzy_matches_near_identical_spellings():
+    # Founder bug 2026-10-29: "Sophia" must resolve to "Sofia Ruiz" directly via fuzzy matching.
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    assert app_control._resolve_person(db, "me", "Sophia") == ("u-sofia", "Sofia Ruiz")
+    assert app_control._resolve_person(db, "me", "Benedict") == (None, "")
+
+
+def test_open_profile_fuzzy_matches_a_near_identical_name():
+    # Founder bug 2026-10-29: fuzzy matching for open_profile should route "Sophia" to "Sofia Ruiz".
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    db.seed_user("u-sam", "Sam Fox")
+    out = _run(app_control._bind_open_profile(db, "me")("Sophia"))
+    assert out.startswith("navigated: screen=profile — Sofia Ruiz's profile is open.")
+    cmd = db.store[_PENDING]
+    assert cmd == {**cmd, "action": "open_profile", "uid": "u-sofia"}
+
+
 # --- registry wiring --------------------------------------------------
 
 _COMMAND_TOOLS = {
-    "open_screen", "search_explore", "open_profile", "open_message_thread",
-    "open_match_report", "app_action", "account_action", "ui_action",
+    "open_screen", "search_explore", "open_profile", "list_conversations",
+    "open_message_thread", "open_match_report", "app_action",
+    "account_action", "ui_action",
 }
 
 
@@ -623,7 +668,9 @@ def test_open_message_thread_resolves_an_existing_conversation():
         "participants": ["me", "u-jordan"]
     }
     out = _run(app_control._bind_open_message_thread(db, "me")("jordan"))
-    assert out == "navigated: screen=dm — the conversation with jordan is open."
+    assert out == (
+        "navigated: screen=dm — the conversation with Jordan Lee is open."
+    )
     cmd = db.store[_PENDING]
     assert cmd == {**cmd, "action": "open_dm_thread", "uid": "u-jordan"}
 
@@ -645,8 +692,117 @@ def test_open_message_thread_reports_when_no_conversation_exists():
     db.seed_user("me", "Me")
     db.seed_user("u-jordan", "Jordan Lee")
     out = _run(app_control._bind_open_message_thread(db, "me")("jordan"))
-    assert "couldn't find an existing conversation" in out
+    assert "couldn't find any existing conversations" in out
     assert _PENDING not in db.store
+
+
+def test_open_message_thread_not_found_when_name_matches_no_thread():
+    # A thread exists, but not with the person the user named ("Sahil not
+    # found"): no navigation, no false success chip (founder bug 2026-10-28).
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    db.store[("dm_threads", "me__u-jordan")] = {
+        "participants": ["me", "u-jordan"],
+        "last_message_at": _FreshTs(),
+    }
+    out = _run(app_control._bind_open_message_thread(db, "me")("sahil"))
+    assert "couldn't find an existing conversation with sahil" in out
+    assert _PENDING not in db.store
+
+
+def test_open_message_thread_opens_the_most_recent_on_last():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-old", "Old Friend")
+    db.seed_user("u-new", "New Friend")
+    db.store[("dm_threads", "me__u-old")] = {
+        "participants": ["me", "u-old"], "last_message_at": _AgeTs(9_000),
+    }
+    db.store[("dm_threads", "me__u-new")] = {
+        "participants": ["me", "u-new"], "last_message_at": _AgeTs(1_000),
+    }
+    out = _run(app_control._bind_open_message_thread(db, "me")("last"))
+    assert "the conversation with New Friend is open" in out
+    assert db.store[_PENDING]["uid"] == "u-new"
+
+
+def test_open_message_thread_fuzzy_name_resolves():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sahil", "Sahil Patel")
+    db.store[("dm_threads", "me__u-sahil")] = {
+        "participants": ["me", "u-sahil"], "last_message_at": _FreshTs(),
+    }
+    # A slightly-off spelling still resolves to the one match.
+    out = _run(app_control._bind_open_message_thread(db, "me")("sahel"))
+    assert "the conversation with Sahil Patel is open" in out
+    assert db.store[_PENDING]["uid"] == "u-sahil"
+
+
+def test_open_message_thread_asks_which_when_ambiguous():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-a", "Alex Rivera")
+    db.seed_user("u-b", "Alex Chen")
+    for tid, other in (("me__u-a", "u-a"), ("me__u-b", "u-b")):
+        db.store[("dm_threads", tid)] = {
+            "participants": ["me", other], "last_message_at": _FreshTs(),
+        }
+    out = _run(app_control._bind_open_message_thread(db, "me")("alex"))
+    assert "more than one conversation" in out
+    assert "Alex Rivera" in out and "Alex Chen" in out
+    assert _PENDING not in db.store
+
+
+# --- list_conversations -------------------------------------------------
+
+def test_list_conversations_orders_by_recency_and_flags_unread():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-old", "Old Friend")
+    db.seed_user("u-new", "New Friend")
+    db.store[("dm_threads", "me__u-old")] = {
+        "participants": ["me", "u-old"], "last_message_at": _AgeTs(9_000),
+    }
+    db.store[("dm_threads", "me__u-new")] = {
+        "participants": ["me", "u-new"], "last_message_at": _AgeTs(1_000),
+        "unread": {"me": 2},
+    }
+    out = _run(app_control._bind_list_conversations(db, "me")())
+    assert out.index("New Friend") < out.index("Old Friend")
+    assert "unread" in out
+    assert "2 conversations" in out
+
+
+def test_list_conversations_is_own_user_only():
+    # A thread between two OTHER users must never appear in this user's list.
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-a", "Person A")
+    db.seed_user("u-b", "Person B")
+    db.store[("dm_threads", "me__u-a")] = {
+        "participants": ["me", "u-a"], "last_message_at": _FreshTs(),
+    }
+    db.store[("dm_threads", "u-a__u-b")] = {
+        "participants": ["u-a", "u-b"], "last_message_at": _FreshTs(),
+    }
+    out = _run(app_control._bind_list_conversations(db, "me")())
+    assert "Person A" in out
+    assert "Person B" not in out
+
+
+def test_list_conversations_excludes_hidden_and_reports_none():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-a", "Person A")
+    db.store[("dm_threads", "me__u-a")] = {
+        "participants": ["me", "u-a"], "last_message_at": _FreshTs(),
+        "hidden_for": ["me"],
+    }
+    out = _run(app_control._bind_list_conversations(db, "me")())
+    assert "no message threads" in out
+    assert "Person A" not in out
 
 
 # --- app_action -----------------------------------------------------------
@@ -671,6 +827,134 @@ def test_app_action_rejects_an_unknown_action():
     out = _run(app_control._bind_app_action(db, "me")("log_out"))
     assert "account_action" in out
     assert _PENDING not in db.store
+
+
+def _patch_appearance_run(monkeypatch, rid="rpt-9"):
+    """Make run_appearance_report runnable in-process: stub the credit check
+    and the engine so calling the tool returns the real ``[appearance:<id>]``
+    card marker. Returns a dict the fake engine fills with what it was asked."""
+    import token_ledger
+    from skills import run_appearance_report as rar
+
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    seen: dict = {}
+
+    async def _fake_run(db, uid, **kw):
+        seen.update(uid=uid, source=kw.get("source"))
+        return {"id": rid}
+
+    monkeypatch.setattr(rar.engine, "run_appearance", _fake_run)
+    return seen
+
+
+def _patch_deep_dive_run(monkeypatch):
+    """Make a self web-research re-run runnable in-process, returning the
+    ``[deep_dive:<id>]`` card marker. Returns a dict the fake engine fills."""
+    import skill_memory
+    import skill_runs
+    import token_ledger
+    from skills import deep_dive as dd
+
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    seen: dict = {}
+
+    async def _fake_run(full_name, db=None, uid=None, context="", is_self=False):
+        seen.update(name=full_name, is_self=is_self)
+        return {"confidence": "ok", "facts": ["x"], "summary": "s"}
+
+    monkeypatch.setattr(dd.engine, "profile_full_name", lambda db, uid: "Sam Doe")
+    monkeypatch.setattr(dd.engine, "profile_dive_context", lambda db, uid, n: "")
+    monkeypatch.setattr(dd.engine, "run", _fake_run)
+    monkeypatch.setattr(dd.engine, "teaser", lambda d: "Here's what I found")
+    monkeypatch.setattr(dd.engine, "dive_report_id", lambda name: "dive-1")
+    monkeypatch.setattr(skill_memory, "save_web_findings", lambda db, uid, d: None)
+    monkeypatch.setattr(skill_runs, "record", lambda *a, **k: None)
+    return seen
+
+
+def test_app_action_rerun_report_executes_the_report(monkeypatch):
+    # Founder bug 2026-10-28: "rerun the appearance report" routed to app_action
+    # used to DEFLECT ("use the run_appearance_report tool"), never re-running.
+    # Now the app-driving path runs it and returns the real card marker.
+    seen = _patch_appearance_run(monkeypatch, "rpt-aa")
+    db = _Db()
+    for phrase in ("rerun appearance report", "regenerate appearance report",
+                   "recalculate my appearance report"):
+        out = _run(app_control._bind_app_action(db, "me")(phrase))
+        assert "[appearance:rpt-aa]" in out, phrase
+        assert "tool" not in out  # not the old deflection pointer
+    assert seen["source"] == "chat_tool"
+    assert _PENDING not in db.store  # a run, not a queued navigate/app_action
+
+
+def test_open_screen_rerun_appearance_executes_the_report(monkeypatch):
+    # The same re-run routed to open_screen must RUN the report, not open the
+    # existing one (its words also match the my_appearance destination).
+    seen = _patch_appearance_run(monkeypatch, "rpt-os")
+    db = _Db()
+    for phrase in ("rerun appearance report", "regenerate appearance report",
+                   "recalculate my appearance report", "refresh appearance report"):
+        out = _run(app_control._bind_open_screen(db, "me")(phrase))
+        assert "[appearance:rpt-os]" in out, phrase
+        assert "did NOT navigate" not in out
+    assert seen["source"] == "chat_tool"
+    assert _PENDING not in db.store  # no navigate command queued
+
+
+def test_open_screen_bare_appearance_report_still_opens(monkeypatch):
+    # A plain "appearance report" (no re-run verb) stays an OPEN — it navigates
+    # to the existing report and never silently re-runs.
+    seen = _patch_appearance_run(monkeypatch)
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("appearance report"))
+    assert out.startswith("navigated: screen=my_appearance")
+    assert "source" not in seen  # run_appearance was never called
+
+
+def test_rerun_web_research_executes_deep_dive(monkeypatch):
+    # The web-research re-run must execute too (a self deep dive), via both
+    # open_screen and app_action.
+    db = _Db()
+    for tool in ("_bind_open_screen", "_bind_app_action"):
+        seen = _patch_deep_dive_run(monkeypatch)
+        out = _run(getattr(app_control, tool)(db, "me")("rerun web research"))
+        assert "[deep_dive:dive-1]" in out, tool
+        assert seen["is_self"] is True, tool
+
+
+def test_run_appearance_report_skill_is_registered_and_triggers(monkeypatch):
+    # The chat/voice tool set must carry run_appearance_report, and calling it
+    # must actually drive appearance.run_appearance (the server re-run).
+    import token_ledger
+    from skills import run_appearance_report as rar
+
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    seen = {}
+
+    async def _fake_run(db, uid, **kw):
+        seen.update(uid=uid, kw=kw)
+        return {"id": "app-123"}
+
+    monkeypatch.setattr(rar.engine, "run_appearance", _fake_run)
+
+    fns = skills.make_session_tool_fns(_Db(), "me")
+    assert "run_appearance_report" in fns
+    out = _run(fns["run_appearance_report"]())
+    assert "[appearance:app-123]" in out
+    assert seen["uid"] == "me"
+    assert seen["kw"]["source"] == "chat_tool"
+
+
+def test_run_appearance_report_reports_out_of_credits(monkeypatch):
+    import token_ledger
+    from skills import run_appearance_report as rar
+
+    def _capped(uid):
+        raise token_ledger.TokenCapExceeded()
+
+    monkeypatch.setattr(token_ledger, "check", _capped)
+    out = _run(rar._bind(_Db(), "me")())
+    assert "out of credits" in out.lower()
 
 
 # --- accent colour ---------------------------------------------------------

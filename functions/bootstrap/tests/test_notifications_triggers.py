@@ -145,6 +145,49 @@ def test_profile_suggestions_deep_links_to_the_review_screen(_capture):
     assert _capture[0]["deep_link"] == "profile_suggestions"
 
 
+def test_profile_suggestions_collapse_to_one_rolling_entry(_capture):
+    # Founder bug 2026-10-27: two identical "Ayma suggests 1 update…" rows at
+    # once. Every fire carries the same stable centre-doc id, so concurrent
+    # writers land on one doc instead of stacking duplicates, and the latest
+    # count overwrites it.
+    _run(nt.notify_profile_suggestions(object(), "u1", 1))
+    _run(nt.notify_profile_suggestions(object(), "u1", 2))
+    ids = {c["dedup_id"] for c in _capture}
+    assert ids == {nt._PROFILE_SUGGESTIONS_DEDUP_ID}
+    assert _capture[-1]["fixed_preview"] == (
+        "Ayma suggests 2 updates to your public profile."
+    )
+
+
+def test_report_ready_deep_links_to_the_report_with_a_neutral_preview(_capture):
+    _run(nt.notify_report_ready(object(), "u1", "current"))
+    assert len(_capture) == 1
+    c = _capture[0]
+    assert c["uid"] == "u1"
+    assert c["type"] == "report_ready"
+    assert c["fixed_preview"] == "Your appearance report is ready."
+    assert c["deep_link"] == "appearance/current"
+    # One rolling entry (there's only ever one current report) so a repeat run
+    # never stacks a second row.
+    assert c["dedup_id"] == nt._REPORT_READY_DEDUP_ID
+
+
+def test_report_ready_body_only_uses_the_body_wording(_capture):
+    _run(nt.notify_report_ready(object(), "u1", "current", body_only=True))
+    assert _capture[0]["fixed_preview"] == "Your body analysis is ready."
+
+
+def test_report_ready_collapses_to_one_rolling_entry(_capture):
+    _run(nt.notify_report_ready(object(), "u1", "current"))
+    _run(nt.notify_report_ready(object(), "u1", "current"))
+    assert {c["dedup_id"] for c in _capture} == {nt._REPORT_READY_DEDUP_ID}
+
+
+def test_report_ready_noop_without_a_report_id(_capture):
+    _run(nt.notify_report_ready(object(), "u1", ""))
+    assert _capture == []
+
+
 def test_ayma_reply_pushes_a_clean_preview_to_the_chat(monkeypatch):
     seen = []
 

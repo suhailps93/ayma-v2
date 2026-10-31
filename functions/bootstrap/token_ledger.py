@@ -132,8 +132,13 @@ FEATURE_PHOTO_MODERATION = "photo_moderation"  # profile/generated-photo safety 
 FEATURE_PHOTO_ATTRS = "photo_attrs"  # per-photo shot-type/attribute tagging (record-only)
 FEATURE_PHOTO_CAPTION = "photo_caption"  # private photo-log caption (record-only)
 FEATURE_DM_INGEST = "dm_ingest"  # DM voice transcription / photo caption for the wiki (record-only)
+FEATURE_DM_TRANSLATE = "dm_translate"  # cross-language DM translation (POST /dm/translate)
 FEATURE_PROFILE_MANUAL = "profile_manual"  # manual profile-edit diff classification
 FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (ai_assessment.py)
+FEATURE_PRACTICE = "practice"  # Practice Date — simulated-match roleplay, live coach + debrief
+FEATURE_DATE_SIM = "date_sim"  # AI Date Simulation — two personas converse, compatibility read
+FEATURE_AVATAR = "avatar"  # Persistent AI-avatar snapshot — background persona distillation (persona_snapshot.py)
+FEATURE_TASTE_BACKFILL = "taste_backfill"  # mine Story + conversation history for music/film/food favourites (taste_backfill.py)
 
 # The one user-facing label per ledger feature key — the Plan page's "Where
 # your credits went" list shows these, never the raw key. Every FEATURE_*
@@ -160,8 +165,13 @@ FEATURE_LABELS = {
     FEATURE_PHOTO_ATTRS: "Reading your photos",
     FEATURE_PHOTO_CAPTION: "Photo captions",
     FEATURE_DM_INGEST: "Message notes",
+    FEATURE_DM_TRANSLATE: "Message translation",
     FEATURE_PROFILE_MANUAL: "Profile edits",
     FEATURE_AI_NOTES: "Ayma's notes",
+    FEATURE_PRACTICE: "Practice Date",
+    FEATURE_DATE_SIM: "Date simulation",
+    FEATURE_AVATAR: "AI avatar",
+    FEATURE_TASTE_BACKFILL: "Taste match",
 }
 FEATURE_LABEL_FALLBACK = "Other"
 
@@ -188,6 +198,7 @@ class TokenCapExceeded(RuntimeError):
 # (deep-dive research vs. a deep-dive correction).
 CONTEXT_BODY_REPORT = "body_report"
 CONTEXT_FACE_REPORT = "face_report"
+CONTEXT_APPEARANCE = "appearance"
 CONTEXT_DEEP_DIVE = "deep_dive"
 CONTEXT_PHOTO_EDIT = "photo_edit"
 CONTEXT_IMAGE_GEN = "image_gen"
@@ -197,6 +208,7 @@ CONTEXT_CHAT = "chat"
 _CONTEXT_ACTIONS: dict[str, str] = {
     CONTEXT_BODY_REPORT: "run a body report",
     CONTEXT_FACE_REPORT: "run a face report",
+    CONTEXT_APPEARANCE: "run your appearance report",
     CONTEXT_DEEP_DIVE: "run a web search",
     CONTEXT_PHOTO_EDIT: "generate an edited photo",
     CONTEXT_IMAGE_GEN: "generate an image",
@@ -683,6 +695,12 @@ def _contact_verified(uid: str) -> bool:
         from firebase_admin import auth as firebase_auth
 
         user = firebase_auth.get_user(uid)
+        email = str(user.email or "").strip().lower()
+        # Demo/judge accounts (docs/DEMO_ACCOUNTS.md) skip the email-verified
+        # check — and only these exact emails; every other account still needs a
+        # verified phone/email. See CONFIG.test_bypass_emails.
+        if email and email in CONFIG.test_bypass_emails:
+            return True
         return bool(user.phone_number) or (
             bool(user.email) and bool(user.email_verified)
         )
@@ -894,6 +912,38 @@ def topup(uid: str, amount: int) -> dict:
 def credits(uid: str) -> dict:
     """The user-facing credit view (see :func:`_credit_view`)."""
     return _credit_view(*_load(uid))
+
+
+_MCP_USAGE_FIELD = "mcp_usage"
+
+
+def record_mcp_tool_call(uid: str | None, tool: str) -> None:
+    """Observability-only meter for an MCP tool call (``docs/MCP_SERVER.md``).
+
+    MCP tools do data ops, not generation — they spend **no** Ayma LLM budget —
+    so this deliberately does NOT touch ``token_usage.total`` or the credit
+    balance (an MCP call must never cost the user a credit). It increments a
+    separate, cost-free ``users/{uid}.mcp_usage`` counter
+    (``{total, tools: {<tool>: n}, updated_at}``) purely so MCP activity is
+    visible for debugging and abuse monitoring. Best-effort; never raises."""
+    if not uid or not tool:
+        return
+    try:
+        from firebase_admin import firestore
+
+        get_db().collection("users").document(uid).set(
+            {
+                _MCP_USAGE_FIELD: {
+                    "total": firestore.Increment(1),
+                    "tools": {tool: firestore.Increment(1)},
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                }
+            },
+            merge=True,
+        )
+        logger.info("mcp-tool-call uid=%s tool=%s", uid, tool)
+    except Exception:  # noqa: BLE001 - metering must never break a tool call
+        logger.exception("mcp meter failed for %s/%s", uid, tool)
 
 
 def check(uid: str | None) -> None:

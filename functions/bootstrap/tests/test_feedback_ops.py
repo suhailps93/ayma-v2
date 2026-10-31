@@ -71,29 +71,148 @@ def test_record_is_noop_without_uid_or_content():
     assert "feedback" not in db.store
 
 
-def test_record_product_writes_to_its_own_bucket_with_paths():
+def test_record_submission_writes_a_product_row_into_feedback():
     db = _Db()
-    fid = feedback_ops.record_product(
-        db, "u1", "bug", "the orb flickers",
-        ["uploads/u1/feedback_1.png", "", "uploads/u1/feedback_2.png"],
-        app_version="1.2.3",
+    fid = feedback_ops.record_submission(
+        db, "u1", "bug", "Orb flickers", "the orb flickers on messages",
+        source="chat_card",
+        screenshot_paths=["uploads/u1/feedback_1.png", "", "uploads/u1/f2.png"],
+        screen="messages", app_version="1.30.0", platform="android",
     )
     assert fid
-    assert "feedback" not in db.store  # never crosses buckets
-    row = _row(db, "product_feedback")
+    row = _row(db, "feedback")  # unified collection, tagged by source
+    assert row["source"] == "chat_card"
     assert row["kind"] == "bug"
-    assert row["text"] == "the orb flickers"
-    assert row["image_paths"] == [
-        "uploads/u1/feedback_1.png", "uploads/u1/feedback_2.png",
+    assert row["title"] == "Orb flickers"
+    assert row["body"] == "the orb flickers on messages"
+    assert row["screenshot_paths"] == [
+        "uploads/u1/feedback_1.png", "uploads/u1/f2.png",
     ]
-    assert row["app_version"] == "1.2.3"
+    assert row["screenshot_url"] == "uploads/u1/feedback_1.png"
+    assert row["screen"] == "messages"
+    assert row["platform"] == "android"
+    assert row["status"] == "new"
 
 
-def test_record_product_defaults_bad_kind_to_bug_and_needs_text():
+def test_record_submission_coerces_bad_kind_and_source_and_needs_content():
     db = _Db()
-    assert feedback_ops.record_product(db, "u1", "bug", "  ") is None
-    feedback_ops.record_product(db, "u1", "rant", "something")
-    assert _row(db, "product_feedback")["kind"] == "bug"
+    assert feedback_ops.record_submission(
+        db, "u1", "bug", "  ", "  ", source="chat_card"
+    ) is None
+    feedback_ops.record_submission(
+        db, "u1", "rant", "", "something broke", source="hax",
+    )
+    row = _row(db, "feedback")
+    assert row["kind"] == "feature"  # unknown kind → feature
+    assert row["source"] == "chat_card"  # unknown source → chat_card
+    assert row["title"] == "something broke"  # title falls back to body
+    assert row["screenshot_url"] is None
+
+
+# ---------------------------------------------------------------- #
+# Admin triage read/write over the unified `feedback` collection.
+# ---------------------------------------------------------------- #
+class _QSnap:
+    def __init__(self, sid, data):
+        self.id, self._d = sid, data
+
+    @property
+    def exists(self):
+        return self._d is not None
+
+    def to_dict(self):
+        return dict(self._d) if self._d is not None else None
+
+
+class _QDocRef:
+    def __init__(self, store, name, doc_id):
+        self._store, self._name, self._id = store, name, doc_id
+
+    @property
+    def id(self):
+        return self._id
+
+    def get(self):
+        return _QSnap(self._id, self._store.get(self._name, {}).get(self._id))
+
+    def set(self, payload, merge=False):
+        col = self._store.setdefault(self._name, {})
+        cur = dict(col.get(self._id) or {}) if merge else {}
+        cur.update(payload)
+        col[self._id] = cur
+
+
+class _Query:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def order_by(self, field, direction=None):
+        return _Query(
+            sorted(
+                self._rows,
+                key=lambda kv: kv[1].get(field) or "",
+                reverse=True,
+            )
+        )
+
+    def limit(self, n):
+        return _Query(self._rows[:n])
+
+    def stream(self):
+        return [_QSnap(sid, data) for sid, data in self._rows]
+
+
+class _QCol:
+    def __init__(self, store, name):
+        self._store, self._name = store, name
+
+    def document(self, doc_id):
+        return _QDocRef(self._store, self._name, doc_id)
+
+    def order_by(self, field, direction=None):
+        rows = list(self._store.get(self._name, {}).items())
+        return _Query(rows).order_by(field, direction)
+
+
+class _QDb:
+    def __init__(self):
+        self.store = {}
+
+    def collection(self, name):
+        return _QCol(self.store, name)
+
+
+def test_list_submissions_returns_only_product_rows_newest_first():
+    db = _QDb()
+    db.store["feedback"] = {
+        "a": {"source": "chat_card", "kind": "bug", "title": "A",
+              "created_at": "2026-10-20T10:00:00"},
+        "b": {"source": "ayma", "category": "tone",  # conduct row, excluded
+              "created_at": "2026-10-21T10:00:00"},
+        "c": {"source": "settings_form", "kind": "feature", "title": "C",
+              "created_at": "2026-10-22T10:00:00"},
+    }
+    rows = feedback_ops.list_submissions(db, limit=50)
+    ids = [r["id"] for r in rows]
+    assert ids == ["c", "a"]  # newest first; conduct row 'b' filtered out
+
+
+def test_set_submission_status_updates_a_product_row():
+    db = _QDb()
+    db.store["feedback"] = {"a": {"source": "chat_card", "status": "new"}}
+    assert feedback_ops.set_submission_status(db, "a", "triaged") is True
+    assert db.store["feedback"]["a"]["status"] == "triaged"
+
+
+def test_set_submission_status_refuses_bad_status_and_conduct_rows():
+    db = _QDb()
+    db.store["feedback"] = {
+        "a": {"source": "chat_card", "status": "new"},
+        "b": {"source": "ayma", "category": "tone"},
+    }
+    assert feedback_ops.set_submission_status(db, "a", "wat") is False
+    assert feedback_ops.set_submission_status(db, "b", "done") is False
+    assert feedback_ops.set_submission_status(db, "missing", "done") is False
 
 
 # ---------------------------------------------------------------- #

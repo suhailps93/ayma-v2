@@ -6,6 +6,11 @@
 # function calling).
 livekit-agents==1.8.9
 livekit-plugins-google==1.8.9
+# Practice-voice Meta cascade (LLM_PROVIDER_VOICE=meta, off by default): the
+# OpenAI-compatible STT + LLM legs point at the Meta Model API. TTS (Inworld)
+# and VAD (bundled Silero) ride livekit-agents' built-in `inference` module, so
+# no TTS/VAD plugin is needed. See docs/META_PROVIDER.md "voice cascade".
+livekit-plugins-openai==1.8.9
 python-dotenv==1.0.1
 # Session-end raw_turns persistence (§1.7 step 8) — the worker writes Firestore
 # directly via the Admin SDK on shutdown, as its own Cloud Run identity.

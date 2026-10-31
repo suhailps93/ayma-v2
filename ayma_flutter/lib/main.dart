@@ -19,7 +19,6 @@ import 'services/accent_color_controller.dart';
 import 'services/api_client.dart';
 import 'services/app_command_host.dart';
 import 'services/app_command_service.dart';
-import 'services/dev_panel_flag.dart';
 import 'services/dev_panel_session.dart';
 import 'services/error_reporting.dart';
 import 'services/notification_service.dart';
@@ -28,12 +27,14 @@ import 'services/revenuecat_service.dart';
 import 'services/meta_integrations.dart';
 import 'services/sentry_config.dart';
 import 'services/push_service.dart';
+import 'services/report_cache.dart';
 import 'services/screen_capture.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
 import 'widgets/ask_ayma_overlay.dart';
 import 'widgets/ayma_toast.dart';
 import 'widgets/keyboard_dismiss.dart';
+import 'widgets/tour_host.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,7 +59,13 @@ Future<void> main() async {
     );
   }
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Every pre-first-frame network await is bounded so a flaky-DNS window can
+  // never stop `runApp` from running (§11.2). On a timeout we proceed anyway —
+  // the splash then handles connectivity and shows its retry/offline state.
+  await guardStartupStep(
+    'Firebase.initializeApp',
+    () => Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
+  );
 
   // Crash reporting (audit Task 3): report crashes to Crashlytics so a
   // regression is found from the dashboard, not by someone tailing
@@ -76,17 +83,42 @@ Future<void> main() async {
     return true;
   };
 
-  await RevenueCatService.instance.init();
+  // Guarded like the other pre-`runApp` startup steps (§11.2): a release build
+  // produced by `scripts/build-apk.sh` carries the RevenueCat Test Store key but
+  // no production key, and `RevenueCatService.selectKey` deliberately *throws* in
+  // a non-debug build in that case (the Test Store key would otherwise native-
+  // kill a release). That throw escapes `init()` before its own try/catch, so an
+  // unguarded `await` here aborted `main()` before `runApp` — the app froze on
+  // the native splash orb (release-only; debug uses the test key and never
+  // throws). Catching it lets the app launch with purchases simply disabled.
+  await guardStartupStep(
+    'RevenueCatService.init',
+    () => RevenueCatService.instance.init(),
+  );
   // Sync plan credits on every entitlement change (purchase, renewal, restore,
   // expiry). A RevenueCat Test Store / sandbox purchase never sends the server
   // webhook, so without this the SDK would show Pro while the balance stayed
   // on the free grant; the call is idempotent and never double-credits.
   RevenueCatService.instance.listenForEntitlementChanges(ApiClient());
   final push = PushService();
+  // Tracks the last signed-in uid so a transition to null can be recognised as
+  // a real SIGN-OUT (clear the per-user local caches) rather than the initial
+  // signed-out emission at launch — clearing on that startup null would wipe
+  // the boot/report cache the optimistic cold start depends on.
+  String? lastKnownUid;
   FirebaseAuth.instance.authStateChanges().listen((user) {
     if (user == null) {
+      // A previously-signed-in user went to null: sign-out / account deletion
+      // from any path. Clear this device's cached reports and boot route so
+      // none of the previous user's own data survives (privacy) and the next
+      // cold start never optimistically replays a stale session.
+      if (lastKnownUid != null) {
+        unawaited(ReportCache.instance.clearForSignOut());
+      }
+      lastKnownUid = null;
       unawaited(RevenueCatService.instance.logOut());
     } else {
+      lastKnownUid = user.uid;
       unawaited(RevenueCatService.instance.logIn(user.uid));
       // Register this device for push (§7.2) once auth is ready. Done here —
       // not in a one-shot at launch — because `currentUser` is still null
@@ -98,7 +130,6 @@ Future<void> main() async {
     }
   });
 
-  DevPanelFlag.instance.listen(FirebaseFirestore.instance);
   WidgetsBinding.instance.addObserver(DevPanelSession.instance);
   AppCommandHost(AppCommandService.shared).attach();
   // Every screen tells Ayma what is on it, and she can operate its controls
@@ -113,6 +144,8 @@ Future<void> main() async {
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();
   await orbAnimationSettingsGlobal.load();
+  // The feature tour's seen-state now lives per-user on the profile document
+  // and is read lazily by the main-shell gate (§11.2) — no startup preload.
   // A tapped push notification (cold start or already running) opens the
   // screen its `deep_link` data names directly — a match request, a DM
   // thread, … — instead of leaving the tap to land wherever the app
@@ -123,6 +156,7 @@ Future<void> main() async {
       deepLink,
       myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
     ),
+    markRead: _markTappedNotificationRead,
   ));
   // Instagram / Facebook are deferred to V2: hidden unless the cached
   // `meta_integrations` flag says otherwise (refreshed for the next launch).
@@ -136,22 +170,85 @@ Future<void> main() async {
     runApp(const AymaApp());
     return;
   }
-  final sentryFlag = await SentryFlag.loadCached();
+  final sentryFlag = await SentryFlag.loadCached()
+      .timeout(const Duration(seconds: 5), onTimeout: () => const SentryFlag());
   unawaited(SentryFlag.refresh(FirebaseFirestore.instance));
   if (!sentryShouldRun(sentryFlag)) {
     runApp(const AymaApp());
     return;
   }
-  await SentryFlutter.init(
-    (options) => configureSentryOptions(options, sentryFlag),
-    appRunner: () => runApp(const AymaApp()),
-  );
+  // Sentry wraps `runApp` in its own error-capturing zone (`appRunner`). If
+  // `SentryFlutter.init` hangs reaching its ingest endpoint on a flaky network,
+  // `appRunner` — and so the first frame — would never run. Guard it: a one-shot
+  // launcher runs the app either when Sentry calls `appRunner` or when the init
+  // deadline passes, whichever is first, and never twice (§11.2).
+  var appStarted = false;
+  void launchApp() {
+    if (appStarted) return;
+    appStarted = true;
+    runApp(const AymaApp());
+  }
+
+  try {
+    await SentryFlutter.init(
+      (options) => configureSentryOptions(options, sentryFlag),
+      appRunner: launchApp,
+    ).timeout(const Duration(seconds: 8));
+  } on TimeoutException {
+    debugPrint('startup: SentryFlutter.init timed out; launching without it.');
+  } catch (e) {
+    debugPrint('startup: SentryFlutter.init failed ($e); launching anyway.');
+  }
+  launchApp();
+}
+
+/// Runs a pre-first-frame startup step under a hard deadline so a hung network
+/// call (e.g. flaky DNS during Firebase init) can never stop `runApp` from
+/// being reached (§11.2). On a timeout or error it logs and returns; whatever
+/// the step would have set up is simply absent, and the splash then surfaces
+/// the connectivity/retry state. [limit] is injectable so the test can prove a
+/// never-completing step still returns.
+@visibleForTesting
+Future<void> guardStartupStep(
+  String label,
+  Future<void> Function() step, {
+  Duration limit = const Duration(seconds: 8),
+}) async {
+  try {
+    await step().timeout(limit);
+  } on TimeoutException {
+    debugPrint('startup: "$label" timed out after '
+        '${limit.inSeconds}s; continuing to runApp.');
+  } catch (e) {
+    debugPrint('startup: "$label" failed ($e); continuing to runApp.');
+  }
 }
 
 /// Opens [path] on top of the current screen — but on a cold start (a tapped
 /// notification launched the app) the splash screen is still resolving the
 /// session and will `go()` to the entry route, wiping anything pushed before
 /// it. So wait until the router has left the splash, then push.
+/// Marks the in-app notification a tapped push points at as read and resyncs
+/// the bell / OS app-icon badge (§7.6). On a cold start from a notification,
+/// `currentUser` can still be null while Firebase restores the persisted
+/// session (same race `syncToken` avoids), so wait for the first signed-in
+/// emission before touching the owner-scoped notifications collection. The
+/// warm (`onMessageOpenedApp`) path already has a user and marks immediately.
+/// Best-effort — never blocks the tap's navigation.
+Future<void> _markTappedNotificationRead(Map<String, dynamic> data) async {
+  try {
+    if (FirebaseAuth.instance.currentUser == null) {
+      await FirebaseAuth.instance
+          .authStateChanges()
+          .firstWhere((u) => u != null)
+          .timeout(const Duration(seconds: 10));
+    }
+    await NotificationService().markReadForTap(data);
+  } catch (e) {
+    debugPrint('tap notification mark-read failed: $e');
+  }
+}
+
 Future<void> _pushWhenPastSplash(String path) async {
   final provider = appRouter.routeInformationProvider;
   bool onSplash() => provider.value.uri.path == SplashScreen.path;
@@ -206,8 +303,15 @@ class AymaApp extends StatelessWidget {
         // pointer-event observer, so it cannot steal or delay any tap in
         // the tree — see [KeyboardDismissOnTap]'s doc.
         // [AymaToastHost] renders app-wide toasts above every route.
-        builder: (context, child) => AymaToastHost(
-          child: KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+        // [TourHost] is OUTERMOST so the interactive feature-tour overlay
+        // (§11.2a) sits above the Navigator — and so above every route it
+        // pushes — and stays mounted as the tour walks between pages (it is
+        // idle, adding nothing, until the shell's gate starts a tour).
+        builder: (context, child) => TourHost(
+          child: AymaToastHost(
+            child:
+                KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+          ),
         ),
         // The persistent bottom nav bar is wired per-route in
         // `routing/app_router.dart` (`NavBarShell`), not here — it needs to

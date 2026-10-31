@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
-import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -27,16 +26,15 @@ import java.io.IOException
  * update, and stop that service (F4 — background call notification).
  *
  * Also hosts the tiny "ayma/media_save" channel the full-screen image viewer
- * and the report card's "Save image" use to save into the device gallery
- * (MediaStore `Pictures/Ayma`) — a dozen lines here instead of a whole
- * gallery-saver plugin.
+ * uses to save into the device gallery (MediaStore `Pictures/Ayma`) — a dozen
+ * lines here instead of a whole gallery-saver plugin.
  */
 class MainActivity : FlutterActivity() {
 
     companion object {
         const val MEDIA_SAVE_CHANNEL = "ayma/media_save"
-        const val SHARE_CHANNEL = "ayma/share"
         const val PUSH_CHANNEL = "ayma/push"
+        const val BADGE_CHANNEL = "ayma/badge"
 
         /**
          * Notification channel for FCM `notification`-payload pushes the system
@@ -157,38 +155,27 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // App-icon badge sync (§7.6). The in-app bell's unread count is mirrored
+        // here on every tap-driven mark-read so the OS badge matches the app.
+        // Android has no portable numeric app-icon badge API (it is launcher-
+        // specific and needs a badge library); the launcher's unread dot tracks
+        // active shade notifications, which auto-cancel when the user taps one.
+        // When the count drops to 0 we clear any notifications still in our
+        // default channel so a stale entry doesn't keep the dot lit. The call is
+        // acknowledged on both platforms so the shared Dart path stays uniform.
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            SHARE_CHANNEL
+            BADGE_CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "instagramStory" -> {
-                    val path = call.argument<String>("path")
-                    val appId = call.argument<String>("appId")
-                    val contentUrl = call.argument<String>("contentUrl") ?: ""
-                    if (path == null || appId == null) {
-                        result.error("ARGS", "missing path or appId", null)
-                        return@setMethodCallHandler
+                "setBadge" -> {
+                    val count = call.argument<Int>("count") ?: 0
+                    if (count <= 0) {
+                        val manager = getSystemService(Context.NOTIFICATION_SERVICE)
+                            as NotificationManager
+                        manager.cancel(DEFAULT_CHANNEL_ID.hashCode())
                     }
-                    try {
-                        result.success(shareToInstagramStory(path, appId, contentUrl))
-                    } catch (e: Exception) {
-                        result.error("STORY_FAILED", e.message, null)
-                    }
-                }
-                "sendToApp" -> {
-                    val path = call.argument<String>("path")
-                    val packages = call.argument<List<String>>("packages") ?: emptyList()
-                    val text = call.argument<String>("text") ?: ""
-                    if (path == null) {
-                        result.error("ARGS", "missing path", null)
-                        return@setMethodCallHandler
-                    }
-                    try {
-                        result.success(sendImageToApp(path, packages, text))
-                    } catch (e: Exception) {
-                        result.error("SEND_FAILED", e.message, null)
-                    }
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }
@@ -219,60 +206,6 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
-    }
-
-    /**
-     * Opens Instagram's Story composer with the PNG at [path] as the
-     * background. Reuses share_plus's FileProvider (its cache-dir paths cover
-     * Dart's temp directory). Returns false when Instagram isn't installed.
-     */
-    private fun shareToInstagramStory(path: String, appId: String, contentUrl: String): Boolean {
-        val uri = FileProvider.getUriForFile(
-            this, "$packageName.fileprovider", File(path)
-        )
-        val intent = Intent("com.instagram.share.ADD_TO_STORY").apply {
-            setDataAndType(uri, "image/png")
-            if (appId.isNotEmpty()) putExtra("source_application", appId)
-            if (contentUrl.isNotEmpty()) putExtra("content_url", contentUrl)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        if (intent.resolveActivity(packageManager) == null) return false
-        grantUriPermission("com.instagram.android", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        startActivity(intent)
-        return true
-    }
-
-    /**
-     * Sends the PNG at [path] (plus optional [text]) to the first installed
-     * app in [packages] with a plain ACTION_SEND — the report card's
-     * WhatsApp / Instagram targets (Instagram then offers Stories). Same
-     * share_plus FileProvider as [shareToInstagramStory]. Returns false when
-     * none of [packages] is installed, so Dart falls back to the share sheet.
-     */
-    private fun sendImageToApp(path: String, packages: List<String>, text: String): Boolean {
-        val uri = FileProvider.getUriForFile(
-            this, "$packageName.fileprovider", File(path)
-        )
-        for (pkg in packages) {
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/png"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                if (text.isNotEmpty()) putExtra(Intent.EXTRA_TEXT, text)
-                setPackage(pkg)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            if (intent.resolveActivity(packageManager) != null) {
-                // The intent flag grants read access to the resolved activity,
-                // but an explicit grant to the target package is more reliable
-                // across OEMs (some drop the flag grant on a direct, non-chooser
-                // startActivity) — without it the receiver gets a URI it can't
-                // read and the image silently fails to attach.
-                grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                startActivity(intent)
-                return true
-            }
-        }
-        return false
     }
 
     /**

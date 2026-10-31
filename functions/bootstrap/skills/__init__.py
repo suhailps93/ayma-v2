@@ -34,8 +34,10 @@ from . import (
     record_feedback,
     remember,
     report_bug,
+    run_appearance_report,
     set_profile_field,
     set_voice_preference,
+    submit_feedback,
     user_steering,
 )
 from tool_labels import outcome_label
@@ -67,6 +69,7 @@ _REGISTRY: list[Skill] = [
     face_report.SKILL,
     body_report.SKILL,
     physical_attributes.SKILL,
+    run_appearance_report.SKILL,
     *questionnaire.SKILLS,
     fact_source.SKILL,
 ]
@@ -84,7 +87,7 @@ _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 _PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_intent"}
 
 
-from . import edit_profile_section, photo_edit, story_edit, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
+from . import edit_profile_section, photo_edit, story_edit, story_manage, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
 
 # Always in the TEXT tool set, never in voice: ``generate_image`` delivers its
 # image through the same mutable ``result`` sink ``edit_photo`` uses
@@ -93,6 +96,25 @@ from . import edit_profile_section, photo_edit, story_edit, deep_dive_edit, appe
 # voice call has nowhere to show a generated image, so exposing the tool there
 # would only let the model claim to send images it can't.
 _TEXT_ONLY_REGISTRY: list[Skill] = [generate_image.SKILL]
+
+# Text-only like ``generate_image``, but delivered through its OWN sink
+# (``main._ChatCtx.feedback_draft`` → the reply's ``feedback_card``) rather
+# than the photo sink: ``submit_feedback`` drafts a confirmation card the user
+# reviews and sends. Voice has no surface to show/edit a card, so it is never
+# in the voice tool set (``_REGISTRY``).
+_FEEDBACK_REGISTRY: list[Skill] = [submit_feedback.SKILL]
+
+# In BOTH the text tool set and the voice tool set (``make_session_tool_fns``
+# and ``make_livekit_tools``): ``edit_story_entry`` / ``remove_story_entry``
+# let Ayma change or soft-remove a section of the user's OWN story/wiki
+# straight from an ordinary chat OR a voice call — no story editor, no "Ask
+# Ayma" passage popup (the editor-only passage tools below need a page +
+# highlighted passage in focus). Both bind on ``(db, uid)`` alone, so they can
+# only ever reach this authenticated user's own story. Voice had no edit tool
+# at all before, so Ayma could only navigate to the Story editor when asked to
+# change a line (founder bug 2026-10-28: "it shouldn't open that pop-up, it
+# should just update it directly").
+_STORY_MANAGE_REGISTRY: list[Skill] = list(story_manage.SKILLS)
 
 # Only exposed when the chat is opened from the Your Story editor (§ Your Story).
 _STORY_REGISTRY: list[Skill] = list(story_edit.SKILLS)
@@ -133,7 +155,7 @@ def session_tool_declarations(
     ``appearance=True`` adds the Appearance-report correct/clear tools."""
     reg = (
         list(_REGISTRY) + _recall_skills() + _TEXT_ONLY_REGISTRY
-        + app_control.COMMAND_SKILLS
+        + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
     )
     if story:
         reg += _STORY_REGISTRY
@@ -160,6 +182,7 @@ def make_session_tool_fns(
     deep_dive_ctx: dict | None = None,
     appearance_ctx: dict | None = None,
     image_result: dict | None = None,
+    feedback_result: dict | None = None,
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
@@ -185,14 +208,19 @@ def make_session_tool_fns(
     mutable ``main._ChatCtx.photo_edit_result`` sink ``photo_ctx["result"]``
     carries) binds the text-only ``generate_image`` tool's delivery — the
     generated image's ``image_path``/``image_url`` land there for the caller
-    to attach to the reply, exactly like ``edit_photo``'s. Every other skill
-    binds on ``(db, uid)`` alone.
+    to attach to the reply, exactly like ``edit_photo``'s; ``feedback_result``
+    (``main._ChatCtx.feedback_draft``) binds the text-only ``submit_feedback``
+    tool's delivery — the drafted ``{kind, title, body}`` lands there for the
+    reply to carry to the client as ``feedback_card`` (nothing is persisted).
+    Every other skill binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in (_REGISTRY + _recall_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
-        elif s.name in ("analyze_physical_attributes", "report_bug"):
+        elif s.name in (
+            "analyze_physical_attributes", "run_appearance_report", "report_bug"
+        ):
             out[s.name] = s.bind(db, uid, image_path=image_path)
         elif s.name in _DM_OUTREACH_NAMES:
             out[s.name] = s.bind(
@@ -204,6 +232,15 @@ def make_session_tool_fns(
             out[s.name] = s.bind(db, uid)
     for s in _TEXT_ONLY_REGISTRY:
         out[s.name] = s.bind(db, uid, result=image_result)
+    for s in _FEEDBACK_REGISTRY:
+        # Its own sink (``feedback_result``), not the photo one — a drafted
+        # feedback card is delivered to the client via the reply's
+        # ``feedback_card`` field; nothing is persisted here.
+        out[s.name] = s.bind(db, uid, result=feedback_result)
+    for s in _STORY_MANAGE_REGISTRY:
+        # Always-on story edit/soft-remove tools — bound on (db, uid) alone,
+        # so they can only ever reach this authenticated user's own story.
+        out[s.name] = s.bind(db, uid)
     for s in app_control.COMMAND_SKILLS:
         # account_action checks the confirmation against the user's own
         # latest message, so it needs this turn's transcript window.
@@ -319,13 +356,17 @@ def make_livekit_tools(
     *,
     on_call: Callable[[str, str, str | None], None] | None = None,
     on_voice_change: set_voice_preference.VoiceChangeHook | None = None,
+    voice_pref: object | None = None,
     guard: Callable[[], str | None] | None = None,
     session_id: str = "",
     turns: Callable[[], list] | None = None,
 ) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
-    the voice-only ``current_screen`` tool (``skills.app_control``). The app
-    command tools it also carries are shared with the text tool set.
+    the always-on story edit/soft-remove tools (``_STORY_MANAGE_REGISTRY`` —
+    ``edit_story_entry`` / ``remove_story_entry``, bound on ``(db, uid)`` so
+    they only ever reach this caller's own story) and the voice-only
+    ``current_screen`` tool (``skills.app_control``). The app command tools it
+    also carries are shared with the text tool set.
 
     ``on_call``, when given, is invoked ``on_call("start", name, None)`` right
     before a tool call runs and ``on_call("end", name, label)`` right after it
@@ -335,7 +376,13 @@ def make_livekit_tools(
 
     ``on_voice_change``, when given, binds ``set_voice_preference`` through
     :func:`skills.set_voice_preference.bind_live` so a voice change is applied
-    to the running call (agent.py ``VoiceSwapper``) instead of "next call".
+    to the running call (agent.py ``VoiceSwapper``) instead of "next call" — the
+    Gemini-Live-only hot-swap path. ``voice_pref`` (a
+    ``voice_catalog.RuntimeVoices``), given on a cascade / non-Gemini-realtime
+    call instead, binds ``set_voice_preference`` through
+    :func:`skills.set_voice_preference.bind_stack` so the voice resolves within
+    the ACTIVE provider's voices (saved for the next call) and the tool's
+    description names those voices rather than the Gemini presets (§13.9).
 
     ``guard``, when given, runs before every tool call; a string it returns
     replaces the call (see :func:`_guarded`).
@@ -350,9 +397,19 @@ def make_livekit_tools(
     from livekit.agents import function_tool
 
     tools = []
-    for s in (_REGISTRY + _recall_skills() + app_control.VOICE_SKILLS):
-        if on_voice_change is not None and s is set_voice_preference.SKILL:
+    for s in (
+        _REGISTRY + _recall_skills() + _STORY_MANAGE_REGISTRY
+        + app_control.VOICE_SKILLS
+    ):
+        description = s.declaration["description"]
+        if s is set_voice_preference.SKILL and on_voice_change is not None:
+            # Gemini Live: mid-call hot-swap within the Gemini presets (unchanged).
             fn = set_voice_preference.bind_live(db, uid, on_voice_change)
+        elif s is set_voice_preference.SKILL and voice_pref is not None:
+            # Cascade / non-Gemini realtime: switch within the active provider's
+            # voices, saved for the next call; name them in the description.
+            fn = set_voice_preference.bind_stack(db, uid, voice_pref)
+            description = set_voice_preference.stack_description(voice_pref)
         elif s.name in _DM_OUTREACH_NAMES:
             fn = s.bind(db, uid, session_id=session_id, turns=turns)
         else:
@@ -362,7 +419,5 @@ def make_livekit_tools(
         if guard is not None:
             # Outermost, so a refused call never shows a tool chip.
             fn = _guarded(fn, guard)
-        tools.append(
-            function_tool(fn, name=s.name, description=s.declaration["description"])
-        )
+        tools.append(function_tool(fn, name=s.name, description=description))
     return tools

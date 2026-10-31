@@ -368,7 +368,13 @@ class _SignInScreenState extends State<SignInScreen> {
                                         : (_voice.isActive
                                               ? AymaOrbState.listening
                                               : AymaOrbState.idle)),
-                              voiceLive: _voice.isActive,
+                              // "Connected" glow only once Ayma is genuinely
+                              // listening — not during connecting/waking — so
+                              // the greeting orb reads as live only when it
+                              // truly is (same source of truth as the call
+                              // notification; the state switch above already
+                              // holds `thinking` until then).
+                              voiceLive: _voice.isListening,
                             ),
                           ),
                         ),

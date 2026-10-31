@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:ayma_flutter/services/report_events.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -387,6 +388,46 @@ void main() {
         resolvePath: (p) async => fail('nothing to resolve'),
       );
       expect(url, isNull);
+    });
+  });
+
+  group('a story-edit tool completion live-refreshes the Story page', () {
+    int rev() => ReportEvents.instance.revisionFor('story_private');
+
+    test('a chat turn that edited the story fires the story report events', () {
+      final store = TranscriptStore();
+      store.addPending('working on it');
+      final before = rev();
+      final beforeNotes = ReportEvents.instance.revisionFor('story_ai_notes');
+      store.resolvePending('done — changed that line for you',
+          tools: const ['Updated your story']);
+      expect(rev(), before + 1);
+      expect(
+          ReportEvents.instance.revisionFor('story_ai_notes'), beforeNotes + 1);
+    });
+
+    test('a finalized voice turn that edited the story fires too', () {
+      final store = TranscriptStore();
+      final before = rev();
+      store.applyVoiceSegment(TurnRole.ayma, 'took that out of your story',
+          isFinal: true, tools: const ['Removed that from your story']);
+      expect(rev(), before + 1);
+    });
+
+    test('a plain turn with no story edit does not fire', () {
+      final store = TranscriptStore();
+      store.addPending('thinking');
+      final before = rev();
+      store.resolvePending('just chatting', tools: const ['Searched the web']);
+      expect(rev(), before);
+    });
+
+    test('an interim (non-final) voice segment never fires', () {
+      final store = TranscriptStore();
+      final before = rev();
+      store.applyVoiceSegment(TurnRole.ayma, 'updating your',
+          isFinal: false, tools: const ['Updated your story']);
+      expect(rev(), before);
     });
   });
 }
