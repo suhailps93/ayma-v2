@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
+import '../util/perf_log.dart';
 import 'biometric_consent.dart';
 
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
@@ -18,8 +20,15 @@ class ApiClient {
     FirebaseAuth? auth,
     this.chatStreamConnectTimeout = const Duration(seconds: 30),
     this.chatStreamIdleTimeout = const Duration(seconds: 60),
-  }) : _http = ConsentAwareHttpClient(httpClient ?? http.Client()),
+  }) : _http = _wrapClient(ConsentAwareHttpClient(httpClient ?? http.Client())),
        _auth = auth ?? FirebaseAuth.instance;
+
+  static http.Client _wrapClient(http.Client client) {
+    if (kDebugMode) {
+      return _TimingHttpClient(client);
+    }
+    return client;
+  }
 
   /// How long `/chat/stream` may take to answer the request, and how long it
   /// may then go without a single byte. The server sends a keepalive comment
@@ -4487,3 +4496,43 @@ class ApiException implements Exception {
   String toString() =>
       'ApiException($message${statusCode != null ? ', status $statusCode' : ''})';
 }
+
+/// Transparent HTTP client wrapper for debug builds that logs timing and status.
+class _TimingHttpClient extends http.BaseClient {
+  _TimingHttpClient(this._inner);
+
+  final http.Client _inner;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final sw = Stopwatch()..start();
+    try {
+      final response = await _inner.send(request);
+      sw.stop();
+      final success = response.statusCode >= 200 && response.statusCode < 400;
+      PerfLog.apiCall(
+        method: request.method,
+        uri: request.url,
+        statusCode: response.statusCode,
+        durationMs: sw.elapsedMilliseconds,
+        success: success,
+      );
+      return response;
+    } catch (e) {
+      sw.stop();
+      PerfLog.apiCall(
+        method: request.method,
+        uri: request.url,
+        statusCode: null,
+        durationMs: sw.elapsedMilliseconds,
+        success: false,
+        error: e.toString(),
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  void close() => _inner.close();
+}
+

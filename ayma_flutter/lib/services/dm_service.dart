@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import '../util/perf_log.dart';
 import 'api_client.dart';
 
 class DmThread {
@@ -156,6 +157,12 @@ class DmService {
         .where('participants', arrayContains: me)
         .snapshots()
         .map((snap) {
+      PerfLog.firestoreSnapshot(
+        path: 'dm_threads',
+        isFromCache: snap.metadata.isFromCache,
+        hasPendingWrites: snap.metadata.hasPendingWrites,
+        docCount: snap.docs.length,
+      );
       final threads = snap.docs
           .where((d) =>
               !((d.data()['hidden_for'] as List?)?.cast<String>() ?? const [])
@@ -212,9 +219,17 @@ class DmService {
       .collection('dm_threads/$threadId/messages')
       .orderBy('created_at')
       .snapshots()
-      .map((snap) => snap.docs
-          .map((d) => DmMessage.fromData(d.id, d.data()))
-          .toList());
+      .map((snap) {
+        PerfLog.firestoreSnapshot(
+          path: 'dm_threads/$threadId/messages',
+          isFromCache: snap.metadata.isFromCache,
+          hasPendingWrites: snap.metadata.hasPendingWrites,
+          docCount: snap.docs.length,
+        );
+        return snap.docs
+            .map((d) => DmMessage.fromData(d.id, d.data()))
+            .toList();
+      });
 
   Future<void> sendText(String threadId, String text) =>
       _api.sendDmMessage(threadId, type: 'text', body: text);

@@ -7,6 +7,7 @@ import '../routing/entry.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
+import '../util/perf_log.dart';
 import '../widgets/ayma_orb.dart';
 import 'biometric_consent_screen.dart';
 import 'sign_in_screen.dart';
@@ -52,6 +53,7 @@ class _SplashScreenState extends State<SplashScreen> {
     }
     try {
       final result = await widget.apiClient!.bootstrap(sessionId: '');
+      PerfLog.milestone('Backend bootstrap complete');
       if (!mounted) return;
       var consentRequired = result.biometricConsentRequired;
       if (consentRequired &&

@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import '../util/perf_log.dart';
 import 'age_gate.dart';
 
 /// Structured onboarding profile, one of the three per-user documents (§3.2).
@@ -82,9 +83,16 @@ class ProfileService {
   /// Live profile updates — the voice-driven preboarding screen autofills its
   /// fields as Ayma's `set_profile_field` tool writes them (§4.2, Step 31).
   Stream<ProfileData?> watchProfile() => _profileDoc.snapshots().map(
-        (snap) => snap.data() == null
-            ? null
-            : ProfileData.fromMap(snap.data()!),
+        (snap) {
+          PerfLog.firestoreSnapshot(
+            path: _profileDoc.path,
+            isFromCache: snap.metadata.isFromCache,
+            hasPendingWrites: snap.metadata.hasPendingWrites,
+          );
+          return snap.data() == null
+              ? null
+              : ProfileData.fromMap(snap.data()!);
+        },
       );
 
   /// Post-onboarding edit of the structured fields (§4.5). Only the keys passed
@@ -169,7 +177,14 @@ class ProfileService {
 
   /// The current "Pause matching" state (§14.2).
   Stream<bool> watchPaused() =>
-      _profileDoc.snapshots().map((s) => s.data()?['paused'] == true);
+      _profileDoc.snapshots().map((s) {
+        PerfLog.firestoreSnapshot(
+          path: '${_profileDoc.path} [paused]',
+          isFromCache: s.metadata.isFromCache,
+          hasPendingWrites: s.metadata.hasPendingWrites,
+        );
+        return s.data()?['paused'] == true;
+      });
 
   /// Toggle "Pause matching" — a paused user drops out of Explore and match
   /// candidate sourcing (§14.2).

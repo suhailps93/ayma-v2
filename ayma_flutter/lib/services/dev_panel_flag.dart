@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
 
+import '../util/perf_log.dart';
+
 final _log = Logger('dev_panel');
 
 /// The `dev_panel` feature flag, live. The backend mirrors it from
@@ -35,12 +37,18 @@ class DevPanelFlag {
   /// Starts (or restarts) listening to the flag doc.
   void listen(FirebaseFirestore db) {
     unawaited(_sub?.cancel());
-    _sub = db
-        .collection(collection)
-        .doc(docId)
+    final docRef = db.collection(collection).doc(docId);
+    _sub = docRef
         .snapshots()
         .listen(
-          (snap) => enabled.value = parse(snap.data()),
+          (snap) {
+            PerfLog.firestoreSnapshot(
+              path: docRef.path,
+              isFromCache: snap.metadata.isFromCache,
+              hasPendingWrites: snap.metadata.hasPendingWrites,
+            );
+            enabled.value = parse(snap.data());
+          },
           onError: (Object e) => _log.warning('dev_panel flag listen failed: $e'),
         );
   }

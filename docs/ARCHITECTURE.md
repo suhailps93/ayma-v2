@@ -1180,6 +1180,13 @@ hand-off any more — both belonged to the old dismiss-and-push-a-route design a
 3. **Client: main app shell widget** — 4-tab bottom nav per §11.3, notification bell icon wired to the notification center (§7.3).
 4. **Client: deep link handling** — notification tap and push-open events call `router.go(deepLink)` per §11.5.
 
+### 11.8 Performance Telemetry Baseline (Phase 0)
+
+Debug-only telemetry utility (`lib/util/perf_log.dart`) measuring client loading and data latency baselines. Guarded strictly by `kDebugMode` (zero runtime cost in release builds):
+- **App-Start Milestones**: Starts high-resolution stopwatch at `main()`, logging elapsed milliseconds for `Firebase init complete`, `First frame rendered` (post-frame callback), and `Backend bootstrap complete` (post-`/bootstrap` resolution on Splash).
+- **API Client Timing**: `_TimingHttpClient` wrapper in `ApiClient` logs method, path, HTTP status, success/failure, and roundtrip duration (ms) for every backend request.
+- **Firestore Snapshot Origin**: All 10 active Firestore stream listeners log whether snapshots originate from `CACHE` or `SERVER` using `SnapshotMetadata.isFromCache` and `hasPendingWrites`.
+
 ---
 
 ## 12. Deployment & Infra

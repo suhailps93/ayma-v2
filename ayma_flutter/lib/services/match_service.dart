@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../util/perf_log.dart';
 import 'api_client.dart';
 
 /// One scored match as the Matches list / detail renders it (§5.4, §14.3).
@@ -54,6 +55,12 @@ class MatchService {
         .where('status', isEqualTo: 'scored')
         .snapshots()
         .asyncMap((snap) async {
+      PerfLog.firestoreSnapshot(
+        path: 'matches [status=scored]',
+        isFromCache: snap.metadata.isFromCache,
+        hasPendingWrites: snap.metadata.hasPendingWrites,
+        docCount: snap.docs.length,
+      );
       final views = <MatchView>[];
       for (final doc in snap.docs) {
         views.add(await _toView(doc, uid));
@@ -73,6 +80,12 @@ class MatchService {
         .where('status', isEqualTo: 'mutual_interest')
         .snapshots()
         .asyncMap((snap) async {
+      PerfLog.firestoreSnapshot(
+        path: 'matches [status=mutual_interest]',
+        isFromCache: snap.metadata.isFromCache,
+        hasPendingWrites: snap.metadata.hasPendingWrites,
+        docCount: snap.docs.length,
+      );
       final views = <MatchView>[];
       for (final doc in snap.docs) {
         views.add(await _toView(doc, uid));
