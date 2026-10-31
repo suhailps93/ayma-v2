@@ -11,6 +11,7 @@ import '../services/voice_session_controller.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_tab_bar.dart';
+import '../widgets/staging_banner.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
 import 'messages_screen.dart';
@@ -47,6 +48,7 @@ class MainShellScreen extends StatefulWidget {
     super.key,
     this.voiceController,
     this.transcriptStore,
+    this.showStagingBanner,
   });
 
   static const path = '/';
@@ -56,6 +58,10 @@ class MainShellScreen extends StatefulWidget {
   /// shell fall through to the shared [AymaSession].
   final VoiceSessionController? voiceController;
   final TranscriptStore? transcriptStore;
+
+  /// Optional override for the staging banner. When null, defaults to
+  /// [Env.isStaging].
+  final bool? showStagingBanner;
 
   @override
   State<MainShellScreen> createState() => _MainShellScreenState();
@@ -252,26 +258,29 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   @override
   Widget build(BuildContext context) {
-    return PopScope<Object?>(
-      canPop: _tabHistory.length <= 1,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _popTab();
-      },
-      child: Scaffold(
-        // A live call keeps running (in this app, not backgrounded to the
-        // OS — that's CallBackgroundService) no matter which tab is on
-        // screen. Returning to it needs no dedicated "tap to return" pill
-        // here: the Ayma tab's own orb below already reflects live call
-        // state (glow/pulse) and is the one tap back to it, from this shell
-        // or, via `NavBarShell`'s identical-looking bar, from anywhere else
-        // in the app.
-        body: IndexedStack(
-          index: _index,
-          children: [
-            for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
-          ],
+    return StagingBanner(
+      enabled: widget.showStagingBanner,
+      child: PopScope<Object?>(
+        canPop: _tabHistory.length <= 1,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _popTab();
+        },
+        child: Scaffold(
+          // A live call keeps running (in this app, not backgrounded to the
+          // OS — that's CallBackgroundService) no matter which tab is on
+          // screen. Returning to it needs no dedicated "tap to return" pill
+          // here: the Ayma tab's own orb below already reflects live call
+          // state (glow/pulse) and is the one tap back to it, from this shell
+          // or, via `NavBarShell`'s identical-looking bar, from anywhere else
+          // in the app.
+          body: IndexedStack(
+            index: _index,
+            children: [
+              for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
+            ],
+          ),
+          bottomNavigationBar: _navBar(context),
         ),
-        bottomNavigationBar: _navBar(context),
       ),
     );
   }

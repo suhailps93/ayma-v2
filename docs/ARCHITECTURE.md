@@ -1188,6 +1188,10 @@ hand-off any more — both belonged to the old dismiss-and-push-a-route design a
 
 One environment — a single Firebase/GCP project, created during Environment Setup. No separate dev project until actual release, at which point a dev project gets added to protect the live one from ongoing development.
 
+For the client Flutter app, environment selection is supported via `--dart-define=ENV=staging`:
+- Default (`ENV` unset or set to `production`): Uses the production API base URL (`https://ayma-api-235381544962.us-central1.run.app`). Nothing about production behavior changes.
+- Staging (`--dart-define=ENV=staging`): Switches the API base URL to `https://ayma-api-staging.invalid` (placeholder until staging Cloud Run is provisioned) and renders a visible `STAGING` banner ribbon in the app shell. Overridable with `--dart-define=AYMA_API_BASE_URL=...`.
+
 ### 12.2 Cloud Run configs
 
 `min-instances`/CPU allocation for the two services from §10.1 (current state; history in `docs/deploy.md`):
