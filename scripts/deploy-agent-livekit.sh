@@ -53,8 +53,12 @@ NONSECRET_ENV=(
   "GEMINI_LIVE_USE_DEV_API=true"
   "CONTEXT_OPT_LEVEL=3"
   "CONTEXT_OPT_MEASURE=true"
-  "LLM_PROVIDER_VOICE=meta"
-  "LLM_PROVIDER_VOICE_MAIN=meta"
+  # Gemini is the default everywhere (founder rule). The signed-in main voice
+  # runs on the LOCKED Gemini Live RealtimeModel (config.py), so both the main
+  # and the per-surface secondary voice provider are pinned to gemini — mirror
+  # of the Cloud Run twin (scripts/deploy-agent.sh).
+  "LLM_PROVIDER_VOICE=gemini"
+  "LLM_PROVIDER_VOICE_MAIN=gemini"
   # No TTS model/voice ids here (AGENTS.md): the default TTS (fishaudio/s2.1-pro,
   # voice Hannah) and the gender-matched voices (Hannah/Adrian) are the committed
   # config.py defaults — the single source of truth.

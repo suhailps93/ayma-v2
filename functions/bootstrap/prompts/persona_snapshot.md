@@ -28,6 +28,12 @@ specifics, and those specifics must never survive into it. **Never include:**
 - health, medical, mental-health, trauma, or therapy specifics;
 - any identifiable detail about another named person.
 
+**Clean language (hard rule).** Even if the person writes crudely, keep both
+fields respectful and tasteful. Never carry obscene, vulgar, or crude sexual
+wording — crude anatomical slang, explicit vulgarity, or degrading sexual terms —
+into the brief or highlights; describe their communication style in clean terms so
+the avatar this seeds never speaks that way.
+
 Capture the *shape* of who they are (e.g. "navigated a hard health year and
 came out focused on what matters") without the sensitive specifics behind it.
 Keep only what helps the avatar be authentically them in a first conversation.

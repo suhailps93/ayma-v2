@@ -51,6 +51,16 @@ _MAX_CHIPS = 4
 _MAX_MESSAGES = 12
 # Cap on the safety ``flags`` tags we pass through (keeps the response small).
 _MAX_FLAGS = 6
+# A coaching ``tip`` is ONE short sentence. Anything longer than this is a
+# rambling paragraph, not a tip, and is dropped rather than shown.
+_TIP_MAX_CHARS = 180
+# Substrings that mark leaked raw JSON or model chain-of-thought — none can
+# occur in a genuine one-sentence coaching tip, so a tip containing any of them
+# is dropped. The UI must NEVER surface the model's reasoning or raw JSON.
+_LEAK_MARKERS = (
+    "{", "}", "```", "<think", '"chips"', '"safety"', '"tip"', '"level"',
+    '"flags"', '"reason"', "json shape", "json:",
+)
 
 MODE_OPENER = "opener"
 MODE_COACH = "coach"
@@ -125,11 +135,41 @@ def _clean_chips(result: object) -> list[str]:
     return out[:_MAX_CHIPS]
 
 
+def _first_sentence(text: str) -> str:
+    """The first sentence of ``text`` — through its first ``. ! ?`` — stripped;
+    the whole string (stripped) when it has no sentence-ending punctuation."""
+    for i, ch in enumerate(text):
+        if ch in ".!?":
+            return text[: i + 1].strip()
+    return text.strip()
+
+
+def _has_leak(text: str) -> bool:
+    """Whether ``text`` carries leaked raw JSON or model reasoning (a marker a
+    genuine, clean coaching line would never contain)."""
+    low = text.lower()
+    return any(marker in low for marker in _LEAK_MARKERS)
+
+
 def _clean_tip(result: object) -> str | None:
+    """The coaching ``tip`` as a single short sentence, or ``None``.
+
+    Fails safe (regression §6.9): a tip that is empty, carries leaked raw JSON
+    or model chain-of-thought, or is longer than one short sentence is dropped —
+    the UI shows nothing rather than a model's reasoning or a rambling
+    paragraph. Muse Spark is a reasoning model; even with ``reasoning_effort``
+    pinned ``minimal`` it can over-produce, so brevity is enforced here, not
+    trusted from the model."""
     tip = result.get("tip") if isinstance(result, dict) else None
-    if isinstance(tip, str) and tip.strip():
-        return tip.strip()
-    return None
+    if not isinstance(tip, str):
+        return None
+    tip = tip.strip()
+    if not tip or _has_leak(tip):
+        return None
+    sentence = _first_sentence(tip)
+    if not sentence or len(sentence) > _TIP_MAX_CHARS:
+        return None
+    return sentence
 
 
 def _clean_safety(result: object) -> dict[str, object]:
@@ -150,6 +190,10 @@ def _clean_safety(result: object) -> dict[str, object]:
 
     reason = safety.get("reason")
     reason = reason.strip() if isinstance(reason, str) else ""
+    # A reason carrying leaked raw JSON / reasoning is unusable — stay silent
+    # rather than surface it to the user (same hygiene as the coaching tip).
+    if reason and _has_leak(reason):
+        return _silent_safety()
 
     raw_flags = safety.get("flags")
     flags: list[str] = []

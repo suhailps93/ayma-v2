@@ -38,9 +38,10 @@ IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/ayma-agent:
 # provider flows from config.py, whose QLOO-PHASE default is ``gemini``
 # (best-experience Gemini Live native-audio voice, flips back to ``meta`` post-
 # Qloo). Set LLM_PROVIDER_VOICE_MAIN=meta on the revision only for a one-off
-# override. LLM_PROVIDER_VOICE (the per-surface practice/secondary voice) stays
-# pinned to meta per the standing per-surface directive.
-ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LLM_PROVIDER_VOICE=meta"
+# override. LLM_PROVIDER_VOICE (the per-surface practice/secondary voice) is
+# pinned to gemini to match the live agent and keep a --full redeploy from
+# snapping back to meta.
+ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LLM_PROVIDER_VOICE=gemini"
 SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SENTRY_DSN=SENTRY_DSN_AGENT:latest,META_API_KEY=META_API_KEY:latest"
 
 # min-instances=0 is the PERMANENT intended config (founder decision,

@@ -279,3 +279,62 @@ workflows:
         notify:
           success: true
           failure: true
+
+  android-play:
+    name: Android - build AAB for Google Play
+    max_build_duration: 60
+    instance_type: linux
+    working_directory: ayma_flutter
+
+    environment:
+      flutter: 3.47.5
+      java: 17
+      groups:
+        - firebase_credentials
+      android_signing:
+        - ayma_upload_keystore
+
+    scripts:
+      - name: Flutter pub get
+        script: flutter pub get
+
+      - name: Analyze
+        script: flutter analyze
+
+      - name: Test
+        script: flutter test
+
+      - name: Build signed release AAB
+        script: |
+          set -e
+          VERSION_NAME=$(grep "^version:" pubspec.yaml | sed "s/version: *//; s/+.*//")
+          BUILD_NUMBER=$(grep "^version:" pubspec.yaml | sed "s/.*+//")
+          test -n "$REVENUECAT_ANDROID_KEY" || { echo "REVENUECAT_ANDROID_KEY is not set"; exit 1; }
+          # No --build-number override: the AAB must carry the pubspec
+          # versionCode (2242) so Play accepts it above the existing 2236.
+          flutter build appbundle --release \
+            --dart-define=REVENUECAT_ANDROID_KEY="$REVENUECAT_ANDROID_KEY" \
+            --dart-define=SENTRY_DSN="$SENTRY_DSN" \
+            --dart-define=SENTRY_ENABLED="${SENTRY_ENABLED:-true}" \
+            --dart-define=SENTRY_ENVIRONMENT=production \
+            --dart-define=SENTRY_RELEASE="ayma@$VERSION_NAME+$BUILD_NUMBER" \
+            --dart-define=SENTRY_DIST="$BUILD_NUMBER"
+          AAB=build/app/outputs/bundle/release/app-release.aab
+          keytool -printcert -jarfile "$AAB" | grep -i "SHA1" || true
+          if keytool -printcert -jarfile "$AAB" | grep -q "Android Debug"; then
+            echo "ERROR: $AAB is debug-signed" >&2
+            exit 1
+          fi
+          echo "OK: release-signed AAB"
+
+    artifacts:
+      - build/app/outputs/bundle/release/app-release.aab
+      - build/app/outputs/mapping/**/mapping.txt
+
+    publishing:
+      email:
+        recipients:
+          - suhailps@gmail.com
+        notify:
+          success: true
+          failure: true

@@ -239,6 +239,51 @@ async def test_generate_json_strips_whitespace_in_keys(_no_ledger):
     assert out == {"strengths": ["a"], "quick_facts": {"age": 3}, "rows": [{"k": 1}]}
 
 
+def test_coerce_json_text_passes_plain_json_through():
+    from llm_provider import _coerce_json_text
+
+    assert _coerce_json_text('{"a": 1}') == '{"a": 1}'
+
+
+def test_coerce_json_text_strips_code_fence():
+    from llm_provider import _coerce_json_text
+
+    raw = 'Here you go:\n```json\n{"chips": ["hi"]}\n```'
+    assert json.loads(_coerce_json_text(raw)) == {"chips": ["hi"]}
+
+
+def test_coerce_json_text_strips_think_block_and_prose():
+    from llm_provider import _coerce_json_text
+
+    raw = (
+        "<think>Wait, what about safety? Base every flag on something said.</think>"
+        'Okay. {"chips": ["hey"], "tip": "nice"}'
+    )
+    assert json.loads(_coerce_json_text(raw)) == {"chips": ["hey"], "tip": "nice"}
+
+
+def test_coerce_json_text_ignores_braces_inside_strings():
+    from llm_provider import _coerce_json_text
+
+    raw = '{"tip": "use a { brace } here", "n": 1}'
+    assert json.loads(_coerce_json_text(raw)) == {"tip": "use a { brace } here", "n": 1}
+
+
+@pytest.mark.asyncio
+async def test_generate_json_extracts_json_from_reasoning_wrapper(_no_ledger):
+    # Muse Spark reasoning surrounds the JSON — the extracted object parses, so
+    # the chain-of-thought never leaks into a field (regression).
+    raw = (
+        "Let me reason about this. JSON shape: {chips, tip, safety}.\n"
+        '```json\n{"chips": ["so what got you into climbing?"], "tip": "keep going"}\n```'
+    )
+    client = _FakeClient([_FakeResponse(_FakeMessage(content=raw))])
+    out = await MetaProvider(client=client).generate_json(
+        "c", "s", uid="u1", feature="dm_coach",
+    )
+    assert out == {"chips": ["so what got you into climbing?"], "tip": "keep going"}
+
+
 @pytest.mark.asyncio
 async def test_generate_json_records_usage(monkeypatch, _no_ledger):
     client = _FakeClient([_FakeResponse(_FakeMessage(content='{"ok": 1}'))])

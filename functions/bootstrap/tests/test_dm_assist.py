@@ -379,6 +379,68 @@ def test_response_schema_requests_safety():
     ]
 
 
+# --- tip hygiene: short, clean, never raw reasoning/JSON (regression) ---- #
+
+
+def test_short_clean_tip_passes_through(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {"chips": ["tell me more"], "tip": "Nice, you opened up — keep that going."},
+    )
+    assert out["tip"] == "Nice, you opened up — keep that going."
+
+
+def test_rambling_tip_is_dropped(monkeypatch):
+    # A paragraph-long run-on with no sentence break is not a tip — drop it, but
+    # keep the chips (the bar still works).
+    ramble = (
+        "You are doing really well here and should keep the conversation flowing "
+        "smoothly naturally quietly comfortably easily without issue and just stay "
+        "relaxed and warm and curious and open and genuine throughout the whole thing"
+    )
+    out = _coach_out(monkeypatch, {"chips": ["so what's next?"], "tip": ramble})
+    assert out["tip"] is None
+    assert out["chips"] == ["so what's next?"]
+
+
+def test_leaked_reasoning_and_json_tip_is_dropped(monkeypatch):
+    # The exact failure mode from the bug report: the model's chain-of-thought
+    # and raw JSON leaked verbatim into the tip. It must NEVER reach the UI.
+    leaked = (
+        'Wait, what about safety? Them said nothing concerning. Guardrails: Base '
+        'every flag on something Them actually said. JSON shape: '
+        '{"chips":["hey"],"tip":"...","safety":{"flags":[],"level":"none","reason":""}}'
+    )
+    out = _coach_out(monkeypatch, {"chips": ["nice"], "tip": leaked})
+    assert out["tip"] is None
+
+
+def test_tip_trimmed_to_its_first_sentence(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["ok"],
+            "tip": "Great question. Now also tell them about yourself.",
+        },
+    )
+    assert out["tip"] == "Great question."
+
+
+def test_safety_reason_with_leaked_json_fails_quiet(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {
+            "chips": ["ok"],
+            "safety": {
+                "level": "warning",
+                "reason": 'warning because {"level":"warning"} they pushed',
+                "flags": ["x"],
+            },
+        },
+    )
+    assert out["safety"] == {"level": "none", "reason": "", "flags": []}
+
+
 # --- endpoint ------------------------------------------------------------ #
 
 

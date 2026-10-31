@@ -34,6 +34,7 @@ _MARKER = re.compile(r"\[[a-z_]+:[\w-]*\]")
 _DM_BODY = {
     "photo": "📷 Photo",
     "image": "📷 Photo",
+    "gif": "📷 GIF",
     "voice": "🎙 Voice message",
     "file": "📎 File",
     "shared_profile": "👤 Shared a profile",
@@ -45,6 +46,7 @@ _DM_BODY = {
 _DM_PUSH_BODY = {
     "photo": "Photo",
     "image": "Photo",
+    "gif": "GIF",
     "voice": "Voice message",
     "file": "File",
     "shared_profile": "Shared a profile",
