@@ -58,3 +58,7 @@ Thumbs.db
 
 # agent worker scratch venv
 functions/bootstrap/.venv-agent/
+
+# Agent worktrees and local session state (never commit)
+.claude/worktrees/
+.claude/projects/
