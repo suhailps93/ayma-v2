@@ -3517,10 +3517,11 @@ async def explore_pass(
 
 class DmMessageRequest(BaseModel):
     type: Literal[
-        "text", "photo", "voice", "shared_profile", "image", "file", "shared_report"
+        "text", "photo", "voice", "shared_profile", "image", "file", "gif",
+        "shared_report"
     ]
     # Required for text/photo/voice/shared_profile; an optional caption for
-    # image/file (validated per-type in the handler).
+    # image/gif/file (validated per-type in the handler).
     body: str = Field(default="", max_length=4000)
     # image/file only: the uploaded object under the caller's ``uploads/`` tree.
     attachment_url: str = Field(default="", max_length=2048)

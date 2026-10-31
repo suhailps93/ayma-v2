@@ -19,6 +19,11 @@ MESSAGE_SHARED_PROFILE = "shared_profile"
 # caption. ``photo`` predates these and keeps its path-in-``body`` shape.
 MESSAGE_IMAGE = "image"
 MESSAGE_FILE = "file"
+# An animated GIF (§6.6): same attachment shape as ``image`` (url/path/mime/
+# name/size, optional ``body`` caption), kept as its own type so the client can
+# render it as an animated GIF and label it accordingly. GIFs arrive either from
+# the keyboard's GIF button (rich-content insertion) or the attach picker.
+MESSAGE_GIF = "gif"
 # A shared report snapshot (``POST /share``): the doc carries a ``report_share``
 # map ({token, title, summary, card_url}) the app renders as an in-app card.
 MESSAGE_SHARED_REPORT = "shared_report"
@@ -29,12 +34,13 @@ MESSAGE_TYPES = (
     MESSAGE_SHARED_PROFILE,
     MESSAGE_IMAGE,
     MESSAGE_FILE,
+    MESSAGE_GIF,
     MESSAGE_SHARED_REPORT,
 )
 
 # Message types that carry an attachment (path/url/mime/name/size) rather than
 # putting everything in ``body``.
-ATTACHMENT_MESSAGE_TYPES = (MESSAGE_IMAGE, MESSAGE_FILE)
+ATTACHMENT_MESSAGE_TYPES = (MESSAGE_IMAGE, MESSAGE_FILE, MESSAGE_GIF)
 
 
 def thread_id(uid_a: str, uid_b: str) -> str:

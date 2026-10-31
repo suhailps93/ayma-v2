@@ -989,7 +989,11 @@ DM access is **not** gated by like/mutual status — only a block prevents messa
 ### 6.6 DM data model
 
 - `dm_threads/{threadId}` (top-level, keyed by sorted pair of uids) — `participants`, `created_at`, `last_message_at`, per-user `last_read_at`.
-- `dm_threads/{threadId}/messages/{messageId}` — `sender_uid`, `type` (`text` / `photo` / `voice` / `shared_profile`), `body` (text, or a Storage ref for photo/voice, or a shared uid for `shared_profile`), `created_at`.
+- `dm_threads/{threadId}/messages/{messageId}` — `sender_uid`, `type`, `body`, `created_at`.
+  - `type` is one of `text` / `photo` / `voice` / `shared_profile` / `image` / `gif` / `file` / `shared_report` (`dm_schema.MESSAGE_TYPES`).
+  - For `text`, `body` is the message; for `photo`/`voice`, a Storage ref; for `shared_profile`, the shared uid.
+  - **Media attachments** (`image` / `gif` / `file`, `dm_schema.ATTACHMENT_MESSAGE_TYPES`): the message carries dedicated `attachment_url` (ready-to-render download URL), `attachment_path` (the Storage object under the sender's `uploads/`), `mime`, `file_name` and `size` fields; `body` then holds an optional caption. `image` vs `gif` share this shape and differ only so the client renders/labels an animated GIF as a GIF. Images come from the attach picker (gallery/camera) or a file pick; GIFs come from the keyboard's GIF button (Flutter `ContentInsertionConfiguration` rich-content insertion — bytes uploaded via `putData`, sent immediately WhatsApp-style) or the picker. GIFs/images render inline in the bubble (`Image.network`, which animates GIFs) and tap to a full-screen viewer. Text moderation (§6.9) is unchanged and applies to `text` only; **media NSFW moderation is a documented follow-up** (see `docs/TODO_QUEUE.md`), not yet built.
+  - For `shared_report`, a `report_share` map (`{token, title, summary, card_url}`) rendered as an in-app card (§6.7).
 - Voice messages are recorded voice notes (async), not live calls — a different feature from the LiveKit companion channel in Piece 1.
 
 ### 6.7 Profile sharing
@@ -1042,6 +1046,7 @@ The same single `/dm/assist` Muse call that produces the coaching chips/tip **al
 |---|---|
 | DM threads | Firestore `dm_threads/{threadId}` (keyed by sorted uid pair) |
 | DM messages | Firestore `dm_threads/{threadId}/messages/{messageId}` |
+| DM media attachments (image/gif/file) | Firebase Storage `uploads/{senderUid}/dm/{threadId}/{name}` (download URL stored on the message's `attachment_url`) |
 | Explore filter schema | Static config file `functions/bootstrap/explore_filter_schema.json` |
 | Photo-derived attributes | Structured fields on `users/{uid}/profile`, computed from the primary photo (§9.1) |
 

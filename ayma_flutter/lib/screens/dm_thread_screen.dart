@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -495,6 +496,43 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     }
   }
 
+  /// A GIF/image inserted from the keyboard's GIF/image button (§6.6). The
+  /// keyboard hands us the bytes directly (no file on disk), so — WhatsApp-style
+  /// — it uploads and sends immediately as a `gif`/`image` message. Keeps any
+  /// text already in the composer untouched; degrades with a toast if the
+  /// keyboard gives only a content URI we can't read, or on an upload failure.
+  Future<void> _onContentInserted(KeyboardInsertedContent content) async {
+    if (_sending) return;
+    final Uint8List? bytes = content.data;
+    if (bytes == null || bytes.isEmpty) {
+      if (mounted) {
+        AymaToast.show(
+          context,
+          "Couldn't read that — tap + to attach it instead.",
+          kind: AymaToastKind.error,
+        );
+      }
+      return;
+    }
+    final mime = content.mimeType;
+    final type = mime.toLowerCase() == 'image/gif' ? 'gif' : 'image';
+    setState(() => _sending = true);
+    try {
+      final att = await _dm.uploadInsertedAttachment(
+        bytes,
+        threadId: widget.threadId,
+        mime: mime,
+      );
+      await _dm.sendAttachment(widget.threadId, type: type, attachment: att);
+    } catch (e) {
+      if (mounted) {
+        AymaToast.show(context, 'Not sent ($e).', kind: AymaToastKind.error);
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   Future<void> _blockAndReport() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -793,6 +831,15 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 focusNode: _composerFocus,
                                 minLines: 1,
                                 maxLines: 4,
+                                // Declare rich-content support so Gboard's
+                                // GIF/image button inserts media here instead
+                                // of showing "This app does not support images
+                                // here" — the inserted bytes upload + send as a
+                                // gif/image message (§6.6).
+                                contentInsertionConfiguration:
+                                    ContentInsertionConfiguration(
+                                  onContentInserted: _onContentInserted,
+                                ),
                                 decoration: const InputDecoration(
                                   filled: false,
                                   border: InputBorder.none,
@@ -1201,7 +1248,9 @@ class _Bubble extends StatelessWidget {
         share: report,
         onTap: () => context.push('/s/${report.token}'),
       );
-    } else if (message.hasImage) {
+    } else if (message.hasImage || message.hasGif) {
+      // A GIF renders the same way (Image.network animates it inline); it only
+      // differs in its stored type + label.
       tight = true;
       content = _image(context, ac);
     } else if (message.hasFile) {
@@ -1227,6 +1276,7 @@ class _Bubble extends StatelessWidget {
       tight = false;
       final label = switch (message.type) {
         'photo' || 'image' => '📷 Photo',
+        'gif' => '📷 GIF',
         'voice' => '🎙 Voice message',
         'file' => '📎 File',
         'shared_profile' => '👤 Shared a profile',

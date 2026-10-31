@@ -137,6 +137,14 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.messagesTab,
   ),
   TourFeature(
+    featureId: 'dm_media',
+    headline: 'Photos & GIFs in chat',
+    subtitle: 'In a chat, tap + to send a photo — or your keyboard\'s GIF '
+        'button to send a GIF.',
+    icon: Icons.gif_box_outlined,
+    anchorId: TourAnchors.messagesTab,
+  ),
+  TourFeature(
     featureId: 'connect_agent',
     headline: 'Bring your own agent',
     subtitle: 'Connect an AI agent to talk to Ayma for you — set it up in Settings.',

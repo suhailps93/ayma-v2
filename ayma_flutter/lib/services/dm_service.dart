@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -60,6 +61,7 @@ class DmMessage {
   bool get isSharedReport => type == 'shared_report' && reportShare != null;
 
   bool get hasImage => type == 'image' && attachmentUrl.isNotEmpty;
+  bool get hasGif => type == 'gif' && attachmentUrl.isNotEmpty;
   bool get hasFile => type == 'file' && attachmentUrl.isNotEmpty;
 
   /// Build a message from a Firestore doc id + its raw data map.
@@ -227,6 +229,8 @@ class DmService {
       case 'image':
       case 'file':
         return body; // caption, if any
+      case 'gif':
+        return body.isNotEmpty ? body : '[gif]';
       case 'photo':
         return '[photo]';
       case 'voice':
@@ -309,8 +313,33 @@ class DmService {
     );
   }
 
-  /// Send an already-uploaded [attachment] as an `image` or `file` message,
-  /// with an optional [caption].
+  /// Upload raw [bytes] that came from the keyboard's GIF/image button
+  /// (rich-content insertion, §6.6) — which hands the app bytes, not a file on
+  /// disk — to `uploads/{myUid}/dm/{threadId}/inserted_{ts}{ext}` and return the
+  /// attachment for [sendAttachment]. [mime] is the content type the keyboard
+  /// reported (e.g. `image/gif`); the extension is derived from it.
+  Future<DmAttachment> uploadInsertedAttachment(
+    Uint8List bytes, {
+    required String threadId,
+    required String mime,
+  }) async {
+    final ext = _extForMime(mime);
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final name = 'inserted_$ts$ext';
+    final path = 'uploads/$uid/dm/$threadId/$name';
+    final ref = _storage.ref(path);
+    await ref.putData(bytes, SettableMetadata(contentType: mime));
+    return DmAttachment(
+      storagePath: path,
+      downloadUrl: await ref.getDownloadURL(),
+      contentType: mime,
+      sizeBytes: bytes.length,
+      name: name,
+    );
+  }
+
+  /// Send an already-uploaded [attachment] as an `image`, `gif` or `file`
+  /// message, with an optional [caption].
   Future<void> sendAttachment(
     String threadId, {
     required String type,
@@ -370,5 +399,24 @@ String _mimeForExt(String ext) {
       return 'video/mp4';
     default:
       return 'application/octet-stream';
+  }
+}
+
+/// The file extension (with leading dot) for a keyboard-inserted media MIME
+/// type, used to name the uploaded object. Covers what Gboard/keyboards insert
+/// (GIF, PNG, JPEG, WebP); an unknown type gets no extension.
+String _extForMime(String mime) {
+  switch (mime.toLowerCase()) {
+    case 'image/gif':
+      return '.gif';
+    case 'image/png':
+      return '.png';
+    case 'image/jpeg':
+    case 'image/jpg':
+      return '.jpg';
+    case 'image/webp':
+      return '.webp';
+    default:
+      return '';
   }
 }

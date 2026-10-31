@@ -7,6 +7,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ayma_flutter/widgets/chat_composer.dart'
     show kComposerBarPadding;
@@ -44,6 +45,7 @@ class _FakeDm extends DmService {
   /// The message tails the screen asked [assist] about, in order.
   final List<List<DmMessage>> assistCalls = [];
   final List<File> uploaded = [];
+  final List<({Uint8List bytes, String mime})> insertedUploads = [];
   final List<({String type, String caption})> attachmentsSent = [];
 
   @override
@@ -87,6 +89,22 @@ class _FakeDm extends DmService {
       contentType: 'image/jpeg',
       sizeBytes: 1234,
       name: '1.jpg',
+    );
+  }
+
+  @override
+  Future<DmAttachment> uploadInsertedAttachment(
+    Uint8List bytes, {
+    required String threadId,
+    required String mime,
+  }) async {
+    insertedUploads.add((bytes: bytes, mime: mime));
+    return const DmAttachment(
+      storagePath: 'uploads/me/dm/a__me/inserted_1.gif',
+      downloadUrl: 'https://example.invalid/inserted_1.gif',
+      contentType: 'image/gif',
+      sizeBytes: 3,
+      name: 'inserted_1.gif',
     );
   }
 
@@ -778,6 +796,85 @@ void main() {
     expect(find.text('report.pdf'), findsOneWidget);
     expect(find.text('2.0 MB'), findsOneWidget);
   });
+
+  testWidgets('renders a GIF attachment inline (animated via Image.network)', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+      ),
+    );
+    await tester.pump();
+    ctrl.add([
+      DmMessage(
+        id: 'g1',
+        senderUid: 'a',
+        type: 'gif',
+        body: '',
+        createdAt: DateTime.now(),
+        attachmentUrl: 'https://example.invalid/party.gif',
+        attachmentPath: 'uploads/a/dm/a__me/party.gif',
+        mime: 'image/gif',
+        fileName: 'party.gif',
+        size: 65536,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    // Rendered inline as an image thumbnail (not the '📷 GIF' text fallback)…
+    expect(find.byType(Image), findsWidgets);
+    expect(find.text('📷 GIF'), findsNothing);
+    // …and tappable to the full-screen viewer.
+    await tester.tap(find.byType(Image).first);
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.close), findsOneWidget);
+  });
+
+  testWidgets(
+    'the composer accepts keyboard-inserted media, uploading + sending it as '
+    'a gif message',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      // The composer declares rich-content support (so Gboard's GIF/image
+      // button inserts here instead of the "not supported" toast)…
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.contentInsertionConfiguration, isNotNull);
+
+      // …and inserting a GIF uploads its bytes and sends it as a `gif` message.
+      field.contentInsertionConfiguration!.onContentInserted(
+        KeyboardInsertedContent(
+          mimeType: 'image/gif',
+          uri: 'content://gif/1',
+          data: Uint8List.fromList(const [1, 2, 3]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(dm.insertedUploads.single.mime, 'image/gif');
+      expect(dm.attachmentsSent.single.type, 'gif');
+    },
+  );
 
   testWidgets('the attach button opens the Photo / Camera / File sheet', (
     tester,
