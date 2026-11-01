@@ -1006,3 +1006,28 @@ def test_period_usage_rejects_unknown_period(_patch):
 def test_usage_adds_period_usage_only_when_asked(_patch):
     assert "period_usage" not in token_ledger.usage("u1")
     assert token_ledger.usage("u1", period="all")["period_usage"]["period"] == "all"
+
+
+# --- provider_for: Meta Muse Spark labeling (forward-only) ------------------
+# Every Meta Muse Spark call was mislabeled ``google_vertex`` because
+# ``provider_for`` had no meta branch, leaving ``token_usage.providers.meta``
+# permanently empty. The fix adds a ``muse-spark`` substring rule.
+
+
+def test_provider_for_labels_meta_muse_spark():
+    assert token_ledger.provider_for("chat", "muse-spark-1.3") == "meta"
+    assert (
+        token_ledger.provider_for("chat", "meta-models/muse-spark-open-1026") == "meta"
+    )
+
+
+def test_provider_for_meta_match_is_case_insensitive():
+    assert token_ledger.provider_for("chat", "Muse-Spark-1.3") == "meta"
+
+
+def test_provider_for_non_meta_is_unchanged():
+    assert token_ledger.provider_for("chat", "gemini-3.7-flash") == "google_vertex"
+    assert (
+        token_ledger.provider_for("voice", "google/gemini-3.8-live")
+        == "livekit_inference"
+    )

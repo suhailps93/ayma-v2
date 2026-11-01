@@ -53,10 +53,30 @@ def _photo_url(storage_path: str) -> str | None:
         return None
 
 
-def _photos(db, uid: str, prof: dict) -> list[str]:
+def _variant_url(storage_path: str, spec: str, width: int) -> str | None:
+    """A token URL for the ``spec`` variant of ``storage_path`` (e.g. the
+    ``thumb_400`` of a profile photo), or ``None`` when image variants are off
+    (prod — no GCS call made) or the variant object doesn't exist yet.
+
+    The client can't derive another user's variant URL (per-object Firebase
+    tokens + owner-only storage.rules), so the backend mints it here, reusing
+    :func:`_photo_url`'s exists-check + token-mint against the variant object
+    itself. Callers fall back to the original URL whenever this is ``None``."""
+    if not CONFIG.image_variants_enabled:
+        return None
+    if not storage_path:
+        return None
+    import image_variants
+
+    return _photo_url(image_variants.variant_object_name(storage_path, spec, width))
+
+
+def _resolve_photo_paths(db, uid: str, prof: dict) -> list[str]:
+    """Ordered list of storage paths for a profile's visible photos (shared by
+    :func:`_photos` and :func:`_photos_with_variants`)."""
     entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
     entries.sort(key=lambda p: p.get("order", 0))
-    urls: list[str] = []
+    paths: list[str] = []
     for e in entries:
         sp = e.get("storage_path")  # legacy inline shape
         if not sp:
@@ -71,10 +91,38 @@ def _photos(db, uid: str, prof: dict) -> list[str]:
                     .to_dict()
                 ) or {}
                 sp = m.get("storage_path")
-        url = _photo_url(sp) if sp else None
+        if sp:
+            paths.append(sp)
+    return paths
+
+
+def _photos(db, uid: str, prof: dict) -> list[str]:
+    urls: list[str] = []
+    for sp in _resolve_photo_paths(db, uid, prof):
+        url = _photo_url(sp)
         if url:
             urls.append(url)
     return urls
+
+
+def _photos_with_variants(
+    db, uid: str, prof: dict
+) -> tuple[list[str], list[str], list[str]]:
+    """``(originals, thumbs, mediums)`` aligned 1:1. Each thumb/medium entry is
+    that photo's variant URL, or its original URL as fallback when the variant
+    is absent or image variants are off. Only photos with a resolvable original
+    URL are included, so the three lists stay aligned."""
+    originals: list[str] = []
+    thumbs: list[str] = []
+    mediums: list[str] = []
+    for sp in _resolve_photo_paths(db, uid, prof):
+        original = _photo_url(sp)
+        if not original:
+            continue
+        originals.append(original)
+        thumbs.append(_variant_url(sp, "thumb", 400) or original)
+        mediums.append(_variant_url(sp, "medium", 1080) or original)
+    return originals, thumbs, mediums
 
 
 def _public_pages(db, uid: str) -> list[dict]:
@@ -171,6 +219,8 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
             "location": "",
             "online": False,
             "photos": [],
+            "photos_thumb": [],
+            "photos_medium": [],
             "pages": [],
             "score": None,
             "liked": False,
@@ -199,6 +249,8 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
     name = str(prof.get("name") or "").strip()
     if not name:
         return None
+
+    photos, photos_thumb, photos_medium = _photos_with_variants(db, other_uid, prof)
 
     is_self = other_uid == caller_uid
     blocked = liked = False
@@ -246,7 +298,9 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "location": str(prof.get("location") or ""),
         # Real presence only — see `_is_online`'s docstring.
         "online": _is_online(db, other_uid),
-        "photos": _photos(db, other_uid, prof),
+        "photos": photos,
+        "photos_thumb": photos_thumb,
+        "photos_medium": photos_medium,
         "pages": _public_pages(db, other_uid),
         "score": None if is_self else _score_for(db, caller_uid, other_uid),
         "liked": liked,

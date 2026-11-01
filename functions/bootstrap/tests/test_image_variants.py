@@ -369,3 +369,37 @@ def test_backfill_route(monkeypatch):
         main, "CONFIG", dataclasses.replace(CONFIG, image_variants_enabled=False)
     )
     assert client.post("/cron/image-variants-backfill", headers=headers).status_code == 403
+
+
+# --- variant_object_name: serve-time path derivation (no GCS call) ----------
+# The backend mints variant URLs for OTHER users' photos (the client can't
+# derive them); this is the pure path helper it uses.
+
+
+def test_variant_object_name_ext_mapping():
+    # jpg/jpeg/uppercase/no-ext all normalise to .jpg
+    assert (
+        image_variants.variant_object_name("uploads/u/photo_1.jpg", "thumb", 400)
+        == "uploads/u/photo_1__thumb_400.jpg"
+    )
+    assert (
+        image_variants.variant_object_name("uploads/u/photo_1.jpeg", "medium", 1080)
+        == "uploads/u/photo_1__medium_1080.jpg"
+    )
+    assert (
+        image_variants.variant_object_name("uploads/u/photo_1.JPG", "thumb", 400)
+        == "uploads/u/photo_1__thumb_400.jpg"
+    )
+    assert (
+        image_variants.variant_object_name("uploads/u/photo_1", "thumb", 400)
+        == "uploads/u/photo_1__thumb_400.jpg"
+    )
+    # png/webp (any case) preserve their encoding
+    assert (
+        image_variants.variant_object_name("uploads/u/photo_1.png", "thumb", 400)
+        == "uploads/u/photo_1__thumb_400.png"
+    )
+    assert (
+        image_variants.variant_object_name("uploads/u/photo_1.WEBP", "medium", 1080)
+        == "uploads/u/photo_1__medium_1080.webp"
+    )

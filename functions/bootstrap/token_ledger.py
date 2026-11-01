@@ -347,17 +347,21 @@ def live_model_id(inference: bool | None = None) -> str:
 PROVIDER_VERTEX = "google_vertex"
 PROVIDER_DEV_API = "google_dev_api"
 PROVIDER_LIVEKIT_INFERENCE = "livekit_inference"
+PROVIDER_META = "meta"
 
 
 def provider_for(feature: str, model: str | None = None) -> str:
     """Which backend billed a recorded call — the ``provider`` field on
     ``spend_events`` docs and the ``token_usage.providers`` buckets. Inference
-    model ids are provider-prefixed (``google/...``); otherwise voice follows
+    model ids are provider-prefixed (``google/...``); Meta Muse Spark ids
+    (any id containing ``muse-spark``) bill to Meta; otherwise voice follows
     ``GEMINI_LIVE_USE_DEV_API`` and every other call is Vertex. Rows written
     before this field existed have no ``provider`` (readers treat that as
     ``google``)."""
     if (model or "").startswith("google/"):
         return PROVIDER_LIVEKIT_INFERENCE
+    if "muse-spark" in (model or "").lower():
+        return PROVIDER_META
     if feature == FEATURE_VOICE and CONFIG.gemini_live_use_dev_api:
         return PROVIDER_DEV_API
     return PROVIDER_VERTEX
