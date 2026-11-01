@@ -63,6 +63,11 @@ file per sweep — never overwrite a previous sweep.
   (privacy/PII extraction, auth, consent/18+, abuse/jailbreak, injection,
   payment/entitlement gating); never trim it to save space.
 
+`docs/testing/PROGRESS.md` is a living build-over-build matrix (one row per test,
+one column per build, cells 🟢/🔴/🟡/⚪). Each new build adds a right-hand column;
+the tester owns the dots, and `PROGRESS.md` is committed alongside the per-sweep
+files whenever a sweep lands.
+
 This mirrors the **Standard Emulator Test Pack** (Astro's pack): the pack carries
 the same convention so each run it produces maps to exactly one repo sweep file +
 folder. See `docs/testing/README.md`.

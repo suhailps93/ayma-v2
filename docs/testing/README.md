@@ -43,5 +43,12 @@ For each sweep:
   abuse & jailbreak, prompt injection, and payment/entitlement gating all stay in
   every sweep.
 
+## PROGRESS.md — the build-over-build matrix
+
+`PROGRESS.md` is a living matrix: one row per test, one column per build, cells
+🟢/🔴/🟡/⚪, so the founder can watch progress build over build. Each new build
+adds a new right-hand column (never delete an old one). The tester owns the dots;
+commit `PROGRESS.md` **alongside** the per-sweep files whenever a sweep lands.
+
 See `docs/agents/WORKFLOW.md` → "Testing sweep documentation" for the rule, and
 `_TEMPLATE.md` here for a starting skeleton.
