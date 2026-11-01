@@ -193,6 +193,14 @@ class DmService {
     return threads;
   }
 
+  /// One-shot top-[limit] threads, newest first — the idle tab warm-up's
+  /// conversation snapshot (design §4.2). Same query as [watchThreads].
+  Future<List<DmThread>> fetchActiveThreads({int limit = 25}) async {
+    final me = uid;
+    final snap = await _threadsQuery(limit: limit).get();
+    return _mapThreads(snap, me);
+  }
+
   /// Total unread DM messages across ALL visible threads (nav-bar badge).
   /// Deliberately unbounded: the badge must count threads past the §3.2.1
   /// top-25 listener tier too.

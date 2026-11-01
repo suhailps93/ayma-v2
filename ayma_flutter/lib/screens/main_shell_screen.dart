@@ -8,6 +8,7 @@ import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
 import '../services/chat_inbox.dart';
 import '../services/tab_request.dart';
+import '../services/tab_prefetch_coordinator.dart';
 import '../services/tour_anchors.dart';
 import '../services/tour_content.dart';
 import '../services/tour_controller.dart';
@@ -275,6 +276,10 @@ class _MainShellScreenState extends State<MainShellScreen>
     // the shell building, and never shows at sign-in or before pre-boarding —
     // only a signed-in user who has reached their own chat lands here.
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowFeatureTour());
+    // Idle tab warm-up (Phase 2 pagination design §4.2): prefetch Explore
+    // page 1 + conversation minis after the first frame settles, so those
+    // tabs paint instantly on first visit. Best-effort; never before FCP.
+    TabPrefetchCoordinator.instance.scheduleIdleWarmup();
   }
 
   /// Decides whether to auto-show the tour and in which mode, from the

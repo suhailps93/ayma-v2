@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/paged_fresh_data.dart';
+import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/ayma_photo.dart';
@@ -144,6 +145,26 @@ class ExploreScreenState extends State<ExploreScreen> {
           : _loadInitial();
 
   Future<void> _loadInitial() async {
+    // Idle warm-up hit (design §4.2): paint page 1 instantly, then fall
+    // through to the background revalidation below. Only for the default
+    // (unsearched) feed the warm-up fetched.
+    if (!_feed.hasData && _searchController.text.trim().isEmpty) {
+      final warm = TabPrefetchCoordinator.instance.takeExplorePage();
+      if (warm != null) {
+        _seenUids
+          ..clear()
+          ..addAll(warm.cards.map((c) => c.uid));
+        setState(() {
+          _feed = PagedFreshData<ExploreCard>(
+            items: List.of(warm.cards),
+            nextCursor: warm.nextCursor,
+            hasMore: warm.hasMore,
+          );
+        });
+        _syncContext();
+        _prefetchVisiblePhotos(warm.cards);
+      }
+    }
     setState(() {
       _feed = _feed.copyWith(refreshing: true, clearError: true);
     });

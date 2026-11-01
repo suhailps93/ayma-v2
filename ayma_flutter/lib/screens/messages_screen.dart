@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/dm_service.dart';
 import '../services/match_service.dart';
+import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
@@ -60,6 +61,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     // Belt-and-braces with the tab shell, which also sets this on tab change /
     // pop-back — but a lazily-built tab's first appearance is its own event.
     AppContext.instance.set(screen: 'messages');
+    _mini.addAll(TabPrefetchCoordinator.instance.takeMiniProfiles());
     _scrollController.addListener(_onScroll);
   }
 
