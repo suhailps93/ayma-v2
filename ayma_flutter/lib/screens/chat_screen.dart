@@ -32,6 +32,7 @@ import '../widgets/face_report_view.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/markdown_text.dart';
+import '../widgets/message_timestamp.dart';
 import '../widgets/ayma_quiet_chip.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
@@ -2443,6 +2444,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 );
                               }
                               final t = turns[idx];
+                              final prev = idx > 0 ? turns[idx - 1] : null;
+                              final showDivider = shouldShowDateDivider(
+                                prev?.createdAt,
+                                t.createdAt,
+                              );
                               final line = _TranscriptLine(
                                 key: _turnKeys.putIfAbsent(t, () => GlobalKey()),
                                 turn: t,
@@ -2462,17 +2468,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               // A one-time landing spot from a "Why Ayma believes
                               // this" source tap — same soft tint the tool-use
                               // kicker chip above an Ayma line already uses.
-                              if (!identical(t, _highlightedTurn)) return line;
-                              return AnimatedContainer(
-                                duration: const Duration(milliseconds: 300),
-                                margin: const EdgeInsets.symmetric(vertical: 2),
-                                padding: const EdgeInsets.symmetric(horizontal: 6),
-                                decoration: BoxDecoration(
-                                  color: ac.accentFaint,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: line,
-                              );
+                              final highlightedLine =
+                                  identical(t, _highlightedTurn)
+                                      ? AnimatedContainer(
+                                          duration:
+                                              const Duration(milliseconds: 300),
+                                          margin: const EdgeInsets.symmetric(
+                                              vertical: 2),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6),
+                                          decoration: BoxDecoration(
+                                            color: ac.accentFaint,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: line,
+                                        )
+                                      : line;
+                              if (showDivider) {
+                                return Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    DateDividerChip(date: t.createdAt!),
+                                    highlightedLine,
+                                  ],
+                                );
+                              }
+                              return highlightedLine;
                             },
                           ),
                         ),
@@ -2869,6 +2893,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     final isAyma = turn.role == TurnRole.ayma;
     final hasImage = turn.imageUrl != null || turn.imageFile != null;
     final width = MediaQuery.of(context).size.width;
+    final timeStr = turn.createdAt != null
+        ? formatMessageTime(turn.createdAt!)
+        : null;
 
     if (!isAyma) {
       // You — a right-aligned rounded bubble (Gemini style).
@@ -2911,11 +2938,38 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                         bottomRight: Radius.circular(4),
                       ),
                     ),
-                    child: Text(
-                      turn.text,
-                      style: AymaType.message(color: ac.onAccent),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          turn.text,
+                          style: AymaType.message(color: ac.onAccent),
+                        ),
+                        if (timeStr != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            timeStr,
+                            style: AymaType.sans(
+                              size: 10.5,
+                              color: ac.onAccent.withValues(alpha: 0.72),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
+                  ),
+                if (turn.text.isEmpty && timeStr != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2, right: 4),
+                    child: Text(
+                      timeStr,
+                      style: AymaType.sans(
+                        size: 10.5,
+                        color: ac.fgMute,
+                      ),
+                    ),
                   ),
               ],
             ),
@@ -3055,37 +3109,55 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   api: widget.api,
                 ),
               ),
-            if (widget.onThumbsDown != null)
+            if (widget.onThumbsDown != null ||
+                (turn.isFinal && timeStr != null))
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: InkWell(
-                  onTap: _flagged ? null : _thumbsDown,
-                  borderRadius: BorderRadius.circular(6),
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _flagged
-                              ? Icons.thumb_down_alt
-                              : Icons.thumb_down_alt_outlined,
-                          size: 13,
-                          color: _flagged ? ac.accent : ac.fgMute,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (turn.isFinal && timeStr != null) ...[
+                      Text(
+                        timeStr,
+                        style: AymaType.sans(
+                          size: 10.5,
+                          color: ac.fgMute,
                         ),
-                        if (_flagged) ...[
-                          const SizedBox(width: 6),
-                          Text(
-                            'noted',
-                            style: AymaType.mono(
-                              size: 8,
-                              color: ac.fgMute,
-                            ).copyWith(letterSpacing: 1.5),
+                      ),
+                      if (widget.onThumbsDown != null)
+                        const SizedBox(width: 8),
+                    ],
+                    if (widget.onThumbsDown != null)
+                      InkWell(
+                        onTap: _flagged ? null : _thumbsDown,
+                        borderRadius: BorderRadius.circular(6),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _flagged
+                                    ? Icons.thumb_down_alt
+                                    : Icons.thumb_down_alt_outlined,
+                                size: 13,
+                                color: _flagged ? ac.accent : ac.fgMute,
+                              ),
+                              if (_flagged) ...[
+                                const SizedBox(width: 6),
+                                Text(
+                                  'noted',
+                                  style: AymaType.mono(
+                                    size: 8,
+                                    color: ac.fgMute,
+                                  ).copyWith(letterSpacing: 1.5),
+                                ),
+                              ],
+                            ],
                           ),
-                        ],
-                      ],
-                    ),
-                  ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
           ],

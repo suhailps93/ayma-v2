@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/widgets/message_timestamp.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -691,4 +692,89 @@ void main() {
     expect(pushed, ['a']);
     expect(find.text('PROFILE PAGE'), findsOneWidget);
   });
+
+  testWidgets(
+    'renders WhatsApp-style time labels and date divider chips between days',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+        ),
+      );
+      await tester.pump();
+
+      // Message 1 on 2026-10-30 09:41 AM (Yesterday)
+      // Message 2 on 2026-10-31 01:15 PM (Today)
+      final d1 = DateTime(2026, 10, 30, 9, 41);
+      final d2 = DateTime(2026, 10, 31, 13, 15);
+
+      ctrl.add([
+        DmMessage(
+          id: '1',
+          senderUid: 'a',
+          type: 'text',
+          body: 'Morning from yesterday',
+          createdAt: d1,
+        ),
+        DmMessage(
+          id: '2',
+          senderUid: 'me',
+          type: 'text',
+          body: 'Afternoon today',
+          createdAt: d2,
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      // Messages rendered
+      expect(find.text('Morning from yesterday'), findsOneWidget);
+      expect(find.text('Afternoon today'), findsOneWidget);
+
+      // Time labels rendered WhatsApp-style
+      expect(find.text('9:41 AM'), findsOneWidget);
+      expect(find.text('1:15 PM'), findsOneWidget);
+
+      // Date divider chips rendered for both days
+      // (Using DateDividerChip widgets)
+      expect(find.byType(DateDividerChip), findsNWidgets(2));
+    },
+  );
+
+  testWidgets(
+    'gracefully handles messages without timestamps (null createdAt)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+        ),
+      );
+      await tester.pump();
+
+      ctrl.add([
+        const DmMessage(
+          id: 'undated-1',
+          senderUid: 'a',
+          type: 'text',
+          body: 'No timestamp message',
+          createdAt: null,
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(find.text('No timestamp message'), findsOneWidget);
+      expect(find.byType(DateDividerChip), findsNothing);
+    },
+  );
 }

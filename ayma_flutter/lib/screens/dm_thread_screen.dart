@@ -19,6 +19,7 @@ import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/image_viewer.dart';
 import '../widgets/keyboard_dismiss.dart';
+import '../widgets/message_timestamp.dart';
 import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
@@ -428,7 +429,22 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                   itemCount: msgs.length,
                   itemBuilder: (context, i) {
                     final m = msgs[msgs.length - 1 - i];
+                    final prev = (msgs.length - 1 - i > 0)
+                        ? msgs[msgs.length - 1 - i - 1]
+                        : null;
+                    final showDivider =
+                        shouldShowDateDivider(prev?.createdAt, m.createdAt);
                     final bubble = _Bubble(message: m, mine: m.senderUid == me);
+                    final content = showDivider
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              DateDividerChip(date: m.createdAt!),
+                              bubble,
+                            ],
+                          )
+                        : bubble;
                     return FadeSlideIn(
                       key: ValueKey(m.id),
                       delay: staggerDelay(i),
@@ -436,8 +452,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                       // Ayma's screen context carries only the newest few
                       // messages of a private conversation.
                       child: i < _kContextMessages
-                          ? bubble
-                          : NoScreenContext(child: bubble),
+                          ? content
+                          : NoScreenContext(child: content),
                     );
                   },
                 );
@@ -836,6 +852,9 @@ class _Bubble extends StatelessWidget {
   }) {
     final ac = context.ac;
     final flagged = message.moderated;
+    final timeStr = message.createdAt != null
+        ? formatMessageTime(message.createdAt!)
+        : null;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: CopyOnLongPress(
@@ -861,31 +880,49 @@ class _Bubble extends StatelessWidget {
             width: flagged ? 1.25 : 0.5,
           ),
         ),
-        child: flagged
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (flagged) ...[
+              Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.flag_rounded, size: 14, color: ac.error),
-                      const SizedBox(width: 5),
-                      Text(
-                        'Flagged for review',
-                        style: AymaType.sans(
-                          size: 11,
-                          color: ac.error,
-                          weight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                  Icon(Icons.flag_rounded, size: 14, color: ac.error),
+                  const SizedBox(width: 5),
+                  Text(
+                    'Flagged for review',
+                    style: AymaType.sans(
+                      size: 11,
+                      color: ac.error,
+                      weight: FontWeight.w600,
+                    ),
                   ),
-                  const SizedBox(height: 6),
-                  child,
                 ],
-              )
-            : child,
+              ),
+              const SizedBox(height: 6),
+            ],
+            child,
+            if (timeStr != null) ...[
+              const SizedBox(height: 2),
+              Padding(
+                padding: EdgeInsets.only(
+                  right: tight ? 4 : 0,
+                  bottom: tight ? 2 : 0,
+                ),
+                child: Text(
+                  timeStr,
+                  style: AymaType.sans(
+                    size: 10.5,
+                    color: (mine && !flagged)
+                        ? ac.onAccent.withValues(alpha: 0.72)
+                        : ac.fgMute,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
       ),
     );
