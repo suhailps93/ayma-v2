@@ -5102,6 +5102,13 @@ async def storage_image_finalized(request: Request) -> dict[str, object]:
     except Exception as exc:  # noqa: BLE001
         logger.exception("image variant generation failed")
         raise HTTPException(status_code=500, detail="Variant failed.") from exc
+    logger.info(
+        "image variants push: %s %s -> %s (%s)",
+        result.get("bucket"),
+        result.get("object"),
+        result.get("status"),
+        result.get("reason", result.get("variants", "")),
+    )
     return result
 
 
@@ -7032,6 +7039,13 @@ async def cron_image_variants_backfill(
         }
 
     try:
-        return await asyncio.to_thread(_sweep)
+        outcome = await asyncio.to_thread(_sweep)
     except image_variants.TransientError as exc:
         raise HTTPException(status_code=500, detail="Transient failure.") from exc
+    logger.info(
+        "image variants backfill: bucket=%s prefix=%s -> %s",
+        CONFIG.storage_bucket,
+        prefix,
+        {k: outcome[k] for k in ("scanned", "processed", "skipped", "failed_count")},
+    )
+    return outcome
