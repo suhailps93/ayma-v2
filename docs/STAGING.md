@@ -46,6 +46,7 @@ revision fails to start.
 | `GOOGLE_IMPORT_CLIENT_ID` | same OAuth client id | Shared (public value, same as prod) |
 | `CONTEXT_OPT_LEVEL`, `CONTEXT_OPT_MEASURE` | `3`, `true` | Shared (same as prod) |
 | `GEMINI_LIVE_USE_DEV_API` (agent) | `true` | Shared (same as prod) |
+| `OPEN_WEIGHTS_BASE_URL` (api) | Modal `…/v1` endpoint | **Staging-only** — wires the open-weights cheap path (hackathon); routes **nothing** on its own (a surface reaches it only when its `LLM_PROVIDER_*` flag is `open-weights`; default stays `gemini`). Credit-guarded — see `scripts/modal_open_weights.py` |
 
 Model ids / voices / Vertex locations stay locked in
 `functions/bootstrap/config.py` — never env vars, same as prod. `LLM_PROVIDER`
@@ -62,9 +63,16 @@ on prod — the prod scripts don't set them either.
   Good enough for a deploy smoke test; do not run destructive tests this way.
 - **Preferred: separate staging Firebase project** (pass `--firebase-project`).
   Then also: deploy firestore rules/indexes to it, and grant the Cloud Run
-  runtime service account datastore + storage access in that project.
-  `firebase_admin` picks the project up from `GOOGLE_CLOUD_PROJECT` via ADC —
-  verify with a write/read probe on first deploy (see handoff note).
+  runtime service account (`235381544962-compute@developer.gserviceaccount.com`,
+  the same prod default compute SA) access in that project — it has **none** by
+  default, so cross-project grants are required or every call is
+  `PERMISSION_DENIED`. Roles granted for `ayma-staging`: `roles/datastore.user`
+  (Firestore), `roles/storage.admin` (uploads bucket) and `roles/aiplatform.user`
+  (Vertex Gemini runs under `GOOGLE_CLOUD_PROJECT`, so inference bills + auths in
+  the data project). `firebase_admin` picks the project up from
+  `GOOGLE_CLOUD_PROJECT` via ADC — verified 2026-11-01 with a service-mediated
+  write probe (`POST /brain/preference` as demo-test1): the write landed in
+  `ayma-staging` and prod `ayma-ai` was untouched.
 - **Not staged (deliberately):** Cloud Scheduler jobs (no staging cron jobs —
   trigger `/cron/*` manually with the staging secret), Firebase Hosting
   rewrites, `justabot.info` domain mapping, RevenueCat production webhook.

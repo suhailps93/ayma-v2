@@ -86,7 +86,13 @@ STORAGE_BUCKET="${DATA_PROJECT}.firebasestorage.app"
 # STORAGE_BUCKET, ayma-staging- LiveKit room prefix, staging Sentry
 # environment tag. AYMA_AGENT_URL + GOOGLE_IMPORT_REDIRECT_URI are resolved
 # after the first deploy (pass 2) since Cloud Run assigns the URL hashes.
-API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging"
+# OPEN_WEIGHTS_BASE_URL wires the Modal-hosted open-weights cheap path (L4 vLLM,
+# OpenAI-compatible `/v1`, Llama-3.1-8B under META_OPEN_WEIGHTS_MODEL). Non-secret
+# endpoint only — it does NOT route any traffic on its own: a surface reaches it
+# solely when its LLM_PROVIDER_* flag is `open-weights` (prod/staging default stays
+# gemini), so wiring it here just makes the hackathon surface available behind flags.
+OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal.run/v1"
+API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL}"
 AGENT_ENV_BASE="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging"
 
 # Same env names as prod, staging-only values where it matters — see docs/STAGING.md.
