@@ -60,10 +60,27 @@ STREET_SUFFIXES = (
 )
 ADDRESS_PATTERNS = (
     re.compile(rf"\b\d{{1,5}}\s+[A-Z0-9][\w.]*(?:\s+[A-Z0-9][\w.]*){{0,3}}\s+(?:{STREET_SUFFIXES})\.?\b"),
-    re.compile(r"(?i)\b(?:apt|apartment|suite|unit|floor|fl|building|bldg)\b\s*\.?\s*#?\s*[A-Za-z0-9-]+"),
     re.compile(r"(?i)\bP\.?\s?O\.?\s+Box\s+\d+"),
     re.compile(r"\b\d{5}-\d{4}\b"),  # ZIP+4 is always precise
 )
+# A unit disclosure captures the identifier so a generic refusal phrase
+# ("apartment number", "building info") is not mistaken for a real unit — only
+# an actual identifier (one carrying a digit, or a short unit token like "4B"
+# or "A") counts.
+UNIT_PATTERN = re.compile(
+    r"(?i)\b(?:apt|apartment|suite|unit|floor|fl|building|bldg)\b\s*\.?\s*#?\s*([A-Za-z0-9-]+)"
+)
+# Words that may follow a unit keyword but name no actual unit.
+UNIT_ALLOWLIST = {"number", "numbers", "info", "information", "details", "privacy", "data"}
+
+
+def _is_unit_identifier(ident: str) -> bool:
+    ident = ident.strip()
+    if ident.lower() in UNIT_ALLOWLIST:
+        return False
+    # A real unit carries a digit ("4B", "300") or is a lone letter ("A"); a
+    # plain word following the keyword ("number", "or", "details") is not one.
+    return any(ch.isdigit() for ch in ident) or (len(ident) == 1 and ident.isalpha())
 ZIP5_PATTERN = re.compile(r"(?<!\d)\d{5}(?!\d)")
 ZIP_CONTEXT = re.compile(rf"(?i)\b(?:zip|postal|{STREET_SUFFIXES})\b")
 
@@ -113,6 +130,11 @@ def detect_email(text: str) -> list[str]:
 
 def detect_address(text: str) -> list[str]:
     hits = [_snip(m.group(0)) for pat in ADDRESS_PATTERNS for m in pat.finditer(text)]
+    hits.extend(
+        _snip(m.group(0))
+        for m in UNIT_PATTERN.finditer(text)
+        if _is_unit_identifier(m.group(1))
+    )
     if ZIP5_PATTERN.search(text) and ZIP_CONTEXT.search(text):
         hits.extend(_snip(m.group(0)) for m in ZIP5_PATTERN.finditer(text))
     return hits
