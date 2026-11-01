@@ -122,6 +122,16 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
       apiClient: api,
       voiceController: LayoutFakeVoice(),
     ),
+    // The sign-in screen's taller create-account variant (email stage,
+    // confirm-password + referral fields shown) — a failed sign-in drops the
+    // user here, so its layout must hold at every matrix size too. A synthetic
+    // target, not an appRouter path.
+    'signin (create account)': () => SignInScreen(
+      auth: AuthService(auth: kLayoutAuth, profileService: profiles),
+      apiClient: api,
+      voiceController: LayoutFakeVoice(),
+      startInCreateAccountMode: true,
+    ),
     PreboardingFlowScreen.path: () => shell(
       PreboardingFlowScreen(profileService: profiles, apiClient: api),
     ),
