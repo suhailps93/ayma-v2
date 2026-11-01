@@ -1,6 +1,6 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-10-31. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-11-01. Update this file whenever an item changes; commit and push to main.
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
@@ -19,6 +19,12 @@ Two small backend changes (`functions/bootstrap`), staging-first, branch NOT mer
 - **Tests (`sign_in_screen_test.dart`):** replaced the now-outdated "error codes map to messages" test with: (a) a failed `invalid-credential` sign-in auto-switches to create mode (confirm field + nudge + back-to-login toggle, typed values kept, no raw code leak); `user-not-found` does the same; (b) `email-already-in-use` on the subsequent create returns to sign-in with the "check your password" nudge; a non-steering code (`too-many-requests`) still falls through to the plain toast with no mode switch. The existing mode-switch test covers (c) the toggle moving between modes.
 - **Layout matrix:** added a synthetic `signin (create account)` target (new injectable `SignInScreen.startInCreateAccountMode` flag — test/matrix seam, defaults false) so the taller create variant (confirm + referral fields) is pumped at every matrix size; stays green.
 - Docs: this entry. No ARCHITECTURE change (no documented sign-in error-contract to amend). **Flutter-only, no deploy — rides the next build. Branch off staging, NOT merged — lead engineer reviews + merges + rebuilds.**
+## Prod → staging 1:1 data sync (chore/prod-to-staging-sync off staging, 2026-11-01) — DONE, lead engineer reviews + merges
+- **What:** `scripts/sync-prod-to-staging.sh` — STRICTLY ONE-WAY copy + nightly sync of prod (`ayma-ai`) data into the staging data project (`ayma-staging`): Firestore (export→import, additive overwrite-by-path), Storage (`gsutil rsync` prod→staging, additive, no `-d`), Auth users (`auth:export`→`auth:import` with prod's SCRYPT hash params read live, passwords preserved). Founder decision 2026-11-01: Full 1:1 copy incl. real PII + biometrics. See `docs/STAGING.md` "Prod → staging 1:1 data sync".
+- **Guardrails:** prod is read-only (only `firestore export`, `rsync` SOURCE, `auth:export`); every destructive call asserts the dest resolves to `ayma-staging` and aborts on any `ayma-ai` target; resolved SOURCE/DEST echoed each run; signer key never hardcoded (fetched at runtime, redacted in logs).
+- **Cadence:** nightly 02:00 via cron + `flock`; logs to `~/workspace/ayma-inbox/prod-sync.log`. Install instructions in `docs/STAGING.md`. Do not raise frequency without asking the founder.
+- **One-time copy done 2026-11-01** (dry-run first, then `--execute`). Verified: staging before/after user counts, a known prod uid now present in staging, prod `ayma-ai` unchanged (all prod ops read-only), a copied Storage object spot-checked. **Branch off staging, pushed, NOT merged — lead engineer reviews.**
+- **Privacy note:** staging now holds real production PII + face-biometric data by design; treat `ayma-staging` with prod-grade access discipline.
 
 ## GATE-RED — Ayma chat "red block" on a history-load failure (fix/gate-red-chat-error off staging, 2026-11-01) — DONE, lead engineer reviews + merges
 - **Symptom (Scout, build 2109665, 2/2 on relaunch whenever `/chat/history` load failed):** the Ayma chat tab rendered a giant solid red `ErrorWidget` block; logs showed framework assertions `framework.dart:7243` (`_children.contains(child)` in `MultiChildRenderObjectElement.forgetChild`) and `framework.dart:2170` (`_elements.contains(element)` in `_InactiveElements.remove`) — the classic GlobalKey-in-a-multi-child reconciliation corruption.

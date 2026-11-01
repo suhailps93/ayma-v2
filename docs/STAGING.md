@@ -110,3 +110,83 @@ error block — before it is offered to the founder. No exceptions.**
 - **Not staged (deliberately):** Cloud Scheduler jobs (no staging cron jobs —
   trigger `/cron/*` manually with the staging secret), Firebase Hosting
   rewrites, `justabot.info` domain mapping, RevenueCat production webhook.
+
+## Prod → staging 1:1 data sync
+
+`scripts/sync-prod-to-staging.sh` copies a **full 1:1 snapshot of production
+(`ayma-ai`) into the staging data project (`ayma-staging`)** so staging holds
+real accounts, profiles, conversations, photos and biometric data. Founder
+decision 2026-11-01: a Full 1:1 copy.
+
+> **⚠️ PRIVACY — read before touching this.** This pipeline **intentionally
+> replicates real-user PII and biometric data** (profiles, conversations,
+> uploaded photos, and the `verification/` face-biometric objects) into staging.
+> That is the founder's explicit decision (2026-11-01), not an accident. Treat
+> `ayma-staging` as holding production PII: same access discipline as prod, no
+> wider sharing, no exports off these two projects.
+
+### What it copies (three planes)
+
+| Plane | Source (read-only) | Dest (writes) | Mechanism |
+|---|---|---|---|
+| **Firestore** | `ayma-ai` (default db) | `ayma-staging` (default db) | `gcloud firestore export` → staging-owned bucket → `gcloud firestore import`. Import is **overwrite-by-document-path (additive)** — any path present only in staging (e.g. staging-only `demo-*` / `demo-edge-*` docs absent from prod) is **left untouched**. |
+| **Storage** | `gs://ayma-ai.firebasestorage.app` | `gs://ayma-staging.firebasestorage.app` | `gsutil -m rsync -r` (SOURCE → DEST). **No `-d`**, so the rsync is additive and never deletes staging-only objects. |
+| **Auth users** | `ayma-ai` | `ayma-staging` | `firebase auth:export` → `firebase auth:import` with prod's **SCRYPT** hash params (algo/signer-key/salt-separator/rounds/mem-cost) read live from prod's Identity Platform config, so real passwords keep working. Import **upserts by uid**. |
+
+The Firestore export lands in a dedicated **staging-owned** bucket
+`gs://ayma-staging-prod-sync` (project `ayma-staging`, `us-central1`, 14-day
+lifecycle) — prod's export data never lands in a prod bucket. The script
+creates that bucket on first run and grants both projects' Firestore service
+agents (`service-235381544962@…` prod, `service-187469876115@…` staging)
+`roles/storage.admin` on it (IAM writes are on the staging bucket only).
+
+### One-way guardrails (ironclad)
+
+This pipeline is **one-way, prod → staging, ONLY.** It never runs an
+import/write/rsync whose target is `ayma-ai` or `gs://ayma-ai*`. The only prod
+operations are read-only: `firestore export`, `gsutil rsync` with prod as
+SOURCE, and `auth:export`. The script:
+
+- hardcodes `SRC_PROJECT=ayma-ai` (read-only) and `DEST_PROJECT=ayma-staging`
+  (the only write target) as `readonly` constants;
+- runs `assert_dest_is_staging` at startup **and** immediately before every
+  destructive gcloud/gsutil/firebase call — it aborts (`FATAL`) if any
+  write/import/dest/export target resolves to `*ayma-ai*`, or to anything that
+  is not `*ayma-staging*`;
+- echoes the resolved SOURCE and DEST at the top of every run.
+
+The password **signer key is never hardcoded** (AGENTS.md rule) — it is fetched
+at runtime from prod's Identity Platform config and redacted in all logs.
+
+### Cadence
+
+Runs **nightly at 02:00 local** via cron on this machine, serialized with
+`flock` so a long run never overlaps the next, with output appended to
+`~/workspace/ayma-inbox/prod-sync.log`. The installed `crontab -l` entry is:
+
+    # Ayma prod->staging 1:1 data sync — nightly 02:00, one-way, flock-guarded (docs/STAGING.md)
+    0 2 * * * /usr/bin/flock -n /tmp/ayma-prod-sync.lock /bin/bash -c '[ -x /home/suhailps/workspace/ayma/scripts/sync-prod-to-staging.sh ] && /home/suhailps/workspace/ayma/scripts/sync-prod-to-staging.sh --execute || echo "[$(date -u +\%Y-\%m-\%dT\%H:\%M:\%SZ)] prod-sync skipped: script not yet merged to canonical path"' >> /home/suhailps/workspace/ayma-inbox/prod-sync.log 2>&1
+
+The `[ -x … ]` guard makes the job a **clean no-op until this branch is merged**
+and the script reaches the canonical `scripts/` path — so the nightly cron does
+not run the unreviewed script against real PII before the lead engineer merges
+it. It auto-activates the first night after merge; no cron edit is needed then.
+
+Do **not** raise the frequency above nightly without asking the founder.
+(A Cloud Scheduler job is an alternative, but cron-on-this-machine is simpler
+and keeps the one-way logic in one audited script.)
+
+### How to run manually
+
+    # DRY-RUN first (no writes; shows resolved SOURCE/DEST + what would copy):
+    scripts/sync-prod-to-staging.sh --dry-run
+
+    # Execute the real sync (idempotent, safe to re-run):
+    scripts/sync-prod-to-staging.sh --execute
+
+    # Limit to one plane while debugging:
+    scripts/sync-prod-to-staging.sh --execute --skip-storage --skip-auth
+
+Prerequisites: `gcloud`/`gsutil`/`firebase` authenticated as a principal with
+read on `ayma-ai` and write on `ayma-staging`, and ADC quota project set (the
+script sets `GOOGLE_CLOUD_QUOTA_PROJECT` per firebase call automatically).
