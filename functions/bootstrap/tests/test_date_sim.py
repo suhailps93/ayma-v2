@@ -461,6 +461,68 @@ def test_each_turn_is_written_the_moment_it_is_produced():
     assert [m["speaker"] for m in msgs] == ["you", "them", "you", "them"]
 
 
+def test_finalize_writes_completed_at_other_uid_thread_id_and_notifies(monkeypatch):
+    """R2-H6: a completed sim is RE-OPENABLE — it records what it needs to be
+    found again (``other_uid`` + ``completed_at`` for the latest-per-candidate
+    lookup, ``thread_id`` so "message for real" still works on reopen) and fires
+    a completion notification deep-linking back to THIS sim."""
+    db = _seeded_db()
+    _fake_personas()
+    fired: list[tuple] = []
+
+    async def fake_notify(db_, uid, name, sim_id, other_uid, score):
+        fired.append((uid, name, sim_id, other_uid, score))
+
+    monkeypatch.setattr(
+        date_sim.notifications_triggers, "notify_date_sim_done", fake_notify
+    )
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_notif_1"))
+    finally:
+        practice_llm.clear_override()
+
+    parent, _ = _sim_docs(db, "sim_notif_1")
+    assert parent["status"] == "done"
+    assert parent["completed_at"] is not None  # newest-by lookup field
+    assert parent["other_uid"] == MAYA  # which candidate it belongs to
+    assert parent["thread_id"]  # DM pair id persisted for reopen
+    assert "finished_at" not in parent  # renamed, no stale duplicate left
+
+    # Exactly one completion notification, carrying the reopen coordinates.
+    assert len(fired) == 1
+    uid, name, sim_id, other_uid, score = fired[0]
+    assert uid == VIEWER
+    assert sim_id == "sim_notif_1"
+    assert other_uid == MAYA
+    assert score == 78  # the verdict score (from _fake_personas)
+
+
+def test_date_sim_notification_deep_link_reopens_the_sim():
+    """The completion trigger writes a centre entry whose deep link carries the
+    match uid + sim id so a tap reopens that exact simulation."""
+    import asyncio as _asyncio
+
+    import notifications_triggers
+    from notifications_schema import NOTIF_SKILL_DONE
+
+    db = _seeded_db()
+    _asyncio.run(
+        notifications_triggers.notify_date_sim_done(
+            db, VIEWER, "Maya", "sim_xyz", MAYA, 83
+        )
+    )
+    notes = [
+        n.to_dict()
+        for n in db.collection("users").document(VIEWER)
+        .collection("notifications").stream()
+    ]
+    assert len(notes) == 1
+    note = notes[0]
+    assert note["type"] == NOTIF_SKILL_DONE
+    assert note["deep_link"] == f"date_sim/{MAYA}/sim_xyz"
+    assert "Maya" in note["body"] and "83/100" in note["body"]
+
+
 def test_failure_marks_error_and_keeps_partial_transcript():
     db = _seeded_db()
     calls = {"n": 0}

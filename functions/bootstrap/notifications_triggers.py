@@ -179,6 +179,38 @@ async def notify_skill_done(
         logger.exception("skill-done notification failed for %s", uid)
 
 
+async def notify_date_sim_done(
+    db, uid: str, name: str, sim_id: str, other_uid: str, score: int,
+) -> None:
+    """Tell the user their AI Date Simulation finished server-side, deep-linking
+    so a tap REOPENS that exact sim (``date_sim/{other_uid}/{sim_id}`` — the sim
+    lives under the recipient's own uid, so the link carries the match's uid for
+    the screen header + the sim id to watch). Reuses the ``skill_result`` type
+    (same as the match report) with a sim-specific preview; deduped per sim so a
+    continuation resurfaces one rolling entry with the refreshed score rather
+    than stacking a new row. Best-effort."""
+    if not uid or not sim_id or not other_uid:
+        return
+    who = name.strip() or "them"
+    preview = (
+        f"Your simulated date with {who} is ready — {score}/100."
+        if score > 0
+        else f"Your simulated date with {who} is ready."
+    )
+    try:
+        await dispatch(
+            db,
+            uid,
+            NOTIF_SKILL_DONE,
+            fixed_preview=preview,
+            deep_link=f"date_sim/{other_uid}/{sim_id}",
+            actor_uid=other_uid,
+            dedup_id=f"date_sim_{sim_id}",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("date-sim notification failed for %s", uid)
+
+
 # One stable centre-doc id for the public-profile-update entry, so two ingests
 # finishing at once (chat-turn + voice, say) can't stack two identical "Ayma
 # suggests 1 update…" rows (founder bug 2026-10-27): concurrent writers land
