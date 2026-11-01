@@ -50,5 +50,15 @@ For each sweep:
 adds a new right-hand column (never delete an old one). The tester owns the dots;
 commit `PROGRESS.md` **alongside** the per-sweep files whenever a sweep lands.
 
+## progress.html — the interactive view
+
+`progress.html` is the clickable version of the same matrix: **click a result
+dot** to see exactly what happened on that build (expected / actual / evidence /
+screenshot), and **click a test name** to read what it checks. It's a single
+self-contained file — the tester edits the `DATA` JSON block at the bottom
+(`status` = `pass|fail|partial|na`; add `expected/actual/evidence/screenshot` on
+a fail). Open it locally, or view the published copy (republish after editing the
+data to refresh the live link).
+
 See `docs/agents/WORKFLOW.md` → "Testing sweep documentation" for the rule, and
 `_TEMPLATE.md` here for a starting skeleton.
