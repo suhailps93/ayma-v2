@@ -93,6 +93,14 @@ STORAGE_BUCKET="${DATA_PROJECT}.firebasestorage.app"
 # gemini), so wiring it here just makes the hackathon surface available behind flags.
 OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal.run/v1"
 API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL}"
+
+# Cloud image variants (Perf Phase 2 PREP chunk A, staging-only): enabled ONLY
+# when the staging data plane is the staging Firebase project. A staging
+# deploy sharing prod data (no --firebase-project) must never generate
+# variants into the prod bucket, so the flag stays unset there (fail closed).
+if [[ "$DATA_PROJECT" == "ayma-staging" ]]; then
+  API_ENV_BASE="${API_ENV_BASE},IMAGE_VARIANTS_ENABLED=true,IMAGE_VARIANTS_PUSH_SA=pubsub-push-invoker@ayma-staging.iam.gserviceaccount.com"
+fi
 AGENT_ENV_BASE="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging"
 
 # Same env names as prod, staging-only values where it matters — see docs/STAGING.md.

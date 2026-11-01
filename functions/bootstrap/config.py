@@ -1004,6 +1004,18 @@ class Config:
     tell the user when a model cannot change accent (§13.9). Lowercase.
     ``VOICE_ACCENT_CAPABLE_PROVIDERS`` (CSV, lowercase) overrides."""
 
+    image_variants_enabled: bool
+    """Cloud profile-photo variants (Perf Phase 2 PREP, ``image_variants``).
+    ``IMAGE_VARIANTS_ENABLED`` — set to ``true`` ONLY on ``ayma-api-staging``.
+    Both variant routes refuse when this is unset, so the code is inert on
+    any deploy (incl. prod) that never sets it."""
+
+    image_variants_push_sa: str
+    """Service-account email allowed to push storage notifications to
+    ``POST /internal/storage/image-finalized`` (``IMAGE_VARIANTS_PUSH_SA``,
+    staging-only). The push OIDC token's ``email`` claim must equal this
+    exactly; an unset value refuses every push (fail closed)."""
+
 
 def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
     raw = os.getenv(name, default)
@@ -1423,6 +1435,10 @@ def _load() -> Config:
         vertex_ai_search_engine=os.getenv(
             "VERTEX_AI_SEARCH_ENGINE", "ayma-public-web-engine"
         ),
+        image_variants_enabled=os.getenv(
+            "IMAGE_VARIANTS_ENABLED", "false"
+        ).strip().lower() in ("1", "true", "yes", "on"),
+        image_variants_push_sa=os.getenv("IMAGE_VARIANTS_PUSH_SA", "").strip(),
     )
 
 

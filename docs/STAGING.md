@@ -46,6 +46,8 @@ revision fails to start.
 | `GOOGLE_IMPORT_CLIENT_ID` | same OAuth client id | Shared (public value, same as prod) |
 | `CONTEXT_OPT_LEVEL`, `CONTEXT_OPT_MEASURE` | `3`, `true` | Shared (same as prod) |
 | `GEMINI_LIVE_USE_DEV_API` (agent) | `true` | Shared (same as prod) |
+| `IMAGE_VARIANTS_ENABLED` (api) | `true` | **Staging-only** — cloud profile-photo variants (Perf Phase 2 PREP chunk A); set only when the data plane is `ayma-staging` (see `docs/perf/image-variants.md`); unset everywhere else (fail closed) |
+| `IMAGE_VARIANTS_PUSH_SA` (api) | `pubsub-push-invoker@ayma-staging.iam.gserviceaccount.com` | **Staging-only** — Pub/Sub push OIDC identity pinned by the variant endpoint |
 | `OPEN_WEIGHTS_BASE_URL` (api) | Modal `…/v1` endpoint | **Staging-only** — wires the open-weights cheap path (hackathon); routes **nothing** on its own (a surface reaches it only when its `LLM_PROVIDER_*` flag is `open-weights`; default stays `gemini`). Credit-guarded — see `scripts/modal_open_weights.py` |
 
 Model ids / voices / Vertex locations stay locked in

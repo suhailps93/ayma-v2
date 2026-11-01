@@ -64,6 +64,7 @@ import feature_flags  # noqa: E402
 import gemini  # noqa: E402
 from llm_provider import get_user_brain_provider  # noqa: E402
 import billing  # noqa: E402
+import image_variants  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
     LiveKitConfigError,
@@ -5052,6 +5053,55 @@ async def revenuecat_webhook(request: Request) -> dict[str, str]:
     return {"status": status_text}
 
 
+@app.post("/internal/storage/image-finalized")
+async def storage_image_finalized(request: Request) -> dict[str, object]:
+    """Pub/Sub push target for staging-bucket ``OBJECT_FINALIZE`` (Perf Phase
+    2 PREP, ``image_variants``). Renders thumb/medium variants alongside the
+    original; the original is never modified and the client upload path is
+    untouched (async, after upload).
+
+    Auth: Pub/Sub OIDC bearer token whose ``email`` claim must equal
+    ``IMAGE_VARIANTS_PUSH_SA``. STAGING ONLY — answers 404 unless
+    ``IMAGE_VARIANTS_ENABLED=true``. Skips are HTTP 200 (ack, no redelivery);
+    only transient GCS failures answer 500 (redeliver; idempotent)."""
+    if not CONFIG.image_variants_enabled:
+        raise HTTPException(status_code=404, detail="Not found.")
+    authz = request.headers.get("authorization", "")
+    if not authz.lower().startswith("bearer ") or len(authz) < 16:
+        raise HTTPException(status_code=403, detail="Bad push credentials.")
+    host = request.headers.get("host", "")
+    audience = f"{request.url.scheme}://{host}{request.url.path}"
+    try:
+        email = await asyncio.to_thread(
+            image_variants.verify_push_token, authz[7:], audience
+        )
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Bad push credentials.")
+    expected_sa = CONFIG.image_variants_push_sa
+    if not expected_sa or email != expected_sa:
+        raise HTTPException(status_code=403, detail="Bad push credentials.")
+    try:
+        envelope = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON.") from exc
+    try:
+        result = await asyncio.to_thread(
+            image_variants.process_pubsub_envelope,
+            envelope,
+            _bucket(),
+            CONFIG.storage_bucket,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except image_variants.TransientError as exc:
+        logger.exception("image variant generation transiently failed")
+        raise HTTPException(status_code=500, detail="Transient failure.") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("image variant generation failed")
+        raise HTTPException(status_code=500, detail="Variant failed.") from exc
+    return result
+
+
 class BillingSyncRequest(BaseModel):
     """Body of ``POST /billing/sync``: the app-reported active entitlement.
     Used ONLY by the dev-view fallback when no RevenueCat REST key is
@@ -6925,3 +6975,60 @@ async def cron_persona_snapshot(user_limit: int | None = None) -> dict:
     import persona_snapshot
 
     return await persona_snapshot.run_sweep(get_db(), user_limit)
+
+
+@app.post("/cron/image-variants-backfill", dependencies=[Depends(require_cron)])
+async def cron_image_variants_backfill(
+    prefix: str = "uploads/", limit: int = 200
+) -> dict[str, object]:
+    """Backfill / recover profile-photo variants over a bucket prefix (Perf
+    Phase 2 PREP, ``image_variants``). Manual trigger with ``X-Cron-Secret``,
+    per the no-staging-cron convention. STAGING ONLY — refuses unless
+    ``IMAGE_VARIANTS_ENABLED=true``. Idempotent: up-to-date variants are
+    skipped via their ``variant_of`` metadata. ``prefix`` must stay under
+    ``uploads/``; ``limit`` is clamped to 1..1000 objects per call."""
+    if not CONFIG.image_variants_enabled:
+        raise HTTPException(status_code=403, detail="Image variants disabled.")
+    if not prefix.startswith("uploads/"):
+        raise HTTPException(status_code=400, detail="Prefix must stay under uploads/.")
+    limit = max(1, min(int(limit), 1000))
+    bucket = _bucket()
+
+    def _sweep() -> dict[str, object]:
+        scanned = 0
+        processed = 0
+        skipped = 0
+        failed: list[str] = []
+        try:
+            blobs = list(bucket.list_blobs(prefix=prefix, max_results=limit))
+        except Exception as exc:  # noqa: BLE001
+            raise image_variants.TransientError(f"list failed: {exc}") from exc
+        for blob in blobs:
+            scanned += 1
+            try:
+                result = image_variants.process_object(
+                    bucket, blob.name, CONFIG.storage_bucket
+                )
+            except image_variants.TransientError as exc:
+                failed.append(f"{blob.name}: {exc}")
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("variant backfill failed for %s", blob.name)
+                failed.append(f"{blob.name}: {exc}")
+                continue
+            if result.get("status") == "processed":
+                processed += 1
+            else:
+                skipped += 1
+        return {
+            "scanned": scanned,
+            "processed": processed,
+            "skipped": skipped,
+            "failed": failed[:10],
+            "failed_count": len(failed),
+        }
+
+    try:
+        return await asyncio.to_thread(_sweep)
+    except image_variants.TransientError as exc:
+        raise HTTPException(status_code=500, detail="Transient failure.") from exc
