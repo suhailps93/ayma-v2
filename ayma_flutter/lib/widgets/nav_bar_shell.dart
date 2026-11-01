@@ -8,6 +8,7 @@ import '../services/tab_request.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_chat_modal.dart';
 import 'ayma_tab_bar.dart';
+import 'staging_banner.dart';
 
 /// Wraps a pushed screen with the app's one persistent bottom nav bar
 /// (founder ask: literally every screen, no exceptions — see `app_router.dart`
@@ -46,6 +47,7 @@ class NavBarShell extends StatelessWidget {
     super.key,
     required this.child,
     this.notificationsActive = false,
+    this.showStagingBanner,
   });
 
   final Widget child;
@@ -53,6 +55,10 @@ class NavBarShell extends StatelessWidget {
   /// True only for the Notifications route, so its own bar's Notifications
   /// tab is inert (see [AymaTabBar.notificationsActive]).
   final bool notificationsActive;
+
+  /// Optional override for the staging ribbon. When null, defaults to
+  /// [Env.isStaging].
+  final bool? showStagingBanner;
 
   void _goTab(BuildContext context, int index) {
     TabRequest.instance.request(index);
@@ -130,11 +136,14 @@ class NavBarShell extends StatelessWidget {
     // applies, leaving a dead gap above the keyboard and, in a short window
     // (landscape, split-screen), squeezing the page until it overflows.
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-    return Column(
-      children: [
-        Expanded(child: child),
-        if (!keyboardOpen) _navBar(context),
-      ],
+    return StagingBanner(
+      enabled: showStagingBanner,
+      child: Column(
+        children: [
+          Expanded(child: child),
+          if (!keyboardOpen) _navBar(context),
+        ],
+      ),
     );
   }
 }

@@ -26,8 +26,36 @@ class Env {
   static const String revenueCatTestKey =
       String.fromEnvironment('REVENUECAT_TEST_KEY');
 
+  /// Production Cloud Run API base URL (ARCHITECTURE.md §12.1).
+  static const String prodApiBaseUrl =
+      'https://ayma-api-235381544962.us-central1.run.app';
+
+  /// Staging API base URL placeholder (ARCHITECTURE.md §12.1).
+  ///
+  /// Intentionally non-routable placeholder (.invalid TLD) used when
+  /// building with `--dart-define=ENV=staging` until a dedicated staging
+  /// Cloud Run service is provisioned.
+  static const String stagingApiBaseUrl =
+      'https://ayma-api-staging.invalid';
+
+  /// Environment selector (`--dart-define=ENV=...`).
+  ///
+  /// Set to `staging` for staging builds (`--dart-define=ENV=staging`).
+  /// When unset (or set to `production`), production is the default.
+  static const String env =
+      String.fromEnvironment('ENV', defaultValue: 'production');
+
+  /// Whether the app is running in the staging environment (`ENV=staging`).
+  static const bool isStaging = env == 'staging';
+
+  /// Active API base URL.
+  ///
+  /// Switched to [stagingApiBaseUrl] when `--dart-define=ENV=staging`.
+  /// Can also be overridden explicitly with `--dart-define=AYMA_API_BASE_URL=...`.
+  /// Production remains the default and nothing about production behavior
+  /// changes when [ENV] is unset.
   static const String apiBaseUrl = String.fromEnvironment(
     'AYMA_API_BASE_URL',
-    defaultValue: 'https://ayma-api-235381544962.us-central1.run.app',
+    defaultValue: isStaging ? stagingApiBaseUrl : prodApiBaseUrl,
   );
 }
