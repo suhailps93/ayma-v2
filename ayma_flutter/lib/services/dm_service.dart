@@ -307,13 +307,45 @@ class DmService {
   /// Block & report the other participant (§6.5); hides the thread for us.
   Future<void> block(String otherUid) => _api.block(otherUid);
 
-  Stream<List<DmMessage>> watchMessages(String threadId) => _db
-      .collection('dm_threads/$threadId/messages')
-      .orderBy('created_at')
-      .snapshots()
-      .map((snap) => snap.docs
-          .map((d) => DmMessage.fromData(d.id, d.data()))
-          .toList());
+  /// Newest [limit] messages as a live tail, oldest-first (Phase 2
+  /// pagination design §3.3.1). Older history pages in on demand via
+  /// [fetchOlderMessages]. Oldest-first is the established contract (see
+  /// [assist]); the DESC limit is applied server-side.
+  Stream<List<DmMessage>> watchMessages(String threadId, {int limit = 30}) =>
+      _db
+          .collection('dm_threads/$threadId/messages')
+          .orderBy('created_at', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((snap) => snap.docs
+              .map((d) => DmMessage.fromData(d.id, d.data()))
+              .toList()
+              .reversed
+              .toList());
+
+  /// One-shot history page (design §3.3.2): up to [limit] messages older
+  /// than [lastMessageId] (exclusive), oldest-first. A deleted anchor ends
+  /// history rather than erroring it.
+  Future<List<DmMessage>> fetchOlderMessages(
+    String threadId, {
+    required String lastMessageId,
+    int limit = 30,
+  }) async {
+    final anchor =
+        await _db.doc('dm_threads/$threadId/messages/$lastMessageId').get();
+    if (!anchor.exists) return const [];
+    final snap = await _db
+        .collection('dm_threads/$threadId/messages')
+        .orderBy('created_at', descending: true)
+        .startAfterDocument(anchor)
+        .limit(limit)
+        .get();
+    return snap.docs
+        .map((d) => DmMessage.fromData(d.id, d.data()))
+        .toList()
+        .reversed
+        .toList();
+  }
 
   Future<void> sendText(String threadId, String text) =>
       _api.sendDmMessage(threadId, type: 'text', body: text);

@@ -49,7 +49,9 @@ class _FakeDm extends DmService {
   final List<({String type, String caption})> attachmentsSent = [];
 
   @override
-  Stream<List<DmMessage>> watchMessages(String threadId) => _msgs.stream;
+  Stream<List<DmMessage>> watchMessages(String threadId,
+      {int limit = 30}) =>
+      _msgs.stream;
 
   @override
   Future<DmAssist> assist(String threadId, List<DmMessage> messages) async {
