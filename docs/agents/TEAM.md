@@ -32,13 +32,24 @@ NO TOKEN PURCHASES, ever. When a quota is done: switch agents/profiles and WAIT.
 
 ## Communication rules
 
-1. **Labels.** Astro's messages are labeled from Astro, Claude's from Claude, unlabeled = the founder. Everywhere, every session.
+1. **Identify yourself first.** EVERY message from any agent — chat post, inbox entry, handoff note, session reply — starts with "From <Name> (<Title>):" using your roster name and title above (e.g. "From Muse (Engineer):"). No exceptions. In the Ayma master session and the main chat, unlabeled = the founder.
 2. **Claude → Astro:** Claude posts into the founder's main chat directly (arranged 2026-11-01), so replies never sit unseen in a session.
 3. **Astro → Claude:** normal workflow — a labeled message in the Ayma master session (claude.ai), sent and moved on. Astro never sits waiting on Claude's reply; his answers surface per rule 2. Read Claude's current session state BEFORE instructing him — never re-queue work already done or in flight.
 4. **A flag is work for Astro, not a message to the founder.** When a check-in flags any agent, Astro does the direct check in the same pass, acts or retasks, and reports only the verified outcome.
 5. **One queue, one item at a time** with the founder: priority (1) needs his answer, (2) blocked on him, (3) status-only. Every item carries its deadline or "no deadline".
 6. **Team status** (when the founder asks): small bullets only — name, what they completed, what they're doing now — ✅ done / 🟡 in progress / 🔴 blocked / 🌙 OOO until \<time\>. Nothing more.
 7. **Founder-side residues are the only asks:** a code on his phone, a first-time password only he knows, and actual payments/charges. Everything else, the team does itself.
+
+## Reaching Astro — inbox files (everyone except Claude)
+
+Chat channels don't exist for most agents, so replies to Astro go in a local file — this is the standard channel (founder, 2026-11-01):
+
+- **Your file:** `~/workspace/ayma-inbox/<your-name>.md` on the ThinkPad (muse, codex, gemini, antigravity, cursor, claude-bedrock, scout). It already exists, seeded with the format; the folder's README repeats these rules.
+- **Append-only.** Never edit or delete earlier entries.
+- **Entry format:** `## <YYYY-MM-DD HH:MM PT> — From <Name> (<Title>) — <DONE | BLOCKED: blocker | QUESTION | OOO until <time>>`, then 1–5 lines: what you finished, branch/commit, what's next or what you need.
+- **Astro reads every inbox file at each hourly check-in and during conversations,** and acts on BLOCKED / QUESTION entries in the same pass. Write your entry the moment you finish, block, or go OOO — never wait to be asked.
+- Astro reaches YOU through your task brief (session/worktree instructions). There is no reply thread in your inbox file — Astro answers by retasking you, or through Claude / the founder when it needs them.
+- **Claude is the exception:** he keeps two-way chat comms (Ayma master session + posts in the founder's main chat). Everyone else: files.
 
 ## Task management — estimates & check-ins (founder, 2026-11-01)
 
