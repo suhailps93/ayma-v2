@@ -78,6 +78,30 @@ def test_never_load_data_absent_from_persona_context():
             )
 
 
+def test_public_display_name_is_available_and_never_a_secret():
+    """The CONTRACT's allow-side: a member's PUBLIC display name is theirs to
+    use. The persona is built from it, so it MUST appear in the persona prompt,
+    and it must never be treated as a never-load secret. This guards against an
+    over-broad "never say a last name" rule that would strip people's real
+    public names. The protect-side (a STORED last name / employer that is not in
+    the public view) is covered by the never-load tests, which now include
+    Maya's stored ``last_name``/``workplace`` as needles."""
+    db = _seeded_db()
+    for entry in practice_seed.DEMO_PROFILES:
+        display_name = entry["profile"]["name"]
+        assert display_name not in entry["secrets"], (
+            f"public display name {display_name!r} must not be a secret"
+        )
+        ctx = practice_date.build_persona_context(db, VIEWER, entry["uid"])
+        assert ctx is not None
+        assert ctx.name == display_name
+        prompt = practice_date.compose_persona_prompt(ctx)
+        assert display_name in prompt, (
+            f"public display name {display_name!r} should be available to the "
+            f"persona for {entry['uid']} — it is public, not protected"
+        )
+
+
 def test_voice_room_seed_contains_no_never_load_data():
     """Axis 1 for the VOICE path (hackathon B): the exact JSON seeded onto a
     practice voice room — the persona prompt built by

@@ -142,10 +142,23 @@ Explore profile screen renders:
   **never streamed** from Firestore.
 - `story.strip_private_spans` removes inline `{{private}}` / `{{ai_only}}` spans
   from the public bodies that remain.
-- `practice_core.build_persona_context` then **whitelists** only: first name, age
-  (computed, never the birthdate), coarse city (never coordinates), the public
-  wiki pages, and a photo count. It reads nothing else about the target — no raw
-  `profile/main` doc, no matches/likes, no contact fields, no other users.
+- `practice_core.build_persona_context` then **whitelists** only: the member's
+  public **display `name`** field, age (computed, never the birthdate), coarse
+  city (never coordinates), the public wiki pages, and a photo count. It reads
+  nothing else about the target — no raw `profile/main` doc, no matches/likes,
+  no contact fields, no other users.
+
+**The contract: display name is public; stored identity fields are protected.**
+The display `name` is the name the member chose to show, so it is public and
+usable in full — including a last name that is part of it (saying "Sofia
+Marino" when that is her display name is correct, not a leak). A member's
+**stored** `last_name` and stored `workplace`/employer are *separate* fields on
+`profile/main` that `public_profile.build` **never returns** (it serialises the
+fixed whitelist above), so the persona/agent structurally cannot know them. The
+protected set is therefore the stored, not-publicly-shown identity fields: a
+stored last name that is not part of the display name, phone, email, street
+address/unit, exact GPS, and a stored employer not on the member's public
+pages. An employer or field of work a member states on a public page is public.
 
 The `NEVER_LOAD` categories (`practice_core.NEVER_LOAD`): exact
 location/coordinates; contact info (phone, email, street address, social

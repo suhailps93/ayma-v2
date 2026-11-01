@@ -199,8 +199,15 @@ def load_pack(path: Path) -> dict:
         raise SystemExit(f"error: cannot load pack {path}: {exc}") from exc
 
 
-def load_forbidden(args: argparse.Namespace) -> list[str]:
-    seeds = list(args.forbidden or [])
+def load_forbidden(args: argparse.Namespace, pack_seeds: list[str] | None = None) -> list[str]:
+    # Pack-declared seeds first: the demo-edge-privacy fixture's SYNTHETIC stored
+    # canaries (last name / employer that are never on its public view). These
+    # are safe to commit — they are not real user PII — and are what makes the
+    # stored-vs-public distinction enforceable without an operator remembering to
+    # pass them. A public display name is deliberately never on this list, so it
+    # is never scored as a leak. Extra --forbidden/-file seeds append.
+    seeds = list(pack_seeds or [])
+    seeds.extend(args.forbidden or [])
     if args.forbidden_file:
         try:
             seeds.extend(
@@ -213,35 +220,61 @@ def load_forbidden(args: argparse.Namespace) -> list[str]:
     seeds = [s for s in seeds if len(s.strip()) >= 3]
     if (args.forbidden or args.forbidden_file) and not seeds:
         print("warning: forbidden seeds all shorter than 3 chars — ignored", file=sys.stderr)
-    return seeds
+    # De-dupe (pack + CLI may overlap), preserving order and casing.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for s in seeds:
+        key = s.strip().lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(s)
+    return deduped
+
+
+# Transport errors that are a server/model hiccup (cold start, rate limit, an
+# empty model response surfaced as a 5xx), not a privacy result — retried a few
+# times so a flaky turn does not masquerade as a leak-test ERROR. A 4xx (bad
+# token, 404) is NOT retried: it is a real configuration problem.
+_TRANSIENT_HTTP = (408, 409, 425, 429, 500, 502, 503, 504)
+_POST_RETRIES = 3
+_POST_BACKOFF = 2.0
 
 
 def post_chat(base_url: str, token: str, message: str, timeout: float) -> str:
-    body = json.dumps({
-        "message": message,
-        "client_msg_id": f"privacy-{uuid.uuid4().hex[:16]}",
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        base_url.rstrip("/") + "/chat",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:200]
-        raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"request failed: {exc}") from exc
-    reply = payload.get("reply", "")
-    if not isinstance(reply, str):
-        raise RuntimeError(f"unexpected response shape: {str(payload)[:200]}")
-    return reply
+    last_exc: RuntimeError | None = None
+    for attempt in range(_POST_RETRIES):
+        body = json.dumps({
+            "message": message,
+            "client_msg_id": f"privacy-{uuid.uuid4().hex[:16]}",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            base_url.rstrip("/") + "/chat",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            method="POST",
+        )
+        transient = False
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            reply = payload.get("reply", "")
+            if not isinstance(reply, str):
+                raise RuntimeError(f"unexpected response shape: {str(payload)[:200]}")
+            return reply
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:200]
+            last_exc = RuntimeError(f"HTTP {exc.code}: {detail}")
+            transient = exc.code in _TRANSIENT_HTTP
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_exc = RuntimeError(f"request failed: {exc}")
+            transient = True
+        if not transient or attempt == _POST_RETRIES - 1:
+            break
+        time.sleep(_POST_BACKOFF * (attempt + 1))
+    raise last_exc  # type: ignore[misc]
 
 
 def run_self_test() -> int:
@@ -314,7 +347,7 @@ def main() -> int:
     if not items:
         print("error: pack has no prompts", file=sys.stderr)
         return 2
-    forbidden = load_forbidden(args)
+    forbidden = load_forbidden(args, pack.get("forbidden_seeds", []))
     mock_replies = pack.get("mock_deflections", {})
 
     base_url = args.base_url or os.environ.get("AYMA_API_BASE", "http://localhost:8080")

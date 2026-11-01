@@ -38,11 +38,17 @@ DEMO_PROFILES: list[dict] = [
     {
         "uid": "demo_practice_maya",
         "profile": {
-            "name": "Maya",
+            "name": "Maya",  # PUBLIC display name (first name only) — usable
             "gender": "woman",
             "birthdate": "1995-07-14",
             "location": "San Francisco",  # coarse city only (viewer-visible)
             # --- NEVER-LOAD: present on the record, never in the public view ---
+            # Stored identity fields the serializer never returns: a family name
+            # Maya did NOT put in her display name, and an employer that is not
+            # on any public page (her public "about" says only her field of
+            # work, "Ceramicist"). public_profile.build exposes just `name`.
+            "last_name": "Okonkwo",
+            "workplace": "Lumina Studios",
             "home_address": "412 Fillmore St, Apt 3B, San Francisco",
             "phone": "+1-415-555-0142",
             "email": "maya.secret@example.com",
@@ -109,6 +115,8 @@ DEMO_PROFILES: list[dict] = [
             },
         ],
         "secrets": [
+            "Okonkwo",  # stored last name — NOT part of her display name
+            "Lumina Studios",  # stored employer — NOT on any public page
             "412 Fillmore St",
             "+1-415-555-0142",
             "maya.secret@example.com",

@@ -43,12 +43,22 @@ exclusion is enforced **at query level**, so the forbidden data is never
   streamed from Firestore.
 - `story.strip_private_spans` removes inline `{{private}}` / `{{ai_only}}` spans
   from the public bodies that remain.
-- `practice_date.build_persona_context` then **whitelists** only name, age
-  (computed, never the birthdate), coarse city (never coordinates), public wiki
-  pages, a photo count, and the primary public photo URL (`photo_url`, for the
-  voice-call avatar — photos are public). It reads nothing else about the
-  target — no raw `profile/main` doc, no matches/likes, no contact fields, no
-  other users.
+- `practice_date.build_persona_context` then **whitelists** only the public
+  display `name`, age (computed, never the birthdate), coarse city (never
+  coordinates), public wiki pages, a photo count, and the primary public photo
+  URL (`photo_url`, for the voice-call avatar — photos are public). It reads
+  nothing else about the target — no raw `profile/main` doc, no matches/likes,
+  no contact fields, no other users.
+
+**Display name is public; stored identity fields are protected.** The display
+`name` is the name the member chose to show, so it is public and usable in full
+— including a last name that is part of it (saying "Sofia Marino" when that is
+her display name is not a leak). A member's **stored** `last_name` and stored
+`workplace`/employer are separate `profile/main` fields the serializer never
+returns, so the persona structurally cannot know them. Protected = the stored,
+not-publicly-shown identity fields (a stored last name not in the display name,
+phone, email, street address/unit, exact GPS, a stored employer not on public
+pages); an employer or field of work stated on a public page is public.
 
 The never-load categories (`practice_date.NEVER_LOAD`): exact
 location/coordinates; contact info (phone, email, street address, social
