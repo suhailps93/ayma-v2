@@ -5,8 +5,10 @@ Read-only (except it runs taste_match / score_pair, which may write cache docs).
 Prints concrete evidence for every hard requirement: profiles complete, photos +
 attributes, story, Ayma conversation, appearance report, AI avatar, the good vs
 bad taste_match and match scores, Explore discoverability for the founder, the
-scoped email-verify bypass, the per-uid flag override, DMs, and a live avatar
-reply. Run from the repo root:  python3 scripts/verify_demo_accounts.py
+scoped email-verify bypass, the per-uid flag override, DMs, a live avatar
+reply, Practice Date persona readiness, date-sim snapshot readiness, and
+story/taste coverage. Run from the repo root:
+python3 scripts/verify_demo_accounts.py
 """
 
 from __future__ import annotations
@@ -66,6 +68,7 @@ async def main() -> int:
             auth_ok = f"email={u.email} verified={u.email_verified} disabled={u.disabled}"
         except Exception as exc:  # noqa: BLE001
             auth_ok = f"AUTH MISSING: {exc}"
+        root_exists = db.collection("users").document(uid).get().exists
         prof = schema.profile_doc(db, uid).get().to_dict() or {}
         comp = prof.get("completeness") or {}
         photos = prof.get("photos") or []
@@ -75,7 +78,7 @@ async def main() -> int:
         appe = db.collection("users").document(uid).collection("appearance_reports").document("current").get()
         avatar = db.collection("users").document(uid).collection("persona").document("avatar").get()
         _p(f"\n-- {p['key']} ({p['name']}) {uid}")
-        _p(f"   auth: {auth_ok}")
+        _p(f"   auth: {auth_ok}  users-root={root_exists}")
         _p(f"   completeness score={comp.get('score')} complete={comp.get('complete')}")
         _p(f"   gender={prof.get('gender')} interested_in={prof.get('interested_in')} "
            f"age_pref=[{prof.get('qz_partner_age_min')},{prof.get('qz_partner_age_max')}] "
@@ -155,6 +158,57 @@ async def main() -> int:
             uid=t1, session_id="verify-probe",
         )
         _p(f"   test2 avatar reply: {reply[:200]!r}")
+
+    _p("\n===== 9. PRACTICE-DATE READINESS (read-only) =====")
+    for viewer_key, target_key in (("test1", "test2"), ("test1", "test3")):
+        viewer, target = by_key[viewer_key]["uid"], by_key[target_key]["uid"]
+        pctx = practice_core.build_persona_context(db, viewer, target)
+        if pctx is None:
+            _p(f"   {viewer_key} -> {target_key}: NO PERSONA CONTEXT")
+            continue
+        prompt = practice_core.compose_persona_prompt(pctx)
+        _p(f"   {viewer_key} -> {target_key}: name={pctx.name!r} age={pctx.age} "
+           f"gender={pctx.gender!r} location={pctx.location!r} "
+           f"pages={len(pctx.pages)} photos={pctx.photo_count} "
+           f"prompt_chars={len(prompt)} name_in_prompt={pctx.name in prompt}")
+
+    _p("\n===== 10. DATE-SIM READINESS (read-only) =====")
+    import persona_snapshot
+
+    for p in plist:
+        uid = p["uid"]
+        snap = db.collection("users").document(uid).collection(
+            "persona").document("avatar").get()
+        if not snap.exists:
+            _p(f"   {p['key']}: NO SNAPSHOT")
+            continue
+        data = snap.to_dict() or {}
+        g = data.get("grounding") or {}
+        _p(f"   {p['key']}: distilled={data.get('distilled')} "
+           f"stale={data.get('stale')} "
+           f"readiness={data.get('readiness_score')} "
+           f"low_context={data.get('low_context')} "
+           f"pages={len(g.get('pages') or [])} "
+           f"exemplars={len(g.get('style_exemplars') or [])}")
+    for viewer_key, target_key in (("test1", "test2"), ("test1", "test3")):
+        pre = persona_snapshot.preflight_readiness(
+            db, by_key[viewer_key]["uid"], by_key[target_key]["uid"])
+        _p(f"   preflight {viewer_key} -> {target_key}: {pre}")
+
+    _p("\n===== 11. STORY + TASTE COVERAGE =====")
+    for p in plist:
+        uid = p["uid"]
+        pages = list(db.collection("users").document(uid).collection(
+            "wiki_pages").stream())
+        types = sorted(
+            (d.to_dict() or {}).get("page_type", "?") for d in pages)
+        _p(f"   {p['key']}: wiki page_types={types}")
+        taste = next(
+            ((d.to_dict() or {}) for d in pages
+             if d.id == "taste"), {})
+        body = str(taste.get("ai_body") or "")
+        present = [ln.split(":")[0] for ln in body.splitlines() if ":" in ln]
+        _p(f"   {p['key']}: taste domains={present}")
 
     _p("\n===== VERIFY DONE =====")
     return 0
