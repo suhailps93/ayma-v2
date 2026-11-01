@@ -64,3 +64,32 @@ class AymaPhoto extends StatelessWidget {
             color: Theme.of(context).colorScheme.outline, size: 20),
       );
 }
+
+/// Best-effort decode prefetch for upcoming card photos (Phase 2 pagination
+/// design §4.3): warms the image cache for the first [count] non-empty [urls]
+/// at [displayWidth] so cards scrolling into view paint without blank tiles.
+/// Silent on failure — a missed prefetch just falls back to normal loading.
+/// Honors [AymaPhoto.debugCacheManager] so widget tests stay offline.
+Future<void> prefetchCardPhotos(
+  BuildContext context,
+  Iterable<String?> urls, {
+  double displayWidth = 260,
+  int count = 8,
+}) async {
+  final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 2.0;
+  final px = (displayWidth * dpr).round().clamp(48, 2000);
+  final cm = AymaPhoto.debugCacheManager;
+  // Resize-on-fetch needs an ImageCacheManager; a plain test fake gets the
+  // unresized bytes (prefetch still warms the same cache entry Discord).
+  final sized = cm == null || cm is ImageCacheManager;
+  final pending = <Future<void>>[];
+  for (final url in urls.where((u) => u != null && u.isNotEmpty).take(count)) {
+    final provider = CachedNetworkImageProvider(
+      url!,
+      maxWidth: sized ? px : null,
+      cacheManager: cm,
+    );
+    pending.add(precacheImage(provider, context).then((_) {}).catchError((_) {}));
+  }
+  if (pending.isNotEmpty) await Future.wait(pending);
+}

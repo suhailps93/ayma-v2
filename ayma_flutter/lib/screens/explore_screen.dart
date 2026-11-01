@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
+import '../services/paged_fresh_data.dart';
 import '../theme.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/ayma_photo.dart';
@@ -45,16 +46,38 @@ enum _Filter { all, liked, mutual, scored }
 class ExploreScreenState extends State<ExploreScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
   Timer? _debounce;
 
-  bool _loading = true;
-  String? _error;
-  List<ExploreCard> _cards = const [];
+  /// Paged feed state (Phase 2 pagination design §5.1): page-1 items plus
+  /// the appended-page states. No disk cache layer exists yet, so page 1
+  /// always comes from the network (`isFromCache` stays false).
+  PagedFreshData<ExploreCard> _feed = const PagedFreshData();
   _Filter _filter = _Filter.all;
 
+  /// Uids already in [_feed], so a profile edited mid-browse can't appear
+  /// twice across a page boundary (design §6.2 dedup invariant).
+  final Set<String> _seenUids = {};
+
+  /// Last scroll sample for the fling guard (design §4.1): page prefetches
+  /// are suppressed while the list is flying past content.
+  double _lastPixels = 0;
+  DateTime _lastScrollAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// In-memory card cap (design §6.4): paging stops here rather than
+  /// growing the model without bound.
+  static const _maxCards = 120;
+
+  /// Test seam for the §4.1 fling guard: prefetches are suppressed above
+  /// this scroll velocity (logical px/s). Widget tests drive the clock, so
+  /// they pin this to [double.infinity] to exercise paging deterministically.
+  @visibleForTesting
+  static double debugFlingVelocityThreshold = 2500;
+
   List<ExploreCard> get _visibleCards {
-    if (_filter == _Filter.all) return _cards;
-    return _cards.where((c) {
+    final cards = _feed.items;
+    if (_filter == _Filter.all) return cards;
+    return cards.where((c) {
       if (c.isSelf) return true; // your card always shows
       return switch (_filter) {
         _Filter.liked => c.liked,
@@ -73,8 +96,9 @@ class ExploreScreenState extends State<ExploreScreen> {
         : (AppContext.instance.pendingExploreQuery ?? '').trim();
     AppContext.instance.pendingExploreQuery = null;
     if (seed.isNotEmpty) _searchController.text = seed;
+    _scrollController.addListener(_onScroll);
     _syncContext();
-    _load();
+    _loadInitial();
   }
 
   static const _filterLabels = {
@@ -90,40 +114,56 @@ class ExploreScreenState extends State<ExploreScreen> {
     AppContext.instance.set(
       screen: 'explore',
       note: _searchController.text.trim(),
-      detail: _loading || _error != null
-          ? ''
-          : exploreSummary(
+      detail: _feed.hasData
+          ? exploreSummary(
               query: _searchController.text,
               filterLabel: _filterLabels[_filter]!,
               cards: _visibleCards,
-            ),
+            )
+          : '',
     );
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  /// Refetch the feed — called by [_load] itself, and by [MainShellScreen]
-  /// each time this tab becomes visible again after the first build (a
-  /// re-selected tab, or Android back landing on it). A fetch already in
-  /// flight is left alone rather than raced against a second one.
-  Future<void> reload() => _loading ? Future<void>.value() : _load();
+  /// Refetch the feed from page 1 — called on search submit, and by
+  /// [MainShellScreen] each time this tab becomes visible again after the
+  /// first build (a re-selected tab, or Android back landing on it). A fetch
+  /// already in flight is left alone rather than raced against a second one.
+  Future<void> reload() =>
+      _feed.refreshing || _feed.loadingNextPage
+          ? Future<void>.value()
+          : _loadInitial();
 
-  Future<void> _load() async {
+  Future<void> _loadInitial() async {
     setState(() {
-      _loading = true;
-      _error = null;
+      _feed = _feed.copyWith(refreshing: true, clearError: true);
     });
     try {
-      final cards = await _api.explore(q: _searchController.text.trim());
+      final page = await _api.explore(q: _searchController.text.trim());
       if (!mounted) return;
+      _seenUids
+        ..clear()
+        ..addAll(page.cards.map((c) => c.uid));
       setState(() {
-        _cards = cards;
-        _loading = false;
+        _feed = _feed.copyWith(
+          items: List.of(page.cards),
+          refreshing: false,
+          clearError: true,
+          clearNextPageError: true,
+          loadingNextPage: false,
+          nextCursor: page.nextCursor,
+          clearNextCursor: page.nextCursor == null,
+          hasMore: page.hasMore,
+        );
       });
       _syncContext();
       AppContext.instance.exploreReport.value = ExploreReport(
@@ -134,19 +174,88 @@ class ExploreScreenState extends State<ExploreScreen> {
           cards: _visibleCards,
         ),
       );
+      _prefetchVisiblePhotos(page.cards);
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not load Explore ($e).';
-        _loading = false;
+        _feed = _feed.copyWith(refreshing: false, error: e);
       });
     }
+  }
+
+  /// Append the next page in place (design §3.1.4). Guarded against
+  /// concurrent calls, terminal feeds, and the in-memory cap; a failure
+  /// keeps earlier pages and surfaces a retry footer (design §5.2).
+  Future<void> _loadNextPage() async {
+    final cursor = _feed.nextCursor;
+    if (_feed.loadingNextPage ||
+        _feed.refreshing ||
+        !_feed.hasMore ||
+        cursor == null ||
+        _feed.items.length >= _maxCards) {
+      return;
+    }
+    setState(() {
+      _feed = _feed.copyWith(loadingNextPage: true, clearNextPageError: true);
+    });
+    try {
+      final page = await _api.explore(
+        q: _searchController.text.trim(),
+        cursor: cursor,
+      );
+      if (!mounted) return;
+      final fresh = page.cards.where((c) => _seenUids.add(c.uid)).toList();
+      final total = _feed.items.length + fresh.length;
+      setState(() {
+        _feed = _feed.copyWith(
+          items: [..._feed.items, ...fresh],
+          loadingNextPage: false,
+          clearNextPageError: true,
+          nextCursor: page.nextCursor,
+          clearNextCursor: page.nextCursor == null,
+          hasMore: page.hasMore && total < _maxCards,
+        );
+      });
+      _prefetchVisiblePhotos(fresh);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _feed = _feed.copyWith(loadingNextPage: false, nextPageError: e);
+      });
+    }
+  }
+
+  /// Scroll proximity prefetch (design §4.1): fetch the next page when
+  /// within 600px of the bottom, unless the list is flinging past.
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    final now = DateTime.now();
+    final dtMs = now.difference(_lastScrollAt).inMilliseconds;
+    final velocity = dtMs > 0
+        ? (pos.pixels - _lastPixels).abs() / dtMs * 1000
+        : 0.0;
+    _lastPixels = pos.pixels;
+    _lastScrollAt = now;
+    if (pos.extentAfter >= 600) return;
+    if (velocity > debugFlingVelocityThreshold) return; // fling guard
+    _loadNextPage();
+  }
+
+  /// Warm the image cache for freshly decoded cards (design §4.3) once the
+  /// frame that carries them is scheduled.
+  void _prefetchVisiblePhotos(List<ExploreCard> cards) {
+    if (!mounted || cards.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      prefetchCardPhotos(context, cards.map((c) => c.gridPhotoUrl));
+    });
   }
 
   void _onSearchChanged(String _) {
     _syncContext();
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), _load);
+    _debounce = Timer(const Duration(milliseconds: 500), _loadInitial);
   }
 
   @override
@@ -170,7 +279,7 @@ class ExploreScreenState extends State<ExploreScreen> {
               child: TextField(
                 controller: _searchController,
                 onChanged: _onSearchChanged,
-                onSubmitted: (_) => _load(),
+                onSubmitted: (_) => _loadInitial(),
                 decoration: const InputDecoration(
                   hintText: 'Describe who you’re looking for…',
                   prefixIcon: Icon(Icons.search),
@@ -210,55 +319,110 @@ class ExploreScreenState extends State<ExploreScreen> {
             ),
             const SizedBox(height: 4),
           ],
-          body: _loading
-              ? const AppLoadingIndicator()
-              : _error != null
-                  ? CenteredScroll(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(_error!,
-                          style: AymaType.sans(
-                              size: 14, color: AymaColors.error)),
-                    )
-                  : _visibleCards.isEmpty
-                      ? Center(
-                          child: Text(
-                              _filter == _Filter.all
-                                  ? 'No one matches that yet.'
-                                  : 'Nothing here for this filter.',
-                              style: AymaType.sans(
-                                  size: 15,
-                                  soft: true,
-                                  color: ac.fgMute)),
-                        )
-                      : GridView.builder(
-                          // Search field above: dragging the results
-                          // away dismisses the keyboard (iOS has no
-                          // dismiss key).
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                          // Two columns on a phone; more on the Fold's inner
-                          // display, a tablet or landscape, instead of two
-                          // giant cards.
-                          gridDelegate:
-                              const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 240,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 0.66,
-                          ),
-                          itemCount: _visibleCards.length,
-                          itemBuilder: (context, i) => FadeSlideIn(
-                            delay: staggerDelay(i),
-                            child:
-                                _Card(card: _visibleCards[i], api: _api),
-                          ),
-                        ),
+          body: Builder(builder: (context) {
+            if (_feed.refreshing && !_feed.hasData) {
+              return const AppLoadingIndicator();
+            }
+            if (_feed.error != null && !_feed.hasData) {
+              return CenteredScroll(
+                padding: const EdgeInsets.all(24),
+                child: Text('Could not load Explore (${_feed.error}).',
+                    style: AymaType.sans(
+                        size: 14, color: AymaColors.error)),
+              );
+            }
+            final cards = _visibleCards;
+            if (cards.isEmpty) {
+              return Center(
+                child: Text(
+                    _filter == _Filter.all
+                        ? 'No one matches that yet.'
+                        : 'Nothing here for this filter.',
+                    style: AymaType.sans(
+                        size: 15, soft: true, color: ac.fgMute)),
+              );
+            }
+            // Search field above: dragging the results
+            // away dismisses the keyboard (iOS has no
+            // dismiss key).
+            return CustomScrollView(
+              controller: _scrollController,
+              keyboardDismissBehavior:
+                  ScrollViewKeyboardDismissBehavior.onDrag,
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  // Two columns on a phone; more on the Fold's inner
+                  // display, a tablet or landscape, instead of two
+                  // giant cards.
+                  sliver: SliverGrid(
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 240,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.66,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) => FadeSlideIn(
+                        delay: staggerDelay(i),
+                        child: _Card(card: cards[i], api: _api),
+                      ),
+                      childCount: cards.length,
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: _PageFooter(
+                    feed: _feed,
+                    onRetry: _loadNextPage,
+                  ),
+                ),
+              ],
+            );
+          }),
           headerShare: 0.5,
           footerShare: 0.5,
         ),
       ),
     );
+  }
+}
+
+/// Pagination footer (design §5.2): a dots indicator while the next page
+/// is in flight, a retry chip when it fails (earlier pages stay visible).
+class _PageFooter extends StatelessWidget {
+  const _PageFooter({required this.feed, required this.onRetry});
+
+  final PagedFreshData<ExploreCard> feed;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (feed.loadingNextPage) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (feed.nextPageError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: TextButton(
+            onPressed: onRetry,
+            child: const Text('Could not load more · Tap to retry'),
+          ),
+        ),
+      );
+    }
+    return const SizedBox(height: 8);
   }
 }
 
