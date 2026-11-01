@@ -144,21 +144,60 @@ def test_sections_for_intent_ordering():
     assert pts[0] == "identity"
     # every section a page_type that actually has nodes for this intent
     assert set(pts) == {n["page_type"] for n in qt.nodes_for_intent("long_term")}
-    # ranked by section priority (max node weight) descending
-    prios = [s["priority"] for s in secs]
-    assert prios == sorted(prios, reverse=True)
     for s in secs:
         assert s["label"] and 1 <= s["priority"] <= 5
-    # ties broken by first appearance in the tree
+    # Beyond the pinned block the sections stay priority-descending, with ties
+    # broken by first appearance in the tree.
+    tail = [s for s in secs if s["page_type"] not in qt.PINNED_SECTION_ORDER]
+    tail_prios = [s["priority"] for s in tail]
+    assert tail_prios == sorted(tail_prios, reverse=True)
     tree_order = []
     for n in qt.nodes_for_intent("long_term"):
         if n["page_type"] not in tree_order:
             tree_order.append(n["page_type"])
-    for a, b in zip(secs, secs[1:]):
+    for a, b in zip(tail, tail[1:]):
         if a["priority"] == b["priority"]:
             assert tree_order.index(a["page_type"]) < tree_order.index(
                 b["page_type"]
             )
+
+
+def test_sections_for_intent_pinned_order():
+    """Pinned sections lead every tree in the fixed order; the rest keep their
+    prior relative order (explicit deterministic override, founder decision)."""
+    assert qt.PINNED_SECTION_ORDER == (
+        "identity",
+        "personality",
+        "relationships",
+        "dealbreakers",
+    )
+    for intent in (None, "long_term", "casual"):
+        pts = [s["page_type"] for s in qt.sections_for_intent(intent)]
+        present_pins = [p for p in qt.PINNED_SECTION_ORDER if p in pts]
+        # the pinned sections lead, in exactly the pinned order
+        assert pts[: len(present_pins)] == present_pins
+        # and the sections after the pins keep the order they had before the
+        # pin was applied (weight desc, then first appearance in the tree)
+        order, priority = [], {}
+        for n in qt.nodes_for_intent(intent):
+            pt = n["page_type"]
+            if pt not in priority:
+                order.append(pt)
+                priority[pt] = n["weight"]
+            else:
+                priority[pt] = max(priority[pt], n["weight"])
+        prior = sorted(order, key=lambda pt: (-priority[pt], order.index(pt)))
+        prior_tail = [p for p in prior if p not in qt.PINNED_SECTION_ORDER]
+        assert pts[len(present_pins):] == prior_tail
+
+    # default intent prints exactly the required leading four
+    default_pts = [s["page_type"] for s in qt.sections_for_intent(None)]
+    assert default_pts[:4] == [
+        "identity",
+        "personality",
+        "relationships",
+        "dealbreakers",
+    ]
 
 
 def test_branch_breakdown():

@@ -63,6 +63,15 @@ _INTENT_TO_BRANCH = {
 
 _DEFAULT_BRANCH = "long_term"
 
+# Explicit, deterministic section order override (founder product decision):
+# these sections are pinned to the front of every tree, in exactly this order,
+# regardless of node weight. Every section not listed here keeps its existing
+# weight-then-first-appearance order, after the pinned block. A pinned section
+# absent from a given tree is simply skipped (never forced in). This is a hard
+# ordering rule, not a weight tie-break, so Dealbreakers sits 4th — right after
+# Relationship style — independent of any future weight changes.
+PINNED_SECTION_ORDER = ("identity", "personality", "relationships", "dealbreakers")
+
 
 @lru_cache(maxsize=1)
 def _raw() -> dict:
@@ -143,8 +152,13 @@ def label_for_page_type(page_type: str) -> str:
 def sections_for_intent(intent: str | None) -> list[dict]:
     """The sections (``page_type`` groups) in the ``intent`` tree, as
     ``{page_type, label, priority}`` where ``priority`` is the highest node
-    weight in that section. Ordered by ``priority`` descending, then by the
-    order the section first appears in the tree."""
+    weight in that section.
+
+    The sections in :data:`PINNED_SECTION_ORDER` come first, in that exact
+    order (any pinned section not present in this tree is skipped). Every other
+    section follows, ordered by ``priority`` descending then by the order the
+    section first appears in the tree — i.e. its prior relative order is
+    preserved."""
     order: list[str] = []
     priority: dict[str, int] = {}
     for n in nodes_for_intent(intent):
@@ -155,11 +169,22 @@ def sections_for_intent(intent: str | None) -> list[dict]:
         else:
             priority[pt] = max(priority[pt], n["weight"])
     ranked = sorted(order, key=lambda pt: (-priority[pt], order.index(pt)))
+    computed_rank = {pt: i for i, pt in enumerate(ranked)}
+    unpinned = len(PINNED_SECTION_ORDER)
+
+    def _order_key(pt: str) -> tuple[int, int]:
+        pinned = (
+            PINNED_SECTION_ORDER.index(pt)
+            if pt in PINNED_SECTION_ORDER
+            else unpinned
+        )
+        return (pinned, computed_rank[pt])
+
     return [
         {
             "page_type": pt,
             "label": label_for_page_type(pt),
             "priority": priority[pt],
         }
-        for pt in ranked
+        for pt in sorted(ranked, key=_order_key)
     ]

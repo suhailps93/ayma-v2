@@ -73,6 +73,7 @@ Sensitive and optional nodes carry `sensitive` / `optional` flags in the tree. E
 - `long_term` branch: marriage timeline, number of children, family proximity, household roles, repair, FIRE and money strategy, rent vs buy, lifestyle inflation.
 - `casual` branch is unchanged apart from three nodes promoted to `all`.
 - Each section keeps at least one `core` node; the faith and intimacy items that open their sections are core so the section-must-have-a-core invariant holds. Core nodes unlock later sections in priority (max node weight) order; `next_questions` hands Ayma the top reachable items by weight, with the existing 15-minute cooldown on a declined item.
+- **Section display order** (`question_tree.sections_for_intent`) is an explicit, deterministic override, not pure weight ranking: `PINNED_SECTION_ORDER = (identity, personality, relationships, dealbreakers)` always leads every tree in that exact order (a pinned section absent from a tree is skipped); every section after the pinned block keeps its weight-descending, first-appearance order. So the default tree reads Identity & basics, Personality & temperament, Relationship style, Dealbreakers, then the rest unchanged.
 
 ## 4. Completeness behaviour changes
 
