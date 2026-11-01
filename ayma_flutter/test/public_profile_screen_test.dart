@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
@@ -6,14 +7,55 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/deep_dive_activity.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
+import 'package:file/file.dart' as fs;
+import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+/// Serves one local fixture file for any URL, so header photos (rendered
+/// through [AymaPhoto] → [CachedNetworkImage]) run their real decode
+/// pipeline with no sqflite cache database and no network.
+class _FakeCacheManager implements BaseCacheManager {
+  _FakeCacheManager(File ioFile)
+    : file = const LocalFileSystem().file(ioFile.path);
+
+  // flutter_cache_manager's API speaks package:file's File type.
+  final fs.File file;
+
+  @override
+  Stream<FileResponse> getFileStream(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+    bool withProgress = false,
+  }) async* {
+    yield FileInfo(
+      file,
+      FileSource.Cache,
+      DateTime.now().add(const Duration(days: 1)),
+      url,
+    );
+  }
+
+  @override
+  Future<fs.File> getSingleFile(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+  }) async => file;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
 
 Map<String, dynamic> _profile({
   bool self = false,
@@ -21,6 +63,9 @@ Map<String, dynamic> _profile({
   double? score,
   bool hasChatted = false,
   String deepDiveId = '',
+  List<String> photos = const [],
+  List<String>? photosThumb,
+  List<String>? photosMedium,
   List<Map<String, dynamic>> pages = const [
     {'page_type': 'identity', 'title': '', 'body': 'From Lisbon, lives in Berlin.'},
     {'page_type': 'interests', 'title': '', 'body': 'Climbs and cooks.'},
@@ -33,7 +78,9 @@ Map<String, dynamic> _profile({
       'name': 'Dana',
       'age': 30,
       'location': 'Berlin',
-      'photos': <String>[],
+      'photos': photos,
+      if (photosThumb != null) 'photos_thumb': photosThumb,
+      if (photosMedium != null) 'photos_medium': photosMedium,
       'pages': pages,
       'liked': liked,
       'score': score,
@@ -734,5 +781,58 @@ void main() {
     await tester.drag(scrollable, const Offset(0, 2000));
     await tester.pumpAndSettle();
     expect(tester.getRect(rail), rectBeforeScroll);
+  });
+
+  testWidgets(
+      'profile detail renders medium in the carousel, thumbs in the filmstrip '
+      '(perf phase 2)', (tester) async {
+    AymaPhoto.debugCacheManager =
+        _FakeCacheManager(File('test/fixtures/tiny.png'));
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    await tester.pumpWidget(_app(_api(_profile(
+      photos: ['https://x/1.jpg', 'https://x/2.jpg'],
+      photosThumb: ['https://x/1t.jpg', 'https://x/2t.jpg'],
+      photosMedium: ['https://x/1m.jpg', 'https://x/2m.jpg'],
+    ))));
+    await tester.pumpAndSettle();
+
+    final headerPhotos = tester
+        .widgetList<AymaPhoto>(find.byType(AymaPhoto))
+        .where((w) => w.displayWidth == 900 || w.displayWidth == 120)
+        .toList();
+    expect(headerPhotos, isNotEmpty);
+    final carousel =
+        headerPhotos.where((w) => w.displayWidth == 900).map((w) => w.url);
+    final strip =
+        headerPhotos.where((w) => w.displayWidth == 120).map((w) => w.url);
+    // Carousel pages: medium variants (PageView pre-builds neighbours, so
+    // assert membership, not exact count).
+    expect(carousel, contains('https://x/1m.jpg'));
+    expect(carousel, isNot(contains('https://x/1.jpg')));
+    expect(carousel, isNot(contains('https://x/1t.jpg')));
+    // Filmstrip: thumb variants for both photos.
+    expect(strip, containsAll(['https://x/1t.jpg', 'https://x/2t.jpg']));
+    expect(strip, isNot(contains('https://x/1.jpg')));
+    expect(strip, isNot(contains('https://x/2.jpg')));
+  });
+
+  testWidgets('profile detail falls back to originals without variant arrays',
+      (tester) async {
+    AymaPhoto.debugCacheManager =
+        _FakeCacheManager(File('test/fixtures/tiny.png'));
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    await tester.pumpWidget(_app(_api(_profile(
+      photos: ['https://x/1.jpg', 'https://x/2.jpg'],
+    ))));
+    await tester.pumpAndSettle();
+
+    final urls = tester
+        .widgetList<AymaPhoto>(find.byType(AymaPhoto))
+        .where((w) => w.displayWidth == 900 || w.displayWidth == 120)
+        .map((w) => w.url)
+        .toList();
+    expect(urls, containsAll(['https://x/1.jpg', 'https://x/2.jpg']));
   });
 }

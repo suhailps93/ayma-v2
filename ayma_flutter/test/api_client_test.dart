@@ -1236,4 +1236,87 @@ void main() {
     });
     expect(usage.plan, 'free');
   });
+
+  group('image-variant display fields (perf phase 2)', () {
+    test('ExploreCard parses photo_url_thumb and prefers it for the grid',
+        () {
+      final card = ExploreCard.fromMap({
+        'uid': 'a',
+        'name': 'Ash',
+        'age': 29,
+        'location': 'X',
+        'photo_url': 'https://x/full.jpg',
+        'photo_url_thumb': 'https://x/full__thumb_400.jpg',
+      });
+      expect(card.photoUrl, 'https://x/full.jpg');
+      expect(card.photoUrlThumb, 'https://x/full__thumb_400.jpg');
+      expect(card.gridPhotoUrl, 'https://x/full__thumb_400.jpg');
+    });
+
+    test('ExploreCard grid falls back to the original without a thumb', () {
+      final missing = ExploreCard.fromMap({
+        'uid': 'a',
+        'name': 'Ash',
+        'age': 29,
+        'location': 'X',
+        'photo_url': 'https://x/full.jpg',
+      });
+      expect(missing.photoUrlThumb, isEmpty);
+      expect(missing.gridPhotoUrl, 'https://x/full.jpg');
+
+      final empty = ExploreCard.fromMap({
+        'uid': 'a',
+        'name': 'Ash',
+        'age': 29,
+        'location': 'X',
+        'photo_url': 'https://x/full.jpg',
+        'photo_url_thumb': '',
+      });
+      expect(empty.gridPhotoUrl, 'https://x/full.jpg');
+    });
+
+    test('PublicProfile parses aligned variant arrays', () {
+      final p = PublicProfile.fromMap({
+        'uid': 'her',
+        'name': 'Dana',
+        'age': 30,
+        'location': 'Berlin',
+        'photos': ['https://x/1.jpg', 'https://x/2.jpg'],
+        'photos_thumb': ['https://x/1t.jpg', 'https://x/2t.jpg'],
+        'photos_medium': ['https://x/1m.jpg', 'https://x/2m.jpg'],
+        'pages': [],
+      });
+      expect(p.photosThumb, ['https://x/1t.jpg', 'https://x/2t.jpg']);
+      expect(p.photosMedium, ['https://x/1m.jpg', 'https://x/2m.jpg']);
+      expect(p.detailPhotos, ['https://x/1m.jpg', 'https://x/2m.jpg']);
+      expect(p.thumbPhotos, ['https://x/1t.jpg', 'https://x/2t.jpg']);
+    });
+
+    test('PublicProfile falls back per entry when variants are missing', () {
+      final missing = PublicProfile.fromMap({
+        'uid': 'her',
+        'name': 'Dana',
+        'age': 30,
+        'location': 'Berlin',
+        'photos': ['https://x/1.jpg', 'https://x/2.jpg'],
+        'pages': [],
+      });
+      expect(missing.detailPhotos, ['https://x/1.jpg', 'https://x/2.jpg']);
+      expect(missing.thumbPhotos, ['https://x/1.jpg', 'https://x/2.jpg']);
+
+      // Short arrays + empty entries fall back per index; extras ignored.
+      final ragged = PublicProfile.fromMap({
+        'uid': 'her',
+        'name': 'Dana',
+        'age': 30,
+        'location': 'Berlin',
+        'photos': ['https://x/1.jpg', 'https://x/2.jpg'],
+        'photos_thumb': [''],
+        'photos_medium': ['https://x/1m.jpg'],
+        'pages': [],
+      });
+      expect(ragged.detailPhotos, ['https://x/1m.jpg', 'https://x/2.jpg']);
+      expect(ragged.thumbPhotos, ['https://x/1.jpg', 'https://x/2.jpg']);
+    });
+  });
 }
