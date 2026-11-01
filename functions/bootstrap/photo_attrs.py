@@ -18,6 +18,24 @@ face photo and a usable full-body photo:
   judgment, so a face-only crop or a group photo is the only thing excluded
 
 These are *not* Explore filters — they live only on the per-photo record.
+
+Boundary with ``physical_attrs`` (see :mod:`physical_attributes`) — the two
+mirrors on ``profile/main`` are different pipeline stages, not duplicates:
+
+* ``photo_attrs`` (this module) is the per-upload snapshot: every
+  profile-photo upload overwrites it with that photo's full record
+  (``photo_pipeline``), so it always reflects the freshest single photo.
+* ``physical_attrs`` is the merged user-level record: one multi-image photo
+  pass plus the user's stated self-report, where stated always wins
+  (``physical_attributes.refresh`` → ``flat_mirror``, known fields only).
+
+Explore (``explore._passes_filters``) prefers ``photo_attrs`` for the 7
+overlapping ``_PHOTO_FIELDS`` and falls back to ``physical_attrs`` only
+when ``photo_attrs`` has no value (strict match — a missing value never
+forgives); the physical-only fields read ``physical_attrs`` alone with
+unknown-never-excludes semantics, and per-field visibility gating applies
+to ``physical_attrs`` only. Unifying the two would change filter
+behaviour, so the split is intentional.
 """
 
 from __future__ import annotations
