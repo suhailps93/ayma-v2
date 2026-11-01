@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'api_client.dart' show kInteractiveTimeout;
+import 'write_ack.dart';
 
 /// One wiki page as the profile views render it (ARCHITECTURE.md §2.1).
 class WikiPageView {
@@ -63,18 +64,18 @@ class WikiService {
 
   /// Override a page's rendered text (§2.8 step 11). Writes `user_edits` only —
   /// `ai_body` is never touched.
-  Future<void> setUserEdit(String pageId, String text) =>
-      _pageDoc(pageId).set(editPayload(text), SetOptions(merge: true));
+  Future<void> setUserEdit(String pageId, String text) => awaitServerAck(
+      _pageDoc(pageId).set(editPayload(text), SetOptions(merge: true)));
 
   /// Drop the user's override/hide — the page renders from `ai_body` again.
-  Future<void> resetPage(String pageId) =>
-      _pageDoc(pageId).set(resetPayload(), SetOptions(merge: true));
+  Future<void> resetPage(String pageId) => awaitServerAck(
+      _pageDoc(pageId).set(resetPayload(), SetOptions(merge: true)));
 
   /// Move a page between `public` and `private` (§2.1). The security rules
   /// reject anything but those two values and never touch `ai_only`.
   Future<void> setVisibility(String pageId, String visibility) =>
-      _pageDoc(pageId)
-          .set(visibilityPayload(visibility), SetOptions(merge: true));
+      awaitServerAck(_pageDoc(pageId)
+          .set(visibilityPayload(visibility), SetOptions(merge: true)));
 
   // Payload builders — pure, so the write intent is unit-testable without a
   // live Firestore.

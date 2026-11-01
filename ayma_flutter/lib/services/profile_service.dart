@@ -7,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 
 import 'age_gate.dart';
 import 'api_client.dart' show kInteractiveTimeout;
+import 'write_ack.dart';
 
 /// Structured onboarding profile, one of the three per-user documents (§3.2).
 ///
@@ -67,10 +68,10 @@ class ProfileService {
   /// Records the "get started" transition on `users/{uid}` so the server can
   /// derive `session_mode: interview` for a still-anonymous session (§3.3).
   Future<void> markOnboardingStarted() {
-    return _firestore.doc('users/$_uid').set(
+    return awaitServerAck(_firestore.doc('users/$_uid').set(
       {'onboarding_started': true, 'updated_at': FieldValue.serverTimestamp()},
       SetOptions(merge: true),
-    );
+    ));
   }
 
   /// The structured profile document, or `null` before onboarding writes it.
@@ -114,7 +115,7 @@ class ProfileService {
     if (gender != null) update['gender'] = gender;
     if (interestedIn != null) update['interested_in'] = interestedIn;
     if (location != null) update['location'] = location.trim();
-    return _profileDoc.set(update, SetOptions(merge: true));
+    return awaitServerAck(_profileDoc.set(update, SetOptions(merge: true)));
   }
 
   /// Writes the structured preboarding fields (§4.2). Merges so later edits
@@ -133,7 +134,7 @@ class ProfileService {
     String phone = '',
   }) {
     final birthdateStamp = _birthdateStamp(birthdate);
-    return _profileDoc.set({
+    return awaitServerAck(_profileDoc.set({
       'name': name.trim(),
       if (firstName.trim().isNotEmpty) 'first_name': firstName.trim(),
       if (lastName.trim().isNotEmpty) 'last_name': lastName.trim(),
@@ -143,7 +144,7 @@ class ProfileService {
       'interested_in': interestedIn,
       'location': location.trim(),
       'updated_at': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    }, SetOptions(merge: true)));
   }
 
   /// A birthdate as a Firestore timestamp. Refuses under-18 dates (the
@@ -175,31 +176,31 @@ class ProfileService {
   /// Toggle "Pause matching" — a paused user drops out of Explore and match
   /// candidate sourcing (§14.2).
   Future<void> setPaused(bool paused) {
-    return _profileDoc.set(
+    return awaitServerAck(_profileDoc.set(
       {'paused': paused, 'updated_at': FieldValue.serverTimestamp()},
       SetOptions(merge: true),
-    );
+    ));
   }
 
   /// Sets `ayma_voice_name` (§13.3). Takes effect from the next voice session.
   Future<void> setVoicePreference(String presetName) {
-    return _profileDoc.set(
+    return awaitServerAck(_profileDoc.set(
       {'ayma_voice_name': presetName, 'updated_at': FieldValue.serverTimestamp()},
       SetOptions(merge: true),
-    );
+    ));
   }
 
   /// Sets `ayma_voice_language` — the default accent/language Ayma speaks
   /// (§13.3). Takes effect from the next voice session; mid-call, Ayma still
   /// follows the caller into another language.
   Future<void> setVoiceLanguage(String code) {
-    return _profileDoc.set(
+    return awaitServerAck(_profileDoc.set(
       {
         'ayma_voice_language': code,
         'updated_at': FieldValue.serverTimestamp(),
       },
       SetOptions(merge: true),
-    );
+    ));
   }
 
   /// Mirrors the chosen accent colour (§ Accent Color settings) onto
@@ -208,13 +209,13 @@ class ProfileService {
   /// `SharedPreferences` (via `AccentColorController`) stays the fast path
   /// that paints the very next frame; this is the durable copy.
   Future<void> setAccentColor(Color color) {
-    return _profileDoc.set(
+    return awaitServerAck(_profileDoc.set(
       {
         'ayma_accent_color': _toHex(color),
         'updated_at': FieldValue.serverTimestamp(),
       },
       SetOptions(merge: true),
-    );
+    ));
   }
 
   /// One-shot read of the server-side accent colour (`null` if never set,

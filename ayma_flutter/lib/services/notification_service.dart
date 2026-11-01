@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'api_client.dart' show kInteractiveTimeout;
 import 'pair_key.dart';
+import 'write_ack.dart';
 
 /// Notification categories (§7.3, §7.7) — must match
 /// `functions/bootstrap/notifications_schema.py`.
@@ -136,8 +137,8 @@ class NotificationService {
           .where((n) => !n.dismissed && n.type != _dmType)
           .length);
 
-  Future<void> markRead(String id) =>
-      _col.doc(id).set({'read': true}, SetOptions(merge: true));
+  Future<void> markRead(String id) => awaitServerAck(
+      _col.doc(id).set({'read': true}, SetOptions(merge: true)));
 
   /// Mark a set of notifications read in one batch — used when a grouped DM
   /// row is opened (all of that sender's unread messages at once).
@@ -148,7 +149,7 @@ class NotificationService {
     for (final id in list) {
       batch.set(_col.doc(id), {'read': true}, SetOptions(merge: true));
     }
-    await batch.commit();
+    await awaitServerAck(batch.commit());
   }
 
   Future<void> markAllRead(List<AppNotification> current) async {
@@ -156,12 +157,12 @@ class NotificationService {
     for (final n in current.where((n) => !n.read)) {
       batch.set(_col.doc(n.id), {'read': true}, SetOptions(merge: true));
     }
-    await batch.commit();
+    await awaitServerAck(batch.commit());
   }
 
   /// Swipe-to-dismiss one row.
-  Future<void> dismiss(String id) =>
-      _col.doc(id).set({'dismissed': true}, SetOptions(merge: true));
+  Future<void> dismiss(String id) => awaitServerAck(
+      _col.doc(id).set({'dismissed': true}, SetOptions(merge: true)));
 
   /// "Clear all" — soft-dismiss every currently-shown notification.
   Future<void> dismissAll(List<AppNotification> current) async {
@@ -169,7 +170,7 @@ class NotificationService {
     for (final n in current) {
       batch.set(_col.doc(n.id), {'dismissed': true}, SetOptions(merge: true));
     }
-    await batch.commit();
+    await awaitServerAck(batch.commit());
   }
 
   /// All four category flags, defaulting missing keys to `true` (§7.7).
@@ -182,8 +183,8 @@ class NotificationService {
     };
   }
 
-  Future<void> setPref(String category, bool enabled) =>
-      _prefsDoc.set({category: enabled}, SetOptions(merge: true));
+  Future<void> setPref(String category, bool enabled) => awaitServerAck(
+      _prefsDoc.set({category: enabled}, SetOptions(merge: true)));
 }
 
 /// Maps a notification `deep_link` (§7.6) to a client route.
