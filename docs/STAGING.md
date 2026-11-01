@@ -162,11 +162,15 @@ at runtime from prod's Identity Platform config and redacted in all logs.
 
 Runs **nightly at 02:00 local** via cron on this machine, serialized with
 `flock` so a long run never overlaps the next, with output appended to
-`~/workspace/ayma-inbox/prod-sync.log`. Install the entry with:
+`~/workspace/ayma-inbox/prod-sync.log`. The installed `crontab -l` entry is:
 
-    crontab -e
-    # then add exactly this line (one job, nightly, flock-guarded):
-    0 2 * * * /usr/bin/flock -n /tmp/ayma-prod-sync.lock /home/suhailps/workspace/ayma/scripts/sync-prod-to-staging.sh --execute >> /home/suhailps/workspace/ayma-inbox/prod-sync.log 2>&1
+    # Ayma prod->staging 1:1 data sync — nightly 02:00, one-way, flock-guarded (docs/STAGING.md)
+    0 2 * * * /usr/bin/flock -n /tmp/ayma-prod-sync.lock /bin/bash -c '[ -x /home/suhailps/workspace/ayma/scripts/sync-prod-to-staging.sh ] && /home/suhailps/workspace/ayma/scripts/sync-prod-to-staging.sh --execute || echo "[$(date -u +\%Y-\%m-\%dT\%H:\%M:\%SZ)] prod-sync skipped: script not yet merged to canonical path"' >> /home/suhailps/workspace/ayma-inbox/prod-sync.log 2>&1
+
+The `[ -x … ]` guard makes the job a **clean no-op until this branch is merged**
+and the script reaches the canonical `scripts/` path — so the nightly cron does
+not run the unreviewed script against real PII before the lead engineer merges
+it. It auto-activates the first night after merge; no cron edit is needed then.
 
 Do **not** raise the frequency above nightly without asking the founder.
 (A Cloud Scheduler job is an alternative, but cron-on-this-machine is simpler
