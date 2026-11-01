@@ -2127,8 +2127,11 @@ flowchart LR
   LOOP --> MOD["Advisory moderation<br/>(dm_moderation, never blocks)"]
   MOD --> V["Verdict call<br/>(date_sim_verdict.md →<br/>score 0-100 + label + summary)"]
   LOOP -. "each turn, the moment it is produced" .-> FS[("Firestore<br/>users/{uid}/date_sims/{sim_id}<br/>+ /messages/{seq}")]
-  V -- "verdict + status=done<br/>(or status=error, partial kept)" --> FS
+  V -- "verdict + status=done + completed_at<br/>(or status=error, partial kept)" --> FS
+  V -- "status=done" --> NOTIF["notify_date_sim_done<br/>(skill_result, deduped per sim,<br/>deep link date_sim/{other_uid}/{sim_id})"]
   FS -- "owner-read snapshots<br/>(rules; Admin-SDK writes only)" --> UI["Flutter DateSimScreen<br/>live chat + typing row,<br/>then score + summary<br/>— never sent to the match"]
+  NOTIF -. "tap → deepLinkToRoute →<br/>/date-sim/{uid}?sim_id=…" .-> UI
+  REOPEN["✨ re-entry / notification tap<br/>(latestCompletedSim: other_uid==x,<br/>status==done, newest completed_at)"] -. "reopen with sim_id" .-> UI
   UI -. "Keep the conversation going<br/>POST /date-sim/{id}/continue" .-> CONT["continue_simulation:<br/>resume at next seq,<br/>append N turns, re-score<br/>over the FULL transcript"]
   CONT --> LOOP
 ```
@@ -2188,8 +2191,9 @@ listening to Firestore FIRST, then fires the POST; the response is just
 `{sim_id, status}` and the client never depends on it for the transcript. After
 the opt-out gates and persona builds pass, the backend creates
 `users/{uid}/date_sims/{sim_id}` (`status: running|done|error`, `estimate`,
-`persona`, `banner`, `max_messages`, `created_at`; `verdict`, `moderation`,
-`usage_capped` when done; `error{code,message}` on failure) and writes every
+`persona`, `banner`, `max_messages`, `other_uid`, `thread_id`, `created_at`;
+`verdict`, `moderation`, `usage_capped`, `completed_at` when done;
+`error{code,message}` on failure) and writes every
 turn to `.../messages/{seq}` (`{seq, speaker: you|them, text, at}`) the instant
 it is generated. Hang guards: each model call is bounded by `TURN_TIMEOUT_S`
 (40s) and the whole run by `RUN_DEADLINE_S` (240s, under Cloud Run's 300s); any
@@ -2235,6 +2239,31 @@ nothing is ever sent to the match. 402/403/404 come back from the POST as on the
 initial run. Tested in `test_date_sim.py`
 (`test_continue_appends_more_turns_and_rescores`,
 `test_continue_blocked_when_a_party_opts_out`) and `date_sim_test.dart`.
+
+**Re-opening a finished sim (R2-H6).** A completed sim is persistent and
+re-openable — it never has to be re-run to be seen again. On create the doc
+records `other_uid` (which candidate it belongs to) and `thread_id` (the
+deterministic DM pair id, so "Message them for real" still works on a reopen
+with no originating profile in hand); `_finalize` stamps `completed_at`. On
+`done`, `date_sim.run_simulation` / `continue_simulation` fire
+`notifications_triggers.notify_date_sim_done` — a `skill_result`-type
+notification (same type as the match report) with a score-bearing preview and a
+deep link `date_sim/{other_uid}/{sim_id}` that reopens *that* sim; it is deduped
+per sim (`date_sim_{sim_id}`) so a continuation resurfaces one rolling entry
+with the refreshed score rather than stacking, and is best-effort (a push
+failure never fails the sim). `notification_service.deepLinkToRoute` maps that
+link to `/date-sim/{other_uid}?sim_id={sim_id}`; the date-sim route reads the
+`sim_id` query param (or `extra['sim_id']`) and passes it to
+`DateSimScreen(simId:)`, which reopens and watches the existing docs instead of
+showing the setup form. The ✨ entry on a profile checks
+`DateSimService.latestCompletedSim(other_uid)` (two equality filters,
+`other_uid == x` + `status == done`, newest-by-`completed_at` client-side — no
+composite index) and, when one exists, routes with its `sim_id` so a re-tap
+reopens the last result instead of silently starting fresh. Tested in
+`test_date_sim.py`
+(`test_finalize_writes_completed_at_other_uid_thread_id_and_notifies`,
+`test_date_sim_notification_deep_link_reopens_the_sim`), `date_sim_test.dart`
+(the ✨-reopen + `simId` render tests) and `notification_center_test.dart`.
 
 **Persistent AI-avatar snapshot (founder directive 2026-10-27).** The avatar
 is no longer assembled ad hoc at sim-spawn time. Each opted-in user has one

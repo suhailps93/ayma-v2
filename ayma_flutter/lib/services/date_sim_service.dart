@@ -34,4 +34,33 @@ class DateSimService {
       .orderBy('seq')
       .snapshots()
       .map((q) => q.docs.map((d) => DateSimMessage.fromMap(d.data())).toList());
+
+  /// The id of the most recently COMPLETED sim against [otherUid], or null if
+  /// there is none (so a re-entry can reopen the last result instead of
+  /// silently starting a fresh setup). Two equality filters need no composite
+  /// index; the latest is picked client-side by `completed_at` (a user has few
+  /// sims per candidate). Returns null on any read/auth failure — the caller
+  /// then just starts fresh.
+  Future<String?> latestCompletedSim(String otherUid) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return null;
+    final q = await _db
+        .collection('users')
+        .doc(uid)
+        .collection('date_sims')
+        .where('other_uid', isEqualTo: otherUid)
+        .where('status', isEqualTo: 'done')
+        .get();
+    if (q.docs.isEmpty) return null;
+    DateTime completedAt(Map<String, dynamic> d) {
+      final ts = d['completed_at'];
+      return ts is Timestamp
+          ? ts.toDate()
+          : DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    final docs = q.docs.toList()
+      ..sort((a, b) => completedAt(b.data()).compareTo(completedAt(a.data())));
+    return docs.first.id;
+  }
 }

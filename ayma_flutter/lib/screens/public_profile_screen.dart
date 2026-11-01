@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
+import '../services/date_sim_service.dart';
 import '../services/match_activity.dart';
 import '../services/tab_request.dart';
 import '../theme.dart';
@@ -30,12 +31,21 @@ import 'voice_call_screen.dart';
 /// from `GET /explore/profile/{uid}`, whose redacted `pages` list is the
 /// same source of truth the report's own adapter reads server-side.
 class PublicProfileScreen extends StatefulWidget {
-  const PublicProfileScreen({super.key, required this.uid, this.api});
+  const PublicProfileScreen({
+    super.key,
+    required this.uid,
+    this.api,
+    this.dateSims,
+  });
 
   static const path = '/profile/user/:uid';
 
   final String uid;
   final ApiClient? api;
+
+  /// Injectable for tests; defaults to a live [DateSimService]. Used to reopen
+  /// a past completed sim with this person instead of starting fresh.
+  final DateSimService? dateSims;
 
   @override
   State<PublicProfileScreen> createState() => _PublicProfileScreenState();
@@ -44,6 +54,7 @@ class PublicProfileScreen extends StatefulWidget {
 class _PublicProfileScreenState extends State<PublicProfileScreen>
     with ScreenContextReasserter<PublicProfileScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
+  late final DateSimService _dateSims = widget.dateSims ?? DateSimService();
   late Future<PublicProfile> _future;
 
   Set<String> _lastActive = const {};
@@ -164,6 +175,25 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     } finally {
       if (mounted) setState(() => _liking = false);
     }
+  }
+
+  /// Open the AI Date Simulation for [p]. If a completed sim with this person
+  /// already exists, REOPEN its result (so a re-tap isn't a silent fresh
+  /// start); otherwise open the setup form. A lookup failure falls back to a
+  /// fresh setup.
+  Future<void> _openDateSim(PublicProfile p) async {
+    String? simId;
+    try {
+      simId = await _dateSims.latestCompletedSim(p.uid);
+    } catch (_) {
+      simId = null;
+    }
+    if (!mounted) return;
+    final query = simId != null ? '?sim_id=${Uri.encodeQueryComponent(simId)}' : '';
+    context.push(
+      '/date-sim/${p.uid}$query',
+      extra: {'name': p.name, 'thread_id': p.threadId},
+    );
   }
 
   Future<void> _runMatch(PublicProfile p) async {
@@ -368,6 +398,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     onLike: _like,
                     onUnlike: _unlike,
                     onRunMatch: _runMatch,
+                    onDateSim: _openDateSim,
                   ),
                 ),
               // Persistent tab bar even though this screen is a pushed route,
@@ -1002,6 +1033,7 @@ class _Actions extends StatelessWidget {
     required this.onLike,
     required this.onUnlike,
     required this.onRunMatch,
+    required this.onDateSim,
   });
 
   final PublicProfile p;
@@ -1015,6 +1047,7 @@ class _Actions extends StatelessWidget {
   final void Function(PublicProfile) onLike;
   final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
+  final void Function(PublicProfile) onDateSim;
 
   @override
   Widget build(BuildContext context) {
@@ -1097,10 +1130,9 @@ class _Actions extends StatelessWidget {
         _RailButton(
           key: const Key('profileDateSimButton'),
           active: false,
-          onPressed: () => context.push(
-            '/date-sim/${p.uid}',
-            extra: {'name': p.name, 'thread_id': p.threadId},
-          ),
+          // Reopens the last completed sim with this person when one exists,
+          // otherwise opens the setup form (see [onDateSim]).
+          onPressed: () => onDateSim(p),
           icon: Icon(Icons.auto_awesome_outlined, color: accent),
         ),
       ],

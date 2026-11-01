@@ -185,6 +185,12 @@ void main() {
           deepLinkToRoute('appearance/current', myUid: 'a'),
           '/appearance/current');
     });
+
+    test('a finished date-sim reopens that exact sim (R2-H6)', () {
+      expect(
+          deepLinkToRoute('date_sim/her/sim_abc', myUid: 'me'),
+          '/date-sim/her?sim_id=sim_abc');
+    });
   });
 
   group('AppNotification.resolveActorUid', () {
