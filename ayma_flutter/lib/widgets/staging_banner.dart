@@ -37,21 +37,38 @@ class StagingBanner extends StatelessWidget {
     final show = enabled ?? Env.isStaging;
     if (!show) return child;
 
-    return Directionality(
-      textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr,
-      child: Banner(
-        message: message,
-        location: location,
-        color: color,
-        textStyle: const TextStyle(
-          color: Colors.white,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 1.0,
-          height: 1.0,
+    // If an ancestor banner is already showing and enabled wasn't explicitly set,
+    // avoid drawing duplicate ribbons over the same corner.
+    final hasAncestorBanner =
+        context.dependOnInheritedWidgetOfExactType<_StagingBannerScope>() != null;
+    if (enabled == null && hasAncestorBanner) {
+      return child;
+    }
+
+    return _StagingBannerScope(
+      child: Directionality(
+        textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr,
+        child: Banner(
+          message: message,
+          location: location,
+          color: color,
+          textStyle: const TextStyle(
+            color: Colors.white,
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.0,
+            height: 1.0,
+          ),
+          child: child,
         ),
-        child: child,
       ),
     );
   }
+}
+
+class _StagingBannerScope extends InheritedWidget {
+  const _StagingBannerScope({required super.child});
+
+  @override
+  bool updateShouldNotify(covariant InheritedWidget oldWidget) => false;
 }

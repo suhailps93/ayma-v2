@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../env.dart';
 import '../legal/biometric_consent_text.dart';
 import '../routing/entry.dart';
 import '../services/api_client.dart';
@@ -9,6 +10,7 @@ import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
 import '../widgets/ayma_orb.dart';
 import 'biometric_consent_screen.dart';
+import 'main_shell_screen.dart';
 import 'sign_in_screen.dart';
 import 'underage_screen.dart';
 
@@ -80,9 +82,25 @@ class _SplashScreenState extends State<SplashScreen> {
         context.go(SignInScreen.path);
         return;
       }
+      if (Env.isStaging && Env.apiBaseUrl.contains('.invalid')) {
+        // Staging backend is currently a placeholder (.invalid TLD).
+        // Route to the app shell so the staging build and UI can be verified.
+        debugPrint(
+          '[staging] Staging API placeholder unreachable ($e); routing to app shell',
+        );
+        context.go(MainShellScreen.path);
+        return;
+      }
       setState(() => _error = 'Could not start ($e).');
     } catch (e) {
       if (!mounted) return;
+      if (Env.isStaging && Env.apiBaseUrl.contains('.invalid')) {
+        debugPrint(
+          '[staging] Staging API placeholder unreachable ($e); routing to app shell',
+        );
+        context.go(MainShellScreen.path);
+        return;
+      }
       setState(() => _error = 'Could not start ($e).');
     }
   }
@@ -126,6 +144,13 @@ class _SplashScreenState extends State<SplashScreen> {
                         },
                         child: const Text('Retry'),
                       ),
+                      if (Env.isStaging) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton(
+                          onPressed: () => context.go(MainShellScreen.path),
+                          child: const Text('Continue to App Shell (Staging)'),
+                        ),
+                      ],
                     ],
                   ),
                 ),

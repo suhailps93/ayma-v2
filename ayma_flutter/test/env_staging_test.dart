@@ -70,6 +70,23 @@ void main() {
       expect(banner.message, 'STAGING');
       expect(banner.location, BannerLocation.topEnd);
     });
+
+    testWidgets('does not duplicate banner when ancestor banner is already active', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          debugShowCheckedModeBanner: false,
+          home: StagingBanner(
+            enabled: true,
+            child: StagingBanner(
+              child: Text('app_content'),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('app_content'), findsOneWidget);
+      expect(findStagingBanner(), findsOneWidget);
+    });
   });
 
   group('App shell staging banner integration', () {
