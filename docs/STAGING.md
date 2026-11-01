@@ -57,6 +57,38 @@ Everything else the code reads (`RATE_*`, credit/economy tunables,
 `REVENUECAT_SECRET_API_KEY`, …) keeps its code default on staging exactly as
 on prod — the prod scripts don't set them either.
 
+## Staging phone build (both axes)
+
+A phone build must match the staging backend on **two** axes or auth breaks: the
+app signs into Firebase with the Dart config in `firebase_options.dart`
+(`Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)`), and
+it calls the API at `AYMA_API_BASE_URL` (`env.dart`). If Firebase stays prod
+(`ayma-ai`) while the API points at staging, the app mints a **prod** ID token
+that the staging backend rejects → history load fails, long cold start, error
+block. (Root cause of the 4264706 build failure, 2026-11-01.)
+
+Build a correct staging phone APK with:
+
+    scripts/build-apk.sh --debug --staging
+
+`--staging` (dev builds only) does both axes from one committed source of truth,
+`ayma_flutter/android/app/google-services.staging.json` (the ayma-staging
+Android app, package `com.ayma.ayma_flutter`, public client config — not a
+secret):
+- swaps that file in as the native `google-services.json` for the build
+  (restored afterwards via an EXIT trap), and
+- injects the matching `--dart-define`s: `AYMA_API_BASE_URL=<staging api>` plus
+  `FB_PROJECT_ID`, `FB_MESSAGING_SENDER_ID`, `FB_STORAGE_BUCKET`,
+  `FB_ANDROID_APP_ID`, `FB_ANDROID_API_KEY` (read from that JSON), which
+  `firebase_options.dart` reads with prod defaults so prod/store builds are
+  unchanged.
+
+Verify the artifact before delivery: `strings`/`aapt dump` the APK must show
+`ayma-staging` for the Firebase project **and** the staging API host, never
+`ayma-ai`. **Standing rule (from the 4264706 failure): Scout bench-verifies the
+exact staging artifact on the emulator — sign in, cold start, chat history, no
+error block — before it is offered to the founder. No exceptions.**
+
 ## Data isolation
 
 - **Default (no `--firebase-project`): staging shares prod Firestore/Auth/Storage.**

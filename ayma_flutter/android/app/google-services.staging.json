@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "187469876115",
+    "project_id": "ayma-staging",
+    "storage_bucket": "ayma-staging.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:187469876115:android:adb41422d11627ddcd3666",
+        "android_client_info": {
+          "package_name": "com.ayma.ayma_flutter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBiviALhlVchkrRLwv1kzq7Vf0OLQe3AvI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

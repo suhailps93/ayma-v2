@@ -49,12 +49,23 @@ class DefaultFirebaseOptions {
     }
   }
 
+  // Android Firebase config is overridable at build time with --dart-define
+  // (FB_* keys) so a staging phone build points at the ayma-staging Firebase
+  // project; unset, every value defaults to the prod (ayma-ai) app, so prod /
+  // store builds are unchanged. The staging values are public client config
+  // (not secrets) and are selected by scripts/build-apk.sh --staging, which
+  // also swaps the native google-services.json. See docs/STAGING.md.
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCDmJ-yygctaNvDmeq2euaJnoQVn_Ltyjk',
-    appId: '1:235381544962:android:99993490ed0aee69c4ef1b',
-    messagingSenderId: '235381544962',
-    projectId: 'ayma-ai',
-    storageBucket: 'ayma-ai.firebasestorage.app',
+    apiKey: String.fromEnvironment('FB_ANDROID_API_KEY',
+        defaultValue: 'AIzaSyCDmJ-yygctaNvDmeq2euaJnoQVn_Ltyjk'),
+    appId: String.fromEnvironment('FB_ANDROID_APP_ID',
+        defaultValue: '1:235381544962:android:99993490ed0aee69c4ef1b'),
+    messagingSenderId: String.fromEnvironment('FB_MESSAGING_SENDER_ID',
+        defaultValue: '235381544962'),
+    projectId: String.fromEnvironment('FB_PROJECT_ID',
+        defaultValue: 'ayma-ai'),
+    storageBucket: String.fromEnvironment('FB_STORAGE_BUCKET',
+        defaultValue: 'ayma-ai.firebasestorage.app'),
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
