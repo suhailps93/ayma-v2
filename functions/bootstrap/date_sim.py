@@ -46,6 +46,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import dm_moderation
+import dm_schema
+import notifications_triggers
 import persona_snapshot
 import practice_llm
 import token_ledger
@@ -369,7 +371,9 @@ async def _finalize(
             "verdict": verdict,
             "moderation": mod,
             "usage_capped": usage_capped,
-            "finished_at": datetime.now(timezone.utc),
+            # The completion timestamp a reopen uses to surface the LATEST
+            # finished sim for a candidate (newest-by-``completed_at``).
+            "completed_at": datetime.now(timezone.utc),
         },
     )
     return verdict, mod, usage_capped
@@ -448,6 +452,10 @@ async def run_simulation(
         {
             "status": STATUS_RUNNING,
             "other_uid": other_uid,
+            # The deterministic DM pair id, persisted so a reopened sim (e.g.
+            # from its completion notification) can still "Message them for
+            # real" without the originating profile in hand.
+            "thread_id": dm_schema.thread_id(uid, other_uid),
             "max_messages": cap,
             "estimate": estimate_credits(cap),
             "persona": persona,
@@ -488,6 +496,13 @@ async def run_simulation(
         logger.warning("date-sim failed", exc_info=True)
         await _fail(sim_ref, "failed", "The simulation failed.")
         raise
+
+    # Completed (status: done) — tell the user it finished and deep-link so a
+    # tap REOPENS this very sim (uid is the owner; carry other_uid + sim_id).
+    # Best-effort inside the trigger: a notification failure never fails the run.
+    await notifications_triggers.notify_date_sim_done(
+        db, uid, other_name, sim_id, other_uid, verdict["score"]
+    )
 
     return {
         "simulation": True,
@@ -611,6 +626,12 @@ async def continue_simulation(
         logger.warning("date-sim continue failed", exc_info=True)
         await _fail(sim_ref, "failed", "The simulation failed.")
         raise
+
+    # Re-surface the completion entry with the refreshed score (deduped per sim,
+    # so a continuation resurfaces one rolling entry rather than stacking).
+    await notifications_triggers.notify_date_sim_done(
+        db, uid, other_name, sim_id, other_uid, verdict["score"]
+    )
 
     return {
         "simulation": True,

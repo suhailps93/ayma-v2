@@ -124,8 +124,9 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'date_sim',
     headline: 'Practice before you meet',
-    subtitle: 'In Explore, watch your AIs feel each other out, see the score, '
-        'then keep the conversation going for more.',
+    subtitle: 'In Explore, open a profile and tap ✨ to watch your AIs feel '
+        'each other out and see the score. Tap ✨ again any time to reopen '
+        'that result and keep the conversation going.',
     icon: Icons.chat_bubble_outline_rounded,
     anchorId: TourAnchors.exploreTab,
   ),

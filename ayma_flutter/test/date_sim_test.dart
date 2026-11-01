@@ -567,4 +567,97 @@ void main() {
     expect(pushed, contains('/date-sim/her'));
     expect(find.text('DATE SIM'), findsOneWidget);
   });
+
+  testWidgets(
+    'R2-H6: tapping ✨ when a completed sim with this person exists reopens '
+    'that sim (carries its sim_id) instead of a fresh setup',
+    (tester) async {
+      final auth = MockFirebaseAuth(signedIn: true);
+      final uid = auth.currentUser!.uid;
+      final fs = FakeFirebaseFirestore();
+      // A past COMPLETED sim with "her" already persisted by the backend.
+      await fs
+          .collection('users')
+          .doc(uid)
+          .collection('date_sims')
+          .doc('simDone')
+          .set({
+        'status': 'done',
+        'other_uid': 'her',
+        'completed_at': Timestamp.now(),
+        'persona': {'name': 'Dana'},
+      });
+
+      final pushed = <String>[];
+      final api = ApiClient(
+        auth: auth,
+        httpClient: MockClient((req) async {
+          if (req.url.path == '/explore/profile/her') {
+            return _json({
+              'uid': 'her',
+              'self': false,
+              'blocked': false,
+              'name': 'Dana',
+              'age': 30,
+              'location': 'Berlin',
+              'photos': <String>[],
+              'pages': const [
+                {'page_type': 'identity', 'title': '', 'body': 'Lives in Berlin.'},
+              ],
+              'liked': false,
+              'score': null,
+              'thread_id': 'her__me',
+              'has_chatted': false,
+              'deep_dive_id': '',
+            });
+          }
+          if (req.url.path == '/report/public_profile/her' ||
+              req.url.path == '/report/story_public/her') {
+            return _json({
+              'title': 'Dana',
+              'sections': const [],
+              'meta': {
+                'owner_uid': 'her',
+                'viewer_can_edit': false,
+                'created_at': null,
+                'updated_at': null,
+              },
+            });
+          }
+          return http.Response('no', 404);
+        }),
+      );
+      final router = GoRouter(
+        initialLocation: '/profile/user/her',
+        routes: [
+          GoRoute(
+            path: '/profile/user/:uid',
+            builder: (_, s) => PublicProfileScreen(
+              uid: s.pathParameters['uid']!,
+              api: api,
+              dateSims: DateSimService(auth: auth, firestore: fs),
+            ),
+          ),
+          GoRoute(
+            path: '/date-sim/:uid',
+            builder: (_, s) {
+              pushed.add(s.uri.toString());
+              return const Scaffold(body: Text('DATE SIM'));
+            },
+          ),
+        ],
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const Key('profileDateSimButton')));
+      await _settle(tester);
+
+      // Reopened THAT sim: the route carries the persisted sim id, so the
+      // screen lands on the result rather than a fresh setup form.
+      expect(pushed, isNotEmpty);
+      expect(pushed.single, startsWith('/date-sim/her'));
+      expect(pushed.single, contains('sim_id=simDone'));
+    },
+  );
 }

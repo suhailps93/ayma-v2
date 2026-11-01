@@ -255,10 +255,15 @@ final appRouter = GoRouter(
       path: DateSimScreen.path,
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>? ?? const {};
+        // Reopen a specific (running or finished) sim when a `sim_id` is given
+        // — the deep link's query param (completion notification) or `extra`.
+        final simId =
+            state.uri.queryParameters['sim_id'] ?? extra['sim_id'] as String?;
         return DateSimScreen(
           uid: state.pathParameters['uid']!,
           name: (extra['name'] as String?) ?? '',
           threadId: extra['thread_id'] as String?,
+          simId: simId,
         );
       },
     ),
