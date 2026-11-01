@@ -5070,7 +5070,10 @@ async def storage_image_finalized(request: Request) -> dict[str, object]:
     if not authz.lower().startswith("bearer ") or len(authz) < 16:
         raise HTTPException(status_code=403, detail="Bad push credentials.")
     host = request.headers.get("host", "")
-    audience = f"{request.url.scheme}://{host}{request.url.path}"
+    # NOTE: Pub/Sub mints the OIDC token with aud = the push endpoint's public
+    # URL (https). The container itself only ever sees plain-http behind the
+    # Cloud Run frontend, so request.url.scheme is wrong here — pin https.
+    audience = f"https://{host}{request.url.path}"
     try:
         email = await asyncio.to_thread(
             image_variants.verify_push_token, authz[7:], audience

@@ -90,7 +90,7 @@ gcloud pubsub topics add-iam-policy-binding $TOPIC --project=$PROJECT \
   --role=roles/pubsub.publisher
 gcloud storage buckets notifications create gs://$BUCKET \
   --project=$PROJECT --topic=$TOPIC \
-  --event-types=OBJECT_FINALIZE --object-name-prefix=uploads/ \
+  --event-types=OBJECT_FINALIZE --object-prefix=uploads/ \
   --payload-format=json
 gcloud pubsub subscriptions create storage-image-finalized-push --project=$PROJECT \
   --topic=$TOPIC --push-endpoint=$PUSH_URL \
