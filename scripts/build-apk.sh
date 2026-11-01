@@ -73,13 +73,17 @@ if (( STAGING == 1 )); then
   # source of truth) so firebase_options.dart (Dart, authoritative for
   # Firebase.initializeApp) and the native google-services.json agree — the
   # APK then verifies as staging on BOTH axes.
-  read -r FB_PROJECT_ID FB_PROJECT_NUMBER FB_STORAGE_BUCKET FB_APP_ID FB_API_KEY < <(
+  read -r FB_PROJECT_ID FB_PROJECT_NUMBER FB_STORAGE_BUCKET FB_APP_ID FB_API_KEY FB_WEB_CLIENT < <(
     python3 - "$GS_STAGING" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 pi = d["project_info"]; c = d["client"][0]
+# The web (client_type 3) oauth client is the Google Sign-In server client id;
+# "-" if Google isn't enabled yet (sign-in will then fall back to prod default).
+web = next((o["client_id"] for o in c.get("oauth_client", [])
+            if o.get("client_type") == 3), "-")
 print(pi["project_id"], pi["project_number"], pi["storage_bucket"],
-      c["client_info"]["mobilesdk_app_id"], c["api_key"][0]["current_key"])
+      c["client_info"]["mobilesdk_app_id"], c["api_key"][0]["current_key"], web)
 PY
   )
   ENVIRONMENT=staging
@@ -91,6 +95,14 @@ PY
     --dart-define=FB_ANDROID_APP_ID="$FB_APP_ID"
     --dart-define=FB_ANDROID_API_KEY="$FB_API_KEY"
   )
+  # Google Sign-In server client id must be the STAGING web client, or Google
+  # sign-in mints a token for the wrong project and staging rejects it (401).
+  if [[ -n "$FB_WEB_CLIENT" && "$FB_WEB_CLIENT" != "-" ]]; then
+    STAGING_DEFINES+=(--dart-define=GOOGLE_SERVER_CLIENT_ID="$FB_WEB_CLIENT")
+    echo ">> staging Google server client: $FB_WEB_CLIENT"
+  else
+    echo ">> WARNING: no web oauth_client in $GS_STAGING — Google sign-in will use the prod default and fail on staging. Enable Google on ayma-staging + regen the config." >&2
+  fi
   # Swap the native config in for this build, always restoring it afterwards.
   cp "$GS" "$GS.prod.bak"
   cp "$GS_STAGING" "$GS"
