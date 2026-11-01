@@ -45,3 +45,24 @@ when the code contradicts it, or (b) ships the fix commit referencing the bug
 id. Astro retests on the fix build → CLOSED or reopen with fresh evidence.
 Ops-side problems (test/seed data, emulator, build conversion, installs, config)
 Astro fixes itself.
+
+## Testing sweep documentation lives in the repo (founder standing rule, 2026-10-31)
+
+Every testing sweep is documented in the repo under **`docs/testing/`**, one new
+file per sweep — never overwrite a previous sweep.
+
+- **One `.md` per sweep**, named with the **version+build** and the **date**:
+  `<version>-<build>_<YYYY-MM-DD>.md` — e.g. `1.30.0-2242_2026-10-31.md`.
+- **Screenshots** for that sweep are committed **alongside it, in a matching
+  folder** of the same base name: `docs/testing/<version>-<build>_<YYYY-MM-DD>/`.
+  The sweep `.md` references its screenshots by relative path into that folder.
+- If two sweeps share a build **and** date, suffix the second with `_run<N>`
+  (e.g. `…_2026-10-31_run2.md`) so nothing is ever overwritten.
+- **Security coverage stays extensive** — the founder specifically values it.
+  Keep the Security section of every sweep as thorough as the pack allows
+  (privacy/PII extraction, auth, consent/18+, abuse/jailbreak, injection,
+  payment/entitlement gating); never trim it to save space.
+
+This mirrors the **Standard Emulator Test Pack** (Astro's pack): the pack carries
+the same convention so each run it produces maps to exactly one repo sweep file +
+folder. See `docs/testing/README.md`.
