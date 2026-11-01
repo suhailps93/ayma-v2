@@ -213,10 +213,8 @@ void main() {
 }
 
 class _FakeDm extends DmService {
-  _FakeDm({required List<DmThread> live, required List<DmThread> archive})
-      : _live = live,
-        _archive = archive,
-        super(auth: _auth());
+  _FakeDm({required this._live, required this._archive})
+      : super(auth: _auth());
 
   final List<DmThread> _live;
   final List<DmThread> _archive;
