@@ -3,6 +3,14 @@
 Set by the founder 2026-10-27. Canonical copy for the hackathon demo video,
 the submission write-up, and all social / launch copy.
 
+## Title & tagline (LOCKED — use verbatim)
+
+Locked by the founder 2026-10-31. Use these exact strings in all submission
+copy; do not paraphrase.
+
+- **Title:** Ayma — Matchmaking in the age of AI
+- **Tagline:** Your AI will find you your soulmate — or your soulmate for the night.
+
 ## The frame
 
 In *Black Mirror*'s "Hang the DJ," two people's digital selves go on a thousand
@@ -13,14 +21,19 @@ so your first real date is with someone you'll actually click with.**
 Aspirational, never dystopian. The simulation works *for* you, with what you
 chose to share — and you always make the final call.
 
-## The two features (one story)
+## The avatar system (one core, several modes)
+
+Every member has a **personal AI avatar** — an agent built from what they share
+with Ayma, that talks in their own style. Everything below is a mode of that one
+avatar: you can message or call a match's avatar, or send your own avatar out to
+meet theirs.
 
 - **Practice Date** — rehearse it yourself. A clearly labeled simulator of your
   match (built only from their public profile) lets you practice the first
   conversation, with live coaching and a debrief.
-- **Agent Dates** — let your agent go first. Your Ayma agent — built from your
+- **Agent Dates** — let your avatar go first. Your Ayma avatar — built from your
   profile, your voice, your context — goes on a simulated first date with your
-  match's agent, and returns a **compatibility score** plus a **how-it-went
+  match's avatar, and returns a **compatibility score** plus a **how-it-went
   summary**: the spark, the awkward pause, the thing you both geeked out on.
 
 Practice teaches you to show up well. Agent Dates tells you who is worth

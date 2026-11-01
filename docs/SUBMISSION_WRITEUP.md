@@ -1,11 +1,14 @@
 # Ayma — Meta Global AI Developer Hackathon write-up (Startup Track)
 
-**Title:** Ayma — practice the date before the date (on Meta's Muse Spark)
+**Title:** Ayma — Matchmaking in the age of AI
 
-**One-liner:** A voice-first AI dating companion, ported to Meta's models, with
-Practice Date: rehearse your first conversation with an AI simulation of your
-match — built only from their public profile — and get coached on what to say
-and what to avoid.
+**Tagline:** Your AI will find you your soulmate — or your soulmate for the night.
+
+**One-liner:** A voice-first AI dating app, ported to Meta's models, where every
+member has a personal AI avatar that talks like them. Message or call a match's
+avatar to rehearse (**Practice Date**), or send your avatar on a simulated date
+and get a compatibility report back (**Agent Dates**). Each avatar is built only
+from what its own person shared, and it informs you — you make the call.
 
 This write-up grounds every claim in what is actually built on the
 `meta-hackathon` branch. Where a number is not independently verifiable from the
@@ -15,26 +18,38 @@ code or the recorded status, it is marked `TODO(verify)` rather than invented.
 
 ## 1. What we submit
 
-Two deliverables, both live on `meta-hackathon`:
+Ayma gives every member a **personal AI avatar** — an agent grounded in what
+that member has shared with Ayma, that talks in their own style. The avatar is
+the core of the product, and it shows up in several modes:
+
+- **Talk to a match's avatar (Practice Date).** On any profile, a **Practice**
+  button opens a clearly labelled *simulator*: you message or voice-call a
+  simulated version of that match — built **only from their viewer-visible
+  profile** — to rehearse the first conversation before reaching the real
+  person, with Ayma coaching live and a debrief at the end. This runs on Meta
+  **Muse Spark** in the deployed build.
+- **Send your avatar on a date (Agent Dates).** Your avatar and a match's
+  avatar go on a *simulated first date* and report back a **compatibility
+  score** plus a short **how-it-went summary** — the optimistic version of
+  *Black Mirror*'s "Hang the DJ": your digital self meets theirs first, so your
+  first real date is with someone you'll actually click with. Built during the
+  hackathon window on the same provider abstraction.
+
+Two deliverables underpin this, both live on `meta-hackathon`:
 
 - **Deliverable A — The Port.** Ayma's LLM work runs behind a provider
   abstraction with Meta's **Muse Spark** as a first-class vendor and Gemini kept
   as the default and the fallback. Each surface flips independently.
-- **Deliverable B — Practice Date.** A new feature: on any profile, a
-  **Practice** button opens a clearly labelled *simulator* where Ayma plays a
-  persona of that match — built **only from their viewer-visible profile** — so
-  the user can rehearse the first conversation (text or voice), with Ayma
-  coaching live and giving an end-of-session debrief. Practice Date's text
-  surface already runs on Muse Spark in the deployed build.
-- **New surface — AI-to-AI date simulation (Agent Dates).** Each user's Ayma
-  agent — built from what that user shares with Ayma — can go on a simulated
-  first date with another user's agent and return a **compatibility score**
-  plus a short **how-it-went summary**. It is the optimistic version of
-  *Black Mirror*'s "Hang the DJ": the simulation finds your person before you
-  ever meet. Built during the hackathon window on the same provider
-  abstraction (Muse Spark), under the same privacy contract as Practice Date:
-  an agent's context holds only its own user's shared data, and the summary
-  reports only what happened inside the simulation.
+- **Deliverable B — The avatar system.** Practice Date (talk to a match's
+  avatar, text or voice, with live coaching + debrief) ships today on Muse
+  Spark; Agent Dates (avatar-to-avatar simulation) is built on the same
+  abstraction.
+
+**Privacy contract (every mode).** Your avatar carries only what *you* shared;
+a match's avatar you reach exposes only their **viewer-visible profile** — never
+their private data (enforced at the database-query level, see §5); summaries
+report only what happened inside the simulation. The simulation **informs; you
+always make the final call.**
 
 ---
 
@@ -193,8 +208,10 @@ current Gemini Live path is unchanged). `agent.build_meta_cascade_session`:
 On any build failure (no key, missing plugin) it falls back to Gemini Live, so a
 flip can never take practice voice down; normal Ayma voice calls are untouched.
 Cascade LLM tokens are metered under `FEATURE_VOICE`. **Not flipped, not
-deployed** — a live Meta voice call bills the card until the $150 credit posts,
-so flipping is gated on billing.
+deployed** — the Meta **LLM leg** of a live voice call bills the card until the
+$150 Meta Model API credit posts, so flipping is gated on billing. That credit
+covers **brain (LLM) inference only**; the cascade's STT/TTS ride LiveKit
+Inference on separate LiveKit credits, not the $150.
 
 ## 8. Startup-track framing — a real pre-launch product
 
@@ -204,8 +221,8 @@ disclosed upfront, now running on Meta models:
 - **Android:** live (internal/beta track; the hackathon build deployed to the
   founder's device and beta).
 - **iOS:** TestFlight.
-- **Pilot:** SJSU campus pilot (per the approved application and `HACKATHON_PLAN`
-  §5). Pilot scale / tester count: `TODO(verify)`.
+- **Pilot:** an initial Bay Area campus pilot (per the approved application and
+  `HACKATHON_PLAN` §5). Pilot scale / tester count: `TODO(verify)`.
 
 The port and Practice Date are both **new work inside the hackathon window**, on
 an existing product, behind flags that keep production on Gemini until a surface
@@ -222,7 +239,9 @@ consumer story Ayma launches with on December 1, 2026.
 
 Until the $150 Meta Model API credit posts to billing, every Meta call bills the
 card, so flips are deliberate and monitored (text practice flipped and watched;
-voice cascade held OFF). Users and judges see **credits**, never dollars. Meta's
+voice cascade held OFF). The $150 covers **brain (LLM) inference only** (the Meta
+Model API) — not voice: STT/TTS run on LiveKit Inference under separate LiveKit
+credits. Users and judges see **credits**, never dollars. Meta's
 own per-model dollar pricing is not yet in the token ledger, so `cost_usd` is 0
 for Meta cascade turns while the token cap still applies — a known Deliverable-A
 gap, not a hidden cost.

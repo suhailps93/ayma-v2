@@ -1,11 +1,18 @@
-# Ayma Practice Date — how to try it (judge one-pager)
+# Ayma — how to try it (judge one-pager)
 
-**Title:** Ayma — practice the date before the date (on Meta's Muse Spark)
+**Title:** Ayma — Matchmaking in the age of AI
 
-**One-liner:** A voice-first AI dating companion, ported to Meta's models, with
-Practice Date: rehearse your first conversation with an AI simulation of your
-match — built only from their public profile — and get coached on what to say
-and what to avoid.
+**Tagline:** Your AI will find you your soulmate — or your soulmate for the night.
+
+**One-liner:** A voice-first AI dating app where every member has a personal AI
+avatar that talks like them. You can message or call a match's avatar to
+rehearse (**Practice Date**), or send your avatar on a simulated date and get a
+report back (**Agent Dates**). Each avatar is built only from what its own
+person shared.
+
+**The avatar system.** Every Ayma member has a personal AI avatar — an agent
+built from what they share, that talks in their style. Practice Date and Agent
+Dates below are two modes of it; this guide walks the **Practice Date** demo.
 
 **What Practice Date is.** On any profile in Ayma, a **Practice** button opens a
 clearly labelled *simulator*: Ayma plays a persona of that match — built **only
