@@ -128,6 +128,13 @@ ensure_worktree() {
   fi
 }
 
+# --- post-build self-check: the APK must carry the staging number ------- #
+# Single grep, never a strings|grep -q pipeline: with pipefail set, grep -q's
+# early exit SIGPIPEs strings and the pipeline fails even when it matches.
+apk_verifies_staging() { # $1=apk path
+  grep -a -q "187469876115" "$1" 2>/dev/null
+}
+
 # --- install the last-built apk to the Pixel; echoes a result string ------- #
 install_to_pixel() {
   local apk="$1" serial
@@ -192,7 +199,7 @@ cycle_once() {
   fi
 
   # ---- staging tip advanced: full cycle ----------------------------------- #
-  local PREV DEPLOY_RES BUILD_RES PHONE_RES PHONE_OK APK
+  local PREV DEPLOY_RES BUILD_RES PHONE_RES PHONE_OK APK STAGING_APK
   PREV="${LAST_STAGING:-$NEW}"
   log "staging advanced: $(short "$PREV") -> $(short "$NEW"); starting cycle"
   git -C "$WT" reset --hard origin/staging -q
@@ -211,14 +218,22 @@ cycle_once() {
     log "staging deploy FAILED"
   fi
 
-  # (2) build the dev apk from this commit, pointed at the staging API
+  # (2) build the dev apk from this commit, pointed at staging (Firebase +
+  # API). build-apk.sh --staging swaps in google-services.staging.json and
+  # injects AYMA_API_BASE_URL + FB_* defines, so the APK verifies as
+  # ayma-staging on both the Dart and native axes.
   APK=""
-  if bash "$WT/scripts/build-apk.sh" --debug \
-        --dart-define=AYMA_API_BASE_URL="$STAGING_API" \
+  if bash "$WT/scripts/build-apk.sh" --debug --staging \
         > "$LOGDIR/build-$(short "$NEW").log" 2>&1; then
-    APK="$WT/ayma_flutter/build/app/outputs/flutter-apk/app-debug.apk"
-    BUILD_RES="success (dev apk -> staging API)"
-    write_state last_apk "$APK"
+    STAGING_APK="$WT/ayma_flutter/build/app/outputs/flutter-apk/app-debug.apk"
+    if apk_verifies_staging "$STAGING_APK"; then
+      APK="$STAGING_APK"
+      BUILD_RES="success (dev apk -> staging API)"
+      write_state last_apk "$APK"
+    else
+      BUILD_RES="FAILED (APK did not verify as staging: project number 187469876115 not found)"
+      log "apk staging self-check FAILED (project number 187469876115 missing from APK)"
+    fi
   else
     BUILD_RES="FAILED (see $LOGDIR/build-$(short "$NEW").log)"
     log "apk build FAILED"
@@ -227,6 +242,8 @@ cycle_once() {
   # (3) install to the Pixel (never the emulator)
   if [[ -n "$APK" ]]; then
     if PHONE_RES="$(install_to_pixel "$APK")"; then PHONE_OK=1; else PHONE_OK=0; fi
+  elif [[ "$BUILD_RES" == *"did not verify as staging"* ]]; then
+    PHONE_RES="not installed - skipped (APK did not verify as staging)"; PHONE_OK=0
   else
     PHONE_RES="not installed - no apk (build failed)"; PHONE_OK=0
   fi
@@ -250,9 +267,15 @@ cycle_once() {
   [[ "$DEPLOY_RES" == FAILED* ]] && muse_blocked "$NEW" "deploy" \
     "staging deploy failed at $(short "$NEW")" \
     "scripts/deploy-staging.sh failed (log: $LOGDIR/deploy-$(short "$NEW").log). Phone build/install for this commit ran anyway where possible."
-  [[ "$BUILD_RES" == FAILED* ]] && muse_blocked "$NEW" "build" \
-    "staging APK build failed at $(short "$NEW")" \
-    "scripts/build-apk.sh --debug (staging-pointed) failed (log: $LOGDIR/build-$(short "$NEW").log). No APK for this commit; phone install skipped."
+  if [[ "$BUILD_RES" == *"did not verify as staging"* ]]; then
+    muse_blocked "$NEW" "build" \
+      "staging APK did not verify as staging at $(short "$NEW")" \
+      "Staging self-check failed: project number 187469876115 not found in the built APK (log: $LOGDIR/build-$(short "$NEW").log). Phone install skipped."
+  elif [[ "$BUILD_RES" == FAILED* ]]; then
+    muse_blocked "$NEW" "build" \
+      "staging APK build failed at $(short "$NEW")" \
+      "scripts/build-apk.sh --debug --staging failed (log: $LOGDIR/build-$(short "$NEW").log). No APK for this commit; phone install skipped."
+  fi
 
   # advance state: staging always advances once we've deployed+recorded (a
   # failed cycle heals on the next tip change); phone advances only on a
@@ -270,6 +293,8 @@ daemon() {
   done
 }
 
+# Only dispatch when executed; self-check.test.sh sources this file.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 case "${1:---once}" in
   --once)   cycle_once ;;
   --daemon) daemon ;;
@@ -279,3 +304,4 @@ case "${1:---once}" in
     echo "State: $STATE/{last_staging,last_phone,last_apk}, logs in $LOGDIR" ;;
   *) echo "error: unknown flag: $1 (see --help)" >&2; exit 2 ;;
 esac
+fi
