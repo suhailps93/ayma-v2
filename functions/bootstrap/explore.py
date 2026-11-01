@@ -428,13 +428,19 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             # only let a user read their *own* uploads/ tree, so the client
             # can't resolve another person's photo itself.
             photo_url = ""
+            photo_url_thumb = ""
             if photo_path:
                 try:
-                    from public_profile import _photo_url
+                    from public_profile import _photo_url, _variant_url
 
                     photo_url = _photo_url(photo_path) or ""
+                    # Smaller grid-sized variant when it exists (staging only);
+                    # falls back to the original when the variant is absent or
+                    # image variants are off (prod) — no extra GCS call then.
+                    photo_url_thumb = _variant_url(photo_path, "thumb", 400) or photo_url
                 except Exception:  # noqa: BLE001 - never sink the feed on a photo
                     photo_url = ""
+                    photo_url_thumb = ""
 
             liked, mutual = (
                 (False, False) if other == uid
@@ -448,6 +454,7 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
                     "location": prof.get("location", ""),
                     "photo_path": photo_path,  # kept for back-compat
                     "photo_url": photo_url,
+                    "photo_url_thumb": photo_url_thumb,
                     "score": None
                     if other == uid
                     else _score_for(db, uid, other),

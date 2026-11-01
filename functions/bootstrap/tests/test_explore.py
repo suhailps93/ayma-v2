@@ -421,3 +421,41 @@ def test_explore_excludes_practice_personas(monkeypatch):
     ids = {c["uid"] for c in ex.explore(db, "me", {})}
     assert "demo_practice_maya" not in ids
     assert ids == {"me", "real"}
+
+
+# --- explore card: server-minted thumb variant URL with fallback ------------
+# The grid gets a smaller thumb variant when it exists (staging); otherwise it
+# falls back to the original photo_url. explore imports _photo_url/_variant_url
+# from public_profile at call time, so patching that module is enough.
+import public_profile as pp  # noqa: E402
+
+
+def test_explore_card_uses_thumb_variant_when_present(monkeypatch):
+    monkeypatch.setattr(pp, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    monkeypatch.setattr(pp, "_variant_url", lambda sp, spec, w: f"https://cdn/{sp}__{spec}_{w}")
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "hasphoto", location="X", birthdate="1993-01-01",
+       photos=[{"media_id": "pm", "order": 0}])
+    db.docs[("users", "hasphoto", "user_media", "pm")] = {
+        "storage_path": "uploads/hasphoto/p.jpg"
+    }
+    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    card = cards["hasphoto"]
+    assert card["photo_url"] == "https://cdn/uploads/hasphoto/p.jpg"
+    assert card["photo_url_thumb"] == "https://cdn/uploads/hasphoto/p.jpg__thumb_400"
+
+
+def test_explore_card_thumb_falls_back_to_original_when_variant_absent(monkeypatch):
+    monkeypatch.setattr(pp, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    monkeypatch.setattr(pp, "_variant_url", lambda sp, spec, w: None)
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "hasphoto", location="X", birthdate="1993-01-01",
+       photos=[{"media_id": "pm", "order": 0}])
+    db.docs[("users", "hasphoto", "user_media", "pm")] = {
+        "storage_path": "uploads/hasphoto/p.jpg"
+    }
+    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    card = cards["hasphoto"]
+    assert card["photo_url_thumb"] == card["photo_url"]  # == original

@@ -52,6 +52,36 @@ kept) for: non-images, undecodable bytes, originals narrower than the target
 width, objects > 25MB, non-profile paths, and variant objects themselves
 (loop guard — variant writes emit `OBJECT_FINALIZE` too).
 
+## Serving variant URLs to the client (server-minted)
+
+The client **cannot** derive another user's variant URL: `uploads/{uid}/*` is
+owner-read-only in `storage.rules`, and Firebase download tokens are per-object
+(an original's token 403s on its variant). So the backend mints variant URLs and
+returns them on the cross-user surfaces, each with per-entry fallback to the
+original:
+
+- `image_variants.variant_object_name(object_name, spec, width)` — serve-time
+  variant path, **no download / GCS call**. Ext is guessed from the source path
+  (`.png`→.png, `.webp`→.webp, else→.jpg); a wrong guess just misses the
+  `exists()` check and the caller falls back to the original.
+- `public_profile._variant_url(storage_path, spec, width)` — returns `None` when
+  `CONFIG.image_variants_enabled` is false (prod — **zero extra GCS calls**), else
+  mints a token URL for the variant object via `_photo_url()` (its own `exists()`
+  check + token mint). `None` ⇒ caller uses the original.
+
+New response fields (additive; old clients ignore them):
+
+| Surface | Existing | New | Fallback |
+| --- | --- | --- | --- |
+| Explore card (`explore.py`) | `photo_url`, `photo_path` | `photo_url_thumb` (thumb-400) | `= photo_url` when variant absent / flag off |
+| Public profile (`public_profile.build`) | `photos[]` | `photos_thumb[]`, `photos_medium[]` (1:1 with `photos`) | each entry `= photos[i]` when absent / flag off |
+
+Inert contract: with the flag **off** (prod) the new fields are byte-identical to
+the originals and no extra GCS call is made; with it **on** (staging) a photo whose
+variant object does not yet exist falls back to its original. The deleted-user
+profile placeholder carries empty `photos_thumb`/`photos_medium` for shape
+consistency. Client mapping: `photoUrlThumb ?? photoUrl`; `photosMedium[i] ?? photos[i]`.
+
 ## Endpoints (code: `image_variants.py`, routes in `main.py`)
 
 - `POST /internal/storage/image-finalized` — Pub/Sub push target. Staging

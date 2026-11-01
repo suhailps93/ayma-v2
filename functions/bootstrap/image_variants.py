@@ -112,6 +112,24 @@ def variant_name(object_name: str, spec: str, width: int, extension: str) -> str
     return f"{base}__{spec}_{width}{extension}"
 
 
+def variant_object_name(object_name: str, spec: str, width: int) -> str:
+    """Serve-time variant path for an original (no download, no GCS call).
+
+    The variant extension is guessed from the SOURCE path extension the same
+    way :func:`_output_format` maps a decoded image: ``.png``→``.png``,
+    ``.webp``→``.webp``, anything else→``.jpg``. A wrong guess simply misses
+    the variant's ``exists()`` check and the caller falls back to the original
+    URL (safe) — the generator is the authority on the real extension."""
+    ext = object_name.rpartition(".")[2].lower() if "." in object_name else ""
+    if ext == "png":
+        vext = ".png"
+    elif ext == "webp":
+        vext = ".webp"
+    else:
+        vext = ".jpg"
+    return variant_name(object_name, spec, width, vext)
+
+
 def is_variant_path(object_name: str) -> bool:
     """True for objects this module generated (loop guard)."""
     return _VARIANT_RE.search(object_name) is not None

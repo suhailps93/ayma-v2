@@ -367,3 +367,85 @@ def test_viewing_profile_context_scales_a_fractional_score_to_percent():
     assert "99/100 compatibility" in out
     assert "1/100" not in out
     assert "do NOT have enough" not in out
+
+
+# --- image variants: server-minted variant URLs with per-entry fallback -----
+# The client can't derive another user's variant URL (per-object Firebase
+# tokens + owner-only storage.rules), so the backend mints thumb/medium URLs
+# with fallback to the original.
+import dataclasses  # noqa: E402
+
+
+def _variants(monkeypatch, enabled: bool):
+    monkeypatch.setattr(
+        pp, "CONFIG", dataclasses.replace(pp.CONFIG, image_variants_enabled=enabled)
+    )
+
+
+def test_variant_url_returns_none_and_touches_no_blob_when_flag_off(monkeypatch):
+    _variants(monkeypatch, False)
+    called = []
+    monkeypatch.setattr(pp, "_photo_url", lambda sp: called.append(sp) or "x")
+    assert pp._variant_url("uploads/u/a.jpg", "thumb", 400) is None
+    assert called == []  # early-return: no blob access, no GCS call
+
+
+def test_variant_url_mints_variant_url_when_flag_on(monkeypatch):
+    _variants(monkeypatch, True)
+    monkeypatch.setattr(pp, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    assert (
+        pp._variant_url("uploads/u/a.jpg", "thumb", 400)
+        == "https://cdn/uploads/u/a__thumb_400.jpg"
+    )
+
+
+def test_photos_with_variants_uses_variant_when_present(monkeypatch):
+    _variants(monkeypatch, True)
+    # every path (original + variant) resolves -> thumb/medium are the variants
+    monkeypatch.setattr(pp, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    db = FakeDb()
+    db.docs[("users", "her", "user_media", "m1")] = {"storage_path": "uploads/her/a.jpg"}
+    prof = {"photos": [{"media_id": "m1", "order": 0}]}
+    originals, thumbs, mediums = pp._photos_with_variants(db, "her", prof)
+    assert originals == ["https://cdn/uploads/her/a.jpg"]
+    assert thumbs == ["https://cdn/uploads/her/a__thumb_400.jpg"]
+    assert mediums == ["https://cdn/uploads/her/a__medium_1080.jpg"]
+
+
+def test_photos_with_variants_falls_back_when_variant_missing(monkeypatch):
+    _variants(monkeypatch, True)
+    # originals resolve; variant objects don't exist -> _photo_url returns None
+    def _url(sp):
+        return None if ("__thumb_" in sp or "__medium_" in sp) else f"https://cdn/{sp}"
+
+    monkeypatch.setattr(pp, "_photo_url", _url)
+    db = FakeDb()
+    db.docs[("users", "her", "user_media", "m1")] = {"storage_path": "uploads/her/a.jpg"}
+    prof = {"photos": [{"media_id": "m1", "order": 0}]}
+    originals, thumbs, mediums = pp._photos_with_variants(db, "her", prof)
+    assert originals == ["https://cdn/uploads/her/a.jpg"]
+    assert thumbs == originals  # fell back to the original
+    assert mediums == originals
+
+
+def test_build_populates_variant_fields_with_fallback(monkeypatch):
+    _variants(monkeypatch, True)
+    monkeypatch.setattr(pp, "_score_for", lambda db, a, b: 0.5)
+
+    def _url(sp):
+        # thumb exists, medium does not -> medium falls back to original
+        if "__medium_" in sp:
+            return None
+        return f"https://cdn/{sp}"
+
+    monkeypatch.setattr(pp, "_photo_url", _url)
+    db = FakeDb()
+    db.docs[("users", "her", "profile", "main")] = {
+        "name": "Dana",
+        "photos": [{"media_id": "m1", "order": 0}],
+    }
+    db.docs[("users", "her", "user_media", "m1")] = {"storage_path": "uploads/her/a.jpg"}
+    v = pp.build(db, "me", "her")
+    assert v["photos"] == ["https://cdn/uploads/her/a.jpg"]
+    assert v["photos_thumb"] == ["https://cdn/uploads/her/a__thumb_400.jpg"]
+    assert v["photos_medium"] == ["https://cdn/uploads/her/a.jpg"]  # fallback
