@@ -128,6 +128,13 @@ ensure_worktree() {
   fi
 }
 
+# --- post-build self-check: the APK must carry the staging number ------- #
+# Single grep, never a strings|grep -q pipeline: with pipefail set, grep -q's
+# early exit SIGPIPEs strings and the pipeline fails even when it matches.
+apk_verifies_staging() { # $1=apk path
+  grep -a -q "187469876115" "$1" 2>/dev/null
+}
+
 # --- install the last-built apk to the Pixel; echoes a result string ------- #
 install_to_pixel() {
   local apk="$1" serial
@@ -219,7 +226,7 @@ cycle_once() {
   if bash "$WT/scripts/build-apk.sh" --debug --staging \
         > "$LOGDIR/build-$(short "$NEW").log" 2>&1; then
     STAGING_APK="$WT/ayma_flutter/build/app/outputs/flutter-apk/app-debug.apk"
-    if strings "$STAGING_APK" 2>/dev/null | grep -q "187469876115"; then
+    if apk_verifies_staging "$STAGING_APK"; then
       APK="$STAGING_APK"
       BUILD_RES="success (dev apk -> staging API)"
       write_state last_apk "$APK"
@@ -286,6 +293,8 @@ daemon() {
   done
 }
 
+# Only dispatch when executed; self-check.test.sh sources this file.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 case "${1:---once}" in
   --once)   cycle_once ;;
   --daemon) daemon ;;
@@ -295,3 +304,4 @@ case "${1:---once}" in
     echo "State: $STATE/{last_staging,last_phone,last_apk}, logs in $LOGDIR" ;;
   *) echo "error: unknown flag: $1 (see --help)" >&2; exit 2 ;;
 esac
+fi
