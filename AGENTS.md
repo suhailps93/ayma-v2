@@ -38,6 +38,8 @@ If implementation reveals that a decision in `PLAN.md` or `docs/ARCHITECTURE.md`
 
 Read `docs/AGENT_HANDOFF.md` after this file and `PLAN.md`: architecture, the founder's working style, deploy/build/adb runbooks, agent orchestration, how to drive Muse and Hark, and the current state and question queue. Rules stay in this file; the handoff holds the details (no secrets, ever).
 
+Also read `docs/agents/WORKFLOW.md`: cross-cutting rules every agent inherits regardless of task — in particular **VERIFY-BEFORE-FIX** (never fix a reported bug blind; confirm from the code it exists as reported, and if the code contradicts the report, correct the report instead of fixing).
+
 ### Default delegation (founder standing rule, do not make the founder repeat it)
 
 - Delegate every delegable task: **Muse** (muse.ai via chrome-devtools) for anything in a browser or vendor console, research, billing checks and applications; **Gemini** (`gemini-mcp`, also the deepseek and codex MCPs) for drafting simple code, analysis and summaries; background or worktree **Claude agents** for app code, builds, deploys and installs.
