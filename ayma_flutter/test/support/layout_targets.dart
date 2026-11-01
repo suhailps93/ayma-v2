@@ -48,6 +48,7 @@ import 'package:ayma_flutter/screens/recovery_screen.dart';
 import 'package:ayma_flutter/screens/release_notes_screen.dart';
 import 'package:ayma_flutter/screens/settings_screen.dart';
 import 'package:ayma_flutter/screens/shared_report_screen.dart';
+import 'package:ayma_flutter/screens/sign_in_critical_consent_dialog.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
 import 'package:ayma_flutter/screens/skills_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
@@ -377,6 +378,11 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         ),
       );
     },
+    // The sign-in greeting's critical-consent dialog (§3.3): the four faithful
+    // consent points + the three legal-screen buttons must lay out at every
+    // matrix size, scale and direction.
+    'sign-in critical consent dialog': (context) =>
+        showSignInCriticalConsent(context),
     'OAuth code dialog': (context) => promptForOAuthCode(context),
     // No Firebase in tests: the permission read fails, which the primer
     // treats as "not asked yet" — so the dialog shows.

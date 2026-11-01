@@ -78,6 +78,13 @@ class VoiceSessionController extends ChangeNotifier {
   final TranscriptStore _store;
   final ApiClient? _apiClient;
 
+  /// The live transcript this session writes its voice segments to (§1.7 step
+  /// 12). Exposed so a surface that only has the controller — e.g. the
+  /// sign-in page's pre-sign-in greeting, where there is no uid and so no
+  /// backend [AppCommandService] navigation path — can observe the user's own
+  /// finalized voice turns and act on them locally.
+  TranscriptStore get transcript => _store;
+
   /// Lazy so merely constructing the controller (e.g. in a widget build) never
   /// touches `FirebaseAuth.instance` — same pattern as `ChatScreen._api`.
   late final ApiClient _api = _apiClient ?? ApiClient();
