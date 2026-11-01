@@ -64,22 +64,84 @@ class MatchService {
   }
 
   /// Mutual matches (both sides accepted, or reciprocal Explore likes) — the
-  /// "start a conversation" half of the Messages tab (§11.3).
-  Stream<List<MatchView>> watchMutualMatches() {
+  /// "start a conversation" half of the Messages tab (§11.3). Bounded to
+  /// [limit] (Phase 2 pagination design §3.2.1) with batched name hydration
+  /// (design §3.2.2 client fallback — no N+1 profile reads).
+  Stream<List<MatchView>> watchMutualMatches({int limit = 25}) {
     final uid = _uid;
     return _db
         .collection('matches')
         .where('uids', arrayContains: uid)
         .where('status', isEqualTo: 'mutual_interest')
+        .limit(limit)
         .snapshots()
-        .asyncMap((snap) async {
-      final views = <MatchView>[];
-      for (final doc in snap.docs) {
-        views.add(await _toView(doc, uid));
-      }
-      views.sort((a, b) => b.score.compareTo(a.score));
-      return views;
-    });
+        .asyncMap((snap) => _toViews(snap.docs, uid));
+  }
+
+  /// Batched view hydration: ONE `POST /profiles/mini` for every match in
+  /// the snapshot instead of one `users/$other/profile/main` read per
+  /// match. When the backend is unreachable (offline), falls back to
+  /// per-profile reads — today's behavior, served from the local cache.
+  Future<List<MatchView>> _toViews(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String uid,
+  ) async {
+    final others = <String>[];
+    for (final doc in docs) {
+      final data = doc.data();
+      final uids = ((data['uids'] as List?) ?? const []).cast<String>();
+      others.add(uids.firstWhere((u) => u != uid, orElse: () => ''));
+    }
+    var minis = const <String, MiniProfile>{};
+    var batched = false;
+    final wanted = others.where((o) => o.isNotEmpty).toSet().toList();
+    if (wanted.isNotEmpty) {
+      try {
+        minis = await _api.miniProfiles(wanted);
+        batched = true;
+      } catch (_) {}
+    }
+    final views = <MatchView>[];
+    for (var i = 0; i < docs.length; i++) {
+      views.add(await _toViewBatched(docs[i], uid, others[i],
+          batchedName: batched ? minis[others[i]]?.name : null,
+          profileFallback: !batched));
+    }
+    views.sort((a, b) => b.score.compareTo(a.score));
+    return views;
+  }
+
+  Future<MatchView> _toViewBatched(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+    String uid,
+    String other, {
+    String? batchedName,
+    bool profileFallback = false,
+  }) async {
+    final data = doc.data() ?? const <String, dynamic>{};
+    final ue = (data['user_explanation'] as Map?)?.cast<String, dynamic>() ?? {};
+
+    var name = (batchedName ?? '').trim();
+    if (name.isEmpty && profileFallback) name = await _profileName(other);
+    if (name.isEmpty) name = 'Someone';
+
+    return MatchView(
+      matchId: doc.id,
+      otherUid: other,
+      otherName: name,
+      score: (data['score'] as num?)?.toDouble() ?? 0,
+      myExplanation: (ue[uid] as String?)?.trim() ?? '',
+      status: (data['status'] as String?) ?? 'scored',
+    );
+  }
+
+  Future<String> _profileName(String other) async {
+    try {
+      final profile = await _db.doc('users/$other/profile/main').get();
+      final n = profile.data()?['name'] as String?;
+      if (n != null && n.trim().isNotEmpty) return n.trim();
+    } catch (_) {}
+    return 'Someone';
   }
 
   Future<MatchView> _toView(
@@ -91,13 +153,7 @@ class MatchService {
     final other = uids.firstWhere((u) => u != uid, orElse: () => '');
     final ue = (data['user_explanation'] as Map?)?.cast<String, dynamic>() ?? {};
 
-    var name = 'Someone';
-    try {
-      final profile =
-          await _db.doc('users/$other/profile/main').get();
-      final n = profile.data()?['name'] as String?;
-      if (n != null && n.trim().isNotEmpty) name = n.trim();
-    } catch (_) {}
+    final name = await _profileName(other);
 
     return MatchView(
       matchId: doc.id,

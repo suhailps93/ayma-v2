@@ -1451,9 +1451,21 @@ class ApiClient {
   }
 
   /// `POST /profiles/mini` — name + resolved photo URL for a batch of users
-  /// (message-list rows, match cards). `{uid: MiniProfile}`.
+  /// (message-list rows, match cards). `{uid: MiniProfile}`. Chunked at the
+  /// server's 100-uid cap so long conversation lists never 422 (Phase 2
+  /// pagination design §2.2).
   Future<Map<String, MiniProfile>> miniProfiles(List<String> uids) async {
     if (uids.isEmpty) return const {};
+    final out = <String, MiniProfile>{};
+    for (var i = 0; i < uids.length; i += 100) {
+      final end = i + 100 > uids.length ? uids.length : i + 100;
+      out.addAll(await _miniProfilesChunk(uids.sublist(i, end)));
+    }
+    return out;
+  }
+
+  Future<Map<String, MiniProfile>> _miniProfilesChunk(
+      List<String> uids) async {
     final r = await _http.post(
       _uri('/profiles/mini'),
       headers: await _headers(),
