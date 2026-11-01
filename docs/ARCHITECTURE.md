@@ -1125,7 +1125,7 @@ Firebase Cloud Messaging (FCM). The client registers its device token **on the F
 
 ### 7.3 In-app notification center
 
-`users/{uid}/notifications/{notificationId}` — `type` (`dm_message` / `mutual_match` / `new_scored_match` / `ayma_checkin` / `skill_result` / `ayma_reply` / `profile_suggestions` / `report_ready`), `body` (preview text), `deep_link`, `created_at`, `read`. Client queries the most recent `NOTIFICATIONS_LIMIT` (existing config, 50) ordered by `created_at`. Every push also writes one of these docs — the notification center is the durable record, the push is the real-time nudge.
+`users/{uid}/notifications/{notificationId}` — `type` (`dm_message` / `mutual_match` / `new_scored_match` / `ayma_checkin` / `skill_result` / `ayma_reply` / `profile_suggestions` / `report_ready`), `body` (preview text), `deep_link`, `created_at`, `read`. Client queries the most recent notifications ordered by `created_at`. Every push also writes one of these docs — the notification center is the durable record, the push is the real-time nudge.
 
 ### 7.4 Push preview content
 
@@ -1169,7 +1169,7 @@ After marking read, the OS app-icon badge is resynced to the fresh bell unread c
 5. **Backend: mutual match trigger** — calls the dispatch helper when `matches/{matchId}.status` flips to `mutual_interest`.
 6. **Backend: cron digest trigger** — after the scheduled matching cron (§5.3) completes for a user, calls the dispatch helper once if any new `matches` doc was created.
 7. **Backend: re-engagement cron job** — scheduled Cloud Scheduler job implementing the 3-day/7-day/14-day backoff from §7.1; generates the profile-share or check-in message via Ayma, writes it to `raw_turns`, calls the dispatch helper.
-8. **Client: notification center UI** — lists `users/{uid}/notifications`, most recent `NOTIFICATIONS_LIMIT`, marks `read` on view, deep-links via `deep_link`.
+8. **Client: notification center UI** — lists recent `users/{uid}/notifications`, marks `read` on view, deep-links via `deep_link`.
 9. **Client: notification preferences screen** — toggles per category, writes `notification_prefs`.
 
 ### 7.10 Sender avatar in DM pushes
@@ -2500,4 +2500,3 @@ flowchart LR
   SC & DI --> OUT["POST /taste/pair → date-sim card<br/>GET /match/{id}.taste → match report section<br/>GET /taste/demo/pair → judge page<br/>(+shared_tags, +demographics)"]
   Q{{"QLOO_API_KEY?"}} -.no / error.-> FX["FixtureQlooClient<br/>(qloo_fixture.json; tags()/demographics() degrade)"]
 ```
-

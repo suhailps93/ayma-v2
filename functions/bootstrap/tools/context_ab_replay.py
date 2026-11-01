@@ -65,6 +65,7 @@ except ImportError:  # pragma: no cover
 import context_opt  # noqa: E402
 import token_ledger  # noqa: E402
 import wiki_query  # noqa: E402
+from config import CONFIG  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
 from transcript import Turn, format_recent_turns  # noqa: E402
 
@@ -399,16 +400,27 @@ def classify_fact(
 # --------------------------------------------------------------------------
 
 
+def _rate(model: str, direction: str) -> float:
+    price = token_ledger._MODEL_PRICING.get(model, {}).get(direction)
+    if not isinstance(price, (int, float)):
+        raise ValueError(f"No {direction} pricing configured for {model!r}")
+    return float(price)
+
+
 def text_rate() -> float:
-    return token_ledger._MODEL_PRICING["gemini-3.7-flash"]["input"]
+    return _rate(CONFIG.gemini_model, "input")
 
 
 def text_out_rate() -> float:
-    return token_ledger._MODEL_PRICING["gemini-3.7-flash"]["output"]
+    return _rate(CONFIG.gemini_model, "output")
 
 
 def voice_rate() -> float:
-    return token_ledger._MODEL_PRICING["gemini-3.1-flash-live-preview"]["input"]
+    return _rate(token_ledger.live_model_id(), "input")
+
+
+def voice_out_rate() -> float:
+    return _rate(token_ledger.live_model_id(), "output")
 
 
 def usd(tokens: float, rate: float) -> float:
@@ -487,7 +499,7 @@ def run_replay(data: Dataset, n_turns: int = 30) -> str:
         f"${text_rate()}/1M (output ${text_out_rate()}/1M, "
         f"{TEXT_OUTPUT_TOKENS_PER_TURN} tok/turn, identical across levels), "
         f"voice audio input ${voice_rate()}/1M "
-        "(gemini-3.1-flash-live-preview, the model voice actually runs).",
+        f"({token_ledger.live_model_id()}, the configured voice model).",
         "",
         "## Text chat — prompt input per turn",
         "",
@@ -529,7 +541,7 @@ def run_replay(data: Dataset, n_turns: int = 30) -> str:
         out_tok = AUDIO_TOKENS_AYMA_TURN * VOICE_TURNS
         cost = usd(total, voice_rate()) + usd(
             out_tok,
-            token_ledger._MODEL_PRICING["gemini-3.1-flash-live-preview"]["output"],
+            voice_out_rate(),
         )
         lines.append(
             f"| {lv} | {seed_tokens:,} | {'on' if compression else 'off'} | "
