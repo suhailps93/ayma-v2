@@ -438,7 +438,7 @@ asgi_app = Starlette(routes=[
 @contextlib.asynccontextmanager
 async def lifespan():
     """Run the SDK's streamable-HTTP session manager for the app's lifetime.
-    ``main.py`` enters this in its startup event (a mounted sub-app's lifespan
+    ``main.py`` enters this in its lifespan (a mounted sub-app's lifespan
     is not run automatically by the parent)."""
     async with _http.router.lifespan_context(_http):
         yield

@@ -45,7 +45,7 @@ async def main() -> int:
     from db import get_db
     import schema
     import feature_flags
-    import token_ledger
+    import start_grant
     import taste_match
     import explore
     import practice_core
@@ -126,10 +126,10 @@ async def main() -> int:
     _p("\n===== 5. EMAIL-VERIFY BYPASS (scoped) =====")
     _p(f"   CONFIG.test_bypass_emails={CONFIG.test_bypass_emails}")
     for uid, label in ((t1, "test1 (allowlisted)"),):
-        _p(f"   _contact_verified({label})={token_ledger._contact_verified(uid)}")
+        _p(f"   contact_verified({label})={start_grant.contact_verified(uid)}")
     if founder:
-        _p(f"   _contact_verified(founder, not in list but verified)="
-           f"{token_ledger._contact_verified(founder)}")
+        _p(f"   contact_verified(founder, not in list but verified)="
+           f"{start_grant.contact_verified(founder)}")
 
     _p("\n===== 6. PER-UID FLAG OVERRIDE (scoped) =====")
     _p(f"   CONFIG.all_flags_on_uids={CONFIG.all_flags_on_uids}")

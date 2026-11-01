@@ -530,10 +530,28 @@ def _consent_required_error() -> HTTPException:
     )
 
 
+_mcp_lifespan_stack = contextlib.AsyncExitStack()
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup/shutdown wiring (replaces deprecated ``@app.on_event``).
+
+    Startup, in the old registration order: enter the MCP streamable-HTTP
+    session manager (a mounted sub-app's lifespan is not run by the parent),
+    then pay the Gemini cold-start cost before serving traffic. Shutdown
+    closes the MCP stack."""
+    await _mcp_lifespan_stack.enter_async_context(mcp_server.lifespan())
+    await gemini.warmup()
+    yield
+    await _mcp_lifespan_stack.aclose()
+
+
 app = FastAPI(
     title="Ayma Main API",
     version=CONFIG.version,
     dependencies=[Depends(require_biometric_consent)],
+    lifespan=_lifespan,
 )
 
 # Per-endpoint fixed-window rate limiting (§10.4, §10.6 step 3). Wraps every
@@ -576,26 +594,6 @@ app.include_router(taste_match.router)
 import mcp_server  # noqa: E402
 
 app.mount(mcp_server.MOUNT_PATH, mcp_server.asgi_app)
-_mcp_lifespan_stack = contextlib.AsyncExitStack()
-
-
-@app.on_event("startup")
-async def _mcp_startup() -> None:
-    # A mounted sub-app's lifespan is not run by the parent, so start the MCP
-    # streamable-HTTP session manager here.
-    await _mcp_lifespan_stack.enter_async_context(mcp_server.lifespan())
-
-
-@app.on_event("shutdown")
-async def _mcp_shutdown() -> None:
-    await _mcp_lifespan_stack.aclose()
-
-
-@app.on_event("startup")
-async def _warmup() -> None:
-    """Pay the Gemini cold-start cost before serving traffic, so the first
-    real /chat doesn't eat an ADC/gRPC/transient-5xx hiccup."""
-    await gemini.warmup()
 
 
 @app.get("/health")

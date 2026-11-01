@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_doc": "Filterable Explore attributes (ARCHITECTURE.md §6.2, §6.3, §6.10). Dropdown filters map straight to these; a natural-language query is parsed once into this same shape (Step 48). Photo-derived fields (Step 47) are written under profile.photo_attrs.*.",
+  "_doc": "Filterable Explore attributes (ARCHITECTURE.md §6.2, §6.3, §6.10). Dropdown filters map straight to these; a natural-language query is parsed once into this same shape (Step 48). Photo-derived fields (Step 47) are written under profile.photo_attrs.* (per-upload snapshot, latest upload wins); the physical_attributes section mirrors to profile.physical_attrs.* (merged multi-image + stated record, stated wins). Explore prefers photo_attrs for the overlapping fields, falling back to physical_attrs only when it has no value.",
 
   "structured": [
     { "field": "location", "type": "string", "source": "profile" },

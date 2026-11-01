@@ -18,6 +18,19 @@ second read.
 
 Everything here is best-effort: :func:`refresh` never raises, so a photo upload
 or a chat turn is never blocked by it.
+
+Boundary with ``photo_attrs`` (see :mod:`photo_attrs`) — the two mirrors on
+``profile/main`` are different pipeline stages, not duplicates:
+``physical_attrs`` (this module) is the merged user-level record — one
+multi-image photo pass plus the user's stated self-report, stated always
+wins, mirrored value-only (known fields) for cheap Explore filtering —
+while ``photo_attrs`` is the per-upload snapshot, overwritten by every
+profile-photo upload with that photo's record. Explore prefers
+``photo_attrs`` for the 7 overlapping ``_PHOTO_FIELDS`` (strict match) and
+reads the physical-only fields here with unknown-never-excludes
+semantics; per-field visibility gating applies to this mirror only.
+Unifying the two would change filter behaviour, so the split is
+intentional.
 """
 
 from __future__ import annotations

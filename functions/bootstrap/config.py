@@ -114,7 +114,7 @@ class Config:
 
     test_bypass_emails: tuple[str, ...]
     """Demo/judge accounts whose Firebase email need NOT be verified to clear
-    the free start-grant contact check (``token_ledger._contact_verified``).
+    the free start-grant contact check (``start_grant.contact_verified``).
     Ayma has no hard email-verification wall; this is the one privilege gate
     that reads ``email_verified``, so the allowlist is scoped to exactly these
     emails and every other account is still gated. Env ``TEST_BYPASS_EMAILS``

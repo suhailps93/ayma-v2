@@ -72,7 +72,7 @@ Both are limited to exactly these accounts and change nothing globally
 1. **Email-verification bypass.** Ayma has no hard email-verification wall — you
    can sign in and use the app without verifying email. The one privilege that
    does read `email_verified` is the free start-grant contact check
-   (`token_ledger._contact_verified`). The three demo emails
+   (`start_grant.contact_verified`). The three demo emails
    (`CONFIG.test_bypass_emails`) clear that check even though their email is
    unverified; **every other account is still gated.**
 2. **All feature flags on.** The three demo uids (`CONFIG.all_flags_on_uids`)

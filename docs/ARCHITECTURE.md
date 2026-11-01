@@ -973,6 +973,8 @@ At profile-photo upload (Piece 4 §4.4), alongside the face-embedding step (§2.
 
 If a self-reported value elsewhere in the wiki conflicts with a photo-derived attribute, that's a new `trust_flags` source, feeding the same down-weight + admin-review policy from §5.5 — no new policy, just a new signal.
 
+**Boundary with `physical_attrs`.** `profile/main` carries two attribute mirrors that are different pipeline stages, not duplicates: `photo_attrs` is the per-upload snapshot (every profile-photo upload overwrites it with that photo's record — the freshest single-photo read), while `physical_attrs` is the merged user-level record from `physical_attributes.refresh` (one multi-image photo pass plus the user's stated self-report, stated always wins; per-field `{value, source, confidence}` provenance lives at `users/{uid}/physical_attributes/current`, mirrored value-only for cheap filtering). Explore prefers `photo_attrs` for the 7 overlapping fields (`explore._PHOTO_FIELDS`, strict match) and falls back to `physical_attrs` only when it has no value; the physical-only fields (skin tone, hair length/type, build, race/ethnicity, height/weight) read `physical_attrs` alone with unknown-never-excludes semantics, and per-field visibility gating applies to that mirror only. The split is intentional — unifying the shapes would change filter behaviour.
+
 ### 6.4 Explore card content
 
 Each card shows `profile_photo`, `name`, age (from `birthdate`), distance (from `location`), and either a score badge (if already Pass-2 scored) or a "check compatibility" action (triggers the §5.3 per-profile manual check). Tapping opens the full public profile view (§2.1).
@@ -2029,7 +2031,7 @@ The free plan grants, per `config.py`:
   paid plan lapses.
   - **Demo-account bypass (scoped).** Ayma has no hard email-verification wall —
     sign-in and app use never require a verified email; the contact check
-    (`token_ledger._contact_verified`) only gates this free start grant. The
+    (`start_grant.contact_verified`) only gates this free start grant. The
     exact emails in `CONFIG.test_bypass_emails` (env `TEST_BYPASS_EMAILS`,
     committed default = the three `docs/DEMO_ACCOUNTS.md` demo logins) clear that
     check even when their Firebase email is unverified; **every other account is
