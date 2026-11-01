@@ -2029,7 +2029,7 @@ The free plan grants, per `config.py`:
   paid plan lapses.
   - **Demo-account bypass (scoped).** Ayma has no hard email-verification wall —
     sign-in and app use never require a verified email; the contact check
-    (`token_ledger._contact_verified`) only gates this free start grant. The
+    (`start_grant.contact_verified`) only gates this free start grant. The
     exact emails in `CONFIG.test_bypass_emails` (env `TEST_BYPASS_EMAILS`,
     committed default = the three `docs/DEMO_ACCOUNTS.md` demo logins) clear that
     check even when their Firebase email is unverified; **every other account is

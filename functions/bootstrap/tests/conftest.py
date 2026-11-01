@@ -24,11 +24,12 @@ def accounts_verified(monkeypatch):
     selfie, not a duplicate) and keep Firebase Auth/Firestore vector lookups off the wire; the anti-abuse tests
     in test_billing.py override this."""
     try:
-        import token_ledger
+        import start_grant
     except ModuleNotFoundError:  # pragma: no cover - agent venv
         return
     monkeypatch.setattr(
-        token_ledger, "_grant_status", lambda _uid, _data: token_ledger.GRANT_OK
+        start_grant, "grant_status",
+        lambda _uid, _data: start_grant.GRANT_OK,
     )
 
 

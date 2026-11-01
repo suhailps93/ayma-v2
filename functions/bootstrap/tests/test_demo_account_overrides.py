@@ -3,7 +3,7 @@
 1. ``feature_flags.resolve/enabled`` turns every BOOL flag on for a uid in
    ``CONFIG.all_flags_on_uids`` and nobody else, without touching any global
    flag.
-2. ``token_ledger._contact_verified`` lets exactly the emails in
+2. ``start_grant.contact_verified`` lets exactly the emails in
    ``CONFIG.test_bypass_emails`` clear the free start-grant contact check even
    when their Firebase email is unverified; every other account stays gated.
 """
@@ -16,7 +16,7 @@ import types
 import pytest
 
 import feature_flags as ff
-import token_ledger
+import start_grant
 from config import CONFIG
 
 DEMO_UID = "demo-test1"
@@ -76,25 +76,25 @@ def _patch_get_user(monkeypatch, *, email, verified, phone=None):
 @pytest.fixture
 def _bypass_config(monkeypatch):
     cfg = dataclasses.replace(CONFIG, test_bypass_emails=(DEMO_EMAIL,))
-    monkeypatch.setattr(token_ledger, "CONFIG", cfg)
+    monkeypatch.setattr(start_grant, "CONFIG", cfg)
 
 
 def test_contact_verified_bypasses_demo_email_without_verification(
     monkeypatch, _bypass_config
 ):
     _patch_get_user(monkeypatch, email=DEMO_EMAIL, verified=False)
-    assert token_ledger._contact_verified("any-uid") is True
+    assert start_grant.contact_verified("any-uid") is True
 
 
 def test_contact_verified_still_gates_non_demo_unverified_email(
     monkeypatch, _bypass_config
 ):
     _patch_get_user(monkeypatch, email=OTHER_EMAIL, verified=False)
-    assert token_ledger._contact_verified("any-uid") is False
+    assert start_grant.contact_verified("any-uid") is False
 
 
 def test_contact_verified_allows_non_demo_verified_email(
     monkeypatch, _bypass_config
 ):
     _patch_get_user(monkeypatch, email=OTHER_EMAIL, verified=True)
-    assert token_ledger._contact_verified("any-uid") is True
+    assert start_grant.contact_verified("any-uid") is True
