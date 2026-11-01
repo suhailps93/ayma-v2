@@ -118,7 +118,7 @@ def _tts(text: str) -> tuple[bytes, int]:
         if CONFIG.use_vertex else genai.Client()
     )
     resp = client.models.generate_content(
-        model="gemini-2.5-flash-preview-tts",
+        model=CONFIG.gemini_tts_model,
         contents=text,
         config=types.GenerateContentConfig(
             response_modalities=["AUDIO"],
