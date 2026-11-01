@@ -6,9 +6,11 @@ The headline privacy extraction test is in ``test_practice_extraction.py``."""
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
+import llm_provider
 import practice_core
 import practice_date
 import practice_llm
@@ -340,6 +342,53 @@ def test_practice_surface_defaults_to_gemini():
     # LLM_PROVIDER_PRACTICE is unset in tests → Gemini (runs tonight; flips to
     # Meta Muse Spark when the flag is set).
     assert isinstance(get_llm_provider(practice_llm.SURFACE), GeminiProvider)
+
+
+def test_spark_debrief_payload_with_whitespace_keys_builds_complete_report(monkeypatch):
+    """The Practice Date debrief uses the Meta JSON route without dropping
+    fields when Muse Spark emits its known trailing-space key variant."""
+    payload = {
+        "what_worked ": ["You asked about Maya's ceramics."],
+        "suggested_next_lines ": ["Which piece are you proudest of?"],
+        "avoid ": ["Do not press for private details."],
+    }
+
+    class _Message:
+        content = json.dumps(payload)
+
+    class _Response:
+        choices = [type("Choice", (), {"message": _Message()})()]
+        usage = None
+
+    class _Completions:
+        async def create(self, **_kwargs):
+            return _Response()
+
+    class _Client:
+        chat = type("Chat", (), {"completions": _Completions()})()
+
+    monkeypatch.setattr(
+        practice_llm,
+        "get_llm_provider",
+        lambda surface: llm_provider.MetaProvider(client=_Client()),
+    )
+    monkeypatch.setattr(practice_llm.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(practice_llm.token_ledger, "record", lambda *args, **kwargs: None)
+
+    ctx = practice_core.persona_context_for_coach("Maya", target_uid=MAYA, gender="woman")
+    report = asyncio.run(
+        practice_date.generate_debrief(
+            ctx,
+            [{"role": practice_core.ROLE_USER, "text": "Your ceramics are beautiful."}],
+            uid=VIEWER,
+        )
+    )
+
+    assert report == {
+        "what_worked": ["You asked about Maya's ceramics."],
+        "suggested_next_lines": ["Which piece are you proudest of?"],
+        "avoid": ["Do not press for private details."],
+    }
 
 
 def test_generate_text_delegates_to_practice_provider(monkeypatch):
