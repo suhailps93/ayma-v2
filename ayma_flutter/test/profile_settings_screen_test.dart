@@ -94,6 +94,35 @@ void main() {
     expect(svc.lastUpdate!['interested_in'], ['Everyone']);
   });
 
+  testWidgets('binds a stored DOB (server ISO-string birthdate) into the date '
+      'field — R2-C3', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Build the read model the way a server-written doc produces it: an
+    // ISO-8601 String birthdate, through fromMap — the exact field the voice
+    // tool / seeded accounts store.
+    final svc = _FakeProfileService(ProfileData.fromMap(<String, dynamic>{
+      'name': 'Sam',
+      'first_name': 'Sam',
+      'last_name': 'Vale',
+      'gender': 'Man',
+      'interested_in': ['Women'],
+      'location': 'Berlin',
+      'birthdate': '1990-01-01',
+    }));
+
+    await tester.pumpWidget(
+      MaterialApp(home: ProfileSettingsScreen(profileService: svc)),
+    );
+    await tester.pumpAndSettle();
+
+    // The stored DOB shows in the field; it must NOT read "Pick a date".
+    expect(find.text('1990-01-01'), findsOneWidget);
+    expect(find.text('Pick a date'), findsNothing);
+  });
+
   testWidgets('with no profile doc, Save is disabled until fields are filled',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);

@@ -117,4 +117,98 @@ void main() {
     // The report's own "Story" headline is not repeated above the content.
     expect(find.text('Story'), findsNothing);
   });
+
+  // R2-C7 regression: on a brand-new account the "My public profile" screen
+  // must render the clean single-layer layout (hero photo header, name/age,
+  // photo strip, real sections) and scroll — never compose the "My story"
+  // cover (placeholder stats "TOPICS / PHOTOS / WEB FINDS", the "Ayma keeps
+  // learning…" banner, the "A few glimpses into my world" photos section) on
+  // top of the real profile. Those cover strings belong only to the standalone
+  // Story screen; none of them may appear here.
+  testWidgets('new-account public profile renders the clean single-layer '
+      'layout (no story cover) and scrolls — R2-C7', (tester) async {
+    final mockHttp = MockClient((request) async {
+      if (request.url.path == '/explore/profile/u1') {
+        return http.Response(
+          jsonEncode({
+            'uid': 'u1',
+            'self': true,
+            'blocked': false,
+            'name': 'Alex',
+            'age': 33,
+            'location': 'San Jose, United States',
+            'photos': [
+              'https://example.com/a.jpg',
+              'https://example.com/b.jpg',
+            ],
+            'pages': [],
+            'liked': false,
+            'score': null,
+            'thread_id': null,
+            'has_chatted': false,
+          }),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      // Minimal, new-account story_public: one real IDENTITY section only.
+      return http.Response(
+        jsonEncode({
+          'title': 'Story',
+          'sections': [
+            {
+              'heading': 'IDENTITY',
+              'blocks': [
+                {
+                  'block_id': 'attr:goes_by',
+                  'type': 'attribute',
+                  'editable': true,
+                  'label': 'Goes by',
+                  'value': 'Alex',
+                },
+              ],
+            },
+          ],
+          'meta': {
+            'owner_uid': 'u1',
+            'viewer_can_edit': true,
+            'created_at': null,
+            'updated_at': null,
+          },
+        }),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(MaterialApp(
+      home: MyPublicProfileScreen(myUid: 'u1', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // The clean single layer: one photo header + the real section content.
+    expect(find.byType(ProfileBody), findsOneWidget);
+    expect(find.byType(ProfilePhotoHeader), findsOneWidget);
+    expect(find.text('Alex'), findsWidgets); // name on the header
+    expect(find.text('IDENTITY'), findsOneWidget); // real section
+
+    // No "My story" cover layer composed over it: none of its placeholder
+    // stat / banner / photos-section strings may appear.
+    expect(find.textContaining('TOPICS'), findsNothing);
+    expect(find.textContaining('WEB FINDS'), findsNothing);
+    expect(find.textContaining('A few glimpses into my world'), findsNothing);
+    expect(
+        find.textContaining('Ayma keeps learning about you'), findsNothing);
+
+    // The page is scrollable (its content lives in one scroll view), and it
+    // laid out with no overflow — pumpAndSettle above would have thrown on a
+    // RenderFlex overflow exception.
+    expect(
+      find.descendant(
+          of: find.byType(ProfileBody), matching: find.byType(Scrollable)),
+      findsWidgets,
+    );
+  });
 }

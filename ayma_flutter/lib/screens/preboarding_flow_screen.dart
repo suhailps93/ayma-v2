@@ -235,9 +235,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       '${d.day} ${_months[d.month - 1][0].toUpperCase()}'
       '${_months[d.month - 1].substring(1)} ${d.year}';
 
-  /// Lenient birthdate parser. Accepts `ddmmyyyy`, `dd/mm/yyyy`, `dd-mm-yyyy`,
-  /// `dd.mm.yyyy`, `yyyy-mm-dd`, `d/m/yy`, and `6 Mar 1993` / `March 6 1993`.
-  /// All-numeric input is read **day-first** unless that can't be a valid date.
+  /// Lenient birthdate parser. Accepts `mmddyyyy`, `mm/dd/yyyy`, `mm-dd-yyyy`,
+  /// `mm.dd.yyyy`, `yyyy-mm-dd`, `m/d/yy`, and `6 Mar 1993` / `March 6 1993`.
+  /// Numeric date-first input is read **month-first (US MM/DD)** — the launch
+  /// audience's convention and the placeholder's own example — falling back to
+  /// day-first only when month-first can't be a valid date.
   static DateTime? _parseDob(String raw) {
     final s = raw.trim().toLowerCase();
     if (s.isEmpty) return null;
@@ -287,8 +289,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     }
     final year = _expandYear(parts[2]);
     if (year == null) return null;
-    // day-first, then fall back to month-first if day-first is impossible.
-    return _valid(year, parts[1], parts[0]) ?? _valid(year, parts[0], parts[1]);
+    // Month-first (US MM/DD), then fall back to day-first if month-first is
+    // impossible (e.g. a first group > 12 can only be a day).
+    return _valid(year, parts[0], parts[1]) ?? _valid(year, parts[1], parts[0]);
   }
 
   static int? _expandYear(int? y) {
@@ -502,7 +505,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     textInputAction: TextInputAction.done,
                     decoration: const InputDecoration(
                       hintText:
-                          'e.g. 03/05/1993 · 03051993 · 1993-05-03 · 3 May 1993',
+                          'e.g. 03/05/1993 · 03051993 · 1993-03-05 · 5 Mar 1993',
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -519,7 +522,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                       ),
                     )
                   else if (_dobController.text.trim().isNotEmpty)
-                    Text("Couldn't read that date — try 03/05/1993 or 1993-05-03.",
+                    Text("Couldn't read that date — try 03/05/1993 or 1993-03-05.",
                         style: AymaType.sans(size: 13, color: ac.fgMute)),
                   Align(
                     alignment: Alignment.centerLeft,

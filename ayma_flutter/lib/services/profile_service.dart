@@ -342,14 +342,32 @@ class ProfileData {
     return joined.isNotEmpty ? joined : name;
   }
 
+  /// Parses the stored birthdate. The Flutter client writes a Firestore
+  /// [Timestamp] (see [ProfileService._birthdateStamp]), but the server writes
+  /// an ISO-8601 `String` (e.g. `"1990-01-01"` from the `set_profile_field`
+  /// voice tool and seeded accounts — `functions/.../mcp_tools.py`,
+  /// `completeness.py`); epoch-millis `int` is accepted for completeness.
+  /// Returns null for anything unparseable so a bad value never crashes the
+  /// edit-profile form or blanks the date field (bug R2-C3: the ISO-string case
+  /// used to fall through to null, so a stored DOB showed "Pick a date").
+  static DateTime? _parseBirthdate(Object? raw) {
+    if (raw is Timestamp) return raw.toDate();
+    if (raw is DateTime) return raw;
+    if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+    if (raw is String) {
+      final s = raw.trim();
+      return s.isEmpty ? null : DateTime.tryParse(s);
+    }
+    return null;
+  }
+
   factory ProfileData.fromMap(Map<String, dynamic> map) {
-    final bd = map['birthdate'];
     return ProfileData(
       name: (map['name'] as String?) ?? '',
       firstName: (map['first_name'] as String?) ?? '',
       lastName: (map['last_name'] as String?) ?? '',
       phone: (map['phone'] as String?) ?? '',
-      birthdate: bd is Timestamp ? bd.toDate() : null,
+      birthdate: _parseBirthdate(map['birthdate']),
       gender: (map['gender'] as String?) ?? '',
       interestedIn:
           ((map['interested_in'] as List?)?.cast<String>()) ?? const [],
