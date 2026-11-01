@@ -593,11 +593,3 @@ List<Map<String, dynamic>> _cardMaps(String prefix, int n, {int age = 25}) => [
         {'uid': '$prefix-$i', 'name': '$prefix-$i', 'age': age + i,
          'location': 'X'},
     ];
-
-void _pinFlingOpen() {
-  ExploreScreenState.debugFlingVelocityThreshold = double.infinity;
-}
-
-void _pagingTearDown() {
-  ExploreScreenState.debugFlingVelocityThreshold = 2500;
-}
