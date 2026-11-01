@@ -45,6 +45,11 @@ class TourAnchors {
   /// The "Ayma's settings" row inside the Profile tab (her brain + voice).
   static const profileAymaSettingsRow = 'profile_ayma_settings_row';
 
+  /// The play/preview button beside the VOICE selector on the "Ayma's models"
+  /// voice screen (`/settings/voice`) — a pushed screen, not a shell tab, so
+  /// this anchor resolves only while that screen is open and otherwise skips.
+  static const voicePreview = 'voice_preview_button';
+
   /// The notification bell in the nav bar.
   static const notificationsBell = 'notifications_bell';
 

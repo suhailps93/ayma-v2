@@ -5539,20 +5539,36 @@ async def set_brain_preference(
 
 @app.get("/voice/preview/{voice_name}")
 async def voice_preview_endpoint(
-    voice_name: str, uid: str = Depends(require_uid)
+    voice_name: str,
+    mode: str = "realtime",
+    tts_id: str = "",
+    realtime_model_id: str = "",
+    uid: str = Depends(require_uid),
 ) -> dict[str, str]:
-    """A short spoken "Hi, I'm Ayma…" sample in ``voice_name`` for the settings
-    picker (§13.3). Generated once per preset via Gemini TTS, then cached in
-    Storage — subsequent calls just return the cached clip's URL."""
-    import voices
+    """A short spoken "Hi, I'm Ayma…" sample of ``voice_name`` on the picked
+    stack (§13.3, §13.9), for the "Ayma's models" voice picker. ``mode`` +
+    ``tts_id``/``realtime_model_id`` name the component the voice belongs to so
+    the right synthesis path is used and the voice is validated against the live
+    catalog: Gemini realtime voices via Gemini TTS, cascade TTS voices via the
+    same LiveKit Inference TTS the live call uses. Generated once per
+    (stack, voice) and cached in Storage — later calls return the cached URL."""
     import voice_preview
 
-    if not voices.is_valid_voice(voice_name):
-        raise HTTPException(status_code=404, detail="Unknown voice preset.")
     try:
-        url = await voice_preview.preview_url(voice_name)
+        url = await voice_preview.preview_url(
+            voice_name,
+            mode=mode,
+            tts_id=tts_id,
+            realtime_model_id=realtime_model_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Unknown voice.") from exc
+    except voice_preview.PreviewUnsupported as exc:
+        raise HTTPException(
+            status_code=422, detail="No sample is available for this voice yet."
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - surface TTS/storage failure as 502
-        logger.exception("voice preview failed for %s", voice_name)
+        logger.exception("voice preview failed for %s (mode=%s)", voice_name, mode)
         raise HTTPException(
             status_code=502, detail="Could not generate a voice preview."
         ) from exc

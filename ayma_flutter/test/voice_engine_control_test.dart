@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/voice_preview_player.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/voice_engine_control.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -8,6 +9,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+/// Records what the VOICE preview button asked the player to play.
+class _FakePreviewPlayer implements VoicePreviewPlayer {
+  final List<String> played = [];
+  int stops = 0;
+
+  @override
+  Future<void> play(String url) async => played.add(url);
+
+  @override
+  Future<void> stop() async => stops++;
+
+  @override
+  void dispose() {}
+}
 
 /// A catalog with two realtime models and a cascade TTS, each with distinct
 /// voices, so a test can prove the voice list tracks the selected component.
@@ -89,12 +105,23 @@ Map<String, dynamic> _catalog() => {
     };
 
 final List<Map<String, dynamic>> _posted = [];
+final List<Uri> _previewRequests = [];
 
-ApiClient _api() {
+ApiClient _api({int previewStatus = 200}) {
   _posted.clear();
+  _previewRequests.clear();
   final mock = MockClient((req) async {
     if (req.url.path == '/voice/engines') {
       return http.Response(jsonEncode(_catalog()), 200,
+          headers: const {'content-type': 'application/json'});
+    }
+    if (req.url.path.startsWith('/voice/preview/')) {
+      _previewRequests.add(req.url);
+      if (previewStatus != 200) {
+        return http.Response('nope', previewStatus);
+      }
+      return http.Response(
+          jsonEncode({'url': 'https://example.test/sample.wav'}), 200,
           headers: const {'content-type': 'application/json'});
     }
     if (req.url.path == '/voice/preference') {
@@ -202,5 +229,64 @@ void main() {
 
     expect(find.textContaining('one fixed accent'), findsOneWidget);
     expect(find.byKey(const ValueKey('voice-accent-field')), findsOneWidget);
+  });
+
+  testWidgets(
+      'tapping the VOICE preview plays a sample of the selected voice + stack',
+      (tester) async {
+    final player = _FakePreviewPlayer();
+    await tester
+        .pumpWidget(_host(VoiceEngineControl(api: _api(), previewPlayer: player)));
+    await tester.pumpAndSettle();
+
+    // Default stack: realtime Gemini Live, current voice Aoede.
+    await tester.tap(find.byKey(const ValueKey('voice-preview-button')));
+    await tester.pumpAndSettle();
+
+    // The player was handed the resolved preview clip…
+    expect(player.played, ['https://example.test/sample.wav']);
+    // …and the request named the SELECTED voice on the SELECTED stack.
+    expect(_previewRequests, isNotEmpty);
+    final req = _previewRequests.last;
+    expect(req.pathSegments.last, 'Aoede');
+    expect(req.queryParameters['mode'], 'realtime');
+    expect(req.queryParameters['realtime_model_id'], 'gemini-live');
+    // No inline error on success.
+    expect(find.byKey(const ValueKey('voice-preview-error')), findsNothing);
+  });
+
+  testWidgets('the preview follows a cascade TTS voice selection', (tester) async {
+    final player = _FakePreviewPlayer();
+    await tester
+        .pumpWidget(_host(VoiceEngineControl(api: _api(), previewPlayer: player)));
+    await tester.pumpAndSettle();
+
+    // Switch to cascade (inworld TTS), then preview its default voice.
+    await tester.tap(find.byType(DropdownButton<String>).first); // mode
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('voice-preview-button')));
+    await tester.pumpAndSettle();
+
+    expect(player.played, ['https://example.test/sample.wav']);
+    final req = _previewRequests.last;
+    expect(req.queryParameters['mode'], 'cascade');
+    expect(req.queryParameters['tts_id'], 'inworld/inworld-tts-1');
+  });
+
+  testWidgets('a failed preview shows the inline couldn\'t-load note',
+      (tester) async {
+    final player = _FakePreviewPlayer();
+    await tester.pumpWidget(_host(
+        VoiceEngineControl(api: _api(previewStatus: 502), previewPlayer: player)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('voice-preview-button')));
+    await tester.pumpAndSettle();
+
+    expect(player.played, isEmpty);
+    expect(find.byKey(const ValueKey('voice-preview-error')), findsOneWidget);
   });
 }

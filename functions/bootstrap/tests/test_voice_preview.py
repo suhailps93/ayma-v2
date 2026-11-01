@@ -144,7 +144,7 @@ def test_unknown_voice_is_rejected_before_any_tts_call(monkeypatch):
 # GET /voice/preview/{voice_name}
 # --------------------------------------------------------------------------- #
 def test_endpoint_happy_path(monkeypatch):
-    async def _fake_url(name):
+    async def _fake_url(name, **_kw):
         return f"https://example.test/{name}.wav"
 
     monkeypatch.setattr(voice_preview, "preview_url", _fake_url)
@@ -153,13 +153,52 @@ def test_endpoint_happy_path(monkeypatch):
     assert resp.json() == {"url": "https://example.test/Aoede.wav"}
 
 
+def test_endpoint_passes_the_stack_params_through(monkeypatch):
+    # The "Ayma's models" picker tells the backend which stack the voice is on
+    # (mode + the component id) so the right TTS path + catalog validation run.
+    captured: dict = {}
+
+    async def _fake_url(name, *, mode="realtime", tts_id="", realtime_model_id=""):
+        captured.update(
+            name=name, mode=mode, tts_id=tts_id, realtime_model_id=realtime_model_id
+        )
+        return "https://example.test/sample.wav"
+
+    monkeypatch.setattr(voice_preview, "preview_url", _fake_url)
+    resp = client.get(
+        "/voice/preview/Ashley",
+        params={"mode": "cascade", "tts_id": "inworld/inworld-tts-1"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    assert captured == {
+        "name": "Ashley",
+        "mode": "cascade",
+        "tts_id": "inworld/inworld-tts-1",
+        "realtime_model_id": "",
+    }
+
+
 def test_endpoint_unknown_voice_is_404(monkeypatch):
     resp = client.get("/voice/preview/Bogus", headers=_auth(monkeypatch))
     assert resp.status_code == 404
 
 
+def test_endpoint_unsupported_voice_is_422(monkeypatch):
+    async def _unsupported(_name, **_kw):
+        raise voice_preview.PreviewUnsupported("no preview path")
+
+    monkeypatch.setattr(voice_preview, "preview_url", _unsupported)
+    resp = client.get(
+        "/voice/preview/alloy",
+        params={"mode": "realtime", "realtime_model_id": "openai-realtime"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 422
+
+
 def test_endpoint_generation_failure_is_502(monkeypatch):
-    async def _boom(_name):
+    async def _boom(_name, **_kw):
         raise RuntimeError("tts upstream down")
 
     monkeypatch.setattr(voice_preview, "preview_url", _boom)
@@ -169,3 +208,103 @@ def test_endpoint_generation_failure_is_502(monkeypatch):
 
 def test_endpoint_requires_auth():
     assert client.get("/voice/preview/Aoede").status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# cascade voices: the CURRENT stack-picker catalog (§13.9)
+# --------------------------------------------------------------------------- #
+def _fake_catalog_tts(monkeypatch, tts_id, voice_ids):
+    import voice_catalog
+
+    monkeypatch.setattr(voice_catalog, "is_valid_tts", lambda t: t == tts_id)
+    monkeypatch.setattr(voice_catalog, "tts_voice_ids", lambda t: set(voice_ids))
+
+
+def test_cascade_voice_synthesizes_via_inference_and_caches(monkeypatch):
+    store, _tts_calls = _install_fakes(monkeypatch)
+    _fake_catalog_tts(
+        monkeypatch, "inworld/inworld-tts-1", {"", "Ashley", "Hades"}
+    )
+    synth_calls: list = []
+
+    async def _fake_synth(tts_id, voice_id):
+        synth_calls.append((tts_id, voice_id))
+        return b"RIFF" + b"\x00" * 64
+
+    monkeypatch.setattr(voice_preview, "_synthesize_cascade", _fake_synth)
+
+    url = asyncio.run(
+        voice_preview.preview_url(
+            "Ashley", mode="cascade", tts_id="inworld/inworld-tts-1"
+        )
+    )
+
+    # Synthesized once via the live-call TTS path for exactly this voice.
+    assert synth_calls == [("inworld/inworld-tts-1", "Ashley")]
+    key = "voice_previews/cascade/inworld_inworld-tts-1/Ashley.wav"
+    assert key in store
+    assert store[key]["content_type"] == "audio/wav"
+    assert "cascade" in url and "token=" in url
+
+    # Second call is served from cache — no second synthesis.
+    url2 = asyncio.run(
+        voice_preview.preview_url(
+            "Ashley", mode="cascade", tts_id="inworld/inworld-tts-1"
+        )
+    )
+    assert len(synth_calls) == 1
+    assert url2 == url
+
+
+def test_cascade_default_voice_uses_the_vendor_default(monkeypatch):
+    store, _ = _install_fakes(monkeypatch)
+    _fake_catalog_tts(monkeypatch, "fishaudio/s2.1-pro", {"", "Hannah"})
+
+    async def _fake_synth(tts_id, voice_id):
+        assert voice_id == ""  # the vendor default
+        return b"RIFF" + b"\x00" * 64
+
+    monkeypatch.setattr(voice_preview, "_synthesize_cascade", _fake_synth)
+
+    asyncio.run(
+        voice_preview.preview_url("", mode="cascade", tts_id="fishaudio/s2.1-pro")
+    )
+    assert "voice_previews/cascade/fishaudio_s2.1-pro/_default.wav" in store
+
+
+def test_cascade_unknown_voice_is_rejected_before_synth(monkeypatch):
+    _store, _ = _install_fakes(monkeypatch)
+    _fake_catalog_tts(monkeypatch, "inworld/inworld-tts-1", {"", "Ashley"})
+    synth_calls: list = []
+
+    async def _fake_synth(tts_id, voice_id):
+        synth_calls.append((tts_id, voice_id))
+        return b"x"
+
+    monkeypatch.setattr(voice_preview, "_synthesize_cascade", _fake_synth)
+
+    try:
+        asyncio.run(
+            voice_preview.preview_url(
+                "NotAVoice", mode="cascade", tts_id="inworld/inworld-tts-1"
+            )
+        )
+    except ValueError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("expected ValueError for a voice not in the catalog")
+    assert synth_calls == []
+
+
+def test_openai_realtime_voice_is_unsupported(monkeypatch):
+    _install_fakes(monkeypatch)
+    try:
+        asyncio.run(
+            voice_preview.preview_url(
+                "alloy", mode="realtime", realtime_model_id="openai-realtime"
+            )
+        )
+    except voice_preview.PreviewUnsupported:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("expected PreviewUnsupported for an OpenAI realtime voice")

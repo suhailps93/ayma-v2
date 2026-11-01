@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/tour_anchors.dart';
+import '../services/voice_preview_player.dart';
 import '../theme.dart';
 import 'ayma_toast.dart';
 
@@ -26,10 +30,16 @@ class VoiceEngineControl extends StatefulWidget {
     super.key,
     required this.api,
     this.onSaved,
+    this.previewPlayer,
   });
 
   final ApiClient api;
   final VoidCallback? onSaved;
+
+  /// Plays the VOICE preview samples. Defaults to a real [JustAudioPreviewPlayer]
+  /// (created lazily on the first preview tap, so a widget/layout test that never
+  /// previews touches no platform audio); tests inject a no-op.
+  final VoicePreviewPlayer? previewPlayer;
 
   @override
   State<VoiceEngineControl> createState() => _VoiceEngineControlState();
@@ -45,6 +55,21 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   // caret; the selection's `accent` is the source of truth on save.
   final TextEditingController _accentCtrl = TextEditingController();
 
+  // VOICE preview (§13.3). The player is created lazily on first use so a test
+  // that never previews touches no platform audio.
+  VoicePreviewPlayer? _playerInstance;
+  // True while the current preview is resolving/starting; drives the spinner.
+  bool _previewing = false;
+  // True when the last preview couldn't be fetched/played; drives the inline
+  // note. Cleared on the next tap or any selection change.
+  bool _previewError = false;
+  // Incremented per preview tap and on every selection change, so a superseded
+  // request can't flip state back on after a newer tap replaced it.
+  int _previewSeq = 0;
+
+  VoicePreviewPlayer get _player =>
+      _playerInstance ??= (widget.previewPlayer ?? JustAudioPreviewPlayer());
+
   @override
   void initState() {
     super.initState();
@@ -54,6 +79,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   @override
   void dispose() {
     _accentCtrl.dispose();
+    _playerInstance?.dispose();
     super.dispose();
   }
 
@@ -153,6 +179,51 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     }
   }
 
+  /// The voice id currently shown in the VOICE dropdown (the saved/selected one,
+  /// else the first available) — what a preview plays.
+  String _effectiveVoiceId() {
+    final voices = _activeVoices();
+    if (voices.any((v) => v.id == _sel!.voiceId)) return _sel!.voiceId;
+    return voices.isNotEmpty ? voices.first.id : '';
+  }
+
+  /// Stop any playing preview and cancel any in-flight request. Called on a new
+  /// tap and on every selection change (a stale voice must not keep playing).
+  void _stopPreview() {
+    _previewSeq++;
+    _previewError = false;
+    _previewing = false;
+    unawaited(_playerInstance?.stop().catchError((_) {}));
+  }
+
+  /// Play a short sample of the currently-selected voice on the selected stack,
+  /// via the backend preview URL. Re-tapping replaces playback; a failure shows
+  /// a small inline note instead of a hard error.
+  Future<void> _preview() async {
+    final sel = _sel!;
+    final voiceId = _effectiveVoiceId();
+    final seq = ++_previewSeq;
+    setState(() {
+      _previewing = true;
+      _previewError = false;
+    });
+    try {
+      await _player.stop();
+      if (seq != _previewSeq) return; // superseded while stopping
+      final url = sel.mode == 'realtime'
+          ? await widget.api.voicePreviewUrl(voiceId,
+              mode: 'realtime', realtimeModelId: sel.realtimeModelId)
+          : await widget.api
+              .voicePreviewUrl(voiceId, mode: 'cascade', ttsId: sel.ttsId);
+      if (!mounted || seq != _previewSeq) return;
+      await _player.play(url);
+    } catch (_) {
+      if (mounted && seq == _previewSeq) setState(() => _previewError = true);
+    } finally {
+      if (mounted && seq == _previewSeq) setState(() => _previewing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -181,7 +252,10 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             for (final m in cat.modes)
               DropdownMenuItem(value: m, child: Text(_modeLabel(m))),
           ],
-          onChanged: (m) => setState(() => _sel = sel.copyWith(mode: m)),
+          onChanged: (m) => setState(() {
+            _stopPreview();
+            _sel = sel.copyWith(mode: m);
+          }),
         ),
         const SizedBox(height: 16),
         if (sel.mode == 'realtime')
@@ -243,6 +317,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
               ? null
               : (v) {
                   setState(() {
+                    _stopPreview();
                     _sel = sel.copyWith(realtimeModelId: v);
                     _reconcileVoice();
                   });
@@ -266,6 +341,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       _label(ac, 'TEXT-TO-SPEECH'),
       _componentDropdown(ac, cat.tts, sel.ttsId, (v) {
         setState(() {
+          _stopPreview();
           _sel = sel.copyWith(ttsId: v);
           _reconcileVoice();
         });
@@ -281,26 +357,48 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _label(ac, 'VOICE'),
-        _dropdown<String>(
-          ac,
-          dropdownKey: const ValueKey('voice-dropdown'),
-          value: voices.any((v) => v.id == sel.voiceId)
-              ? sel.voiceId
-              : (voices.isNotEmpty ? voices.first.id : null),
-          items: [
-            for (final v in voices)
-              DropdownMenuItem(
-                value: v.id,
-                child: Text(
-                  v.description.isEmpty ? v.label : '${v.label} — ${v.description}',
-                  overflow: TextOverflow.ellipsis,
-                ),
+        Row(
+          children: [
+            Expanded(
+              child: _dropdown<String>(
+                ac,
+                dropdownKey: const ValueKey('voice-dropdown'),
+                value: voices.any((v) => v.id == sel.voiceId)
+                    ? sel.voiceId
+                    : (voices.isNotEmpty ? voices.first.id : null),
+                items: [
+                  for (final v in voices)
+                    DropdownMenuItem(
+                      value: v.id,
+                      child: Text(
+                        v.description.isEmpty
+                            ? v.label
+                            : '${v.label} — ${v.description}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: voices.isEmpty
+                    ? null
+                    : (v) => setState(() {
+                          _stopPreview();
+                          _sel = sel.copyWith(voiceId: v);
+                        }),
               ),
+            ),
+            const SizedBox(width: 4),
+            _previewButton(ac, voices.isNotEmpty),
           ],
-          onChanged: voices.isEmpty
-              ? null
-              : (v) => setState(() => _sel = sel.copyWith(voiceId: v)),
         ),
+        if (_previewError)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              key: const ValueKey('voice-preview-error'),
+              "Couldn't load a sample — try again.",
+              style: AymaType.sans(size: 12, color: AymaColors.error),
+            ),
+          ),
         const SizedBox(height: 12),
         _label(ac, 'LANGUAGE'),
         _dropdown<String>(
@@ -368,6 +466,33 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
       ],
+    );
+  }
+
+  /// The play/preview control beside the VOICE dropdown (§13.3): a spinner while
+  /// the sample resolves, else a speaker button that plays the selected voice.
+  /// Carries the feature-tour anchor (`TourAnchors.voicePreview`) on its always-
+  /// mounted box so the coach-mark can spotlight it (§11.2a).
+  Widget _previewButton(AymaTokens ac, bool enabled) {
+    return SizedBox(
+      key: TourAnchors.keyFor(TourAnchors.voicePreview),
+      width: 44,
+      height: 44,
+      child: Center(
+        child: _previewing
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : IconButton(
+                key: const ValueKey('voice-preview-button'),
+                icon: const Icon(Icons.volume_up_outlined, size: 20),
+                color: ac.fgMute,
+                tooltip: 'Hear this voice',
+                onPressed: (_saving || !enabled) ? null : _preview,
+              ),
+      ),
     );
   }
 

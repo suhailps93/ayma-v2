@@ -1600,12 +1600,27 @@ class ApiClient {
     );
   }
 
-  /// `GET /voice/preview/{name}` — a download URL for a short spoken sample in
-  /// that voice preset ("Hi, I'm Ayma…"), so the picker can play it before the
-  /// user commits (§13.3). Cached server-side after the first request.
-  Future<String> voicePreviewUrl(String voiceName) async {
+  /// `GET /voice/preview/{name}` — a download URL for a short spoken sample of
+  /// the voice ("Hi, I'm Ayma…") on the selected stack, so the "Ayma's models"
+  /// picker can play it before the user saves (§13.3, §13.9). [mode] plus
+  /// [ttsId] (cascade) / [realtimeModelId] (realtime) tell the backend which
+  /// component the voice belongs to, so it synthesizes with the matching TTS
+  /// path and validates the voice against the live catalog. Cached server-side
+  /// after the first request.
+  Future<String> voicePreviewUrl(
+    String voiceName, {
+    String mode = 'realtime',
+    String ttsId = '',
+    String realtimeModelId = '',
+  }) async {
     final r = await _http.get(
-      _uri('/voice/preview/${Uri.encodeComponent(voiceName)}'),
+      _uri('/voice/preview/${Uri.encodeComponent(voiceName)}').replace(
+        queryParameters: {
+          'mode': mode,
+          if (ttsId.isNotEmpty) 'tts_id': ttsId,
+          if (realtimeModelId.isNotEmpty) 'realtime_model_id': realtimeModelId,
+        },
+      ),
       headers: await _headers(),
     );
     if (r.statusCode != 200) {

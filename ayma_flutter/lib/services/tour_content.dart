@@ -114,6 +114,17 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.profileAymaSettingsRow,
     tab: 3,
   ),
+  // Lives on the pushed "Ayma's models" → Voice screen (not a shell tab), so
+  // tab is null: the engine spotlights the preview button when that screen is
+  // open and skips gracefully otherwise (§11.2a).
+  TourFeature(
+    featureId: 'voice_preview',
+    headline: 'Hear her first',
+    subtitle: "In Ayma's settings, tap the speaker next to a voice to hear a "
+        'sample before you save it.',
+    icon: Icons.volume_up_outlined,
+    anchorId: TourAnchors.voicePreview,
+  ),
   TourFeature(
     featureId: 'qloo_taste',
     headline: 'Matched on taste',
