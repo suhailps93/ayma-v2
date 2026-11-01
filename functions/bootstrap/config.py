@@ -54,11 +54,6 @@ class Config:
     version: str
     """App version string, surfaced by the health check."""
 
-    bootstrap_stub_session_mode: str
-    """Hardcoded `session_mode` returned by ``POST /bootstrap`` until real
-    server-side derivation lands (Step 34 / §3.3). One of
-    ``marketing`` / ``interview`` / ``active``."""
-
     cap_marketing_turns: int
     """Pre-signup marketing turn cap (§3.3). At the cap Ayma nudges toward
     "get started" once, then refuses further marketing turns."""
@@ -443,9 +438,6 @@ class Config:
     'livekit'``), and the name ``POST /bootstrap`` routes a room to when a user's
     ``voice_agent_cloud`` is ``livekit``. The Cloud Run worker keeps AUTOMATIC
     dispatch (no name) so production voice is unchanged. ``AGENT_NAME_LIVEKIT``."""
-
-    notifications_limit: int
-    """Most-recent ``users/{uid}/notifications`` the client lists (§7.3)."""
 
     push_preview_len: int
     """Max chars of underlying message/event text in a push preview (§7.4)."""
@@ -1039,9 +1031,6 @@ def _load() -> Config:
             or ""
         ),
         version=os.getenv("APP_VERSION", "0.1.0"),
-        bootstrap_stub_session_mode=os.getenv(
-            "BOOTSTRAP_STUB_SESSION_MODE", "marketing"
-        ),
         cap_marketing_turns=int(os.getenv("CAP_MARKETING_TURNS", "10")),
         cap_interview_turns=int(os.getenv("CAP_INTERVIEW_TURNS", "40")),
         rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
@@ -1167,7 +1156,6 @@ def _load() -> Config:
         agent_url=os.getenv("AYMA_AGENT_URL", ""),
         agent_runtime=os.getenv("AGENT_RUNTIME", "").strip().lower(),
         agent_name_livekit=os.getenv("AGENT_NAME_LIVEKIT", "ayma-lk").strip(),
-        notifications_limit=int(os.getenv("NOTIFICATIONS_LIMIT", "50")),
         push_preview_len=int(os.getenv("PUSH_PREVIEW_LEN", "100")),
         push_cooldown_seconds=int(os.getenv("PUSH_COOLDOWN_SECONDS", "900")),
         max_fcm_tokens=int(os.getenv("MAX_FCM_TOKENS", "10")),

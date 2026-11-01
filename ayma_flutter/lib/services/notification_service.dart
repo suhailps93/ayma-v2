@@ -20,8 +20,7 @@ const notificationCategories = <String, String>{
 /// type is filtered out so records written before that change disappear too.
 const _dmType = 'dm_message';
 
-/// Most-recent notifications the centre lists — mirrors backend
-/// `NOTIFICATIONS_LIMIT` (§7.3).
+/// Most-recent notifications the centre lists (§7.3).
 const notificationsLimit = 50;
 
 class AppNotification {
