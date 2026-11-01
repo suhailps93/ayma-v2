@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import logging
 
+from timefmt import iso_or_none
 import appearance
 import deep_dive
 import pair_key
@@ -118,11 +119,6 @@ _QUICK_ACTIONS = {
     QUICK_CONFIRM_ME, QUICK_NOT_ME,
 }
 
-
-def _iso(v):
-    return v if isinstance(v, str) or v is None else (
-        v.isoformat() if hasattr(v, "isoformat") else None
-    )
 
 
 # --- ownership --------------------------------------------------------
@@ -240,8 +236,8 @@ def get_report(db, report_type: str, report_id: str, viewer_uid: str) -> dict:
             "viewer_can_edit": (
                 owner == viewer_uid and report_type not in _READ_ONLY_TYPES
             ),
-            "created_at": _iso(created_at),
-            "updated_at": _iso(updated_at),
+            "created_at": iso_or_none(created_at, keep_strings=True),
+            "updated_at": iso_or_none(updated_at, keep_strings=True),
             # Appearance only: the analysed photos the owner has removed from
             # their shareable report card (by Storage path). Card-only — the
             # full report above still carries every photo. Empty / absent for

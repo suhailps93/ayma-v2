@@ -26,9 +26,9 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_sections
 import deep_dive_links
 import feature_flags
 import gemini
@@ -906,31 +906,12 @@ async def correct_finding(
     return {"report_id": report_id, "digest": digest, "reply": reply, "action": action}
 
 
-@lru_cache(maxsize=1)
-def _prompt_sections() -> dict[str, str]:
-    """The ``## name`` sections of ``prompts/deep_dive.md``."""
-    text = _PROMPTS_PATH.read_text(encoding="utf-8")
-    out: dict[str, str] = {}
-    key: str | None = None
-    buf: list[str] = []
-    for line in text.splitlines():
-        m = re.match(r"^##\s+([\w-]+)\s*$", line)
-        if m:
-            if key is not None:
-                out[key] = "\n".join(buf).strip()
-            key, buf = m.group(1), []
-        elif key is not None:
-            buf.append(line)
-    if key is not None:
-        out[key] = "\n".join(buf).strip()
-    return out
 
+_RESEARCH_SYSTEM = load_prompt_sections(_PROMPTS_PATH)["research_system"]
 
-_RESEARCH_SYSTEM = _prompt_sections()["research_system"]
+_DIGEST_SYSTEM = load_prompt_sections(_PROMPTS_PATH)["digest_system"]
 
-_DIGEST_SYSTEM = _prompt_sections()["digest_system"]
-
-_CORRECTION_SYSTEM = _prompt_sections()["correction_system"]
+_CORRECTION_SYSTEM = load_prompt_sections(_PROMPTS_PATH)["correction_system"]
 
 _CORRECTION_SCHEMA = {
     "type": "object",

@@ -53,9 +53,9 @@ import hashlib
 import json
 import logging
 import time
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 from firebase_admin import firestore
 
 import gemini
@@ -111,11 +111,6 @@ _DIGEST_MAX_CHARS = 1200  # compact digest handed to matching
 
 # Non-flag refreshes at most this often; a new moderation flag bypasses it.
 _MIN_REFRESH_INTERVAL_S = 3600
-
-
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 def _now_ms() -> int:
@@ -463,7 +458,7 @@ async def refresh(db, uid: str, *, force: bool = False) -> bool:
     prior_notes = _clean_notes({"notes": data.get("frontmatter", {}).get("notes")})
     result = await gemini.generate_json(
         _contents(wiki_text, prior_notes, flagged_block, sample_block),
-        system_prompt=_prompt(),
+        system_prompt=load_prompt_file(_PROMPT_PATH),
         response_schema=_RESPONSE_SCHEMA,
         uid=uid,
         feature=token_ledger.FEATURE_AI_NOTES,

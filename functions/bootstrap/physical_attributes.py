@@ -28,6 +28,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 import gemini
 import media_embed
 import schema
@@ -64,11 +65,6 @@ _FREE_TEXT_FIELDS = ("race_ethnicity", "distinguishing_features")
 
 _PHOTO_NOTE = "extracted from pictures"
 _STATED_NOTE = "from your answers"
-
-
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)
@@ -176,7 +172,7 @@ async def extract_from_photos(
     try:
         result = await gemini.generate_json(
             "Extract this person's physical attributes from the photo set.",
-            system_prompt=_prompt(),
+            system_prompt=load_prompt_file(_PROMPT_PATH),
             response_schema=_response_schema(),
             images=images,
             uid=uid,

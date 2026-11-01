@@ -632,3 +632,21 @@ def test_misheard_fragment_detection():
     # A user whose call language isn't English is never second-guessed.
     assert not voices.is_misheard_fragment("murió", "Spanish")
     assert voices.is_misheard_fragment("murió", "British English")
+
+
+def test_load_prompt_file_reads_and_strips(tmp_path):
+    f = tmp_path / "probe.md"
+    f.write_text("\n\n  hello prompt  \n\n", encoding="utf-8")
+    assert prompt_mod.load_prompt_file(f) == "hello prompt"
+    assert prompt_mod.load_prompt_file(str(f)) == "hello prompt"
+
+
+def test_load_prompt_file_caches_per_path(tmp_path):
+    f = tmp_path / "cached.md"
+    f.write_text("v1", encoding="utf-8")
+    assert prompt_mod.load_prompt_file(f) == "v1"
+    f.write_text("v2", encoding="utf-8")
+    assert prompt_mod.load_prompt_file(f) == "v1"  # cached, like _prompt() was
+    g = tmp_path / "other.md"
+    g.write_text("v2", encoding="utf-8")
+    assert prompt_mod.load_prompt_file(g) == "v2"

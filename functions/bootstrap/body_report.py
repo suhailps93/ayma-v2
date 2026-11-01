@@ -22,157 +22,48 @@ Two callers:
 
 Prompts live in ``prompts/body_report.md`` (``## system`` / ``## instruction``
 sections), loaded dynamically — never inline (AGENTS.md).
+
+The engine skeleton (vision call, normalization, render, teaser) is shared
+with :mod:`face_report` via :mod:`photo_report`; this module is the body
+spec plus its own docstrings.
 """
 
 from __future__ import annotations
 
-import logging
-import re
-from functools import lru_cache
-from pathlib import Path
-
-import gemini
-import report_blocks as rb
+import photo_report
 import token_ledger
-from llm_provider import get_vision_provider
 
-logger = logging.getLogger("ayma.bodyreport")
-
-_PROMPTS_PATH = Path(__file__).with_name("prompts") / "body_report.md"
-
-
-@lru_cache(maxsize=1)
-def _prompt_sections() -> dict[str, str]:
-    """The ``## name`` sections of ``prompts/body_report.md``."""
-    text = _PROMPTS_PATH.read_text(encoding="utf-8")
-    out: dict[str, str] = {}
-    key: str | None = None
-    buf: list[str] = []
-    for line in text.splitlines():
-        m = re.match(r"^##\s+([\w-]+)\s*$", line)
-        if m:
-            if key is not None:
-                out[key] = "\n".join(buf).strip()
-            key, buf = m.group(1), []
-        elif key is not None:
-            buf.append(line)
-    if key is not None:
-        out[key] = "\n".join(buf).strip()
-    return out
-
-
-def _system() -> str:
-    return _prompt_sections()["system"]
-
-
-def _instruction() -> str:
-    return _prompt_sections()["instruction"]
-
-_FEATURE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "name": {
-            "type": "string",
-            "description": "frame | proportions | posture | muscularity | "
-            "leanness | symmetry | v_taper | skin_and_grooming | presence",
-        },
-        "score": {"type": "number", "description": "0-10"},
-        "note": {"type": "string", "description": "one specific observation"},
-    },
-    "required": ["name", "score", "note"],
-}
-
-_RECO_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "category": {
-            "type": "string",
-            "description": "training | nutrition | posture | styling | "
-            "recovery",
-        },
-        "text": {"type": "string"},
-    },
-    "required": ["category", "text"],
-}
-
-_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "usable": {"type": "boolean"},
-        "overall_score": {"type": "number", "description": "0-10"},
-        "verdict": {"type": "string", "description": 'e.g. "Above average"'},
-        "verdict_note": {"type": "string", "description": "one sentence"},
-        "features": {"type": "array", "items": _FEATURE_SCHEMA},
-        "quick_facts": {
-            "type": "object",
-            "properties": {
-                "body_type": {"type": "string"},
-                "est_height_impression": {"type": "string"},
-                "build": {"type": "string"},
-                "estimated_body_fat_range": {"type": "string"},
-                "dominant_strength": {"type": "string"},
-                "weakest_area": {"type": "string"},
-                "frame_size": {"type": "string"},
-            },
-        },
-        "strengths": {"type": "array", "items": {"type": "string"}},
-        "improvements": {"type": "array", "items": {"type": "string"}},
-        "recommendations": {"type": "array", "items": _RECO_SCHEMA},
-    },
-    "required": [
-        "usable",
-        "overall_score",
-        "verdict",
-        "features",
-        "strengths",
-        "improvements",
-        "recommendations",
-    ],
-}
-
-_QUICK_FACT_KEYS = (
-    "body_type",
-    "est_height_impression",
-    "build",
-    "estimated_body_fat_range",
-    "dominant_strength",
-    "weakest_area",
-    "frame_size",
+SPEC = photo_report.Spec(
+    key="body",
+    prompt_file="body_report.md",
+    feature_names=(
+        "frame | proportions | posture | muscularity | leanness | symmetry | "
+        "v_taper | skin_and_grooming | presence"
+    ),
+    reco_categories="training | nutrition | posture | styling | recovery",
+    quick_fact_keys=(
+        "body_type",
+        "est_height_impression",
+        "build",
+        "estimated_body_fat_range",
+        "dominant_strength",
+        "weakest_area",
+        "frame_size",
+    ),
+    ledger_feature=token_ledger.FEATURE_BODY_REPORT,
+    not_usable=(
+        "I can't get a clean read on that photo — send a clearer shot "
+        "with your upper body or more visible, in fitted clothing, and "
+        "I'll take a proper look."
+    ),
+    teaser_fallback="Here's your physique report.",
 )
 
+_SCHEMA = photo_report.schema_for(SPEC)
 
-def _num(value, default: float = 0.0) -> float:
-    try:
-        return round(float(value), 1)
-    except (TypeError, ValueError):
-        return default
+_QUICK_FACT_KEYS = SPEC.quick_fact_keys
 
-
-def _normalize_images(
-    image_or_images, mime_type: str | None, source_path: str | None
-) -> list[tuple[bytes, str, str]]:
-    """Coerce either call form into a ``[(bytes, mime, path), …]`` list:
-
-    * single image (legacy): ``run(image_bytes, mime_type, source_path=…)``;
-    * multi image: ``run([(bytes, mime, path), …])`` — all the SAME person.
-
-    Drops any entry with empty bytes; defaults a blank mime to ``image/jpeg``.
-    """
-    if isinstance(image_or_images, (bytes, bytearray)):
-        if not image_or_images:
-            return []
-        mime = (mime_type or "image/jpeg").strip() or "image/jpeg"
-        return [(bytes(image_or_images), mime, source_path or "")]
-    out: list[tuple[bytes, str, str]] = []
-    for item in image_or_images or []:
-        data = item[0]
-        if not data:
-            continue
-        mime = (item[1] if len(item) > 1 else None) or "image/jpeg"
-        mime = str(mime).strip() or "image/jpeg"
-        path = str(item[2]).strip() if len(item) > 2 and item[2] else ""
-        out.append((bytes(data), mime, path))
-    return out
+_NOT_USABLE = SPEC.not_usable
 
 
 async def run(
@@ -205,100 +96,15 @@ async def run(
     ``uid`` under the ``body_report`` feature; a cap hit propagates
     ``TokenCapExceeded``.
     """
-    images = _normalize_images(image_or_images, mime_type, source_path)
-    if not images:
-        raise ValueError("an image is required")
-
-    report = await get_vision_provider("reports").generate_json(
-        _instruction(),
-        system_prompt=_system(),
-        response_schema=_SCHEMA,
-        images=[(data, mime) for data, mime, _p in images],
-        uid=uid,
-        feature=token_ledger.FEATURE_BODY_REPORT,
+    return await photo_report.run(
+        SPEC, image_or_images, mime_type, uid=uid, source_path=source_path
     )
-    if not isinstance(report, dict):
-        report = {}
-
-    quick = report.get("quick_facts")
-    quick = quick if isinstance(quick, dict) else {}
-
-    return {
-        "usable": bool(report.get("usable", True)),
-        "overall_score": _num(report.get("overall_score")),
-        "verdict": str(report.get("verdict", "")).strip(),
-        "verdict_note": str(report.get("verdict_note", "")).strip(),
-        "features": [
-            {
-                "name": str(f.get("name", "")).strip(),
-                "score": _num(f.get("score")),
-                "note": str(f.get("note", "")).strip(),
-            }
-            for f in (report.get("features") or [])
-            if isinstance(f, dict) and f.get("name")
-        ],
-        "quick_facts": {
-            k: str(quick.get(k, "")).strip() for k in _QUICK_FACT_KEYS
-        },
-        "strengths": [
-            str(s).strip()
-            for s in (report.get("strengths") or [])
-            if str(s).strip()
-        ],
-        "improvements": [
-            str(s).strip()
-            for s in (report.get("improvements") or [])
-            if str(s).strip()
-        ],
-        "recommendations": [
-            {
-                "category": str(r.get("category", "")).strip(),
-                "text": str(r.get("text", "")).strip(),
-            }
-            for r in (report.get("recommendations") or [])
-            if isinstance(r, dict) and r.get("text")
-        ],
-        "source_photos": [p for _d, _m, p in images if p],
-    }
 
 
 def render(report: dict) -> str:
     """A short markdown summary of a :func:`run` result for the chat
     transcript. If the photo was unusable, ask for a better one."""
-    if not report.get("usable", True):
-        return (
-            "I can't get a clean read on that photo — send a clearer shot "
-            "with your upper body or more visible, in fitted clothing, and "
-            "I'll take a proper look."
-        )
-
-    score = report.get("overall_score", 0)
-    verdict = report.get("verdict", "").strip()
-    head = f"**{score}/10**" + (f" — {verdict}" if verdict else "")
-    lines = [head]
-    if report.get("verdict_note"):
-        lines.append(report["verdict_note"].strip())
-
-    strengths = [s for s in (report.get("strengths") or []) if s][:3]
-    if strengths:
-        lines.append("")
-        lines.append("**Working for you**")
-        lines.extend(f"- {s}" for s in strengths)
-
-    improvements = [s for s in (report.get("improvements") or []) if s][:3]
-    if improvements:
-        lines.append("")
-        lines.append("**Worth working on**")
-        lines.extend(f"- {s}" for s in improvements)
-
-    return "\n".join(lines).strip()
-
-
-_NOT_USABLE = (
-    "I can't get a clean read on that photo — send a clearer shot "
-    "with your upper body or more visible, in fitted clothing, and "
-    "I'll take a proper look."
-)
+    return photo_report.render(SPEC, report)
 
 
 def teaser(report: dict) -> str:
@@ -312,7 +118,4 @@ def teaser(report: dict) -> str:
     exact result shape — rather than a second, independently-maintained copy
     of it living here (§ founder: converge the drifted face/body/deep-dive
     ``teaser()`` functions)."""
-    blocks = rb.scored_result_blocks(report, id_prefix="body", not_usable_text=_NOT_USABLE)
-    if blocks and blocks[0]["type"] == rb.SECTION_HEAD:
-        return blocks[0]["text"]
-    return "Here's your physique report."
+    return photo_report.teaser(SPEC, report)

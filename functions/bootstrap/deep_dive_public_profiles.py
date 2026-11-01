@@ -38,9 +38,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.robotparser
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 import feature_flags
 import gemini
 import public_url
@@ -119,11 +119,6 @@ def region_blocked(location: str) -> bool:
     return region_block.is_blocked(
         location, feature_flags.get("deepdive_blocked_regions")
     )
-
-
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 def _host(url: str) -> str:
@@ -263,7 +258,7 @@ async def _grounded_profiles(who: str, uid: str | None) -> list[dict] | None:
     try:
         text, _sources = await gemini.research(
             f"Find the public profile pages of: {who}",
-            system_prompt=_prompt(),
+            system_prompt=load_prompt_file(_PROMPT_PATH),
             uid=uid,
             feature=FEATURE_DEEPDIVE,
             max_output_tokens=1024,

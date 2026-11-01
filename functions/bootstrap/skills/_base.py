@@ -40,3 +40,31 @@ def last_user_quote(turns: list | None) -> str:
         if role == "user" and text:
             return text[:_MAX_QUOTE]
     return ""
+
+
+def latest_chat_image(db, uid: str) -> str:
+    """The ``image_path`` of the most recent ``chat_messages`` doc that has
+    one, or ``""``.
+
+    Was ``_latest_chat_image``, identically duplicated in
+    ``skills/face_report.py`` and ``skills/body_report.py`` (sweep finding
+    BE-#2); the single implementation lives here.
+    """
+    from firebase_admin import firestore
+
+    try:
+        docs = (
+            db.collection("users")
+            .document(uid)
+            .collection("chat_messages")
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(30)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001 - a missing index / empty collection
+        return ""
+    for d in docs:
+        path = str((d.to_dict() or {}).get("image_path", "")).strip()
+        if path:
+            return path
+    return ""

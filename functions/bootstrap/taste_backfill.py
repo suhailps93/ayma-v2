@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 import chat_history
 import gemini
 import token_ledger
@@ -55,11 +55,6 @@ _RESPONSE_SCHEMA = {
 _MAX_WIKI_CHARS = 8000
 _MAX_TRANSCRIPT_CHARS = 12000
 _MAX_TURNS = 400
-
-
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 def _taste_values(db, uid: str) -> dict[str, str]:
@@ -146,7 +141,7 @@ async def backfill(db, uid: str, *, force: bool = False) -> list[str]:
             return []
         extracted = await gemini.generate_json(
             text,
-            _prompt(),
+            load_prompt_file(_PROMPT_PATH),
             _RESPONSE_SCHEMA,
             uid=uid,
             feature=token_ledger.FEATURE_TASTE_BACKFILL,

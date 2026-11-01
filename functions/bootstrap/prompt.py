@@ -379,6 +379,45 @@ def load_questionnaire_guidance() -> str:
     return _QUESTIONNAIRE_PATH.read_text(encoding="utf-8").strip()
 
 
+@lru_cache(maxsize=32)
+def load_prompt_file(path) -> str:
+    """The stripped text of one prompt/template file, cached per path.
+
+    The single-file ``_prompt()`` loaders in ``dm_moderation``,
+    ``taste_backfill``, ``photo_moderation``, ``photo_attrs``,
+    ``photo_pipeline``, ``deep_dive_public_profiles``, ``physical_attributes``,
+    ``explore``, ``ai_assessment`` (cached) and ``completeness`` (uncached)
+    were all this same read — they call it now with their own
+    ``_PROMPT_PATH``. ``path`` is ``str``- or ``Path``-shaped; a missing file
+    still raises ``FileNotFoundError``, exactly as before.
+    """
+    return Path(path).read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=32)
+def load_prompt_sections(path) -> dict[str, str]:
+    """The ``## name`` sections of one prompt file, cached per path.
+
+    The section parsers in ``face_report``, ``body_report`` (both now via
+    ``photo_report``) and ``deep_dive`` were three copies of this same
+    loop; they call it now with their own ``_PROMPTS_PATH``.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    out: dict[str, str] = {}
+    key: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        m = re.match(r"^##\s+([\w-]+)\s*$", line)
+        if m:
+            if key is not None:
+                out[key] = "\n".join(buf).strip()
+            key, buf = m.group(1), []
+        elif key is not None:
+            buf.append(line)
+    if key is not None:
+        out[key] = "\n".join(buf).strip()
+    return out
+
 def compose_system_prompt(
     recent_turns: list[Turn] | None = None,
     wiki_context: str = "",

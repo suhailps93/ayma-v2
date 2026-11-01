@@ -62,6 +62,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from timefmt import utcnow
 import gemini
 import report_blocks as rb
 import story
@@ -168,9 +169,6 @@ def _prompt(name: str) -> str:
 def _norm(text: str) -> str:
     return " ".join((text or "").split())
 
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 # --- reading the public text -------------------------------------------
@@ -759,7 +757,7 @@ def _edited_within_window(ts) -> bool:
         return False
     try:
         edited = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-        return _now() - edited <= _SUPPRESS_WINDOW
+        return utcnow() - edited <= _SUPPRESS_WINDOW
     except Exception:  # noqa: BLE001
         return False
 
@@ -830,7 +828,7 @@ def route_ai_update(page_id: str, cur: dict, payload: dict) -> dict:
         # the window): swallow this diverging rewrite — never re-propose or
         # revert their change — and spend the explicit flag if it was set.
         return _settle(spend=True)
-    out: dict = {F_PROPOSAL: {"before": current, "after": after, "created_at": _now()}}
+    out: dict = {F_PROPOSAL: {"before": current, "after": after, "created_at": utcnow()}}
     if not (cur.get(story.F_USER_EDITS) or "").strip():
         out[story.F_USER_EDITS] = current
     return out

@@ -8,9 +8,9 @@ False``, ``reason: "moderation_error"``) rather than published, per §8.4.
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 import gemini
 import token_ledger
 
@@ -29,11 +29,6 @@ _SCHEMA = {
 }
 
 
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
-
-
 async def moderate(
     image_bytes: bytes, mime_type: str, *, uid: str | None = None
 ) -> dict:
@@ -44,7 +39,7 @@ async def moderate(
     try:
         result = await gemini.generate_json(
             "Review this photo for the dating-app safety policy.",
-            system_prompt=_prompt(),
+            system_prompt=load_prompt_file(_PROMPT_PATH),
             response_schema=_SCHEMA,
             image=(image_bytes, mime_type),
             uid=uid,
