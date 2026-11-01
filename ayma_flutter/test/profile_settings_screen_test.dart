@@ -18,6 +18,7 @@ class _FakeProfileService extends ProfileService {
 
   final ProfileData? _initial;
   Map<String, dynamic>? lastUpdate;
+  int failNextSaves = 0;
 
   @override
   Future<ProfileData?> readProfile() async => _initial;
@@ -33,6 +34,10 @@ class _FakeProfileService extends ProfileService {
     List<String>? interestedIn,
     String? location,
   }) async {
+    if (failNextSaves > 0) {
+      failNextSaves--;
+      throw StateError('refused');
+    }
     lastUpdate = {
       'name': name,
       'first_name': firstName,
@@ -92,6 +97,51 @@ void main() {
     expect(svc.lastUpdate!['phone'], '+15551234567');
     expect(svc.lastUpdate!['gender'], 'Non-binary');
     expect(svc.lastUpdate!['interested_in'], ['Everyone']);
+  });
+
+  testWidgets('a refused save offers Retry, which saves the same input',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final svc = _FakeProfileService(ProfileData(
+      name: 'Sam',
+      firstName: 'Samuel',
+      lastName: 'Vale',
+      phone: '+15551234567',
+      birthdate: DateTime(1996, 5, 4),
+      gender: 'Non-binary',
+      interestedIn: const ['Everyone'],
+      location: 'Berlin',
+    ))
+      ..failNextSaves = 1;
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response('{}', 200)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+          home: ProfileSettingsScreen(profileService: svc, apiClient: api)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Berlin'), 'Lisbon');
+    await tester.pump();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(svc.lastUpdate, isNull);
+    expect(find.textContaining('Save failed'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    expect(svc.lastUpdate!['location'], 'Lisbon');
+    expect(find.text('Profile saved'), findsOneWidget);
   });
 
   testWidgets('with no profile doc, Save is disabled until fields are filled',

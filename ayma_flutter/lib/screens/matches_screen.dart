@@ -209,7 +209,9 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       AymaToast.show(context, 'That didn\'t work ($e).',
-          kind: AymaToastKind.error);
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+              label: 'Retry', onPressed: () => _respond(accept)));
       setState(() => _working = false);
     }
   }

@@ -58,8 +58,9 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   }
 
   void _showSnack(String message,
-      {AymaToastKind kind = AymaToastKind.info}) {
-    AymaToast.show(context, message, kind: kind);
+      {AymaToastKind kind = AymaToastKind.info,
+      AymaToastAction? action}) {
+    AymaToast.show(context, message, kind: kind, action: action);
   }
 
   @override
@@ -106,7 +107,10 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _selected = previous);
-        _showSnack('Could not save ($e).', kind: AymaToastKind.error);
+        _showSnack('Could not save ($e).',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+                label: 'Retry', onPressed: () => _choose(name)));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -122,7 +126,9 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     } catch (e) {
       if (mounted) {
         _showSnack('Could not save ($e).',
-            kind: AymaToastKind.error);
+            kind: AymaToastKind.error,
+            action:
+                AymaToastAction(label: 'Retry', onPressed: _saveLang));
       }
     } finally {
       if (mounted) setState(() => _saving = false);

@@ -120,7 +120,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     } catch (_) {
       if (mounted) {
         AymaToast.show(context, "Couldn't send that like.",
-            kind: AymaToastKind.error);
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+                label: 'Retry', onPressed: () => _like(p)));
       }
     } finally {
       if (mounted) setState(() => _liking = false);
@@ -162,7 +164,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     } catch (_) {
       if (mounted) {
         AymaToast.show(context, "Couldn't remove that like.",
-            kind: AymaToastKind.error);
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+                label: 'Retry', onPressed: () => _unlike(p)));
       }
     } finally {
       if (mounted) setState(() => _liking = false);

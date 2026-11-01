@@ -224,7 +224,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       // about, not one-shot openers.
     } catch (e) {
       if (mounted) {
-        AymaToast.show(context, 'Not sent ($e).', kind: AymaToastKind.error);
+        // The composer keeps the text (and any picked attachment), so Retry
+        // resends exactly the original input.
+        AymaToast.show(context, 'Not sent ($e).',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(label: 'Retry', onPressed: _send));
       }
     } finally {
       if (mounted) setState(() => _sending = false);

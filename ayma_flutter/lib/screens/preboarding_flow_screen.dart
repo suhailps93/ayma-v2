@@ -202,9 +202,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     context.go(UnderageScreen.path);
   }
 
-  void _snack(String message, {AymaToastKind kind = AymaToastKind.info}) {
+  void _snack(String message,
+      {AymaToastKind kind = AymaToastKind.info,
+      AymaToastAction? action}) {
     if (!mounted) return;
-    AymaToast.show(context, message, kind: kind);
+    AymaToast.show(context, message, kind: kind, action: action);
   }
 
   Future<void> _pickBirthdate() async {
@@ -455,7 +457,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (!mounted) return;
       context.go('/');
     } catch (e) {
-      _snack('Could not save your profile: $e', kind: AymaToastKind.error);
+      // The form keeps every field, so Retry saves exactly the original input.
+      _snack('Could not save your profile: $e',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(label: 'Retry', onPressed: _save));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

@@ -95,7 +95,9 @@ ApiClient _api(
   Map<String, dynamic>? compat,
   bool likeMutual = false,
   Map<String, dynamic>? deepDive,
+  int failLikes = 0,
 }) {
+  var likeFailuresLeft = failLikes;
   return ApiClient(
     auth: MockFirebaseAuth(signedIn: true),
     httpClient: MockClient((req) async {
@@ -109,6 +111,10 @@ ApiClient _api(
       if (req.method == 'POST') {
         onPost?.call(req.url.path);
         if (req.url.path == '/explore/like') {
+          if (likeFailuresLeft > 0) {
+            likeFailuresLeft--;
+            return http.Response('no', 500);
+          }
           return http.Response(
               jsonEncode({'ok': true, 'mutual': likeMutual}), 200);
         }
@@ -426,6 +432,29 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(posts, contains('/explore/like'));
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
+  });
+
+  testWidgets('a refused like offers Retry, which sends the same like',
+      (tester) async {
+    final posts = <String>[];
+    await tester.pumpWidget(
+        _app(_api(_profile(), onPost: posts.add, failLikes: 1)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(AymaHeartGlyph));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't send that like."), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    expect(posts, ['/explore/like', '/explore/like']);
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isTrue);
   });

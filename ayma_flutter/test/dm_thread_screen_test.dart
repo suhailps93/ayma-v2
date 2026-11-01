@@ -39,6 +39,7 @@ class _FakeDm extends DmService {
   final StreamController<List<DmMessage>> _msgs;
   final StreamController<FreshData<List<DmMessage>>>? freshCtrl;
   final List<String> sent = [];
+  int failNextSends = 0;
   final List<String> blocked = [];
   final List<String> chips;
   final List<File> uploaded = [];
@@ -62,6 +63,10 @@ class _FakeDm extends DmService {
 
   @override
   Future<void> sendText(String threadId, String text) async {
+    if (failNextSends > 0) {
+      failNextSends--;
+      throw StateError('refused');
+    }
     sent.add(text);
     _msgs.add([
       DmMessage(
@@ -390,6 +395,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(dm.sent, ['yo']);
     expect(find.text('yo'), findsOneWidget);
+  });
+
+  testWidgets('a refused send keeps the composer text and offers Retry',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl)..failNextSends = 1;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(
+          threadId: 'a__me',
+          dmService: dm,
+          apiClient: _api(),
+        ),
+      ),
+    );
+    await tester.pump();
+    ctrl.add(const []);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'yo');
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(dm.sent, isEmpty);
+    expect(find.textContaining('Not sent'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    // The original input is still in the composer.
+    expect(find.text('yo'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    expect(dm.sent, ['yo']);
   });
 
   testWidgets(
