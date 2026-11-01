@@ -37,11 +37,17 @@ class SignInScreen extends StatefulWidget {
     this.auth,
     this.voiceController,
     this.apiClient,
+    this.startInCreateAccountMode = false,
   });
 
   static const path = '/signin';
 
   final AuthService? auth;
+
+  /// Injectable for tests / the layout matrix: open directly on the email
+  /// stage in create-account mode (confirm-password + referral fields shown),
+  /// so that taller variant's layout is covered without driving taps.
+  final bool startInCreateAccountMode;
 
   /// Injectable for tests; used only to redeem a referral code right after a
   /// new account is created.
@@ -90,9 +96,15 @@ class _SignInScreenState extends State<SignInScreen> {
   /// its "check your email" confirmation inline.
   String? _resetSentTo;
 
+  /// A short inline nudge shown in create mode right after a failed sign-in
+  /// auto-switched the user here ("New here? Confirm your password…"). Null
+  /// the rest of the time — a plain, deliberate switch shows no nudge.
+  String? _createHint;
+
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirmPassword = TextEditingController();
+  final _confirmFocus = FocusNode();
   final _referral = TextEditingController();
   final _phone = TextEditingController();
   final _code = TextEditingController();
@@ -106,6 +118,10 @@ class _SignInScreenState extends State<SignInScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.startInCreateAccountMode) {
+      _stage = _Stage.email;
+      _createMode = true;
+    }
     _voice.addListener(_onVoice);
     // Ayma greets while they choose how to sign in. Best-effort — a mic denial
     // or offline just leaves the orb quiet.
@@ -136,6 +152,7 @@ class _SignInScreenState extends State<SignInScreen> {
     _email.dispose();
     _password.dispose();
     _confirmPassword.dispose();
+    _confirmFocus.dispose();
     _referral.dispose();
     _phone.dispose();
     _code.dispose();
@@ -147,7 +164,14 @@ class _SignInScreenState extends State<SignInScreen> {
     AymaToast.show(context, m, kind: kind);
   }
 
-  Future<void> _run(Future<UserCredential> Function() action) async {
+  /// [onAuthError], when given, gets first look at a [FirebaseAuthException]:
+  /// if it returns true it has handled the error (e.g. steered the user into
+  /// another mode) and the default error toast is suppressed. Only the email
+  /// flows pass it; Google/Apple/phone keep the plain toast.
+  Future<void> _run(
+    Future<UserCredential> Function() action, {
+    bool Function(FirebaseAuthException e)? onAuthError,
+  }) async {
     if (_busy || !_consentsGiven) return;
     setState(() => _busy = true);
     try {
@@ -156,7 +180,9 @@ class _SignInScreenState extends State<SignInScreen> {
       if (!mounted) return;
       context.go(SplashScreen.path);
     } on FirebaseAuthException catch (e) {
-      _snack(_friendly(e), kind: AymaToastKind.error);
+      if (onAuthError == null || !onAuthError(e)) {
+        _snack(_friendly(e), kind: AymaToastKind.error);
+      }
     } on GoogleSignInException catch (e) {
       if (e.code != GoogleSignInExceptionCode.canceled) {
         _snack('Google sign-in failed (${e.code.name}).',
@@ -214,7 +240,46 @@ class _SignInScreenState extends State<SignInScreen> {
       () => _createMode
           ? _createAccountAndRedeemReferral(email)
           : _auth.signInWithEmailPassword(email, _password.text),
+      onAuthError: _createMode ? _onCreateError : _onSignInError,
     );
+  }
+
+  /// A failed *sign-in*. Under email-enumeration protection newer Firebase
+  /// reports both an unknown email and a wrong password as `invalid-credential`
+  /// (and older ones as `user-not-found`), so instead of dead-ending on a
+  /// toast we guide the user straight into sign-up: switch to create mode,
+  /// keep the typed email + password, reveal and focus the confirm field, and
+  /// show a friendly nudge. If it was actually a wrong password on an existing
+  /// account, the create attempt comes back `email-already-in-use` and
+  /// [_onCreateError] sends them back to sign-in — so both cases stay correct.
+  bool _onSignInError(FirebaseAuthException e) {
+    if (e.code != 'user-not-found' && e.code != 'invalid-credential') {
+      return false;
+    }
+    setState(() {
+      _createMode = true;
+      _resetSentTo = null;
+      _createHint = 'New here? Confirm your password to create your account.';
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _confirmFocus.requestFocus();
+    });
+    return true;
+  }
+
+  /// A failed *create*: an `email-already-in-use` means the account exists, so
+  /// the earlier sign-in failure was a mistyped password, not a new user —
+  /// switch back to sign-in so they can correct it rather than stay stuck on
+  /// the sign-up form.
+  bool _onCreateError(FirebaseAuthException e) {
+    if (e.code != 'email-already-in-use') return false;
+    setState(() {
+      _createMode = false;
+      _createHint = null;
+    });
+    _snack('You already have an account — check your password.',
+        kind: AymaToastKind.warning);
+    return true;
   }
 
   /// Creates the account, then best-effort redeems any referral code typed in
@@ -489,10 +554,19 @@ class _SignInScreenState extends State<SignInScreen> {
       const SizedBox(height: 10),
       TextField(
         controller: _confirmPassword,
+        focusNode: _confirmFocus,
         obscureText: true,
         onSubmitted: (_) => _submitEmail(),
         decoration: const InputDecoration(labelText: 'Confirm password'),
       ),
+      if (_createHint != null) ...[
+        const SizedBox(height: 8),
+        Text(
+          _createHint!,
+          textAlign: TextAlign.center,
+          style: AymaType.sans(size: 12.5, color: ac.fgMute),
+        ),
+      ],
       const SizedBox(height: 10),
       // Unobtrusive and optional — only in sign-up mode. A friend's invite
       // link (…/r/CODE) shows this same code; pasting the whole link works
@@ -538,6 +612,8 @@ class _SignInScreenState extends State<SignInScreen> {
       onPressed: () => setState(() {
         _createMode = !_createMode;
         _resetSentTo = null;
+        _createHint = null;
+        _confirmPassword.clear();
       }),
       child: Text(
         _createMode

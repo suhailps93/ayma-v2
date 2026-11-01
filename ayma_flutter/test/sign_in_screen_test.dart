@@ -372,52 +372,117 @@ void main() {
     expect(find.textContaining('user-not-found'), findsNothing);
   });
 
-  testWidgets('error codes map to human messages steering to the right mode',
+  String fieldText(WidgetTester tester, String label) =>
+      tester.widget<TextField>(find.widgetWithText(TextField, label))
+          .controller!
+          .text;
+
+  testWidgets(
+      'a failed email sign-in auto-switches into create mode: confirm field, '
+      'a nudge, a back-to-login toggle, typed values kept — no raw code leak',
       (tester) async {
     final auth = _FakeAuth();
     await _openEmail(tester, auth);
 
-    Future<void> submit(String code, {bool create = false}) async {
-      auth.nextError = FirebaseAuthException(code: code);
-      await tester.enterText(
-          find.widgetWithText(TextField, 'Email'), 'a@b.com');
-      await tester.enterText(
-          find.widgetWithText(TextField, 'Password'), 'secret1');
-      if (create) {
-        await tester.enterText(
-            find.widgetWithText(TextField, 'Confirm password'), 'secret1');
-      }
-      await tester.tap(find.widgetWithText(
-          FilledButton, create ? 'Create account' : 'Sign in'));
-      await tester.pump();
-    }
+    // Starts in sign-in mode.
+    expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsNothing);
 
-    // Wrong password (also how Firebase reports it post-enumeration-protection).
-    await submit('invalid-credential');
-    expect(
-      find.text('That email and password don’t match. New here? '
-          'Tap “Sign up” below.'),
-      findsOneWidget,
-    );
-
-    // No such account.
-    await submit('user-not-found');
-    expect(
-      find.text('No account with that email yet — tap “Sign up” to create one.'),
-      findsOneWidget,
-    );
-
-    // Email already in use, from the sign-up mode.
-    await tester.tap(find.text('Don’t have an account? Sign up'));
+    // Newer Firebase lumps unknown-email AND wrong-password into this code.
+    auth.nextError = FirebaseAuthException(code: 'invalid-credential');
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
     await tester.pump();
-    await submit('email-already-in-use', create: true);
+
+    // The sign-in was attempted, then the UI flipped to create mode.
+    expect(auth.calls, contains('signIn:a@b.com'));
+    expect(find.widgetWithText(FilledButton, 'Create account'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsOneWidget);
     expect(
-      find.text('That email already has an account — tap “Sign in” instead.'),
+      find.text('New here? Confirm your password to create your account.'),
       findsOneWidget,
     );
-
-    // Raw codes never leak.
+    // Always a way back to login.
+    expect(find.text('Already have an account? Sign in'), findsOneWidget);
+    // Typed email + password are kept.
+    expect(fieldText(tester, 'Email'), 'a@b.com');
+    expect(fieldText(tester, 'Password'), 'secret1');
+    // Raw Firebase code never surfaces.
     expect(find.textContaining('invalid-credential'), findsNothing);
+  });
+
+  testWidgets(
+      'user-not-found on sign-in also auto-switches into create mode',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+
+    auth.nextError = FirebaseAuthException(code: 'user-not-found');
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    expect(find.widgetWithText(FilledButton, 'Create account'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsOneWidget);
+    expect(find.textContaining('user-not-found'), findsNothing);
+  });
+
+  testWidgets(
+      'email-already-in-use on the auto-switched create returns to sign-in '
+      'with a check-your-password nudge', (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+
+    // Wrong password on an existing account → arrives as invalid-credential →
+    // auto-switch to create.
+    auth.nextError = FirebaseAuthException(code: 'invalid-credential');
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+    expect(find.widgetWithText(FilledButton, 'Create account'), findsOneWidget);
+
+    // They confirm; the account already exists, so we bounce back to sign-in.
+    auth.nextError = FirebaseAuthException(code: 'email-already-in-use');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Confirm password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Create account'));
+    await tester.pump();
+
+    expect(auth.calls, contains('create:a@b.com'));
+    expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsNothing);
+    expect(
+      find.text('You already have an account — check your password.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('email-already-in-use'), findsNothing);
+  });
+
+  testWidgets(
+      'other sign-in error codes still fall through to the plain toast '
+      '(no mode switch)', (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+
+    auth.nextError = FirebaseAuthException(code: 'too-many-requests');
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    // Stayed in sign-in mode; showed the friendly toast.
+    expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsNothing);
+    expect(
+      find.text('Too many attempts. Wait a minute and try again.'),
+      findsOneWidget,
+    );
   });
 }
