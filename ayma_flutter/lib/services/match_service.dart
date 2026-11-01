@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'api_client.dart';
+import 'fresh_data.dart';
 
 /// One scored match as the Matches list / detail renders it (§5.4, §14.3).
 class MatchView {
@@ -45,41 +46,54 @@ class MatchService {
     return uid;
   }
 
-  /// "New from Ayma" — matches still awaiting this user's response.
-  Stream<List<MatchView>> watchNewMatches() {
+  /// "New from Ayma" — matches still awaiting this user's response, with
+  /// Firestore [SnapshotMetadata] freshness (PERF_PLAN Phase 1).
+  Stream<FreshData<List<MatchView>>> watchNewMatchesFresh() {
     final uid = _uid;
     return _db
         .collection('matches')
         .where('uids', arrayContains: uid)
         .where('status', isEqualTo: 'scored')
-        .snapshots()
-        .asyncMap((snap) async {
-      final views = <MatchView>[];
-      for (final doc in snap.docs) {
-        views.add(await _toView(doc, uid));
-      }
-      views.sort((a, b) => b.score.compareTo(a.score));
-      return views;
-    });
+        .snapshots(includeMetadataChanges: true)
+        .asyncMap((snap) => _viewsFresh(snap, uid));
   }
 
+  Stream<List<MatchView>> watchNewMatches() =>
+      watchNewMatchesFresh().map((f) => f.data ?? const <MatchView>[]);
+
   /// Mutual matches (both sides accepted, or reciprocal Explore likes) — the
-  /// "start a conversation" half of the Messages tab (§11.3).
-  Stream<List<MatchView>> watchMutualMatches() {
+  /// "start a conversation" half of the Messages tab (§11.3), with freshness.
+  Stream<FreshData<List<MatchView>>> watchMutualMatchesFresh() {
     final uid = _uid;
     return _db
         .collection('matches')
         .where('uids', arrayContains: uid)
         .where('status', isEqualTo: 'mutual_interest')
-        .snapshots()
-        .asyncMap((snap) async {
+        .snapshots(includeMetadataChanges: true)
+        .asyncMap((snap) => _viewsFresh(snap, uid));
+  }
+
+  Stream<List<MatchView>> watchMutualMatches() =>
+      watchMutualMatchesFresh().map((f) => f.data ?? const <MatchView>[]);
+
+  Future<FreshData<List<MatchView>>> _viewsFresh(
+    QuerySnapshot<Map<String, dynamic>> snap,
+    String uid,
+  ) async {
+    try {
       final views = <MatchView>[];
       for (final doc in snap.docs) {
         views.add(await _toView(doc, uid));
       }
       views.sort((a, b) => b.score.compareTo(a.score));
-      return views;
-    });
+      return FreshData<List<MatchView>>(
+        data: views,
+        isFromCache: snap.metadata.isFromCache,
+        hasPendingWrites: snap.metadata.hasPendingWrites,
+      );
+    } catch (e) {
+      return FreshData<List<MatchView>>(error: e);
+    }
   }
 
   Future<MatchView> _toView(

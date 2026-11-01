@@ -3,12 +3,14 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import '../services/credits_balance.dart';
+import '../services/fresh_data.dart';
 import '../services/revenuecat_service.dart';
 import '../services/subscription_status.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/freshness_indicator.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/overflow_guards.dart';
 import 'trial_paywall_screen.dart';
@@ -118,6 +120,8 @@ class _PlanScreenState extends State<PlanScreen> {
       widget.service ?? RevenueCatService.instance;
   late final ApiClient _api = widget.api ?? ApiClient();
   late Future<_PlanData> _data = _load();
+  FreshData<_PlanData> _fresh = const FreshData();
+  _PlanData? _lastOk;
   String? _selected; // productId of the plan shown in the detail card
   bool _busy = false;
 
@@ -157,16 +161,46 @@ class _PlanScreenState extends State<PlanScreen> {
   }
 
   Future<_PlanData> _load() async {
-    final status = SubscriptionStatus.load(_rc, _api);
-    final plans = _plans();
-    final usage = _usage();
-    final s = await status;
-    return _PlanData(
-      status: s,
-      plans: await plans,
-      usage: await usage,
-      trial: await _trialFor(s),
-    );
+    final prior = _lastOk;
+    if (mounted) {
+      setState(() {
+        _fresh = FreshData.fromApi(
+          data: prior,
+          refreshing: true,
+          fromPrior: prior != null,
+        );
+      });
+    }
+    try {
+      final status = SubscriptionStatus.load(_rc, _api);
+      final plans = _plans();
+      final usage = _usage();
+      final s = await status;
+      final loaded = _PlanData(
+        status: s,
+        plans: await plans,
+        usage: await usage,
+        trial: await _trialFor(s),
+      );
+      if (mounted) {
+        setState(() {
+          _lastOk = loaded;
+          _fresh = FreshData.fromApi(data: loaded);
+        });
+      }
+      return loaded;
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _fresh = FreshData.fromApi(
+            data: prior,
+            error: e,
+            fromPrior: prior != null,
+          );
+        });
+      }
+      rethrow;
+    }
   }
 
   void _reload() {
@@ -318,93 +352,122 @@ class _PlanScreenState extends State<PlanScreen> {
     return FutureBuilder<_PlanData>(
       future: _data,
       builder: (context, snap) {
-        final d = snap.data;
-        final plan = d == null ? null : _selectedPlan(d);
-        final action = d == null || plan == null ? null : _action(d, plan);
+        final shown = snap.data ?? _lastOk;
+        final plan = shown == null ? null : _selectedPlan(shown);
+        final action =
+            shown == null || plan == null ? null : _action(shown, plan);
         return Scaffold(
           appBar: AppBar(
             leading: const AymaBackButton(),
             title: const Text('Plan'),
           ),
-          body: d == null || plan == null
-              ? const Center(child: CircularProgressIndicator())
-              : RefreshIndicator(
-                  onRefresh: () async {
-                    _reload();
-                    await _data;
-                  },
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-                    children: [
-                      _Hero(data: d, onRetry: _reload),
-                      const SizedBox(height: 40),
-                      const Eyebrow('Plans'),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Each plan adds a monthly pool of credits.',
-                        style: AymaType.sans(size: 13, color: ac.fgMute),
-                      ),
-                      const SizedBox(height: 16),
-                      _PlanSelector(
-                        plans: d.plans,
-                        selected: plan.productId,
-                        current: d.status.productId,
-                        onSelect: (id) => setState(() => _selected = id),
-                      ),
-                      const SizedBox(height: 12),
-                      _PlanDetail(
-                        plan: plan,
-                        isCurrent: plan.productId == d.status.productId,
-                        trial: d.trial?.plan.productId == plan.productId
-                            ? d.trial
-                            : null,
-                      ),
-                      const SizedBox(height: 40),
-                      _CreditHistory(
-                        initial: d.usage?.periodUsage,
-                        available: d.usage != null,
-                        load: _periodUsage,
-                      ),
-                      const SizedBox(height: 32),
-                      Divider(height: 0.5, color: ac.lineSoft),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 4,
-                        children: [
-                          TextButton(
-                            key: const ValueKey('restore-purchases'),
-                            onPressed: _busy || !_rc.enabled
-                                ? null
-                                : () => _run(
-                                    _rc.restore,
-                                    success: 'Purchases restored.',
-                                    empty: 'No purchases to restore.',
-                                  ),
-                            child: const Text('Restore purchases'),
-                          ),
-                          TextButton(
-                            key: const ValueKey('manage-in-store'),
-                            onPressed: () => _manage(d.status),
-                            child: const Text('Manage in store'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Subscriptions renew automatically each month until '
-                        'cancelled. Manage or cancel any time in your store '
-                        'account settings (Google Play or the App Store).',
-                        key: const ValueKey('renewal-note'),
-                        style: AymaType.sans(
-                          size: 12,
-                          soft: true,
-                          color: ac.fgMute,
-                          height: 1.45,
+          body: Column(
+            children: [
+              if (_fresh.hasData ||
+                  _fresh.state == FreshnessState.stale ||
+                  _fresh.state == FreshnessState.refused)
+                FreshnessIndicator.fromFresh(_fresh, onRetry: _reload),
+              Expanded(
+                child: shown == null || plan == null
+                    ? snap.hasError
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                "Couldn't load your plan.",
+                                style: AymaType.sans(
+                                    size: 14, color: ac.error),
+                              ),
+                            ),
+                          )
+                        : const Center(child: CircularProgressIndicator())
+                    : RefreshIndicator(
+                        onRefresh: () async {
+                          _reload();
+                          await _data;
+                        },
+                        child: ListView(
+                          padding:
+                              const EdgeInsets.fromLTRB(24, 20, 24, 32),
+                          children: [
+                            _Hero(data: shown, onRetry: _reload),
+                            const SizedBox(height: 40),
+                            const Eyebrow('Plans'),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Each plan adds a monthly pool of credits.',
+                              style:
+                                  AymaType.sans(size: 13, color: ac.fgMute),
+                            ),
+                            const SizedBox(height: 16),
+                            _PlanSelector(
+                              plans: shown.plans,
+                              selected: plan.productId,
+                              current: shown.status.productId,
+                              onSelect: (id) =>
+                                  setState(() => _selected = id),
+                            ),
+                            const SizedBox(height: 12),
+                            _PlanDetail(
+                              plan: plan,
+                              isCurrent:
+                                  plan.productId == shown.status.productId,
+                              trial: shown.trial?.plan.productId ==
+                                      plan.productId
+                                  ? shown.trial
+                                  : null,
+                            ),
+                            const SizedBox(height: 40),
+                            _CreditHistory(
+                              initial: shown.usage?.periodUsage,
+                              available: shown.usage != null,
+                              load: _periodUsage,
+                            ),
+                            const SizedBox(height: 32),
+                            Divider(height: 0.5, color: ac.lineSoft),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 4,
+                              children: [
+                                TextButton(
+                                  key: const ValueKey('restore-purchases'),
+                                  onPressed: _busy || !_rc.enabled
+                                      ? null
+                                      : () => _run(
+                                            _rc.restore,
+                                            success: 'Purchases restored.',
+                                            empty:
+                                                'No purchases to restore.',
+                                          ),
+                                  child: const Text('Restore purchases'),
+                                ),
+                                TextButton(
+                                  key: const ValueKey('manage-in-store'),
+                                  onPressed: () => _manage(shown.status),
+                                  child: const Text('Manage in store'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Subscriptions renew automatically each month '
+                              'until cancelled. Manage or cancel any time in '
+                              'your store account settings (Google Play or '
+                              'the App Store).',
+                              key: const ValueKey('renewal-note'),
+                              style: AymaType.sans(
+                                size: 12,
+                                soft: true,
+                                color: ac.fgMute,
+                                height: 1.45,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
+              ),
+            ],
+          ),
           bottomNavigationBar: action == null
               ? null
               : _ActionBar(

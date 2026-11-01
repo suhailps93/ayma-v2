@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'api_client.dart';
+import 'fresh_data.dart';
 
 class DmThread {
   const DmThread({
@@ -149,32 +150,41 @@ class DmService {
     return u;
   }
 
-  Stream<List<DmThread>> watchThreads() {
+  /// DM inbox with Firestore [SnapshotMetadata] freshness (PERF_PLAN Phase 1).
+  /// Uses `includeMetadataChanges` so cache→server transitions emit.
+  Stream<FreshData<List<DmThread>>> watchThreadsFresh() {
     final me = uid;
     return _db
         .collection('dm_threads')
         .where('participants', arrayContains: me)
-        .snapshots()
-        .map((snap) {
-      final threads = snap.docs
-          .where((d) =>
-              !((d.data()['hidden_for'] as List?)?.cast<String>() ?? const [])
-                  .contains(me))
-          .map((d) {
-        final data = d.data();
-        final parts = (data['participants'] as List).cast<String>();
-        return DmThread(
-          threadId: d.id,
-          otherUid: parts.firstWhere((p) => p != me, orElse: () => ''),
-          lastMessageAt: (data['last_message_at'] as Timestamp?)?.toDate(),
-          unread: (((data['unread'] as Map?)?[me]) as num?)?.toInt() ?? 0,
-        );
-      }).toList()
-        ..sort((a, b) => (b.lastMessageAt ?? DateTime(0))
-            .compareTo(a.lastMessageAt ?? DateTime(0)));
-      return threads;
-    });
+        .snapshots(includeMetadataChanges: true)
+        .map((snap) => FreshData.fromQuery(snap, (s) {
+              final threads = s.docs
+                  .where((d) => !((d.data()['hidden_for'] as List?)
+                              ?.cast<String>() ??
+                          const [])
+                      .contains(me))
+                  .map((d) {
+                final data = d.data();
+                final parts = (data['participants'] as List).cast<String>();
+                return DmThread(
+                  threadId: d.id,
+                  otherUid:
+                      parts.firstWhere((p) => p != me, orElse: () => ''),
+                  lastMessageAt:
+                      (data['last_message_at'] as Timestamp?)?.toDate(),
+                  unread:
+                      (((data['unread'] as Map?)?[me]) as num?)?.toInt() ?? 0,
+                );
+              }).toList()
+                ..sort((a, b) => (b.lastMessageAt ?? DateTime(0))
+                    .compareTo(a.lastMessageAt ?? DateTime(0)));
+              return threads;
+            }));
   }
+
+  Stream<List<DmThread>> watchThreads() =>
+      watchThreadsFresh().map((f) => f.data ?? const <DmThread>[]);
 
   /// Total unread DM messages across all visible threads (nav-bar badge).
   Stream<int> watchTotalUnread() =>
@@ -208,13 +218,20 @@ class DmService {
   /// Block & report the other participant (§6.5); hides the thread for us.
   Future<void> block(String otherUid) => _api.block(otherUid);
 
-  Stream<List<DmMessage>> watchMessages(String threadId) => _db
+  /// Thread messages with Firestore freshness metadata (PERF_PLAN Phase 1).
+  Stream<FreshData<List<DmMessage>>> watchMessagesFresh(String threadId) => _db
       .collection('dm_threads/$threadId/messages')
       .orderBy('created_at')
-      .snapshots()
-      .map((snap) => snap.docs
-          .map((d) => DmMessage.fromData(d.id, d.data()))
-          .toList());
+      .snapshots(includeMetadataChanges: true)
+      .map((snap) => FreshData.fromQuery(
+            snap,
+            (s) => s.docs
+                .map((d) => DmMessage.fromData(d.id, d.data()))
+                .toList(),
+          ));
+
+  Stream<List<DmMessage>> watchMessages(String threadId) =>
+      watchMessagesFresh(threadId).map((f) => f.data ?? const <DmMessage>[]);
 
   Future<void> sendText(String threadId, String text) =>
       _api.sendDmMessage(threadId, type: 'text', body: text);

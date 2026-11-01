@@ -6,9 +6,11 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
+import '../services/fresh_data.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/freshness_indicator.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
@@ -49,6 +51,7 @@ class ExploreScreenState extends State<ExploreScreen> {
   bool _loading = true;
   String? _error;
   List<ExploreCard> _cards = const [];
+  FreshData<List<ExploreCard>> _fresh = const FreshData();
   _Filter _filter = _Filter.all;
 
   List<ExploreCard> get _visibleCards {
@@ -113,9 +116,17 @@ class ExploreScreenState extends State<ExploreScreen> {
   Future<void> reload() => _loading ? Future<void>.value() : _load();
 
   Future<void> _load() async {
+    final hadCards = _cards.isNotEmpty;
     setState(() {
-      _loading = true;
+      // Keep prior cards visible while refreshing so freshness is honest —
+      // only the first load blanks to a spinner.
+      _loading = !hadCards;
       _error = null;
+      _fresh = FreshData.fromApi(
+        data: hadCards ? _cards : null,
+        refreshing: true,
+        fromPrior: hadCards,
+      );
     });
     try {
       final cards = await _api.explore(q: _searchController.text.trim());
@@ -123,6 +134,7 @@ class ExploreScreenState extends State<ExploreScreen> {
       setState(() {
         _cards = cards;
         _loading = false;
+        _fresh = FreshData.fromApi(data: cards);
       });
       _syncContext();
       AppContext.instance.exploreReport.value = ExploreReport(
@@ -136,8 +148,13 @@ class ExploreScreenState extends State<ExploreScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not load Explore ($e).';
+        _error = hadCards ? null : 'Could not load Explore ($e).';
         _loading = false;
+        _fresh = FreshData.fromApi(
+          data: hadCards ? _cards : null,
+          error: e,
+          fromPrior: hadCards,
+        );
       });
     }
   }
@@ -164,6 +181,12 @@ class ExploreScreenState extends State<ExploreScreen> {
               title: 'Explore',
               automaticallyImplyBack: true,
             ),
+            // Hide the strip on the blank first-load spinner — it would only
+            // echo "Updating…" next to the CircularProgressIndicator.
+            if (_fresh.hasData ||
+                _fresh.state == FreshnessState.stale ||
+                _fresh.state == FreshnessState.refused)
+              FreshnessIndicator.fromFresh(_fresh, onRetry: _load),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
               child: TextField(
