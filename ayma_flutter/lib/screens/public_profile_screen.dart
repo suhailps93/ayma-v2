@@ -474,10 +474,18 @@ class ProfilePhotoHeader extends StatefulWidget {
     this.blockedMessage,
     this.actions,
     this.editing,
+    this.stripPhotos,
   });
 
-  /// Ready-to-render download URLs, primary first.
+  /// Carousel-ready URLs, primary first (the caller passes medium variants
+  /// with per-entry fallback to the original — see `PublicProfile.detailPhotos`).
   final List<String> photos;
+
+  /// Filmstrip-ready URLs, aligned 1:1 with [photos] (thumb variants with
+  /// fallback — see `PublicProfile.thumbPhotos`). Null or length-mismatched
+  /// renders the strip from [photos]. Ignored in edit mode, where the strip
+  /// shows the controller's live grid instead.
+  final List<String>? stripPhotos;
 
   /// Seeds the fallback gradient shown when [photos] is empty.
   final String seed;
@@ -544,6 +552,16 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
   List<String> get _photos => _editable
       ? widget.editing!.controller.photos.map((g) => g.downloadUrl).toList()
       : widget.photos;
+
+  /// The photos the read-only filmstrip shows: the thumb variants when the
+  /// caller passed an aligned list, else the same list as the carousel.
+  /// Edit mode always uses the controller's live grid (same as [_photos]).
+  List<String> get _stripPhotos {
+    final base = _photos;
+    final strip = widget.stripPhotos;
+    if (_editable || strip == null || strip.length != base.length) return base;
+    return strip;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -753,7 +771,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
           // Read-only: the plain thumbnail strip, shown only with more than one
           // photo (same threshold the old dot indicator used).
           _Filmstrip(
-            photos: photos,
+            photos: _stripPhotos,
             fallback: fallback,
             currentPage: page,
             onSelect: _goToPage,
@@ -901,7 +919,8 @@ class ProfileBody extends StatelessWidget {
           ListenableBuilder(
             listenable: edit.controller,
             builder: (context, _) => ProfilePhotoHeader(
-              photos: p.photos,
+              photos: p.detailPhotos,
+              stripPhotos: p.thumbPhotos,
               seed: p.uid.isEmpty ? reportId : p.uid,
               name: p.name,
               age: p.age,
@@ -912,7 +931,8 @@ class ProfileBody extends StatelessWidget {
           )
         else if (p != null)
           ProfilePhotoHeader(
-            photos: p.photos,
+            photos: p.detailPhotos,
+            stripPhotos: p.thumbPhotos,
             seed: p.uid.isEmpty ? reportId : p.uid,
             name: p.name,
             age: p.age,

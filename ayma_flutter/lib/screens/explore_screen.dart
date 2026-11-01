@@ -366,7 +366,7 @@ class _Card extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _Photo(seed: card.uid, url: card.photoUrl),
+                  _Photo(seed: card.uid, url: card.gridPhotoUrl),
                   // Like / Message / Match all live on the profile now — the
                   // card is just a way in. A small heart flags a like / mutual.
                   if (!card.isSelf && (card.liked || card.mutual))

@@ -2585,6 +2585,7 @@ class ExploreCard {
     required this.location,
     this.photoPath,
     this.photoUrl = '',
+    this.photoUrlThumb = '',
     this.score,
     this.liked = false,
     this.mutual = false,
@@ -2601,6 +2602,16 @@ class ExploreCard {
   /// Ready token URL for the primary photo (resolved server-side — the client
   /// can't read another user's Storage path itself).
   final String photoUrl;
+
+  /// Grid-sized (`thumb_400`) variant of [photoUrl], minted server-side.
+  /// Empty when the server sent none (old responses) — renderers must use
+  /// [gridPhotoUrl], which falls back to [photoUrl].
+  final String photoUrlThumb;
+
+  /// The URL the Explore grid renders: the thumb variant when present, else
+  /// the original. The server already falls back to the original when the
+  /// variant object is missing; this covers responses without the field.
+  String get gridPhotoUrl => photoUrlThumb.isNotEmpty ? photoUrlThumb : photoUrl;
   final double? score;
 
   /// You liked them / it's a mutual like — for the Explore filter chips.
@@ -2620,6 +2631,7 @@ class ExploreCard {
     location: m['location'] as String? ?? '',
     photoPath: m['photo_path'] as String?,
     photoUrl: m['photo_url'] as String? ?? '',
+    photoUrlThumb: m['photo_url_thumb'] as String? ?? '',
     score: (m['score'] as num?)?.toDouble(),
     liked: m['liked'] == true,
     mutual: m['mutual'] == true,
@@ -2731,6 +2743,8 @@ class PublicProfile {
     this.deepDiveId = '',
     this.physicalAttributes = const [],
     this.isOnline = false,
+    this.photosThumb = const [],
+    this.photosMedium = const [],
   });
 
   final String uid;
@@ -2747,6 +2761,29 @@ class PublicProfile {
 
   /// Ready-to-render download URLs, primary first.
   final List<String> photos;
+
+  /// Server-minted `thumb_400` / `medium_1080` variants, aligned 1:1 with
+  /// [photos] (the server already falls back per entry to the original when a
+  /// variant object is missing). Empty when the server sent none — renderers
+  /// must use [thumbPhotos] / [detailPhotos], which fall back to [photos].
+  final List<String> photosThumb;
+  final List<String> photosMedium;
+
+  /// Carousel-ready URLs: the medium variant per photo, else the original.
+  /// Index-aligned with [photos]; defensive against short/missing arrays.
+  List<String> get detailPhotos => _withFallback(photosMedium);
+
+  /// Filmstrip-ready URLs: the thumb variant per photo, else the original.
+  /// Index-aligned with [photos]; defensive against short/missing arrays.
+  List<String> get thumbPhotos => _withFallback(photosThumb);
+
+  List<String> _withFallback(List<String> variants) => List<String>.generate(
+        photos.length,
+        (i) => i < variants.length && variants[i].isNotEmpty
+            ? variants[i]
+            : photos[i],
+        growable: false,
+      );
   final List<ProfileSection> sections;
   final bool isSelf;
   final bool blocked;
@@ -2778,6 +2815,12 @@ class PublicProfile {
     age: (m['age'] as num?)?.toInt(),
     location: m['location'] as String? ?? '',
     photos: ((m['photos'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    photosThumb: ((m['photos_thumb'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    photosMedium: ((m['photos_medium'] as List?) ?? const [])
         .map((e) => e.toString())
         .toList(),
     sections: ((m['pages'] as List?) ?? const [])

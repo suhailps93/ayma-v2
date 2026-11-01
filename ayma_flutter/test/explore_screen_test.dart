@@ -1,15 +1,57 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
+import 'package:file/file.dart' as fs;
+import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+/// Serves one local fixture file for any URL, so grid photos (rendered
+/// through [AymaPhoto] → [CachedNetworkImage]) run their real decode
+/// pipeline with no sqflite cache database and no network.
+class _FakeCacheManager implements BaseCacheManager {
+  _FakeCacheManager(File ioFile)
+    : file = const LocalFileSystem().file(ioFile.path);
+
+  // flutter_cache_manager's API speaks package:file's File type.
+  final fs.File file;
+
+  @override
+  Stream<FileResponse> getFileStream(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+    bool withProgress = false,
+  }) async* {
+    yield FileInfo(
+      file,
+      FileSource.Cache,
+      DateTime.now().add(const Duration(days: 1)),
+      url,
+    );
+  }
+
+  @override
+  Future<fs.File> getSingleFile(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+  }) async => file;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
 
 ApiClient _api(
   List<Map<String, dynamic>> Function(Uri uri) cards, {
@@ -369,5 +411,63 @@ void main() {
     expect(find.text('Bo'), findsNothing);
     expect(r.result, isNot(contains('Bo')));
     handle.dispose();
+  });
+
+  testWidgets('Explore grid renders the thumb variant URL (perf phase 2)',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    AymaPhoto.debugCacheManager =
+        _FakeCacheManager(File('test/fixtures/tiny.png'));
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    final api = _api((_) => [
+          {
+            'uid': 'a',
+            'name': 'Ash',
+            'age': 29,
+            'location': 'X',
+            'photo_url': 'https://x/full.jpg',
+            'photo_url_thumb': 'https://x/full__thumb_400.jpg',
+          },
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    final urls = tester
+        .widgetList<AymaPhoto>(find.byType(AymaPhoto))
+        .map((w) => w.url)
+        .toList();
+    expect(urls, contains('https://x/full__thumb_400.jpg'));
+    expect(urls, isNot(contains('https://x/full.jpg')));
+  });
+
+  testWidgets('Explore grid falls back to the original without a thumb',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    AymaPhoto.debugCacheManager =
+        _FakeCacheManager(File('test/fixtures/tiny.png'));
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    final api = _api((_) => [
+          {
+            'uid': 'a',
+            'name': 'Ash',
+            'age': 29,
+            'location': 'X',
+            'photo_url': 'https://x/full.jpg',
+          },
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    final urls = tester
+        .widgetList<AymaPhoto>(find.byType(AymaPhoto))
+        .map((w) => w.url)
+        .toList();
+    expect(urls, contains('https://x/full.jpg'));
   });
 }
