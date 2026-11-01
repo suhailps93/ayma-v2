@@ -1174,4 +1174,102 @@ void main() {
     });
     expect(usage.plan, 'free');
   });
+
+  group('Interactive timeout & deduplication (PERF_PLAN Phase 1)', () {
+    test('interactive call throws 408 ApiException when timing out', () async {
+      final mockHttp = MockClient((request) async {
+        // Stalls longer than the custom 50ms test timeout
+        await Future.delayed(const Duration(milliseconds: 200));
+        return http.Response('{"cards": []}', 200);
+      });
+      final client = ApiClient(
+        httpClient: mockHttp,
+        auth: MockFirebaseAuth(signedIn: true),
+        interactiveTimeout: const Duration(milliseconds: 50),
+      );
+
+      await expectLater(
+        client.explore(),
+        throwsA(isA<ApiException>()
+            .having((e) => e.statusCode, 'statusCode', 408)
+            .having((e) => e.message, 'message', contains('timed out'))),
+      );
+    });
+
+    test('concurrent identical GET requests are deduplicated to 1 network call',
+        () async {
+      var callCount = 0;
+      final completer = Completer<http.Response>();
+
+      final mockHttp = MockClient((request) async {
+        callCount++;
+        return completer.future;
+      });
+
+      final client = ApiClient(
+        httpClient: mockHttp,
+        auth: MockFirebaseAuth(signedIn: true),
+      );
+
+      // Fire two identical GET calls concurrently
+      final future1 = client.explore();
+      final future2 = client.explore();
+
+      // Allow microtask to resolve token and hit in-flight dedupe map
+      await Future<void>.delayed(Duration.zero);
+      expect(callCount, 1);
+
+      // Complete the response
+      completer.complete(http.Response('{"cards": []}', 200));
+
+      final results = await Future.wait([future1, future2]);
+      expect(results[0], isEmpty);
+      expect(results[1], isEmpty);
+      expect(callCount, 1);
+    });
+
+    test('idempotent GET retries once on 503 and succeeds on 2nd attempt',
+        () async {
+      var callCount = 0;
+      final mockHttp = MockClient((request) async {
+        callCount++;
+        if (callCount == 1) {
+          return http.Response('Service Unavailable', 503);
+        }
+        return http.Response('{"cards": []}', 200);
+      });
+
+      final client = ApiClient(
+        httpClient: mockHttp,
+        auth: MockFirebaseAuth(signedIn: true),
+      );
+
+      final cards = await client.explore();
+      expect(cards, isEmpty);
+      expect(callCount, 2);
+    });
+
+    test('photoPublish respects longTimeout over interactiveTimeout', () async {
+      var received = false;
+      final mockHttp = MockClient((request) async {
+        if (request.url.path == '/wiki/photo-publish') {
+          // Stalls past a 40ms interactive timeout but within 200ms longTimeout
+          await Future.delayed(const Duration(milliseconds: 80));
+          received = true;
+          return http.Response('{"published": true}', 200);
+        }
+        return http.Response('{}', 200);
+      });
+
+      final client = ApiClient(
+        httpClient: mockHttp,
+        auth: MockFirebaseAuth(signedIn: true),
+        interactiveTimeout: const Duration(milliseconds: 40),
+        longTimeout: const Duration(milliseconds: 200),
+      );
+
+      await client.photoPublish('https://example.com/p.jpg', source: 'chat');
+      expect(received, isTrue);
+    });
+  });
 }

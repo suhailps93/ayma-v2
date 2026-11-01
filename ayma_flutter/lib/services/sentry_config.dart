@@ -6,6 +6,8 @@ import 'package:logging/logging.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'api_client.dart' show kInteractiveTimeout;
+
 final _log = Logger('sentry');
 
 /// Sentry DSN, supplied at build time via `--dart-define=SENTRY_DSN=...`.
@@ -87,7 +89,7 @@ class SentryFlag {
           .collection(collection)
           .doc(docId)
           .get()
-          .timeout(const Duration(seconds: 10));
+          .timeout(kInteractiveTimeout);
       final flag = SentryFlag.fromMap(snap.data());
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kEnabled, flag.enabled);

@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'api_client.dart' show kInteractiveTimeout;
+
 /// One wiki page as the profile views render it (ARCHITECTURE.md §2.1).
 class WikiPageView {
   const WikiPageView({
@@ -111,7 +113,8 @@ class WikiService {
     final snap = await _firestore
         .collection('users/$_uid/wiki_pages')
         .where('visibility', whereIn: const ['public', 'private'])
-        .get();
+        .get()
+        .timeout(kInteractiveTimeout);
     return filterPages(
       [
         for (final doc in snap.docs) {'id': doc.id, ...doc.data()},

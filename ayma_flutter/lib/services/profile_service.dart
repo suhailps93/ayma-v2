@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'age_gate.dart';
+import 'api_client.dart' show kInteractiveTimeout;
 
 /// Structured onboarding profile, one of the three per-user documents (§3.2).
 ///
@@ -74,7 +75,7 @@ class ProfileService {
 
   /// The structured profile document, or `null` before onboarding writes it.
   Future<ProfileData?> readProfile() async {
-    final snap = await _profileDoc.get();
+    final snap = await _profileDoc.get().timeout(kInteractiveTimeout);
     final data = snap.data();
     return data == null ? null : ProfileData.fromMap(data);
   }
@@ -224,7 +225,7 @@ class ProfileService {
   Future<Color?> getAccentColor() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return null;
-    final snap = await _profileDoc.get();
+    final snap = await _profileDoc.get().timeout(kInteractiveTimeout);
     final hex = snap.data()?['ayma_accent_color'] as String?;
     return hex == null ? null : _fromHex(hex);
   }

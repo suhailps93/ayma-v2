@@ -107,8 +107,10 @@ class MatchService {
 
     var name = 'Someone';
     try {
-      final profile =
-          await _db.doc('users/$other/profile/main').get();
+      final profile = await _db
+          .doc('users/$other/profile/main')
+          .get()
+          .timeout(kInteractiveTimeout);
       final n = profile.data()?['name'] as String?;
       if (n != null && n.trim().isNotEmpty) name = n.trim();
     } catch (_) {}
@@ -128,10 +130,15 @@ class MatchService {
 
   /// Loads one match by id directly — used by the match request screen when
   /// it's reached via a route/deep link (a notification tap) rather than
-  /// tapped from an already-loaded [watchNewMatches] list.
+  /// tapped from an already-loaded [watchNewMatches] list. Enforces
+  /// [kInteractiveTimeout] so network drops fail fast instead of hanging.
   Future<MatchView> fetchMatch(String matchId) async {
     final uid = _uid;
-    final doc = await _db.collection('matches').doc(matchId).get();
+    final doc = await _db
+        .collection('matches')
+        .doc(matchId)
+        .get()
+        .timeout(kInteractiveTimeout);
     if (!doc.exists) {
       throw StateError('No such match: $matchId');
     }

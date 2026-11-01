@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/services/fresh_data.dart';
+import 'package:ayma_flutter/widgets/freshness_indicator.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,12 +31,13 @@ ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
 }
 
 class _FakeDm extends DmService {
-  _FakeDm(this._msgs, {this.chips = const []})
+  _FakeDm(this._msgs, {this.chips = const [], this.freshCtrl})
     : super(
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
       );
 
   final StreamController<List<DmMessage>> _msgs;
+  final StreamController<FreshData<List<DmMessage>>>? freshCtrl;
   final List<String> sent = [];
   final List<String> blocked = [];
   final List<String> chips;
@@ -43,6 +46,10 @@ class _FakeDm extends DmService {
 
   @override
   Stream<List<DmMessage>> watchMessages(String threadId) => _msgs.stream;
+
+  @override
+  Stream<FreshData<List<DmMessage>>> watchMessagesFresh(String threadId) =>
+      freshCtrl?.stream ?? _msgs.stream.map((m) => FreshData(data: m));
 
   @override
   Future<List<String>> icebreakers(String threadId) async => chips;
@@ -691,4 +698,34 @@ void main() {
     expect(pushed, ['a']);
     expect(find.text('PROFILE PAGE'), findsOneWidget);
   });
+
+  testWidgets(
+    'shows FreshnessIndicator when thread messages are from cache (stale)',
+    (tester) async {
+      final ctrl = StreamController<FreshData<List<DmMessage>>>.broadcast();
+      final dm = _FakeDm(
+        StreamController<List<DmMessage>>.broadcast(),
+        freshCtrl: ctrl,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const FreshData(
+        data: [],
+        isFromCache: true,
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FreshnessIndicator), findsOneWidget);
+      expect(find.text('Offline — showing saved data'), findsOneWidget);
+    },
+  );
 }

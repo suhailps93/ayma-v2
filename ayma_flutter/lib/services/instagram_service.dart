@@ -45,7 +45,7 @@ class InstagramService {
 
   /// Whether an Instagram account is currently connected.
   Future<bool> status() async {
-    final snap = await _db.doc('users/$_uid').get();
+    final snap = await _db.doc('users/$_uid').get().timeout(kInteractiveTimeout);
     final token = snap.data()?['instagram_access_token'] as String?;
     return token != null && token.isNotEmpty;
   }

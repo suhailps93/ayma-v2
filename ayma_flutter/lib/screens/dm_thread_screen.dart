@@ -11,12 +11,14 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
+import '../services/fresh_data.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
+import '../widgets/freshness_indicator.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/keyboard_dismiss.dart';
 import '../widgets/shared_report_card.dart';
@@ -380,70 +382,62 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: StreamBuilder<List<DmMessage>>(
-              stream: _dm.watchMessages(widget.threadId),
-              builder: (context, snap) {
-                final msgs = snap.data ?? const <DmMessage>[];
-                _markReadIfIncoming(msgs);
-                // A brand-new thread has no doc yet; the stream can be briefly
-                // empty or (transiently) error — never hang the screen on it.
-                if (msgs.isEmpty) {
-                  if (snap.connectionState == ConnectionState.waiting &&
-                      !snap.hasError) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return Center(
-                    child: Text(
-                      'Say something.',
-                      style: AymaType.sans(
-                        size: 15,
-                        soft: true,
-                        color: ac.fgMute,
+      body: StreamBuilder<FreshData<List<DmMessage>>>(
+        stream: _dm.watchMessagesFresh(widget.threadId),
+        builder: (context, snap) {
+          final fresh = snap.data;
+          final msgs = fresh?.data ?? const <DmMessage>[];
+          _markReadIfIncoming(msgs);
+          final waiting = fresh == null &&
+              snap.connectionState == ConnectionState.waiting &&
+              !snap.hasError;
+          return Column(
+            children: [
+              if (fresh != null) FreshnessIndicator.fromFresh(fresh),
+              Expanded(
+                child: msgs.isEmpty
+                    ? (waiting
+                        ? const Center(child: CircularProgressIndicator())
+                        : Center(
+                            child: Text(
+                              'Say something.',
+                              style: AymaType.sans(
+                                size: 15,
+                                soft: true,
+                                color: ac.fgMute,
+                              ),
+                            ),
+                          ))
+                    : ListView.builder(
+                        reverse: true,
+                        // iOS has no keyboard-dismiss key — dragging the
+                        // transcript away is the native escape hatch.
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        padding: const EdgeInsets.fromLTRB(
+                          16,
+                          16,
+                          16,
+                          kChatListBottomInset, // bottom 12
+                        ),
+                        itemCount: msgs.length,
+                        itemBuilder: (context, i) {
+                          final m = msgs[msgs.length - 1 - i];
+                          final bubble =
+                              _Bubble(message: m, mine: m.senderUid == me);
+                          return FadeSlideIn(
+                            key: ValueKey(m.id),
+                            delay: staggerDelay(i),
+                            offset: 8,
+                            // Ayma's screen context carries only the newest few
+                            // messages of a private conversation.
+                            child: i < _kContextMessages
+                                ? bubble
+                                : NoScreenContext(child: bubble),
+                          );
+                        },
                       ),
-                    ),
-                  );
-                }
-                // `reverse: true` keeps the list pinned to the newest message
-                // — without it the view stayed put while new bubbles landed
-                // below the fold, half-clipped against the composer (founder
-                // screenshot). The bottom inset matches the Ayma chat's, so
-                // the last bubble clears the composer identically on both
-                // screens; items are keyed by id so the reversed indexing
-                // still animates each new bubble in once.
-                return ListView.builder(
-                  reverse: true,
-                  // iOS has no keyboard-dismiss key — dragging the
-                  // transcript away is the native escape hatch.
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: const EdgeInsets.fromLTRB(
-                    16,
-                    16,
-                    16,
-                    kChatListBottomInset, // bottom 12
-                  ),
-                  itemCount: msgs.length,
-                  itemBuilder: (context, i) {
-                    final m = msgs[msgs.length - 1 - i];
-                    final bubble = _Bubble(message: m, mine: m.senderUid == me);
-                    return FadeSlideIn(
-                      key: ValueKey(m.id),
-                      delay: staggerDelay(i),
-                      offset: 8,
-                      // Ayma's screen context carries only the newest few
-                      // messages of a private conversation.
-                      child: i < _kContextMessages
-                          ? bubble
-                          : NoScreenContext(child: bubble),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
+              ),
           if (_icebreakers.isNotEmpty)
             _IcebreakerBar(
               chips: _icebreakers,
@@ -544,8 +538,10 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             ),
           ),
         ],
-      ),
-    );
+      );
+    },
+  ),
+);
   }
 }
 

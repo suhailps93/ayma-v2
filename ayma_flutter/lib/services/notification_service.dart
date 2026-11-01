@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'api_client.dart' show kInteractiveTimeout;
 import 'pair_key.dart';
 
 /// Notification categories (§7.3, §7.7) — must match
@@ -173,7 +174,7 @@ class NotificationService {
 
   /// All four category flags, defaulting missing keys to `true` (§7.7).
   Future<Map<String, bool>> readPrefs() async {
-    final snap = await _prefsDoc.get();
+    final snap = await _prefsDoc.get().timeout(kInteractiveTimeout);
     final stored = snap.data() ?? const {};
     return {
       for (final key in notificationCategories.keys)
