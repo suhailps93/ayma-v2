@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../util/perf_log.dart';
 import 'pair_key.dart';
 
 /// Notification categories (§7.3, §7.7) — must match
@@ -116,10 +117,18 @@ class NotificationService {
       .orderBy('created_at', descending: true)
       .limit(notificationsLimit)
       .snapshots()
-      .map((s) => s.docs
-          .map(AppNotification.fromDoc)
-          .where((n) => !n.dismissed && n.type != _dmType)
-          .toList());
+      .map((s) {
+        PerfLog.firestoreSnapshot(
+          path: _col.path,
+          isFromCache: s.metadata.isFromCache,
+          hasPendingWrites: s.metadata.hasPendingWrites,
+          docCount: s.docs.length,
+        );
+        return s.docs
+            .map(AppNotification.fromDoc)
+            .where((n) => !n.dismissed && n.type != _dmType)
+            .toList();
+      });
 
   /// Unread AND not dismissed — "Clear all" / swipe-dismiss only set
   /// `dismissed` (read state is left alone, same as `watch()`'s list), so the
@@ -130,10 +139,18 @@ class NotificationService {
   Stream<int> watchUnreadCount() => _col
       .where('read', isEqualTo: false)
       .snapshots()
-      .map((s) => s.docs
-          .map(AppNotification.fromDoc)
-          .where((n) => !n.dismissed && n.type != _dmType)
-          .length);
+      .map((s) {
+        PerfLog.firestoreSnapshot(
+          path: '${_col.path} [read=false]',
+          isFromCache: s.metadata.isFromCache,
+          hasPendingWrites: s.metadata.hasPendingWrites,
+          docCount: s.docs.length,
+        );
+        return s.docs
+            .map(AppNotification.fromDoc)
+            .where((n) => !n.dismissed && n.type != _dmType)
+            .length;
+      });
 
   Future<void> markRead(String id) =>
       _col.doc(id).set({'read': true}, SetOptions(merge: true));

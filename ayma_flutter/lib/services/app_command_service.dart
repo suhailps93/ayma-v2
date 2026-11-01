@@ -8,6 +8,7 @@ import 'package:flutter/material.dart' show ThemeMode;
 import '../routing/app_router.dart';
 import '../screens/explore_screen.dart';
 import '../screens/sign_in_screen.dart';
+import '../util/perf_log.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
 import 'app_context.dart';
@@ -237,6 +238,11 @@ class AppCommandService {
   }
 
   void _onDoc(DocumentSnapshot<Map<String, dynamic>> snap) {
+    PerfLog.firestoreSnapshot(
+      path: snap.reference.path,
+      isFromCache: snap.metadata.isFromCache,
+      hasPendingWrites: snap.metadata.hasPendingWrites,
+    );
     final data = snap.data();
     if (data == null) return;
     final id = (data['id'] as String? ?? '').trim();

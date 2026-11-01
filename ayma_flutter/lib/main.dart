@@ -31,12 +31,14 @@ import 'services/push_service.dart';
 import 'services/screen_capture.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
+import 'util/perf_log.dart';
 import 'widgets/ask_ayma_overlay.dart';
 import 'widgets/ayma_toast.dart';
 import 'widgets/keyboard_dismiss.dart';
 import 'widgets/staging_banner.dart';
 
 Future<void> main() async {
+  PerfLog.start();
   WidgetsFlutterBinding.ensureInitialized();
 
   // The whole app is designed portrait-only — a dating app is held upright, and
@@ -60,6 +62,7 @@ Future<void> main() async {
   }
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  PerfLog.milestone('Firebase init complete');
 
   // Crash reporting (audit Task 3): report crashes to Crashlytics so a
   // regression is found from the dashboard, not by someone tailing
@@ -129,23 +132,28 @@ Future<void> main() async {
   // `meta_integrations` flag says otherwise (refreshed for the next launch).
   await MetaIntegrations.loadCached();
   unawaited(MetaIntegrations.refresh(FirebaseFirestore.instance));
+  void startApp() {
+    runApp(const AymaApp());
+    PerfLog.trackFirstFrame();
+  }
+
   // Sentry runs alongside Crashlytics (it chains the handlers installed
   // above) and only starts when the DSN, the compile-time switch and the
   // cached Firestore flag all allow it. The flag is refreshed in the
   // background for the next launch; with the switch off nothing is fetched.
   if (sentryDsn.isEmpty || !sentryCompiledIn) {
-    runApp(const AymaApp());
+    startApp();
     return;
   }
   final sentryFlag = await SentryFlag.loadCached();
   unawaited(SentryFlag.refresh(FirebaseFirestore.instance));
   if (!sentryShouldRun(sentryFlag)) {
-    runApp(const AymaApp());
+    startApp();
     return;
   }
   await SentryFlutter.init(
     (options) => configureSentryOptions(options, sentryFlag),
-    appRunner: () => runApp(const AymaApp()),
+    appRunner: () => startApp(),
   );
 }
 
