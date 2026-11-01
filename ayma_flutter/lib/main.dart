@@ -33,6 +33,7 @@ import 'services/theme_controller.dart';
 import 'theme.dart';
 import 'widgets/ask_ayma_overlay.dart';
 import 'widgets/ayma_toast.dart';
+import 'widgets/graceful_error.dart';
 import 'widgets/keyboard_dismiss.dart';
 import 'widgets/tour_host.dart';
 
@@ -82,6 +83,11 @@ Future<void> main() async {
     FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
     return true;
   };
+  // GATE-RED durable guard: a build-phase exception (e.g. an element-tree
+  // assertion on a failed data-load rebuild) must never paint Flutter's
+  // full-screen red ErrorWidget for a user. Render a calm fallback instead;
+  // reporting above still fires, so the failure is never hidden from the fleet.
+  ErrorWidget.builder = gracefulErrorWidget;
 
   // Guarded like the other pre-`runApp` startup steps (§11.2): a release build
   // produced by `scripts/build-apk.sh` carries the RevenueCat Test Store key but

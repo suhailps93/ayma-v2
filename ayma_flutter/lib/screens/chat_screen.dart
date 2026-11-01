@@ -2426,8 +2426,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             itemCount:
                                 turns.length + waiting.length + 1 + loaderRow,
                             itemBuilder: (context, i) {
+                              // Stable keys on the loader and divider rows:
+                              // without them these unkeyed rows reconcile by
+                              // index, so when the older-page loader flips on
+                              // (`_loadingOlder`) — including when an older
+                              // `/chat/history` page *fails* and flips it back
+                              // off — every GlobalKey-ed turn row below shifts
+                              // index against them and Flutter has to *move*
+                              // each keyed child instead of leaving it put.
+                              // That keyed-vs-unkeyed reshuffle mid-rebuild is
+                              // what trips the `_children.contains` /
+                              // `_elements.contains` framework assertions
+                              // (GATE-RED). Keying every row makes the loader a
+                              // clean keyed insert/remove with no turn moves.
                               if (loaderRow == 1 && i == 0) {
                                 return const Padding(
+                                  key: ValueKey('chat-older-loader'),
                                   padding: EdgeInsets.symmetric(vertical: 12),
                                   child: Center(
                                     child: SizedBox(
@@ -2441,7 +2455,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 );
                               }
                               if (i == loaderRow) {
-                                return const DividerLabel("Your conversation");
+                                return const DividerLabel(
+                                  "Your conversation",
+                                  key: ValueKey('chat-conversation-divider'),
+                                );
                               }
                               final idx = i - 1 - loaderRow;
                               if (idx >= turns.length) {
