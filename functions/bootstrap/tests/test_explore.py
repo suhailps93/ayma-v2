@@ -311,6 +311,17 @@ def test_primary_photo_path_resolves_media_id_via_user_media():
     assert ex._primary_photo_path(db, "u", photos) == "uploads/u/a.jpg"
 
 
+def test_primary_photo_path_falls_back_when_first_has_no_storage_path():
+    db = FakeDb()
+    # m1 has empty/missing storage_path, but m2 has a valid one
+    db.docs[("users", "u", "user_media", "m1")] = {}
+    db.docs[("users", "u", "user_media", "m2")] = {
+        "storage_path": "uploads/u/b.jpg"
+    }
+    photos = [{"media_id": "m1", "order": 0}, {"media_id": "m2", "order": 1}]
+    assert ex._primary_photo_path(db, "u", photos) == "uploads/u/b.jpg"
+
+
 def test_primary_photo_path_handles_legacy_inline_and_missing():
     db = FakeDb()
     # legacy shape: storage_path inlined on the entry

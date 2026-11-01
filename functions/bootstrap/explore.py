@@ -303,21 +303,24 @@ def _primary_photo_path(db, other: str, photos: list) -> str | None:
         entries = [p for p in (photos or []) if isinstance(p, dict)]
         if not entries:
             return None
-        first = min(entries, key=lambda p: p.get("order", 0))
-        if first.get("storage_path"):  # legacy inline shape
-            return str(first["storage_path"])
-        media_id = str(first.get("media_id") or "").strip()
-        if not media_id:
-            return None
-        media = (
-            db.collection("users")
-            .document(other)
-            .collection("user_media")
-            .document(media_id)
-            .get()
-            .to_dict()
-        ) or {}
-        return str(media["storage_path"]) if media.get("storage_path") else None
+        entries.sort(key=lambda p: p.get("order", 0))
+        for e in entries:
+            if e.get("storage_path"):  # legacy inline shape
+                return str(e["storage_path"])
+            media_id = str(e.get("media_id") or "").strip()
+            if not media_id:
+                continue
+            media = (
+                db.collection("users")
+                .document(other)
+                .collection("user_media")
+                .document(media_id)
+                .get()
+                .to_dict()
+            ) or {}
+            if media.get("storage_path"):
+                return str(media["storage_path"])
+        return None
     except Exception:  # noqa: BLE001 - a photo lookup must never 500 Explore
         logger.warning("explore: photo lookup failed for %s", other, exc_info=True)
         return None

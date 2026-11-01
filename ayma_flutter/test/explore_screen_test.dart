@@ -370,4 +370,21 @@ void main() {
     expect(r.result, isNot(contains('Bo')));
     handle.dispose();
   });
+
+  testWidgets('card with empty photoUrl renders graceful initial placeholder',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X', 'photo_url': ''},
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    // Renders the card with the name, and the graceful placeholder initial 'A'
+    expect(find.text('Ash'), findsOneWidget);
+    expect(find.text('A'), findsOneWidget);
+  });
 }
