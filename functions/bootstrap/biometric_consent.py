@@ -37,6 +37,7 @@ import logging
 import re
 import time
 
+from timefmt import iso_or_empty
 from firebase_admin import firestore
 
 import account_ops
@@ -135,10 +136,6 @@ def forget(uid: str) -> None:
     _ok_until.pop(uid, None)
 
 
-def _iso(value) -> str:
-    iso = getattr(value, "isoformat", None)
-    return iso() if callable(iso) else ""
-
 
 def status(db, uid: str) -> dict:
     """The caller's consent state for the app's consent screen / Settings."""
@@ -148,7 +145,7 @@ def status(db, uid: str) -> dict:
         "consented": consented,
         "current_version": CONSENT_VERSION,
         "consent_version": str(rec.get(KEY_VERSION) or "") if consented else "",
-        "consented_at": _iso(rec.get(KEY_CONSENTED_AT)) if consented else "",
+        "consented_at": iso_or_empty(rec.get(KEY_CONSENTED_AT)) if consented else "",
         "region": str(rec.get(KEY_REGION) or "") if consented else "",
     }
 

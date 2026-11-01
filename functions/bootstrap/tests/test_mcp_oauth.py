@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from timefmt import utcnow
 import pytest
 
 import mcp_oauth
@@ -112,7 +113,7 @@ def test_expired_token_does_not_resolve():
     )
     # Force expiry in the stored doc.
     key = (mcp_oauth.TOKENS_COLLECTION, token_id)
-    db.docs[key]["expires_at"] = mcp_oauth._now() - timedelta(days=1)
+    db.docs[key]["expires_at"] = utcnow() - timedelta(days=1)
     mcp_oauth.clear_cache()
     assert mcp_oauth.resolve_token(db, raw) is None
 

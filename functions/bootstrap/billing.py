@@ -55,6 +55,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
+from timefmt import parse_iso_utc
 from config import PLAN_FREE, PLAN_TIERS, PRODUCT_TO_PLAN, Config
 
 logger = logging.getLogger("ayma.billing")
@@ -359,17 +360,6 @@ def handle_event(db, payload: dict, cfg: Config, now: datetime | None = None) ->
 _REVENUECAT_API_BASE = "https://api.revenuecat.com/v1"
 
 
-def _iso(value) -> datetime | None:
-    """Parse a RevenueCat ISO-8601 timestamp (``...Z`` or ``+00:00``) to an
-    aware UTC datetime, or None when absent/unparseable."""
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
 
 def client_entitlement(product_id, expires_at_ms, is_trial) -> dict | None:
     """Build an entitlement map from an app-reported active subscription, or
@@ -412,7 +402,7 @@ def fetch_active_entitlement(
         product = str((ent or {}).get("product_identifier") or "")
         if _plan_for(product) is None:
             continue
-        expires = _iso((ent or {}).get("expires_date"))
+        expires = parse_iso_utc((ent or {}).get("expires_date"))
         if expires is None or now >= expires + grace:
             continue  # lifetime (no model for it) or lapsed past grace
         period_type = str(

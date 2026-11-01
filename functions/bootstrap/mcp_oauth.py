@@ -36,6 +36,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from timefmt import utcnow
 from firebase_admin import firestore
 
 logger = logging.getLogger("ayma.mcp.oauth")
@@ -115,9 +116,6 @@ class OAuthError(Exception):
 # ---- helpers ------------------------------------------------------------- #
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
 
 def _as_aware(value) -> datetime | None:
     """A stored Firestore timestamp / datetime as a tz-aware UTC datetime."""
@@ -184,7 +182,7 @@ def create_device_code(db, client_id: str, scope_text: str | None) -> dict:
             break
         user_code = _gen_user_code()
 
-    now = _now()
+    now = utcnow()
     db.collection(DEVICE_CODES_COLLECTION).document(device_code).set(
         {
             "user_code": user_code,
@@ -224,7 +222,7 @@ def lookup_by_user_code(db, user_code: str) -> tuple[str, dict] | None:
         return None
     doc = snaps[0].to_dict() or {}
     exp = _as_aware(doc.get("expires_at"))
-    if exp is not None and exp < _now():
+    if exp is not None and exp < utcnow():
         return None
     return snaps[0].id, doc
 
@@ -250,7 +248,7 @@ def approve(db, uid: str, user_code: str, scopes: list[str] | None = None) -> di
             "uid": uid,
             "scope": granted,
             "status": STATUS_APPROVED,
-            "approved_at": _now(),
+            "approved_at": utcnow(),
         },
         merge=True,
     )
@@ -265,7 +263,7 @@ def deny(db, uid: str, user_code: str) -> dict:
         raise OAuthError("invalid_request", 404, "Unknown or expired code.")
     device_code, doc = found
     db.collection(DEVICE_CODES_COLLECTION).document(device_code).set(
-        {"uid": uid, "status": STATUS_DENIED, "denied_at": _now()}, merge=True
+        {"uid": uid, "status": STATUS_DENIED, "denied_at": utcnow()}, merge=True
     )
     return {"client_id": doc.get("client_id")}
 
@@ -301,7 +299,7 @@ def redeem(db, device_code: str, client_id: str, token_ttl_days: int) -> dict:
         raise OAuthError("invalid_client", 401, "client_id mismatch.")
 
     exp = _as_aware(doc.get("expires_at"))
-    if exp is not None and exp < _now():
+    if exp is not None and exp < utcnow():
         raise OAuthError("expired_token", 400, "The device code has expired.")
 
     status = doc.get("status")
@@ -313,7 +311,7 @@ def redeem(db, device_code: str, client_id: str, token_ttl_days: int) -> dict:
     if status == STATUS_PENDING:
         # Enforce the minimum poll interval (RFC 8628 slow_down).
         last = _as_aware(doc.get("last_polled_at"))
-        now = _now()
+        now = utcnow()
         ref.set({"last_polled_at": now}, merge=True)
         if last is not None and (now - last).total_seconds() < POLL_INTERVAL_SECONDS - 1:
             raise OAuthError("slow_down", 400, "Polling too fast.")
@@ -329,7 +327,7 @@ def redeem(db, device_code: str, client_id: str, token_ttl_days: int) -> dict:
         scopes=scopes, token_ttl_days=token_ttl_days,
         source_device_code=snap.id,
     )
-    ref.set({"status": STATUS_REDEEMED, "redeemed_at": _now()}, merge=True)
+    ref.set({"status": STATUS_REDEEMED, "redeemed_at": utcnow()}, merge=True)
     return {
         "access_token": raw,
         "token_type": "Bearer",
@@ -349,7 +347,7 @@ def issue_token(
     ``(raw_token, token_id)``; only the hash (``token_id``) is persisted."""
     raw = TOKEN_PREFIX + secrets.token_urlsafe(32)
     token_id = _hash(raw)
-    now = _now()
+    now = utcnow()
     db.collection(TOKENS_COLLECTION).document(token_id).set(
         {
             "uid": uid,
@@ -386,7 +384,7 @@ def resolve_token(db, raw_token: str) -> Principal | None:
     if doc.get("revoked"):
         return None
     exp = _as_aware(doc.get("expires_at"))
-    if exp is not None and exp < _now():
+    if exp is not None and exp < utcnow():
         return None
     uid = doc.get("uid")
     if not uid:
@@ -418,7 +416,7 @@ def list_tokens(db, uid: str) -> list[dict]:
     """The user's active (non-revoked, non-expired) access tokens for the
     "connected agents" management screen. Never returns a raw token."""
     out: list[dict] = []
-    now = _now()
+    now = utcnow()
     try:
         snaps = list(
             db.collection(TOKENS_COLLECTION).where("uid", "==", uid).stream()
@@ -459,7 +457,7 @@ def revoke_token(db, uid: str, token_id: str) -> bool:
     if d.get("uid") != uid:
         return False
     db.collection(TOKENS_COLLECTION).document(token_id).set(
-        {"revoked": True, "revoked_at": _now()}, merge=True
+        {"revoked": True, "revoked_at": utcnow()}, merge=True
     )
     _token_cache.pop(token_id, None)
     logger.info("mcp token revoked uid=%s token_id=%s", uid, token_id[:12])
@@ -475,7 +473,7 @@ def revoke_raw_token(db, raw_token: str) -> bool:
     if not getattr(snap, "exists", False):
         return False
     db.collection(TOKENS_COLLECTION).document(token_id).set(
-        {"revoked": True, "revoked_at": _now()}, merge=True
+        {"revoked": True, "revoked_at": utcnow()}, merge=True
     )
     _token_cache.pop(token_id, None)
     return True

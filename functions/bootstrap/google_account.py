@@ -95,6 +95,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from timefmt import iso_or_str
 from firebase_admin import firestore
 
 import schema
@@ -644,8 +645,8 @@ def status(db, uid: str) -> dict:
     return {
         "connected": True,
         "email": data.get("email", ""),
-        "connected_at": _iso(data.get("connected_at")),
-        "last_synced_at": _iso(data.get("last_synced_at")),
+        "connected_at": iso_or_str(data.get("connected_at")),
+        "last_synced_at": iso_or_str(data.get("last_synced_at")),
     }
 
 
@@ -698,11 +699,3 @@ async def sweep(db, user_limit: int = 100) -> dict:
             logger.exception("Google sync sweep failed for %s", uid)
     return {"users": scanned, "synced": synced}
 
-
-def _iso(ts) -> str | None:
-    if ts is None:
-        return None
-    try:
-        return ts.isoformat()
-    except AttributeError:
-        return str(ts)

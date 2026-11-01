@@ -21,9 +21,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 from google.cloud.firestore_v1.vector import Vector
 
 import biometric_consent
@@ -61,11 +61,6 @@ _SOURCE_LABELS = {
 # same constant it's written with.
 STATUS_APPROVED = schema.MEDIA_STATUS_APPROVED
 STATUS_FLAGGED = schema.MEDIA_STATUS_FLAGGED
-
-
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 async def _caption(
@@ -113,7 +108,7 @@ async def _caption(
     try:
         result = await gemini.generate_json(
             "\n".join(lines),
-            system_prompt=_prompt(),
+            system_prompt=load_prompt_file(_PROMPT_PATH),
             response_schema=_CAPTION_SCHEMA,
             image=(image, mime),
             uid=uid,

@@ -38,6 +38,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
+from timefmt import utcnow
 from config import CONFIG
 
 logger = logging.getLogger("ayma.provider_spend")
@@ -70,9 +71,6 @@ _cache: dict[str, tuple[float, dict]] = {}
 def _unavailable(reason: str) -> dict:
     return {"available": False, "reason": reason}
 
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +282,7 @@ def google_billing() -> dict:
                 f"No Cloud Billing export table found in {project}:{BILLING_DATASET}. "
                 "Enable the detailed usage cost export to BigQuery in the Billing console."
             )
-        today = _now().date()
+        today = utcnow().date()
         since = today - timedelta(days=BILLING_WINDOW_DAYS - 1)
         rows = _run_query(session, project, _billing_query(table, project), since)
         data = aggregate_google(rows, today)
@@ -402,7 +400,7 @@ def livekit_usage() -> dict:
 
         token = _livekit_token(api_key, api_secret)
         http = requests.Session()
-        today = _now().date()
+        today = utcnow().date()
         window_start = max(
             today - timedelta(days=LIVEKIT_ANALYTICS_WINDOW_DAYS - 1),
             date.fromisoformat(LIVEKIT_TRACKING_STARTED_AT),
@@ -459,7 +457,7 @@ def _cached(key: str, fn) -> dict:
         if hit and time.monotonic() - hit[0] < CACHE_TTL_SECONDS:
             return hit[1]
     value = fn()
-    value["fetched_at"] = _now().isoformat(timespec="seconds")
+    value["fetched_at"] = utcnow().isoformat(timespec="seconds")
     ok = value.get("available") is True or value.get("usage", {}).get("available") is True
     if ok:
         with _cache_lock:
@@ -469,7 +467,7 @@ def _cached(key: str, fn) -> dict:
 
 def snapshot() -> dict:
     return {
-        "fetched_at": _now().isoformat(timespec="seconds"),
+        "fetched_at": utcnow().isoformat(timespec="seconds"),
         "cache_ttl_seconds": CACHE_TTL_SECONDS,
         "google": _cached("google", google_billing),
         "livekit": _cached("livekit", livekit_usage),

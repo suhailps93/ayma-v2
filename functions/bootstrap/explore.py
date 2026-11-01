@@ -32,9 +32,9 @@ never gets to act as if it were public.
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 import config
 import gemini
 import physical_attributes
@@ -113,11 +113,6 @@ _PHYSICAL_MIRROR_FILTER_KEYS = frozenset(
 )
 
 
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
-
-
 async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
     """One LLM call → the filter shape. ``{}`` on anything unclear or on error.
     Billed to ``uid`` in the token ledger (``explore`` feature)."""
@@ -127,7 +122,7 @@ async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
     try:
         result = await gemini.generate_json(
             text,
-            system_prompt=_prompt(),
+            system_prompt=load_prompt_file(_PROMPT_PATH),
             response_schema=_NL_SCHEMA,
             uid=uid,
             feature=token_ledger.FEATURE_EXPLORE,

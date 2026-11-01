@@ -40,6 +40,7 @@ import logging
 import re
 import time
 
+from timefmt import iso_or_none
 from firebase_admin import firestore
 
 import gemini
@@ -178,9 +179,6 @@ def _to_epoch(v) -> float:
             return 0.0
     return 0.0
 
-
-def _iso(v):
-    return v.isoformat() if hasattr(v, "isoformat") else None
 
 
 # --- private spans ------------------------------------------------------
@@ -611,7 +609,7 @@ def list_section_versions(db, uid: str, page_id: str) -> list[dict]:
             "author": data.get("author") or AUTHOR_USER,
             "note": data.get("note") or "",
             "visibility": data.get("visibility") or VIS_PRIVATE,
-            "created_at": _iso(data.get("created_at")),
+            "created_at": iso_or_none(data.get("created_at")),
             "created_at_ms": int(data.get("created_at_ms") or 0),
         }
         for vid, data in _section_history(db, uid, page_id)
@@ -631,7 +629,7 @@ def get_section_version(db, uid: str, page_id: str, version_id: str) -> dict:
         "visibility": data.get("visibility") or VIS_PRIVATE,
         "author": data.get("author") or AUTHOR_USER,
         "note": data.get("note") or "",
-        "created_at": _iso(data.get("created_at")),
+        "created_at": iso_or_none(data.get("created_at")),
         "created_at_ms": int(data.get("created_at_ms") or 0),
     }
 
@@ -725,7 +723,7 @@ def get_section_provenance(db, uid: str, page_id: str) -> dict:
         tdata = snap.to_dict() or {}
         ts = tdata.get("updated_at")
         sources.append(
-            {"date": _iso(ts), "session_id": tid, "_epoch": _to_epoch(ts)}
+            {"date": iso_or_none(ts), "session_id": tid, "_epoch": _to_epoch(ts)}
         )
     sources.sort(key=lambda s: s["_epoch"], reverse=True)
     for s in sources:
@@ -733,8 +731,8 @@ def get_section_provenance(db, uid: str, page_id: str) -> dict:
     return {
         "page_id": page_id,
         "conversation_count": len(turn_ids),
-        "updated_at": _iso(data.get(F_AI_BODY_UPDATED_AT)),
-        "user_updated_at": _iso(data.get(F_USER_UPDATED_AT)),
+        "updated_at": iso_or_none(data.get(F_AI_BODY_UPDATED_AT)),
+        "user_updated_at": iso_or_none(data.get(F_USER_UPDATED_AT)),
         # Most-recent handful — "Learned across N conversations" already says
         # the total; the list itself is a "Sources" preview, not a full log.
         "sources": sources[:8],

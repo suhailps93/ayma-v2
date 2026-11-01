@@ -18,9 +18,9 @@ it is not charged to the sender's credits.
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 import gemini
 
 logger = logging.getLogger("ayma.dm")
@@ -40,11 +40,6 @@ _SCHEMA = {
 _UNFLAGGED: dict = {"flagged": False, "reason": "", "categories": []}
 
 
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
-
-
 async def moderate(text: str) -> dict:
     """Return ``{flagged, reason, categories}`` for a DM text message.
 
@@ -58,7 +53,7 @@ async def moderate(text: str) -> dict:
     try:
         result = await gemini.generate_json(
             text,
-            system_prompt=_prompt(),
+            system_prompt=load_prompt_file(_PROMPT_PATH),
             response_schema=_SCHEMA,
             enforce_cap=False,
         )

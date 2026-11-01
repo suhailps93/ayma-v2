@@ -25,6 +25,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from prompt import load_prompt_file
 import gemini
 import question_tree
 import token_ledger
@@ -182,10 +183,6 @@ _OFFER_COOLDOWN_SECONDS = 900
 # a perfect score would be a false promise — full current coverage tops out
 # here, not at 100.
 _MAX_SCORE = 95
-
-
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 def _now_iso() -> str:
@@ -378,7 +375,7 @@ async def _run_narrative_llm(uid: str, wiki_text: str, topics: list[dict]) -> di
     )
     raw = await gemini.generate_json(
         contents,
-        _prompt(),
+        load_prompt_file(_PROMPT_PATH),
         schema,
         uid=uid,
         feature=token_ledger.FEATURE_COMPLETENESS,
@@ -424,7 +421,7 @@ async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, str]
         (
             "|".join(sorted(t["id"] for t in topics))
             + "||"
-            + _prompt()
+            + load_prompt_file(_PROMPT_PATH)
             + "||"
             + wiki_text
         ).encode("utf-8")

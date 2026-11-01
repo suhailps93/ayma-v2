@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 import time
 
+from timefmt import iso_or_none
 import body_report
 import face_report
 import gemini
@@ -926,14 +927,11 @@ def set_card_hidden(db, uid: str, ids) -> list[str]:
     return cleaned
 
 
-def _iso(v):
-    return v.isoformat() if hasattr(v, "isoformat") else None
-
 
 def _shape(rid: str, data: dict) -> dict:
     return {
         "id": rid,
-        "created_at": _iso(data.get("created_at")),
+        "created_at": iso_or_none(data.get("created_at")),
         "attributes": data.get("attributes") or {},
         "face": data.get("face") or {},
         "body": data.get("body") or {},
@@ -977,7 +975,7 @@ def history(db, uid: str, *, limit: int = 20) -> list[dict]:
             rows.append(
                 {
                     "id": snap.id,
-                    "created_at": _iso(d.get("created_at")),
+                    "created_at": iso_or_none(d.get("created_at")),
                     "has_face": _section_ok(d.get("face")),
                     "has_body": _section_ok(d.get("body")),
                     "summary": summ,
@@ -1005,7 +1003,7 @@ def history(db, uid: str, *, limit: int = 20) -> list[dict]:
                 rows.append(
                     {
                         "id": s.id,
-                        "created_at": _iso(d.get("created_at")),
+                        "created_at": iso_or_none(d.get("created_at")),
                         "has_face": kind == "face",
                         "has_body": kind == "body",
                         "summary": summ,

@@ -27,6 +27,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
+from prompt import load_prompt_file
 import gemini
 import schema
 import token_ledger
@@ -53,11 +54,6 @@ USABLE_FIELDS: tuple[str, ...] = ("usable_for_face", "usable_for_body")
 LOOSE_CLOTHING_FIELD = "loose_clothing"
 _BOOL_FIELDS: tuple[str, ...] = (*USABLE_FIELDS, LOOSE_CLOTHING_FIELD)
 _EXTRA_FIELDS: tuple[str, ...] = (SHOT_TYPE_FIELD, *_BOOL_FIELDS)
-
-
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)
@@ -131,7 +127,7 @@ async def extract_attributes(
     try:
         result = await gemini.generate_json(
             "Extract the profile-photo attributes.",
-            system_prompt=_prompt(),
+            system_prompt=load_prompt_file(_PROMPT_PATH),
             response_schema=_response_schema(),
             image=(image_bytes, mime_type),
             uid=uid,

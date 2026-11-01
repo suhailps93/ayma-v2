@@ -45,6 +45,7 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from timefmt import iso_or_str
 from ._base import Skill
 
 _MAX_MATCHES = 6
@@ -66,18 +67,6 @@ def _score(query_tokens: set[str], text: str) -> int:
         return 0
     return len(query_tokens & _tokens(text))
 
-
-def _iso(ts) -> str:
-    if ts is None:
-        return ""
-    for attr in ("isoformat",):
-        fn = getattr(ts, attr, None)
-        if callable(fn):
-            try:
-                return fn()
-            except Exception:  # noqa: BLE001
-                pass
-    return str(ts)
 
 
 DESCRIPTION = (
@@ -133,7 +122,7 @@ def _profile_matches(db, uid: str, qtok: set[str]) -> list[dict]:
                 "field": field,
                 "current_value": value,
                 "quote": quote,
-                "when": _iso(prov.get("at")),
+                "when": iso_or_str(prov.get("at"), none=""),
                 "_score": score,
             }
         )
@@ -171,7 +160,7 @@ def _questionnaire_matches(db, uid: str, qtok: set[str]) -> list[dict]:
                     "field": label,
                     "current_value": value,
                     "quote": quote,
-                    "when": _iso(prov.get("at")),
+                    "when": iso_or_str(prov.get("at"), none=""),
                     "_score": score,
                 }
             )
@@ -183,7 +172,7 @@ def _questionnaire_matches(db, uid: str, qtok: set[str]) -> list[dict]:
                     "field": label,
                     "current_value": value,
                     "quote": "",
-                    "when": _iso(data.get("updated_at")),
+                    "when": iso_or_str(data.get("updated_at"), none=""),
                     "_score": score,
                 }
             )
@@ -216,7 +205,7 @@ def _wiki_matches(db, uid: str, qtok: set[str]) -> list[dict]:
                     "exact": True,
                     "field": snap.id,
                     "quote": excerpt,
-                    "when": _iso(entry.get("at")),
+                    "when": iso_or_str(entry.get("at"), none=""),
                     "_score": score,
                 }
             )
@@ -255,7 +244,7 @@ def _deep_dive_matches(db, uid: str, qtok: set[str]) -> list[dict]:
                     "field": subject,
                     "quote": claim,
                     "url": url,
-                    "when": _iso(data.get("created_at")),
+                    "when": iso_or_str(data.get("created_at"), none=""),
                     "_score": score,
                 }
             )
