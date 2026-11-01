@@ -31,6 +31,8 @@ never gets to act as if it were public.
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 from pathlib import Path
 
@@ -339,7 +341,228 @@ def _primary_photo_path(db, other: str, photos: list) -> str | None:
         return None
 
 
-def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
+_PAGE_DEFAULT = 24
+
+# Scan rounds per page request. Filters cut candidates after the scan, so one
+# page may need several bounded rounds to fill; the cap keeps a single
+# request's reads bounded no matter how selective the filters are.
+_PAGE_MAX_ROUNDS = 8
+
+
+def _encode_cursor(last_uid: str) -> str:
+    """Opaque page cursor: base64url JSON ``{tier, last_score, last_uid}``.
+
+    Phase 2 pagination design (``docs/perf/phase2-pagination-design.md``
+    §3.1.2) cursor shape. Globally score-ordered pages (tier 2) need a
+    score-queryable match index the current schema doesn't have, so pages
+    scan the deterministic uid-ordered roster (tier 3) and sort score-first
+    within the page instead.
+    """
+    payload = json.dumps(
+        {"v": 1, "tier": 3, "last_score": None, "last_uid": last_uid},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii")
+
+
+def _decode_cursor(cursor: str | None) -> str | None:
+    """Last scanned uid from an opaque cursor, or ``None`` for page 1.
+
+    Tolerates missing keys; anything malformed restarts at page 1 rather
+    than erroring the feed.
+    """
+    if not cursor:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        data = json.loads(raw)
+        last_uid = (data if isinstance(data, dict) else {}).get("last_uid")
+        return str(last_uid) if last_uid else None
+    except Exception:  # noqa: BLE001 - a malformed cursor restarts page one
+        return None
+
+
+def _card_sort_key(c: dict) -> tuple:
+    # Your own card pins to the top; then scored matches high-to-low, then
+    # the rest. uid breaks score ties so paging is deterministic.
+    return (not c["self"], c["score"] is None, -(c["score"] or 0), c["uid"])
+
+
+def _scan_user_batch(db, last_uid: str | None, n: int) -> list:
+    """One bounded ``users`` id-ordered scan round → user snaps after
+    ``last_uid`` (or from the start when ``None``)."""
+    q = db.collection("users").order_by("__name__").limit(max(1, int(n)))
+    if last_uid:
+        anchor = db.collection("users").document(last_uid).get()
+        if anchor.exists:
+            q = q.start_after(anchor)
+        # A deleted anchor restarts the scan rather than erroring; the
+        # client's uid dedup absorbs any repeated cards.
+    return list(q.stream())
+
+
+def _batch_docs(db, refs: list) -> list:
+    """Batched ``get_all`` fetch with a per-doc fallback for fakes without it."""
+    if not refs:
+        return []
+    get_all = getattr(db, "get_all", None)
+    if get_all is None:
+        return [r.get() for r in refs]
+    return list(get_all(refs))
+
+
+def _hydrate_candidates(db, uid: str, others: list[str]) -> dict:
+    """One batched read for every doc card assembly needs per candidate:
+    ``profile/main``, both block directions, both like directions, the pair
+    match doc, and the caller's match candidate. Returns
+    ``{(other, kind): dict-or-None}``."""
+    users = db.collection("users")
+    keyed: list[tuple[tuple[str, str], object]] = []
+    for other in others:
+        if other == uid:
+            # Self needs only its profile — pair docs (blocks/likes/match)
+            # are never read for the caller's own card.
+            keyed.append((
+                (other, "profile"),
+                users.document(other).collection("profile").document("main"),
+            ))
+            continue
+        keyed.extend([
+            ((other, "profile"),
+             users.document(other).collection("profile").document("main")),
+            ((other, "block_fwd"),
+             db.collection("blocks").document(block_id(uid, other))),
+            ((other, "block_rev"),
+             db.collection("blocks").document(block_id(other, uid))),
+            ((other, "like_out"),
+             users.document(uid).collection("likes").document(other)),
+            ((other, "like_in"),
+             users.document(other).collection("likes").document(uid)),
+            ((other, "match"),
+             db.collection("matches").document(sorted_pair_key(uid, other))),
+            ((other, "cand"),
+             users.document(uid).collection("match_candidates").document(other)),
+        ])
+    snaps = _batch_docs(db, [ref for _, ref in keyed])
+    out: dict[tuple[str, str], dict | None] = {}
+    for key, snap in zip([k for k, _ in keyed], snaps):
+        out[key] = snap.to_dict() if snap.exists else None
+    return out
+
+
+def _first_media_id(photos) -> str | None:
+    """Media id needing a ``user_media`` lookup, or ``None`` (legacy inline
+    entries carry the path already; no photos needs nothing)."""
+    entries = [p for p in (photos or []) if isinstance(p, dict)]
+    if not entries:
+        return None
+    first = min(entries, key=lambda p: p.get("order", 0))
+    if first.get("storage_path"):
+        return None
+    media_id = str(first.get("media_id") or "").strip()
+    return media_id or None
+
+
+def _first_photo_path(prof: dict, media_path: str | None) -> str | None:
+    entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
+    if not entries:
+        return None
+    first = min(entries, key=lambda p: p.get("order", 0))
+    if first.get("storage_path"):  # legacy inline shape
+        return str(first["storage_path"])
+    return media_path
+
+
+def _media_paths(db, jobs: list[tuple[str, str]]) -> dict[str, str | None]:
+    """``{other: storage_path}`` for candidates whose first photo needs a
+    ``user_media`` lookup — one batched read for the whole page."""
+    if not jobs:
+        return {}
+    refs = [
+        db.collection("users").document(other)
+        .collection("user_media").document(media_id)
+        for other, media_id in jobs
+    ]
+    out: dict[str, str | None] = {}
+    for (other, _media_id), snap in zip(jobs, _batch_docs(db, refs)):
+        media = snap.to_dict() if snap.exists else None
+        out[other] = (
+            str(media["storage_path"])
+            if media and media.get("storage_path")
+            else None
+        )
+    return out
+
+
+def _build_card(
+    uid: str,
+    other: str,
+    prof: dict,
+    docs: dict,
+    media_path: str | None,
+) -> dict:
+    photo_path = _first_photo_path(prof, media_path)
+    # A ready token URL, not a raw storage path — Storage rules only let a
+    # user read their *own* uploads/ tree, so the client can't resolve
+    # another person's photo itself.
+    photo_url = ""
+    photo_url_thumb = ""
+    if photo_path:
+        try:
+            from public_profile import _photo_url, _variant_url
+
+            photo_url = _photo_url(photo_path) or ""
+            # Smaller grid-sized variant when it exists (staging only);
+            # falls back to the original when the variant is absent or
+            # image variants are off (prod) — no extra GCS call then.
+            photo_url_thumb = _variant_url(photo_path, "thumb", 400) or photo_url
+        except Exception:  # noqa: BLE001 - never sink the feed on a photo
+            photo_url = ""
+            photo_url_thumb = ""
+
+    if other == uid:
+        liked, mutual, score = False, False, None
+    else:
+        you = docs.get((other, "like_out")) is not None
+        liked = you
+        mutual = you and docs.get((other, "like_in")) is not None
+        match = docs.get((other, "match"))
+        if match is not None:
+            score = match.get("score")
+        else:
+            score = (docs.get((other, "cand")) or {}).get("heuristic_score")
+    return {
+        "uid": other,
+        "name": prof.get("name", ""),
+        "age": _age(prof.get("birthdate")),
+        "location": prof.get("location", ""),
+        "photo_path": photo_path,  # kept for back-compat
+        "photo_url": photo_url,
+        "photo_url_thumb": photo_url_thumb,
+        "score": score,
+        "liked": liked,
+        "mutual": mutual,
+        "self": other == uid,
+        "paused": other == uid and prof.get("paused") is True,
+    }
+
+
+def explore_page(
+    db, uid: str, filters: dict, limit: int = _PAGE_DEFAULT,
+    cursor: str | None = None,
+) -> tuple[list[dict], str | None]:
+    """One bounded page of the Explore feed → ``(cards, next_cursor)``.
+
+    ``next_cursor`` is ``None`` at the end of the feed. Callers must
+    deduplicate by uid across pages — a profile edited mid-browse can
+    legitimately reappear across a page boundary. Every request costs a
+    bounded number of reads (scan rounds × page size), independent of the
+    total user count.
+    """
+    page_size = max(1, min(int(limit or _PAGE_DEFAULT), 60))
+    last_uid = _decode_cursor(cursor)
+    first_page = last_uid is None
+
     me = (
         db.collection("users")
         .document(uid)
@@ -349,7 +572,7 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
         .to_dict()
     )
     if not me:
-        return []
+        return ([], None)
     passed = {
         s.id
         for s in db.collection("users")
@@ -357,125 +580,155 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
         .collection("explore_passed")
         .stream()
     }
-
-    cards: list[dict] = []
-    seen: set[str] = set()
     # A designated e2e/demo viewer (config.explore_fixture_bypass_uids) sees
     # seeded test fixtures so the e2e harness can still verify a real
     # dealbreaker profile renders in Explore; real users never match.
     bypass_fixtures = uid in set(config.CONFIG.explore_fixture_bypass_uids)
-    for user_snap in db.collection("users").stream():
-        other = user_snap.id
-        # Explore lists everyone with a profile, the caller included — no
-        # orientation or community gating (product decision, 2026-08-30). Only
-        # blocks / paused / already-passed, practice-date personas and the
-        # active search filters cut the roster down. `seen` guards against ever
-        # emitting the same person twice — a stream shouldn't repeat a document
-        # id, but a single duplicate card showing two different (stale vs.
-        # current) percentages for the same real person is exactly the kind of
-        # data-integrity bug worth defending against defensively, not just
-        # trusting the source query never to regress.
-        if other in passed or other in seen or len(cards) >= limit:
-            continue
-        # Practice-date simulator personas are never real people (BUG E).
-        if practice_seed.is_practice_persona(other):
-            continue
-        # Seeded test fixtures (demo-edge-*, flagged exclude_from_explore) must
-        # never reach a real user's Explore. A designated e2e/demo viewer still
-        # sees them (bypass_fixtures). Self is always exempt.
-        if (
-            other != uid
-            and not bypass_fixtures
-            and _is_test_fixture(other, user_snap.to_dict() or {})
-        ):
-            continue
-        seen.add(other)
-        try:
-            prof = (
-                db.collection("users")
-                .document(other)
-                .collection("profile")
-                .document("main")
-                .get()
-                .to_dict()
-            )
+    mirror_active = any(filters.get(k) for k in _PHYSICAL_MIRROR_FILTER_KEYS)
+
+    cards: list[dict] = []
+    seen: set[str] = set()
+    exhausted = False
+    for _ in range(_PAGE_MAX_ROUNDS):
+        if len(cards) >= page_size:
+            break
+        batch = _scan_user_batch(db, last_uid, page_size)
+        if not batch:
+            exhausted = True
+            break
+        last_uid = batch[-1].id
+        if len(batch) < page_size:
+            exhausted = True
+        user_data = {s.id: (s.to_dict() or {}) for s in batch}
+        others = [s.id for s in batch if s.id not in seen]
+        seen.update(others)
+        docs = _hydrate_candidates(db, uid, others)
+        passers: list[tuple[str, dict]] = []
+        for other in others:
+            # Explore lists everyone with a profile, the caller included — no
+            # orientation or community gating (product decision, 2026-08-30).
+            # Only blocks / paused / already-passed, practice-date personas
+            # and the active search filters cut the roster down.
+            if other in passed:
+                continue
+            # Practice-date simulator personas are never real people (BUG E).
+            if practice_seed.is_practice_persona(other):
+                continue
+            # Seeded test fixtures (demo-edge-*, flagged exclude_from_explore)
+            # must never reach a real user's Explore. A designated e2e/demo
+            # viewer still sees them (bypass_fixtures). Self is always exempt.
+            if (
+                other != uid
+                and not bypass_fixtures
+                and _is_test_fixture(other, user_data.get(other) or {})
+            ):
+                continue
+            if not first_page and other == uid:
+                continue  # self pins to page 1 only
+            prof = docs.get((other, "profile"))
             if not prof:
                 continue
-            # A profile with no name isn't a real, set-up person — half-finished
-            # onboarding or a test fixture. Keep it out of the feed (self is
-            # exempt so you always see your own card).
+            # A profile with no name isn't a real, set-up person —
+            # half-finished onboarding or a test fixture. Keep it out of the
+            # feed (self is exempt so you always see your own card).
             if other != uid and not str(prof.get("name") or "").strip():
                 continue
-            # "Pause matching" (§14.2) hides you from *other* people's Explore;
-            # you still see your own card (so you can tell you're paused and
-            # un-pause).
+            # "Pause matching" (§14.2) hides you from *other* people's
+            # Explore; you still see your own card (so you can tell you're
+            # paused and un-pause).
             if other != uid and prof.get("paused") is True:
                 continue
-            if other != uid and _blocked(db, uid, other):
+            if other != uid and (
+                docs.get((other, "block_fwd")) is not None
+                or docs.get((other, "block_rev")) is not None
+            ):
                 continue
             # Only spend the extra read on a search that actually touches a
             # physical-attributes filter key (the common case doesn't).
             public_fields = (
                 physical_attributes.public_fields(db, other)
-                if any(filters.get(k) for k in _PHYSICAL_MIRROR_FILTER_KEYS)
+                if mirror_active
                 else None
             )
             if not _passes_filters(prof, filters, public_fields=public_fields):
                 continue
+            passers.append((other, prof))
+        media_jobs = [
+            (other, media_id)
+            for other, prof in passers
+            if (media_id := _first_media_id(prof.get("photos")))
+        ]
+        media = _media_paths(db, media_jobs)
+        for other, prof in passers:
+            try:
+                cards.append(
+                    _build_card(uid, other, prof, docs, media.get(other))
+                )
+            except Exception:  # noqa: BLE001 - one bad row never sinks a page
+                logger.warning(
+                    "explore: skipped %s (row build failed)",
+                    other, exc_info=True,
+                )
+                continue
+            if len(cards) >= page_size:
+                break
+        if exhausted:
+            break
 
-            photo_path = _primary_photo_path(db, other, prof.get("photos"))
-            # Return a ready token URL, not a raw storage path — Storage rules
-            # only let a user read their *own* uploads/ tree, so the client
-            # can't resolve another person's photo itself.
-            photo_url = ""
-            photo_url_thumb = ""
-            if photo_path:
-                try:
-                    from public_profile import _photo_url, _variant_url
+    if first_page and not any(c["uid"] == uid for c in cards):
+        # Self pins to page 1 even when the uid scan hasn't reached it yet —
+        # the caller's own card is always shown first (it still honors the
+        # active search filters, exactly as before). Page 1 may then hold
+        # one card over the page size; trimming would lose a scanned row.
+        try:
+            if _passes_filters(me, filters):
+                self_media_id = _first_media_id(me.get("photos"))
+                self_media = (
+                    _media_paths(db, [(uid, self_media_id)]).get(uid)
+                    if self_media_id
+                    else None
+                )
+                cards.insert(
+                    0,
+                    _build_card(uid, uid, me, {(uid, "profile"): me},
+                                self_media),
+                )
+        except Exception:  # noqa: BLE001 - a bad self row never sinks page 1
+            logger.warning("explore: skipped self row", exc_info=True)
 
-                    photo_url = _photo_url(photo_path) or ""
-                    # Smaller grid-sized variant when it exists (staging only);
-                    # falls back to the original when the variant is absent or
-                    # image variants are off (prod) — no extra GCS call then.
-                    photo_url_thumb = _variant_url(photo_path, "thumb", 400) or photo_url
-                except Exception:  # noqa: BLE001 - never sink the feed on a photo
-                    photo_url = ""
-                    photo_url_thumb = ""
-
-            liked, mutual = (
-                (False, False) if other == uid
-                else _like_state(db, uid, other)
-            )
-            cards.append(
-                {
-                    "uid": other,
-                    "name": prof.get("name", ""),
-                    "age": _age(prof.get("birthdate")),
-                    "location": prof.get("location", ""),
-                    "photo_path": photo_path,  # kept for back-compat
-                    "photo_url": photo_url,
-                    "photo_url_thumb": photo_url_thumb,
-                    "score": None
-                    if other == uid
-                    else _score_for(db, uid, other),
-                    "liked": liked,
-                    "mutual": mutual,
-                    "self": other == uid,
-                    "paused": other == uid and prof.get("paused") is True,
-                }
-            )
-        except Exception:  # noqa: BLE001 - one bad profile never sinks the feed
-            logger.warning(
-                "explore: skipped %s (row build failed)", other, exc_info=True
-            )
-            continue
-
-    # Your own card pins to the top; then scored matches high-to-low, then the
-    # rest.
-    cards.sort(
-        key=lambda c: (not c["self"], c["score"] is None, -(c["score"] or 0))
+    cards.sort(key=_card_sort_key)
+    next_cursor = (
+        _encode_cursor(last_uid) if (not exhausted and last_uid) else None
     )
-    return cards
+    return (cards, next_cursor)
+
+
+def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
+    """Full-roster Explore feed (legacy shape) — backend callers that need
+    every candidate (e.g. DM outreach) and pre-pagination tests.
+
+    Pages internally through :func:`explore_page` and sorts once globally,
+    so results match the old full-scan order: self pinned, scored
+    high-to-low, then the rest.
+    """
+    if limit is not None and int(limit) <= 0:
+        return []
+    want = max(1, min(int(limit or 30), 10_000))
+    out: list[dict] = []
+    seen_ids: set[str] = set()
+    cursor: str | None = None
+    while len(out) < want:
+        page, cursor = explore_page(
+            db, uid, filters, limit=min(want - len(out), 100), cursor=cursor
+        )
+        for c in page:
+            if c["uid"] not in seen_ids:
+                seen_ids.add(c["uid"])
+                out.append(c)
+        if cursor is None:
+            break
+    out.sort(key=_card_sort_key)
+    return out[:want]
 
 
 def merge_filters(query_params: dict, nl_filters: dict) -> dict:
