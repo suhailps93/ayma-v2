@@ -11,7 +11,7 @@ Maintained by Astro (PM). Founder rules override anything here. Last updated: 20
 | **Astro** (Muse) | PM / Chief of Staff | The queue, assignments, time estimates, check-ins, the test program, all ops & admin. Only founder-facing seat | Labels every message he sends: "From Astro (Muse)" |
 | **Claude** | Lead Engineer | Builds, fixes, designs, staging integration & deploys. Engineering only — kept out of testing, his tokens are precious | Replies in the Ayma master session (labeled "From Claude") and posts status directly into the founder's main chat so nothing gets lost |
 | **Scout** (the Tester) | QA Lead | Runs the Standard Test Pack on every build, posts every test individually in the "Ayma Build Testing Loop" thread, owns `docs/testing/PROGRESS.md` and the sweep records | Testing thread; bug reports to engineers in the fixed format; retests fixes to CLOSED |
-| **Muse** | Engineer (Muse Spark) | Small, scoped, completable chunks: verification, sweep analysis, doc/commit mechanics | Branch + handoff note per task |
+| **Muse** | Engineer — Deployment | All deploy mechanics (staging watcher, phone installs) + small scoped chunks: verification, sweep analysis, doc/commit mechanics | Branch + handoff note per task |
 | **Codex** | Engineer | Scoped build/verify chunks on full clones (its sandbox can't commit — Astro commits its trees) | Branch/tree + handoff note per task |
 | **Gemini** | Engineer / Analyst | Slow background analysis via `gemini-ayma` (3-key rotation) | Branch + handoff note per task |
 | **Antigravity** | Engineer | Frontend & perf chunks via `agy-ayma` | Branch + handoff note per task |

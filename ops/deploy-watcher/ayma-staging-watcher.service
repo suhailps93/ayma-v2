@@ -1,0 +1,15 @@
+[Unit]
+Description=Ayma staging auto-deploy watcher (staging tip -> staging cloud + Pixel dev install)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/suhailps/workspace/ayma-autodeploy/ops/deploy-watcher/staging-autodeploy.sh --daemon
+Restart=always
+RestartSec=30
+StandardOutput=append:/home/suhailps/workspace/ayma-inbox/.autodeploy/logs/watcher.log
+StandardError=inherit
+
+[Install]
+WantedBy=default.target
