@@ -4,10 +4,12 @@
 //
 // MarkdownText (lib/widgets/markdown_text.dart) is a basic renderer: headings,
 // **bold**/italic, bullet and numbered lists, http(s) links, and paragraphs.
-// It has no blockquotes and no tables, so the source `> **Note:** …`
-// blockquotes are written here as plain paragraphs, the internal attorney-review
-// note is left out, the data-category and subprocessor tables are written as
-// lists, and the relative `[Terms of Service](…)` link is plain text.
+// It has no blockquotes and no tables, so the source's internal drafting and
+// attorney-review blockquotes (`> **Internal note …**` and the `> **Note:** …`
+// "a lawyer must still…/confirm before launch" reminders) are left out entirely
+// — they are guidance for the drafters, never user-facing policy — the
+// data-category and subprocessor tables are written as lists, and the relative
+// `[Terms of Service](…)` link is plain text.
 
 const String kPrivacyText = r'''
 # Ayma Privacy Policy
@@ -29,10 +31,6 @@ The company behind Ayma is **Justabot LLC**, a Delaware limited liability
 company (referred to as "Ayma", "we", or "us"). Justabot LLC is the controller
 of the personal data described in this policy. You can reach us at
 founder@justabot.info.
-
-**Note:** If Ayma has an EU/EEA or UK presence or targets those markets, add
-the EU/UK representative and the Data Protection Officer (or a statement that
-none is required) here.
 
 ## The short version
 
@@ -163,13 +161,6 @@ contract.
 - **RevenueCat** — Subscription and in-app purchase management. Data involved: App user ID, purchase history, subscription status.
 - **Sentry** — Error, crash and performance monitoring for the app and backend. Data involved: Device and app diagnostics, error reports, user ID where attached to an error.
 
-**Note:** Confirm this list before launch and keep a current subprocessor
-list published. Confirm the exact Google entities and regions, whether
-Gemini is used via Vertex AI or the Gemini API, and that data-processing
-agreements and Standard Contractual Clauses are in place with each,
-including with LiveKit for LiveKit Inference. Attorney review of this section is
-still needed.
-
 ### AI providers and training
 
 We instruct our AI providers to process your content only to return results to
@@ -243,9 +234,6 @@ Ayma is a mobile app, not a website, so it does not use advertising cookies.
 - Standard mobile identifiers (such as a push token and an app-instance ID) are
   used to deliver notifications and basic analytics.
 
-**Note:** Align this section with the App Store / Google Play data-safety
-disclosures and any consent banner required in your markets.
-
 ## International data transfers
 
 Ayma and its providers are based in, or operate from, the United States and
@@ -253,9 +241,6 @@ other countries. Your data may be processed outside the country where you live,
 including in the United States. Where the law requires it, we use appropriate
 safeguards for these transfers, such as the European Commission's Standard
 Contractual Clauses (or the UK equivalent) with our providers.
-
-**Note:** State the specific transfer mechanism relied on and the countries
-involved once the entity and hosting regions are fixed.
 
 ## Biometric information (face matching)
 
@@ -308,9 +293,6 @@ these Terms and the Privacy Policy). **Ayma cannot be used without it.**
 - **We may keep specific records longer where we must for legal, tax,
   security, or dispute-resolution reasons (a "legal hold"),** and only for as
   long as that purpose lasts.
-
-**Note:** Insert concrete backup rotation, log retention and legal-hold
-periods once operations confirm them.
 
 ## How we protect your data
 
@@ -379,7 +361,4 @@ For any privacy question or request, email founder@justabot.info or use the
 
 See also our [Child Safety Standards](https://justabot.info/child-safety.html)
 and the [account deletion page](https://justabot.info/delete-account.html).
-
-**Note:** Before launch, add the postal address and, if applicable, the
-EU/UK representative's contact details.
 ''';

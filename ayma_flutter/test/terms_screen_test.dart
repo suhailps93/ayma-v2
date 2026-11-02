@@ -80,6 +80,32 @@ void main() {
     expect(kTermsText, isNot(contains('[PLACEHOLDER — legal review needed]')));
   });
 
+  // Regression (N6): the user-facing Terms must not leak the internal
+  // drafting / attorney-review reminders that lived in the source as
+  // `> **Note:** …` blockquotes. Each of these phrases was once rendered to
+  // users; none may ever render again.
+  test('kTermsText contains no internal drafting notes', () {
+    expect(kTermsText, isNot(contains('**Note:**')));
+    expect(kTermsText, isNot(contains('A lawyer must still insert')));
+    expect(kTermsText, isNot(contains('A lawyer should confirm')));
+    expect(kTermsText, isNot(contains('registered address and governing')));
+    expect(kTermsText, isNot(contains('postal address for formal')));
+  });
+
+  testWidgets('the rendered Terms screen shows no drafting notes',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: const TermsScreen(),
+    ));
+    await tester.pumpAndSettle();
+
+    final text = _plain(tester);
+    expect(text, isNot(contains('Note:')));
+    expect(text, isNot(contains('A lawyer')));
+    expect(text, isNot(contains('registered address')));
+  });
+
   test('kTermsText covers the previously stubbed sections', () {
     // Safety
     expect(kTermsText, contains('## Safety'));

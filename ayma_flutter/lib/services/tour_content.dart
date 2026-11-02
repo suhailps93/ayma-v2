@@ -154,7 +154,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'notifications',
     headline: 'Never miss a moment',
-    subtitle: "The bell nudges you only when there's something worth your time.",
+    subtitle: "The bell nudges you only when there's something worth your "
+        'time — choose what from Settings › Notifications.',
     icon: Icons.notifications_active_outlined,
     anchorId: TourAnchors.notificationsBell,
   ),

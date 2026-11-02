@@ -17,6 +17,7 @@ import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
 import 'developer_screen.dart';
 import 'main_shell_screen.dart';
+import 'notification_prefs_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -24,8 +25,9 @@ import '../widgets/ayma_back_button.dart';
 /// and face verification. Normal users see only a clean release version here;
 /// seven taps (or a long-press) on that version row open the hidden Developer
 /// panel, whose contents are password-gated. Ayma-behaviour settings (voice, animation, wiki reset) live
-/// on `AymaSettingsScreen`; deletion / sign out / notifications on their own
-/// screens reached from the Profile tab.
+/// on `AymaSettingsScreen`; deletion / sign out on their own screens reached
+/// from the Profile tab. Notification preferences are reached from here (the
+/// Notifications row) and also from the notification centre's bell.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -273,6 +275,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: _pausedSaving ? null : _setPaused,
               );
             },
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Notifications',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          ListTile(
+            key: const ValueKey('settings-notifications'),
+            leading: Icon(Icons.notifications_outlined, color: ac.fgDim),
+            title: Text('Notification preferences',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text('Choose what Ayma can notify you about.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(NotificationPrefsScreen.path),
           ),
           Divider(color: ac.lineSoft),
           Padding(

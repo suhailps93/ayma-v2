@@ -39,7 +39,7 @@ them. If you do not agree, please do not use Ayma.**
 These Terms work together with our [Privacy Policy](PRIVACY.md), which explains
 in more detail what we collect and why.
 
-> **Note:** A lawyer must still insert the registered address and governing
+> **Internal note (not shown in the app or on the web):** A lawyer must still insert the registered address and governing
 > law / jurisdiction, and confirm any consumer-law carve-outs for the launch
 > markets.
 
@@ -365,7 +365,7 @@ appropriate safeguards for those transfers.
 - We do not guarantee that any particular feature will stay free, stay a given
   price, or remain available. We may add, change, or remove paid features.
 
-> **Note:** A lawyer should confirm the refund, cancellation, and cooling-off
+> **Internal note (not shown in the app or on the web):** A lawyer should confirm the refund, cancellation, and cooling-off
 > wording against consumer-protection law in each launch market (for example
 > the EU/UK right of withdrawal for digital content), and align it with the
 > Apple and Google billing rules that apply.
@@ -394,5 +394,5 @@ The best way to reach us about these Terms, a safety concern, or a privacy
 request is the **in-app feedback tool** (Profile, then "Send feedback"), or
 email founder@justabot.info.
 
-> **Note:** Add the postal address for formal / regulatory notices before
+> **Internal note (not shown in the app or on the web):** Add the postal address for formal / regulatory notices before
 > launch.

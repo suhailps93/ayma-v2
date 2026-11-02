@@ -4,11 +4,12 @@
 //
 // MarkdownText (lib/widgets/markdown_text.dart) is a basic renderer: headings,
 // **bold**/italic, bullet and numbered lists, http(s) links, and paragraphs.
-// It has no blockquotes and no tables, so the source `> **Note:** …`
-// blockquotes are written here as plain paragraphs, the internal attorney-review
-// note is left out, the relative `[Privacy Policy](…)` link is plain text, and
-// the "Key points" blockquote is [kTermsKeyPoints], which the Terms screen
-// renders in its own box.
+// It has no blockquotes and no tables, so the source's internal drafting and
+// attorney-review blockquotes (`> **Note:** …` "a lawyer must still…/confirm
+// before launch" reminders) are left out entirely — they are guidance for the
+// drafters, never user-facing policy — the relative `[Privacy Policy](…)` link
+// is plain text, and the "Key points" blockquote is [kTermsKeyPoints], which
+// the Terms screen renders in its own box.
 
 const String kTermsText = r'''
 # Ayma Terms of Service
@@ -22,10 +23,6 @@ them. If you do not agree, please do not use Ayma.**
 
 These Terms work together with our Privacy Policy, which explains
 in more detail what we collect and why.
-
-**Note:** A lawyer must still insert the registered address and governing
-law / jurisdiction, and confirm any consumer-law carve-outs for the launch
-markets.
 
 ## Age: 18 and over only
 
@@ -349,11 +346,6 @@ appropriate safeguards for those transfers.
 - We do not guarantee that any particular feature will stay free, stay a given
   price, or remain available. We may add, change, or remove paid features.
 
-**Note:** A lawyer should confirm the refund, cancellation, and cooling-off
-wording against consumer-protection law in each launch market (for example
-the EU/UK right of withdrawal for digital content), and align it with the
-Apple and Google billing rules that apply.
-
 ## No warranty and limitation of liability
 
 **Ayma is provided "as is". We work to keep it running and useful, but we do
@@ -377,9 +369,6 @@ you wish, delete your account.
 The best way to reach us about these Terms, a safety concern, or a privacy
 request is the **in-app feedback tool** (Profile, then "Send feedback"), or
 email founder@justabot.info.
-
-**Note:** Add the postal address for formal / regulatory notices before
-launch.
 ''';
 
 /// The "Key points" summary the Terms screen shows in a box above

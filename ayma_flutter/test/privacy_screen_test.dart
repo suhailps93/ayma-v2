@@ -56,4 +56,34 @@ void main() {
     expect(kPrivacyText, contains('_Last updated: 2026-10-25_'));
     expect(kPrivacyText, isNot(contains('PLACEHOLDER')));
   });
+
+  // Regression (N6): the user-facing policy must not leak the internal
+  // drafting / attorney-review reminders that lived in the source as
+  // `> **Note:** …` blockquotes. Every one of these phrases was once rendered
+  // to users; none may ever render again.
+  test('kPrivacyText contains no internal drafting notes', () {
+    expect(kPrivacyText, isNot(contains('**Note:**')));
+    expect(kPrivacyText, isNot(contains('EU/UK representative')));
+    expect(kPrivacyText, isNot(contains('Confirm this list before launch')));
+    expect(kPrivacyText, isNot(contains('Align this section with the App')));
+    expect(kPrivacyText, isNot(contains('transfer mechanism relied on')));
+    expect(kPrivacyText, isNot(contains('Insert concrete backup rotation')));
+    expect(kPrivacyText, isNot(contains('add the postal address')));
+    expect(kPrivacyText, isNot(contains('Attorney review')));
+  });
+
+  testWidgets('the rendered Privacy screen shows no drafting notes',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: const PrivacyScreen(),
+    ));
+    await tester.pumpAndSettle();
+
+    final text = _plain(tester);
+    expect(text, isNot(contains('Note:')));
+    expect(text, isNot(contains('EU/UK representative')));
+    expect(text, isNot(contains('before launch')));
+    expect(text, isNot(contains('Attorney review')));
+  });
 }

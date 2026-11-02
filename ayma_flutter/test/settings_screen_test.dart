@@ -231,6 +231,48 @@ void main() {
     expect(find.text('ROUTE /profile/plan'), findsOneWidget);
   });
 
+  // Regression (N4): the notification-preferences screen was unreachable from
+  // Settings (only via the notification-centre bell). There must now be a
+  // Settings row that navigates to it — exactly the user's reported path.
+  testWidgets('the Notifications row opens the notification-preferences screen',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = ThemeController(initial: ThemeMode.dark);
+    final router = GoRouter(
+      initialLocation: SettingsScreen.path,
+      routes: [
+        GoRoute(
+          path: SettingsScreen.path,
+          builder: (_, __) => SettingsScreen(
+              controller: c, profileService: _FakeProfiles(), api: _api((_) {})),
+        ),
+        GoRoute(
+          path: '/notifications/prefs',
+          builder: (_, __) => const Scaffold(body: Text('NOTIF PREFS SCREEN')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(AnimatedBuilder(
+      animation: c,
+      builder: (context, _) => MaterialApp.router(
+        theme: AymaTheme.light,
+        darkTheme: AymaTheme.dark,
+        themeMode: c.mode,
+        routerConfig: router,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final row = find.byKey(const ValueKey('settings-notifications'));
+    await tester.scrollUntilVisible(row, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+    expect(find.text('NOTIF PREFS SCREEN'), findsOneWidget);
+  });
+
   testWidgets('tapping Accent Color pushes the accent color screen',
       (tester) async {
     final c = ThemeController(initial: ThemeMode.dark);
