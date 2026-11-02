@@ -1,0 +1,123 @@
+"""App-control command queue: the primitives every app-driving tool shares.
+
+One UI command is queued at ``users/{uid}/app_commands/pending`` and the tool
+*waits* (bounded) for the client's ack of that exact id at
+``users/{uid}/app_commands/ack`` before returning — a queued command is
+*intent*, not fact (founder bug, 2026-09-26). Split out of
+``skills/app_control.py`` (Tier-2 sweep item #8); ``app_control.py`` stays the
+facade and keeps the timeout knobs (tests patch them there).
+
+Also home to the shared tool-description loader (:func:`_prompt`) and the
+honest-failure lines, which every action family imports from here.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+from pathlib import Path
+
+_PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
+
+
+def _prompt(name: str, **fill: str) -> str:
+    """A tool description from ``prompts/<name>.md`` with its ``{{KEY}}``
+    slots filled from the registry, so the capability list the model reads is
+    always the registry itself."""
+    text = (_PROMPTS / f"{name}.md").read_text(encoding="utf-8").strip()
+    for key, value in fill.items():
+        text = text.replace("{{" + key + "}}", value)
+    return text
+
+
+# The cap on how much of the client's search-results report reaches the model.
+_RESULT_MAX_CHARS = 1500
+
+# The shared honest-failure line for every navigation tool — the model must
+# relay this, not soften it into a success.
+_NOT_NAVIGATED = (
+    "The app did NOT navigate — tell the user it didn't work and where to "
+    "find it themselves."
+)
+_NOT_APPLIED = "The app did NOT apply that — tell the user it didn't work."
+
+
+def _server_ts():
+    from firebase_admin import firestore
+
+    return firestore.SERVER_TIMESTAMP
+
+
+def _command_doc(db, uid: str):
+    return (
+        db.collection("users")
+        .document(uid)
+        .collection("app_commands")
+        .document("pending")
+    )
+
+
+def _ack_doc(db, uid: str):
+    return (
+        db.collection("users")
+        .document(uid)
+        .collection("app_commands")
+        .document("ack")
+    )
+
+
+def _queue_command(db, uid: str, payload: dict) -> str:
+    """Write one UI command to the pending doc with a fresh unique ``id``
+    (what the client's ack echoes back) and return that id."""
+    cmd_id = uuid.uuid4().hex
+    _command_doc(db, uid).set({**payload, "id": cmd_id, "ts": _server_ts()})
+    return cmd_id
+
+
+# Other skills queue a UI command without waiting for the ack (send_dm_message
+# opens the thread it just sent to).
+queue_command = _queue_command
+
+
+async def _await_ack(db, uid: str, cmd_id: str) -> dict | None:
+    """Poll the ack doc until the client acknowledges ``cmd_id`` or the
+    bounded wait runs out. Returns the ack dict (``{id, ok, …}``) or ``None``
+    on timeout. Firestore reads run in a thread so the LiveKit agent's event
+    loop (live audio) is never blocked by a poll."""
+    from skills import app_control  # deferred: the facade owns the knobs
+
+    deadline = time.monotonic() + app_control._ACK_TIMEOUT_SECONDS
+    while True:
+        try:
+            snap = await asyncio.to_thread(_ack_doc(db, uid).get)
+            data = snap.to_dict() if getattr(snap, "exists", False) else None
+        except Exception:  # noqa: BLE001
+            data = None
+        if data and str(data.get("id") or "") == cmd_id:
+            return data
+        if time.monotonic() >= deadline:
+            return None
+        await asyncio.sleep(app_control._ACK_POLL_SECONDS)
+
+
+async def _await_result(db, uid: str, cmd_id: str) -> str:
+    """Poll the ack doc until the client adds the ``result`` text for
+    ``cmd_id`` (what Explore shows after the search loaded), or the bounded
+    wait runs out. Returns ``""`` on timeout."""
+    from skills import app_control  # deferred: the facade owns the knobs
+
+    deadline = time.monotonic() + app_control._RESULT_TIMEOUT_SECONDS
+    while True:
+        try:
+            snap = await asyncio.to_thread(_ack_doc(db, uid).get)
+            data = snap.to_dict() if getattr(snap, "exists", False) else None
+        except Exception:  # noqa: BLE001
+            data = None
+        if data and str(data.get("id") or "") == cmd_id:
+            result = str(data.get("result") or "").strip()
+            if result:
+                return result[:_RESULT_MAX_CHARS]
+        if time.monotonic() >= deadline:
+            return ""
+        await asyncio.sleep(app_control._ACK_POLL_SECONDS)
