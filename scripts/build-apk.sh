@@ -107,7 +107,16 @@ PY
   cp "$GS" "$GS.prod.bak"
   cp "$GS_STAGING" "$GS"
   trap 'mv -f "$GS.prod.bak" "$GS" 2>/dev/null || true' EXIT
-  echo ">> staging build: Firebase=$FB_PROJECT_ID, API=staging"
+  # CRITICAL: the google-services Gradle task caches its generated native config
+  # (google_app_id / project_id resources) under build/.../generated/res/
+  # google-services. On an incremental build it stays UP-TO-DATE and silently
+  # reuses the PREVIOUS (prod) config even though we just swapped in the staging
+  # google-services.json — which shipped a staging build running on PROD Firebase
+  # (prod-aud tokens → staging API 401 crash loop, 2026-11-01). Delete the
+  # generated output so the task re-runs against the staging file every time.
+  rm -rf "$ROOT/ayma_flutter/build/app/generated/res/google-services" \
+         "$ROOT/ayma_flutter/build/app/intermediates/merged_res" 2>/dev/null || true
+  echo ">> staging build: Firebase=$FB_PROJECT_ID, API=staging (google-services cache busted)"
 fi
 
 cd "$ROOT/ayma_flutter"
