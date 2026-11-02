@@ -10,6 +10,7 @@ import '../legal/biometric_consent_text.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/biometric_consent.dart';
+import '../services/sign_in_voice_intent.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
@@ -18,6 +19,7 @@ import '../widgets/ayma_toast.dart';
 import '../widgets/phone_number_field.dart';
 import 'biometric_info_screen.dart';
 import 'privacy_screen.dart';
+import 'sign_in_critical_consent_dialog.dart';
 import 'splash_screen.dart';
 import 'terms_screen.dart';
 
@@ -115,6 +117,14 @@ class _SignInScreenState extends State<SignInScreen> {
       defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.macOS;
 
+  /// The last finalized user voice turn already acted on, so a repeated
+  /// transcript notification for the same turn never re-navigates or
+  /// re-opens the critical-consent dialog.
+  TranscriptTurn? _lastHandledVoiceTurn;
+
+  /// Guards against opening a second critical-consent dialog while one is up.
+  bool _criticalConsentOpen = false;
+
   @override
   void initState() {
     super.initState();
@@ -123,6 +133,13 @@ class _SignInScreenState extends State<SignInScreen> {
       _createMode = true;
     }
     _voice.addListener(_onVoice);
+    // The greeting (§3.3) can act on two spoken legal/consent intents — "open
+    // terms / privacy / biometric" and "is there anything critical I should
+    // know?". The pre-sign-in welcome room has no uid, so the backend
+    // AppCommandService navigation path is dead; instead the app watches the
+    // user's own finalized voice turns in the shared transcript and handles
+    // these locally with the same navigation the clickwrap links use.
+    _voice.transcript.addListener(_onTranscript);
     // Ayma greets while they choose how to sign in. Best-effort — a mic denial
     // or offline just leaves the orb quiet.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -134,8 +151,40 @@ class _SignInScreenState extends State<SignInScreen> {
     if (mounted) setState(() {});
   }
 
+  /// A transcript segment landed. Act once on the latest finalized *user*
+  /// voice turn if it carries a sign-in legal/consent intent.
+  void _onTranscript() {
+    if (!mounted) return;
+    final turns = _voice.transcript.turns;
+    if (turns.isEmpty) return;
+    final last = turns.last;
+    if (last.role != TurnRole.user ||
+        last.source != TurnSource.voice ||
+        !last.isFinal) {
+      return;
+    }
+    if (identical(last, _lastHandledVoiceTurn)) return;
+    _lastHandledVoiceTurn = last;
+    switch (parseSignInVoiceIntent(last.text)) {
+      case SignInVoiceIntent.openTerms:
+        context.push(TermsScreen.path);
+      case SignInVoiceIntent.openPrivacy:
+        context.push(PrivacyScreen.path);
+      case SignInVoiceIntent.openBiometric:
+        context.push(BiometricInfoScreen.path);
+      case SignInVoiceIntent.critical:
+        if (_criticalConsentOpen) return;
+        _criticalConsentOpen = true;
+        showSignInCriticalConsent(context)
+            .whenComplete(() => _criticalConsentOpen = false);
+      case SignInVoiceIntent.none:
+        break;
+    }
+  }
+
   Future<void> _stopVoice() async {
     _voice.removeListener(_onVoice);
+    _voice.transcript.removeListener(_onTranscript);
     if (widget.voiceController == null && _voice.isActive) {
       await _voice.stop();
     }
@@ -144,6 +193,7 @@ class _SignInScreenState extends State<SignInScreen> {
   @override
   void dispose() {
     _voice.removeListener(_onVoice);
+    _voice.transcript.removeListener(_onTranscript);
     if (widget.voiceController == null) {
       _voice.stop();
       _voice.dispose();
