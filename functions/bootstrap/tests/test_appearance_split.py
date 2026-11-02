@@ -140,3 +140,92 @@ def test_facade_line_count_reduction():
     lines = len(facade_path.read_text(encoding="utf-8").splitlines())
     # Monolith was ~1334 lines; facade should be <= 250 lines
     assert lines <= 250, f"Facade line count {lines} exceeds 250 lines limit"
+
+
+# --- regression: SWEEP59-J3R appearance hidden_photos strict-read 502 --------
+#
+# The split's ``_grid_photos`` dropped the ``.to_dict()`` on the profile read,
+# so it handed a raw Firestore ``DocumentSnapshot`` to
+# ``schema.analysis_photo_entries``. That helper does ``snap.get("hidden_photos")``
+# which, on a DocumentSnapshot, raises
+# ``"'hidden_photos' is not contained in the data"`` when the field is ABSENT
+# (the google-cloud-firestore ``DocumentSnapshot.get`` semantics) — exactly the
+# 502 Scout hit on a prod-copied profile doc that predates the field. A dict's
+# ``.get`` returns a default instead, so the report builds normally.
+
+
+class _FakeSnap:
+    """Mimics a Firestore ``DocumentSnapshot``: ``.get(field)`` raises when the
+    top-level field is absent (the real 502's root cause), while ``.to_dict()``
+    returns the backing dict."""
+
+    def __init__(self, data, doc_id="main"):
+        self._data = data
+        self.exists = data is not None
+        self.id = doc_id
+
+    def to_dict(self):
+        return dict(self._data) if self._data is not None else None
+
+    def get(self, field_path):
+        data = self._data or {}
+        if field_path not in data:
+            raise KeyError(f"{field_path!r} is not contained in the data")
+        return data[field_path]
+
+
+class _FakeDoc:
+    def __init__(self, snap, subcols=None):
+        self._snap = snap
+        self._subcols = subcols or {}
+
+    def get(self):
+        return self._snap
+
+    def collection(self, name):
+        return self._subcols.get(name, _FakeCol({}))
+
+
+class _FakeCol:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def document(self, doc_id):
+        return self._docs.get(doc_id, _FakeDoc(_FakeSnap(None)))
+
+
+class _FakeDb:
+    def __init__(self, profile_data):
+        profile_doc = _FakeDoc(_FakeSnap(profile_data))
+        user_doc = _FakeDoc(
+            _FakeSnap({}),
+            {"profile": _FakeCol({"main": profile_doc}), "user_media": _FakeCol({})},
+        )
+        self._users = _FakeCol({"u1": user_doc})
+
+    def collection(self, name):
+        if name == "users":
+            return self._users
+        return _FakeCol({})
+
+
+def test_grid_photos_tolerates_profile_without_hidden_photos():
+    # A valid older profile doc with photos but NO ``hidden_photos`` field.
+    # Pre-fix this raised the Firestore "not contained in the data" KeyError
+    # (which the endpoint turned into a 502); post-fix it returns normally.
+    db = _FakeDb({"photos": [{"media_id": "m1", "order": 0}]})
+    assert appearance_engine._grid_photos(db, "u1") == []
+
+
+def test_analysis_photo_entries_honors_hidden_photos_when_present():
+    # When the field IS present, hidden photos still feed analysis, appended
+    # after the public grid and renumbered 0..n-1.
+    import schema
+
+    prof = {
+        "photos": [{"media_id": "p0", "order": 0}],
+        "hidden_photos": [{"media_id": "h0", "order": 0}],
+    }
+    entries = schema.analysis_photo_entries(prof)
+    assert [e["media_id"] for e in entries] == ["p0", "h0"]
+    assert [e["order"] for e in entries] == [0, 1]

@@ -47,6 +47,7 @@ def _grid_photos(db, uid: str) -> list[dict]:
             .collection("profile")
             .document("main")
             .get()
+            .to_dict()
         ) or {}
     except Exception:  # noqa: BLE001
         return []
