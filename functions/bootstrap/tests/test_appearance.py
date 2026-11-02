@@ -380,6 +380,64 @@ def test_explicit_selection_never_falls_back_to_a_chat_attachment(monkeypatch, _
     assert _mocks["body"] == 0
 
 
+def test_not_self_chat_image_is_excluded_from_analysis_and_count(monkeypatch, _mocks):
+    # § R2-C8a (privacy/correctness): a photo the user SHARED in chat that is
+    # confirmed NOT to be them (a browsed profile / stock photo — flagged
+    # is_user="no" when it was shared) must never be folded into the appearance
+    # analysis. It is dropped from EVERY vision pass (attributes, face, body) and
+    # must not inflate the PHOTOS count. Only the user's own grid photo is read.
+    import photo_notes
+    import public_profile
+
+    rogue = "uploads/u1/milan-stock.jpg"
+    monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"url::{sp}")
+    monkeypatch.setattr(
+        photo_notes, "get_note",
+        lambda db, uid, url: {"is_user": "no"} if url == f"url::{rogue}" else {},
+    )
+
+    pa_extra: dict = {}
+
+    async def _pa_capture(db, uid, *, persist_report=False, extra_images=None, **kw):
+        pa_extra["paths"] = [p for _b, _m, p in (extra_images or [])]
+        return {"fields": _PA_FIELDS, "report_id": "pr1", "photo_count": 1,
+                "photo_paths": ["uploads/u1/g1.jpg"]}
+
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_capture)
+
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", source="chat_tool",
+        extra_images=[(b"milan", "image/jpeg", rogue)],
+    ))
+
+    # the rogue, not-self image is gone from the analysed set AND the count
+    assert rep["photo_count"] == 1                       # NOT 2 (no inflation)
+    assert pa_extra["paths"] == []                       # attributes pass got none
+    assert rep["face"]["source_photos"] == ["uploads/u1/g1.jpg"]
+    assert rep["body"]["source_photos"] == ["uploads/u1/g1.jpg"]
+    assert rogue not in rep["attributes"].get("source_photos", [])
+
+
+def test_self_chat_selfie_is_not_over_excluded(monkeypatch, _mocks):
+    # The flip side of R2-C8a: a chat-shared image the face match CONFIRMS is the
+    # user (is_user="yes") is a legitimate own self-photo and must still be kept.
+    import photo_notes
+    import public_profile
+
+    monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"url::{sp}")
+    monkeypatch.setattr(
+        photo_notes, "get_note", lambda db, uid, url: {"is_user": "yes"}
+    )
+
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", source="chat_tool",
+        extra_images=[(b"selfie", "image/jpeg", "uploads/u1/selfie.jpg")],
+    ))
+    assert rep["photo_count"] == 2  # grid g1 + the confirmed own selfie, kept
+
+
 def test_rerun_face_only_keeps_the_previous_body_so_the_card_survives(_mocks):
     # § founder 2026-10-28 "after Ayma reran I don't see the report card": a
     # first full run scores both axes; a rerun that only runs face (body

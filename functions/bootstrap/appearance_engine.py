@@ -219,6 +219,75 @@ def _unchanged_since_last_run(db, uid: str, current_paths: list[str] | None) -> 
     return prev
 
 
+def _owned_extra_images(
+    db, uid: str, extra: list[tuple[bytes, str, str]]
+) -> list[tuple[bytes, str, str]]:
+    """Keep only the chat-shared images that are genuinely the user's OWN
+    photos of THEMSELVES — drop any confirmed NOT to be the account holder.
+
+    ``extra`` are chat attachments (``(bytes, mime, storage_path)``) folded in
+    by the chat/voice ``run_appearance_report`` tool, the
+    ``analyze_physical_attributes`` tool and ``POST /appearance[/report]``. A
+    photo the user merely *shared* in chat (a profile they're browsing, a stock
+    image) lives under their own ``uploads/`` tree but is NOT a photo of them,
+    so the storage-path ownership check alone can't tell the two apart
+    (§ R2-C8a). The authoritative same-person signal is the face-match verdict:
+    the ``photo_notes`` ``is_user`` flag persisted when the photo was shared
+    (``main._persist_shared_photo_verdict``), with a live face match
+    (``deep_dive_images``) as the backstop when no verdict was stored. Only a
+    CONFIRMED non-match (stored ``is_user == "no"`` / live ``"not_self"``) is
+    excluded — a confirmed/plausible selfie and the "can't tell" band are kept,
+    so a legitimate own photo is never dropped.
+
+    Best-effort: any failure keeps the image (fail-open), never raising — the
+    persisted verdict stays the reliable gate.
+    """
+    if not extra:
+        return extra
+    try:
+        import photo_notes
+        from public_profile import _photo_url
+    except Exception:  # noqa: BLE001
+        return extra
+    refs = None  # fetched once, lazily, only if a live check is actually needed
+    kept: list[tuple[bytes, str, str]] = []
+    for data, mime, path in extra:
+        verdict = ""
+        if path:
+            try:
+                url = _photo_url(path)
+                if url:
+                    verdict = photo_notes.get_note(db, uid, url).get("is_user", "")
+            except Exception:  # noqa: BLE001
+                verdict = ""
+        if verdict == "no":
+            logger.info(
+                "appearance: excluding not-self chat image %s for %s", path, uid
+            )
+            continue
+        if verdict == "":
+            # No stored same-person verdict — live face match as the backstop.
+            try:
+                import deep_dive_images
+
+                if refs is None:
+                    refs = deep_dive_images.reference_embeddings_for(db, uid)
+                if refs:
+                    emb = media_embed.embed_image_bytes(data, mime)
+                    if deep_dive_images.classify_face_match(emb, refs) == "not_self":
+                        logger.info(
+                            "appearance: excluding not-self chat image %s for %s "
+                            "(live match)", path, uid,
+                        )
+                        continue
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "appearance: own-photo check failed for %s", uid, exc_info=True
+                )
+        kept.append((data, mime, path))
+    return kept
+
+
 async def run_appearance(
     db,
     uid: str,
@@ -295,10 +364,15 @@ async def run_appearance(
     read_doc_fn = getattr(appearance, "_read_report_doc", _read_report_doc)
     axis_ran_fn = getattr(appearance, "_axis_ran", _axis_ran)
     persist_fn = getattr(appearance, "_persist_report", _persist_report)
+    owned_extra_fn = getattr(appearance, "_owned_extra_images", _owned_extra_images)
 
     if not uid:
         return None
-    extra = list(extra_images or [])
+    # Only the user's OWN self-photos feed the appearance analysis. A chat-shared
+    # image confirmed NOT to be the account holder (a browsed profile, a stock
+    # photo) is dropped here before it can inflate the photo count or be analysed
+    # as if it were them (§ R2-C8a).
+    extra = owned_extra_fn(db, uid, list(extra_images or []))
     photos = grid_photos_fn(db, uid)
     if not photos and not extra:
         record_fn(db, uid, "skipped", source, "no_photo")

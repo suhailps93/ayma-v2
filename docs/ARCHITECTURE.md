@@ -308,7 +308,15 @@ flowchart LR
   honours the user's own picks via `appearance._pick_all` + `_bucket_eligible` — the *same* categorisation the sheet uses,
   returning ALL selected eligible photos for an axis (capped at `_MAX_PHOTOS`) for one combined read, so a freshly-added,
   not-yet-classified photo the user selected is still read, while a photo clearly for the other axis is refused; an
-  explicit selection never falls back to a chat attachment. The face/body report prompts are externalised to
+  explicit selection never falls back to a chat attachment. **Only the user's OWN self-photos are analysed**: before
+  anything is read or counted, `run_appearance` runs every `extra_images` chat attachment through
+  `appearance_engine._owned_extra_images`, which drops any image confirmed NOT to be the account holder — the
+  `photo_notes` `is_user == "no"` verdict persisted when the photo was shared (`main._persist_shared_photo_verdict`),
+  with a live `deep_dive_images` face match as a backstop when no verdict was stored. A photo a user merely *shared* in
+  chat (a browsed profile, a stock image) lives under their own `uploads/` tree but is not a photo of them, so
+  storage-path ownership alone cannot gate it; only a confirmed non-match is excluded (a confirmed/plausible selfie and
+  the "can't tell" band are kept, so a legitimate own photo is never dropped), and the excluded image never inflates the
+  PHOTOS count or feeds any vision pass (§ R2-C8a). The face/body report prompts are externalised to
   `functions/bootstrap/prompts/face_report.md` and `body_report.md` (`## system` / `## instruction` sections, loaded
   dynamically — AGENTS.md: no inline prompt strings). `run_appearance` returns and persists a per-axis
   `category_status` (`ran` / `skipped` / `no_eligible_photo`). **A rerun never wipes the axis it didn't run**: when this
