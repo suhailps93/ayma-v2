@@ -45,6 +45,19 @@ def test_persona_forbids_ungrounded_match_claims():
     assert "align" in persona and "run a match" in persona
 
 
+def test_persona_forbids_surfacing_internal_context_scaffolding():
+    """Founder bug R2-D3: with a profile pinned, Ayma opened a reply with "A
+    system test report slipped through there—ignore that!" — remarking on its
+    own internal context scaffolding to the user. The persona must carry an
+    explicit guardrail that grounding/context, photo-context notes and any
+    system/test annotation are private and never quoted or remarked on, so it
+    is in every chat and voice system prompt."""
+    persona = load_persona().lower()
+    assert "private scaffolding" in persona
+    assert "test" in persona and "slipped through" in persona
+    assert "photo-context" in persona
+
+
 class _NoConfigDb:
     """Firestore stub with no `config/ayma_persona` doc at all."""
 

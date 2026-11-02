@@ -239,10 +239,15 @@ def _collect(db, uid: str) -> list[dict]:
     except Exception:  # noqa: BLE001
         rt = []
     for doc in rt:
-        # DM ingest reuses persist_raw_turns to give the wiki pipeline a
-        # substrate, keyed `dm-{threadId}-{msgId}`. Those are NOT Ayma-chat
-        # turns — skip them or a DM you sent shows up in the Ayma transcript.
-        if doc.id.startswith("dm-"):
+        # DM ingest and the photo pipeline reuse persist_raw_turns purely to
+        # give the wiki pipeline a substrate, keyed `dm-{threadId}-{msgId}`
+        # (dm_ingest) and `photo-{mediaId}` (photo_pipeline — an internal
+        # photo-context annotation like "(shared a photo of themselves) …").
+        # Neither is an Ayma-chat turn — project them and a DM you sent, or an
+        # internal photo-context record, surfaces in the Ayma transcript as a
+        # user bubble (founder bug R2-D3: the "(shared a photo …) …" annotation
+        # rendered as a pink user message in history).
+        if doc.id.startswith("dm-") or doc.id.startswith("photo-"):
             continue
         d = doc.to_dict() or {}
         base = _as_dt(d.get("updated_at"))

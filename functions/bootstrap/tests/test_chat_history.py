@@ -290,6 +290,37 @@ def test_recent_excludes_dm_sourced_raw_turns():
     assert "hey there" in texts
 
 
+def test_recent_excludes_photo_context_raw_turns():
+    # The photo pipeline writes raw_turns/photo-{mediaId} purely as wiki
+    # substrate: an internal photo-context annotation, not an Ayma-chat turn.
+    # It must NOT surface in the transcript as a (pink) user bubble (founder
+    # bug R2-D3: the fragment "of themselves) Daniel shared this in chat,
+    # striking a pose outside the cathedral with the pigeons." rendered as a
+    # user message the user never wrote).
+    db = _FakeDB(
+        chat_rows=[
+            {"role": "ayma", "text": "love that shot", "image_path": "",
+             "created_at": _T0 + timedelta(minutes=1)},
+        ],
+        raw_rows=[
+            {"_id": "photo-abc123",
+             "turns": [{"role": "user",
+                        "text": "(shared a photo of themselves) Daniel shared "
+                                "this in chat, striking a pose outside the "
+                                "cathedral with the pigeons."}],
+             "updated_at": _T0 + timedelta(minutes=2)},
+            {"_id": "01ABCSESSION",
+             "turns": [{"role": "user", "text": "real ayma turn"}],
+             "updated_at": _T0 + timedelta(minutes=3)},
+        ],
+    )
+    texts = [m["text"] for m in chat_history.recent(db, "u1", limit=40)["messages"]]
+    assert not any("striking a pose outside the cathedral" in t for t in texts)
+    assert not any("of themselves)" in t for t in texts)
+    assert "real ayma turn" in texts
+    assert "love that shot" in texts
+
+
 def test_recent_dedupes_a_turn_present_in_both_sources():
     db = _FakeDB(
         chat_rows=[
