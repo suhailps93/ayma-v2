@@ -382,10 +382,17 @@ flowchart LR
   `skill_result` push. The chat renders the marker as a card (web research report; match report with the current
   score) that opens the report. Whoever started the job (a profile button, Recalculate, or Ayma tapping it for the
   user by voice or text), the card lands in the conversation: an open chat pulls new marker turns on app resume and
-  when the app sees the job finish (`ChatInbox.resultsLanded`), otherwise the next history load shows it.
+  when the app sees the job finish (`ChatInbox.resultsLanded`), otherwise the next history load shows it. The
+  deep-dive card + push are delivered by `_deliver_deep_dive_result` with a bounded in-job retry (3 attempts, short
+  growing backoff) so a transient Firestore/push blip self-heals server-side (founder: auto-retry, no user tap); each
+  side-effect lands at most once across retries, and the non-essential wiki writes (`skill_memory.save_web_findings`
+  / `promote`) are guarded so a failure there can never skip the card + push + the already-metered spend.
 - *Web research run status*: `POST /deep-dive` writes `users/{caller}/deep_dive_runs/{report_id}` as `running`
-  before queueing the job, and the job's `finally` writes `done` or `failed` (search error, credit cap,
-  cancellation). `GET /deep-dive-report/{id}` returns it as `run_status`; a run still `running` after
+  before queueing the job. The job meters the spend exactly once inside `deep_dive.run` (never on the delivery retry,
+  so no double-charge) and uses **deliver-then-mark**: its `finally` writes `done` only after the card + push are
+  confirmed delivered, else `failed` (search error, credit cap, cancellation, or delivery that couldn't be completed
+  even after retries — the report is still written, so it stays openable from history). `GET /deep-dive-report/{id}`
+  returns it as `run_status`; a run still `running` after
   `RUN_STALE_MINUTES` (10, e.g. an instance killed mid-job) is rewritten to `failed` on that read. The report
   screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`
   polls it, capped at the same 10 minutes of wall-clock time); `failed` shows "Search didn't finish." with

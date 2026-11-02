@@ -2579,21 +2579,90 @@ def _deep_dive_subject_image(is_self: bool, target: str) -> str:
     return story._photo_url_safe(_primary_profile_photo_path(target)) or ""
 
 
+# A finished dive's two user-visible side-effects (the "Web research report"
+# chat card + the result push) are Firestore/push writes that can hit a
+# transient blip. Rather than surface that as a stuck/failed dive, retry them a
+# bounded number of times with a short growing backoff — the founder's standing
+# directive is "auto-retry in the backend without the user having to click a
+# button." Kept small so a genuine outage still gives up promptly.
+_DEEP_DIVE_DELIVERY_ATTEMPTS = 3
+_DEEP_DIVE_DELIVERY_BACKOFF = 1.5  # seconds, multiplied by the attempt number
+
+
+async def _deliver_deep_dive_result(
+    uid: str, *, chat_text: str, label: str, subject_image: str,
+    notify: bool, who: str, deep_link: str,
+) -> bool:
+    """Deliver the user-visible side-effects of a finished dive — the chat card
+    and (when ``notify``) the result push — with a bounded retry so a transient
+    write failure self-heals in the background.
+
+    Each side-effect lands at most once even across retries (re-appending would
+    double the card), so the loop only re-attempts the parts still outstanding.
+    Returns True only when every requested side-effect was delivered. This path
+    never meters: the dive's spend is recorded exactly once inside
+    ``deep_dive.run`` and is deliberately kept off the retry loop so a retry can
+    never double-charge."""
+    card_done = False
+    notify_done = not notify
+    for attempt in range(1, _DEEP_DIVE_DELIVERY_ATTEMPTS + 1):
+        try:
+            if not card_done:
+                chat_history.append(
+                    get_db(), uid, "ayma", chat_text,
+                    tools=[label], subject_image=subject_image or None,
+                )
+                card_done = True
+            if not notify_done:
+                await notifications_triggers.notify_skill_done(
+                    get_db(), uid,
+                    f"Your web search on {who} is ready.", deep_link,
+                )
+                notify_done = True
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "deep-dive delivery attempt %d/%d failed for %s "
+                "(card_done=%s notify_done=%s)",
+                attempt, _DEEP_DIVE_DELIVERY_ATTEMPTS, uid,
+                card_done, notify_done,
+            )
+            if attempt < _DEEP_DIVE_DELIVERY_ATTEMPTS:
+                await asyncio.sleep(_DEEP_DIVE_DELIVERY_BACKOFF * attempt)
+    return card_done and notify_done
+
+
 async def _finish_deep_dive(
     uid: str, digest: dict, *, is_self: bool, target: str, name: str, notify: bool
 ) -> dict:
     """Shared tail for a deep dive (cache hit or fresh): persist, drop Ayma's
-    summary into the transcript, optionally push, and shape the response."""
+    summary into the transcript, optionally push, and shape the response.
+
+    ``"delivered"`` in the returned dict reports whether the user-visible
+    side-effects (card + push) actually landed, so the background job can wait
+    to mark the run ``done`` until they did."""
     # Only a lookup on *yourself* belongs in your wiki / Your Story. Research on
     # someone you're meeting is a private note for the chat + the reuse cache,
     # never your own story.
+    #
+    # These wiki / skill-run writes are NON-ESSENTIAL bookkeeping: a failure
+    # here must never skip the user-visible card + push + the already-metered
+    # spend that follow. (QA 00:41: an unguarded save_web_findings throw here
+    # silently dropped the card and the notification while the report itself
+    # still got written.) Guard loudly and carry on.
     if is_self:
-        skill_memory.save_web_findings(get_db(), uid, digest)
-        skill_memory.promote(get_db(), uid, "web_findings")
-        skill_runs.record(
-            get_db(), uid, skill_runs.DEEP_DIVE,
-            status=skill_runs.STATUS_OK, source="user", detail="self",
-        )
+        try:
+            skill_memory.save_web_findings(get_db(), uid, digest)
+            skill_memory.promote(get_db(), uid, "web_findings")
+            skill_runs.record(
+                get_db(), uid, skill_runs.DEEP_DIVE,
+                status=skill_runs.STATUS_OK, source="user", detail="self",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "deep-dive wiki/skill-run bookkeeping failed for %s "
+                "(continuing to card + notify)", uid,
+            )
         # Best-effort: re-derive the structured career timeline now that fresh
         # web-research facts (possibly LinkedIn-derived — § career timeline)
         # are on hand. Never blocks/fails the deep-dive response itself.
@@ -2631,22 +2700,17 @@ async def _finish_deep_dive(
             "" if is_self else target, name
         )
     chat_text = f"{summary}\n\n[deep_dive:{report_id}]" if report_id else summary
-    try:
-        chat_history.append(
-            get_db(), uid, "ayma", chat_text,
-            tools=[label], subject_image=subject_image or None,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("deep-dive chat_history append failed for %s", uid)
-    if notify:
-        who = "yourself" if is_self else name
-        # Point the push at the re-openable report when the dive produced one;
-        # a "not found" dive has no report_id, so fall back to chat (that's
-        # where the "nothing found" summary actually lives).
-        deep_link = f"deep_dive/{report_id}" if report_id else "chat"
-        await notifications_triggers.notify_skill_done(
-            get_db(), uid, f"Your web search on {who} is ready.", deep_link,
-        )
+    # Card + (optional) push are the user-visible payoff — deliver them with a
+    # bounded retry and report whether they landed. Point the push at the
+    # re-openable report when the dive produced one; a "not found" dive has no
+    # report_id, so fall back to chat (that's where the "nothing found" summary
+    # actually lives).
+    who = "yourself" if is_self else name
+    deep_link = f"deep_dive/{report_id}" if report_id else "chat"
+    delivered = await _deliver_deep_dive_result(
+        uid, chat_text=chat_text, label=label, subject_image=subject_image,
+        notify=notify, who=who, deep_link=deep_link,
+    )
     return {
         "digest": digest,
         "summary": summary,
@@ -2654,6 +2718,7 @@ async def _finish_deep_dive(
         "is_self": is_self,
         "subject_image": subject_image,
         "tool_label": label,
+        "delivered": delivered,
     }
 
 
@@ -2664,10 +2729,15 @@ async def _deep_dive_job(
     even if the app is backgrounded or closed. Delivers via a push + the chat
     transcript. Never raises.
 
-    Always finishes the run doc the endpoint opened (``done`` once the digest
-    is stored, ``failed`` otherwise) so the app's "Searching the web…" state
-    ends; a job killed before its ``finally`` is caught by the stale-run
-    timeout in :func:`deep_dive.run_status`."""
+    Finishes the run doc the endpoint opened only once the user-visible
+    side-effects actually landed: ``done`` when the digest is stored AND the
+    card + push were delivered, ``failed`` otherwise (digest failed, or it
+    succeeded server-side but the card/push could not be delivered even after
+    the bounded retry). Marking ``done`` before delivery once let a run read
+    ``done`` server-side while the user got no card and no notification (QA
+    00:41); the spend, metered inside ``deep_dive.run`` before this point, is
+    never re-charged by the delivery retry. A job killed before its ``finally``
+    is caught by the stale-run timeout in :func:`deep_dive.run_status`."""
     report_id = deep_dive.dive_report_id("" if is_self else target, name)
     status = deep_dive.RUN_FAILED
     try:
@@ -2682,13 +2752,28 @@ async def _deep_dive_job(
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive job failed for %s", uid)
             return
-        status = deep_dive.RUN_DONE
+        # Digest stored and spend already metered inside run(). Deliver the
+        # card + push BEFORE marking the run done — delivery has its own
+        # bounded retry, so only flip to `done` when it confirms the user
+        # actually got the result. On failure leave the run `failed` (honest +
+        # recoverable: the report is written, so it still opens from history)
+        # rather than a false `done`.
+        delivered = False
         try:
-            await _finish_deep_dive(
+            result = await _finish_deep_dive(
                 uid, digest, is_self=is_self, target=target, name=name, notify=True,
             )
+            delivered = bool(result.get("delivered"))
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive job delivery failed for %s", uid)
+        if delivered:
+            status = deep_dive.RUN_DONE
+        else:
+            logger.error(
+                "deep-dive job for %s/%s completed server-side but could not "
+                "deliver the card/notification after retries; leaving the run "
+                "recoverable (not `done`)", uid, report_id,
+            )
     finally:
         await asyncio.to_thread(deep_dive.mark_run, get_db(), uid, report_id, status)
 

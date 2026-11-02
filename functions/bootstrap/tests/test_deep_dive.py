@@ -995,6 +995,186 @@ def test_self_dive_writes_wiki_and_no_breadcrumb(monkeypatch):
     assert calls == ["save", "promote"]  # no interactions breadcrumb
 
 
+# --- reliable finish: side-effect delivery + bounded retry (QA 00:41 drop) ---
+
+
+def _patch_finish_env(monkeypatch):
+    """Common stubs for driving `_finish_deep_dive` / `_deep_dive_job` directly:
+    a dummy db, neutralised photo + timeline helpers, benign wiki bookkeeping,
+    and instant backoff so the retry loop doesn't sleep in tests."""
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_runs, "record", lambda *a, **k: None)
+
+    async def _no_timeline(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.career_timeline, "extract", _no_timeline)
+
+    async def _instant(_seconds):
+        return None
+
+    monkeypatch.setattr(main.asyncio, "sleep", _instant)
+
+
+def test_finish_delivers_card_and_push_even_when_wiki_write_throws(monkeypatch):
+    """A throw in the non-essential wiki write (save_web_findings) must NOT skip
+    the user-visible card + push that follow. Pre-fix the unguarded write
+    propagated and dropped both (QA 00:41)."""
+    _patch_finish_env(monkeypatch)
+
+    def _boom(*a, **k):
+        raise RuntimeError("firestore blip on the wiki write")
+
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", _boom)
+
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append((role, text)),
+    )
+    notes = []
+
+    async def _notify(_db, uid, preview, deep_link):
+        notes.append((preview, deep_link))
+
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _notify)
+
+    out = _run(
+        main._finish_deep_dive(
+            "me", {**_DIGEST, "name": "Me"},
+            is_self=True, target="", name="Me", notify=True,
+        )
+    )
+    assert out["delivered"] is True
+    assert appended and appended[0][0] == "ayma"  # card still appended
+    assert len(notes) == 1  # push still sent
+    assert notes[0][0] == "Your web search on yourself is ready."
+
+
+def test_job_does_not_mark_done_when_delivery_keeps_failing(monkeypatch):
+    """A dive that completes server-side but can't deliver the card/push after
+    the bounded retry must land as `failed`, never a false `done` — and the
+    spend (metered inside run) is charged exactly once (run never retried)."""
+    _patch_finish_env(monkeypatch)
+    runs = []
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        runs.append(uid)
+        return {**_DIGEST, "name": name, "is_self": True}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+
+    def _always_boom(*a, **k):
+        raise RuntimeError("card write down")
+
+    monkeypatch.setattr(main.chat_history, "append", _always_boom)
+
+    async def _notify(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _notify)
+    marked = []
+    monkeypatch.setattr(
+        main.deep_dive, "mark_run",
+        lambda _db, uid, rid, status: marked.append(status),
+    )
+
+    _run(main._deep_dive_job("me", "Me", "", True, "", True))
+    assert marked == [main.deep_dive.RUN_FAILED]  # NOT RUN_DONE
+    assert len(runs) == 1  # run (and its metering) happened exactly once
+
+
+def test_job_retries_delivery_then_marks_done(monkeypatch):
+    """A transient card-write blip self-heals within the job's bounded retry:
+    the card lands once (no duplicate) and the run ends `done`."""
+    _patch_finish_env(monkeypatch)
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        return {**_DIGEST, "name": name, "is_self": True}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+
+    appended = []
+    attempts = {"n": 0}
+
+    def _flaky_append(_db, uid, role, text, **kw):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("transient blip")
+        appended.append((role, text))
+
+    monkeypatch.setattr(main.chat_history, "append", _flaky_append)
+    notes = []
+
+    async def _notify(_db, uid, preview, deep_link):
+        notes.append(preview)
+
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _notify)
+    marked = []
+    monkeypatch.setattr(
+        main.deep_dive, "mark_run",
+        lambda _db, uid, rid, status: marked.append(status),
+    )
+
+    _run(main._deep_dive_job("me", "Me", "", True, "", True))
+    assert marked == [main.deep_dive.RUN_DONE]  # recovered
+    assert len(appended) == 1  # card appended exactly once
+    assert len(notes) == 1  # notified exactly once
+
+
+def test_job_retry_after_notify_failure_does_not_duplicate_card_or_recharge(
+    monkeypatch,
+):
+    """When the push fails after the card already landed, the retry re-sends
+    ONLY the push — the card isn't re-appended and run() (where the spend is
+    metered) is not re-invoked, so there's no duplicate card and no
+    double-charge."""
+    _patch_finish_env(monkeypatch)
+    runs = []
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        runs.append(uid)
+        return {**_DIGEST, "name": name, "is_self": True}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append(text),
+    )
+    notify_attempts = {"n": 0}
+    sent = []
+
+    async def _flaky_notify(_db, uid, preview, deep_link):
+        notify_attempts["n"] += 1
+        if notify_attempts["n"] == 1:
+            raise RuntimeError("push gateway blip")
+        sent.append(preview)
+
+    monkeypatch.setattr(
+        main.notifications_triggers, "notify_skill_done", _flaky_notify
+    )
+    marked = []
+    monkeypatch.setattr(
+        main.deep_dive, "mark_run",
+        lambda _db, uid, rid, status: marked.append(status),
+    )
+
+    _run(main._deep_dive_job("me", "Me", "", True, "", True))
+    assert len(runs) == 1  # the only place the dive is metered — ran once
+    assert len(appended) == 1  # card NOT re-appended on the push retry
+    assert len(sent) == 1  # push eventually delivered once
+    assert marked == [main.deep_dive.RUN_DONE]
+
+
 def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
     stored = {
         "digest": {**_DIGEST, "name": "Dana Reyes"},
