@@ -45,11 +45,23 @@ class _Harness {
         }
         if (req.url.path.endsWith('/continue')) {
           continueCalls.add(req.url.path);
+          continueCounts.add(
+            (jsonDecode(req.body) as Map<String, dynamic>)['more_messages']
+                as int,
+          );
           return http.Response(
             '{"status":"done"}',
             continueStatus,
             headers: const {'content-type': 'application/json'},
           );
+        }
+        if (req.url.path.endsWith('/stop')) {
+          stopCalls.add(req.url.path);
+          return _json({'status': 'stopping'});
+        }
+        if (req.method == 'DELETE' && req.url.path.startsWith('/date-sim/pair/')) {
+          resetCalls.add(req.url.path);
+          return _json({'deleted': 1});
         }
         if (req.url.path == '/date-sim') {
           simId =
@@ -77,6 +89,16 @@ class _Harness {
   /// with (so a test can assert the SAME sim was continued).
   final int continueStatus;
   final List<String> continueCalls = <String>[];
+
+  /// The `more_messages` each `/continue` was called with, so a test can assert
+  /// the USER-CHOSEN count flowed through (C).
+  final List<int> continueCounts = <int>[];
+
+  /// Call log for `POST /date-sim/{id}/stop` (D).
+  final List<String> stopCalls = <String>[];
+
+  /// Call log for `DELETE /date-sim/pair/{otherUid}` (E).
+  final List<String> resetCalls = <String>[];
   final Completer<void> release = Completer<void>();
   late final MockFirebaseAuth auth;
   late final FakeFirebaseFirestore fs;
@@ -114,6 +136,16 @@ class _Harness {
     uid: 'her',
     name: 'Dana',
     api: api,
+    service: DateSimService(auth: auth, firestore: fs),
+    profiles: ProfileService(auth: auth, firestore: fs),
+  );
+
+  /// The screen REOPENED on an existing [simId] (watches it; no new run).
+  Widget screen2(String simId) => DateSimScreen(
+    uid: 'her',
+    name: 'Dana',
+    api: api,
+    simId: simId,
     service: DateSimService(auth: auth, firestore: fs),
     profiles: ProfileService(auth: auth, firestore: fs),
   );
@@ -421,8 +453,13 @@ void main() {
 
       await tester.tap(find.byKey(const Key('dateSimContinueButton')));
       await _settle(tester);
-      // It continued THIS sim, not a new one.
+      // The chooser (C) asks how many more; pick +5.
+      expect(find.byKey(const Key('dateSimContinueChooser')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('dateSimContinueOption_5')));
+      await _settle(tester);
+      // It continued THIS sim, not a new one, by the chosen amount.
       expect(h.continueCalls, contains('/date-sim/sim1/continue'));
+      expect(h.continueCounts, contains(5));
 
       // Backend plays the continuation: back to running, then more turns + a
       // fresh (higher) score — the original first message is still there.
@@ -448,6 +485,13 @@ void main() {
       final kept = await h.sim.collection('messages').orderBy('seq').get();
       expect(kept.docs.map((d) => d['seq'] as int), containsAll([0, 1, 2]));
       expect(kept.docs.first.data()['text'], 'hey there!');
+      // The transcript auto-scrolls to the end; drag it back up so the middle
+      // (newly appended) turn is in view for the on-screen assertion.
+      await tester.drag(
+        find.byKey(const Key('dateSimTranscript')),
+        const Offset(0, 300),
+      );
+      await _settle(tester);
       expect(find.textContaining('what are you into'), findsOneWidget); // new
       expect(find.text('91'), findsOneWidget); // re-scored over the full chat
       expect(find.textContaining('Strong spark'), findsOneWidget);
@@ -477,7 +521,113 @@ void main() {
     await _settle(tester);
     await tester.tap(find.byKey(const Key('dateSimContinueButton')));
     await _settle(tester);
+    await tester.tap(find.byKey(const Key('dateSimContinueOption_3')));
+    await _settle(tester);
     // The standard out-of-credits sheet is shown; the result view stays put.
+    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+  });
+
+  // --- C: the continue chooser asks how many, then dismisses cleanly ------- //
+  testWidgets(
+    'C: dismissing the continue chooser does NOT continue the sim',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.finish();
+      await tester.pumpWidget(_wrap(h.screen2('sim1')));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const Key('dateSimContinueButton')));
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimContinueChooser')), findsOneWidget);
+      // Dismiss the sheet (tap the scrim) without choosing a count.
+      await tester.tapAt(const Offset(10, 10));
+      await _settle(tester);
+      expect(h.continueCalls, isEmpty);
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+    },
+  );
+
+  // --- D: STOP halts an in-flight run -------------------------------------- //
+  testWidgets('D: a running sim shows a Stop control that calls stop', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.simId = 'sim1';
+    await h.start(status: 'running');
+    await h.say(0, 'you', 'hey there!');
+    await tester.pumpWidget(_wrap(h.screen2('sim1')));
+    await _settle(tester);
+
+    // While running, the Stop control is shown and the finished CTAs are not.
+    expect(find.byKey(const Key('dateSimStopButton')), findsOneWidget);
+    expect(find.byKey(const Key('dateSimMessageForRealButton')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('dateSimStopButton')));
+    await _settle(tester);
+    expect(h.stopCalls, contains('/date-sim/sim1/stop'));
+
+    // Backend finalizes the partial as stopped → the finished view takes over
+    // with a "stopped early" note and the score over the partial.
+    await h.sim.update({
+      'status': 'done',
+      'stopped': true,
+      'verdict': {
+        'score': 44,
+        'score_label': 'Cut short',
+        'summary': 'A brief exchange before you stopped it.',
+      },
+    });
+    await _settle(tester);
+    expect(find.byKey(const Key('dateSimStopButton')), findsNothing);
+    expect(find.byKey(const Key('dateSimStoppedNote')), findsOneWidget);
+    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+  });
+
+  // --- E: RESET discards the pair's sim and returns to setup --------------- //
+  testWidgets('E: Start over resets the pair and returns to the setup form', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.simId = 'sim1';
+    await h.start(status: 'done');
+    await h.say(0, 'you', 'hey there!');
+    await h.finish();
+    await tester.pumpWidget(_wrap(h.screen2('sim1')));
+    await _settle(tester);
+    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('dateSimResetButton')));
+    await _settle(tester);
+    // Confirm the reset.
+    expect(find.byKey(const Key('dateSimResetDialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('dateSimResetConfirmButton')));
+    await _settle(tester);
+
+    expect(h.resetCalls, contains('/date-sim/pair/her'));
+    // Back at the setup form (fresh run), the result view is gone.
+    expect(find.byKey(const Key('dateSimScore')), findsNothing);
+    expect(find.byKey(const Key('dateSimRunButton')), findsOneWidget);
+  });
+
+  testWidgets('E: cancelling Start over keeps the result and does not reset', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.simId = 'sim1';
+    await h.start(status: 'done');
+    await h.say(0, 'you', 'hey there!');
+    await h.finish();
+    await tester.pumpWidget(_wrap(h.screen2('sim1')));
+    await _settle(tester);
+
+    await tester.tap(find.byKey(const Key('dateSimResetButton')));
+    await _settle(tester);
+    await tester.tap(find.text('Cancel'));
+    await _settle(tester);
+    expect(h.resetCalls, isEmpty);
     expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
   });
 

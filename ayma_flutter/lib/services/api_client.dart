@@ -1649,6 +1649,40 @@ class ApiClient {
     );
   }
 
+  /// `POST /date-sim/{simId}/stop` — STOP an in-flight simulation. The backend
+  /// flags the run; the server-side generator halts between turns, keeps what's
+  /// already produced and scores it, then flips the Firestore doc to `done`
+  /// (the client is already watching it). Idempotent: a stop on a finished run
+  /// is a harmless no-op. Throws [ApiException] on failure (404 no such sim).
+  Future<void> dateSimStop(String simId) async {
+    final r = await _http.post(
+      _uri('/date-sim/$simId/stop'),
+      headers: await _headers(),
+    );
+    if (r.statusCode == 200) return;
+    throw ApiException(
+      'Stopping the simulation failed.',
+      statusCode: r.statusCode,
+      body: r.body,
+    );
+  }
+
+  /// `DELETE /date-sim/pair/{otherUid}` — RESET the pair: discard every stored
+  /// simulation (transcript + report) between the user and [otherUid] so a new
+  /// sim starts from scratch. Throws [ApiException] on failure.
+  Future<void> dateSimReset(String otherUid) async {
+    final r = await _http.delete(
+      _uri('/date-sim/pair/$otherUid'),
+      headers: await _headers(),
+    );
+    if (r.statusCode == 200) return;
+    throw ApiException(
+      'Resetting the simulation failed.',
+      statusCode: r.statusCode,
+      body: r.body,
+    );
+  }
+
   /// The AI-Avatar opt-out message from a 403 `/date-sim` body
   /// (`{"detail": {"code", "message"}}`).
   static String _dateSimOptOutMessage(String body) {

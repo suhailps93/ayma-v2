@@ -106,6 +106,13 @@ class _DateSimScreenState extends State<DateSimScreen> {
   /// until the doc flips back to `running` and the live view takes over).
   bool _continuing = false;
 
+  /// True while a "stop" request is in flight (keeps the Stop button disabled
+  /// until the doc flips to `done`/`error` and the finished view takes over).
+  bool _stopping = false;
+
+  /// True while a "reset" (discard this pair's sim) request is in flight.
+  bool _resetting = false;
+
   /// The Qloo taste match, fetched once when the simulation completes.
   Future<TasteMatchLoad>? _taste;
 
@@ -295,12 +302,21 @@ class _DateSimScreenState extends State<DateSimScreen> {
     }
   }
 
-  /// Continue the SAME simulation with more turns, picking up where it left off
-  /// (not a restart). The backend appends to the same Firestore doc and
-  /// re-scores over the full transcript; the live view updates from the streams
-  /// — the doc flips back to `running` (typing indicator returns), then `done`
-  /// with the refreshed score/coaching. Out of credits opens the standard sheet.
-  Future<void> _continue() async {
+  /// Ask the user HOW MANY more messages to run, then continue by that amount.
+  /// The chooser (a small bottom sheet of +3/+5/+10, with the rough credit cost)
+  /// returns the chosen count; cancelling it does nothing.
+  Future<void> _chooseAndContinue() async {
+    if (_continuing) return;
+    final more = await showSimContinueChooser(context, estimate: _estimate);
+    if (more != null) await _continue(more);
+  }
+
+  /// Continue the SAME simulation with [more] more turns, picking up where it
+  /// left off (not a restart). The backend appends to the same Firestore doc
+  /// and re-scores over the full transcript; the live view updates from the
+  /// streams — the doc flips back to `running` (typing indicator returns), then
+  /// `done` with the refreshed score/coaching. Out of credits opens the sheet.
+  Future<void> _continue(int more) async {
     final simId = _simId;
     if (simId == null || _continuing) return;
     setState(() {
@@ -308,7 +324,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
       _error = null;
     });
     try {
-      await _api.dateSimContinue(simId, _count);
+      await _api.dateSimContinue(simId, more);
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 402) {
@@ -325,6 +341,63 @@ class _DateSimScreenState extends State<DateSimScreen> {
 
   static const _continueError =
       "Couldn't continue the conversation. Please try again.";
+
+  /// STOP the in-flight run. The backend halts generation between turns and
+  /// keeps what's done; the sim doc then flips to `done` and the finished view
+  /// (with the partial transcript + its score) takes over via the stream.
+  Future<void> _stop() async {
+    final simId = _simId;
+    if (simId == null || _stopping) return;
+    setState(() {
+      _stopping = true;
+      _error = null;
+    });
+    try {
+      await _api.dateSimStop(simId);
+    } on ApiException {
+      if (mounted) setState(() => _error = _stopError);
+    } catch (_) {
+      // Transport failure: the run keeps going; the stream reports the outcome.
+    } finally {
+      if (mounted) setState(() => _stopping = false);
+    }
+  }
+
+  static const _stopError =
+      "Couldn't stop the conversation. Please try again.";
+
+  /// RESET: discard this pair's simulation(s) and return to the setup form so a
+  /// brand-new sim can be run from scratch. Confirmed first (it can't be undone).
+  Future<void> _reset() async {
+    if (_resetting) return;
+    final ok = await showSimResetConfirm(context, name: _name);
+    if (ok != true || !mounted) return;
+    setState(() {
+      _resetting = true;
+      _error = null;
+    });
+    try {
+      await _api.dateSimReset(widget.uid);
+      if (!mounted) return;
+      _stopListening();
+      setState(() {
+        _phase = _Phase.setup;
+        _sim = null;
+        _messages = const [];
+        _taste = null;
+        _simId = null;
+      });
+    } on ApiException {
+      if (mounted) setState(() => _error = _resetError);
+    } catch (_) {
+      if (mounted) setState(() => _error = _resetError);
+    } finally {
+      if (mounted) setState(() => _resetting = false);
+    }
+  }
+
+  static const _resetError =
+      "Couldn't start over. Please try again.";
 
   String get _name =>
       _sim?.persona.name.isNotEmpty == true ? _sim!.persona.name : widget.name;
@@ -492,6 +565,16 @@ class _DateSimScreenState extends State<DateSimScreen> {
                 partial: false,
               ),
             ],
+            if (sim.stopped && !sim.usageCapped) ...[
+              const SizedBox(height: 12),
+              const _InlineError(
+                key: Key('dateSimStoppedNote'),
+                message:
+                    'You stopped the conversation early. The read below '
+                    'covers what was said so far.',
+                partial: false,
+              ),
+            ],
             if (sim.hasVerdict) ...[
               const SizedBox(height: 20),
               _Verdict(
@@ -508,6 +591,46 @@ class _DateSimScreenState extends State<DateSimScreen> {
         ],
       ),
       footer: [
+        // While the run is live: a STOP control to halt it mid-conversation.
+        if (running)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_error != null) ...[
+                  Text(
+                    _error!,
+                    key: const Key('dateSimStopError'),
+                    textAlign: TextAlign.center,
+                    style: AymaType.sans(size: 13, color: ac.error),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                OutlinedButton.icon(
+                  key: const Key('dateSimStopButton'),
+                  onPressed: _stopping ? null : _stop,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: ac.error,
+                    side: BorderSide(color: ac.error),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: _stopping
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: ac.error,
+                          ),
+                        )
+                      : const Icon(Icons.stop_circle_outlined, size: 18),
+                  label: Text(_stopping ? 'Stopping…' : 'Stop'),
+                ),
+              ],
+            ),
+          ),
         if (finished)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -524,13 +647,13 @@ class _DateSimScreenState extends State<DateSimScreen> {
                   ),
                   const SizedBox(height: 10),
                 ],
-                // "Keep the conversation going" — continue the same sim with
-                // more turns (only when it finished cleanly, i.e. there's a
-                // transcript to continue and no error).
+                // "Keep the conversation going" — asks HOW MANY more messages,
+                // then continues the same sim by that amount (only when it
+                // finished cleanly, i.e. there's a transcript to continue).
                 if (status == DateSimStatus.done) ...[
                   OutlinedButton.icon(
                     key: const Key('dateSimContinueButton'),
-                    onPressed: _continuing ? null : _continue,
+                    onPressed: _continuing ? null : _chooseAndContinue,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: ac.accent,
                       side: BorderSide(color: ac.accent),
@@ -568,6 +691,24 @@ class _DateSimScreenState extends State<DateSimScreen> {
                         ? 'Message them for real'
                         : 'Message $_name for real',
                   ),
+                ),
+                const SizedBox(height: 10),
+                // RESET — discard this pair's sim and start a fresh one.
+                TextButton.icon(
+                  key: const Key('dateSimResetButton'),
+                  onPressed: _resetting ? null : _reset,
+                  style: TextButton.styleFrom(foregroundColor: ac.fgDim),
+                  icon: _resetting
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: ac.fgDim,
+                          ),
+                        )
+                      : const Icon(Icons.refresh_rounded, size: 18),
+                  label: Text(_resetting ? 'Starting over…' : 'Start over'),
                 ),
               ],
             ),
@@ -612,7 +753,11 @@ class _TypingIndicator extends StatelessWidget {
 
 /// Inline failure notice shown under the (possibly partial) transcript.
 class _InlineError extends StatelessWidget {
-  const _InlineError({required this.message, required this.partial});
+  const _InlineError({
+    super.key,
+    required this.message,
+    required this.partial,
+  });
 
   final String message;
   final bool partial;
@@ -938,6 +1083,122 @@ class _Verdict extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Asks HOW MANY more messages to run when continuing a simulation — a small
+/// bottom sheet of +3 / +5 / +10 (with each option's rough credit cost from
+/// [estimate]). Returns the chosen count, or null if dismissed. Public so the
+/// layout matrix can pump it.
+Future<int?> showSimContinueChooser(
+  BuildContext context, {
+  Map<int, int> estimate = const {},
+}) {
+  const options = [3, 5, 10];
+  return showModalBottomSheet<int>(
+    context: context,
+    backgroundColor: context.ac.bg,
+    showDragHandle: true,
+    builder: (ctx) {
+      final ac = ctx.ac;
+      return SafeArea(
+        child: SingleChildScrollView(
+          key: const Key('dateSimContinueChooser'),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Keep the conversation going',
+                style: AymaType.sans(
+                  size: 17,
+                  weight: FontWeight.w700,
+                  color: ac.fg,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'How many more messages should they exchange?',
+                style: AymaType.sans(size: 13.5, color: ac.fgDim, height: 1.3),
+              ),
+              const SizedBox(height: 16),
+              for (final n in options) ...[
+                OutlinedButton(
+                  key: Key('dateSimContinueOption_$n'),
+                  onPressed: () => Navigator.of(ctx).pop(n),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: ac.accent,
+                    side: BorderSide(color: ac.accent),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  // Label over cost (not side-by-side) so both wrap safely at
+                  // large text scale on a narrow sheet.
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('+$n messages', textAlign: TextAlign.center),
+                      if (estimate[n] != null)
+                        Text(
+                          '≈ ${estimate[n]} credits',
+                          textAlign: TextAlign.center,
+                          style: AymaType.sans(size: 12.5, color: ac.fgDim),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Confirms a RESET (discard this pair's simulation) before it happens — it
+/// can't be undone. Returns true when the user confirms. Public so the layout
+/// matrix can pump it.
+Future<bool?> showSimResetConfirm(BuildContext context, {String name = ''}) {
+  return showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      final ac = ctx.ac;
+      return AlertDialog(
+        key: const Key('dateSimResetDialog'),
+        scrollable: true,
+        backgroundColor: ac.bgCard,
+        title: Text(
+          'Start over?',
+          style: AymaType.sans(size: 17, weight: FontWeight.w700, color: ac.fg),
+        ),
+        content: Text(
+          name.isEmpty
+              ? 'This discards the simulated conversation and its result, and '
+                    "lets you run a fresh one. This can't be undone."
+              : 'This discards your simulated conversation with $name and its '
+                    "result, and lets you run a fresh one. This can't be undone.",
+          style: AymaType.sans(size: 14, color: ac.fg, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            style: TextButton.styleFrom(foregroundColor: ac.fgDim),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('dateSimResetConfirmButton'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: ac.error,
+              foregroundColor: ac.onAccent,
+            ),
+            child: const Text('Start over'),
+          ),
+        ],
+      );
+    },
+  );
 }
 
 /// The persistent "this is a simulation, not sent to them" header.

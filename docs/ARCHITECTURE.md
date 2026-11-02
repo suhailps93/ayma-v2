@@ -1412,7 +1412,9 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /profile/share` | Share a profile into a DM thread | §6.11 |
 | `POST /dm/{threadId}/messages` | Send a DM message (text/photo/voice/shared_profile) | §6.8 |
 | `POST /date-sim` | AI Date Simulation: two personas converse, streamed to `users/{uid}/date_sims/{sim_id}` (owner-read) → transcript + compatibility read | §18 |
-| `POST /date-sim/{sim_id}/continue` | Continue a finished sim: append N more turns from where it left off (not a restart), re-score over the full transcript | §18 |
+| `POST /date-sim/{sim_id}/continue` | Continue a finished sim: append a **user-chosen** N more turns from where it left off (not a restart), re-score over the full transcript | §18 |
+| `POST /date-sim/{sim_id}/stop` | STOP an in-flight sim: flag `cancel_requested`; the generator halts between turns, keeps the partial and scores it | §18 |
+| `DELETE /date-sim/pair/{other_uid}` | RESET the pair: discard every stored sim (transcript + report) with `other_uid` so a new sim starts fresh | §18 |
 | `POST /taste/pair` | Qloo taste match: shared-taste score + date ideas from both public Taste pages | §19 |
 | `GET /taste/demo`, `GET /taste/demo/pair` | Public Qloo judge demo over the seeded demo profiles only | §19 |
 | `POST /dm/translate` | Translate a DM message/draft (cross-language DM); pair-only, 18+, cap-exempt | §6.12 |
@@ -1506,7 +1508,7 @@ The tour is an **interactive coach-mark / spotlight walkthrough** that steps the
 
 - **The spotlight is press-through (interactive).** The dimmed scrim absorbs taps, but the cutout does not: a custom `_HoleGate` (`RenderProxyBox`) reports **no hit inside the cutout rect**, so the tap falls through the overlay to the real widget behind it, while a translucent `Listener` over the whole overlay observes the same tap and advances the tour. Tapping the highlighted anchor therefore **performs its real action AND advances** — tap the Profile tab and it opens Profile, then the tour continues into its in-Profile sub-steps. The painted cutout and the press-through hit region share one inflated rect (`_kHolePad`) so they always line up. Advancing also drops any keyboard a press-through tap raised (so it never covers the next step's anchor). The informational "Skip tour" / "Next" / "Done" buttons still advance without tapping the anchor.
 
-- **Content is data, in one place — now naming its UI anchor.** The tour is an ordered list of `TourFeature` entries in `lib/services/tour_content.dart`, each with a **stable `feature_id`**, short how-to copy, an optional callout `icon`, the **`anchorId`** of the UI element it spotlights (a `TourAnchors` id), and an optional **`tab`** (the shell `IndexedStack` index that must be the active body for that anchor to be laid out). Adding a feature to the tour = adding one entry: id + how-to + **its UI anchor key**. Seeded features (in order) and their anchors: `voice_dating`→the nav-bar orb ("press & hold for voice"), `profile_building`→the chat composer on tab 0 ("say hi, Ayma builds your profile"), then the **Profile walkthrough** — `profile_hub`→the Profile tab (tap to open it, press-through), and sub-steps on tab 3 spotlighting the real rows inside: `your_story`→the **My story** row, `appearance_report`→the **Appearance** row, `ayma_models`→the **Ayma's settings** row (top-to-bottom) — then `qloo_taste` / `date_sim`→the Explore tab, `chat_coach`→the Messages tab, `connect_agent`→centered (no anchor), `notifications`→the nav-bar bell, `privacy`→centered (no anchor). **Process rule:** every new user-facing feature must add/update its tour entry — `feature_id` + how-to + its UI anchor key (see §0 definition of done and `docs/AGENT_HANDOFF.md`).
+- **Content is data, in one place — now naming its UI anchor.** The tour is an ordered list of `TourFeature` entries in `lib/services/tour_content.dart`, each with a **stable `feature_id`**, short how-to copy, an optional callout `icon`, the **`anchorId`** of the UI element it spotlights (a `TourAnchors` id), and an optional **`tab`** (the shell `IndexedStack` index that must be the active body for that anchor to be laid out). Adding a feature to the tour = adding one entry: id + how-to + **its UI anchor key**. Seeded features (in order) and their anchors: `voice_dating`→the nav-bar orb ("press & hold for voice"), `profile_building`→the chat composer on tab 0 ("say hi, Ayma builds your profile"), then the **Profile walkthrough** — `profile_hub`→the Profile tab (tap to open it, press-through), and sub-steps on tab 3 spotlighting the real rows inside: `your_story`→the **My story** row, `appearance_report`→the **Appearance** row, `ayma_models`→the **Ayma's settings** row (top-to-bottom) — then `qloo_taste` / `date_sim` / `sim_controls`→the Explore tab (`sim_controls` spotlights the simulated-date Stop / continue-chooser / Start-over controls), `chat_coach`→the Messages tab, `connect_agent`→centered (no anchor), `notifications`→the nav-bar bell, `privacy`→centered (no anchor). **Process rule:** every new user-facing feature must add/update its tour entry — `feature_id` + how-to + its UI anchor key (see §0 definition of done and `docs/AGENT_HANDOFF.md`).
 - **Anchors.** `TourAnchors` (`lib/services/tour_anchors.dart`) is a tiny registry mapping each stable anchor id to a shared `GlobalKey` (`keyFor`). Target widgets attach that key (the shell's chat composer via `ChatScreen.composerAnchorKey`→`ChatComposer.rootKey`; the nav-bar orb/tabs/bell via `AymaTabBar.anchorKeys`, which **only the shell's own bar passes** — the page-context popup's copy must not, or two live widgets would share a key; the Profile rows via `ProfileTabScreen`'s `_Item.anchorId`). The engine resolves a step's anchor to its on-screen rect with `rectFor`; a null rect (a gated feature, the wrong tab, a widget that doesn't ship) **skips that step gracefully** so a missing anchor never blocks the tour (it retries a few frames first, to ride out a tab still switching in). A null `anchorId` is a deliberate centered callout (an intro/outro).
 - **Hosted at the app root, ABOVE the Navigator (so it survives route pushes).** The overlay is **not** mounted inside any screen. `TourHost` (`lib/widgets/tour_host.dart`), installed as the outermost wrapper in `MaterialApp.router`'s `builder` (`main.dart`, above `AymaToastHost`/`KeyboardDismissOnTap`), renders **one** `CoachMarkOverlay` as a sibling **above** the `Navigator`. So when a step (or a press-through tap) pushes a sub-page — My story, Appearance, Ayma's settings — the floating callout **stays mounted and open over the new page** instead of being torn down (the founder's "when you click to a different page, the pop-up goes away"). `TourHost` watches `TourController` (a `ChangeNotifier` singleton, `lib/services/tour_controller.dart`); when idle it adds nothing to the tree. The anchors' global rects line up with the scrim's full-screen paint because the overlay fills the whole window. Back while the tour is up is intercepted by a root `BackButtonListener` in `TourHost` (returns `false` when idle, so normal back routing is untouched) and **skips the tour** (marking its features seen) — the shell's own `PopScope` now only walks tab history.
 - **The shell DECIDES, the controller HOSTS.** `MainShellScreen` still owns *when* the tour starts — the post-pre-boarding / first-chat gate (`_maybeShowFeatureTour`) and the Settings/Dev replay listener (`_consumeTourRequest`) — but instead of holding overlay state it calls `TourController.instance.start(features, spotlight:, store:)` (passing its possibly-test-injected store). Finishing (`onFinish` → `TourController.finish`) or skipping (`TourController.skipFromBack`) writes the per-user seen-state and clears the session.
@@ -2141,8 +2143,11 @@ flowchart LR
   FS -- "owner-read snapshots<br/>(rules; Admin-SDK writes only)" --> UI["Flutter DateSimScreen<br/>live chat + typing row,<br/>then score + summary<br/>— never sent to the match"]
   NOTIF -. "tap → deepLinkToRoute →<br/>/date-sim/{uid}?sim_id=…" .-> UI
   REOPEN["✨ re-entry / notification tap<br/>(latestCompletedSim: other_uid==x,<br/>status==done, newest completed_at)"] -. "reopen with sim_id" .-> UI
-  UI -. "Keep the conversation going<br/>POST /date-sim/{id}/continue" .-> CONT["continue_simulation:<br/>resume at next seq,<br/>append N turns, re-score<br/>over the FULL transcript"]
+  UI -. "Keep the conversation going<br/>(chooser: +3/+5/+10)<br/>POST /date-sim/{id}/continue {more_messages}" .-> CONT["continue_simulation:<br/>resume at next seq,<br/>append the CHOSEN N turns, re-score<br/>over the FULL transcript"]
   CONT --> LOOP
+  UI -. "Stop (mid-run)<br/>POST /date-sim/{id}/stop" .-> STOP["cancel_requested=true"]
+  STOP -. "checked between turns" .-> LOOP
+  UI -. "Start over<br/>DELETE /date-sim/pair/{other_uid}" .-> RESET["reset_pair_sims:<br/>delete every sim + messages<br/>for the pair → fresh setup"]
 ```
 
 **Grounding asymmetry + the disclosure filter (privacy).** The USER's persona
@@ -2200,9 +2205,9 @@ listening to Firestore FIRST, then fires the POST; the response is just
 `{sim_id, status}` and the client never depends on it for the transcript. After
 the opt-out gates and persona builds pass, the backend creates
 `users/{uid}/date_sims/{sim_id}` (`status: running|done|error`, `estimate`,
-`persona`, `banner`, `max_messages`, `other_uid`, `thread_id`, `created_at`;
-`verdict`, `moderation`, `usage_capped`, `completed_at` when done;
-`error{code,message}` on failure) and writes every
+`persona`, `banner`, `max_messages`, `other_uid`, `thread_id`, `created_at`,
+`cancel_requested`; `verdict`, `moderation`, `usage_capped`, `stopped`,
+`completed_at` when done; `error{code,message}` on failure) and writes every
 turn to `.../messages/{seq}` (`{seq, speaker: you|them, text, at}`) the instant
 it is generated. Hang guards: each model call is bounded by `TURN_TIMEOUT_S`
 (40s) and the whole run by `RUN_DEADLINE_S` (240s, under Cloud Run's 300s); any
@@ -2229,6 +2234,30 @@ in the module) × (one turn per message + one verdict call), priced through
 `token_ledger.cost_usd_for` and `billing.credits_for` (`credits_per_usd`) — no
 inline prices or credit rates.
 
+**Result-screen controls (C/D/E).** The result screen carries three run
+controls, all server-honoured (the client never writes the sim docs — Admin SDK
+only):
+- **C — Continue by a chosen amount.** "Keep the conversation going"
+  (`dateSimContinueButton`) opens a chooser sheet (`dateSimContinueChooser`,
+  `showSimContinueChooser`) of **+3 / +5 / +10** (each with its rough credit
+  cost); the picked count is passed through as `more_messages` — the extend
+  amount is a parameter end-to-end, never a fixed silent increment. Dismissing
+  the sheet continues nothing.
+- **D — Stop mid-run.** While a run is live the footer shows **Stop**
+  (`dateSimStopButton` → `POST /date-sim/{sim_id}/stop` → `stop_simulation`),
+  which flags `cancel_requested` on the sim doc. `_generate_turns` checks the
+  flag **between turns** (`_cancel_requested`, a defensive read that never
+  forces a stop on error) and halts, keeping what's already produced; `_finalize`
+  then scores over the partial and writes `status: done` with `stopped: true`
+  (the screen shows a `dateSimStoppedNote`). A stop on an already-finished run
+  is a harmless no-op; a continuation clears the flag first so it can't cancel
+  itself.
+- **E — Start over (reset).** "Start over" (`dateSimResetButton`) confirms
+  (`dateSimResetDialog`) then `DELETE /date-sim/pair/{other_uid}` →
+  `reset_pair_sims`, which deletes **every** sim doc + its `messages`
+  subcollection for that pair, and the screen returns to the setup form so a
+  brand-new sim runs from scratch (`latestCompletedSim` then finds nothing).
+
 **Continue the conversation.** After a sim finishes, the result screen offers
 "Keep the conversation going" (`dateSimContinueButton`) beside the primary
 "Message `<name>` for real" CTA. `POST /date-sim/{sim_id}/continue
@@ -2247,7 +2276,15 @@ over the **full** transcript. It re-checks the AI-Avatar opt-out of both parties
 nothing is ever sent to the match. 402/403/404 come back from the POST as on the
 initial run. Tested in `test_date_sim.py`
 (`test_continue_appends_more_turns_and_rescores`,
-`test_continue_blocked_when_a_party_opts_out`) and `date_sim_test.dart`.
+`test_continue_runs_the_chosen_count`,
+`test_continue_blocked_when_a_party_opts_out`,
+`test_stop_halts_further_turns_and_keeps_partial`,
+`test_stop_simulation_sets_the_flag_and_404s_on_missing`,
+`test_continue_after_stop_clears_the_flag_and_runs`,
+`test_reset_clears_pair_sims_and_a_fresh_run_starts_clean`,
+`test_reset_leaves_other_pairs_untouched`) and `date_sim_test.dart` (the
+continue chooser C, the Stop control D, and the Start-over/reset flow E), with
+layout-matrix entries for the chooser sheet and the reset dialog.
 
 **Re-opening a finished sim (R2-H6).** A completed sim is persistent and
 re-openable — it never has to be re-run to be seen again. On create the doc

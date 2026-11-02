@@ -74,6 +74,7 @@ class DateSimDoc {
     this.summary = '',
     this.moderationFlagged = false,
     this.usageCapped = false,
+    this.stopped = false,
     this.errorMessage = '',
   });
 
@@ -88,6 +89,10 @@ class DateSimDoc {
   final String summary;
   final bool moderationFlagged;
   final bool usageCapped;
+
+  /// True when the user STOPPED the run early; the partial transcript is kept
+  /// and still scored over what was produced.
+  final bool stopped;
   final String errorMessage;
 
   bool get hasVerdict =>
@@ -112,6 +117,7 @@ class DateSimDoc {
       summary: (verdict['summary'] as String?) ?? '',
       moderationFlagged: ((m['moderation'] as Map?)?['flagged']) == true,
       usageCapped: m['usage_capped'] == true,
+      stopped: m['stopped'] == true,
       errorMessage: (err['message'] as String?) ?? '',
     );
   }

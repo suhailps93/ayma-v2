@@ -265,6 +265,17 @@ async def _fail(sim_ref, code: str, reason: str) -> None:
         logger.warning("date-sim could not record failure", exc_info=True)
 
 
+async def _cancel_requested(sim_ref) -> bool:
+    """True when the user asked to STOP this run (``cancel_requested`` on the sim
+    doc, set by the ``/stop`` endpoint). Checked between turns so an in-flight
+    run halts and keeps what's done. A read failure never forces a stop."""
+    try:
+        snap = await asyncio.to_thread(sim_ref.get)
+    except Exception:  # noqa: BLE001 - a transient read failure must not cancel
+        return False
+    return bool((snap.to_dict() or {}).get("cancel_requested"))
+
+
 async def _generate_turns(
     sim_ref,
     self_ctx: PersonaContext,
@@ -278,22 +289,30 @@ async def _generate_turns(
     session_id: str,
     uid: str,
     deadline: float,
-) -> bool:
+) -> tuple[bool, bool]:
     """Produce ``count`` more alternating turns starting at absolute index
     ``start`` (``turns``/``transcript`` carry any prior turns), appending each to
     both lists and writing its ``messages/{seq:03d}`` doc the instant it is
     produced. The role of turn ``i`` is fixed by its absolute parity (the user
     opens at 0), so a continuation resumes the alternation exactly where it left
-    off. Returns ``usage_capped``.
+    off. Returns ``(usage_capped, cancelled)``.
+
+    Checks for a user STOP request (``cancel_requested``) before each turn and
+    halts cleanly if set, keeping what's already produced (``cancelled``).
 
     Raises :class:`asyncio.TimeoutError` past ``deadline`` and
     :class:`token_ledger.TokenCapExceeded` only when it runs out of credits with
     an empty transcript (otherwise it stops and flags ``usage_capped``)."""
     usage_capped = False
+    cancelled = False
     for i in range(start, start + count):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise asyncio.TimeoutError()
+        # Honor a user STOP between turns — stop generating, keep what's done.
+        if await _cancel_requested(sim_ref):
+            cancelled = True
+            break
         role = ROLE_YOU if i % 2 == 0 else ROLE_THEM
         if role == ROLE_YOU:
             ctx, speaker, other = self_ctx, self_name, other_name
@@ -330,7 +349,7 @@ async def _generate_turns(
                 "at": datetime.now(timezone.utc),
             },
         )
-    return usage_capped
+    return usage_capped, cancelled
 
 
 async def _finalize(
@@ -341,6 +360,7 @@ async def _finalize(
     usage_capped: bool,
     uid: str,
     deadline: float,
+    stopped: bool = False,
 ) -> tuple[dict, dict, bool]:
     """Moderate the whole transcript (advisory, never blocks), re-score it, and
     write ``status: done`` with the fresh verdict + moderation. Returns
@@ -371,6 +391,10 @@ async def _finalize(
             "verdict": verdict,
             "moderation": mod,
             "usage_capped": usage_capped,
+            # True when the user STOPPED the run early (partial transcript kept,
+            # still scored over what was produced). Cleared on a fresh continue.
+            "stopped": stopped,
+            "cancel_requested": False,
             # The completion timestamp a reopen uses to surface the LATEST
             # finished sim for a candidate (newest-by-``completed_at``).
             "completed_at": datetime.now(timezone.utc),
@@ -460,6 +484,7 @@ async def run_simulation(
             "estimate": estimate_credits(cap),
             "persona": persona,
             "banner": banner,
+            "cancel_requested": False,
             "created_at": datetime.now(timezone.utc),
         },
     )
@@ -469,7 +494,7 @@ async def run_simulation(
     deadline = time.monotonic() + RUN_DEADLINE_S
 
     try:
-        usage_capped = await _generate_turns(
+        usage_capped, cancelled = await _generate_turns(
             sim_ref,
             self_ctx,
             match_ctx,
@@ -484,7 +509,14 @@ async def run_simulation(
             deadline,
         )
         verdict, mod, usage_capped = await _finalize(
-            sim_ref, self_name, other_name, transcript, usage_capped, uid, deadline
+            sim_ref,
+            self_name,
+            other_name,
+            transcript,
+            usage_capped,
+            uid,
+            deadline,
+            stopped=cancelled,
         )
     except token_ledger.TokenCapExceeded:
         await _fail(sim_ref, "out_of_credits", "Out of credits.")
@@ -515,6 +547,7 @@ async def run_simulation(
         "summary": verdict["summary"],
         "moderation": mod,
         "usage_capped": usage_capped,
+        "stopped": cancelled,
     }
 
 
@@ -592,14 +625,20 @@ async def continue_simulation(
     start = len(existing)
     deadline = time.monotonic() + RUN_DEADLINE_S
 
-    # Back to running while the extra turns + fresh read are produced.
+    # Back to running while the extra turns + fresh read are produced. Clear any
+    # stale STOP flag from an earlier run so the continuation isn't cancelled
+    # before it starts.
     await _write(
         sim_ref.update,
-        {"status": STATUS_RUNNING, "continued_at": datetime.now(timezone.utc)},
+        {
+            "status": STATUS_RUNNING,
+            "cancel_requested": False,
+            "continued_at": datetime.now(timezone.utc),
+        },
     )
 
     try:
-        usage_capped = await _generate_turns(
+        usage_capped, cancelled = await _generate_turns(
             sim_ref,
             self_ctx,
             match_ctx,
@@ -614,7 +653,14 @@ async def continue_simulation(
             deadline,
         )
         verdict, mod, usage_capped = await _finalize(
-            sim_ref, self_name, other_name, transcript, usage_capped, uid, deadline
+            sim_ref,
+            self_name,
+            other_name,
+            transcript,
+            usage_capped,
+            uid,
+            deadline,
+            stopped=cancelled,
         )
     except token_ledger.TokenCapExceeded:
         await _fail(sim_ref, "out_of_credits", "Out of credits.")
@@ -643,7 +689,41 @@ async def continue_simulation(
         "summary": verdict["summary"],
         "moderation": mod,
         "usage_capped": usage_capped,
+        "stopped": cancelled,
     }
+
+
+async def stop_simulation(db, uid: str, sim_id: str) -> None:
+    """Request a STOP of an in-flight simulation: set ``cancel_requested`` on the
+    sim doc. The running generator picks it up between turns and halts, keeping
+    what's already produced and scoring over it. A no-op (but not an error) when
+    the run has already finished. Raises :class:`ValueError` when the sim is
+    missing."""
+    sim_ref = _sims(db, uid).document(sim_id)
+    snap = await asyncio.to_thread(sim_ref.get)
+    if not getattr(snap, "exists", False):
+        raise ValueError("no such simulation")
+    await _write(sim_ref.update, {"cancel_requested": True})
+
+
+async def reset_pair_sims(db, uid: str, other_uid: str) -> int:
+    """Discard EVERY stored simulation (transcript + report) between ``uid`` and
+    ``other_uid`` so the next sim for the pair starts from scratch. Deletes each
+    sim's ``messages`` subcollection and then the sim doc. Returns how many sims
+    were removed."""
+
+    def _delete() -> int:
+        coll = _sims(db, uid)
+        removed = 0
+        for sim in coll.where("other_uid", "==", other_uid).stream():
+            sim_ref = sim.reference
+            for msg in sim_ref.collection("messages").stream():
+                msg.reference.delete()
+            sim_ref.delete()
+            removed += 1
+        return removed
+
+    return await asyncio.to_thread(_delete)
 
 
 # --------------------------------------------------------------------------- #
@@ -742,6 +822,35 @@ async def date_sim(
         raise HTTPException(
             status_code=502, detail=f"Date simulation failed: {exc}"
         ) from exc
+
+
+@router.post("/date-sim/{sim_id}/stop")
+async def date_sim_stop(
+    sim_id: str, caller: Caller = Depends(require_caller)
+) -> dict[str, object]:
+    """STOP an in-flight simulation. Flags the caller's own sim doc; the running
+    generator halts between turns, keeps what's done and scores it. Idempotent —
+    a stop on an already-finished run is a harmless no-op."""
+    if not _SIM_ID_RE.match(sim_id):
+        raise HTTPException(status_code=422, detail="Invalid sim_id.")
+    try:
+        await stop_simulation(get_db(), caller.uid, sim_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="No simulation to stop.") from exc
+    return {"sim_id": sim_id, "status": "stopping"}
+
+
+@router.delete("/date-sim/pair/{other_uid}")
+async def date_sim_reset(
+    other_uid: str, caller: Caller = Depends(require_caller)
+) -> dict[str, object]:
+    """RESET the pair: discard every stored simulation (transcript + report)
+    between the caller and ``other_uid`` so a new sim starts from scratch."""
+    other = other_uid.strip()
+    if not other:
+        raise HTTPException(status_code=422, detail="Invalid match.")
+    removed = await reset_pair_sims(get_db(), caller.uid, other)
+    return {"deleted": removed}
 
 
 @router.post(

@@ -489,6 +489,19 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
           ),
         );
       },
+    // The date-sim "keep the conversation going" chooser (C): a bottom sheet
+    // of +3/+5/+10 options, each with its rough credit cost.
+    'date-sim continue chooser sheet': (context) async {
+      await showSimContinueChooser(
+        context,
+        estimate: const {3: 40, 5: 70, 10: 130},
+      );
+    },
+    // The date-sim "start over" (reset, E) confirmation dialog, with a long
+    // match name to stress wrapping.
+    'date-sim reset confirm dialog': (context) async {
+      await showSimResetConfirm(context, name: kLongName);
+    },
     // The interactive feature-tour coach-mark overlay (§11.2a): a dimming
     // scrim + spotlight cutout around a (dummy) target near the bottom, with
     // its anchored callout above. Long copy + scale 2.0 stress the callout's

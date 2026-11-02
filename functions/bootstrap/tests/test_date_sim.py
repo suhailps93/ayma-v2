@@ -679,3 +679,151 @@ def test_continue_blocked_when_a_party_opts_out():
     finally:
         practice_llm.clear_override()
     assert exc.value.who == "match"
+
+
+# --- C: "keep the conversation going" runs the USER-CHOSEN count ----------- #
+def test_continue_runs_the_chosen_count():
+    """C: the extend amount is a parameter end-to-end — a chosen count of 3 adds
+    exactly 3 more turns (not a fixed amount), at the next absolute seqs."""
+    db = _seeded_db()
+    _fake_personas()
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_chosen_1"))
+        asyncio.run(date_sim.continue_simulation(db, VIEWER, "sim_chosen_1", 3))
+    finally:
+        practice_llm.clear_override()
+    _, msgs = _sim_docs(db, "sim_chosen_1")
+    assert [m["seq"] for m in msgs] == [0, 1, 2, 3, 4, 5, 6]  # 4 + chosen 3
+
+
+# --- D: STOP halts further turns mid-run and keeps the partial ------------- #
+def _sim_ref(db, sim_id):
+    return (
+        db.collection("users").document(VIEWER).collection("date_sims").document(sim_id)
+    )
+
+
+def test_stop_halts_further_turns_and_keeps_partial():
+    """D: a stop request (``cancel_requested``) set mid-run halts the generator
+    between turns; the partial transcript is kept and scored, status is ``done``
+    with ``stopped`` true."""
+    db = _seeded_db()
+    sim_ref = _sim_ref(db, "sim_stop_1")
+    produced = {"n": 0}
+
+    async def fake_text(system, message, uid, feature, session_id):
+        produced["n"] += 1
+        if produced["n"] == 3:  # the user taps STOP after the 3rd turn
+            sim_ref.update({"cancel_requested": True})
+        return "a friendly line"
+
+    async def fake_json(system, contents, schema, uid, feature):
+        return {"score": 55, "score_label": "cut short", "summary": "stopped early"}
+
+    practice_llm.set_override(text=fake_text, json=fake_json)
+    try:
+        out = asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 10, "sim_stop_1"))
+    finally:
+        practice_llm.clear_override()
+
+    parent, msgs = _sim_docs(db, "sim_stop_1")
+    assert len(msgs) == 3  # stopped after what was done — no further turns
+    assert parent["status"] == "done"
+    assert parent["stopped"] is True
+    assert parent["verdict"]["score"] == 55  # still scored over the partial
+    assert out["stopped"] is True
+
+
+def test_stop_simulation_sets_the_flag_and_404s_on_missing():
+    db = _seeded_db()
+    _fake_personas()
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_stop_api"))
+    finally:
+        practice_llm.clear_override()
+    asyncio.run(date_sim.stop_simulation(db, VIEWER, "sim_stop_api"))
+    assert _sim_ref(db, "sim_stop_api").get().to_dict()["cancel_requested"] is True
+    with pytest.raises(ValueError):
+        asyncio.run(date_sim.stop_simulation(db, VIEWER, "no_such_sim"))
+
+
+def test_continue_after_stop_clears_the_flag_and_runs():
+    """A continuation after a STOP must reset the flag first, or it would cancel
+    itself before producing a single new turn."""
+    db = _seeded_db()
+    sim_ref = _sim_ref(db, "sim_stop_cont")
+    produced = {"n": 0}
+
+    async def fake_text(system, message, uid, feature, session_id):
+        produced["n"] += 1
+        if produced["n"] == 3:
+            sim_ref.update({"cancel_requested": True})
+        return "a friendly line"
+
+    async def fake_json(system, contents, schema, uid, feature):
+        return {"score": 60, "score_label": "ok", "summary": "fine"}
+
+    practice_llm.set_override(text=fake_text, json=fake_json)
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 10, "sim_stop_cont"))
+        _, after_stop = _sim_docs(db, "sim_stop_cont")
+        assert len(after_stop) == 3
+        asyncio.run(date_sim.continue_simulation(db, VIEWER, "sim_stop_cont", 4))
+    finally:
+        practice_llm.clear_override()
+    _, msgs = _sim_docs(db, "sim_stop_cont")
+    assert [m["seq"] for m in msgs] == [0, 1, 2, 3, 4, 5, 6]  # 3 + 4 new turns
+    assert _sim_ref(db, "sim_stop_cont").get().to_dict()["stopped"] is False
+
+
+# --- E: RESET discards the pair's sims so a fresh run starts clean --------- #
+def test_reset_clears_pair_sims_and_a_fresh_run_starts_clean():
+    db = _seeded_db()
+    _fake_personas()
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_reset_1"))
+    finally:
+        practice_llm.clear_override()
+    _, msgs = _sim_docs(db, "sim_reset_1")
+    assert len(msgs) == 4
+
+    removed = asyncio.run(date_sim.reset_pair_sims(db, VIEWER, MAYA))
+    assert removed == 1
+    ref = _sim_ref(db, "sim_reset_1")
+    assert not ref.get().exists  # the report doc is gone
+    assert list(ref.collection("messages").stream()) == []  # and its transcript
+    assert (
+        list(
+            db.collection("users")
+            .document(VIEWER)
+            .collection("date_sims")
+            .where("other_uid", "==", MAYA)
+            .stream()
+        )
+        == []
+    )
+
+    # A fresh run for the same pair starts clean from seq 0.
+    _fake_personas()
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_reset_2"))
+    finally:
+        practice_llm.clear_override()
+    _, fresh = _sim_docs(db, "sim_reset_2")
+    assert [m["seq"] for m in fresh] == [0, 1, 2, 3]
+
+
+def test_reset_leaves_other_pairs_untouched():
+    db = _seeded_db()
+    _fake_personas()
+    try:
+        asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_reset_3"))
+    finally:
+        practice_llm.clear_override()
+    # A sim recorded against a DIFFERENT match.
+    other = _sim_ref(db, "other_pair")
+    other.set({"other_uid": "someone_else", "status": "done"})
+
+    removed = asyncio.run(date_sim.reset_pair_sims(db, VIEWER, MAYA))
+    assert removed == 1
+    assert other.get().exists  # the other pair's sim survives

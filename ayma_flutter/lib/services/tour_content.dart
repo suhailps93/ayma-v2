@@ -131,6 +131,14 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.exploreTab,
   ),
   TourFeature(
+    featureId: 'sim_controls',
+    headline: 'Run the sim your way',
+    subtitle: 'In a simulated date you can stop it mid-conversation, choose how '
+        'many more messages to add when you keep it going, or start over fresh.',
+    icon: Icons.tune_rounded,
+    anchorId: TourAnchors.exploreTab,
+  ),
+  TourFeature(
     featureId: 'chat_coach',
     headline: 'Your wingman in every chat',
     subtitle: "Stuck for words? In Messages, Ayma coaches you line by line.",
