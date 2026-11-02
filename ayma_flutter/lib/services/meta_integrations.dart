@@ -25,17 +25,49 @@ class MetaIntegrations {
   /// Current value; widgets read this synchronously. Defaults to OFF.
   static final ValueNotifier<bool> enabled = ValueNotifier<bool>(false);
 
+  static Completer<void>? _readyCompleter;
+
+  /// Awaits readiness of the cached meta integrations flag.
+  static Future<void> ensureReady() async {
+    if (_readyCompleter != null) {
+      await _readyCompleter!.future;
+      return;
+    }
+    await loadCached();
+  }
+
   /// Only a literal `enabled: true` turns the integrations on.
   static bool parse(Map<String, dynamic>? data) => data?['enabled'] == true;
+
+  /// Synchronously loads flag from preloaded preferences.
+  static void loadFromPrefs(SharedPreferences prefs) {
+    try {
+      enabled.value = prefs.getBool(_kEnabled) ?? false;
+    } catch (e) {
+      _log.warning('flag cache unreadable: $e');
+      enabled.value = false;
+    } finally {
+      if (_readyCompleter == null) {
+        _readyCompleter = Completer<void>()..complete();
+      } else if (!_readyCompleter!.isCompleted) {
+        _readyCompleter!.complete();
+      }
+    }
+  }
 
   /// Applies the cached value from the last successful [refresh].
   static Future<void> loadCached() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      enabled.value = prefs.getBool(_kEnabled) ?? false;
+      loadFromPrefs(prefs);
     } catch (e) {
       _log.warning('flag cache unreadable: $e');
       enabled.value = false;
+      if (_readyCompleter == null) {
+        _readyCompleter = Completer<void>()..complete();
+      } else if (!_readyCompleter!.isCompleted) {
+        _readyCompleter!.complete();
+      }
     }
   }
 

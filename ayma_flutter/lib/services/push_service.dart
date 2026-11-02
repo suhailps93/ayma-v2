@@ -3,8 +3,12 @@ import 'dart:async';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 
+import '../core/dag/launch_intent_resolver.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
+import 'deep_link_queue.dart';
 import 'notification_service.dart';
 
 /// The slice of Firebase Cloud Messaging [PushService] needs — pulled behind an
@@ -95,6 +99,13 @@ class PushService {
   final FcmTokens _tokens;
   final ApiClient _api;
 
+  final Completer<void> _readyCompleter = Completer<void>();
+  Future<void> ensureReady() => _readyCompleter.future;
+
+  Future<void> initDeferred() async {
+    if (!_readyCompleter.isCompleted) _readyCompleter.complete();
+  }
+
   StreamSubscription<String>? _refreshSub;
   StreamSubscription<Map<String, dynamic>>? _tapSub;
   String? _lastRegistered;
@@ -151,9 +162,13 @@ class PushService {
   /// both the cold-start tap and taps while running, on Android and iOS.
   Future<void> listenForTaps({
     required void Function(String path) navigate,
-    required String Function(String deepLink) resolveRoute,
+    String Function(String deepLink)? resolveRoute,
     Future<void> Function(Map<String, dynamic> data)? markRead,
+    DeepLinkQueue? queue,
+    AuthService? authService,
+    GoRouter? router,
   }) async {
+    if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     final markReadFor = markRead ??
         (Map<String, dynamic> data) async {
           try {
@@ -165,6 +180,16 @@ class PushService {
 
     void route(Map<String, dynamic> data) {
       unawaited(markReadFor(data));
+      if (queue != null && router != null) {
+        final intent = LaunchIntentResolver.classify(data);
+        unawaited(queue.handleIntent(
+          intent,
+          router: router,
+          authService: authService ?? AuthService.instance,
+          navigate: navigate,
+        ));
+        return;
+      }
       var link = data['deep_link'] as String?;
       if (link == null || link.isEmpty) {
         // A DM push always names its thread; if the deep link was lost, the
@@ -173,7 +198,9 @@ class PushService {
         if (data['type'] != 'dm' || sender == null || sender.isEmpty) return;
         link = 'profile/$sender';
       }
-      navigate(resolveRoute(link));
+      if (resolveRoute != null) {
+        navigate(resolveRoute(link));
+      }
     }
 
     try {

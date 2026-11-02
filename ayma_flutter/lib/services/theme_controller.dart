@@ -11,6 +11,17 @@ class ThemeController extends ChangeNotifier {
   ThemeMode _mode;
   ThemeMode get mode => _mode;
 
+  /// Hydrate from preloaded preferences (synchronous fast path).
+  void loadFromPrefs(SharedPreferences prefs) {
+    try {
+      final raw = prefs.getString(_key);
+      _mode = _parse(raw) ?? _mode;
+      notifyListeners();
+    } catch (_) {
+      // Keep current mode on read error
+    }
+  }
+
   /// Load the saved preference. Defaults to dark (founder 2026-09-22: dark
   /// mode is the app default for anyone who hasn't explicitly chosen
   /// otherwise) — a user can still pick light or system from Settings, and
@@ -19,9 +30,8 @@ class ThemeController extends ChangeNotifier {
   /// sees.
   Future<void> load() async {
     try {
-      final raw = (await SharedPreferences.getInstance()).getString(_key);
-      _mode = _parse(raw) ?? _mode;
-      notifyListeners();
+      final prefs = await SharedPreferences.getInstance();
+      loadFromPrefs(prefs);
     } catch (_) {
       // No storage (tests / restricted context) — keep the default.
     }

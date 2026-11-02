@@ -65,16 +65,26 @@ class SentryFlag {
     );
   }
 
-  /// The cached flag from the last successful [refresh]; the default (ON) when
-  /// there is none or the store is unreadable.
-  static Future<SentryFlag> loadCached() async {
+  /// In-memory parse from preloaded preferences.
+  static SentryFlag loadFromPrefs(SharedPreferences prefs) {
     try {
-      final prefs = await SharedPreferences.getInstance();
       return SentryFlag.fromMap({
         'enabled': prefs.getBool(_kEnabled),
         'traces_sample_rate': prefs.getDouble(_kTraces),
         'error_sample_rate': prefs.getDouble(_kErrors),
       });
+    } catch (e) {
+      _log.warning('flag cache unreadable: $e');
+      return const SentryFlag();
+    }
+  }
+
+  /// The cached flag from the last successful [refresh]; the default (ON) when
+  /// there is none or the store is unreadable.
+  static Future<SentryFlag> loadCached() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return loadFromPrefs(prefs);
     } catch (e) {
       _log.warning('flag cache unreadable: $e');
       return const SentryFlag();

@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/auth_service.dart';
+import 'package:ayma_flutter/services/deep_link_queue.dart';
 import 'package:ayma_flutter/services/notification_service.dart';
 import 'package:ayma_flutter/services/push_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
 
@@ -189,6 +193,50 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(routed, isEmpty);
+    });
+
+    test('ensureReady completes on initDeferred', () async {
+      final svc = PushService(tokens: _FakeFcm(), apiClient: _api((_) {}));
+      var completed = false;
+      unawaited(svc.ensureReady().then((_) => completed = true));
+      expect(completed, isFalse);
+
+      await svc.initDeferred();
+      expect(completed, isTrue);
+    });
+
+    test('listenForTaps delegates to DeepLinkQueue', () async {
+      final fcm = _FakeFcm();
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final queue = DeepLinkQueue.instance;
+      final mockAuth = MockFirebaseAuth(
+        mockUser: MockUser(uid: 'user_456'),
+        signedIn: true,
+      );
+      final authService = AuthService(auth: mockAuth);
+      authService.notifyAuthSessionRestored(MockUser(uid: 'user_456'));
+
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(path: '/', builder: (_, __) => const SizedBox()),
+          GoRoute(path: '/profile/plan', builder: (_, __) => const SizedBox()),
+        ],
+      );
+
+      final routed = <String>[];
+      await svc.listenForTaps(
+        navigate: routed.add,
+        queue: queue,
+        authService: authService,
+        router: router,
+      );
+
+      queue.notifyNavigationSettled();
+      fcm.tap({'deep_link': 'plan'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(routed, ['/profile/plan']);
     });
   });
 

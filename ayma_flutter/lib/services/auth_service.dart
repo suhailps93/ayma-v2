@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
@@ -14,9 +17,29 @@ class AuthService {
         _profileService =
             profileService ?? ProfileService(auth: auth ?? FirebaseAuth.instance);
 
+  static final AuthService instance = AuthService();
+
   final FirebaseAuth _auth;
   final ProfileService _profileService;
   bool _googleInitialized = false;
+
+  Completer<User?> _authReadyCompleter = Completer<User?>();
+
+  /// Hard Invariant: Awaits confirmed KeyStore/Keychain token restoration.
+  /// Resolves to non-null User, or null if signed out. NO timeout fallback.
+  Future<User?> ensureAuthReady() => _authReadyCompleter.future;
+
+  /// Explicit notification when auth state change settles (called by StartupDAG/main listener).
+  void notifyAuthSessionRestored(User? user) {
+    if (!_authReadyCompleter.isCompleted) {
+      _authReadyCompleter.complete(user);
+    }
+  }
+
+  @visibleForTesting
+  void resetForTest() {
+    _authReadyCompleter = Completer<User?>();
+  }
 
   /// Email / password — sign in to an *existing* account. Throws
   /// [FirebaseAuthException] (`user-not-found`, `wrong-password`,

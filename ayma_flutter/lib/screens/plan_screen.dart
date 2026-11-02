@@ -178,6 +178,7 @@ class _PlanScreenState extends State<PlanScreen> {
   }
 
   Future<_PlanData> _load() async {
+    await _rc.ensureReady();
     final prior = _lastOk;
     if (mounted) {
       setState(() {
