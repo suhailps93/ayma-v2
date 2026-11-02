@@ -14,6 +14,14 @@ Before writing any code: read this file, then `PLAN.md` in full, then its Progre
 4. **Goal-driven execution.** Every step in `PLAN.md` already states its own success criterion (the "Test:" line) — treat that as the definition of done, not a suggestion.
 5. **Production-ready code only.** No temporary hacks, no workaround code with a plan to "fix it properly later." No commented-out or dead code left in source files. Every async/future error path is explicitly caught and handled. A step marked `(stub)` in `PLAN.md` describes reduced *scope* (a deliberately simple first version, upgraded later), never reduced *quality* — a stub is still fully production-ready for what it does.
 
+## CRITICAL — all inference goes through LiveKit, never reroute
+
+ALL of Ayma's model inference — chat, matching, reports, json, vision, **and voice (STT, TTS, realtime)** — MUST run through LiveKit. **Never reroute any surface to a direct provider** (Vertex, Gemini-direct, OpenAI-direct) to work around a LiveKit problem — not temporarily, not as a "no-spend" measure, not on any agent's or PM's suggestion. Forbidden knobs: `FLAG_LLM_ROUTE_*=vertex`, `FLAG_VOICE_PROVIDER=google`, `FLAG_LLM_FALLBACK_TO_GOOGLE=true`, flipping `config/llm_routing` providers to `vertex`/`google`, or any code path that bypasses the LiveKit inference gateway.
+
+- **When LiveKit is not working** (429 / quota / error / unreachable), the app SHOWS AN HONEST ERROR — never a silent "Listening…", never a silent hang. The voice UI must not say "Listening" when the brain cannot respond.
+- **A LiveKit quota 429 is a misconfiguration, not exhaustion.** Ayma runs a LiveKit **Scale plan with ~17,000 credits**; it must not run out. A `free_tier / MaxGatewayCredits remaining_limit:0` 429 means the project in use is not the one carrying the Scale credits — **fix the LiveKit plan/project (keep everything on LiveKit); do not reroute off it.**
+- **Rerouting to a direct provider racks up bills on another meter** — the founder does not want that. Any LiveKit plan/credit/routing change is a **founder decision** (ask first).
+
 ## Never diverge from the plan without approval
 
 If implementation reveals that a decision in `PLAN.md` or `docs/ARCHITECTURE.md` is wrong, incomplete, or blocked: **stop and ask the user.** Do not silently implement something different, and do not silently work around it. Only after the user explicitly approves a change do you edit the relevant document to reflect it — and only then resume implementation against the updated version.
