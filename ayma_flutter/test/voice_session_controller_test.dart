@@ -1301,4 +1301,118 @@ void main() {
       await c.stop();
     });
   });
+
+  // --- Honest error instead of a silent "Listening" ------------------------ //
+  // AGENTS.md: when LiveKit (STT/TTS/LLM gateway) is not working, the voice UI
+  // must SHOW AN HONEST ERROR, never a silent "Listening…". The gap: the agent
+  // worker joins the LiveKit room and publishes a (silent) track even when the
+  // inference gateway is 429/drained, so `agentReady` fires and the phase goes
+  // `live` ("Listening…") — but no transcript / speech / tool event ever
+  // follows. Without the no-first-response guard the call hangs on "Listening"
+  // until the 4-minute idle guard ends it with a benign notice.
+  group('honest error, never a silent "Listening"', () {
+    test(
+        'a live session that never produces a first response surfaces an '
+        'honest error, not a stuck "Listening"', () async {
+      final transport = FakeVoiceTransport();
+      final reporter = _RecordingReporter();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        sessionId: 's-test',
+        apiClient: _api(),
+        transportFactory: () => transport,
+        responseGuardTimeout: const Duration(milliseconds: 40),
+        errorReporter: reporter,
+      );
+
+      await _startLive(c, transport);
+      // The worker joined the room (agentReady), so the UI would say
+      // "Listening…" — but the gateway is down, so nothing ever comes back.
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(c.isListening, isTrue);
+
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      // Pre-fix this stayed `live` forever (stuck on "Listening"). Now it fails
+      // loudly within the bound with an honest, retry-able message.
+      expect(c.phase, VoiceSessionPhase.error);
+      expect(c.isListening, isFalse);
+      expect(c.errorMessage, contains('voice service'));
+      expect(c.cappedError, isFalse);
+      expect(transport.disconnectCalls, 1); // the dead session was torn down
+      expect(
+          reporter.reports.map((r) => r.reason), contains('voice_no_response'));
+    });
+
+    test(
+        'a genuine first response (speech) cancels the guard — a working call '
+        'stays live and never errors', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+        responseGuardTimeout: const Duration(milliseconds: 40),
+      );
+
+      await _startLive(c, transport);
+      // Ayma's opener lands well inside the bound.
+      transport.agentSpeakingController.add(true);
+      await Future<void>.delayed(Duration.zero);
+
+      // Longer than the guard: a healthy call must not be falsely errored.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(c.errorMessage, isNull);
+      await c.stop();
+    });
+
+    test(
+        'an agent_transcript also counts as a first response and keeps the '
+        'call live', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+        responseGuardTimeout: const Duration(milliseconds: 40),
+      );
+
+      await _startLive(c, transport);
+      transport.transcriptsController.add(const TranscriptSegment(
+        topic: 'agent_transcript',
+        text: 'Hey — good to hear you.',
+        isFinal: true,
+      ));
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(c.errorMessage, isNull);
+      await c.stop();
+    });
+
+    test('"Listening" (isListening) is false until the agent is ready, true '
+        'only after', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+      );
+
+      await c.start();
+      // Room connected + mic publishing, but the agent has NOT joined: the UI
+      // shows "Waking Ayma…", and we are explicitly not yet listening.
+      expect(c.phase, VoiceSessionPhase.waking);
+      expect(c.isListening, isFalse);
+
+      transport.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(c.isListening, isTrue);
+      await c.stop();
+    });
+  });
 }
