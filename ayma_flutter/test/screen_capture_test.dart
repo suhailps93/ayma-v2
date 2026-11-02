@@ -426,7 +426,9 @@ void main() {
     handle.dispose();
   });
 
-  testWidgets('scroll_to_bottom on a growing list stops at the cap, honestly',
+  testWidgets(
+      'scroll_to_bottom on a growing list stops EARLY (growth-capped), '
+      'honestly — not the full step cap (GW-SCROLL variant B: Explore)',
       (tester) async {
     final handle = tester.ensureSemantics();
     await tester.pumpWidget(const MaterialApp(home: _GrowingList()));
@@ -439,9 +441,14 @@ void main() {
         control: list.id, label: list.label, op: 'scroll_to_bottom');
     expect(r.ok, isTrue, reason: r.reason);
     expect(r.result, contains('more content may remain'));
-    expect(r.result,
-        contains('Stopped after $kScrollToEndMaxSteps scrolls'));
     expect(r.result, isNot(contains('Reached the bottom')));
+    // The paginated list's end keeps running away; the growth cap stops it
+    // well before the full step cap, so the op returns inside the backend's
+    // ack window instead of grinding all kScrollToEndMaxSteps (which overran
+    // the bound and evaporated the turn). Parse the "Stopped after N" count.
+    final n = int.parse(
+        RegExp(r'Stopped after (\d+) scrolls').firstMatch(r.result)!.group(1)!);
+    expect(n, lessThan(kScrollToEndMaxSteps), reason: 'stopped early: $n');
     handle.dispose();
   });
 

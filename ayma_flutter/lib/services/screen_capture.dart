@@ -461,6 +461,19 @@ const _scrollEndOps = {'scroll_to_bottom', 'scroll_to_top'};
 /// or paginated list never truly ends).
 const int kScrollToEndMaxSteps = 50;
 
+/// How many substantial end-extent growths (a paginated list loading its next
+/// page as we approach the bottom) [_scrollToEnd] tolerates before it concludes
+/// the list has no reachable end and stops honestly. A finite list's extent is
+/// stable, so this never fires for it — only a growing/paginated list (Explore)
+/// trips it, well before the step cap, so the op returns inside the backend's
+/// ack window instead of grinding all [kScrollToEndMaxSteps] (GW-SCROLL variant
+/// B: an Explore scroll overran the ack bound and the whole turn evaporated).
+const int kScrollToEndMaxGrowths = 3;
+
+/// The minimum end-extent jump that counts as "the list grew a page" (filters
+/// out small reflow from images decoding on a finite list).
+const double _kScrollGrowthThreshold = 200;
+
 String _norm(String s) => _clean(s).toLowerCase();
 
 bool _sameLabel(String a, String b) {
@@ -777,6 +790,8 @@ class ScreenCapture {
   Future<({bool reachedEnd, int steps})> _scrollToEnd(
       SemanticsOwner owner, int nodeId, SemanticsAction action) async {
     var steps = 0;
+    var growths = 0;
+    double? lastMax;
     for (var i = 0; i < kScrollToEndMaxSteps; i++) {
       final before = _nodeData(nodeId);
       if (before == null || !before.hasAction(action)) {
@@ -792,6 +807,21 @@ class ScreenCapture {
       final a = before.scrollPosition, b = after.scrollPosition;
       if (a != null && b != null && (a - b).abs() < 0.5) {
         return (reachedEnd: true, steps: steps);
+      }
+      // A paginated list extends its end as we approach it, so it never settles
+      // and would grind the full step cap — long enough to overrun the backend
+      // ack bound and lose the turn. Count the page-loads; once the end has run
+      // away this many times, stop honestly ("more may remain") well in time. A
+      // finite list's extent is stable, so this never fires for it.
+      final mx = after.scrollExtentMax;
+      if (mx != null) {
+        if (lastMax != null && mx > lastMax + _kScrollGrowthThreshold) {
+          growths++;
+          if (growths >= kScrollToEndMaxGrowths) {
+            return (reachedEnd: false, steps: steps);
+          }
+        }
+        lastMax = mx;
       }
     }
     return (reachedEnd: false, steps: steps);

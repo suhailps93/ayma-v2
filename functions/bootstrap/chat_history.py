@@ -140,6 +140,26 @@ def reply_for_client_id(db, uid: str, client_msg_id: str) -> dict | None:
     return None
 
 
+def user_turn_exists(db, uid: str, client_msg_id: str) -> bool:
+    """Whether the *user* row for ``client_msg_id`` is already persisted.
+
+    The idempotency read behind persisting the user turn at turn START (so a
+    slow/failed turn never loses the user's message): a retry of a send whose
+    first attempt already recorded the user row must not record it twice."""
+    if not uid or not client_msg_id:
+        return False
+    try:
+        docs = list(
+            _user(db, uid)
+            .collection("chat_messages")
+            .where("client_msg_id", "==", str(client_msg_id))
+            .stream()
+        )
+    except Exception:  # noqa: BLE001 - a read hiccup must never fail /chat
+        return False
+    return any(str((d.to_dict() or {}).get("role", "")) == "user" for d in docs)
+
+
 # Generated-image URL derivations, cached per path for the process lifetime —
 # the blobs are immutable (one uuid-named upload, never rewritten), so a URL
 # derived once stays right, and a history page reload doesn't re-hit Storage.

@@ -165,6 +165,98 @@ def test_chat_rejects_empty_message(monkeypatch):
     assert resp.status_code == 422
 
 
+# --- GW-SCROLL variant B: a turn must never evaporate ----------------------
+# The Explore scroll-to-end overran the ack bound → the follow-up produced no
+# reply → the whole turn vanished from history, user message and all. The turn
+# now persists the user message at START and always finalizes with an honest
+# reply, so a slow/failed turn always leaves a truthful record.
+
+def _recording_history(monkeypatch):
+    """Monkeypatch chat_history so persistence is captured in-memory and
+    ``user_turn_exists`` reflects what was recorded (so the start-persist /
+    finalize de-dup of the user turn is exercised faithfully)."""
+    import main
+
+    appended: list[tuple[str, str]] = []
+
+    def _append(_db, _uid, role, text, **_kw):
+        appended.append((role, text))
+
+    def _user_exists(_db, _uid, _cid):
+        return any(r == "user" for r, _ in appended)
+
+    monkeypatch.setattr(main.chat_history, "append", _append)
+    monkeypatch.setattr(main.chat_history, "user_turn_exists", _user_exists)
+    return appended
+
+
+def test_chat_stream_errored_turn_persists_user_and_an_honest_reply(monkeypatch):
+    import main
+
+    async def _events(_message, *_a, **_kw):
+        yield {"type": "status", "label": "Thinking…"}
+        # What the Explore scroll turn hit: the follow-up after the (timed-out)
+        # tool produced nothing and the provider raised.
+        raise RuntimeError("Gemini returned an empty response.")
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    appended = _recording_history(monkeypatch)
+    resp = client.post(
+        "/chat/stream",
+        json={"message": "scroll to the bottom", "client_msg_id": "c-evap"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    # a live client still saw an honest error…
+    assert any(e.get("type") == "error" for e in events)
+    # …but the turn did NOT evaporate: the user message + one honest ayma
+    # reply are persisted, exactly once each.
+    roles = [r for r, _ in appended]
+    assert roles.count("user") == 1, appended
+    assert ("user", "scroll to the bottom") in appended
+    assert ("ayma", main._CHAT_INCOMPLETE_REPLY) in appended
+
+
+def test_chat_errored_turn_persists_user_and_an_honest_reply(monkeypatch):
+    import main
+
+    async def _fail(_message, **_kw):
+        raise RuntimeError("Gemini returned an empty response.")
+
+    monkeypatch.setattr(gemini, "generate_reply", _fail)
+    appended = _recording_history(monkeypatch)
+    resp = client.post(
+        "/chat",
+        json={"message": "scroll to the top", "client_msg_id": "c-evap2"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == main._CHAT_INCOMPLETE_REPLY
+    roles = [r for r, _ in appended]
+    assert roles.count("user") == 1, appended
+    assert ("user", "scroll to the top") in appended
+    assert ("ayma", main._CHAT_INCOMPLETE_REPLY) in appended
+
+
+def test_chat_stream_normal_turn_persists_one_user_and_one_ayma(monkeypatch):
+    async def _events(_message, *_a, **_kw):
+        yield {"type": "reply", "text": "all set", "tools_used": []}
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    appended = _recording_history(monkeypatch)
+    resp = client.post(
+        "/chat/stream",
+        json={"message": "hey", "client_msg_id": "c-ok"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    roles = [r for r, _ in appended]
+    # start-persist + finalize must not double the user turn.
+    assert roles.count("user") == 1 and roles.count("ayma") == 1, appended
+    assert ("user", "hey") in appended and ("ayma", "all set") in appended
+
+
 def test_chat_feeds_recent_turns_into_the_system_prompt(monkeypatch):
     seen = {}
 
@@ -528,7 +620,12 @@ async def _boom_should_not_run(*_a, **_k):  # pragma: no cover
     raise AssertionError("model should not be called past the cap")
 
 
-def test_chat_502_when_gemini_fails(monkeypatch):
+def test_chat_completes_honestly_when_gemini_fails(monkeypatch):
+    # A generation failure no longer 502s and discards the turn: it completes
+    # with the honest fallback reply and persists the turn, so the user is
+    # never left with a silent non-response (GW-SCROLL variant B; founder rule).
+    import main
+
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("model exploded")
 
@@ -536,7 +633,8 @@ def test_chat_502_when_gemini_fails(monkeypatch):
     resp = client.post(
         "/chat", json={"message": "hi"}, headers=_auth(monkeypatch)
     )
-    assert resp.status_code == 502
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == main._CHAT_INCOMPLETE_REPLY
 
 
 def test_chat_appends_user_and_ayma_to_chat_history(monkeypatch):

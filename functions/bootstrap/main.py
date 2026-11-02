@@ -1672,6 +1672,29 @@ async def _persisted_turn_reply(uid: str, req: ChatRequest) -> dict | None:
     }
 
 
+def _persist_user_turn(ctx: _ChatCtx, req: ChatRequest) -> None:
+    """Persist the user's message at turn START, so a turn that is slow, errors,
+    or never produces a reply still keeps the user's message in history instead
+    of evaporating whole (GW-SCROLL variant B: an Explore scroll turn vanished
+    with no record of the user message at all). Best-effort and idempotent per
+    ``client_msg_id`` — ``_finalize_chat`` later appends the user turn only if
+    this didn't. Only runs for a tagged send (the untagged case has no retry to
+    dedup against and is left to ``_finalize_chat`` as before)."""
+    client_msg_id = (req.client_msg_id or "").strip()
+    if not client_msg_id:
+        return
+    try:
+        if chat_history.user_turn_exists(get_db(), ctx.uid, client_msg_id):
+            return
+        chat_history.append(
+            get_db(), ctx.uid, "user", req.message,
+            image_path=ctx.image_path or None,
+            client_msg_id=client_msg_id,
+        )
+    except Exception:  # noqa: BLE001 - best-effort; never fail the turn
+        logger.exception("user-turn persist failed for %s", ctx.uid)
+
+
 def _finalize_chat(
     background: BackgroundTasks,
     ctx: _ChatCtx,
@@ -1693,11 +1716,17 @@ def _finalize_chat(
         except Exception:  # noqa: BLE001
             pass
     try:
-        chat_history.append(
-            get_db(), ctx.uid, "user", req.message,
-            image_path=ctx.image_path or None,
-            client_msg_id=client_msg_id or None,
-        )
+        # The user turn is normally persisted at turn START (_persist_user_turn,
+        # so a slow/failed turn never loses it); append it here only if that
+        # didn't run (no client_msg_id, or the start write failed) — never twice.
+        if not (client_msg_id and chat_history.user_turn_exists(
+            get_db(), ctx.uid, client_msg_id
+        )):
+            chat_history.append(
+                get_db(), ctx.uid, "user", req.message,
+                image_path=ctx.image_path or None,
+                client_msg_id=client_msg_id or None,
+            )
         chat_history.append(
             get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
             image_path=ctx.photo_edit_result.get("image_path") or None,
@@ -1783,8 +1812,11 @@ async def chat(
     assert ctx is not None
 
     async def _turn() -> dict[str, object]:
+        # Persist the user message up front so a slow/failed turn never loses it.
+        _persist_user_turn(ctx, req)
         try:
             reply = await _generate_chat_reply(ctx, req)
+            reply_text, tools_used = reply.text, reply.tools_used
         except token_ledger.TokenCapExceeded:
             return {
                 "reply": _USAGE_CAPPED_REPLY,
@@ -1792,12 +1824,15 @@ async def chat(
                 "fallback_form": False,
                 "usage_capped": True,
             }
+        except Exception:  # noqa: BLE001 - complete honestly, never evaporate
+            logger.exception("chat turn failed for %s", ctx.uid)
+            reply_text, tools_used = _CHAT_INCOMPLETE_REPLY, []
         finalize_bg = BackgroundTasks()
-        _finalize_chat(finalize_bg, ctx, req, reply.text, reply.tools_used)
+        _finalize_chat(finalize_bg, ctx, req, reply_text, tools_used)
         _spawn_turn(finalize_bg())
         return {
-            "reply": reply.text,
-            "tools_used": reply.tools_used,
+            "reply": reply_text,
+            "tools_used": tools_used,
             "image_url": ctx.photo_edit_result.get("image_url", ""),
             "feedback_card": ctx.feedback_draft or None,
         }
@@ -1893,6 +1928,14 @@ _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 _CHAT_TURN_TIMEOUT_SECONDS = 200.0
 _SSE_KEEPALIVE_SECONDS = 15.0
 _CHAT_TIMEOUT_DETAIL = "Ayma took too long to answer. Please try again."
+# The honest stand-in reply when a turn reached generation but produced no
+# reply (the model errored, or returned nothing). Persisted so the turn always
+# completes with something truthful in history rather than evaporating — a
+# silent non-response is never acceptable (GW-SCROLL variant B: an Explore
+# scroll turn vanished whole, user message and all).
+_CHAT_INCOMPLETE_REPLY = (
+    "Sorry — I couldn't finish that just now. Please try again."
+)
 
 
 def _sse_response(gen) -> StreamingResponse:
@@ -1967,6 +2010,8 @@ async def chat_stream(
         reply_text = ""
         tools_used: list[str] = []
         result: dict[str, object] = {}
+        # Persist the user message up front so a slow/failed turn never loses it.
+        _persist_user_turn(ctx, req)
         try:
             try:
                 async with asyncio.timeout(_CHAT_TURN_TIMEOUT_SECONDS):
@@ -2061,15 +2106,27 @@ async def chat_stream(
                 queue.put_nowait(
                     {"type": "error", "detail": _CHAT_TIMEOUT_DETAIL}
                 )
-                raise
             except Exception as exc:  # noqa: BLE001
                 logger.exception("chat stream failed for %s", ctx.uid)
                 queue.put_nowait({"type": "error", "detail": str(exc)})
-                raise
-            if reply_text:
-                finalize_bg = BackgroundTasks()
-                _finalize_chat(finalize_bg, ctx, req, reply_text, tools_used)
-                _spawn_turn(finalize_bg())
+            # Always complete the turn honestly: a turn that reached generation
+            # ALWAYS persists the user message + an ayma reply, so a slow or
+            # failed turn (e.g. an Explore scroll whose client ack overran the
+            # bound → the model produced nothing) never evaporates from history
+            # (GW-SCROLL variant B). The error event above already told a live
+            # client; the honest fallback is what lands in the transcript. A
+            # TokenCapExceeded above returned early and is intentionally not
+            # persisted. This does not weaken dropped-connection recovery: that
+            # relies on the SUCCESS path persisting the real reply, unchanged.
+            if not reply_text:
+                reply_text = _CHAT_INCOMPLETE_REPLY
+                result = {
+                    "reply": reply_text, "tools_used": tools_used,
+                    "image_url": "", "feedback_card": None,
+                }
+            finalize_bg = BackgroundTasks()
+            _finalize_chat(finalize_bg, ctx, req, reply_text, tools_used)
+            _spawn_turn(finalize_bg())
             return result
         finally:
             queue.put_nowait(None)  # end-of-stream for the relay
