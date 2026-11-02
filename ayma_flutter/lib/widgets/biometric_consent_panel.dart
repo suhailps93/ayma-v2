@@ -59,6 +59,23 @@ class _BiometricConsentPanelState extends State<BiometricConsentPanel> {
       await widget.api.acceptBiometricConsent(
         region: widget.region ?? deviceRegionCode(),
       );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 409) {
+        // The account is soft-deleted: consent can't be recorded until it is
+        // recovered (B9, §3.6). Signal recovery — the router redirects to the
+        // recovery screen — instead of the misleading "check your connection".
+        RecoveryRequiredState.instance.markRequired();
+        setState(() => _saving = false);
+        return;
+      }
+      setState(() {
+        _saving = false;
+        _error =
+            "Couldn't save your consent. Check your connection and try "
+            'again.';
+      });
+      return;
     } catch (_) {
       if (!mounted) return;
       setState(() {

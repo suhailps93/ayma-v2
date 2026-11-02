@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/recovery_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/biometric_consent.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,8 +11,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
-  testWidgets('recover button calls /account/recover then routes home',
-      (tester) async {
+  testWidgets(
+      'recover button calls /account/recover, clears the recovery gate, then '
+      're-bootstraps via splash (B9)', (tester) async {
+    // Pre-condition: the session was held behind the recovery gate.
+    RecoveryRequiredState.instance.markRequired();
+    addTearDown(RecoveryRequiredState.instance.clear);
+
     final paths = <String>[];
     final api = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -28,9 +34,11 @@ void main() {
           path: '/recover',
           builder: (_, __) => RecoveryScreen(apiClient: api),
         ),
+        // Recovery must re-run startup through the splash so session_mode and
+        // the restored profile are re-read — NOT a blind jump to '/'.
         GoRoute(
-          path: '/',
-          builder: (_, __) => const Scaffold(body: Text('home')),
+          path: '/splash',
+          builder: (_, __) => const Scaffold(body: Text('splash')),
         ),
       ],
     );
@@ -43,6 +51,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(paths, ['/account/recover']);
-    expect(find.text('home'), findsOneWidget);
+    expect(find.text('splash'), findsOneWidget);
+    expect(RecoveryRequiredState.instance.required, isFalse);
   });
 }

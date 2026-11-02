@@ -13,6 +13,7 @@ import 'core/dag/startup_nodes.dart';
 import 'routing/app_router.dart';
 import 'services/accent_color_controller.dart';
 import 'services/auth_service.dart';
+import 'services/biometric_consent.dart';
 import 'services/deep_link_queue.dart';
 import 'services/push_service.dart';
 import 'services/report_cache.dart';
@@ -66,6 +67,10 @@ Future<void> main() async {
         unawaited(ReportCache.instance.clearForSignOut());
       }
       lastKnownUid = null;
+      // Drop the per-account gates so a signed-out session never carries a
+      // stale "recovery/consent required" into the next sign-in (B9).
+      RecoveryRequiredState.instance.clear();
+      BiometricConsentState.instance.clear();
       unawaited(RevenueCatService.instance.logOut());
     } else {
       lastKnownUid = user.uid;

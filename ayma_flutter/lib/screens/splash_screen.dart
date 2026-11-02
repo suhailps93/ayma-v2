@@ -260,6 +260,14 @@ class _SplashScreenState extends State<SplashScreen> {
   /// bootstrap so both compute the destination identically. Uses no
   /// [BuildContext], so it is safe to call after the splash has been disposed.
   Future<String> _resolveRoute(BootstrapResult result) async {
+    // Keep the global recovery gate in sync with the server's verdict so the
+    // router (which may run before or after this) never lets a soft-deleted
+    // account reach the app, and a recovered one is no longer held back (B9).
+    if (result.recoveryRequired) {
+      RecoveryRequiredState.instance.markRequired();
+    } else {
+      RecoveryRequiredState.instance.clear();
+    }
     var consentRequired = result.biometricConsentRequired;
     if (consentRequired &&
         !result.ageBlocked &&

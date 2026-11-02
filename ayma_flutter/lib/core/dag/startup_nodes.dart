@@ -20,6 +20,7 @@ import '../../services/api_client.dart';
 import '../../services/app_command_host.dart';
 import '../../services/app_command_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/biometric_consent.dart';
 import '../../services/deep_link_queue.dart';
 import '../../services/dev_panel_session.dart';
 import '../../services/error_reporting.dart';
@@ -294,6 +295,16 @@ class StartupNodes {
         try {
           final client = apiClient ?? ApiClient();
           final result = await client.bootstrap(sessionId: '');
+          // A soft-deleted account must be routed to recovery, not into the
+          // app (B9, §3.6). This background path previously ignored
+          // `recovery_required`, so a resumed deleted session fell through to
+          // its cached entry route (the shell), whose consent-gated calls then
+          // stranded it on the consent screen. Signal recovery — the router
+          // redirects to /recover — and don't cache an app entry route for it.
+          if (result.recoveryRequired) {
+            RecoveryRequiredState.instance.markRequired();
+            return;
+          }
           final config = BootConfig(
             uid: user.uid,
             sessionMode: result.sessionMode,

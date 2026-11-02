@@ -176,6 +176,20 @@ def test_feature_endpoint_refuses_without_consent(monkeypatch):
     assert resp.headers["x-ayma-consent-required"] == "1"
 
 
+def test_feature_endpoint_routes_a_soft_deleted_account_to_recovery(monkeypatch):
+    # B9 PART-1 repro: a soft-deleted account has no consent record, so the gate
+    # used to answer "consent required" — stranding the app on the consent
+    # screen, which then refuses to record consent (409), a dead end. It must
+    # answer "recovery required" so the client routes to the recovery screen.
+    monkeypatch.setattr(biometric_consent, "has_consent", lambda _db, _uid: False)
+    monkeypatch.setattr(main, "_recovery_required", lambda _uid: True)
+    resp = client.get("/verification/status", headers=_auth(monkeypatch))
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "recovery_required"
+    assert resp.headers["x-ayma-recovery-required"] == "1"
+    assert "x-ayma-consent-required" not in resp.headers
+
+
 def test_feature_endpoint_allowed_with_consent(monkeypatch):
     monkeypatch.setattr(main, "get_db", lambda: FakeDb())
     resp = client.get("/verification/status", headers=_auth(monkeypatch))
@@ -256,6 +270,9 @@ def test_consent_endpoint_refuses_a_soft_deleted_account(monkeypatch):
     )
     assert resp.status_code == 409
     assert ("users", "u-1") not in db.docs
+    # The 409 carries the recovery header so the client's HTTP layer routes to
+    # the recovery screen instead of showing a misleading connection error (B9).
+    assert resp.headers["x-ayma-recovery-required"] == "1"
 
 
 def test_consent_endpoint_rejects_missing_fields(monkeypatch):

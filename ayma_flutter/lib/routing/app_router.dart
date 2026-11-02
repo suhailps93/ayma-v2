@@ -99,6 +99,16 @@ const _consentPendingAllowed = {
   UnderageScreen.path,
 };
 
+// Where a signed-in user whose account is soft-deleted (recovery required, B9)
+// may still be: only the recovery screen itself, splash (which re-bootstraps
+// and re-routes), and the legal pages it links to.
+const _recoveryPendingAllowed = {
+  RecoveryScreen.path,
+  SplashScreen.path,
+  TermsScreen.path,
+  PrivacyScreen.path,
+};
+
 void setupAuthDeepLinkDrain([FirebaseAuth? auth]) {
   (auth ?? FirebaseAuth.instance).authStateChanges().listen((user) {
     if (user != null && !user.isAnonymous) {
@@ -133,6 +143,16 @@ final appRouter = GoRouter(
       return SignInScreen.path;
     }
     if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
+    // Soft-deleted account (B9, §3.6): recovery takes precedence over the
+    // consent gate. A deleted account's consent record was quarantined too, so
+    // its gated calls would otherwise read as "consent required" and strand the
+    // user on the consent screen, where recording consent is itself refused
+    // until recovery. Route to the recovery screen first.
+    if (signedIn &&
+        RecoveryRequiredState.instance.required &&
+        !_recoveryPendingAllowed.contains(loc)) {
+      return RecoveryScreen.path;
+    }
     // Mandatory face-matching consent: once the server says this account
     // doesn't have it, only the one-time consent screen (and the legal pages)
     // stay reachable.
@@ -143,7 +163,10 @@ final appRouter = GoRouter(
     }
     return null;
   },
-  refreshListenable: BiometricConsentState.instance,
+  refreshListenable: Listenable.merge([
+    BiometricConsentState.instance,
+    RecoveryRequiredState.instance,
+  ]),
   routes: [
     GoRoute(
       path: SplashScreen.path,

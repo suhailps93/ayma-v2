@@ -36,6 +36,7 @@ http.Response _json(Object body, [int status = 200]) =>
 
 void main() {
   setUp(BiometricConsentState.instance.clear);
+  setUp(RecoveryRequiredState.instance.clear);
 
   group('BiometricConsentPanel', () {
     testWidgets(
@@ -111,6 +112,40 @@ void main() {
       expect(agreed, isFalse);
       expect(find.textContaining("Couldn't save your consent"), findsOneWidget);
     });
+
+    testWidgets(
+        'a 409 (recover first) signals recovery, not a connection error (B9)',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      // 409 without the header: exercises the panel's own statusCode==409
+      // branch (the soft-deleted-account consent dead end).
+      final rec = _Recorded(
+        (_) async => _json({'detail': 'Recover your account first.'}, 409),
+      );
+      var agreed = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: BiometricConsentPanel(
+                api: rec.api,
+                region: '',
+                onAgreed: () => agreed = true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('biometric_consent_checkbox')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('biometric_consent_agree')));
+      await tester.pumpAndSettle();
+      expect(agreed, isFalse);
+      expect(find.textContaining("Couldn't save your consent"), findsNothing);
+      expect(RecoveryRequiredState.instance.required, isTrue);
+    });
   });
 
   group('consent-required signal', () {
@@ -137,6 +172,28 @@ void main() {
         rec.api.verificationStatus(),
         throwsA(isA<ApiException>()),
       );
+      expect(BiometricConsentState.instance.required, isFalse);
+    });
+
+    test(
+        'a response carrying the recovery header marks recovery, not consent '
+        '(B9)', () async {
+      // A soft-deleted account's gated call: the server answers 403 recovery-
+      // required so the client routes to recovery, never the consent dead end.
+      final rec = _Recorded(
+        (_) async => http.Response(
+          jsonEncode({
+            'detail': {'code': 'recovery_required'},
+          }),
+          403,
+          headers: {kRecoveryRequiredHeader: '1'},
+        ),
+      );
+      await expectLater(
+        rec.api.verificationStatus(),
+        throwsA(isA<ApiException>()),
+      );
+      expect(RecoveryRequiredState.instance.required, isTrue);
       expect(BiometricConsentState.instance.required, isFalse);
     });
 

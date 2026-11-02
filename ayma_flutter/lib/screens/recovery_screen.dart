@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/biometric_consent.dart';
 import '../theme.dart';
+import 'splash_screen.dart';
 
 /// Shown when `/bootstrap` reports the account is soft-deleted (§3.6). The
 /// person can restore everything, or leave it — a scheduled job purges the
@@ -30,8 +32,16 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
     });
     try {
       await _api.recoverAccount();
+      // The account is live again: the server has un-scheduled the deletion and
+      // restored the full profile, consent and story (§3.6). Clear the gates we
+      // were held behind and re-run startup through the splash so `session_mode`
+      // and the restored profile are re-read from the server — landing on the
+      // real app, never the fresh-onboarding form, with the profile populated
+      // (B9). Going straight to '/' would route blind on stale local state.
+      RecoveryRequiredState.instance.clear();
+      BiometricConsentState.instance.clear();
       if (!mounted) return;
-      context.go('/');
+      context.go(SplashScreen.path);
     } catch (e) {
       if (!mounted) return;
       setState(() {

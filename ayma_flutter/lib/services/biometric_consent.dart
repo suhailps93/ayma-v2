@@ -6,6 +6,40 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// answers (functions/bootstrap/main.py `require_biometric_consent`).
 const String kConsentRequiredHeader = 'x-ayma-consent-required';
 
+/// Response header the API sets whenever the caller's account is soft-deleted
+/// and must be recovered before anything else works (B9, §3.6). It rides any
+/// gated call's `403 recovery_required` and the consent endpoint's `409`, so
+/// the client's HTTP layer can route to the recovery screen — NOT the consent
+/// screen — without parsing the body. Takes precedence over the consent gate.
+const String kRecoveryRequiredHeader = 'x-ayma-recovery-required';
+
+/// App-wide "this account is soft-deleted and must be recovered first" signal
+/// (B9, §3.6). Set by `/bootstrap` reporting `recovery_required` or by any API
+/// call the server answered with [kRecoveryRequiredHeader]; the router's
+/// redirect (routing/app_router.dart) listens and sends the user to the
+/// recovery screen, ahead of the consent gate. Cleared once the account is
+/// recovered or on sign-out.
+class RecoveryRequiredState extends ChangeNotifier {
+  RecoveryRequiredState._();
+
+  static final RecoveryRequiredState instance = RecoveryRequiredState._();
+
+  bool _required = false;
+  bool get required => _required;
+
+  void markRequired() {
+    if (_required) return;
+    _required = true;
+    notifyListeners();
+  }
+
+  void clear() {
+    if (!_required) return;
+    _required = false;
+    notifyListeners();
+  }
+}
+
 /// App-wide "this account still needs the face-matching consent" signal. Set
 /// by `/bootstrap` or by any API call the server refused for missing consent;
 /// the router's redirect (routing/app_router.dart) listens and sends the user
@@ -34,16 +68,26 @@ class BiometricConsentState extends ChangeNotifier {
 /// Wraps the API's HTTP client: a response carrying [kConsentRequiredHeader]
 /// raises [BiometricConsentState.markRequired], whichever call it was.
 class ConsentAwareHttpClient extends http.BaseClient {
-  ConsentAwareHttpClient(this._inner, {BiometricConsentState? state})
-    : _state = state ?? BiometricConsentState.instance;
+  ConsentAwareHttpClient(
+    this._inner, {
+    BiometricConsentState? state,
+    RecoveryRequiredState? recoveryState,
+  })  : _state = state ?? BiometricConsentState.instance,
+        _recoveryState = recoveryState ?? RecoveryRequiredState.instance;
 
   final http.Client _inner;
   final BiometricConsentState _state;
+  final RecoveryRequiredState _recoveryState;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     final response = await _inner.send(request);
-    if (response.statusCode == 403 &&
+    // Recovery takes precedence: a soft-deleted account is told to recover on
+    // any gated call (403) and on the consent endpoint's refusal (409). Checked
+    // regardless of status so the router routes to recovery, not consent (B9).
+    if (response.headers[kRecoveryRequiredHeader] == '1') {
+      _recoveryState.markRequired();
+    } else if (response.statusCode == 403 &&
         response.headers[kConsentRequiredHeader] == '1') {
       _state.markRequired();
     }

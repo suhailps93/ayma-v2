@@ -520,6 +520,14 @@ async def require_biometric_consent(
     except Exception:  # noqa: BLE001 - the route's own auth dependency rejects it
         return
     if not await asyncio.to_thread(biometric_consent.has_consent, get_db(), uid):
+        # A soft-deleted account has no consent record — it was quarantined with
+        # the rest of the account (§3.6). It must NOT be told "consent required":
+        # that dead-ends the app on the consent screen, where recording consent
+        # is itself refused (409) until the account is recovered, so the user
+        # gets stuck (B9). Signal recovery instead, so the client's HTTP layer
+        # routes it to the recovery screen rather than the consent screen.
+        if await asyncio.to_thread(_recovery_required, uid):
+            raise _recovery_required_error()
         raise _consent_required_error()
 
 
@@ -533,6 +541,20 @@ def _consent_required_error() -> HTTPException:
             "message": biometric_consent.REQUIRED_MESSAGE,
         },
         headers={"X-Ayma-Consent-Required": "1"},
+    )
+
+
+def _recovery_required_error() -> HTTPException:
+    """403 ``recovery_required``; the header lets the app's HTTP layer route a
+    soft-deleted account to the recovery screen (not the consent screen) on any
+    gated call, without parsing the body (B9)."""
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": "recovery_required",
+            "message": "Recover your account to continue.",
+        },
+        headers={"X-Ayma-Recovery-Required": "1"},
     )
 
 
@@ -2424,7 +2446,8 @@ async def biometric_consent_accept(
     would recreate the live ``users/{uid}`` doc."""
     if await asyncio.to_thread(_recovery_required, uid):
         raise HTTPException(
-            status_code=409, detail="Recover your account first."
+            status_code=409, detail="Recover your account first.",
+            headers={"X-Ayma-Recovery-Required": "1"},
         )
     try:
         result = await asyncio.to_thread(

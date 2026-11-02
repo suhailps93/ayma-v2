@@ -71,6 +71,69 @@ def test_soft_delete_then_recover_round_trips(monkeypatch):
     assert account_ops.is_recovery_required(db, "u1") is False
 
 
+def test_recover_restores_profile_and_consent_no_onboarding_no_wedge(monkeypatch):
+    """B9 data-layer proof of 'everything comes back exactly as it was': soft
+    delete is a SOFT delete (the profile + consent are quarantined, not wiped),
+    and recover restores BOTH. So after recovery the profile doc is present
+    (name/DOB/gender/interested-in/location/partner-age) — the app has no reason
+    to route to the fresh-onboarding DOB form — and the biometric-consent record
+    is back, so the consent gate passes instead of wedging (B9 PART 1 + 2)."""
+    _patch_sentinels(monkeypatch)
+    import biometric_consent
+
+    db = FakeDb()
+    db.docs[("users", "u1")] = {
+        "created_at": 1,
+        "biometric_consent": {
+            "consent_version": biometric_consent.CONSENT_VERSION,
+            "consented_at": 111,
+        },
+        "qz_partner_age_min": 28,
+        "qz_partner_age_max": 41,
+    }
+    db.docs[("users", "u1", "profile", "main")] = {
+        "name": "Jo",
+        "last_name": "Rivera",
+        "birthdate": "1990-01-01",
+        "gender": "woman",
+        "interested_in": ["man"],
+        "location": "San Francisco",
+    }
+    assert biometric_consent.is_valid_record(
+        db.docs[("users", "u1")]["biometric_consent"]
+    )
+
+    account_ops.soft_delete(db, None, "u1")
+    # Soft, not hard: the profile + consent live on in quarantine, recoverable.
+    assert db.docs[("deleted_accounts", "u1", "profile", "main")]["name"] == "Jo"
+    assert db.docs[("deleted_accounts", "u1")]["biometric_consent"][
+        "consented_at"
+    ] == 111
+    # While deleted the live account (and its consent record) is gone, so the
+    # gate reads "no consent" — the B9 wedge trigger — and recovery is required.
+    assert ("users", "u1") not in db.docs
+    assert account_ops.is_recovery_required(db, "u1") is True
+
+    account_ops.recover(db, None, "u1")
+    prof = db.docs[("users", "u1", "profile", "main")]
+    assert prof["name"] == "Jo"
+    assert prof["last_name"] == "Rivera"
+    assert prof["birthdate"] == "1990-01-01"
+    assert prof["gender"] == "woman"
+    assert prof["interested_in"] == ["man"]
+    assert prof["location"] == "San Francisco"
+    # Partner age range restored, not reset to the 18–99 default.
+    assert db.docs[("users", "u1")]["qz_partner_age_min"] == 28
+    assert db.docs[("users", "u1")]["qz_partner_age_max"] == 41
+    # Consent record restored -> the gate passes, so no wedge on the recovered
+    # session (the consented_at keeps the original signup timestamp).
+    assert biometric_consent.is_valid_record(
+        db.docs[("users", "u1")]["biometric_consent"]
+    )
+    assert db.docs[("users", "u1")]["biometric_consent"]["consented_at"] == 111
+    assert account_ops.is_recovery_required(db, "u1") is False
+
+
 def test_soft_delete_is_a_noop_without_a_live_account():
     db = FakeDb()
     out = account_ops.soft_delete(db, None, "ghost")
