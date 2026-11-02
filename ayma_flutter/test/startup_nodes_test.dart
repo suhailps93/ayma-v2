@@ -87,8 +87,16 @@ void main() {
     // then. If that invariant breaks, main() touches Firebase before
     // [core/no-app] is resolved and the app hangs on the splash. These tests
     // lock the invariant.
-    test('every Firebase-dependent node transitively depends on '
-        'N7:firebase_core', () {
+    // The invariant: NO Firebase-dependent node may run before N7. Rather than
+    // a hand-maintained list of Firebase nodes (which missed N5 and N11 the
+    // first time — their Firebase access is hidden in a constructor:
+    // AccentColorController→ProfileService→FirebaseAuth.instance and
+    // ApiClient()→FirebaseAuth.instance), this inverts the check: every node is
+    // required to depend transitively on N7 UNLESS it is in the explicitly
+    // audited "Firebase-free" allowlist. A new node that touches Firebase and
+    // forgets the N7 edge therefore fails this test by default.
+    test('every node transitively depends on N7:firebase_core except the '
+        'audited Firebase-free nodes', () {
       final dag = StartupNodes.buildDefaultDAG();
 
       Set<String> transitiveDeps(String id) {
@@ -103,25 +111,32 @@ void main() {
         return out;
       }
 
-      // N8 is main()'s run target; everything main registers after
-      // `dag.run({N8})` assumes Firebase is up, so N8 itself must gate on N7.
-      // The others each call a Firebase API in their action.
-      const firebaseDependentNodes = [
-        'N6:launch_intent', // FirebaseMessaging.getInitialMessage
-        'N8:first_frame_mount', // main()'s run target
-        'N9:auth_session_restore', // FirebaseAuth via AuthService
-        'N15:crashlytics_enable', // FirebaseCrashlytics
-        'N16:push_token_sync', // PushService → FirebaseMessaging
-        'N18:sentry_init', // reads Firebase-synced flags
-        'N19:remote_sync', // FirebaseFirestore
-      ];
-      for (final id in firebaseDependentNodes) {
+      // Audited as touching NO Firebase at action time. If a node is added
+      // here, it must genuinely make no Firebase/RevenueCat-via-Firebase call
+      // (directly or through a constructor/singleton it first touches).
+      const firebaseFreeNodes = {
+        'N1:engine_binding', // WidgetsFlutterBinding only
+        'N2:orientation_lock', // SystemChrome only
+        'N3:crashlytics_fatal', // installs handlers; Firebase calls deferred+guarded
+        'N4:prefs_preload', // SharedPreferences only
+        'N7:firebase_core', // the gate itself
+      };
+
+      for (final id in dag.nodes.keys) {
+        if (firebaseFreeNodes.contains(id)) continue;
         expect(
           transitiveDeps(id),
           contains('N7:firebase_core'),
-          reason: '$id touches Firebase and must run after N7:firebase_core',
+          reason: '$id is not in the audited Firebase-free allowlist, so it '
+              'must depend (transitively) on N7:firebase_core. If it truly '
+              'touches no Firebase, add it to firebaseFreeNodes with a reason.',
         );
       }
+
+      // Guard the allowlist itself: the two nodes whose Firebase access hides
+      // in a constructor (the original miss) must NOT be treated as free.
+      expect(firebaseFreeNodes, isNot(contains('N5:ui_controllers')));
+      expect(firebaseFreeNodes, isNot(contains('N11:revenuecat_init')));
     });
 
     test('run(targetNodes: {N8}) returns only after N7:firebase_core has run '
@@ -165,6 +180,53 @@ void main() {
         lessThan(completionOrder.indexOf('N8:first_frame_mount')),
         reason: 'N7:firebase_core must complete before N8:first_frame_mount',
       );
+    });
+
+    test('full DAG run executes N7:firebase_core before every '
+        'Firebase-dependent node (regression: N5/N11 ran pre-N7)', () async {
+      // Mirror the real wiring (dependencies copied from buildDefaultDAG) with
+      // recorder-only actions and let the FULL graph run to completion, so we
+      // observe the real execution order every node sees at boot. N9 must
+      // complete here (otherwise its dependents never run), so no node hangs.
+      final real = StartupNodes.buildDefaultDAG();
+      final completionOrder = <String>[];
+      final mirror = StartupDAG();
+      for (final node in real.nodes.values) {
+        mirror.addNode(
+          StartupNode<void>(
+            id: node.id,
+            dependencies: node.dependencies,
+            critical: node.critical,
+            action: (ctx) async {
+              completionOrder.add(node.id);
+            },
+          ),
+        );
+      }
+
+      await mirror.run();
+
+      expect(completionOrder.length, equals(real.nodes.length));
+
+      // Same audited allowlist as the structural test: everything else must
+      // have observed N7 complete before it ran.
+      const firebaseFreeNodes = {
+        'N1:engine_binding',
+        'N2:orientation_lock',
+        'N3:crashlytics_fatal',
+        'N4:prefs_preload',
+        'N7:firebase_core',
+      };
+      final n7Index = completionOrder.indexOf('N7:firebase_core');
+      expect(n7Index, greaterThanOrEqualTo(0));
+      for (final id in real.nodes.keys) {
+        if (firebaseFreeNodes.contains(id)) continue;
+        expect(
+          completionOrder.indexOf(id),
+          greaterThan(n7Index),
+          reason: '$id (Firebase-dependent) ran before N7:firebase_core',
+        );
+      }
     });
   });
 }

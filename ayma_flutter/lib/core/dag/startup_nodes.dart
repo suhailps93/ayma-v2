@@ -105,10 +105,15 @@ class StartupNodes {
   }
 
   /// N5: UI Controllers Hydration from SharedPreferences
+  ///
+  /// Depends on N7:firebase_core: the first access to `accentColorControllerGlobal`
+  /// (and the other global controllers) lazily constructs it, and
+  /// `AccentColorController()` builds a `ProfileService()` whose constructor binds
+  /// `FirebaseAuth.instance`. Running this before N7 throws [core/no-app].
   static StartupNode<void> createUIControllersNode() {
     return StartupNode<void>(
       id: 'N5:ui_controllers',
-      dependencies: {'N4:prefs_preload'},
+      dependencies: {'N4:prefs_preload', 'N7:firebase_core'},
       action: (ctx) async {
         final prefs = ctx.get<SharedPreferences>('prefs');
         themeControllerGlobal.loadFromPrefs(prefs);
@@ -201,10 +206,15 @@ class StartupNodes {
   }
 
   /// N11: RevenueCat Deferred Init
+  ///
+  /// Depends on N7:firebase_core: `listenForEntitlementChanges(ApiClient())`
+  /// constructs an `ApiClient`, whose constructor binds `FirebaseAuth.instance`.
+  /// Running this before N7 throws [core/no-app] and leaves RevenueCat (and so
+  /// subscriptions) uninitialized at boot.
   static StartupNode<void> createRevenueCatInitNode() {
     return StartupNode<void>(
       id: 'N11:revenuecat_init',
-      dependencies: {'N1:engine_binding'},
+      dependencies: {'N1:engine_binding', 'N7:firebase_core'},
       timeout: const Duration(seconds: 4),
       action: (ctx) async {
         await RevenueCatService.instance.initDeferred();
