@@ -47,10 +47,13 @@ class VoiceSessionController extends ChangeNotifier {
     AppCommandService? appCommandService,
     CallPermissions? callPermissions,
     Duration? idleGuardTimeout,
+    Duration? responseGuardTimeout,
     ErrorReporter? errorReporter,
   })  : _store = transcriptStore,
         _reporter = errorReporter ?? ErrorReporter.instance,
         _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
+        _responseGuardTimeout =
+            responseGuardTimeout ?? const Duration(seconds: 20),
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport()),
@@ -124,6 +127,30 @@ class VoiceSessionController extends ChangeNotifier {
   /// unreachable), so end it here and stop paying for an empty room.
   final Duration _idleGuardTimeout;
   Timer? _idleGuard;
+
+  /// How long to wait, once the session reaches [VoiceSessionPhase.live] (the
+  /// agent has joined the room and published its track, so the UI would say
+  /// "Listening…"), for the agent to produce its FIRST genuine response —
+  /// audible speech, a transcript segment, or a tool call. A healthy call
+  /// always produces an opener within seconds, even if the caller stays silent
+  /// (the agent's `maybe_open_conversation`). When Ayma's inference runs but
+  /// the LiveKit gateway is 429/drained/unreachable (AGENTS.md "all inference
+  /// goes through LiveKit": when LiveKit is not working the app SHOWS AN HONEST
+  /// ERROR, never a silent "Listening…"), the worker still joins the room and
+  /// publishes a silent track — so `agentReady` fires and the UI reaches
+  /// "Listening…" — but no response ever lands. Without this guard the call
+  /// hangs on "Listening…" until the 4-minute idle guard ends it with a benign
+  /// "silence" notice; this instead surfaces an honest error within a bounded
+  /// window. Armed on entering `live`, cancelled for good on the first agent
+  /// response ([_noteAgentResponse]).
+  final Duration _responseGuardTimeout;
+  Timer? _responseGuard;
+
+  /// Set once the agent has produced any genuine response this session (speech,
+  /// transcript, or a tool call). Latches the brain as "alive" so the
+  /// no-first-response guard can never fire after a real reply — later mid-call
+  /// silence is the (benign) idle guard's job, not this one's.
+  bool _agentRespondedOnce = false;
 
   /// Non-error note shown after a call ended on its own (idle timeout).
   String? _endNotice;
@@ -307,6 +334,7 @@ class VoiceSessionController extends ChangeNotifier {
     _relayRetrying = false;
     _agentSpeaking = false;
     _agentReadySeen = false;
+    _agentRespondedOnce = false;
     _muted = false;
     _pendingToolLabels.clear();
     _activeToolLabel = null;
@@ -474,6 +502,7 @@ class VoiceSessionController extends ChangeNotifier {
     // the UI stops indicating playback immediately (§1.7 step 10).
     _speakingSub = transport.agentSpeaking.listen((speaking) {
       _noteActivity();
+      if (speaking) _noteAgentResponse();
       if (_agentSpeaking == speaking) return;
       _agentSpeaking = speaking;
       notifyListeners();
@@ -538,6 +567,41 @@ class VoiceSessionController extends ChangeNotifier {
     debugPrint('[voice] phase -> live (agent ready)');
     _setPhase(VoiceSessionPhase.live);
     _noteActivity();
+    // The agent is in the room, but "joined" is not "can respond": if the
+    // LiveKit inference gateway is down/429, the worker joins and the UI shows
+    // "Listening…" yet no reply ever comes. Arm the bounded no-first-response
+    // guard so that silent-brain case fails loudly instead of hanging.
+    if (!_agentRespondedOnce) {
+      _responseGuard?.cancel();
+      _responseGuard = Timer(_responseGuardTimeout, _onResponseGuardFired);
+    }
+  }
+
+  /// The agent produced a genuine response (speech / transcript / tool call) —
+  /// the brain is alive, so cancel the no-first-response guard for good.
+  void _noteAgentResponse() {
+    if (_agentRespondedOnce) return;
+    _agentRespondedOnce = true;
+    _responseGuard?.cancel();
+    _responseGuard = null;
+  }
+
+  /// Live, but the agent never produced a first response within
+  /// [_responseGuardTimeout] — the LiveKit gateway/brain is unreachable even
+  /// though the worker joined the room. Surface an honest error rather than
+  /// leaving the UI stuck on "Listening…" (AGENTS.md).
+  void _onResponseGuardFired() {
+    _responseGuard = null;
+    if (_phase != VoiceSessionPhase.live || _agentRespondedOnce) return;
+    debugPrint('[voice] no first response — brain unreachable');
+    _report(
+      VoiceStartError(
+          'no agent response within ${_responseGuardTimeout.inSeconds}s of live'),
+      null,
+      'no_response',
+    );
+    unawaited(_teardown());
+    _fail("Couldn't reach the voice service — tap the mic to try again.");
   }
 
   /// Restarts the client idle guard (see [_idleGuardTimeout]) — only while
@@ -608,6 +672,7 @@ class VoiceSessionController extends ChangeNotifier {
   void _onTranscriptSegment(TranscriptSegment seg) {
     _noteActivity();
     final role = seg.topic == 'agent_transcript' ? TurnRole.ayma : TurnRole.user;
+    if (role == TurnRole.ayma) _noteAgentResponse();
     if (role == TurnRole.user && seg.isFinal) {
       // A new user turn starts a new "what did Ayma do to answer it" window
       // — drop any stray labels left over from a tool call that never
@@ -627,6 +692,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// [_pendingToolLabels] for the next finalized ayma turn.
   void _onToolEvent(ToolUsedEvent e) {
     _noteActivity();
+    _noteAgentResponse();
     if (e.isStart) {
       _activeToolLabel = e.label;
       notifyListeners();
@@ -860,6 +926,8 @@ class VoiceSessionController extends ChangeNotifier {
     _wakingTimer = null;
     _idleGuard?.cancel();
     _idleGuard = null;
+    _responseGuard?.cancel();
+    _responseGuard = null;
 
     // Snapshot every session-scoped handle (subscriptions + transport) and
     // null the instance fields *synchronously*, before the first `await`
