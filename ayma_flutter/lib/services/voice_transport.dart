@@ -43,6 +43,7 @@ const _toolUsedTopic = 'tool_used';
 const _callEndingTopic = 'call_ending';
 const _agentMuteTopic = 'agent_mute';
 const _agentMuteControlTopic = 'agent_mute_control';
+const _voiceAccentControlTopic = 'voice_accent_control';
 const _practiceCoachTopic = 'practice_coach';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
@@ -99,6 +100,15 @@ abstract class VoiceTransport {
   /// `muted: false` (the user tapped Unmute) and always answers on
   /// [agentMute], which stays the single source of truth.
   Future<void> sendAgentMuteControl({required bool muted});
+
+  /// Tells the live agent the voice settings were saved mid-call (topic
+  /// `voice_accent_control`, payload `{"accent", "language"}` — the saved
+  /// free-text accent and language label, §13.9). The agent hot-swaps the
+  /// running session to them instead of waiting for the next call.
+  Future<void> sendVoiceAccentControl({
+    required String accent,
+    required String language,
+  });
 
   /// Emits once if the transport drops unexpectedly (network / server close).
   Stream<Object> get closed;
@@ -336,6 +346,22 @@ class LiveKitVoiceTransport implements VoiceTransport {
       utf8.encode(jsonEncode({'muted': muted})),
       reliable: true,
       topic: _agentMuteControlTopic,
+    );
+  }
+
+  @override
+  Future<void> sendVoiceAccentControl({
+    required String accent,
+    required String language,
+  }) async {
+    final participant = _room?.localParticipant;
+    if (participant == null) {
+      throw StateError('not connected to a voice room');
+    }
+    await participant.publishData(
+      utf8.encode(jsonEncode({'accent': accent, 'language': language})),
+      reliable: true,
+      topic: _voiceAccentControlTopic,
     );
   }
 

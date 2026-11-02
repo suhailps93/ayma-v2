@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import 'ayma_toast.dart';
 
@@ -14,7 +15,9 @@ import 'ayma_toast.dart';
 ///
 /// Dropdown contents are pulled from the cloud catalog (LiveKit Inference, live),
 /// so new providers appear without a client change. Saving calls
-/// `POST /voice/preference`; it takes effect on the next voice call.
+/// `POST /voice/preference`; a changed accent/language also hot-swaps the
+/// live call when one is active (§13.9), everything else takes effect on the
+/// next voice call.
 ///
 /// This is the user-facing "Ayma's voice" control (ARCHITECTURE §13.9): it shows
 /// the whole stack — mode, brain, STT, TTS, voice and language — so a normal user
@@ -41,6 +44,12 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   String? _error;
   bool _saving = false;
 
+  // Last-saved accent/language (§13.9 hot-swap): only a save that actually
+  // changes one of these nudges the live call; a voice/stack-only save never
+  // rebuilds the running session.
+  String _savedAccent = '';
+  String _savedLanguageCode = '';
+
   // Free-text ACCENT field (§13.9). Its own controller so typing keeps the
   // caret; the selection's `accent` is the source of truth on save.
   final TextEditingController _accentCtrl = TextEditingController();
@@ -65,6 +74,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         _cat = cat;
         _sel = _normalize(cat, cat.current);
         _accentCtrl.text = _sel!.accent;
+        _savedAccent = _sel!.accent;
+        _savedLanguageCode = _sel!.languageCode;
       });
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -135,12 +146,47 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     }
   }
 
+  /// The saved language LABEL for the current selection (the server stores
+  /// the label in `ayma_voice_language`); '' when the code has no label.
+  String _languageLabel() {
+    final code = _sel!.languageCode;
+    for (final l in _activeLanguages()) {
+      if (l.code == code) return l.label;
+    }
+    return '';
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await widget.api.saveVoicePreference(_sel!);
+      final sel = _sel!;
+      await widget.api.saveVoicePreference(sel);
+      // The accent/language changed mid-call: nudge the live agent (if any)
+      // so THIS call hot-swaps instead of waiting for the next one (§13.9).
+      // Best effort — the save itself already succeeded.
+      var appliedLive = false;
+      if (sel.accent != _savedAccent ||
+          sel.languageCode != _savedLanguageCode) {
+        try {
+          appliedLive = await VoiceSessionController.active
+                  ?.notifyVoiceAccentChanged(
+                accent: sel.accent,
+                language: _languageLabel(),
+              ) ??
+              false;
+        } catch (_) {
+          appliedLive = false;
+        }
+        _savedAccent = sel.accent;
+        _savedLanguageCode = sel.languageCode;
+      }
       if (mounted) {
-        AymaToast.show(context, 'Voice saved — starts on your next call.');
+        AymaToast.show(
+          context,
+          appliedLive
+              ? 'Voice saved — accent applied to your current call.'
+              : 'Voice saved — starts on your next call.',
+        );
         widget.onSaved?.call();
       }
     } catch (e) {

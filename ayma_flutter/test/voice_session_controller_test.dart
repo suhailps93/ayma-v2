@@ -745,6 +745,43 @@ void main() {
     await c.stop();
   });
 
+  test('notifyVoiceAccentChanged publishes to the live call only', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+
+    // No live call: nothing sent (the save applies from the next call).
+    expect(
+      await c.notifyVoiceAccentChanged(accent: 'Irish', language: ''),
+      isFalse,
+    );
+    expect(transport.accentControlCalls, isEmpty);
+
+    await _startLive(c, transport);
+    expect(
+      await c.notifyVoiceAccentChanged(
+        accent: 'an Irish accent',
+        language: 'Default (English)',
+      ),
+      isTrue,
+    );
+    expect(transport.accentControlCalls, [
+      (accent: 'an Irish accent', language: 'Default (English)'),
+    ]);
+
+    // A failed send is best effort: false, never throws, call stays live.
+    transport.failAccentControl = true;
+    expect(
+      await c.notifyVoiceAccentChanged(accent: 'Irish', language: ''),
+      isFalse,
+    );
+    expect(c.phase, VoiceSessionPhase.live);
+    await c.stop();
+  });
+
   test('toggleMute flips mic state only when live', () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(

@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
+import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/voice_engine_control.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -203,4 +205,67 @@ void main() {
     expect(find.textContaining('one fixed accent'), findsOneWidget);
     expect(find.byKey(const ValueKey('voice-accent-field')), findsOneWidget);
   });
+
+  testWidgets('a changed accent nudges the live call (§13.9 hot-swap)',
+      (tester) async {
+    final voice = _FakeVoice();
+    VoiceSessionController.active = voice;
+    addTearDown(() => VoiceSessionController.active = null);
+
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('voice-accent-field')),
+      'an Irish accent',
+    );
+    await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
+    await tester.pumpAndSettle();
+
+    expect(_posted, hasLength(1));
+    expect(voice.notifyCalls, 1);
+    expect(voice.lastAccent, 'an Irish accent');
+    // The saved LANGUAGE label rides along (the server stores labels).
+    expect(voice.lastLanguage, 'Default (English)');
+  });
+
+  testWidgets('an unchanged accent never nudges the live call',
+      (tester) async {
+    final voice = _FakeVoice();
+    VoiceSessionController.active = voice;
+    addTearDown(() => VoiceSessionController.active = null);
+
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    // Save without touching accent or language: posted, but the live call
+    // is left alone (no pointless session rebuild).
+    await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
+    await tester.pumpAndSettle();
+
+    expect(_posted, hasLength(1));
+    expect(voice.notifyCalls, 0);
+  });
+}
+
+/// A live call stand-in: records accent hot-swap nudges instead of reaching a
+/// room (the real controller → transport path is covered in
+/// `voice_session_controller_test.dart`).
+class _FakeVoice extends VoiceSessionController {
+  _FakeVoice() : super(transcriptStore: TranscriptStore());
+
+  int notifyCalls = 0;
+  String? lastAccent;
+  String? lastLanguage;
+
+  @override
+  Future<bool> notifyVoiceAccentChanged({
+    required String accent,
+    required String language,
+  }) async {
+    notifyCalls++;
+    lastAccent = accent;
+    lastLanguage = language;
+    return true;
+  }
 }
