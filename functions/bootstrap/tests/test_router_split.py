@@ -19,6 +19,11 @@ def _app_route_map():
         if isinstance(r, Route):
             for m in r.methods:
                 routes[(m, r.path)] = r.endpoint
+        elif hasattr(r, "original_router"):
+            for sub_r in r.original_router.routes:
+                if isinstance(sub_r, Route):
+                    for m in sub_r.methods:
+                        routes[(m, sub_r.path)] = sub_r.endpoint
     return routes
 
 

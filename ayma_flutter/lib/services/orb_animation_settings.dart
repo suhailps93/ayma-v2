@@ -50,14 +50,23 @@ class OrbAnimationSettings extends ChangeNotifier {
   bool flutterEnabledFor({required bool navBar}) =>
       _flutterEnabled && (!navBar || _navBarFlutterEnabled);
 
+  /// Hydrate from preloaded preferences (synchronous fast path).
+  void loadFromPrefs(SharedPreferences prefs) {
+    try {
+      _flutterEnabled = prefs.getBool(_flutterKey) ?? _flutterEnabled;
+      _navBarFlutterEnabled = prefs.getBool(_navBarKey) ?? _navBarFlutterEnabled;
+      notifyListeners();
+    } catch (_) {
+      // Keep defaults on read error
+    }
+  }
+
   /// Load the saved preferences. Defaults (both ON) survive a missing key or
   /// missing storage (tests / restricted context).
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _flutterEnabled = prefs.getBool(_flutterKey) ?? _flutterEnabled;
-      _navBarFlutterEnabled = prefs.getBool(_navBarKey) ?? _navBarFlutterEnabled;
-      notifyListeners();
+      loadFromPrefs(prefs);
     } catch (_) {
       // No storage — keep the defaults.
     }

@@ -34,34 +34,52 @@ class AccentColorController extends ChangeNotifier {
   Color _color;
   Color get color => _color;
 
-  /// Load the saved preference. Local `SharedPreferences` wins when present
-  /// (fast path); otherwise, best-effort, pull the server copy so a
-  /// reinstall/new device picks up a colour chosen elsewhere.
-  Future<void> load() async {
+  /// Fast-path local hydration from preloaded preferences (zero network).
+  void loadFromPrefs(SharedPreferences prefs) {
     try {
-      final raw = (await SharedPreferences.getInstance()).getString(_key);
+      final raw = prefs.getString(_key);
       final local = _parse(raw);
       if (local != null) {
         _color = local;
         notifyListeners();
-        return;
       }
     } catch (_) {
-      // No storage (tests / restricted context) — fall through to default.
+      // Keep default on read failure
     }
+  }
+
+  /// Syncs the server-side accent colour if missing from local storage.
+  /// Intended to run in the background post-frame (N19) so network latency
+  /// never blocks startup.
+  Future<void> syncRemoteIfMissing([ProfileService? profiles]) async {
     try {
-      final remote = await _profiles.getAccentColor();
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getString(_key) != null) return;
+      final svc = profiles ?? _profiles;
+      final remote = await svc.getAccentColor();
       if (remote != null) {
         _color = remote;
         notifyListeners();
         try {
-          await (await SharedPreferences.getInstance())
-              .setString(_key, _toHex(remote));
+          await prefs.setString(_key, _toHex(remote));
         } catch (_) {/* best-effort cache */}
       }
     } catch (_) {
       // Signed out / offline / no profile doc yet — keep the default.
     }
+  }
+
+  /// Load the saved preference. Local `SharedPreferences` wins when present
+  /// (fast path); otherwise, best-effort, pull the server copy so a
+  /// reinstall/new device picks up a colour chosen elsewhere.
+  Future<void> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      loadFromPrefs(prefs);
+    } catch (_) {
+      // No storage (tests / restricted context) — fall through to default.
+    }
+    await syncRemoteIfMissing();
   }
 
   /// Live-updates the colour app-wide (notifies listeners — every
