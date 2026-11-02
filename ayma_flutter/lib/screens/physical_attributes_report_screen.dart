@@ -43,8 +43,13 @@ class _PhysicalAttributesReportScreenState
   void reassertScreenContext() =>
       AppContext.instance.set(screen: 'physical_report');
 
-  void _reload() =>
-      setState(() => _future = _api.physicalReport(widget.reportId));
+  void _reload() {
+    // Block closure, not `=>`: the arrow form returns the assigned Future
+    // from the setState callback, which throws on debug builds (AYMA-FLUTTER-2Q).
+    setState(() {
+      _future = _api.physicalReport(widget.reportId);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -29,8 +29,13 @@ class _AdminFeedbackScreenState extends State<AdminFeedbackScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   late Future<List<FeedbackRow>> _future = _api.adminListFeedback();
 
-  void _refresh() =>
-      setState(() => _future = _api.adminListFeedback());
+  void _refresh() {
+    // Block closure, not `=>`: the arrow form returns the assigned Future
+    // from the setState callback, which throws on debug builds (AYMA-FLUTTER-2Q).
+    setState(() {
+      _future = _api.adminListFeedback();
+    });
+  }
 
   Future<void> _setStatus(FeedbackRow row, String status) async {
     try {

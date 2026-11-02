@@ -53,7 +53,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
 
   Future<void> _reload() async {
     final next = _fetch();
-    setState(() => _future = next);
+    setState(() {
+      _future = next;
+    });
     try {
       await next;
     } catch (_) {/* surfaced by the FutureBuilder's error branch */}
@@ -84,7 +86,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
           if (snap.hasError || snap.data == null) {
             return _Message(
               text: "Couldn't load your profile progress.",
-              onRetry: () => setState(() => _future = _fetch()),
+              onRetry: () => setState(() {
+                _future = _fetch();
+              }),
             );
           }
           return _Body(

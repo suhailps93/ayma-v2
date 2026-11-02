@@ -75,4 +75,45 @@ void main() {
     expect(find.textContaining("Couldn't load that report"), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
   });
+
+  testWidgets('Retry reassigns the load future without a setState Future '
+      'throw (AYMA-FLUTTER-2Q)', (tester) async {
+    var calls = 0;
+    final mockHttp = MockClient((request) async {
+      calls++;
+      if (calls == 1) return http.Response('boom', 500);
+      return http.Response(
+        jsonEncode({
+          'id': 'r1',
+          'summary': 'Physical profile.',
+          'photo_count': 1,
+          'fields': {
+            'build': {
+              'value': 'athletic',
+              'source': 'stated',
+              'confidence': 'high'
+            },
+          },
+        }),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final api = ApiClient(
+        httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+    await tester.pumpWidget(MaterialApp(
+      home: PhysicalAttributesReportScreen(reportId: 'r1', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry'), findsOneWidget);
+
+    // Pre-fix `_reload` used `setState(() => _future = ...)` — the arrow
+    // closure returns the assigned Future, which throws
+    // "setState() callback argument returned a Future" on debug builds.
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Athletic'), findsOneWidget);
+  });
 }

@@ -238,7 +238,9 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                         style: AymaType.sans(size: 14, color: ac.fgMute)),
                     const SizedBox(height: 12),
                     OutlinedButton(
-                      onPressed: () => setState(() => _future = _load()),
+                      onPressed: () => setState(() {
+                        _future = _load();
+                      }),
                       child: const Text('Retry'),
                     ),
                   ],

@@ -201,7 +201,9 @@ class _MatchReportScreenState extends State<MatchReportScreen>
         unawaited(MatchActivity.instance
             .start(widget.matchId, previousScore: before?.score, api: _api));
       } else {
-        setState(() => _future = _fetch());
+        setState(() {
+          _future = _fetch();
+        });
         _reportKey.currentState?.reload();
       }
     } catch (_) {
@@ -259,7 +261,9 @@ class _MatchReportScreenState extends State<MatchReportScreen>
           if (snap.hasError) {
             return _Message(
               text: "Couldn't load this report.",
-              onRetry: () => setState(() => _future = _fetch()),
+              onRetry: () => setState(() {
+                _future = _fetch();
+              }),
             );
           }
           if (r == null) {

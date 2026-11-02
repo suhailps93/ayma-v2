@@ -97,7 +97,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final finished = _lastActive.difference(now).isNotEmpty;
     _lastActive = now;
     if (finished) {
-      setState(() => _future = _loadProfile());
+      setState(() {
+        _future = _loadProfile();
+      });
     }
   }
 
@@ -341,7 +343,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           } else if (snap.hasError || p == null) {
             content = _Message(
               text: "Couldn't load this profile.",
-              onRetry: () => setState(() => _future = _loadProfile()),
+              onRetry: () => setState(() {
+                _future = _loadProfile();
+              }),
             );
           } else {
             // Self (by uid) shows exactly the You tab's page: the owner's
