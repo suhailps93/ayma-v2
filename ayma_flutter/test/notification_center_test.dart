@@ -180,6 +180,15 @@ void main() {
       expect(
           deepLinkToRoute('deep_dive/a b', myUid: 'a'), '/deep-dive/a%20b');
     });
+    // Bug J1/L3: the automatic "web search about me" report completion
+    // deep-links with the self dive's name-keyed id (`deep_dive/name_<slug>`).
+    // It must open the rendered report, NOT fall through to the Ayma chat tab
+    // ('/') the way it did when the auto report fired no deep-link at all.
+    test('self about-me report (name-keyed) opens the report, not chat', () {
+      expect(
+          deepLinkToRoute('deep_dive/name_ana-reis', myUid: 'ana'),
+          '/deep-dive/name_ana-reis');
+    });
     test('appearance maps to the appearance report screen', () {
       expect(
           deepLinkToRoute('appearance/current', myUid: 'a'),

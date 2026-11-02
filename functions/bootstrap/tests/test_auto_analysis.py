@@ -575,3 +575,70 @@ def test_analyse_web_never_raises_when_the_dive_fails(monkeypatch):
 
     _run(auto_analysis.analyse_web(db, "u1"))  # no raise
     assert ("users", "u1") not in db.docs  # flag not set -> retries later
+
+
+# --- bug L3 / J1: the automatic "web search about me" report completion
+# fires a "your report is ready" notification that deep-links straight to the
+# rendered report (`/deep-dive/{id}`), instead of writing the report doc
+# silently (no notification at all) and leaving the only self-dive entry to
+# fall back to the Ayma chat tab. The test fires the real trigger
+# (`analyse_web`) and asserts the notification + its report deep-link, not just
+# the stored doc.
+
+
+def test_analyse_web_fires_a_ready_notification_deep_linking_to_the_report(
+    monkeypatch,
+):
+    db = FakeDb()
+    db.docs[("users", "u1", "profile", "main")] = {
+        "first_name": "Ana", "last_name": "Reis",
+    }
+    monkeypatch.setattr(auto_analysis.firestore, "SERVER_TIMESTAMP", "TS")
+
+    async def _dive(name, *, uid=None, context="", is_self=False, db=None,
+                    target_uid="", force=False):
+        return dict(_DIGEST)  # confidence "medium" + a summary -> a real report
+
+    monkeypatch.setattr(deep_dive, "run", _dive)
+
+    sent = []
+
+    async def _spy(db_, uid, preview, deep_link="chat"):
+        sent.append((uid, preview, deep_link))
+
+    monkeypatch.setattr(auto_analysis.notifications_triggers,
+                        "notify_skill_done", _spy)
+
+    _run(auto_analysis.analyse_web(db, "u1"))
+
+    expected_id = deep_dive.dive_report_id(name="Ana Reis")  # name_ana-reis
+    assert sent == [
+        ("u1", "Your web search on yourself is ready.", f"deep_dive/{expected_id}"),
+    ]
+    # The deep-link resolves to the report route, never the chat fallback.
+    assert sent[0][2].startswith("deep_dive/") and sent[0][2] != "deep_dive/"
+    assert db.docs[("users", "u1")]["auto_dive_done"] is True
+
+
+def test_analyse_web_stays_silent_when_the_dive_found_nothing(monkeypatch):
+    db = FakeDb()
+    db.docs[("users", "u1", "profile", "main")] = {"name": "Nemo Nobody"}
+    monkeypatch.setattr(auto_analysis.firestore, "SERVER_TIMESTAMP", "TS")
+
+    async def _dive(*_a, **_k):
+        return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
+
+    monkeypatch.setattr(deep_dive, "run", _dive)
+
+    sent = []
+
+    async def _spy(*_a, **_k):
+        sent.append(_a)
+
+    monkeypatch.setattr(auto_analysis.notifications_triggers,
+                        "notify_skill_done", _spy)
+
+    _run(auto_analysis.analyse_web(db, "u1"))
+
+    assert sent == []  # nothing found -> no "ready" notification worth firing
+    assert db.docs[("users", "u1")]["auto_dive_done"] is True  # still one-shot

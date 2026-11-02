@@ -31,6 +31,7 @@ import deep_dive
 import deep_dive_images
 import face_report
 import media_embed
+import notifications_triggers
 import photo_attrs
 import skill_memory
 import token_ledger
@@ -270,6 +271,28 @@ async def analyse_web(db, uid: str) -> None:
         )
     except Exception:  # noqa: BLE001
         logger.exception("auto_analysis: skill-run record failed for %s", uid)
+
+    # Tell the user their automatic "web search about me" finished, deep-linking
+    # straight to the rendered report — the same completion signal a
+    # user-initiated dive gets (``_finish_deep_dive``) and the appearance report
+    # gets (``notify_report_ready``). Without this the auto dive wrote its report
+    # doc silently and offered no "your report is ready" entry to open it from
+    # (bug L3), and any entry that did exist fell back to the chat tab (bug J1).
+    # A dive that found nothing has no report worth pointing at — mirror the
+    # user-initiated ``report_id`` gate exactly so the two never disagree.
+    try:
+        has_report = digest.get("confidence") != "not_found" and (
+            digest.get("facts") or digest.get("summary")
+        )
+        if has_report:
+            report_id = deep_dive.dive_report_id(name=name)
+            await notifications_triggers.notify_skill_done(
+                db, uid,
+                "Your web search on yourself is ready.",
+                f"deep_dive/{report_id}",
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("auto_analysis: dive-ready notification failed for %s", uid)
 
     try:
         db.collection("users").document(uid).set(
