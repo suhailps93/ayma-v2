@@ -453,6 +453,14 @@ const _ops = {
   'dismiss': SemanticsAction.dismiss,
 };
 
+/// Ops that repeat one scroll step until the list reaches the end (handled in
+/// [ScreenCapture.perform], not through [_ops]).
+const _scrollEndOps = {'scroll_to_bottom', 'scroll_to_top'};
+
+/// How many scroll steps a scroll-to-end op runs before giving up (a growing
+/// or paginated list never truly ends).
+const int kScrollToEndMaxSteps = 50;
+
 String _norm(String s) => _clean(s).toLowerCase();
 
 bool _sameLabel(String a, String b) {
@@ -651,7 +659,7 @@ class ScreenCapture {
       await _settle();
       return UiActionResult.done(capture().visible);
     }
-    if (op != 'set_text' && !_ops.containsKey(op)) {
+    if (op != 'set_text' && !_ops.containsKey(op) && !_scrollEndOps.contains(op)) {
       return UiActionResult.refused("'$op' isn't something Ayma can do here");
     }
     final before = _beforeAct;
@@ -687,13 +695,28 @@ class ScreenCapture {
         return const UiActionResult.refused("that field can't be typed into");
       }
       owner.performAction(target.nodeId, SemanticsAction.setText, value);
+    } else if (_scrollEndOps.contains(op)) {
+      // "to the bottom" = reveal what is below = content moves up.
+      final action = op == 'scroll_to_bottom'
+          ? SemanticsAction.scrollUp
+          : SemanticsAction.scrollDown;
+      final end = await _scrollToEnd(owner, target.nodeId, action);
+      final where = op == 'scroll_to_bottom' ? 'the bottom' : 'the top';
+      final head = end.reachedEnd
+          ? 'Reached $where.'
+          : 'Stopped after ${end.steps} scrolls — more content may remain.';
+      return UiActionResult.done('$head\n${capture().visible}');
     } else {
       final action = _ops[op]!;
       if (!_hasAction(target.nodeId, action)) {
         return UiActionResult.refused(
             "'${target.label}' doesn't support $op");
       }
-      final times = (op == 'increase' || op == 'decrease')
+      // increase/decrease/scroll may repeat: `value` is a 1–20 count.
+      final times = (op == 'increase' ||
+              op == 'decrease' ||
+              op == 'scroll_down' ||
+              op == 'scroll_up')
           ? (int.tryParse(value.trim()) ?? 1).clamp(1, 20)
           : 1;
       for (var i = 0; i < times; i++) {
@@ -725,9 +748,13 @@ class ScreenCapture {
     return byLabel.length == 1 ? byLabel.single : null;
   }
 
-  bool _hasAction(int nodeId, SemanticsAction action) {
+  bool _hasAction(int nodeId, SemanticsAction action) =>
+      _nodeData(nodeId)?.hasAction(action) ?? false;
+
+  /// The live [SemanticsData] of node [nodeId], or null if it is gone.
+  SemanticsData? _nodeData(int nodeId) {
     final root = _root();
-    if (root == null) return false;
+    if (root == null) return null;
     SemanticsNode? found;
     bool find(SemanticsNode n) {
       if (n.id == nodeId) {
@@ -739,6 +766,34 @@ class ScreenCapture {
     }
 
     find(root);
-    return found?.getSemanticsData().hasAction(action) ?? false;
+    return found?.getSemanticsData();
+  }
+
+  /// Repeats one scroll [action] on node [nodeId] until the list stops moving
+  /// — the action drops off (nothing left in that direction) or the scroll
+  /// offset settles — capped at [kScrollToEndMaxSteps]. A list already at the
+  /// end runs zero steps and still counts as reached. Returns whether the end
+  /// was reached and how many scrolls ran (settling between each).
+  Future<({bool reachedEnd, int steps})> _scrollToEnd(
+      SemanticsOwner owner, int nodeId, SemanticsAction action) async {
+    var steps = 0;
+    for (var i = 0; i < kScrollToEndMaxSteps; i++) {
+      final before = _nodeData(nodeId);
+      if (before == null || !before.hasAction(action)) {
+        return (reachedEnd: true, steps: steps);
+      }
+      owner.performAction(nodeId, action);
+      await _settle();
+      steps++;
+      final after = _nodeData(nodeId);
+      if (after == null || !after.hasAction(action)) {
+        return (reachedEnd: true, steps: steps);
+      }
+      final a = before.scrollPosition, b = after.scrollPosition;
+      if (a != null && b != null && (a - b).abs() < 0.5) {
+        return (reachedEnd: true, steps: steps);
+      }
+    }
+    return (reachedEnd: false, steps: steps);
   }
 }

@@ -1376,6 +1376,8 @@ def test_ui_action_needs_an_id_and_label_except_back_and_page_scroll():
     assert _run(act("", "", "tap")).startswith("Pass the control")
     assert _run(act("", "", "back")).startswith("Done:")
     assert _run(act("", "", "scroll_down")).startswith("Done:")
+    assert _run(act("", "", "scroll_to_bottom")).startswith("Done:")
+    assert _run(act("", "", "scroll_to_top")).startswith("Done:")
     assert _run(act("b1", "Save", "fly")).startswith("'fly' isn't")
 
 
