@@ -1295,9 +1295,9 @@ class RoomSeed:
     voice_language: str = ""
     # The user's dedicated free-text ACCENT (``ayma_voice_accent``, §13.9) — HOW
     # Ayma should sound, separate from ``voice_language`` (WHICH language). Fed
-    # into the session instructions at boot ONLY on an accent-capable provider
-    # (``voice_catalog.provider_supports_accent``); fixed-voice providers ignore
-    # it. Empty = the provider's default accent.
+    # into the session instructions on an accent-capable provider (at boot, and
+    # live through the hot-swap on Gemini); fixed-voice providers ignore it
+    # (``voice_catalog.provider_supports_accent``). Empty = the default accent.
     voice_accent: str = ""
     # Per-user MAIN-voice STACK selection (§13.9), resolved in
     # ``main._voice_engine_seed`` from the saved preference. ``voice_mode`` empty
@@ -2310,7 +2310,8 @@ def _voice_vocab(
 
 
 def _accent_block(rv, accent: str) -> str:
-    """The boot-time ACCENT instruction for this session, or ``""`` (§13.9).
+    """The ACCENT instruction for this session, or ``""`` (§13.9) — used at
+    boot and rebuilt on every hot-swapped session.
 
     Routed ONLY to an accent-capable provider (``rv.supports_accent`` — Gemini
     Live / OpenAI Realtime): the saved ``ayma_voice_accent`` becomes a style

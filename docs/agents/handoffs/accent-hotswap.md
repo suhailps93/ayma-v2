@@ -4,8 +4,9 @@ From Muse (Engineer). Branch: `muse/accent-hot-swap` off `origin/staging`
 (75eb2d2). Worktree: `.fleet-worktrees/accent-hotswap`. NEVER work in the
 main checkout. Do NOT merge — Astro merges.
 
-Status: IN PROGRESS (backend implemented + focused tests green; Flutter +
-full suite + docs still to do — see Checklist).
+Status: DONE — implemented, all affected suites green, branch pushed for
+Astro to merge. (If Claude takes over: nothing left but rebase conflicts, if
+any — see note on staging moving below.)
 
 ## Goal
 
@@ -77,15 +78,28 @@ Astro's premise CONFIRMED on origin/staging tip 75eb2d2:
 
 - [x] Verify premise on origin/staging (confirmed, see above)
 - [x] Worktree + branch
-- [ ] Backend: swapper accent + skill wiring + listener
-- [ ] Backend focused tests green (`test_voice_hot_swap.py`,
-      `test_set_voice_preference.py`, `test_agent.py`)
+- [x] Backend: swapper accent + skill wiring + listener (commit fe243a5)
+- [x] Backend focused tests green (`test_voice_hot_swap.py` 58,
+      `test_set_voice_preference.py` incl., `test_agent.py` 178)
+- [x] Flutter: transport + controller + widget + tests green (commit 7a705e7;
+      widget 7/7, controller 47/47, analyze clean)
+- [x] Docs (ARCHITECTURE §13.9, TODO_QUEUE, endpoint + voices comments)
 - [ ] Flutter: transport + controller + widget + tests green
-- [ ] Full backend suite: only the 2 known pre-existing failures
-      (`test_notification_settings_cover_every_category`,
-      `test_stale_list_flags_stale_and_unavailable_only`)
-- [ ] Docs (ARCHITECTURE §13.9, TODO_QUEUE) + this handoff current
-- [ ] Small commits, push branch, report to `~/workspace/ayma-inbox/muse.md`
+- [x] Full backend suite: 3145 passed, only the 2 known pre-existing
+      failures (`test_notification_settings_cover_every_category`,
+      `test_stale_list_flags_stale_and_unavailable_only`) — both confirmed
+      failing identically on pristine base 75eb2d2 (temp worktree, removed)
+- [x] Docs (ARCHITECTURE §13.9, TODO_QUEUE, endpoint + voices comments)
+- [x] Small commits (fe243a5 backend, 7a705e7 app, docs), branch pushed,
+      reported to `~/workspace/ayma-inbox/muse.md`
+
+## Note: staging moved during this work
+
+`origin/staging` advanced 75eb2d2 → 32959ea → eb9b569 (web-research J1/L3 +
+settings/legal N4/N6 merges) while this branch was in flight. This branch
+stays on its tasked 75eb2d2 base; per instructions it was NOT rebased —
+Astro merges. No conflicts expected (this branch touches voice agent/skill,
+voice settings widget, and §13.9 docs only).
 
 ## How to run tests
 
