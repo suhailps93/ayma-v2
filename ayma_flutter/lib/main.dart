@@ -31,6 +31,30 @@ Future<void> main() async {
     );
   }
 
+  final dag = StartupNodes.buildDefaultDAG(
+    app: const AymaApp(),
+    router: appRouter,
+  );
+
+  // Extract initial launch intent and dynamically configure critical path
+  final intent = await LaunchIntentResolver.extract();
+  LaunchIntentResolver.configureDAGForIntent(dag, intent);
+
+  // Run pre-frame DAG to first frame mount (N8:first_frame_mount). N8 depends
+  // (transitively) on N7:firebase_core, so once this returns Firebase is
+  // guaranteed initialized. The ongoing session listeners below all touch
+  // Firebase (PushService → FirebaseMessaging.instance, FirebaseAuth) and MUST
+  // NOT be registered before this point: registering them at the top of main()
+  // — before the DAG ran N7 — was the P0 boot crash (`PushService()` threw
+  // `[core/no-app]`, aborting main() on the splash). See startup_nodes_test.dart
+  // for the "run-to-N8 guarantees N7" regression guard.
+  await dag.run(targetNodes: {'N8:first_frame_mount'});
+
+  // Firebase is up. Register the ongoing session listeners that depend on it.
+  // N9:auth_session_restore blocks on `notifyAuthSessionRestored` (fired by the
+  // auth listener below) — it is not on the path to N8, so it resolves here,
+  // once the listener is live, and its dependent nodes (routing, boot config,
+  // RevenueCat bind, push sync) then run in the background.
   final push = PushService();
   setupAuthDeepLinkDrain();
 
@@ -60,18 +84,6 @@ Future<void> main() async {
     router: appRouter,
     authService: AuthService.instance,
   ));
-
-  final dag = StartupNodes.buildDefaultDAG(
-    app: const AymaApp(),
-    router: appRouter,
-  );
-
-  // Extract initial launch intent and dynamically configure critical path
-  final intent = await LaunchIntentResolver.extract();
-  LaunchIntentResolver.configureDAGForIntent(dag, intent);
-
-  // Run pre-frame DAG to first frame mount (N8:first_frame_mount)
-  await dag.run(targetNodes: {'N8:first_frame_mount'});
 }
 
 /// Runs a pre-first-frame startup step under a hard deadline.
