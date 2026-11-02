@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -466,6 +467,69 @@ void main() {
     expect(ctrl.position.pixels, greaterThan(afterOne));
     handle.dispose();
   });
+
+  // GW-SCROLL regression: "scroll to the bottom" arrives while the
+  // page-context "Ask Ayma" sheet is up. perform() closes that sheet first
+  // (`_beforeAct`, wired in startup_nodes.dart) to reveal the page, then runs
+  // the scroll. The command handler (AppCommandService.shared) is app-level,
+  // not tied to the sheet's widget lifecycle, so the scroll must still run to
+  // the end and report the honest result even though the sheet was dismissed
+  // mid-command. Covers Scout's two specimens: a pinned profile and Explore,
+  // both reached through the chat sheet.
+  for (final route in const ['/explore', '/profile/user/u1']) {
+    testWidgets(
+        'scroll_to_bottom scrolls the page revealed when the Ask Ayma sheet '
+        'is dismissed first ($route)', (tester) async {
+      final handle = tester.ensureSemantics();
+      final ctrl = ScrollController();
+      final navKey = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(MaterialApp(
+        navigatorKey: navKey,
+        home: Scaffold(
+          body: ListView(controller: ctrl, children: [
+            for (var i = 0; i < 60; i++)
+              SizedBox(height: 120, child: Text('Row $i')),
+          ]),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // The page-context "Ask Ayma" sheet sits over the page.
+      var sheetOpen = true;
+      unawaited(showModalBottomSheet<void>(
+        context: navKey.currentContext!,
+        builder: (_) => const SizedBox(
+            height: 200, child: Center(child: Text('Ask Ayma'))),
+      ).whenComplete(() => sheetOpen = false));
+      await tester.pumpAndSettle();
+      expect(find.text('Ask Ayma'), findsOneWidget);
+      expect(ctrl.position.pixels, 0);
+
+      final cap = ScreenCapture(
+        routeOf: () => route,
+        settle: () => tester.pumpAndSettle(),
+        back: () async => await navKey.currentState?.maybePop() ?? false,
+        // Exactly as startup_nodes wires it: close the sheet, reveal the page.
+        beforeAct: () async {
+          if (!sheetOpen) return;
+          navKey.currentState?.pop();
+          await tester.pumpAndSettle();
+        },
+      );
+
+      final r =
+          await cap.perform(control: '', label: '', op: 'scroll_to_bottom');
+      await tester.pumpAndSettle();
+
+      // The sheet was dismissed, the page under it scrolled to the end, and
+      // the honest at-end result came back in the one command.
+      expect(find.text('Ask Ayma'), findsNothing);
+      expect(r.ok, isTrue, reason: r.reason);
+      expect(r.result, contains('Reached the bottom.'));
+      expect(ctrl.position.pixels, greaterThan(0));
+      handle.dispose();
+    });
+  }
 
   test('a screen slug set on another route is dropped by the next capture',
       () {

@@ -1381,6 +1381,47 @@ def test_ui_action_needs_an_id_and_label_except_back_and_page_scroll():
     assert _run(act("b1", "Save", "fly")).startswith("'fly' isn't")
 
 
+def test_ui_action_scroll_to_end_waits_past_the_default_tap_cutoff(monkeypatch):
+    # GW-SCROLL regression: a scroll-to-end repeats on the client for many
+    # seconds, so its ack lands after the short tap cutoff but within the
+    # scroll window. Pre-fix the tool used the flat tap timeout and reported
+    # the scroll as NOT applied while it was still running (→ no reply at all).
+    monkeypatch.setattr(app_control, "_ACK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(app_control, "_ACK_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(app_control, "_SCROLL_ACK_TIMEOUT_SECONDS", 2.0)
+    db = _Db()
+
+    async def _scenario():
+        task = asyncio.ensure_future(
+            app_control._bind_ui_action(db, "me")("", "", "scroll_to_bottom")
+        )
+        await asyncio.sleep(0.2)  # well past the 0.05 tap cutoff
+        cmd_id = db.store[_PENDING]["id"]
+        db.store[_ACK] = {
+            "id": cmd_id, "ok": True, "result": "Reached the bottom.",
+        }
+        return await task
+
+    out = _run(_scenario())
+    assert out.startswith("Done: scroll_to_bottom")
+    assert "Reached the bottom." in out
+
+
+def test_ui_action_scroll_completes_honestly_when_no_ack_ever_arrives(
+    monkeypatch,
+):
+    # The anti-hang guarantee: a scroll whose ack never comes still COMPLETES
+    # via the bounded scroll wait with the honest failure line — it must never
+    # hang indefinitely waiting for an ack that is not coming.
+    monkeypatch.setattr(app_control, "_ACK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(app_control, "_ACK_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(app_control, "_SCROLL_ACK_TIMEOUT_SECONDS", 0.1)
+    db = _Db()  # no client — nothing ever acks
+
+    out = _run(app_control._bind_ui_action(db, "me")("", "", "scroll_to_bottom"))
+    assert out == app_control._NOT_APPLIED
+
+
 def test_ui_action_is_a_command_tool_in_voice_and_text():
     assert "ui_action" in {s.name for s in app_control.COMMAND_SKILLS}
     desc = app_control._UI_ACTION["description"]

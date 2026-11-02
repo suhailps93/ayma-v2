@@ -64,7 +64,17 @@ def _bind_ui_action(db, uid: str) -> Callable[..., str]:
             "action": "ui_action", "control": cid,
             "label": label.strip()[:200], "op": op, "value": value[:500],
         })
-        ack = await _await_ack(db, uid, cmd_id)
+        # Scroll-to-end ops repeat on the client for up to ~20-25s (see
+        # app_control._SCROLL_ACK_TIMEOUT_SECONDS), so they wait longer for
+        # the ack than a single tap; still bounded, so the turn never hangs.
+        from skills import app_control as _facade  # deferred: owns the knobs
+
+        ack_timeout = (
+            _facade._SCROLL_ACK_TIMEOUT_SECONDS
+            if op in ("scroll_to_bottom", "scroll_to_top")
+            else None
+        )
+        ack = await _await_ack(db, uid, cmd_id, timeout=ack_timeout)
         if not ack:
             return _NOT_APPLIED
         if not ack.get("ok"):

@@ -163,6 +163,18 @@ from .app_control_ui import (
 _ACK_TIMEOUT_SECONDS = 6.0
 _ACK_POLL_SECONDS = 0.25
 
+# The scroll-to-end ui_action ops (scroll_to_bottom / scroll_to_top) are not a
+# single snapshot scroll: the client repeats one scroll step until the list
+# settles — up to ScreenCapture.kScrollToEndMaxSteps (50) steps, each waiting a
+# settle frame (~0.45s), so a long/paginated list can take ~20-25s to finish
+# before it can ack. The flat 6s cutoff above fired long before that ack,
+# wrongly reporting the scroll as NOT applied while it was still running — and
+# the model's follow-up turn then produced no reply at all (GW-SCROLL, build
+# 2249). These ops get their own, still-bounded, wait so the real honest result
+# ("Reached the bottom." / "Stopped after N scrolls…") comes back; if even this
+# lapses the tool still returns the honest _NOT_APPLIED, never hanging.
+_SCROLL_ACK_TIMEOUT_SECONDS = 30.0
+
 # After a search_explore is acked, how long to wait for the client to report
 # the loaded results (the feed is a network call after navigation).
 _RESULT_TIMEOUT_SECONDS = 6.0

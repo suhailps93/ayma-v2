@@ -80,14 +80,19 @@ def _queue_command(db, uid: str, payload: dict) -> str:
 queue_command = _queue_command
 
 
-async def _await_ack(db, uid: str, cmd_id: str) -> dict | None:
+async def _await_ack(
+    db, uid: str, cmd_id: str, timeout: float | None = None
+) -> dict | None:
     """Poll the ack doc until the client acknowledges ``cmd_id`` or the
     bounded wait runs out. Returns the ack dict (``{id, ok, …}``) or ``None``
-    on timeout. Firestore reads run in a thread so the LiveKit agent's event
+    on timeout. ``timeout`` overrides the default ``_ACK_TIMEOUT_SECONDS`` for
+    a slower command (a scroll-to-end op repeats on the client for ~20s before
+    it can ack). Firestore reads run in a thread so the LiveKit agent's event
     loop (live audio) is never blocked by a poll."""
     from skills import app_control  # deferred: the facade owns the knobs
 
-    deadline = time.monotonic() + app_control._ACK_TIMEOUT_SECONDS
+    wait = app_control._ACK_TIMEOUT_SECONDS if timeout is None else timeout
+    deadline = time.monotonic() + wait
     while True:
         try:
             snap = await asyncio.to_thread(_ack_doc(db, uid).get)
