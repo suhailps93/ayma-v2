@@ -35,35 +35,61 @@ class BudgetHttpClient extends http.BaseClient {
 
   final Map<String, Future<http.Response>> _inFlightGets = {};
 
+  // Endpoints whose server work legitimately runs well past the 8s interactive
+  // budget — model/report/photo builds, external-affinity (Qloo) resolution,
+  // and cold-start-sensitive first calls. The 8s budget aborts them
+  // client-side (TimeoutException -> ApiException 408) while the server logs
+  // `200 OK`, surfacing as "Couldn't finish…/load…/start…". The bounded GET
+  // retry runs inside the same deadline and cannot heal a deterministic >8s
+  // latency, so these must take the long (but still bounded) budget. We've hit
+  // this 3x (practice-start, /match/ SWEEP451-M1, /appearance/report). The
+  // FAST reads of the SAME resources deliberately stay on the interactive
+  // budget: GET /appearance/report/{id}, /appearance/history|coverage|
+  // eligibility, /deep-dive/mine, /deep-dive-report/{id}, /physical-attributes,
+  // /skills/report/* — they are stored reads, not builds.
+  //
+  // Matched by EXACT path (a build POST that shares its prefix with fast
+  // reads, e.g. POST `/appearance/report` vs GET `/appearance/report/{id}`).
+  static const _longBudgetExactPaths = <String>{
+    '/wiki/photo-publish', // moderation + face embedding
+    '/appearance/report', // POST: multi-photo face+body vision build (>8s)
+    '/deep-dive', // POST: web research + model synthesis
+    '/face-report', // POST: facial-beauty vision model
+    '/body-report', // POST: physique vision model
+    '/physical-attributes/refresh', // POST: re-run of the vision pass
+    '/check-compatibility', // POST: token-intensive pairwise match-score model
+    '/media', // POST: unified photo pipeline (moderate→embed→attributes→caption)
+    '/media/photos/batch', // POST: analyses up to 9 photos into the Appearance report
+    '/verification/selfie', // POST: moderate+embed selfie, seeds the initial Appearance read
+    '/taste/pair', // POST: Qloo cross-domain affinity (same resolution /match/ warm-returns in ~13–15s)
+    '/chat', // POST: non-stream model turn (tool use / cold start); fallback for /chat/stream
+  };
+
+  // Matched by PREFIX (a whole family of long builds / reads under one root).
+  static const _longBudgetPrefixes = <String>[
+    '/practice/', // builds the match persona + runs the model; first call after cold start (~18s)
+    '/match/', // match-report read resolves taste/Qloo affinity (~13–15s)
+    '/report/match/', // the same match report via the generic report hub
+  ];
+
+  static bool _isLongBudgetPath(String path) {
+    if (_longBudgetExactPaths.contains(path)) return true;
+    // Report tap-to-correct (`/report/{type}/{id}/correct`) regenerates report
+    // blocks with the model — a model turn, not a quick read.
+    if (path.endsWith('/correct')) return true;
+    for (final prefix in _longBudgetPrefixes) {
+      if (path.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
   Duration _timeoutFor(Uri url, Map<String, String>? headers) {
     final custom = headers?['X-Request-Timeout'];
     if (custom != null) {
       final ms = int.tryParse(custom);
       if (ms != null) return Duration(milliseconds: ms);
     }
-    if (url.path == '/wiki/photo-publish') {
-      return longTimeout;
-    }
-    // Practice-simulator endpoints build the match persona and run the model
-    // server-side, and `/practice/start` is typically the first call after a
-    // scale-to-zero cold start (~18s). The 8s interactive budget aborts them
-    // before the server's 200 arrives — the server logs `200 OK` while the
-    // client shows "Couldn't start practice. Please try again." Give the whole
-    // family the long (but still bounded) budget, like `/wiki/photo-publish`.
-    if (url.path.startsWith('/practice/')) {
-      return longTimeout;
-    }
-    // The match-report read resolves taste/Qloo affinity server-side on every
-    // read and warm-returns in ~13–15s. The 8s interactive budget aborts it
-    // (TimeoutException -> ApiException 408) while the server logs `200 OK`, so
-    // every report fetch shows "Couldn't load this report." The bounded GET
-    // retry runs inside the same 8s deadline and cannot heal a deterministic
-    // >8s latency. Give the report read paths the long (but still bounded)
-    // budget, like `/practice/`. See SWEEP451-M1.
-    if (url.path.startsWith('/match/') ||
-        url.path.startsWith('/report/match/')) {
-      return longTimeout;
-    }
+    if (_isLongBudgetPath(url.path)) return longTimeout;
     return interactiveTimeout;
   }
 

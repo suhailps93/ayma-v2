@@ -1482,5 +1482,108 @@ void main() {
             .having((e) => e.statusCode, 'statusCode', 408)),
       );
     });
+
+    // Founder bug: the Appearance report showed "Couldn't finish the analysis.
+    // Please try again." while staging logged `POST /appearance/report 200 OK`.
+    // Same defect class as /match/ (SWEEP451-M1) and practice-start: the slow
+    // multi-photo face+body build finished past the 8s interactive budget but
+    // within the 55s long budget, so the client aborted it client-side. The
+    // POST build must take the long budget; the fast GET re-open must not.
+    test(
+        'runAppearanceReport respects longTimeout — a 200 landing past the '
+        'interactive budget but within the long budget succeeds', () async {
+      var received = false;
+      final mockHttp = MockClient((request) async {
+        if (request.method == 'POST' &&
+            request.url.path == '/appearance/report') {
+          // Stalls past a 40ms interactive budget but within 200ms long budget.
+          await Future.delayed(const Duration(milliseconds: 80));
+          received = true;
+          return http.Response(
+              '{"report_id": "ap1", "usage_capped": false}', 200);
+        }
+        return http.Response('{}', 200);
+      });
+
+      final client = ApiClient(
+        httpClient: mockHttp,
+        auth: MockFirebaseAuth(signedIn: true),
+        interactiveTimeout: const Duration(milliseconds: 40),
+        longTimeout: const Duration(milliseconds: 200),
+      );
+
+      final result = await client.runAppearanceReport();
+      expect(received, isTrue);
+      expect(result.reportId, 'ap1');
+    });
+
+    test(
+        'BudgetHttpClient long-budget audit: every exempted build path takes '
+        'the long budget; a quick GET like /explore stays interactive',
+        () async {
+      http.Client stall() => MockClient((request) async {
+            // Stalls past the 40ms interactive budget but within the 200ms
+            // long budget.
+            await Future.delayed(const Duration(milliseconds: 80));
+            return http.Response('{}', 200);
+          });
+
+      // Every path the slow-endpoint audit moved onto the long budget. If any
+      // regressed to the interactive budget its 80ms stall would 408 here.
+      const longBudgetPaths = <String>[
+        '/wiki/photo-publish',
+        '/appearance/report',
+        '/deep-dive',
+        '/face-report',
+        '/body-report',
+        '/physical-attributes/refresh',
+        '/check-compatibility',
+        '/media',
+        '/media/photos/batch',
+        '/verification/selfie',
+        '/taste/pair',
+        '/chat',
+        '/practice/start',
+        '/match/m1',
+        '/report/match/m1',
+        '/report/appearance/me/correct',
+      ];
+      for (final path in longBudgetPaths) {
+        final client = BudgetHttpClient(
+          stall(),
+          interactiveTimeout: const Duration(milliseconds: 40),
+          longTimeout: const Duration(milliseconds: 200),
+        );
+        final res = await client.get(Uri.parse('https://api.test$path'));
+        expect(res.statusCode, 200,
+            reason: '$path should take the long budget');
+      }
+
+      // Fast reads / genuinely-interactive paths must STAY on the interactive
+      // budget: an 80ms stall must abort at 40ms as a 408. This guards against
+      // over-exempting (a real hang would otherwise sit for the full 55s).
+      const interactivePaths = <String>[
+        '/explore',
+        '/appearance/report/ap1', // GET re-open of a stored report (not the POST build)
+        '/appearance/history',
+        '/deep-dive/mine',
+        '/physical-attributes',
+        '/media/photos/order', // PUT reorder — a quick write
+        '/chat/history',
+      ];
+      for (final path in interactivePaths) {
+        final client = BudgetHttpClient(
+          stall(),
+          interactiveTimeout: const Duration(milliseconds: 40),
+          longTimeout: const Duration(milliseconds: 200),
+        );
+        await expectLater(
+          client.get(Uri.parse('https://api.test$path')),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 408)),
+          reason: '$path should stay on the interactive budget',
+        );
+      }
+    });
   });
 }
