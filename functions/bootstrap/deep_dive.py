@@ -560,6 +560,65 @@ def fact_id(fact: dict) -> str:
     return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:12]
 
 
+def _dispute_url_matches(entry: dict, url: str) -> bool:
+    """Match one digest link-like entry against a stripped dispute URL."""
+    return str(entry.get("url") or "").strip() == url
+
+
+def _dispute_entry(
+    db,
+    uid: str,
+    report_id: str,
+    target: str,
+    *,
+    digest_key: str,
+    disputed_key: str,
+    matches,
+    audit,
+) -> dict | None:
+    """One parameterized dispute path behind the four ``dispute_*`` wrappers.
+
+    Removes the first ``digest[digest_key]`` entry for which
+    ``matches(entry, target)`` holds and appends ``audit(removed, target)``
+    to ``disputed_key`` on the same doc. Self-dive only; ``None`` when the
+    report or the entry is missing.
+    """
+    report_id = (report_id or "").strip()
+    target = (target or "").strip()
+    if not db or not uid or not report_id or not target:
+        return None
+    ref = _cache_ref(db, uid, report_id)
+    snap = ref.get()
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    digest = data.get("digest")
+    if not isinstance(digest, dict):
+        return None
+    owner = str(data.get("target_uid") or "").strip()
+    if owner and owner != uid:
+        raise PermissionError("dispute is only ever available on a self-dive")
+
+    kept: list[dict] = []
+    removed: dict | None = None
+    for entry in digest.get(digest_key) or []:
+        if not isinstance(entry, dict):
+            continue
+        if removed is None and matches(entry, target):
+            removed = entry
+            continue
+        kept.append(entry)
+    if removed is None:
+        return None
+
+    digest = dict(digest)
+    digest[digest_key] = kept
+    disputed = list(data.get(disputed_key) or [])
+    disputed.append(audit(removed, target))
+    ref.set({"digest": digest, disputed_key: disputed}, merge=True)
+    return {"report_id": report_id, "digest": digest, disputed_key: disputed}
+
+
 def dispute_fact(db, uid: str, report_id: str, target_fact_id: str) -> dict | None:
     """Mark one fact on a stored dive report incorrect: remove it from the
     persisted ``digest.facts`` and remember it as the user's own correction in
@@ -571,47 +630,26 @@ def dispute_fact(db, uid: str, report_id: str, target_fact_id: str) -> dict | No
     ``PermissionError`` when the report is about someone other than the
     caller — disputing a fact is a *self*-dive action only, never available on
     a report about someone the user looked up."""
-    report_id = (report_id or "").strip()
-    target_fact_id = (target_fact_id or "").strip()
-    if not db or not uid or not report_id or not target_fact_id:
-        return None
-    ref = _cache_ref(db, uid, report_id)
-    snap = ref.get()
-    if not getattr(snap, "exists", False):
-        return None
-    data = snap.to_dict() or {}
-    digest = data.get("digest")
-    if not isinstance(digest, dict):
-        return None
-    target = str(data.get("target_uid") or "").strip()
-    if target and target != uid:
-        raise PermissionError("dispute is only ever available on a self-dive")
+    def _matches(entry: dict, tid: str) -> bool:
+        return (str(entry.get("id") or "") or fact_id(entry)) == tid
 
-    kept: list[dict] = []
-    removed: dict | None = None
-    for f in digest.get("facts") or []:
-        if not isinstance(f, dict):
-            continue
-        this_id = str(f.get("id") or "") or fact_id(f)
-        if removed is None and this_id == target_fact_id:
-            removed = f
-            continue
-        kept.append(f)
-    if removed is None:
-        return None
-
-    digest = dict(digest)
-    digest["facts"] = kept
-    disputed = list(data.get("disputed_facts") or [])
-    disputed.append(
-        {
+    def _audit(removed: dict, _target: str) -> dict:
+        return {
             "claim": str(removed.get("claim", "")).strip(),
             "category": str(removed.get("category", "")).strip(),
             "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
+
+    return _dispute_entry(
+        db,
+        uid,
+        report_id,
+        target_fact_id,
+        digest_key="facts",
+        disputed_key="disputed_facts",
+        matches=_matches,
+        audit=_audit,
     )
-    ref.set({"digest": digest, "disputed_facts": disputed}, merge=True)
-    return {"report_id": report_id, "digest": digest, "disputed_facts": disputed}
 
 
 def dispute_link(db, uid: str, report_id: str, url: str) -> dict | None:
@@ -625,46 +663,23 @@ def dispute_link(db, uid: str, report_id: str, url: str) -> dict | None:
     `None` when there's no such report or no matching link. Raises
     `PermissionError` for a report about someone other than the caller —
     self-dive only, same rule as `dispute_fact`."""
-    report_id = (report_id or "").strip()
-    url = (url or "").strip()
-    if not db or not uid or not report_id or not url:
-        return None
-    ref = _cache_ref(db, uid, report_id)
-    snap = ref.get()
-    if not getattr(snap, "exists", False):
-        return None
-    data = snap.to_dict() or {}
-    digest = data.get("digest")
-    if not isinstance(digest, dict):
-        return None
-    target = str(data.get("target_uid") or "").strip()
-    if target and target != uid:
-        raise PermissionError("dispute is only ever available on a self-dive")
-
-    kept: list[dict] = []
-    removed: dict | None = None
-    for ln in digest.get("links") or []:
-        if not isinstance(ln, dict):
-            continue
-        if removed is None and str(ln.get("url") or "").strip() == url:
-            removed = ln
-            continue
-        kept.append(ln)
-    if removed is None:
-        return None
-
-    digest = dict(digest)
-    digest["links"] = kept
-    disputed = list(data.get("disputed_links") or [])
-    disputed.append(
-        {
-            "url": url,
+    def _audit(removed: dict, target: str) -> dict:
+        return {
+            "url": target,
             "title": str(removed.get("title", "")).strip(),
             "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
+
+    return _dispute_entry(
+        db,
+        uid,
+        report_id,
+        url,
+        digest_key="links",
+        disputed_key="disputed_links",
+        matches=_dispute_url_matches,
+        audit=_audit,
     )
-    ref.set({"digest": digest, "disputed_links": disputed}, merge=True)
-    return {"report_id": report_id, "digest": digest, "disputed_links": disputed}
 
 
 def dispute_social_link(db, uid: str, report_id: str, url: str) -> dict | None:
@@ -680,92 +695,46 @@ def dispute_social_link(db, uid: str, report_id: str, url: str) -> dict | None:
     `None` when there's no such report or no matching link. Raises
     `PermissionError` for a report about someone other than the caller —
     self-dive only, same rule as `dispute_fact`."""
-    report_id = (report_id or "").strip()
-    url = (url or "").strip()
-    if not db or not uid or not report_id or not url:
-        return None
-    ref = _cache_ref(db, uid, report_id)
-    snap = ref.get()
-    if not getattr(snap, "exists", False):
-        return None
-    data = snap.to_dict() or {}
-    digest = data.get("digest")
-    if not isinstance(digest, dict):
-        return None
-    target = str(data.get("target_uid") or "").strip()
-    if target and target != uid:
-        raise PermissionError("dispute is only ever available on a self-dive")
-
-    kept: list[dict] = []
-    removed: dict | None = None
-    for s in digest.get("social_handles") or []:
-        if not isinstance(s, dict):
-            continue
-        if removed is None and str(s.get("url") or "").strip() == url:
-            removed = s
-            continue
-        kept.append(s)
-    if removed is None:
-        return None
-
-    digest = dict(digest)
-    digest["social_handles"] = kept
-    disputed = list(data.get("disputed_social") or [])
-    disputed.append(
-        {
-            "url": url,
+    def _audit(removed: dict, target: str) -> dict:
+        return {
+            "url": target,
             "platform": str(removed.get("platform", "")).strip(),
             "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
+
+    return _dispute_entry(
+        db,
+        uid,
+        report_id,
+        url,
+        digest_key="social_handles",
+        disputed_key="disputed_social",
+        matches=_dispute_url_matches,
+        audit=_audit,
     )
-    ref.set({"digest": digest, "disputed_social": disputed}, merge=True)
-    return {"report_id": report_id, "digest": digest, "disputed_social": disputed}
 
 
 def dispute_web_image(db, uid: str, report_id: str, url: str) -> dict | None:
     """Same as `dispute_social_link` but for one entry of `digest.web_images`
     (a "photos of you found online" thumbnail), tracked in `disputed_photos`.
     Self-dive only; same return/exception shape."""
-    report_id = (report_id or "").strip()
-    url = (url or "").strip()
-    if not db or not uid or not report_id or not url:
-        return None
-    ref = _cache_ref(db, uid, report_id)
-    snap = ref.get()
-    if not getattr(snap, "exists", False):
-        return None
-    data = snap.to_dict() or {}
-    digest = data.get("digest")
-    if not isinstance(digest, dict):
-        return None
-    target = str(data.get("target_uid") or "").strip()
-    if target and target != uid:
-        raise PermissionError("dispute is only ever available on a self-dive")
-
-    kept: list[dict] = []
-    removed: dict | None = None
-    for im in digest.get("web_images") or []:
-        if not isinstance(im, dict):
-            continue
-        if removed is None and str(im.get("url") or "").strip() == url:
-            removed = im
-            continue
-        kept.append(im)
-    if removed is None:
-        return None
-
-    digest = dict(digest)
-    digest["web_images"] = kept
-    disputed = list(data.get("disputed_photos") or [])
-    disputed.append(
-        {
-            "url": url,
+    def _audit(removed: dict, target: str) -> dict:
+        return {
+            "url": target,
             "source_page": str(removed.get("source_page", "")).strip(),
             "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
+
+    return _dispute_entry(
+        db,
+        uid,
+        report_id,
+        url,
+        digest_key="web_images",
+        disputed_key="disputed_photos",
+        matches=_dispute_url_matches,
+        audit=_audit,
     )
-    ref.set({"digest": digest, "disputed_photos": disputed}, merge=True)
-    return {"report_id": report_id, "digest": digest, "disputed_photos": disputed}
 
 
 _MAX_CORRECTIONS = 30
