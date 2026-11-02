@@ -60,7 +60,7 @@ from dataclasses import dataclass
 
 import voices
 from config import CONFIG
-from llm_provider import PROVIDER_GEMINI, PROVIDER_META
+from llm_provider import PROVIDER_GEMINI, PROVIDER_META, PROVIDER_OPEN_WEIGHTS
 
 logger = logging.getLogger("ayma.voice_catalog")
 
@@ -73,10 +73,18 @@ MODES = (MODE_REALTIME, MODE_CASCADE)
 REALTIME_GEMINI = "gemini-live"
 REALTIME_OPENAI = "openai-realtime"
 BRAIN_META = "meta-muse-spark"
+# Self-hosted open-weights voice brain (§13.9). Offered only when
+# ``CONFIG.open_weights_api_base_url`` (env ``OPEN_WEIGHTS_BASE_URL``) is set;
+# never a production default. Stable id persisted on the profile — never renamed.
+BRAIN_OPEN_WEIGHTS = "open-weights-llama-3.1-8b"
 
 # Cascade brain ROUTES (how the agent builds the LLM leg).
 ROUTE_META = "meta"
 ROUTE_INFERENCE = "inference"
+# OpenAI-compatible self-hosted endpoint (NOT LiveKit Inference): the agent
+# builds the LLM leg with ``livekit-plugins-openai`` pointed at
+# ``CONFIG.open_weights_api_base_url``.
+ROUTE_OPEN_WEIGHTS = "open-weights"
 
 _CATALOG_TTL_SECONDS = 300
 
@@ -485,10 +493,14 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
 
 def brain_route(brain_id: str) -> tuple[str, str] | None:
     """``(route, model_id)`` for a cascade brain id, or ``None`` if unknown.
-    The Meta brain is ``meta`` → ``CONFIG.meta_chat_model``; every other brain id
-    is itself a LiveKit Inference LLM model string (route ``inference``)."""
+    The Meta brain is ``meta`` → ``CONFIG.meta_chat_model``; the open-weights
+    brain is ``open-weights`` → ``CONFIG.open_weights_model`` (offered only when
+    ``OPEN_WEIGHTS_BASE_URL`` is set); every other brain id is itself a LiveKit
+    Inference LLM model string (route ``inference``)."""
     if brain_id == BRAIN_META:
         return ROUTE_META, CONFIG.meta_chat_model
+    if brain_id == BRAIN_OPEN_WEIGHTS and CONFIG.open_weights_api_base_url:
+        return ROUTE_OPEN_WEIGHTS, CONFIG.open_weights_model
     # An extra brain may map its id to a distinct model string.
     for entry in CONFIG.voice_cascade_extra_brains:
         parts = [p.strip() for p in entry.split("|")]
@@ -514,6 +526,20 @@ def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
             "requires_secret": "META_API_KEY",
         }
     ]
+    # Self-hosted open-weights brain: exposed ONLY when the endpoint is
+    # configured (``OPEN_WEIGHTS_BASE_URL`` set), so production (env unset)
+    # never lists it. Never a default (see ``_default_from``).
+    if CONFIG.open_weights_api_base_url:
+        out.append(
+            {
+                "id": BRAIN_OPEN_WEIGHTS,
+                "label": "Llama 3.1 8B (open weights)",
+                "provider": PROVIDER_OPEN_WEIGHTS,
+                "route": ROUTE_OPEN_WEIGHTS,
+                "available": True,
+                "requires_secret": "",
+            }
+        )
     src = str(sources["source"])
     for mid in sources["llm"]:  # type: ignore[index]
         provider = _provider_of(mid)

@@ -87,6 +87,69 @@ def test_brain_route_meta_vs_inference(monkeypatch):
     assert vc.brain_route("nope") is None
 
 
+def test_open_weights_brain_listed_only_when_configured(monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    # Unset (production): the open-weights brain is NOT offered.
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG, open_weights_api_base_url="", open_weights_model=""))
+    vc.clear_cache()
+    assert not any(
+        b["id"] == vc.BRAIN_OPEN_WEIGHTS for b in vc.catalog()["brains"])
+
+    # Configured (opt-in): it appears, available, with a clear label + route.
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG,
+        open_weights_api_base_url="https://modal.example/v1",
+        open_weights_model="meta-llama/Llama-3.1-8B-Instruct"))
+    vc.clear_cache()
+    brains = {b["id"]: b for b in vc.catalog()["brains"]}
+    assert vc.BRAIN_OPEN_WEIGHTS in brains
+    ow = brains[vc.BRAIN_OPEN_WEIGHTS]
+    assert ow["available"] is True
+    assert ow["route"] == vc.ROUTE_OPEN_WEIGHTS
+    assert ow["provider"] == vc.PROVIDER_OPEN_WEIGHTS
+    assert "open weights" in ow["label"].lower()
+
+
+def test_brain_route_open_weights(monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    # Unconfigured → unknown brain (route None).
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG, open_weights_api_base_url="", open_weights_model=""))
+    vc.clear_cache()
+    assert vc.brain_route(vc.BRAIN_OPEN_WEIGHTS) is None
+
+    # Configured → resolves to the open-weights route + config model id.
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG,
+        open_weights_api_base_url="https://modal.example/v1",
+        open_weights_model="meta-llama/Llama-3.1-8B-Instruct"))
+    vc.clear_cache()
+    assert vc.brain_route(vc.BRAIN_OPEN_WEIGHTS) == (
+        vc.ROUTE_OPEN_WEIGHTS, "meta-llama/Llama-3.1-8B-Instruct")
+
+
+def test_open_weights_brain_never_the_default(monkeypatch):
+    import dataclasses
+
+    # Even with the endpoint configured, the default stack is unchanged — the
+    # open-weights brain is opt-in only and never auto-selected as the default.
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG,
+        llm_provider_voice_main=vc.PROVIDER_META,
+        open_weights_api_base_url="https://modal.example/v1",
+        open_weights_model="meta-llama/Llama-3.1-8B-Instruct"))
+    vc.clear_cache()
+    d = vc.default_selection()
+    assert d["brain_id"] == vc.BRAIN_META
+    assert d["brain_id"] != vc.BRAIN_OPEN_WEIGHTS
+
+
 def test_tts_voices_fallback_inworld():
     ids = vc.tts_voice_ids("inworld/inworld-tts-1")
     assert "" in ids and "Ashley" in ids

@@ -484,6 +484,10 @@ def _build_cascade_brain(brain_id: str):
       ``META_API_KEY``). Muse Spark is reasoning-only, so ``reasoning_effort`` is
       pinned to ``CONFIG.meta_reasoning_effort`` (``minimal``) — without it
       replies come back empty.
+    * ``open-weights`` — a self-hosted OpenAI-compatible server (e.g. a
+      Modal-hosted ``Llama-3.1-8B``) via ``livekit-plugins-openai`` pointed at
+      ``CONFIG.open_weights_api_base_url`` (env ``OPEN_WEIGHTS_BASE_URL``), with
+      the optional ``OPEN_WEIGHTS_API_KEY``. Opt-in only; never a default.
     * ``inference`` — any LiveKit-Inference-hosted LLM (``inference.LLM``),
       LiveKit-credit covered, no extra key.
 
@@ -516,6 +520,35 @@ def _build_cascade_brain(brain_id: str):
             api_key=api_key,
             temperature=0.9,
             reasoning_effort=CONFIG.meta_reasoning_effort,
+        )
+    if route == voice_catalog.ROUTE_OPEN_WEIGHTS:
+        base_url = CONFIG.open_weights_api_base_url
+        if not base_url:
+            raise RuntimeError(
+                "OPEN_WEIGHTS_BASE_URL is not set — cannot run the open-weights "
+                "cascade brain"
+            )
+        if not model:
+            raise RuntimeError(
+                "OPEN_WEIGHTS_MODEL is not set — cannot run the open-weights "
+                "cascade brain (config.py must provide it; no hardcoded default)"
+            )
+        try:
+            from livekit.plugins import openai as lk_openai
+        except ModuleNotFoundError as exc:  # pragma: no cover - dep in requirements
+            raise RuntimeError(
+                "livekit-plugins-openai is required for the open-weights cascade brain"
+            ) from exc
+        # The self-hosted server may be keyless; the OpenAI client still needs a
+        # non-empty api_key, so fall back to a sentinel (NOT a credential) when
+        # OPEN_WEIGHTS_API_KEY is unset. A real key, when the server needs one,
+        # comes only from the environment / Secret Manager.
+        api_key = os.getenv("OPEN_WEIGHTS_API_KEY", "") or "not-needed"
+        return lk_openai.LLM(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=0.9,
         )
     from livekit.agents import inference
 

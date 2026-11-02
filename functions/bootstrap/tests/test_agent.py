@@ -2713,6 +2713,67 @@ def test_meta_cascade_wires_config_models_and_reasoning(monkeypatch):
     }
 
 
+def test_open_weights_cascade_brain_wires_endpoint(monkeypatch):
+    import voice_catalog
+
+    # Opt-in endpoint configured (prod leaves these unset → brain never offered).
+    cfg = dataclasses.replace(
+        CONFIG,
+        open_weights_api_base_url="https://modal.example/v1",
+        open_weights_model="meta-llama/Llama-3.1-8B-Instruct",
+    )
+    monkeypatch.setattr(agent, "CONFIG", cfg)
+    monkeypatch.setattr(voice_catalog, "CONFIG", cfg)
+    voice_catalog.clear_cache()
+    monkeypatch.setenv("OPEN_WEIGHTS_API_KEY", "ow-secret")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    agent._build_cascade_brain(voice_catalog.BRAIN_OPEN_WEIGHTS)
+
+    # LLM leg points at the self-hosted endpoint with the config model id (no
+    # hardcoded strings), the env key, and NO reasoning_effort (not Muse Spark).
+    assert captured["llm"]["base_url"] == "https://modal.example/v1"
+    assert captured["llm"]["model"] == "meta-llama/Llama-3.1-8B-Instruct"
+    assert captured["llm"]["api_key"] == "ow-secret"
+    assert "reasoning_effort" not in captured["llm"]
+
+
+def test_open_weights_cascade_brain_keyless_uses_sentinel(monkeypatch):
+    import voice_catalog
+
+    cfg = dataclasses.replace(
+        CONFIG,
+        open_weights_api_base_url="https://modal.example/v1",
+        open_weights_model="llama",
+    )
+    monkeypatch.setattr(agent, "CONFIG", cfg)
+    monkeypatch.setattr(voice_catalog, "CONFIG", cfg)
+    voice_catalog.clear_cache()
+    monkeypatch.delenv("OPEN_WEIGHTS_API_KEY", raising=False)
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    agent._build_cascade_brain(voice_catalog.BRAIN_OPEN_WEIGHTS)
+    # Keyless server: a non-credential sentinel so the OpenAI client is happy.
+    assert captured["llm"]["api_key"] == "not-needed"
+
+
+def test_open_weights_cascade_brain_throws_without_model(monkeypatch):
+    import voice_catalog
+
+    # Base URL set but OPEN_WEIGHTS_MODEL empty → throw (never substitute a
+    # hardcoded id), so the caller falls safely back to Gemini Live.
+    cfg = dataclasses.replace(
+        CONFIG,
+        open_weights_api_base_url="https://modal.example/v1",
+        open_weights_model="",
+    )
+    monkeypatch.setattr(agent, "CONFIG", cfg)
+    monkeypatch.setattr(voice_catalog, "CONFIG", cfg)
+    voice_catalog.clear_cache()
+    with pytest.raises(RuntimeError, match="OPEN_WEIGHTS_MODEL"):
+        agent._build_cascade_brain(voice_catalog.BRAIN_OPEN_WEIGHTS)
+
+
 def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
     import config
 

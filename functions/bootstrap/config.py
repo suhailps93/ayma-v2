@@ -768,7 +768,21 @@ class Config:
     the environment at the call site in ``llm_provider.py``, never stored
     here. Env ``OPEN_WEIGHTS_BASE_URL``, default empty = unconfigured: a
     surface routed to ``open-weights`` then fails with an explicit
-    ``OpenWeightsUnconfiguredError`` and never falls back to a paid route."""
+    ``OpenWeightsUnconfiguredError`` and never falls back to a paid route.
+    Also gates the VOICE cascade's open-weights brain (§13.9): the Brain (LLM)
+    dropdown offers ``Llama 3.1 8B (open weights)`` only when this is set, so
+    production (env unset) never shows or defaults to it."""
+
+    open_weights_model: str
+    """Model id the VOICE cascade's open-weights brain requests from
+    ``open_weights_api_base_url`` — a self-hosted OpenAI-compatible server
+    (e.g. a Modal-hosted ``Llama-3.1-8B``). Distinct from
+    ``meta_open_weights_model`` (the Muse Spark open-weights id the TEXT
+    ``OpenWeightsProvider`` uses) because the voice endpoint may serve a
+    different model. Env ``OPEN_WEIGHTS_MODEL``, default empty: the voice brain
+    is offered only when ``OPEN_WEIGHTS_BASE_URL`` is set, and the agent throws
+    (never substitutes a hardcoded id, per AGENTS.md) if this is empty, falling
+    the call safely back to Gemini Live."""
 
     meta_transcribe_model: str
     """Meta Muse Voice Transcribe (STT) id. Listed in the Meta Model API's
@@ -1232,6 +1246,7 @@ def _load() -> Config:
         open_weights_api_base_url=os.getenv(
             "OPEN_WEIGHTS_BASE_URL", ""
         ).rstrip("/"),
+        open_weights_model=os.getenv("OPEN_WEIGHTS_MODEL", ""),
         qloo_api_base_url=os.getenv(
             "QLOO_API_BASE_URL", "https://hackathon.api.qloo.com"
         ).rstrip("/"),
