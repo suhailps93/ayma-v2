@@ -181,7 +181,9 @@ def _persist(
 
 def _persist_accent(db, uid: str, accent: str) -> None:
     """Save the dedicated free-text ACCENT (``ayma_voice_accent``) verbatim.
-    Routed to accent-capable providers at the next session boot
+    On a live Gemini call it hot-swaps the running session (``bind_live``
+    routes it through the swapper); everywhere else it is routed to
+    accent-capable providers at the next session boot
     (``agent._accent_block``); fixed-voice providers ignore it."""
     (
         db.collection("users").document(uid).collection("profile").document("main")
@@ -268,10 +270,13 @@ def _bind(db, uid: str) -> Callable[..., str]:
     return set_voice_preference
 
 
-# ``on_change(preset, accent) -> (reconnecting, detail)`` — the live call's
-# hot-swap hook (agent.py ``VoiceSwapper.request``). ``detail`` is the
-# truthful one-line account of what actually changes on the Live session.
-VoiceChangeHook = Callable[[str | None, str], tuple[bool, str]]
+# ``on_change(preset, accent_language, *, voice_accent) ->
+# (reconnecting, detail)`` — the live call's hot-swap hook (agent.py
+# ``VoiceSwapper.request``). ``detail`` is the truthful one-line account of
+# what actually changes on the Live session. The ``voice_accent`` keyword is
+# passed only when an accent change was asked for, so a plain 2-arg hook keeps
+# working for voice/language-only calls.
+VoiceChangeHook = Callable[..., tuple[bool, str]]
 
 
 def bind_live(db, uid: str, on_change: VoiceChangeHook) -> Callable[..., str]:
@@ -283,20 +288,27 @@ def bind_live(db, uid: str, on_change: VoiceChangeHook) -> Callable[..., str]:
         request: str = "", voice_name: str = "", accent_language: str = "",
         accent: str = "",
     ) -> str:
-        """Persist the voice character and/or the accent/language and apply
-        it to this call right now. The dedicated ACCENT (``accent``) is always
-        accent-capable here — Gemini Live is instruction-driven — and takes
-        effect at the next session boot (``agent._accent_block``)."""
-        acc_clause = _accent_clause(db, uid, accent, supports_accent=True)
+        """Persist the voice character, the accent/language, and/or the
+        dedicated ACCENT (``accent``) and apply it to this call right now —
+        including the accent, which hot-swaps the live session. Always
+        accent-capable here: this is the Gemini Live path."""
+        new_accent = (accent or "").strip()[:200]
+        if new_accent:
+            _persist_accent(db, uid, new_accent)
         preset, lang = _persist(db, uid, request, voice_name, accent_language)
-        if not preset and not lang:
-            return _combine(_UNCLEAR, acc_clause)
-        reconnecting, detail = on_change(preset, lang)
+        if not preset and not lang and not new_accent:
+            return _UNCLEAR
+        if new_accent:
+            reconnecting, detail = on_change(
+                preset, lang, voice_accent=new_accent
+            )
+        else:
+            reconnecting, detail = on_change(preset, lang)
         if reconnecting:
             base = f"{detail}. Saved as their default. {prompt.load_voice_swap_heads_up()}"
         else:
             base = f"{detail}. Saved as their default."
-        return _combine(base, acc_clause)
+        return base
 
     return set_voice_preference
 

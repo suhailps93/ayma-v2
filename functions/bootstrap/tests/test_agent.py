@@ -2846,10 +2846,16 @@ class _FakePracticeSession:
 
 def _practice_ctx():
     class _Room:
-        pass
+        def __init__(self):
+            self.handlers: dict = {}
+
+        def on(self, event, cb=None):
+            self.handlers.setdefault(event, []).append(cb)
+            return cb
 
     class _Ctx:
-        room = _Room()
+        def __init__(self):
+            self.room = _Room()
 
     return _Ctx()
 
@@ -3365,6 +3371,69 @@ def test_realtime_accent_reaches_build_realtime_model_as_bcp47(monkeypatch):
         _practice_ctx(), seed2, flush=_FakeFlush(), window=[], route="vertex",
         use_inference=False, voice_provider="p"))
     assert build_args["args"][1] == "fr-FR", build_args
+
+
+def test_boot_wires_accent_into_hot_swapper_and_listens_for_settings_changes(
+    monkeypatch,
+):
+    """Mid-call accent hot-swap (founder follow-up 2026-11-01): the live
+    swapper must start from the same accent the boot session plays (raw system
+    prompt + a builder for the accent block, not the block baked in), and the
+    agent must listen for the settings screen's ``voice_accent_control`` data
+    message so a save mid-call reaches the live session."""
+    created: dict = {}
+    real_swapper = agent.VoiceSwapper
+
+    def _recording(session, **kwargs):
+        created.update(kwargs)
+        return real_swapper(session, **kwargs)
+
+    monkeypatch.setattr(agent, "VoiceSwapper", _recording)
+    monkeypatch.setattr(agent, "Agent", lambda **k: object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_token_usage", "relay_cascade_usage", "watch_for_idle",
+                 "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+    async def _fake_open(*_a, **_k):
+        pass
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    monkeypatch.setattr(
+        agent, "build_realtime_model", lambda *a, **k: object()
+    )
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    class _Sess:
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    monkeypatch.setattr(agent, "AgentSession", lambda **k: _Sess())
+
+    ctx = _practice_ctx()
+    seed = agent.RoomSeed(system_prompt="SYS", uid="u1", session_id="s1",
+                          voice_accent="indian", voice_language="")
+    asyncio.run(agent._start_main_gemini_session(
+        ctx, seed, flush=_FakeFlush(), window=[], route="vertex",
+        use_inference=False, voice_provider="p"))
+    # The swapper holds the RAW prompt plus the boot accent and a builder, so
+    # a later accent rebuilds the instructions instead of replaying the old.
+    assert created["system_prompt"] == "SYS", created
+    assert created["voice_accent"] == "indian", created
+    assert "indian" not in created["system_prompt"]
+    assert "southern" in created["accent_block"]("a southern accent")
+    # The settings screen's mid-call save has a listener on this call.
+    assert "data_received" in ctx.room.handlers
+    assert len(ctx.room.handlers["data_received"]) == 1
 
 
 # --- cascade must not act on a stale seeded user turn (founder bug 2026-10-27)-

@@ -4,6 +4,7 @@ conversation carried over once, a context note + confirmation instruction on the
 new agent, and every session-level relay (metrics, transcripts…) untouched."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -75,7 +76,8 @@ def _seeded_session():
 
 
 def _swapper(
-    session, factory, *, route="vertex", voice="Aoede", language="", muted=False
+    session, factory, *, route="vertex", voice="Aoede", language="",
+    accent="", accent_block=None, muted=False,
 ):
     sw = agent.VoiceSwapper(
         session,
@@ -83,6 +85,8 @@ def _swapper(
         route=route,
         voice_name=voice,
         voice_language=language,
+        voice_accent=accent,
+        accent_block=accent_block,
         model_factory=factory,
         session_id="s-1",
         provider="livekit_inference" if route == "inference" else "google",
@@ -92,6 +96,15 @@ def _swapper(
     )
     sw.tools = []
     return sw
+
+
+class _AccentCapable:
+    supports_accent = True
+
+
+def _real_accent_block(accent):
+    """The production accent directive, as the boot path builds it."""
+    return agent._accent_block(_AccentCapable(), accent)
 
 
 def _speak(session):
@@ -593,3 +606,185 @@ def test_call_ending_mid_swap_stops_retrying(monkeypatch):
 
     asyncio.run(_run())
     assert count[0] == 1 and len(sent) == 1
+
+
+# --- Mid-call ACCENT hot-swap (founder follow-up 2026-11-01) ------------------
+# The dedicated free-text accent (``ayma_voice_accent``) applies to the CURRENT
+# call through the same seamless reconnect — the BCP-47 lever boot uses plus a
+# rebuilt accent instruction block — instead of persisting-only for the next
+# call.
+
+
+def test_accent_change_reconnects_with_bcp47_hint(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    session = _seeded_session()
+    _new_sessions_speak(session)
+    factory = _Factory()
+    sw = _swapper(session, factory, accent_block=_real_accent_block)
+
+    async def _run():
+        reconnecting, detail = sw.request(None, "", voice_accent="indian")
+        assert reconnecting
+        assert "en-IN" in detail and "indian" in detail
+        await sw._task
+
+    asyncio.run(_run())
+    # Raw accent text reaches the builder, which hints it (as boot does).
+    assert factory.calls == [("Aoede", "indian", "vertex")]
+    new = session.current_agent
+    assert isinstance(new, agent.SwappedVoiceAgent)
+    assert new.instructions.startswith("SYSTEM PROMPT")
+    assert "indian" in new.instructions
+    assert sw._live_accent == "indian"
+
+
+def test_explicit_language_still_wins_over_accent_hint_live(monkeypatch):
+    """Boot parity on the live path: an explicit voice_language beats the
+    accent-derived hint — but the new accent instructions still apply."""
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    session = _seeded_session()
+    _new_sessions_speak(session)
+    factory = _Factory()
+    sw = _swapper(
+        session, factory, language="fr-FR", accent_block=_real_accent_block
+    )
+
+    async def _run():
+        reconnecting, _detail = sw.request(None, "", voice_accent="indian")
+        assert reconnecting
+        await sw._task
+
+    asyncio.run(_run())
+    assert factory.calls == [("Aoede", "fr-FR", "vertex")]
+    assert "indian" in session.current_agent.instructions
+
+
+def test_same_accent_does_not_reconnect():
+    sw = _swapper(_seeded_session(), _Factory(), accent="an Irish accent")
+    reconnecting, detail = sw.request(None, "", voice_accent="an Irish accent")
+    assert not reconnecting and "already the current accent" in detail
+    assert sw._task is None and sw._live_accent == "an Irish accent"
+
+
+def test_accent_cleared_rebuilds_without_hint(monkeypatch):
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    session = _seeded_session()
+    _new_sessions_speak(session)
+    factory = _Factory()
+    sw = _swapper(
+        session, factory, accent="indian", accent_block=_real_accent_block
+    )
+
+    async def _run():
+        reconnecting, detail = sw.request(None, "", voice_accent="")
+        assert reconnecting and "default" in detail
+        await sw._task
+
+    asyncio.run(_run())
+    assert factory.calls == [("Aoede", "", "vertex")]
+    new = session.current_agent
+    assert new.instructions.startswith("SYSTEM PROMPT")
+    assert "indian" not in new.instructions
+    assert sw._live_accent == ""
+
+
+def test_accent_change_on_inference_reconnects_for_instructions(monkeypatch):
+    """The gateway ignores the BCP-47 hint, but the accent instructions still
+    refresh — so an accent change reconnects where a bare language-hint
+    change would not."""
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    session = _seeded_session()
+    _new_sessions_speak(session)
+    factory = _Factory()
+    sw = _swapper(
+        session, factory, route="inference", accent_block=_real_accent_block
+    )
+
+    async def _run():
+        reconnecting, detail = sw.request(
+            None, "", voice_accent="an Irish accent"
+        )
+        assert reconnecting
+        assert "en-IE" not in detail and "Irish" in detail
+        await sw._task
+
+    asyncio.run(_run())
+    assert factory.calls == [("Aoede", "an Irish accent", "inference")]
+    assert "Irish" in session.current_agent.instructions
+
+
+def test_live_tool_accent_only_hot_swaps_live():
+    db = _Chain()
+    calls = []
+
+    def _hook(preset, accent, *, voice_accent=None):
+        calls.append((preset, accent, voice_accent))
+        return True, f"accent → {voice_accent}: hint set to en-IE, switching now"
+
+    msg = svp.bind_live(db, "u1", _hook)(accent="an Irish accent")
+    assert calls == [(None, "", "an Irish accent")]
+    assert db.written["ayma_voice_accent"] == "an Irish accent"
+    assert "Switching my voice, one second" in msg
+    assert "next" not in msg
+
+
+def test_live_tool_accent_plus_voice_combines_live():
+    db = _Chain()
+    calls = []
+
+    def _hook(preset, accent, *, voice_accent=None):
+        calls.append((preset, accent, voice_accent))
+        return True, "voice → Charon (deep); accent → Irish (switching now)"
+
+    msg = svp.bind_live(db, "u1", _hook)(
+        request="a male voice", accent="Irish"
+    )
+    assert calls == [("Charon", "", "Irish")]
+    assert db.written["ayma_voice_name"] == "Charon"
+    assert db.written["ayma_voice_accent"] == "Irish"
+    assert "Switching my voice, one second" in msg
+
+
+class _Packet:
+    def __init__(self, topic, data):
+        self.topic = topic
+        self.data = data
+
+
+def _pkt(topic, payload):
+    return _Packet(topic, json.dumps(payload).encode())
+
+
+def test_voice_accent_control_message_triggers_swap(monkeypatch):
+    """The settings screen's mid-call save arrives as a
+    ``voice_accent_control`` data message; the agent hot-swaps to it."""
+    monkeypatch.setattr(agent, "_await_heads_up", _no_heads_up)
+    session = _seeded_session()
+    _new_sessions_speak(session)
+    factory = _Factory()
+    sw = _swapper(session, factory, accent_block=_real_accent_block)
+    on_data = agent.voice_accent_control_handler(sw)
+
+    async def _run():
+        on_data(_pkt(
+            agent.TOPIC_VOICE_ACCENT_CONTROL, {"accent": "indian", "language": ""}
+        ))
+        assert sw._task is not None
+        await sw._task
+
+    asyncio.run(_run())
+    assert factory.calls == [("Aoede", "indian", "vertex")]
+    assert "indian" in session.current_agent.instructions
+
+
+def test_voice_accent_control_ignores_noise():
+    session = _seeded_session()
+    factory = _Factory()
+    sw = _swapper(session, factory)
+    on_data = agent.voice_accent_control_handler(sw)
+    on_data(_pkt("agent_mute_control", {"muted": False}))  # wrong topic
+    on_data(_Packet(agent.TOPIC_VOICE_ACCENT_CONTROL, b"\xff\xfe"))  # bad bytes
+    on_data(_Packet(agent.TOPIC_VOICE_ACCENT_CONTROL, b"[1,2]"))  # not a dict
+    on_data(_pkt(agent.TOPIC_VOICE_ACCENT_CONTROL, {}))  # nothing asked
+    on_data(_pkt(agent.TOPIC_VOICE_ACCENT_CONTROL, {"accent": 123}))  # not text
+    assert sw._task is None and factory.calls == []
