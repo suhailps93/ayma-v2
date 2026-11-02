@@ -15,9 +15,9 @@ import 'ayma_toast.dart';
 ///
 /// Dropdown contents are pulled from the cloud catalog (LiveKit Inference, live),
 /// so new providers appear without a client change. Saving calls
-/// `POST /voice/preference`; a changed accent/language also hot-swaps the
-/// live call when one is active (§13.9), everything else takes effect on the
-/// next voice call.
+/// `POST /voice/preference`; a changed language (any model) or a changed accent
+/// (accent-capable models only) also hot-swaps the live call when one is active
+/// (§13.9); everything else takes effect on the next voice call.
 ///
 /// This is the user-facing "Ayma's voice" control (ARCHITECTURE §13.9): it shows
 /// the whole stack — mode, brain, STT, TTS, voice and language — so a normal user
@@ -83,7 +83,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   }
 
   /// Whether the active component (realtime model, or the cascade TTS) honours a
-  /// free-text accent (§13.9). Drives the accent field's helper note.
+  /// free-text accent (§13.9). Gates whether the ACCENT card renders at all: a
+  /// fixed-accent model hides it entirely (the saved value is kept, not cleared).
   bool _activeSupportsAccent() {
     final cat = _cat!, sel = _sel!;
     if (sel.mode == 'realtime') {
@@ -164,9 +165,20 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       // The accent/language changed mid-call: nudge the live agent (if any)
       // so THIS call hot-swaps instead of waiting for the next one (§13.9).
       // Best effort — the save itself already succeeded.
+      //
+      // A LANGUAGE change always nudges (a fixed-accent TTS can still switch
+      // language live). An ACCENT change only nudges when the active component
+      // can honour a free-text accent — a fixed-accent model must NOT announce
+      // an accent change it would silently ignore. The accent is still
+      // persisted above (hide-don't-delete); it simply isn't applied to a live
+      // call here. We only advance the saved-accent bookkeeping when the accent
+      // was actually honoured, so switching back to an accent-capable model
+      // still re-applies the accent on the next save.
+      final supportsAccent = _activeSupportsAccent();
+      final accentChanged = sel.accent != _savedAccent;
+      final languageChanged = sel.languageCode != _savedLanguageCode;
       var appliedLive = false;
-      if (sel.accent != _savedAccent ||
-          sel.languageCode != _savedLanguageCode) {
+      if (languageChanged || (accentChanged && supportsAccent)) {
         try {
           appliedLive = await VoiceSessionController.active
                   ?.notifyVoiceAccentChanged(
@@ -177,8 +189,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         } catch (_) {
           appliedLive = false;
         }
-        _savedAccent = sel.accent;
         _savedLanguageCode = sel.languageCode;
+        if (supportsAccent) _savedAccent = sel.accent;
       }
       if (mounted) {
         AymaToast.show(
@@ -362,8 +374,15 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
               ? null
               : (v) => setState(() => _sel = sel.copyWith(languageCode: v ?? '')),
         ),
-        const SizedBox(height: 12),
-        _accentField(ac, sel),
+        // §13.9: show the ACCENT card ONLY when the active component (the
+        // realtime model, or the cascade TTS) can honour a free-text accent.
+        // A fixed-accent model renders nothing here — no card and no orphan
+        // helper note. The saved accent value is kept (hide-don't-delete), so
+        // switching back to an accent-capable model restores it.
+        if (_activeSupportsAccent()) ...[
+          const SizedBox(height: 12),
+          _accentField(ac, sel),
+        ],
       ],
     );
   }
@@ -375,7 +394,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   /// field sizes to its content inside the scrolling list, so it stays matrix-
   /// safe at text scale 2.0 / with the keyboard up.
   Widget _accentField(AymaTokens ac, VoiceSelection sel) {
-    final supported = _activeSupportsAccent();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -388,7 +406,11 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           maxLines: 2,
           maxLength: 200,
           textInputAction: TextInputAction.done,
-          onChanged: (v) => _sel = sel.copyWith(accent: v),
+          // setState so a later model/mode switch rebuilds its handlers from a
+          // selection that already carries the typed accent — otherwise a
+          // sibling dropdown's stale closure would overwrite it (§13.9
+          // hide-don't-delete). The controller keeps the caret across rebuilds.
+          onChanged: (v) => setState(() => _sel = sel.copyWith(accent: v)),
           style: AymaType.sans(size: 15, color: ac.fg),
           decoration: InputDecoration(
             isDense: true,
@@ -407,10 +429,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         ),
         const SizedBox(height: 6),
         Text(
-          supported
-              ? 'Ayma speaks with this accent from the first word of every call.'
-              : 'This model speaks one fixed accent — pick an accent-capable '
-                  'model (like Gemini Live) above to use a custom accent.',
+          'Ayma speaks with this accent from the first word of every call.',
           style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
       ],
