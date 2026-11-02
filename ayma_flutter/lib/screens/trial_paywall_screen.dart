@@ -274,6 +274,7 @@ Future<void> openTrialPaywallOrPlans(
   final rc = service ?? RevenueCatService.instance;
   final clock = now ?? DateTime.now();
   try {
+    await rc.ensureReady();
     if (rc.enabled && await gate.dailyDue(clock)) {
       final offer = await rc.proTrialOffer();
       if (offer != null && await rc.activeSubscription() == null) {
@@ -298,6 +299,7 @@ Future<void> showOnboardingPaywall(
 }) async {
   final id = uid ?? FirebaseAuth.instance.currentUser?.uid;
   final rc = service ?? RevenueCatService.instance;
+  await rc.ensureReady();
   if (id == null || !rc.enabled || !await gate.onboardingDue(id)) return;
   Widget? page;
   try {

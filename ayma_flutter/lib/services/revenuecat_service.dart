@@ -201,18 +201,55 @@ class RevenueCatService {
   /// Whether purchases are available in this build.
   bool get enabled => _configured;
 
-  /// Configures the SDK. Stays disabled without a key; throws [StateError] only
-  /// for the release misconfiguration described on [_platformKey].
-  Future<void> init() async {
+  Completer<void> _readyCompleter = Completer<void>();
+
+  bool _forceDeferredForTest = false;
+
+  @visibleForTesting
+  void forceDeferredForTest() {
+    _forceDeferredForTest = true;
+  }
+
+  /// Readiness future. Completes when Purchases.configure returns or throws.
+  Future<void> ensureReady({Duration timeout = const Duration(seconds: 4)}) async {
+    if (!_forceDeferredForTest &&
+        (_configured || runtimeType != RevenueCatService || _platformKey.isEmpty)) {
+      return;
+    }
+    if (_readyCompleter.isCompleted) return;
+    try {
+      await _readyCompleter.future.timeout(timeout);
+    } on TimeoutException {
+      debugPrint('[RevenueCatService] ensureReady timed out after ${timeout.inSeconds}s');
+    } catch (_) {}
+  }
+
+  @visibleForTesting
+  void resetForTest() {
+    _configured = false;
+    _readyCompleter = Completer<void>();
+  }
+
+  /// Post-runApp deferred initialization.
+  Future<void> initDeferred() async {
     final key = _platformKey;
-    if (key.isEmpty || _configured) return;
+    if (key.isEmpty || _configured) {
+      if (!_readyCompleter.isCompleted) _readyCompleter.complete();
+      return;
+    }
     try {
       await Purchases.configure(PurchasesConfiguration(key));
       _configured = true;
     } on PlatformException catch (e) {
       debugPrint('RevenueCat configure failed: ${e.message}');
+    } finally {
+      if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     }
   }
+
+  /// Configures the SDK. Stays disabled without a key; throws [StateError] only
+  /// for the release misconfiguration described on [_platformKey].
+  Future<void> init() => initDeferred();
 
   Future<void> logIn(String uid) async {
     if (!_configured) return;
@@ -245,6 +282,7 @@ class RevenueCatService {
   /// package; when the offering can't be loaded every plan does, and
   /// [plansUnavailableReason] says why.
   Future<List<PlanOption>> plans() async {
+    await ensureReady();
     _plansUnavailableReason = null;
     if (!_configured) return fallbackPlans;
     try {
@@ -311,6 +349,7 @@ class RevenueCatService {
   /// iOS the product needs a free introductory price and
   /// `checkTrialOrIntroductoryPriceEligibility` must say eligible.
   Future<TrialOffer?> proTrialOffer() async {
+    await ensureReady();
     if (!_configured) return null;
     try {
       final pro = fallbackPlans.firstWhere((p) => p.name == 'Pro');
@@ -369,6 +408,7 @@ class RevenueCatService {
   /// The active paid subscription from RevenueCat CustomerInfo, or null when
   /// the SDK is disabled, nothing is active, or the lookup fails.
   Future<ActiveSubscription?> activeSubscription() async {
+    await ensureReady();
     if (!_configured) return null;
     try {
       final info = await Purchases.getCustomerInfo();
@@ -397,6 +437,7 @@ class RevenueCatService {
     String? replacing,
     bool isUpgrade = true,
   }) async {
+    await ensureReady();
     final pkg = plan.package;
     if (!_configured || pkg == null) {
       throw const PurchaseFailure('Purchases are not available right now.');
@@ -469,6 +510,7 @@ class RevenueCatService {
 
   /// Restores prior purchases for this store account.
   Future<PurchaseOutcome> restore() async {
+    await ensureReady();
     if (!_configured) {
       throw const PurchaseFailure('Purchases are not available right now.');
     }
