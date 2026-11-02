@@ -144,7 +144,10 @@ flowchart LR
 **Gates every request passes.**
 - *Biometric consent* (`biometric_consent.py`): an app-wide FastAPI dependency answers 403
   `biometric_consent_required` for every authenticated route except `/health`, `/bootstrap`, `/age-gate/declare`,
-  `/biometric-consent*`, `/account/delete|recover`, `/welcome/token` and the Instagram sign-in pair. `/bootstrap`
+  `/biometric-consent*`, `/account/delete|recover`, `/welcome/token`, the Instagram sign-in pair and FCM push-token
+  (de)registration (`/notifications/token`, `/notifications/token/remove` — a fresh sign-up registers its device
+  token at startup, before the consent screen is done, and must get match/message pushes immediately; a token carries
+  no biometric data and is scoped to the caller's own uid). `/bootstrap`
   returns `biometric_consent_required: true` before minting a voice token. Every face-embedding / face-match path
   re-checks consent for the person whose face is involved with an uncached read (`has_consent_fresh`; the endpoint gate's positive cache is 30 s), so a withdrawal on any instance stops face work at once. Withdrawal deletes face data, then soft-deletes the
   account. Current text version `CONSENT_VERSION` (bumping it re-asks everyone and doubles as Terms re-acceptance).

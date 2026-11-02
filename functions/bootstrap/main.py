@@ -480,8 +480,12 @@ from firebase_admin import auth as _firebase_auth  # noqa: E402
 
 # Signed-in calls that must work before the biometric consent is recorded:
 # routing (/bootstrap reports `biometric_consent_required` itself), the age
-# declaration, the consent endpoints, account delete / recover, and the
-# pre-sign-in / sign-in helpers.
+# declaration, the consent endpoints, account delete / recover, the
+# pre-sign-in / sign-in helpers, and FCM push-token (de)registration — a
+# freshly signed-up user registers their device token at startup, before the
+# consent screen is completed, and must receive match/message pushes from the
+# moment they sign up; a token carries no biometric data and is scoped to the
+# caller's own uid (notifications_ops writes only users/{uid}).
 _CONSENT_EXEMPT_PATHS = frozenset({
     "/health",
     "/bootstrap",
@@ -493,6 +497,8 @@ _CONSENT_EXEMPT_PATHS = frozenset({
     "/welcome/token",
     "/instagram/signin-auth-url",
     "/instagram/signin",
+    "/notifications/token",
+    "/notifications/token/remove",
 })
 _optional_bearer = HTTPBearer(auto_error=False)
 
