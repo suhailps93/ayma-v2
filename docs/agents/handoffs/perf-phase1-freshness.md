@@ -23,7 +23,8 @@
 ### Chunk 2: Interactive Timeouts, Deduplication & Retries
 - **API Client Budget & Timeouts (`api_client.dart`)**:
   - Enforced interactive timeout budget `kInteractiveTimeout = Duration(seconds: 8)` (down from 25s) across interactive endpoints.
-  - Retained `kLongTimeout = Duration(seconds: 55)` for heavy asynchronous/multimodal operations (e.g. `/wiki/photo-publish`).
+  - Retained `kLongTimeout = Duration(seconds: 55)` for heavy asynchronous/multimodal operations (e.g. `/wiki/photo-publish`, and the model-backed `/practice/*` simulator endpoints which are cold-start-sensitive — see below).
+  - **Fix (practice start fails):** `/practice/*` (start/chat/voice/debrief) build a persona and run the model server-side, and `/practice/start` is usually the first call after a scale-to-zero cold start (~18s). Under the 8s interactive budget the POST was aborted before the server's `200 OK` arrived, so the backend logged `200` while the app showed "Couldn't start practice. Please try again." (`BudgetHttpClient.post` → `TimeoutException` → `ApiException(408)` → `practice_screen._begin`'s `catch`). `_timeoutFor` now routes `/practice/*` to `kLongTimeout`. Regression: `test/practice_date_test.dart` "cold-start delay past the interactive budget".
   - Added support for explicit timeouts via `X-Request-Timeout` header.
   - Wrapped client pipeline with `BudgetHttpClient` that:
     - Automatically translates timeout expirations to `ApiException('Request timed out — please try again.', statusCode: 408)` instead of hanging or bubbling unformatted `TimeoutException`.

@@ -44,6 +44,15 @@ class BudgetHttpClient extends http.BaseClient {
     if (url.path == '/wiki/photo-publish') {
       return longTimeout;
     }
+    // Practice-simulator endpoints build the match persona and run the model
+    // server-side, and `/practice/start` is typically the first call after a
+    // scale-to-zero cold start (~18s). The 8s interactive budget aborts them
+    // before the server's 200 arrives — the server logs `200 OK` while the
+    // client shows "Couldn't start practice. Please try again." Give the whole
+    // family the long (but still bounded) budget, like `/wiki/photo-publish`.
+    if (url.path.startsWith('/practice/')) {
+      return longTimeout;
+    }
     return interactiveTimeout;
   }
 

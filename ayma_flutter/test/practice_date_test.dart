@@ -177,6 +177,54 @@ void main() {
     }
   });
 
+  testWidgets(
+      'practice start survives a cold-start delay past the interactive budget '
+      '(server answers 200 slowly) instead of showing the error toast',
+      (tester) async {
+    // Reproduces the founder bug: "Practice with Sofia Marino" showed
+    // "Couldn't start practice. Please try again." even though the backend
+    // logged `POST /practice/start 200 OK`. Root cause: BudgetHttpClient
+    // aborted the POST at the 8s interactive budget during the Cloud Run
+    // cold start, before the (successful) 200 arrived. With `/practice/*` on
+    // the long budget, a slow-but-successful start now proceeds to the
+    // simulator. Tiny budgets here keep the test fast: the mock answers after
+    // the interactive budget would have fired but well within the long one.
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      interactiveTimeout: const Duration(milliseconds: 20),
+      longTimeout: const Duration(seconds: 10),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/practice/start') {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          return _json({
+            'session_id': 'practice_sofia',
+            'simulation': true,
+            'persona': {
+              'name': 'Sofia Marino',
+              'age': 27,
+              'location': 'San Jose',
+              'photo_count': 3,
+              'photo_url': null,
+            },
+            'banner':
+                "Practice mode — you're talking to a simulated version of Sofia Marino, not the real person.",
+          });
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    await tester.pumpWidget(
+        _wrap(PracticeScreen(uid: 'test2', name: 'Sofia Marino', api: api)));
+    await _settle(tester);
+
+    // It reached the live simulator — no error toast, composer present.
+    expect(find.byKey(const Key('practiceError')), findsNothing);
+    expect(find.byKey(const Key('practiceInput')), findsOneWidget);
+    expect(find.byKey(const Key('practiceBanner')), findsOneWidget);
+    expect(
+        find.textContaining('simulated version of Sofia Marino'), findsOneWidget);
+  });
+
   testWidgets('a profile with no simulatable person shows an error',
       (tester) async {
     await tester.pumpWidget(
