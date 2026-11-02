@@ -299,6 +299,40 @@ def _bind_open_match_report(db, uid: str) -> Callable[..., str]:
     return open_match_report
 
 
+def _bind_open_date_sim(db, uid: str) -> Callable[..., str]:
+    async def open_date_sim(name: str = "") -> str:
+        other, full = await asyncio.to_thread(_resolve_person, db, uid, name)
+        if not other:
+            return (
+                f"I couldn't find someone called {name.strip() or 'that'} "
+                "in the app."
+            )
+        return await _navigate(
+            db, uid, "date_sim", f"/date-sim/{other}",
+            f"the AI date simulation with {full} (the setup screen — "
+            "nothing is sent to them; they run it from there)",
+        )
+
+    return open_date_sim
+
+
+def _bind_open_practice_date(db, uid: str) -> Callable[..., str]:
+    async def open_practice_date(name: str = "") -> str:
+        other, full = await asyncio.to_thread(_resolve_person, db, uid, name)
+        if not other:
+            return (
+                f"I couldn't find someone called {name.strip() or 'that'} "
+                "in the app."
+            )
+        return await _navigate(
+            db, uid, "practice_date", f"/practice/{other}",
+            f"the practice date with {full} (a clearly-labelled simulator "
+            "built from their public profile)",
+        )
+
+    return open_practice_date
+
+
 def _bind_search_explore(db, uid: str) -> Callable[..., str]:
     async def search_explore(query: str = "") -> str:
         q = query.strip()
@@ -475,6 +509,45 @@ _OPEN_MATCH_REPORT = {
         "Open the user's match report with a person, by name. If they were "
         "never matched, the return says so. The return says whether the app "
         "actually navigated — relay it honestly."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    },
+}
+
+_OPEN_DATE_SIM = {
+    "name": "open_date_sim",
+    "description": (
+        "Open the AI Date Simulation (also called an Agent Date or "
+        "agent-to-agent simulation) with a person, by name as the user said "
+        "it. This is a real, core feature: the user's AI and the other "
+        "person's AI run a preview conversation, then you get a compatibility "
+        "read — nothing is sent to that person. Use this whenever the user "
+        "wants to 'run an agent-to-agent sim', 'simulate a date', 'do an "
+        "agent date', or 'see how our AIs get along' with someone. It opens "
+        "the setup screen; the user runs it from there. The return says "
+        "whether the app actually navigated — relay it honestly."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    },
+}
+
+_OPEN_PRACTICE = {
+    "name": "open_practice_date",
+    "description": (
+        "Open a Practice Date with a person, by name as the user said it. "
+        "This is a real, core feature: a clearly-labelled simulator where a "
+        "persona built from that person's public profile lets the user "
+        "rehearse talking to them (by text or voice). Use this whenever the "
+        "user wants to 'chat with someone's agent/avatar', 'talk to their "
+        "AI', 'practice a date', or 'rehearse messaging' a specific person — "
+        "it is NOT a policy refusal, it is this feature. The return says "
+        "whether the app actually navigated — relay it honestly."
     ),
     "parameters": {
         "type": "object",

@@ -39,12 +39,12 @@
     {"route": "/profile/user/:uid", "via": "open_profile", "reason": "a specific person's profile"},
     {"route": "/deep-dive/:id", "via": "open_screen my_web_research", "reason": "a web-research report; the user's own one resolves via my_web_research"},
     {"route": "/appearance/:id", "via": "open_screen my_appearance", "reason": "an Appearance report; the user's own one resolves via my_appearance"},
-    {"route": "/physical-attributes/:id", "via": "open_screen my_appearance", "reason": "a legacy physical-profile report, folded into the Appearance report history"}
+    {"route": "/physical-attributes/:id", "via": "open_screen my_appearance", "reason": "a legacy physical-profile report, folded into the Appearance report history"},
+    {"route": "/date-sim/:uid", "via": "open_date_sim", "reason": "AI Date Simulation (Agent Date) with a specific person — your AI and theirs run a preview conversation, then a compatibility read; opened by name via open_date_sim (nothing is sent to that person)"},
+    {"route": "/practice/:uid", "via": "open_practice_date", "reason": "Practice Date with a specific person — rehearse talking to a clearly-labelled persona built from their profile; opened by name via open_practice_date"}
   ],
   "non_navigable": [
-    {"route": "/practice/:uid", "reason": "Practice Date simulator; opened only from the Practice button on a profile, never on request"},
     {"route": "/practice/:uid/debrief", "reason": "Practice Date debrief; reached only by ending a practice session"},
-    {"route": "/date-sim/:uid", "reason": "AI Date Simulation; opened only from the Simulate button on a profile, never on request"},
     {"route": "/consent", "reason": "biometric consent gate; the router forces it while consent is required and it must only ever be answered by the user's own tap"},
     {"route": "/splash", "reason": "app start-up bootstrap; re-running it mid-session would restart the app flow"},
     {"route": "/under-18", "reason": "age-gate outcome screen (18+ gate); never opened on request"},

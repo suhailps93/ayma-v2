@@ -500,8 +500,8 @@ def test_open_profile_fuzzy_matches_a_near_identical_name():
 
 _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "list_conversations",
-    "open_message_thread", "open_match_report", "app_action",
-    "account_action", "ui_action",
+    "open_message_thread", "open_match_report", "open_date_sim",
+    "open_practice_date", "app_action", "account_action", "ui_action",
 }
 
 
@@ -1438,3 +1438,158 @@ def test_describe_profile_tab_lists_the_completeness_card():
     out = app_control._describe({"screen": "profile_tab"})
     assert "Your profile is N% complete" in out
     assert "complete_profile" in out and "My public profile" in out
+
+
+# --- open_date_sim / open_practice_date ---------------------------------
+#
+# Founder bug (build 2246): voice Ayma DENIED that core features exist because
+# the registry had no route to them ("I can't connect you to someone else's
+# agent", "I don't have a feature for agent-to-agent simulations"). Agent Dates
+# (date-sim) and talk-to-their-agent/avatar (Practice Date) are headline
+# mechanics; these tools give her the route she was missing.
+
+
+def test_open_date_sim_resolves_a_name_and_navigates():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    db.seed_user("u-sam", "Sam Fox")
+    out = _run(app_control._bind_open_date_sim(db, "me")("Sofia"))
+    assert out.startswith("navigated: screen=date_sim")
+    assert "Sofia Ruiz" in out
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "navigate" and cmd["path"] == "/date-sim/u-sofia"
+
+
+def test_open_date_sim_fuzzy_matches_sophia_to_sofia():
+    # The founder typed "Sophia"; the roster name is "Sofia Ruiz".
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    out = _run(app_control._bind_open_date_sim(db, "me")("Sophia"))
+    assert out.startswith("navigated: screen=date_sim")
+    assert db.store[_PENDING]["path"] == "/date-sim/u-sofia"
+
+
+def test_open_date_sim_reports_when_nobody_matches():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sam", "Sam Fox")
+    out = _run(app_control._bind_open_date_sim(db, "me")("Taylor"))
+    assert out == "I couldn't find someone called Taylor in the app."
+    assert _PENDING not in db.store
+
+
+def test_open_practice_date_resolves_a_name_and_navigates():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    out = _run(app_control._bind_open_practice_date(db, "me")("Sophia"))
+    assert out.startswith("navigated: screen=practice_date")
+    assert "Sofia Ruiz" in out
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "navigate" and cmd["path"] == "/practice/u-sofia"
+
+
+def test_open_practice_date_reports_when_nobody_matches():
+    db = _Db()
+    db.seed_user("me", "Me")
+    out = _run(app_control._bind_open_practice_date(db, "me")("nobody"))
+    assert out == "I couldn't find someone called nobody in the app."
+
+
+def test_sim_tools_are_registered_in_the_command_set():
+    # Both must be wired into COMMAND_SKILLS (and therefore voice + text), or
+    # the model can never pick them and the denial bug returns.
+    names = {s.declaration["name"] for s in app_control.COMMAND_SKILLS}
+    assert {"open_date_sim", "open_practice_date"} <= names
+    voice = {s.declaration["name"] for s in app_control.VOICE_SKILLS}
+    assert {"open_date_sim", "open_practice_date"} <= voice
+    text = {d["name"] for d in skills.session_tool_declarations()}
+    assert {"open_date_sim", "open_practice_date"} <= text
+
+
+# --- never-deny phrasing suite ------------------------------------------
+#
+# Tool *selection* is the model's job, so these assert the deterministic layer
+# that made the model deny: (1) the feature's trigger words live in a real,
+# registered tool's description, so the model has something to pick; (2) the
+# phrase does NOT resolve to an `unavailable` canned denial or to a misleading
+# destination that would hijack it; (3) when the right tool runs with the named
+# person, it navigates rather than refusing. Together these make a bare "I
+# don't have that feature" impossible for a feature that exists.
+
+def _tool_desc(name: str) -> str:
+    for s in app_control.COMMAND_SKILLS:
+        if s.declaration["name"] == name:
+            return s.declaration["description"].lower()
+    raise AssertionError(f"no such tool {name}")
+
+
+# The founder's three verbatim asks, each with the tool that must own it.
+_FOUNDER_ASKS = [
+    ("I want to chat with Sofia's agent", "open_practice_date"),
+    ("I want to talk with Sophia's avatar", "open_practice_date"),
+    ("Can you open an agent to agent simulation with Sophia?",
+     "open_date_sim"),
+]
+
+
+@pytest.mark.parametrize("phrase,_tool", _FOUNDER_ASKS)
+def test_founder_asks_are_not_a_canned_unavailable_denial(phrase, _tool):
+    # No `unavailable` entry may claim these phrases (that is the literal
+    # "not available in this version" denial the founder hit).
+    assert app_registry.find_unavailable(phrase) is None, phrase
+
+
+@pytest.mark.parametrize("phrase,_tool", _FOUNDER_ASKS)
+def test_founder_asks_do_not_hijack_to_a_misleading_page(phrase, _tool):
+    # open_screen must not grab these (e.g. "agent" -> connect_agent would send
+    # them to the MCP page). find_destination either misses or, if it matches,
+    # must not be the connect_agent page.
+    dest = app_registry.find_destination(phrase)
+    assert dest is None or dest["key"] != "connect_agent", (phrase, dest)
+
+
+@pytest.mark.parametrize("phrase,tool", _FOUNDER_ASKS)
+def test_founder_asks_have_a_real_tool_whose_words_match(phrase, tool):
+    desc = _tool_desc(tool)
+    # The tool exists and its description carries the vocabulary of the ask, so
+    # the model routes here instead of inventing a refusal.
+    words = ("agent", "simulat") if tool == "open_date_sim" else (
+        "agent", "avatar", "practice"
+    )
+    for word in words:
+        assert word in desc, (tool, word)
+
+
+def test_founder_asks_navigate_when_their_tool_runs():
+    # End to end on the deterministic layer: the named person resolves and the
+    # tool queues a real navigate, never a refusal string.
+    binds = {
+        "open_date_sim": app_control._bind_open_date_sim,
+        "open_practice_date": app_control._bind_open_practice_date,
+    }
+    for _phrase, tool in _FOUNDER_ASKS:
+        db = _acking_db()
+        db.seed_user("me", "Me")
+        db.seed_user("u-sofia", "Sofia Ruiz")
+        out = _run(binds[tool](db, "me")("Sophia"))
+        assert out.startswith("navigated:"), (tool, out)
+        assert "can't" not in out.lower() and "don't have" not in out.lower()
+
+
+# A spread across other features: each phrasing must resolve to exactly the
+# destination it names and never to a denial.
+@pytest.mark.parametrize("phrase,key", [
+    ("open my matches", "matches"),
+    ("take me to explore", "explore"),
+    ("show my messages", "messages"),
+    ("open my plan", "credits"),
+    ("open my appearance report", "my_appearance"),
+    ("connect an agent", "connect_agent"),
+    ("open my public profile", "my_public_profile"),
+])
+def test_feature_phrasings_resolve_to_their_destination(phrase, key):
+    dest = app_registry.find_destination(phrase)
+    assert dest and dest["key"] == key, (phrase, dest)

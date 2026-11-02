@@ -26,7 +26,7 @@ NO_CHIP = "\x00no_chip"
 # failure line otherwise (``skills/app_control.py``).
 _NAV_CHIP_TOOLS = frozenset(
     "open_message_thread open_screen open_profile open_match_report "
-    "search_explore".split()
+    "open_date_sim open_practice_date search_explore".split()
 )
 
 TOOL_LABELS = {
@@ -79,6 +79,8 @@ TOOL_LABELS = {
     "open_profile": "Opened their profile",
     "open_message_thread": "Opened that conversation",
     "open_match_report": "Opened your match report",
+    "open_date_sim": "Opened the date simulation",
+    "open_practice_date": "Opened your practice date",
     "app_action": "Did that for you",
     "account_action": "Handled your account request",
     "ui_action": "Did that on your screen",
@@ -152,6 +154,8 @@ WORKING_LABELS = {
     "open_profile": "Opening their profile…",
     "open_message_thread": "Opening the conversation…",
     "open_match_report": "Opening the match report…",
+    "open_date_sim": "Opening the date simulation…",
+    "open_practice_date": "Opening your practice date…",
     "app_action": "Changing that…",
     "account_action": "Checking your account request…",
     "ui_action": "Doing that on your screen…",

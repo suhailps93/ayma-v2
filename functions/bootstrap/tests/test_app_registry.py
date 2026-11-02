@@ -301,3 +301,107 @@ def test_tool_descriptions_list_the_registry():
         assert a["key"] in acct_desc
     for desc in (screen_desc, action_desc, acct_desc):
         assert "{{" not in desc
+
+
+# --- resolution: no registration points nowhere --------------------------
+#
+# The other direction from ``test_every_router_route_is_registered...``: every
+# registered destination must resolve BACK from the user's own words AND land
+# on a route the router really has — so a dead/typo destination (a key or path
+# that points nowhere) fails here, not silently at runtime as a "that page
+# doesn't exist" to the user.
+
+def test_every_destination_resolves_to_a_real_router_route():
+    routes = _router_paths()
+    for d in app_registry.destinations():
+        path = d["path"].split("?")[0]
+        assert path in routes, f"destination {d['key']} -> {path} is not a route"
+        back = app_registry.find_destination(d["key"])
+        assert back and back["key"] == d["key"], (
+            f"destination {d['key']} doesn't resolve from its own key"
+        )
+
+
+def test_every_parameterized_route_names_a_real_route_and_a_tool():
+    routes = _router_paths()
+    import skills
+
+    tools = {d["name"] for d in skills.session_tool_declarations()} | {
+        s.name for s in skills.app_control.VOICE_SKILLS
+    }
+    for p in app_registry.registry()["parameterized"]:
+        assert p["route"] in routes, f"parameterized {p['route']} is not a route"
+        # ``via`` is free-form prose ("open_screen my_appearance") but must name
+        # a tool the session actually exposes, so a typo can't orphan a route.
+        assert any(t in p["via"] for t in tools), (
+            f"parameterized {p['route']} via {p['via']!r} names no real tool"
+        )
+
+
+# --- imperative pushes: close the Navigator.push / MaterialPageRoute crack --
+#
+# The route-registration invariant above walks GoRoutes. A full screen pushed
+# imperatively (``MaterialPageRoute(builder: (_) => XxxScreen())`` /
+# ``Navigator.push`` / ``context.push`` of a widget) never appears as a
+# GoRoute, so it could slip past unregistered — exactly how the date-sim /
+# practice screens hid from Ayma. This enumerates every imperatively-pushed
+# ``*Screen`` widget and requires each to be EITHER a registered route (it
+# declares a ``static const path`` the registry knows) OR a listed sub-view
+# with a reason below. A new imperative push of an unregistered screen fails.
+
+# Sub-views and overlays that are intentionally NOT standalone routes: reached
+# only from inside their parent screen's own flow, never navigable by Ayma.
+_IMPERATIVE_SUBVIEWS = {
+    "ManualProfileEditScreen": (
+        "in-place profile editor pushed from My public profile; a sub-editor "
+        "of that page, not a standalone route"
+    ),
+    "PracticeVoiceScreen": (
+        "voice mode of a live Practice Date, pushed from the practice screen; "
+        "part of that session, not a standalone page"
+    ),
+    "VoiceCallScreen": (
+        "full-screen voice-call overlay pushed from the chat screen when a "
+        "call starts; an overlay, not a navigable page"
+    ),
+}
+
+
+def _imperatively_pushed_screens() -> set[str]:
+    out: set[str] = set()
+    for f in _SCREENS.parent.rglob("*.dart"):
+        src = f.read_text(encoding="utf-8")
+        out.update(
+            re.findall(r"=>\s*(?:const\s+)?([A-Z]\w*Screen)\(", src)
+        )
+        out.update(
+            re.findall(r"\.push(?:Named)?\(\s*(?:const\s+)?([A-Z]\w*Screen)\b", src)
+        )
+    return out
+
+
+def test_imperative_pushes_target_registered_routes_or_listed_subviews():
+    routes = _router_paths()
+    paths_by_class = {
+        name.split(".")[0]: path for name, path in _screen_paths().items()
+    }
+    pushed = _imperatively_pushed_screens()
+    assert pushed, "the push scanner found nothing — the regex rotted"
+    offenders = []
+    for cls in sorted(pushed):
+        if cls in _IMPERATIVE_SUBVIEWS:
+            continue
+        path = paths_by_class.get(cls)
+        if path is None or path.split("?")[0] not in routes:
+            offenders.append(cls)
+    assert not offenders, (
+        "screens pushed imperatively that are neither a registered route nor a "
+        "listed sub-view — register them in app_registry.json or add a reason "
+        f"to _IMPERATIVE_SUBVIEWS: {offenders}"
+    )
+    # Keep the allowlist honest: each entry is still pushed and still routeless.
+    for cls in _IMPERATIVE_SUBVIEWS:
+        assert cls in pushed, f"{cls} is no longer pushed; drop it from the list"
+        assert cls not in paths_by_class, (
+            f"{cls} now declares a route; register it instead of listing it"
+        )

@@ -193,6 +193,19 @@ flowchart LR
   (not found, the app never navigated) returns `tool_labels.NO_CHIP`, which both surfaces honour — text drops it from
   `tools_used`, voice sends an empty-label `tool_used` end event that clears the "…ing" indicator and queues no settled
   chip — so a failed open no longer shows a false "Opened that conversation" chip (founder bug 2026-10-28).
+- *Person-targeted simulation navigation (`skills/app_control_navigation.py`)*: `open_date_sim` and `open_practice_date` open the
+  AI Date Simulation (Agent Date / agent-to-agent sim, `/date-sim/:uid`) and Practice Date (`/practice/:uid`) with a
+  named person, resolving the name through the same `_resolve_person` (and fuzzy fallback) as `open_profile`, then
+  queuing a plain `navigate` command with the resolved path — so they work on the already-shipped client (the
+  `navigate` case existed long before) with no new app build. Both routes are registered `parameterized` in
+  `app_registry.json` (`via` = the tool). These exist because Ayma had **no route** to the two headline mechanics and
+  so confabulated a policy refusal ("I don't have a feature for agent-to-agent simulations", founder bug build 2246);
+  the registration + tools + persona wording (`persona.md` "Driving the app", `prompts/app_control_open_screen.md`)
+  make a bare "that feature doesn't exist" impossible for a feature that exists. **Registration is now a hard rule**
+  (see `AGENTS.md` → "Ayma registration"): every navigable surface — declared `GoRoute` *or* an imperative
+  `MaterialPageRoute`/`Navigator.push`/`context.push` of a screen — is a registered destination/parameterized route or
+  an explicit `non_navigable` entry with a reason, enforced by `tests/test_app_registry.py` (which now also enumerates
+  imperative pushes) and `ayma_flutter/test/app_registry_test.dart`.
 - *Deep-dive photo sources*: Custom Search image API (only when `IMAGE_SEARCH_API_KEY`/`_CSE_ID` are set),
   public profile pages from a grounded Gemini call plus Vertex AI Search (`deepdive_public_profiles`,
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch

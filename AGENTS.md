@@ -50,6 +50,10 @@ Every change, before it counts as done, includes: (1) the docs updated (docs/*.m
 
 Also: every **new user-facing feature** must add/update its entry in the feature tour (`ayma_flutter/lib/services/tour_content.dart` — a stable `feature_id` + short how-to + **its UI anchor key** (`anchorId`, from `tour_anchors.dart`, plus the `tab` it lives on), attaching that key to the real target widget), so the interactive coach-mark tour spotlights it and existing users get a spotlight for it on next open (§11.2a).
 
+### Ayma registration (founder standing rule, do not make the founder repeat it)
+
+No page or feature merges without its Ayma registration in `functions/bootstrap/app_registry.json`: a registered destination/action entry (key, label, aliases **in the user's own words**, and the parameterized form when it takes a person/target — mirror `open_profile`/`open_date_sim`), **or** an explicit `non_navigable` entry **with a reason**. A feature is never just absent — absence is what makes Ayma deny that a real feature exists (founder bug, build 2246: "I don't have a feature for agent-to-agent simulations"). The registry tests enforce this: `functions/bootstrap/tests/test_app_registry.py` and `ayma_flutter/test/app_registry_test.dart` fail any new route (declared `GoRoute` **or** an imperative `MaterialPageRoute`/`Navigator.push`/`context.push` of a screen) that is neither registered nor listed non-navigable with a reason.
+
 ## Using this file from a specific tool
 
 If the active tool expects its own filename (`CLAUDE.md`, `.cursor/rules`, `GEMINI.md`, etc.), that file should do nothing but point here: *"Read `AGENTS.md` and `PLAN.md` at the repo root before doing anything else; follow them exactly."* Keep all actual rules and plan content in `AGENTS.md`/`PLAN.md` only — a tool-specific file that duplicates rules instead of pointing to these two will drift out of sync the first time one gets edited and not the other.
