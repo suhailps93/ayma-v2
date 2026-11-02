@@ -92,7 +92,16 @@ STORAGE_BUCKET="${DATA_PROJECT}.firebasestorage.app"
 # solely when its LLM_PROVIDER_* flag is `open-weights` (prod/staging default stays
 # gemini), so wiring it here just makes the hackathon surface available behind flags.
 OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal.run/v1"
-API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL}"
+# DEDICATED staging LiveKit project (wss://ayma-staging-cyofszqr.livekit.cloud /
+# p_484u2zjk8ob), NOT prod's (aimma-wt34nu3l / p_4jk3pqz7u9r). This is a hard
+# isolation boundary: staging + prod agents are both Cloud Run workers, and the
+# dispatch guard only separates cloudrun-vs-livekit-cloud, so on a SHARED LiveKit
+# project the prod agent could grab a staging call and write app_commands to prod
+# Firestore (voice app-nav silently failed on staging, founder 2026-11-01). A
+# separate LiveKit project means the prod agent never sees staging rooms. Key +
+# secret are the staging project's, in ayma-ai Secret Manager under the _STAGING
+# names (prod's bare LIVEKIT_API_KEY/SECRET are left untouched).
+API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_484u2zjk8ob,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL}"
 
 # Cloud image variants (Perf Phase 2 PREP chunk A, staging-only): enabled ONLY
 # when the staging data plane is the staging Firebase project. A staging
@@ -101,7 +110,7 @@ API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=$
 if [[ "$DATA_PROJECT" == "ayma-staging" ]]; then
   API_ENV_BASE="${API_ENV_BASE},IMAGE_VARIANTS_ENABLED=true,IMAGE_VARIANTS_PUSH_SA=pubsub-push-invoker@ayma-staging.iam.gserviceaccount.com"
 fi
-AGENT_ENV_BASE="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging"
+AGENT_ENV_BASE="LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging"
 
 # Same env names as prod, staging-only values where it matters — see docs/STAGING.md.
 # META_API_KEY: the Meta Model API key (Muse Spark) shared with prod — required
@@ -109,11 +118,11 @@ AGENT_ENV_BASE="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,V
 # on staging; without it MetaProvider silently falls back to Gemini (the demo's
 # Meta path is the user-driven brain switch, not a default flip — voice stays
 # Gemini Live).
-API_SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,CRON_SECRET=CRON_SECRET_STAGING:latest,ADMIN_PASSWORD=ADMIN_PASSWORD_STAGING:latest,INSTAGRAM_APP_SECRET=INSTAGRAM_APP_SECRET:latest,GOOGLE_IMPORT_CLIENT_SECRET=GOOGLE_IMPORT_CLIENT_SECRET:latest,REVENUECAT_WEBHOOK_SECRET=REVENUECAT_WEBHOOK_SECRET_STAGING:latest,DEV_PANEL_PASSWORD=DEV_PANEL_PASSWORD_STAGING:latest,META_API_KEY=META_API_KEY:latest"
-AGENT_SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
+API_SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY_STAGING:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET_STAGING:latest,CRON_SECRET=CRON_SECRET_STAGING:latest,ADMIN_PASSWORD=ADMIN_PASSWORD_STAGING:latest,INSTAGRAM_APP_SECRET=INSTAGRAM_APP_SECRET:latest,GOOGLE_IMPORT_CLIENT_SECRET=GOOGLE_IMPORT_CLIENT_SECRET:latest,REVENUECAT_WEBHOOK_SECRET=REVENUECAT_WEBHOOK_SECRET_STAGING:latest,DEV_PANEL_PASSWORD=DEV_PANEL_PASSWORD_STAGING:latest,META_API_KEY=META_API_KEY:latest"
+AGENT_SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY_STAGING:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET_STAGING:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
 
 REQUIRED_STAGING_SECRETS="CRON_SECRET_STAGING ADMIN_PASSWORD_STAGING DEV_PANEL_PASSWORD_STAGING REVENUECAT_WEBHOOK_SECRET_STAGING"
-REQUIRED_SHARED_SECRETS="LIVEKIT_API_KEY LIVEKIT_API_SECRET INSTAGRAM_APP_SECRET GOOGLE_IMPORT_CLIENT_SECRET GOOGLE_API_KEY META_API_KEY"
+REQUIRED_SHARED_SECRETS="LIVEKIT_API_KEY_STAGING LIVEKIT_API_SECRET_STAGING INSTAGRAM_APP_SECRET GOOGLE_IMPORT_CLIENT_SECRET GOOGLE_API_KEY META_API_KEY"
 
 service_url() {
   gcloud run services describe "$1" --project "$PROJECT" --region "$REGION" \
