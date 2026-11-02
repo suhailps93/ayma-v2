@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'api_client.dart';
+import 'fresh_data.dart';
 
 /// One scored match as the Matches list / detail renders it (§5.4, §14.3).
 class MatchView {
@@ -45,38 +46,52 @@ class MatchService {
     return uid;
   }
 
-  /// "New from Ayma" — matches still awaiting this user's response.
-  Stream<List<MatchView>> watchNewMatches() {
+  /// "New from Ayma" — matches still awaiting this user's response, with
+  /// Firestore [SnapshotMetadata] freshness (PERF_PLAN Phase 1).
+  Stream<FreshData<List<MatchView>>> watchNewMatchesFresh() {
     final uid = _uid;
     return _db
         .collection('matches')
         .where('uids', arrayContains: uid)
         .where('status', isEqualTo: 'scored')
-        .snapshots()
-        .asyncMap((snap) async {
-      final views = <MatchView>[];
-      for (final doc in snap.docs) {
-        views.add(await _toView(doc, uid));
-      }
-      views.sort((a, b) => b.score.compareTo(a.score));
-      return views;
-    });
+        .snapshots(includeMetadataChanges: true)
+        .asyncMap((snap) => _viewsFresh(snap, uid));
   }
+
+  Stream<List<MatchView>> watchNewMatches() =>
+      watchNewMatchesFresh().map((f) => f.data ?? const <MatchView>[]);
 
   /// Mutual matches (both sides accepted, or reciprocal Explore likes) — the
   /// "start a conversation" half of the Messages tab (§11.3). Bounded to
   /// [limit] (Phase 2 pagination design §3.2.1) with batched name hydration
-  /// (design §3.2.2 client fallback — no N+1 profile reads).
-  Stream<List<MatchView>> watchMutualMatches({int limit = 25}) {
+  /// (design §3.2.2 client fallback — no N+1 profile reads) and Firestore
+  /// [SnapshotMetadata] freshness (PERF_PLAN Phase 1). Uses
+  /// `includeMetadataChanges` so cache→server transitions emit.
+  Stream<FreshData<List<MatchView>>> watchMutualMatchesFresh({int limit = 25}) {
     final uid = _uid;
     return _db
         .collection('matches')
         .where('uids', arrayContains: uid)
         .where('status', isEqualTo: 'mutual_interest')
         .limit(limit)
-        .snapshots()
-        .asyncMap((snap) => _toViews(snap.docs, uid));
+        .snapshots(includeMetadataChanges: true)
+        .asyncMap((snap) async {
+      try {
+        final views = await _toViews(snap.docs, uid);
+        return FreshData<List<MatchView>>(
+          data: views,
+          isFromCache: snap.metadata.isFromCache,
+          hasPendingWrites: snap.metadata.hasPendingWrites,
+        );
+      } catch (e) {
+        return FreshData<List<MatchView>>(error: e);
+      }
+    });
   }
+
+  Stream<List<MatchView>> watchMutualMatches({int limit = 25}) =>
+      watchMutualMatchesFresh(limit: limit)
+          .map((f) => f.data ?? const <MatchView>[]);
 
   /// Batched view hydration: ONE `POST /profiles/mini` for every match in
   /// the snapshot instead of one `users/$other/profile/main` read per
@@ -135,13 +150,42 @@ class MatchService {
     );
   }
 
+  /// Per-profile name read with the interactive timeout (PERF_PLAN Phase 1) so
+  /// an offline/slow read fails fast instead of hanging. Used by the batched
+  /// path's offline fallback and the single-doc [_toView].
   Future<String> _profileName(String other) async {
     try {
-      final profile = await _db.doc('users/$other/profile/main').get();
+      final profile = await _db
+          .doc('users/$other/profile/main')
+          .get()
+          .timeout(kInteractiveTimeout);
       final n = profile.data()?['name'] as String?;
       if (n != null && n.trim().isNotEmpty) return n.trim();
     } catch (_) {}
     return 'Someone';
+  }
+
+  /// Freshness-wrapped per-doc hydration for [watchNewMatchesFresh]: maps a
+  /// snapshot into views (one read per match) and carries its
+  /// [SnapshotMetadata], or [FreshData.error] when hydration throws.
+  Future<FreshData<List<MatchView>>> _viewsFresh(
+    QuerySnapshot<Map<String, dynamic>> snap,
+    String uid,
+  ) async {
+    try {
+      final views = <MatchView>[];
+      for (final doc in snap.docs) {
+        views.add(await _toView(doc, uid));
+      }
+      views.sort((a, b) => b.score.compareTo(a.score));
+      return FreshData<List<MatchView>>(
+        data: views,
+        isFromCache: snap.metadata.isFromCache,
+        hasPendingWrites: snap.metadata.hasPendingWrites,
+      );
+    } catch (e) {
+      return FreshData<List<MatchView>>(error: e);
+    }
   }
 
   Future<MatchView> _toView(
@@ -170,10 +214,15 @@ class MatchService {
 
   /// Loads one match by id directly — used by the match request screen when
   /// it's reached via a route/deep link (a notification tap) rather than
-  /// tapped from an already-loaded [watchNewMatches] list.
+  /// tapped from an already-loaded [watchNewMatches] list. Enforces
+  /// [kInteractiveTimeout] so network drops fail fast instead of hanging.
   Future<MatchView> fetchMatch(String matchId) async {
     final uid = _uid;
-    final doc = await _db.collection('matches').doc(matchId).get();
+    final doc = await _db
+        .collection('matches')
+        .doc(matchId)
+        .get()
+        .timeout(kInteractiveTimeout);
     if (!doc.exists) {
       throw StateError('No such match: $matchId');
     }

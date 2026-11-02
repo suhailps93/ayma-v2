@@ -421,10 +421,10 @@ class AppCommandService {
         _accent.set(color);
         return true;
       case 'pause_matching':
-        _profiles.setPaused(true);
+        _profiles.setPaused(true).catchError((_) {});
         return true;
       case 'resume_matching':
-        _profiles.setPaused(false);
+        _profiles.setPaused(false).catchError((_) {});
         return true;
       case 'wing_flutter':
         final on = _onOff(value);

@@ -13,6 +13,199 @@ import '../models/living_report.dart';
 import '../models/report_share.dart';
 import 'biometric_consent.dart';
 
+/// Target budget for interactive API and Firestore waits (PERF_PLAN Phase 1).
+const kInteractiveTimeout = Duration(seconds: 8);
+
+/// Long timeout for multi-model server-side operations (e.g. photoPublish moderation + face embedding).
+const kLongTimeout = Duration(seconds: 55);
+
+/// An HTTP client wrapper enforcing interactive timeout budgets (target ≤8s),
+/// bounded retry with backoff for idempotent GETs, and concurrent GET deduplication
+/// (PERF_PLAN Phase 1).
+class BudgetHttpClient extends http.BaseClient {
+  BudgetHttpClient(
+    this._inner, {
+    this.interactiveTimeout = kInteractiveTimeout,
+    this.longTimeout = kLongTimeout,
+  });
+
+  final http.Client _inner;
+  final Duration interactiveTimeout;
+  final Duration longTimeout;
+
+  final Map<String, Future<http.Response>> _inFlightGets = {};
+
+  Duration _timeoutFor(Uri url, Map<String, String>? headers) {
+    final custom = headers?['X-Request-Timeout'];
+    if (custom != null) {
+      final ms = int.tryParse(custom);
+      if (ms != null) return Duration(milliseconds: ms);
+    }
+    if (url.path == '/wiki/photo-publish') {
+      return longTimeout;
+    }
+    return interactiveTimeout;
+  }
+
+  /// Long/streaming runs whose duration is driven by the server, not the
+  /// client: they must never hit the interactive budget (mirrors `/chat/stream`,
+  /// which bypasses this wrapper via [send]). A date simulation streams its
+  /// transcript into Firestore for the whole run — minutes, not seconds — so
+  /// the POST (and its `/continue`) is exempt from any client timeout.
+  bool _noClientTimeout(Uri url) {
+    final p = url.path;
+    return p == '/date-sim' ||
+        (p.startsWith('/date-sim/') && p.endsWith('/continue'));
+  }
+
+  Map<String, String>? _cleanHeaders(Map<String, String>? headers) {
+    if (headers == null ||
+        !(headers.containsKey('X-Request-Timeout') ||
+            headers.containsKey('X-No-Retry'))) {
+      return headers;
+    }
+    final copy = Map<String, String>.from(headers)
+      ..remove('X-Request-Timeout')
+      ..remove('X-No-Retry');
+    return copy;
+  }
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    return _inner.send(request);
+  }
+
+  @override
+  Future<http.Response> get(Uri url, {Map<String, String>? headers}) {
+    final clean = _cleanHeaders(headers);
+    final key = '$url|${clean?['Authorization'] ?? ''}';
+    final existing = _inFlightGets[key];
+    if (existing != null) return existing;
+
+    final timeout = _timeoutFor(url, headers);
+    // The pending-chat-queue flush has its own retry/dedup and must fail fast
+    // offline (a backoff here would outlive the flush and skip the online
+    // retry, PERF_PLAN GATE-RED). Such callers opt out with `X-No-Retry`.
+    final maxAttempts = headers?['X-No-Retry'] == '1' ? 1 : 2;
+    final future = _executeGet(url, clean, timeout, maxAttempts);
+    _inFlightGets[key] = future;
+    future.whenComplete(() => _inFlightGets.remove(key)).ignore();
+    return future;
+  }
+
+  Future<http.Response> _executeGet(
+    Uri url,
+    Map<String, String>? headers,
+    Duration timeout,
+    int maxAttempts, // Bounded retry for idempotent GETs (1 = no retry)
+  ) async {
+    final deadline = DateTime.now().add(timeout);
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw ApiException('Request timed out — please try again.', statusCode: 408);
+      }
+      try {
+        final r = await _inner.get(url, headers: headers).timeout(remaining);
+        if (attempt < maxAttempts &&
+            (r.statusCode == 502 || r.statusCode == 503 || r.statusCode == 504)) {
+          final after = deadline.difference(DateTime.now());
+          if (after > const Duration(milliseconds: 400)) {
+            await Future.delayed(const Duration(milliseconds: 300));
+            continue;
+          }
+        }
+        return r;
+      } on TimeoutException {
+        if (attempt < maxAttempts) {
+          final after = deadline.difference(DateTime.now());
+          if (after > const Duration(milliseconds: 400)) {
+            await Future.delayed(const Duration(milliseconds: 300));
+            continue;
+          }
+        }
+        throw ApiException('Request timed out — please try again.', statusCode: 408);
+      } on http.ClientException catch (e) {
+        if (attempt < maxAttempts) {
+          final after = deadline.difference(DateTime.now());
+          if (after > const Duration(milliseconds: 400)) {
+            await Future.delayed(const Duration(milliseconds: 300));
+            continue;
+          }
+        }
+        throw ApiException('Network error: ${e.message}');
+      }
+    }
+    throw ApiException('Request timed out — please try again.', statusCode: 408);
+  }
+
+  @override
+  Future<http.Response> post(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    final clean = _cleanHeaders(headers);
+    try {
+      final send =
+          _inner.post(url, headers: clean, body: body, encoding: encoding);
+      // Streaming/long runs drive their own duration — no client timeout.
+      return _noClientTimeout(url)
+          ? await send
+          : await send.timeout(_timeoutFor(url, headers));
+    } on TimeoutException {
+      throw ApiException('Request timed out — please try again.', statusCode: 408);
+    } on http.ClientException catch (e) {
+      throw ApiException('Network error: ${e.message}');
+    }
+  }
+
+  @override
+  Future<http.Response> put(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    final timeout = _timeoutFor(url, headers);
+    final clean = _cleanHeaders(headers);
+    try {
+      return await _inner
+          .put(url, headers: clean, body: body, encoding: encoding)
+          .timeout(timeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out — please try again.', statusCode: 408);
+    } on http.ClientException catch (e) {
+      throw ApiException('Network error: ${e.message}');
+    }
+  }
+
+  @override
+  Future<http.Response> delete(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    final timeout = _timeoutFor(url, headers);
+    final clean = _cleanHeaders(headers);
+    try {
+      return await _inner
+          .delete(url, headers: clean, body: body, encoding: encoding)
+          .timeout(timeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out — please try again.', statusCode: 408);
+    } on http.ClientException catch (e) {
+      throw ApiException('Network error: ${e.message}');
+    }
+  }
+
+  @override
+  void close() => _inner.close();
+}
+
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
 class ApiClient {
@@ -21,7 +214,13 @@ class ApiClient {
     FirebaseAuth? auth,
     this.chatStreamConnectTimeout = const Duration(seconds: 30),
     this.chatStreamIdleTimeout = const Duration(seconds: 60),
-  }) : _http = ConsentAwareHttpClient(httpClient ?? http.Client()),
+    this.interactiveTimeout = kInteractiveTimeout,
+    this.longTimeout = kLongTimeout,
+  }) : _http = BudgetHttpClient(
+         ConsentAwareHttpClient(httpClient ?? http.Client()),
+         interactiveTimeout: interactiveTimeout,
+         longTimeout: longTimeout,
+       ),
        _auth = auth ?? FirebaseAuth.instance;
 
   /// How long `/chat/stream` may take to answer the request, and how long it
@@ -41,8 +240,65 @@ class ApiClient {
   static const _bootstrapTokenTimeout = Duration(seconds: 12);
   static const _bootstrapPostTimeout = Duration(seconds: 15);
 
+  /// Budget for interactive user-facing calls (target ≤8s, PERF_PLAN Phase 1).
+  final Duration interactiveTimeout;
+
+  /// Extended budget for known long-running multi-model operations (e.g. photo publish).
+  final Duration longTimeout;
+
   final http.Client _http;
   final FirebaseAuth _auth;
+
+  Future<http.Response> _get(
+    Uri uri, {
+    Map<String, String>? headers,
+    Duration? timeout,
+  }) async {
+    final h = Map<String, String>.from(headers ?? await _headers());
+    if (timeout != null) {
+      h['X-Request-Timeout'] = '${timeout.inMilliseconds}';
+    }
+    return _http.get(uri, headers: h);
+  }
+
+  Future<http.Response> _post(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+  }) async {
+    final h = Map<String, String>.from(headers ?? await _headers());
+    if (timeout != null) {
+      h['X-Request-Timeout'] = '${timeout.inMilliseconds}';
+    }
+    return _http.post(uri, headers: h, body: body);
+  }
+
+  Future<http.Response> _delete(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+  }) async {
+    final h = Map<String, String>.from(headers ?? await _headers());
+    if (timeout != null) {
+      h['X-Request-Timeout'] = '${timeout.inMilliseconds}';
+    }
+    return _http.delete(uri, headers: h, body: body);
+  }
+
+  Future<http.Response> _put(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+  }) async {
+    final h = Map<String, String>.from(headers ?? await _headers());
+    if (timeout != null) {
+      h['X-Request-Timeout'] = '${timeout.inMilliseconds}';
+    }
+    return _http.put(uri, headers: h, body: body);
+  }
 
   Uri _uri(String path) => Uri.parse('${Env.apiBaseUrl}$path');
 
@@ -776,10 +1032,11 @@ class ApiClient {
   Future<Map<String, dynamic>> _getJson(
     String path, [
     Map<String, String> query = const {},
+    Duration? timeout,
   ]) async {
     final uri = _uri(path)
         .replace(queryParameters: query.isEmpty ? null : query);
-    final r = await _http.get(uri, headers: await _headers());
+    final r = await _get(uri, timeout: timeout);
     if (r.statusCode != 200) {
       throw ApiException(
         '$path failed.',
@@ -793,20 +1050,25 @@ class ApiClient {
   Future<Map<String, dynamic>> _sendJson(
     String method,
     String path,
-    Map<String, dynamic> body,
-  ) async {
-    final req = http.Request(method, _uri(path))
-      ..headers.addAll(await _headers())
-      ..body = jsonEncode(body);
-    final res = await http.Response.fromStream(await _http.send(req));
-    if (res.statusCode != 200) {
+    Map<String, dynamic> body, {
+    Duration? timeout,
+  }) async {
+    final uri = _uri(path);
+    final effectiveTimeout = timeout ?? interactiveTimeout;
+    final r = switch (method.toUpperCase()) {
+      'POST' => await _post(uri, body: jsonEncode(body), timeout: effectiveTimeout),
+      'PUT' => await _put(uri, body: jsonEncode(body), timeout: effectiveTimeout),
+      'DELETE' => await _delete(uri, body: jsonEncode(body), timeout: effectiveTimeout),
+      _ => await _get(uri, timeout: effectiveTimeout),
+    };
+    if (r.statusCode != 200) {
       throw ApiException(
         '$path failed.',
-        statusCode: res.statusCode,
-        body: res.body,
+        statusCode: r.statusCode,
+        body: r.body,
       );
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
   /// `GET /story` — the whole story document (one call): every visible section.
@@ -1529,20 +1791,13 @@ class ApiClient {
 
   /// `POST /wiki/photo-hide` — the gallery's "Delete": takes the photo out of
   /// view (and off the public grid, if it was a profile photo). Ayma keeps
-  /// the underlying record.
+  /// the underlying record. Enforces the interactive timeout budget (≤8s).
   Future<void> photoHide(String url, {required String source}) async {
-    final http.Response r;
-    try {
-      r = await _http
-          .post(
-            _uri('/wiki/photo-hide'),
-            headers: await _headers(),
-            body: jsonEncode({'url': url, 'source': source}),
-          )
-          .timeout(const Duration(seconds: 25));
-    } on TimeoutException {
-      throw ApiException('Timed out — try again.');
-    }
+    final r = await _post(
+      _uri('/wiki/photo-hide'),
+      body: jsonEncode({'url': url, 'source': source}),
+      timeout: interactiveTimeout,
+    );
     if (r.statusCode != 200) {
       throw ApiException(
         'Could not remove that photo.',
@@ -1556,21 +1811,14 @@ class ApiClient {
   /// onto the public profile grid, through the same moderation every profile
   /// upload goes through. Throws with the reason if it doesn't clear
   /// moderation. This runs moderation + a face-embed + captioning pass
-  /// server-side (several sequential model calls), so it's given a generous
-  /// timeout rather than the short one most calls get.
+  /// server-side (several sequential model calls), so it's given the extended
+  /// [longTimeout] budget.
   Future<void> photoPublish(String url, {required String source}) async {
-    final http.Response r;
-    try {
-      r = await _http
-          .post(
-            _uri('/wiki/photo-publish'),
-            headers: await _headers(),
-            body: jsonEncode({'url': url, 'source': source}),
-          )
-          .timeout(const Duration(seconds: 55));
-    } on TimeoutException {
-      throw ApiException('Timed out — try again.');
-    }
+    final r = await _post(
+      _uri('/wiki/photo-publish'),
+      body: jsonEncode({'url': url, 'source': source}),
+      timeout: longTimeout,
+    );
     if (r.statusCode != 200) {
       throw ApiException(
         'Could not publish that photo.',
@@ -1980,11 +2228,11 @@ class ApiClient {
   Future<void> unlikeProfile(String otherUid) =>
       _postJsonOk('/explore/unlike', {'other_uid': otherUid});
 
-  Future<void> _postJsonOk(String path, Map<String, dynamic> body) async {
-    final r = await _http.post(
+  Future<void> _postJsonOk(String path, Map<String, dynamic> body, {Duration? timeout}) async {
+    final r = await _post(
       _uri(path),
-      headers: await _headers(),
       body: jsonEncode(body),
+      timeout: timeout,
     );
     if (r.statusCode != 200) {
       throw ApiException(
@@ -2266,6 +2514,7 @@ class ApiClient {
   Future<({List<ChatMessage> messages, String? nextBefore})> chatHistory({
     String? before,
     int limit = 40,
+    bool noRetry = false,
   }) async {
     final uri = _uri('/chat/history').replace(
       queryParameters: {
@@ -2273,7 +2522,11 @@ class ApiClient {
         if (before != null && before.isNotEmpty) 'before': before,
       },
     );
-    final r = await _http.get(uri, headers: await _headers());
+    final headers = await _headers();
+    // The offline queue flush opts out of the GET retry-backoff so it fails
+    // fast and the online flush isn't skipped (PERF_PLAN GATE-RED).
+    if (noRetry) headers['X-No-Retry'] = '1';
+    final r = await _http.get(uri, headers: headers);
     if (r.statusCode != 200) {
       throw ApiException(
         'chat history failed.',

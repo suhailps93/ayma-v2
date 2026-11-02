@@ -18,6 +18,7 @@ class _FakeMatchService extends MatchService {
   final List<MatchView> _matches;
   final Map<String, MatchView> _byId;
   final List<(String, bool)> responded = [];
+  int failNextResponds = 0;
 
   @override
   Stream<List<MatchView>> watchNewMatches() =>
@@ -32,6 +33,10 @@ class _FakeMatchService extends MatchService {
 
   @override
   Future<void> respond(String matchId, {required bool accept}) async {
+    if (failNextResponds > 0) {
+      failNextResponds--;
+      throw StateError('refused');
+    }
     responded.add((matchId, accept));
   }
 }
@@ -194,6 +199,33 @@ void main() {
     await tester.tap(find.text('Accept'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+
+    expect(svc.responded, [('a__me', true)]);
+    expect(find.text('Accepted'), findsOneWidget);
+  });
+
+  testWidgets('a refused response offers Retry, which posts the same choice',
+      (tester) async {
+    final svc = _FakeMatchService(const [], byId: {'a__me': _m})
+      ..failNextResponds = 1;
+    await tester.pumpWidget(MaterialApp(
+      home: MatchDetailScreen(
+        matchId: 'a__me',
+        service: svc,
+        api: _fakeApi(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Accept'));
+    await tester.pumpAndSettle();
+
+    expect(svc.responded, isEmpty);
+    expect(find.textContaining("That didn't work"), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
 
     expect(svc.responded, [('a__me', true)]);
     expect(find.text('Accepted'), findsOneWidget);

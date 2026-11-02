@@ -69,7 +69,10 @@ class PhotoService {
 
   Future<String?> _downloadUrl(String mediaId) async {
     try {
-      final doc = await _db.doc('users/$_uid/user_media/$mediaId').get();
+      final doc = await _db
+          .doc('users/$_uid/user_media/$mediaId')
+          .get()
+          .timeout(kInteractiveTimeout);
       final path = doc.data()?['storage_path'] as String?;
       if (path == null || path.isEmpty) return null;
       return await _storage.ref(path).getDownloadURL();

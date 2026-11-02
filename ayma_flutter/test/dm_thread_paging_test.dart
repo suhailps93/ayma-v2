@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/services/fresh_data.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -58,6 +59,11 @@ class _PagingDm extends DmService {
   Stream<List<DmMessage>> watchMessages(String threadId,
           {int limit = 30}) =>
       Stream.value(_tail);
+
+  @override
+  Stream<FreshData<List<DmMessage>>> watchMessagesFresh(String threadId,
+          {int limit = 30}) =>
+      Stream.value(FreshData(data: _tail));
 
   @override
   Future<List<DmMessage>> fetchOlderMessages(

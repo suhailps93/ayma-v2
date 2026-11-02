@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/messages_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/services/fresh_data.dart';
 import 'package:ayma_flutter/services/match_service.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -224,6 +225,10 @@ class _FakeDm extends DmService {
       Stream.value(_live);
 
   @override
+  Stream<FreshData<List<DmThread>>> watchThreadsFresh({int limit = 25}) =>
+      Stream.value(FreshData(data: _live));
+
+  @override
   Future<List<DmThread>> fetchOlderThreads({
     required String lastThreadId,
     int limit = 25,
@@ -236,4 +241,8 @@ class _FakeMatches extends MatchService {
   @override
   Stream<List<MatchView>> watchMutualMatches({int limit = 25}) =>
       Stream.value(const []);
+
+  @override
+  Stream<FreshData<List<MatchView>>> watchMutualMatchesFresh({int limit = 25}) =>
+      Stream.value(const FreshData(data: []));
 }

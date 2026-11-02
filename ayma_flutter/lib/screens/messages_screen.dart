@@ -4,11 +4,13 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/dm_service.dart';
+import '../services/fresh_data.dart';
 import '../services/match_service.dart';
 import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/freshness_indicator.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 
@@ -142,98 +144,123 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
-            const AymaScreenHeader(
-              title: 'Messages',
-              // Back arrow when pushed standalone (deep link / `open_screen`)
-              // — invisible in the shell tab, where the route can't pop.
-              automaticallyImplyBack: true,
-            ),
-            Expanded(child: _body(context, ac)),
-          ],
+        child: StreamBuilder<FreshData<List<DmThread>>>(
+          stream: _dm.watchThreadsFresh(),
+          builder: (context, threadSnap) {
+            return StreamBuilder<FreshData<List<MatchView>>>(
+              stream: _matches.watchMutualMatchesFresh(),
+              builder: (context, matchSnap) {
+                final threadFresh = threadSnap.data;
+                final matchFresh = matchSnap.data;
+                final waiting = threadFresh == null && matchFresh == null;
+                final freshness = (threadFresh != null && matchFresh != null)
+                    ? FreshData.mergeMeta<bool>(
+                        data: (threadFresh.hasData || matchFresh.hasData)
+                            ? true
+                            : null,
+                        a: threadFresh,
+                        b: matchFresh,
+                      )
+                    : (threadFresh ?? matchFresh);
+
+                return Column(
+                  children: [
+                    const AymaScreenHeader(
+                      title: 'Messages',
+                      // Back arrow when pushed standalone (deep link /
+                      // `open_screen`) — invisible in the shell tab, where
+                      // the route can't pop.
+                      automaticallyImplyBack: true,
+                    ),
+                    if (freshness != null)
+                      FreshnessIndicator.fromFresh(freshness),
+                    Expanded(
+                      child: waiting
+                          ? const Center(child: CircularProgressIndicator())
+                          : _list(
+                              context,
+                              ac,
+                              threads: threadFresh?.data ?? const <DmThread>[],
+                              matches:
+                                  matchFresh?.data ?? const <MatchView>[],
+                            ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _body(BuildContext context, AymaTokens ac) {
-    return StreamBuilder<List<DmThread>>(
-        stream: _dm.watchThreads(),
-        builder: (context, threadSnap) {
-          return StreamBuilder<List<MatchView>>(
-            stream: _matches.watchMutualMatches(),
-            builder: (context, matchSnap) {
-              if (!threadSnap.hasData && !matchSnap.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final threads = threadSnap.data ?? const <DmThread>[];
-              final matches = matchSnap.data ?? const <MatchView>[];
-              _knownThreadIds
-                ..clear()
-                ..addAll(threads.map((t) => t.threadId))
-                ..addAll(_archived.map((t) => t.threadId));
-              // Live tier first, then archive (dropping archive rows that a
-              // live update promoted back into the top 25).
-              final liveIds = threads.map((t) => t.threadId).toSet();
-              _allThreads = [
-                ...threads,
-                ..._archived.where((t) => !liveIds.contains(t.threadId)),
-              ];
-              final threadByUid = {for (final t in _allThreads) t.otherUid: t};
+  Widget _list(
+    BuildContext context,
+    AymaTokens ac, {
+    required List<DmThread> threads,
+    required List<MatchView> matches,
+  }) {
+    // Merge the live top-tier threads with any archive pages fetched on
+    // scroll (Phase 2 pagination design §3.2.3), dropping archive rows a
+    // live update promoted back into the top 25.
+    _knownThreadIds
+      ..clear()
+      ..addAll(threads.map((t) => t.threadId))
+      ..addAll(_archived.map((t) => t.threadId));
+    final liveIds = threads.map((t) => t.threadId).toSet();
+    _allThreads = [
+      ...threads,
+      ..._archived.where((t) => !liveIds.contains(t.threadId)),
+    ];
+    final threadByUid = {for (final t in _allThreads) t.otherUid: t};
 
-              final rows = <_Row>[
-                for (final t in _allThreads)
-                  _Row.thread(t, matched: matches
-                      .any((m) => m.otherUid == t.otherUid)),
-                for (final m in matches)
-                  if (!threadByUid.containsKey(m.otherUid)) _Row.match(m),
-              ]..sort((a, b) => b.sortKey.compareTo(a.sortKey));
+    final rows = <_Row>[
+      for (final t in _allThreads)
+        _Row.thread(t,
+            matched: matches.any((m) => m.otherUid == t.otherUid)),
+      for (final m in matches)
+        if (!threadByUid.containsKey(m.otherUid)) _Row.match(m),
+    ]..sort((a, b) => b.sortKey.compareTo(a.sortKey));
 
-              WidgetsBinding.instance.addPostFrameCallback(
-                  (_) => _ensureMini(rows.map((r) => r.otherUid).toSet()));
+    WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _ensureMini(rows.map((r) => r.otherUid).toSet()));
 
-              if (rows.isEmpty) {
-                return CenteredScroll(
-                  padding: const EdgeInsets.all(32),
-                  child: Text(
-                    'No matches or conversations yet.\nExplore to get started.',
-                    textAlign: TextAlign.center,
-                    style: AymaType.sans(
-                        size: 15, soft: true, color: ac.fgMute),
-                  ),
-                );
-              }
-              return ListView.separated(
-                controller: _scrollController,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: rows.length + (_fetchingArchive ? 1 : 0),
-                separatorBuilder: (_, __) =>
-                    Divider(height: 1, color: ac.lineSoft),
-                itemBuilder: (context, i) {
-                  if (i >= rows.length) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child:
-                              CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    );
-                  }
-                  return FadeSlideIn(
-                    delay: staggerDelay(i),
-                    child: rows[i].build(context, _mini[rows[i].otherUid]),
-                  );
-                },
-              );
-            },
-          );
-        },
+    if (rows.isEmpty) {
+      return CenteredScroll(
+        padding: const EdgeInsets.all(32),
+        child: Text(
+          'No matches or conversations yet.\nExplore to get started.',
+          textAlign: TextAlign.center,
+          style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
+        ),
       );
+    }
+    return ListView.separated(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: rows.length + (_fetchingArchive ? 1 : 0),
+      separatorBuilder: (_, __) => Divider(height: 1, color: ac.lineSoft),
+      itemBuilder: (context, i) {
+        if (i >= rows.length) {
+          // Archive page in flight — a footer spinner below the live tier.
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        return FadeSlideIn(
+          delay: staggerDelay(i),
+          child: rows[i].build(context, _mini[rows[i].otherUid]),
+        );
+      },
+    );
   }
 }
 

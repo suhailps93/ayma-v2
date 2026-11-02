@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/services/fresh_data.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -43,6 +44,11 @@ class _FakeDm extends DmService {
   Stream<List<DmMessage>> watchMessages(String threadId,
       {int limit = 30}) =>
       _msgs.stream;
+
+  @override
+  Stream<FreshData<List<DmMessage>>> watchMessagesFresh(String threadId,
+          {int limit = 30}) =>
+      _msgs.stream.map((m) => FreshData(data: m));
 
   @override
   Future<void> markThreadRead(String threadId) async {}

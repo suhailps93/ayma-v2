@@ -12,6 +12,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
+import '../services/fresh_data.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
@@ -20,6 +21,7 @@ import '../widgets/overflow_guards.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
+import '../widgets/freshness_indicator.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/keyboard_dismiss.dart';
 import '../widgets/shared_report_card.dart';
@@ -385,7 +387,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       // about, not one-shot openers.
     } catch (e) {
       if (mounted) {
-        AymaToast.show(context, 'Not sent ($e).', kind: AymaToastKind.error);
+        // The composer keeps the text (and any picked attachment), so Retry
+        // resends exactly the original input.
+        AymaToast.show(context, 'Not sent ($e).',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(label: 'Retry', onPressed: _send));
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -707,10 +713,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
         builder: (context, constraints) => Column(
         children: [
           Expanded(
-            child: StreamBuilder<List<DmMessage>>(
-              stream: _dm.watchMessages(widget.threadId),
+            child: StreamBuilder<FreshData<List<DmMessage>>>(
+              stream: _dm.watchMessagesFresh(widget.threadId),
               builder: (context, snap) {
-                final tail = snap.data ?? const <DmMessage>[];
+                final fresh = snap.data;
+                final tail = fresh?.data ?? const <DmMessage>[];
                 final msgs = _mergeTail(tail);
                 _oldestId = msgs.isEmpty ? null : msgs.first.id;
                 _tailFull = tail.length >= _historyPageSize;
@@ -722,87 +729,101 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                 if (!snap.hasError) _scheduleAssist(msgs);
                 // A brand-new thread has no doc yet; the stream can be briefly
                 // empty or (transiently) error — never hang the screen on it.
-                if (msgs.isEmpty) {
-                  if (snap.connectionState == ConnectionState.waiting &&
-                      !snap.hasError) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return Center(
-                    child: Text(
-                      'Say something.',
-                      style: AymaType.sans(
-                        size: 15,
-                        soft: true,
-                        color: ac.fgMute,
-                      ),
-                    ),
-                  );
-                }
+                final waiting = fresh == null &&
+                    snap.connectionState == ConnectionState.waiting &&
+                    !snap.hasError;
                 // `reverse: true` keeps the list pinned to the newest message
                 // — without it the view stayed put while new bubbles landed
                 // below the fold, half-clipped against the composer (founder
                 // screenshot). The bottom inset matches the Ayma chat's, so
                 // the last bubble clears the composer identically on both
                 // screens; items are keyed by id so the reversed indexing
-                // still animates each new bubble in once.
-                return ListView.builder(
-                  controller: _listController,
-                  reverse: true,
-                  // iOS has no keyboard-dismiss key — dragging the
-                  // transcript away is the native escape hatch.
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: const EdgeInsets.fromLTRB(
-                    16,
-                    16,
-                    16,
-                    kChatListBottomInset, // bottom 12
-                  ),
-                  itemCount: msgs.length + (_fetchingOlder ? 1 : 0),
-                  itemBuilder: (context, i) {
-                    if (i >= msgs.length) {
-                      // History page in flight — pinned to the top of the
-                      // reversed transcript (last index).
-                      return const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                        child: Center(
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      );
-                    }
-                    final m = msgs[msgs.length - 1 - i];
-                    final mine = m.senderUid == me;
-                    final bubble = _Bubble(
-                      message: m,
-                      mine: mine,
-                      // Incoming text bubbles get the translate affordance;
-                      // auto-translate kicks in when the thread toggle is on.
-                      translate: mine
-                          ? null
-                          : (text) => _dm.translate(
-                                widget.threadId,
-                                text,
-                                _preferredLang,
+                // still animates each new bubble in once. The freshness banner
+                // (PERF_PLAN Phase 1) sits above the transcript so Live /
+                // Syncing / Stale / Refused is visible without guessing.
+                return Column(
+                  children: [
+                    if (fresh != null) FreshnessIndicator.fromFresh(fresh),
+                    Expanded(
+                      child: msgs.isEmpty
+                          ? (waiting
+                              ? const Center(
+                                  child: CircularProgressIndicator())
+                              : Center(
+                                  child: Text(
+                                    'Say something.',
+                                    style: AymaType.sans(
+                                      size: 15,
+                                      soft: true,
+                                      color: ac.fgMute,
+                                    ),
+                                  ),
+                                ))
+                          : ListView.builder(
+                              controller: _listController,
+                              reverse: true,
+                              // iOS has no keyboard-dismiss key — dragging the
+                              // transcript away is the native escape hatch.
+                              keyboardDismissBehavior:
+                                  ScrollViewKeyboardDismissBehavior.onDrag,
+                              padding: const EdgeInsets.fromLTRB(
+                                16,
+                                16,
+                                16,
+                                kChatListBottomInset, // bottom 12
                               ),
-                      autoTranslate: _autoTranslate,
-                      onDetected: _onOtherLangDetected,
-                      preferredLang: _preferredLang,
-                    );
-                    return FadeSlideIn(
-                      key: ValueKey(m.id),
-                      delay: staggerDelay(i),
-                      offset: 8,
-                      // Ayma's screen context carries only the newest few
-                      // messages of a private conversation.
-                      child: i < _kContextMessages
-                          ? bubble
-                          : NoScreenContext(child: bubble),
-                    );
-                  },
+                              itemCount: msgs.length + (_fetchingOlder ? 1 : 0),
+                              itemBuilder: (context, i) {
+                                if (i >= msgs.length) {
+                                  // History page in flight — pinned to the top
+                                  // of the reversed transcript (last index).
+                                  return const Padding(
+                                    padding:
+                                        EdgeInsets.symmetric(vertical: 16),
+                                    child: Center(
+                                      child: SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      ),
+                                    ),
+                                  );
+                                }
+                                final m = msgs[msgs.length - 1 - i];
+                                final mine = m.senderUid == me;
+                                final bubble = _Bubble(
+                                  message: m,
+                                  mine: mine,
+                                  // Incoming text bubbles get the translate
+                                  // affordance; auto-translate kicks in when
+                                  // the thread toggle is on.
+                                  translate: mine
+                                      ? null
+                                      : (text) => _dm.translate(
+                                            widget.threadId,
+                                            text,
+                                            _preferredLang,
+                                          ),
+                                  autoTranslate: _autoTranslate,
+                                  onDetected: _onOtherLangDetected,
+                                  preferredLang: _preferredLang,
+                                );
+                                return FadeSlideIn(
+                                  key: ValueKey(m.id),
+                                  delay: staggerDelay(i),
+                                  offset: 8,
+                                  // Ayma's screen context carries only the
+                                  // newest few messages of a private
+                                  // conversation.
+                                  child: i < _kContextMessages
+                                      ? bubble
+                                      : NoScreenContext(child: bubble),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
                 );
               },
             ),

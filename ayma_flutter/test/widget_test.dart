@@ -60,17 +60,58 @@ void main() {
   });
 
   testWidgets(
-      'a failed history load shows a distinct error + retry, not "say hello"',
+      'a persistent history failure shows a distinct error + retry, not '
+      '"say hello"', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    var calls = 0;
+    var recovered = false;
+    // Every attempt fails (a persistent 5xx) until the backend recovers. The
+    // bounded auto-retry (PERF_PLAN Phase 1) can't paper over a persistent
+    // failure, so the graceful error + Retry state MUST still show — auto-retry
+    // must not swallow it (GATE-RED / P2).
+    final api = _apiWithHistory((_) {
+      calls++;
+      if (recovered) {
+        return http.Response(
+            jsonEncode({'messages': <dynamic>[], 'next_before': null}), 200);
+      }
+      return http.Response('nope', 503);
+    });
+
+    await tester.pumpWidget(MaterialApp(home: ChatScreen(apiClient: api)));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull); // no red ErrorWidget
+    // Not the empty-history copy — a real error with a way to recover.
+    expect(find.text('Say hello to start a conversation.'), findsNothing);
+    expect(
+        find.text("Couldn't load your conversation history."), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
+    expect(calls, greaterThanOrEqualTo(2)); // the load was auto-retried
+
+    // Manual Retry on a now-healthy backend recovers to the empty state.
+    recovered = true;
+    await tester.tap(find.widgetWithText(TextButton, 'Retry'));
+    await tester.pumpAndSettle();
+    expect(
+        find.text("Couldn't load your conversation history."), findsNothing);
+    expect(find.text('Say hello to start a conversation.'), findsOneWidget);
+  });
+
+  testWidgets('a transient history 5xx auto-recovers with no error UI',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     var calls = 0;
+    // A single transient 503, then 200: the bounded retry recovers it, so the
+    // user never sees the error state (PERF_PLAN Phase 1).
     final api = _apiWithHistory((_) {
       calls++;
-      // Fail the first load (e.g. cold-start 503 / rate-limit 429), then
-      // succeed on retry.
       if (calls == 1) return http.Response('nope', 503);
       return http.Response(
           jsonEncode({'messages': <dynamic>[], 'next_before': null}), 200);
@@ -79,16 +120,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: ChatScreen(apiClient: api)));
     await tester.pumpAndSettle();
 
-    // Not the empty-history copy — a real error with a way to recover.
-    expect(find.text('Say hello to start a conversation.'), findsNothing);
-    expect(
-        find.text("Couldn't load your conversation history."), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
-
-    await tester.tap(find.widgetWithText(TextButton, 'Retry'));
-    await tester.pumpAndSettle();
-
-    expect(calls, 2);
+    expect(calls, 2); // one auto-retry, then success
+    expect(tester.takeException(), isNull);
     expect(
         find.text("Couldn't load your conversation history."), findsNothing);
     expect(find.text('Say hello to start a conversation.'), findsOneWidget);

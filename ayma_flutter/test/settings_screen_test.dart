@@ -21,6 +21,7 @@ class _FakeProfiles extends ProfileService {
 
   bool paused = false;
   final List<bool> pausedWrites = [];
+  int failNextPauses = 0;
 
   @override
   Stream<bool> watchAiAvatar() => Stream.value(true);
@@ -30,6 +31,10 @@ class _FakeProfiles extends ProfileService {
 
   @override
   Future<void> setPaused(bool value) async {
+    if (failNextPauses > 0) {
+      failNextPauses--;
+      throw StateError('refused');
+    }
     paused = value;
     pausedWrites.add(value);
   }
@@ -99,6 +104,25 @@ void main() {
 
     await tester.tap(find.text('Pause matching'));
     await tester.pumpAndSettle();
+    expect(profiles.pausedWrites, [true]);
+  });
+
+  testWidgets('a refused pause-matching write offers Retry', (tester) async {
+    final profiles = _FakeProfiles()..failNextPauses = 1;
+    await tester.pumpWidget(host(
+        ThemeController(initial: ThemeMode.dark), profiles, _api((_) {})));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Pause matching'));
+    await tester.pumpAndSettle();
+
+    expect(profiles.pausedWrites, isEmpty);
+    expect(find.textContaining('Could not save'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
     expect(profiles.pausedWrites, [true]);
   });
 
