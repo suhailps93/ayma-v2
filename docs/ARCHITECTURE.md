@@ -1316,6 +1316,8 @@ raw content) is shown before the OAuth URL opens, in addition to the
 Terms/Privacy Policy disclosure this step added (§ "Connecting Google
 (Gmail, Calendar)" / "Connecting a Google account").
 
+**Module structure (Tier-2 sweep monolith split #16)**: `google_account.py` (facade re-exporting all symbols for 100% backward compatibility + sync/sweep orchestration), `google_account_oauth.py` (OAuth 2.0 flow, token exchange, refresh, revoke, email lookup, status), `google_account_gmail.py` (sender-domain exclusions, quote stripping, plain-text body extraction, bounded facts pull), and `google_account_calendar.py` (primary calendar events pull and formatting).
+
 ---
 
 ## 9. Data Layer (Firestore schema & ownership boundaries)
