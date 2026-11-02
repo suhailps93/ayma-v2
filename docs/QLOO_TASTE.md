@@ -20,8 +20,13 @@ shared-taste chips and date ideas, plus **per-domain bars** — one horizontal
 0–100 bar per domain (accent fill on a faint track, value right-aligned with
 tabular figures), ordered Music → Film → Food & places (`dining` → "Food &
 places"), reproducing the public demo `taste_demo.html`. Bars appear only when
-both sides have taste (`domains` non-empty); otherwise the card shows the
-no-Taste-page note. Below the summary it also surfaces the depth fields: a
+both sides have taste (`domains` non-empty); when there's no taste MATCH to show
+— one/both sides have no public Taste page, or the Qloo lookup failed/degraded —
+the **card is absent entirely** (an empty `SizedBox`), never a note or an error
+card (§ BUG A, 2026-11-01: a 200 "no taste data" / any failure used to render a
+"Taste match unavailable right now." error card). Taste is optional enrichment,
+so its absence is simply not surfaced in the app. Below the summary it also
+surfaces the depth fields: a
 **"Why you match"** row of outline tag chips from `shared_tags` (wrapping,
 visually distinct from the filled `shared` entity chips, hidden when empty) and
 a compact muted **demographics line** from `demographics.note` (shown only when
@@ -287,10 +292,13 @@ tailored (`taste_match._resolve_pair`):
 - **Viewer missing, match has taste** — prompts the viewer to add their page and
   names the match.
 - **Both missing** — the generic add-a-Taste-page hint.
-  This copy is **server-driven** (the Flutter card renders the server `message`
-  as its note — `TasteMatchLoad.fromReportValue` / `loadTasteMatch`), so it ships
-  the moment ayma-api deploys, no app release needed. Full dual-sided rendering
-  (score, shared chips, date ideas) is unchanged when both have taste.
+  This copy is **server-driven** and still produced for the public web demo
+  page. The **Flutter app no longer renders a no-taste note** (§ BUG A): the
+  shared card (`taste_match_card.dart`) is absent whenever there's no actual
+  taste match (`TasteMatchLoad.match == null`), rather than showing the tailored
+  `message` — so the message surfaces only on the web/demo surface now. Full
+  dual-sided rendering (score, shared chips, date ideas) is unchanged when both
+  have taste.
 - `GET /taste/demo` — public HTML judge page (`taste_demo.html`).
 - `GET /taste/demo/pair?a=&b=` — public; ONLY the four seeded demo ids
   (`maya|leo|aisha|noah`), anything else 404, so it can never read a real user.

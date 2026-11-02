@@ -123,7 +123,8 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('the no-Taste-page empty state', (tester) async {
+    testWidgets('a non-match (no Taste page / degraded) hides the card',
+        (tester) async {
       const hint = 'Maya hasn\'t added a public Taste page yet — add one to '
           'see a taste match.';
       await tester.pumpWidget(
@@ -131,9 +132,12 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('powered by Qloo'), findsOneWidget);
-      expect(find.byKey(const Key('tasteMatchNote')), findsOneWidget);
-      expect(find.text(hint), findsOneWidget);
+      // The card is absent — no header, no note, never an error card
+      // (§ founder BUG A). Taste is optional enrichment, so its absence is
+      // simply not shown.
+      expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+      expect(find.text('powered by Qloo'), findsNothing);
+      expect(find.text(hint), findsNothing);
       expect(find.byKey(const Key('tasteMatchScore')), findsNothing);
       expect(tester.takeException(), isNull);
     });

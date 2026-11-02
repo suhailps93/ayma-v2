@@ -56,7 +56,15 @@ ApiClient _api(http.Response Function() taste) => ApiClient(
     );
 
 /// A finished simulation, already streamed into Firestore, reopened by id.
-Future<void> _runSim(WidgetTester tester, ApiClient api) async {
+///
+/// [expectCard] scrolls the taste card into view before returning; pass false
+/// when the taste match is absent (no Taste page / failure) so there's nothing
+/// to scroll to.
+Future<void> _runSim(
+  WidgetTester tester,
+  ApiClient api, {
+  bool expectCard = true,
+}) async {
   final auth = MockFirebaseAuth(signedIn: true);
   final fs = FakeFirebaseFirestore();
   final sim = fs
@@ -96,14 +104,16 @@ Future<void> _runSim(WidgetTester tester, ApiClient api) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   await tester.pump(const Duration(milliseconds: 400));
-  await tester.scrollUntilVisible(
-    find.byKey(const Key('tasteMatchCard')),
-    200,
-    scrollable: find.descendant(
-      of: find.byKey(const Key('dateSimTranscript')),
-      matching: find.byType(Scrollable),
-    ),
-  );
+  if (expectCard) {
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('tasteMatchCard')),
+      200,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('dateSimTranscript')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+  }
   await tester.pump();
 }
 
@@ -208,7 +218,7 @@ void main() {
     expect(find.text('sample data'), findsOneWidget);
   });
 
-  testWidgets('no Taste page (404 no_taste) shows the backend hint',
+  testWidgets('no Taste page (404 no_taste) hides the card entirely',
       (tester) async {
     const hint = 'Add a public "Taste" page with lines like "Music: ..." '
         'to see your taste match.';
@@ -217,20 +227,35 @@ void main() {
       _api(() => _json({
             'detail': {'code': 'no_taste', 'message': hint},
           }, 404)),
+      expectCard: false,
     );
 
-    expect(find.byKey(const Key('tasteMatchNote')), findsOneWidget);
-    expect(find.text(hint), findsOneWidget);
+    // The card is absent — never a bare note / error. Taste is an optional
+    // enrichment; its absence isn't surfaced to the user.
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text(hint), findsNothing);
+    expect(find.text('Taste match'), findsNothing);
     expect(find.byKey(const Key('tasteMatchScore')), findsNothing);
     // The date-sim result itself is unaffected.
     expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('any other failure falls back to a muted message',
+  testWidgets(
+      'any other failure hides the card, never an "unavailable" error card',
       (tester) async {
-    await _runSim(tester, _api(() => http.Response('boom', 500)));
+    // § founder BUG A: a non-200 (or degraded Qloo) used to render a "Taste
+    // match unavailable right now." error card. It must now be absent.
+    await _runSim(
+      tester,
+      _api(() => http.Response('boom', 500)),
+      expectCard: false,
+    );
 
-    expect(find.text('Taste match unavailable right now.'), findsOneWidget);
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text('Taste match unavailable right now.'), findsNothing);
+    expect(find.text('Taste match'), findsNothing);
+    // The rest of the date-sim result is intact and usable.
     expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
     expect(find.byKey(const Key('dateSimMessageForRealButton')), findsOneWidget);
     expect(tester.takeException(), isNull);

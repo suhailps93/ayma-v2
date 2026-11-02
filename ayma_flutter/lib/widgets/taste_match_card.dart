@@ -21,8 +21,12 @@ Future<TasteMatchLoad> loadTasteMatch(ApiClient api, String otherUid) async {
 /// "Taste match · powered by Qloo" — the overlap score, summary, shared tastes
 /// and date ideas. Shown under the date-sim compatibility read and as a section
 /// in the match report. While [load] is pending it shows a muted "comparing"
-/// line; when it resolves to a note (no Taste page, or any failure) it shows
-/// that note instead.
+/// line; when there's a match it shows that. When there's NO taste content to
+/// show — one side has no public Taste page, or the Qloo lookup failed /
+/// degraded — the card is simply ABSENT (an empty [SizedBox]), never an error
+/// card: Taste is an optional enrichment, not something whose absence the user
+/// needs told about (§ founder BUG A — a 200 "no taste data" was being turned
+/// into a "Taste match unavailable right now." error card).
 class TasteMatchCard extends StatelessWidget {
   const TasteMatchCard({super.key, required this.load});
 
@@ -40,7 +44,12 @@ class TasteMatchCard extends StatelessWidget {
       future: load,
       builder: (context, snap) {
         final m = snap.data?.match;
-        final note = snap.data?.note ?? (snap.hasError ? _unavailable : null);
+        // Resolved with no match to show (no Taste page, a failure, or any
+        // other non-match state) → the card is absent, not an error card. Only
+        // a still-pending load keeps the card up, for its "comparing" line.
+        if (snap.connectionState == ConnectionState.done && m == null) {
+          return const SizedBox.shrink();
+        }
         return Container(
           key: const Key('tasteMatchCard'),
           width: double.infinity,
@@ -57,13 +66,6 @@ class TasteMatchCard extends StatelessWidget {
               const SizedBox(height: 12),
               if (m != null)
                 ..._body(ac, m)
-              else if (note != null)
-                Text(
-                  note,
-                  key: const Key('tasteMatchNote'),
-                  style:
-                      AymaType.sans(size: 13.5, color: ac.fgDim, height: 1.4),
-                )
               else
                 Text(
                   'Comparing your tastes…',
