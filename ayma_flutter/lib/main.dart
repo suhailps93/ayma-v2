@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:logging/logging.dart';
 
+import 'core/app_recovery.dart';
 import 'core/dag/launch_intent_resolver.dart';
 import 'core/dag/startup_nodes.dart';
 import 'routing/app_router.dart';
@@ -113,6 +114,21 @@ class AymaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Keyed on [appRecoveryEpoch] so the error fallback's "Go back" can force a
+    // full rebuild of the router subtree — re-mounting the Router/Navigator
+    // even when a build threw high enough to take out the whole app tree
+    // (SWEEP91-J1R S2). A bump changes the KeyedSubtree key, which discards and
+    // rebuilds everything below it.
+    return ValueListenableBuilder<int>(
+      valueListenable: appRecoveryEpoch,
+      builder: (context, epoch, _) => KeyedSubtree(
+        key: ValueKey<int>(epoch),
+        child: _buildRouterApp(context),
+      ),
+    );
+  }
+
+  Widget _buildRouterApp(BuildContext context) {
     return AnimatedBuilder(
       animation: Listenable.merge([
         themeControllerGlobal,

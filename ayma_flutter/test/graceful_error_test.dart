@@ -1,3 +1,4 @@
+import 'package:ayma_flutter/core/app_recovery.dart';
 import 'package:ayma_flutter/widgets/graceful_error.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -42,20 +43,41 @@ void main() {
   });
 
   testWidgets(
-      'SWEEP91-J1R S2: the fallback offers a Go back affordance so it is never a dead end',
+      'SWEEP91-J1R S2: the fallback renders under a Material canvas (no debug underlines)',
       (tester) async {
     await tester.pumpWidget(
       gracefulErrorWidget(FlutterErrorDetails(exception: StateError('x'))),
     );
-    // A chromeless full-screen error (it can replace a whole route's AppBar +
-    // back button) must still give the user a way out — otherwise system BACK
-    // sometimes can't pop it and only a force-stop recovers.
+    // The yellow "no Material" debug underlines QA saw on the full-screen error
+    // mean the Text had no Material ancestor. The fallback now brings its own
+    // Material canvas (and Directionality), so every Text sits under a Material.
+    expect(
+      find.ancestor(
+        of: find.text("Something didn't load"),
+        matching: find.byType(Material),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'SWEEP91-J1R S2: tapping Go back actually recovers (bumps the app-root epoch)',
+      (tester) async {
+    // QA (dbd8154): "Go back" rendered but tapping left an identical frame — it
+    // did not pop/navigate. The recovery must force the app root to rebuild
+    // (so the frame changes even when the Router itself was torn out), which it
+    // signals by bumping [appRecoveryEpoch]. Assert the tap bumps it.
+    final before = appRecoveryEpoch.value;
+    await tester.pumpWidget(
+      gracefulErrorWidget(FlutterErrorDetails(exception: StateError('x'))),
+    );
     final goBack = find.text('Go back');
     expect(goBack, findsOneWidget);
-    // Tapping it is self-guarded (drives the global router, try/caught) and
-    // must never itself throw out of the error screen.
     await tester.tap(goBack);
     await tester.pump();
+    expect(appRecoveryEpoch.value, greaterThan(before),
+        reason: 'Go back must trigger an app-root rebuild, not a no-op');
     expect(tester.takeException(), isNull);
   });
 }

@@ -1660,14 +1660,19 @@ Four client-side perceived-performance improvements, all behind no flag (pure UX
   shown with its snake_case), and `not_found` maps to no label at all — the stat is omitted entirely, since the summary
   already renders "Nothing found yet." beside it. The client pill (`living_report_view._NonNumericStat`) matches
   `high`/`medium`/`low` case-insensitively, so the capitalized labels still render as the colored band pill.
-- **Graceful error is never a dead end** (`widgets/graceful_error.dart`, SWEEP91-J1R S2) — the app-wide
-  `ErrorWidget.builder` (`gracefulErrorWidget`, wired in `startup_nodes`) replaces a thrown build subtree with a calm
-  "Something didn't load" panel. When the throw is high enough it can replace a whole route's chrome (AppBar + back
-  button included), leaving a chromeless full-screen panel that Android's system BACK sometimes couldn't pop (only a
-  force-stop recovered). The panel now carries a self-contained **"Go back"** affordance — context-free (no
-  Material/Theme/Navigator-of-context lookups, any of which may be the thing that failed) — that drives the global
-  `appRouter` directly: `pop()` the stranded route, or `go(MainShellScreen.path)` when there's nothing to pop. Every
-  call is try/caught so a tap can never itself throw back out of the error screen.
+- **Graceful error is never a dead end** (`widgets/graceful_error.dart`, `core/app_recovery.dart`, SWEEP91-J1R S2) —
+  the app-wide `ErrorWidget.builder` (`gracefulErrorWidget`, wired in `startup_nodes`) replaces a thrown build subtree
+  with a calm "Something didn't load" panel. When the throw is high enough it can replace a whole route's chrome
+  (AppBar + back button), or the whole app tree, leaving a chromeless full-screen panel that Android's system BACK
+  couldn't pop (only a force-stop recovered). Two fixes: **(1)** the panel brings its own **`Material`** canvas (plus
+  `Directionality`) so the text no longer shows the yellow "no Material" debug underlines QA saw; **(2)** its
+  self-contained **"Go back"** affordance calls `recoverAppRoot()` — which resets the route Home **and** bumps
+  `appRecoveryEpoch`, a `ValueNotifier` the app root (`AymaApp`) keys its `MaterialApp.router` subtree on, forcing a
+  full rebuild that re-mounts the `Router`/`Navigator`. That matters because an earlier "Go back" that only called
+  `appRouter.pop()`/`.go()` left an identical frame when the failure had torn the Router's delegate out of the tree
+  (QA on dbd8154): `appRouter` navigation is a no-op once its delegate is unmounted, whereas the epoch-keyed rebuild
+  always changes the frame. Context-free throughout (no Theme/Navigator-of-context lookups, any of which may be the
+  thing that failed) and fully try/caught so a tap can never itself throw back out of the error screen.
   - **Entry from the profile action rail** (`public_profile_screen.dart`) — the web-research (magnifier-with-sparkle)
     rail icon only **navigates**; it never calls `POST /deep-dive` itself. A profile with an existing report
     (`deep_dive_id` non-empty) opens `/deep-dive/<id>`; a profile with none opens `/deep-dive/uid_<uid>`, landing on the

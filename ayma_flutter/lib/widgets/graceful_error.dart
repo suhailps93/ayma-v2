@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../routing/app_router.dart';
-import '../screens/main_shell_screen.dart';
+import '../core/app_recovery.dart';
 import '../theme.dart';
 
 /// App-wide replacement for Flutter's default **red** [ErrorWidget].
@@ -20,8 +19,10 @@ import '../theme.dart';
 /// must never see the raw red screen; developers still get the console stack.
 ///
 /// Built to be robust high in the tree: it brings its own [Directionality] and
-/// hardcoded neutral colors, and avoids `Scaffold`/`Theme`/`MediaQuery`
-/// lookups, since an ancestor of those may be exactly what failed to build.
+/// a [Material] canvas (so [Text] never shows the yellow "no Material" debug
+/// underlines — SWEEP91-J1R S2, QA saw them), hardcoded neutral colors, and
+/// avoids `Scaffold`/`Theme`/`MediaQuery` lookups, since an ancestor of those
+/// may be exactly what failed to build.
 Widget gracefulErrorWidget(FlutterErrorDetails details) {
   // Context-free (an ancestor Theme may be exactly what failed), so use the
   // app's dark-palette compile-time constants from theme.dart directly rather
@@ -29,78 +30,68 @@ Widget gracefulErrorWidget(FlutterErrorDetails details) {
   const bg = AymaColors.darkBg;
   const fg = AymaColors.darkFg;
   const muted = AymaColors.darkFgMute;
+  // Directionality + a Material canvas are both brought in-house: the failed
+  // subtree can be the route's own Scaffold (no Material above the Text ->
+  // yellow underlines) or the whole app (no Directionality -> an assert). This
+  // widget stands alone under either.
   return Directionality(
     textDirection: TextDirection.ltr,
-    child: Container(
+    child: Material(
       color: bg,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.cloud_off_rounded, color: muted, size: 36),
-          SizedBox(height: 14),
-          Text(
-            "Something didn't load",
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: fg,
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.cloud_off_rounded, color: muted, size: 36),
+            SizedBox(height: 14),
+            Text(
+              "Something didn't load",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: fg,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'Please go back and try again in a moment.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: muted, fontSize: 14, height: 1.3),
-          ),
-          // This fallback can replace a whole route's chrome (AppBar + back
-          // button included) when the build threw high in the subtree, leaving
-          // a chromeless screen that Android's system BACK sometimes can't pop
-          // — a dead end only force-stop recovered from (Scout SWEEP91 S2).
-          // A self-contained, context-free "Go back" affordance guarantees a
-          // way out regardless: it pops the top route, or returns Home when
-          // there's nothing to pop. Built WITHOUT Material/Theme (an ancestor
-          // of those may be exactly what failed) — a plain tappable box.
-          SizedBox(height: 22),
-          _GoBackButton(),
-        ],
+            SizedBox(height: 8),
+            Text(
+              'Please go back and try again in a moment.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: muted, fontSize: 14, height: 1.3),
+            ),
+            // This fallback can replace a whole route's chrome (AppBar + back
+            // button included), or the whole app tree, when a build throws —
+            // leaving a chromeless screen that Android's system BACK can't pop,
+            // a dead end only force-stop recovered from (SWEEP91-J1R S2). The
+            // "Go back" affordance below guarantees a way out, and crucially it
+            // RECOVERS THE FRAME even when the Router itself was torn out (see
+            // [recoverAppRoot]) — not just when a single route can be popped.
+            SizedBox(height: 22),
+            _GoBackButton(),
+          ],
+        ),
       ),
     ),
   );
 }
 
 /// A context-free recovery button for [gracefulErrorWidget] — no
-/// Material/Theme/Navigator-of-context lookups (any of them may be the thing
-/// that failed to build). It drives the global [appRouter] directly: pop the
-/// stranded route when possible, else go Home. Every call is guarded so a tap
-/// can never itself throw out of the error screen.
+/// Theme/Navigator-of-context lookups (any of them may be the thing that
+/// failed to build). It calls [recoverAppRoot], which resets the route Home
+/// AND force-rebuilds the app root, so the frame changes even when the global
+/// router's delegate was unmounted by the failure. Guarded so a tap can never
+/// itself throw out of the error screen.
 class _GoBackButton extends StatelessWidget {
   const _GoBackButton();
-
-  void _recover() {
-    try {
-      if (appRouter.canPop()) {
-        appRouter.pop();
-      } else {
-        appRouter.go(MainShellScreen.path);
-      }
-    } catch (_) {
-      // Last resort: a direct Home navigation can't be worse than the
-      // dead-end the user is already stranded on.
-      try {
-        appRouter.go(MainShellScreen.path);
-      } catch (_) {/* nothing more we can safely do */}
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     const fg = AymaColors.darkFg;
     const muted = AymaColors.darkFgMute;
     return GestureDetector(
-      onTap: _recover,
+      onTap: recoverAppRoot,
       behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 11),

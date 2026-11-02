@@ -786,6 +786,54 @@ def test_finished_deep_dive_falls_back_to_chat_when_nothing_found(monkeypatch):
     assert calls[0][2] == "chat"
 
 
+def test_refresh_self_dive_notification_deep_links_to_the_report(monkeypatch):
+    """SWEEP91-J1R: the web-research screen's REFRESH is `POST /deep-dive`
+    `{force: true}` for the caller themselves. Its completion notification must
+    carry the SAME `deep_dive/{report_id}` the auto path emits — the exact id
+    the stored self-dive report opens at — not the chat fallback. (Verifies the
+    refresh entry point emits an identical, resolvable record; the earlier
+    reopened-bug claim that refresh wrote a different/chat-routing record does
+    not hold in code.)"""
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(main.deep_dive, "cached_dive", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    seen_force = []
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        seen_force.append((is_self, target_uid, force))
+        return {**_DIGEST, "name": name, "is_self": True}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+
+    calls = []
+
+    async def _capture_notify(_db, uid, preview, deep_link):
+        calls.append((uid, preview, deep_link))
+
+    monkeypatch.setattr(
+        main.notifications_triggers, "notify_skill_done", _capture_notify
+    )
+
+    # A self refresh: empty target_uid, force=true (the screen's 🔄 action).
+    r = _client.post(
+        "/deep-dive", headers=_auth(monkeypatch), json={"force": True},
+    )
+    assert r.status_code == 200
+    # Resolved as a self, forced (cache-skipping) dive.
+    assert seen_force == [(True, "", True)]
+    assert len(calls) == 1
+    _uid, _preview, deep_link = calls[0]
+    expected = f"deep_dive/{main.deep_dive.dive_report_id('', 'Suhail Pallath')}"
+    assert deep_link == expected
+    assert deep_link != "chat" and deep_link.endswith("name_suhail-pallath")
+
+
 def test_endpoint_returns_a_cached_dive_inline_for_someone_else(monkeypatch):
     # Caching only ever short-circuits a dive on *someone else* — see
     # test_self_dive_never_uses_the_cache below for the self case.
