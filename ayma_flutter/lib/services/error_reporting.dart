@@ -22,6 +22,48 @@ void logLayoutErrorLoudly(FlutterErrorDetails details) {
   );
 }
 
+/// Debug/profile builds only: dumps the FULL [FlutterErrorDetails] — exception,
+/// the widget/library that threw, its context, and the stack — to the console
+/// so it is capturable in `adb logcat`.
+///
+/// The app overrides both [FlutterError.onError] and [ErrorWidget.builder]
+/// (startup_nodes N3 + graceful_error.dart). Overriding `FlutterError.onError`
+/// without calling [FlutterError.dumpErrorToConsole] SUPPRESSES Flutter's
+/// default console dump — so a non-layout build-throw (J1: the self web-search
+/// `/deep-dive` render) reached only Crashlytics and never appeared in
+/// `adb logcat`, leaving QA with no stack. This restores the console dump on
+/// debug/profile builds only; release behaviour (silent + Crashlytics) is
+/// unchanged. Uses `forceReport: true` so the dump is never abbreviated by
+/// `dumpErrorToConsole`'s consecutive-error de-duplication (the same throw can
+/// reach this via both the onError and the ErrorWidget.builder paths).
+void dumpBuildErrorToConsole(
+  FlutterErrorDetails details, {
+  required String source,
+}) {
+  if (kReleaseMode) return;
+  debugPrint('======== AYMA BUILD ERROR [$source] ========');
+  debugPrint('exception: ${details.exceptionAsString().split('\n').first}');
+  debugPrint('library: ${details.library ?? 'unknown'}');
+  final ctx = details.context?.toDescription();
+  if (ctx != null && ctx.isNotEmpty) debugPrint('context: $ctx');
+  debugPrint('stack:\n${details.stack}');
+  FlutterError.dumpErrorToConsole(details, forceReport: true);
+}
+
+/// Debug/profile builds only: dumps an uncaught ASYNC error (the
+/// `PlatformDispatcher.instance.onError` / zone-guard path) to the console so
+/// it is capturable in `adb logcat`. Release behaviour is unchanged.
+void dumpAsyncErrorToConsole(
+  Object error,
+  StackTrace stack, {
+  required String source,
+}) {
+  if (kReleaseMode) return;
+  debugPrint('======== AYMA ASYNC ERROR [$source] ========');
+  debugPrint('error: $error');
+  debugPrint('stack:\n$stack');
+}
+
 /// Sends a *handled* (non-fatal) error to Sentry and Crashlytics, with tags
 /// that say where it happened. Used where a failure is caught and shown to
 /// the user (e.g. a voice call that could not start), so it is still visible

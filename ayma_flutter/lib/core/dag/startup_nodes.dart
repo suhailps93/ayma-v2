@@ -74,12 +74,20 @@ class StartupNodes {
       dependencies: {'N1:engine_binding'},
       action: (ctx) async {
         FlutterError.onError = (details) {
+          // Debug/profile: dump the full exception + stack to the console.
+          // Overriding onError here replaces Flutter's own default console
+          // dump, which otherwise hid every non-layout build-throw from
+          // `adb logcat` (J1: the self web-search /deep-dive render). Gated
+          // off release, so release stays silent + Crashlytics-only.
+          dumpBuildErrorToConsole(details, source: 'FlutterError.onError');
           logLayoutErrorLoudly(details);
           try {
             FirebaseCrashlytics.instance.recordFlutterFatalError(details);
           } catch (_) {}
         };
         PlatformDispatcher.instance.onError = (error, stack) {
+          dumpAsyncErrorToConsole(error, stack,
+              source: 'PlatformDispatcher.onError');
           try {
             FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
           } catch (_) {}

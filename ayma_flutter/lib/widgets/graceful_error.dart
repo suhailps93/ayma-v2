@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_recovery.dart';
+import '../services/error_reporting.dart';
 import '../theme.dart';
 
 /// App-wide replacement for Flutter's default **red** [ErrorWidget].
@@ -24,6 +25,12 @@ import '../theme.dart';
 /// avoids `Scaffold`/`Theme`/`MediaQuery` lookups, since an ancestor of those
 /// may be exactly what failed to build.
 Widget gracefulErrorWidget(FlutterErrorDetails details) {
+  // Debug/profile only: dump the throwing widget + stack to the console so the
+  // exact build-throw behind this fallback is capturable in `adb logcat`. This
+  // path fires independently of `FlutterError.onError`, so we dump here too —
+  // some throws reach the ErrorWidget.builder without a loud onError. Gated off
+  // release inside [dumpBuildErrorToConsole]; release/Crashlytics is unchanged.
+  dumpBuildErrorToConsole(details, source: 'ErrorWidget.builder');
   // Context-free (an ancestor Theme may be exactly what failed), so use the
   // app's dark-palette compile-time constants from theme.dart directly rather
   // than a Theme.of(context) lookup.

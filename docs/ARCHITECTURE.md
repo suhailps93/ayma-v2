@@ -1666,13 +1666,24 @@ Four client-side perceived-performance improvements, all behind no flag (pure UX
   (AppBar + back button), or the whole app tree, leaving a chromeless full-screen panel that Android's system BACK
   couldn't pop (only a force-stop recovered). Two fixes: **(1)** the panel brings its own **`Material`** canvas (plus
   `Directionality`) so the text no longer shows the yellow "no Material" debug underlines QA saw; **(2)** its
-  self-contained **"Go back"** affordance calls `recoverAppRoot()` — which resets the route Home **and** bumps
-  `appRecoveryEpoch`, a `ValueNotifier` the app root (`AymaApp`) keys its `MaterialApp.router` subtree on, forcing a
-  full rebuild that re-mounts the `Router`/`Navigator`. That matters because an earlier "Go back" that only called
-  `appRouter.pop()`/`.go()` left an identical frame when the failure had torn the Router's delegate out of the tree
-  (QA on dbd8154): `appRouter` navigation is a no-op once its delegate is unmounted, whereas the epoch-keyed rebuild
-  always changes the frame. Context-free throughout (no Theme/Navigator-of-context lookups, any of which may be the
-  thing that failed) and fully try/caught so a tap can never itself throw back out of the error screen.
+  self-contained **"Go back"** affordance calls `recoverAppRoot()` — which `go`s the route Home (replacing the whole
+  navigation stack, so the pushed `/deep-dive/:id` route that threw is **dropped**, not re-rendered — Home shows at
+  most the compact "Web research report" chat button for that dive, never the report view that threw), bumps
+  `appRecoveryEpoch` (a `ValueNotifier` the app root (`AymaApp`) keys its `MaterialApp.router` subtree on, forcing a
+  full rebuild that re-mounts the `Router`/`Navigator`), **and then re-asserts Home in a post-frame callback** — so
+  even if the re-mounted `Router` restored the delegate's stale `/deep-dive` matchlist instead of re-reading the
+  provider (the stranding QA still hit on 10fb131, where `go(Home)` + epoch alone did not recover), the settled route
+  is guaranteed Home. The epoch rebuild matters because an earlier "Go back" that only called `appRouter.pop()`/`.go()`
+  left an identical frame when the failure had torn the Router's delegate out of the tree (QA on dbd8154): `appRouter`
+  navigation is a no-op once its delegate is unmounted, whereas the epoch-keyed rebuild always changes the frame.
+  Context-free throughout (no Theme/Navigator-of-context lookups, any of which may be the thing that failed) and fully
+  try/caught so a tap can never itself throw back out of the error screen. **(3)** Debug/profile builds dump the full
+  `FlutterErrorDetails` (exception + throwing widget/library + stack) to the console from **both** the
+  `ErrorWidget.builder` path (`gracefulErrorWidget`) and `FlutterError.onError`/`PlatformDispatcher.onError` (N3,
+  `dumpBuildErrorToConsole`/`dumpAsyncErrorToConsole` in `services/error_reporting.dart`) — overriding those handlers
+  had suppressed Flutter's default console dump, so a non-layout build-throw (J1: the self web-search `/deep-dive`
+  render) reached only Crashlytics and never `adb logcat`, leaving QA with no stack. Release behaviour (silent +
+  Crashlytics) is unchanged (gated on `kReleaseMode`).
   - **Entry from the profile action rail** (`public_profile_screen.dart`) — the web-research (magnifier-with-sparkle)
     rail icon only **navigates**; it never calls `POST /deep-dive` itself. A profile with an existing report
     (`deep_dive_id` non-empty) opens `/deep-dive/<id>`; a profile with none opens `/deep-dive/uid_<uid>`, landing on the
