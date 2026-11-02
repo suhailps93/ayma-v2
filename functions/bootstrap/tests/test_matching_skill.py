@@ -518,3 +518,107 @@ def test_llm_contents_includes_both_stated_answer_blocks():
     )
     assert "STATED ANSWERS FROM A" in out and "No heavy drinkers" in out
     assert "STATED ANSWERS FROM B" in out
+
+
+# --- matching inference: bounded retry + no-double-charge --------------------
+# Mirror of the deep-dive hardening (deep_dive._grounded_research) applied to
+# the matching score. The match is a polled BACKGROUND job, so an inference
+# call that times out is retried once rather than failing the whole match;
+# metering records spend only after a call returns, so a timed-out attempt
+# bills nothing and a retry can never double-charge.
+
+import pytest  # noqa: E402
+
+
+async def _no_sleep(*_a, **_k):
+    return None
+
+
+class _BadRequest(Exception):
+    """A deterministic 4xx (would fail again) — must NOT be retried."""
+
+    code = 400
+
+
+def _llm_that(fail_n, *, exc_factory, counter, charges):
+    """A fake Brain ``generate_json`` that raises ``exc_factory()`` on its first
+    ``fail_n`` calls, then returns a valid score. It faithfully mirrors the real
+    providers' metering ORDER — spend is recorded only AFTER a call succeeds, so
+    a failing attempt (which raises first) never bills — so counting its own
+    ``charges`` proves the retry introduces no double-charge."""
+
+    async def _json(contents, system_prompt, response_schema=None, *, uid=None,
+                    feature="misc", **_kw):
+        counter["n"] += 1
+        if counter["n"] <= fail_n:
+            raise exc_factory()
+        charges["n"] += 1  # a real provider records spend only on success
+        return {
+            "dimensions": _DEFAULT_LLM_DIMS,
+            "user_explanation": {"A": "for you", "B": "for them"},
+            "ai_explanation": "private reasoning",
+            "shared": ["both value calm evenings"],
+            "tensions": ["different money instincts"],
+            "missing": ["how chores get split"],
+        }
+
+    return _json
+
+
+def test_match_completes_after_a_single_inference_timeout(monkeypatch):
+    """Times out ONCE then succeeds → the match score still completes, and is
+    billed exactly once (the timed-out attempt bills nothing). Pre-fix a single
+    timeout failed the whole match job."""
+    _patch_wiki(monkeypatch)
+    counter, charges = {"n": 0}, {"n": 0}
+    monkeypatch.setattr(
+        gemini, "generate_json",
+        _llm_that(1, exc_factory=asyncio.TimeoutError, counter=counter,
+                  charges=charges),
+    )
+    monkeypatch.setattr(matching_skill.asyncio, "sleep", _no_sleep)
+
+    db = _Db({"a": _user(), "b": _user()})
+    out = _run(matching_skill.score_pair(db, "a", "b"))
+
+    assert counter["n"] == 2  # timed out once, succeeded on the retry
+    assert charges["n"] == 1  # billed exactly once — no double-charge
+    assert 0.0 <= out["score"] <= 1.0
+
+
+def test_match_both_attempts_timeout_fails_honestly_no_double_charge(monkeypatch):
+    """Both attempts time out → score_pair re-raises TimeoutError (honest
+    failure, the contract _match_job logs & drops on), having tried exactly the
+    bounded number of times and billed NOTHING (no attempt reached record)."""
+    _patch_wiki(monkeypatch)
+    counter, charges = {"n": 0}, {"n": 0}
+    monkeypatch.setattr(
+        gemini, "generate_json",
+        _llm_that(99, exc_factory=asyncio.TimeoutError, counter=counter,
+                  charges=charges),
+    )
+    monkeypatch.setattr(matching_skill.asyncio, "sleep", _no_sleep)
+
+    db = _Db({"a": _user(), "b": _user()})
+    with pytest.raises(asyncio.TimeoutError):
+        _run(matching_skill.score_pair(db, "a", "b"))
+
+    assert counter["n"] == matching_skill._LLM_ATTEMPTS  # tried twice, no more
+    assert charges["n"] == 0  # every attempt raised before record → zero charges
+
+
+def test_match_deterministic_bad_request_is_not_retried(monkeypatch):
+    """A 4xx bad request would just fail again — it is raised, not retried."""
+    _patch_wiki(monkeypatch)
+    counter, charges = {"n": 0}, {"n": 0}
+    monkeypatch.setattr(
+        gemini, "generate_json",
+        _llm_that(99, exc_factory=_BadRequest, counter=counter, charges=charges),
+    )
+    monkeypatch.setattr(matching_skill.asyncio, "sleep", _no_sleep)
+
+    db = _Db({"a": _user(), "b": _user()})
+    with pytest.raises(_BadRequest):
+        _run(matching_skill.score_pair(db, "a", "b"))
+
+    assert counter["n"] == 1  # no retry on a deterministic 4xx

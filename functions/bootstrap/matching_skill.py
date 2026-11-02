@@ -28,6 +28,7 @@ low otherwise. In-process only.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from functools import lru_cache
@@ -36,6 +37,7 @@ from pathlib import Path
 import ai_assessment
 import gemini
 import match_deterministic
+import token_ledger
 from llm_provider import get_user_brain_provider
 import matching_schema
 import question_tree
@@ -310,24 +312,85 @@ def _confidence(
 # --- LLM pass -------------------------------------------------------------
 
 
+# The match score runs inside a polled BACKGROUND job (main._match_job:
+# POST /check-compatibility returns {queued: True}, the client polls
+# matches/{id}), so it is NOT bound by the client's long-request budget — a
+# bounded auto-retry on a transient inference failure is safe here and keeps a
+# single ~75s inference timeout (the failure class seen in the QA window) from
+# losing the whole match. Mirrors deep_dive._grounded_research: 2 attempts
+# total, short backoff, on an inference TimeoutError or a transient server
+# error (5xx / 408 / 429 / a status-less transport error) — never a
+# deterministic 4xx bad request or a credit cap — and NO model fallback (we
+# stay on the user's chosen Brain, the same provider instance across attempts;
+# the fallback_to_google flip is a separate, founder-gated change). The
+# matching call is a plain JSON generate (not grounded web research), so it
+# keeps gemini's 75s synchronous timeout rather than a longer research one;
+# worst case stays bounded at ≈ 2 × that.
+_LLM_ATTEMPTS = 2
+_LLM_RETRY_BACKOFF_SECONDS = 2.0
+
+
+def _inference_error_retryable(exc: Exception) -> bool:
+    """A matching-inference failure worth one more attempt: an inference
+    timeout or a transient server-side error (5xx, plus 408/429), or a
+    transport error with no HTTP status. A deterministic bad request (a 4xx
+    other than those) would just fail again, so it is NOT retried; a credit cap
+    is terminal, so it is NOT retried either. Mirrors
+    ``deep_dive._research_error_retryable``."""
+    if isinstance(exc, token_ledger.TokenCapExceeded):
+        return False
+    if isinstance(exc, asyncio.TimeoutError):
+        return True
+    code = getattr(exc, "code", None)
+    if code is None:
+        code = getattr(exc, "status_code", None)
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        # No HTTP status (e.g. a connection/transport error): treat as transient.
+        return True
+    if code in (408, 429):
+        return True
+    return code >= 500
+
+
 async def _run_llm(
     contents: str, dim_keys: list[str], *, uid: str
 ) -> dict:
     # Unified Brain (§13.10): the user's chosen brain drives matching (JSON
-    # scoring); Muse Spark supports json, so it is honoured, else Gemini.
-    result = await get_user_brain_provider(uid, "matching", needs="json").generate_json(
-        contents,
-        system_prompt=_load_prompt(),
-        response_schema=_response_schema(dim_keys),
-        uid=uid,
-        feature="matching",
-        # Deterministic scoring: the same inputs must return the same numbers
-        # every time (§5.4).
-        temperature=0.0,
-    )
-    if not isinstance(result, dict):
-        raise ValueError("matching skill returned a non-object")
-    return result
+    # scoring); Muse Spark supports json, so it is honoured, else Gemini. The
+    # provider is resolved ONCE and reused across retries — the retry stays on
+    # the chosen Brain (no model fallback). No double-charge: the provider
+    # records spend only after the underlying call returns, so a timed-out /
+    # failed attempt (which raises first) bills nothing; only the succeeding
+    # attempt is metered, exactly once.
+    provider = get_user_brain_provider(uid, "matching", needs="json")
+    for attempt in range(_LLM_ATTEMPTS):
+        try:
+            result = await provider.generate_json(
+                contents,
+                system_prompt=_load_prompt(),
+                response_schema=_response_schema(dim_keys),
+                uid=uid,
+                feature="matching",
+                # Deterministic scoring: the same inputs must return the same
+                # numbers every time (§5.4).
+                temperature=0.0,
+            )
+        except Exception as exc:  # noqa: BLE001 - classified by _inference_error_retryable
+            last = attempt + 1 >= _LLM_ATTEMPTS
+            if not _inference_error_retryable(exc) or last:
+                raise
+            logger.warning(
+                "matching inference failed (%s: %s) on attempt %d/%d — retrying",
+                type(exc).__name__, exc, attempt + 1, _LLM_ATTEMPTS,
+            )
+            await asyncio.sleep(_LLM_RETRY_BACKOFF_SECONDS * (attempt + 1))
+            continue
+        if not isinstance(result, dict):
+            raise ValueError("matching skill returned a non-object")
+        return result
+    raise RuntimeError("unreachable: matching retry loop exhausted")  # pragma: no cover
 
 
 def _assessment_block(who: str, digest: str) -> str:
