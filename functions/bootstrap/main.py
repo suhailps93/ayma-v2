@@ -586,6 +586,20 @@ import taste_backfill  # noqa: E402
 
 app.include_router(taste_match.router)
 
+from routes import (  # noqa: E402
+    appearance_router,
+    cron_router,
+    media_router,
+    profile_router,
+    story_router,
+)
+
+app.include_router(story_router)
+app.include_router(profile_router)
+app.include_router(cron_router)
+app.include_router(media_router)
+app.include_router(appearance_router)
+
 # Ayma MCP server (bring-your-own-agent) — mounted at /mcp. The whole surface is
 # dark behind the `mcp_server` feature flag (default OFF): when off its auth
 # wrapper answers every request 503, so this mount exposes nothing until the
@@ -2229,86 +2243,7 @@ async def clear_voice_context(
     return {"ok": True, "cleared": True}
 
 
-class MediaRequest(BaseModel):
-    storage_path: str = Field(min_length=1, max_length=500)
-    context: Literal["profile", "chat", "dm"] = "profile"
-    # Whatever the user typed alongside this photo (a chat message sent with
-    # it) — optional, empty for a profile-grid upload (nothing is "said" when
-    # adding one). Folded into the caption composer (§ photo_pipeline).
-    caption_context: str = Field(default="", max_length=2000)
-
-
-@app.post("/media")
-async def register_media(
-    req: MediaRequest,
-    background: BackgroundTasks,
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """Embed an uploaded photo and record it on ``user_media`` (§2.5, §2.8
-    step 7). The client uploads the file to ``uploads/{uid}/…`` first, then
-    calls this. The unified ``/media/upload`` entry + full §8.5 pipeline is
-    Phase 10.
-    """
-    prefix = f"uploads/{uid}/"
-    if not req.storage_path.startswith(prefix):
-        raise HTTPException(
-            status_code=403,
-            detail="storage_path must be under the caller's uploads/ tree.",
-        )
-    import photo_pipeline
-
-    try:
-        result = await photo_pipeline.process(
-            get_db(),
-            uid,
-            req.storage_path,
-            req.context,
-            wiki_uids=[uid] if req.context in ("profile", "chat") else None,
-            accompanying_text=req.caption_context,
-            background=background,
-            # A profile-grid upload needs the photo stored, moderated and
-            # tagged before it returns, but nothing on the upload/preview path
-            # consumes the caption — defer the captioning + wiki fold off the
-            # request path so the add returns as soon as the photo is safe to
-            # show. Chat/DM keep it inline so Ayma can reference the image in
-            # the same turn.
-            defer_enrichment=(req.context == "profile"),
-        )
-    except Exception as exc:  # noqa: BLE001 - surface embed/storage failure
-        raise HTTPException(
-            status_code=502, detail=f"Media pipeline failed: {exc}"
-        ) from exc
-
-    if req.context == "profile":
-        # A profile-grid photo isn't "added" yet at this point — it only
-        # becomes visible via POST /media/photos or /media/photos/batch,
-        # which run the batched Appearance pipeline
-        # (appearance.run_batch_photos) themselves. Triggering analysis here
-        # too used to double-analyse every profile upload (register + grid
-        # add) — one of the causes of the old "7+ history entries from 4
-        # photos" bug (§ appearance report v2).
-        pass
-    else:
-        # A chat/DM attachment never goes through the grid — this is its
-        # only analysis trigger, so keep it here. Auto-analysis (§ auto
-        # analysis): the user's own photo -> face/body read into their
-        # private `ai_only` memory, in the background. Reuses the
-        # embedding/attributes the pipeline just computed rather than
-        # re-deriving them, and is gated by them (group shot / face-match /
-        # usable flags).
-        background.add_task(
-            auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
-            embedding=result.get("embedding"), attributes=result.get("attributes"),
-        )
-
-    return {
-        "ok": True,
-        "media_id": result["media_id"],
-        "moderation_status": result["moderation_status"],
-        "published": result["published"],
-        "reason": result["reason"],
-        "photo_attrs": result["attributes"],
-    }
+from routes.media import MediaRequest, register_media  # noqa: E402
 
 
 @app.get("/verification/status")
@@ -3776,31 +3711,7 @@ async def dm_translate_endpoint(
     )
 
 
-class ProfileShareRequest(BaseModel):
-    shared_uid: str = Field(min_length=1, max_length=128)
-    thread_with: str = Field(min_length=1, max_length=128)
-
-
-@app.post("/profile/share")
-async def profile_share(
-    req: ProfileShareRequest, uid: str = Depends(require_adult_uid)
-) -> dict[str, object]:
-    """Send a ``shared_profile`` message into the DM thread with
-    ``thread_with`` (§6.7)."""
-    try:
-        msg_id = await asyncio.to_thread(
-            dm_ops.post_message,
-            get_db(),
-            uid,
-            req.thread_with.strip(),
-            "shared_profile",
-            req.shared_uid.strip(),
-        )
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Blocked.") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "message_id": msg_id}
+from routes.profile import ProfileShareRequest, profile_share  # noqa: E402
 
 
 # --- Shareable reports (web research / Match) ------------------------------
@@ -4596,345 +4507,41 @@ async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
     return result
 
 
-# --- Your Story editor (§ Your Story) -------------------------------------
-
-
-class StorySaveSectionRequest(BaseModel):
-    page_id: str = Field(min_length=1, max_length=80)
-    body: str = Field(default="", max_length=20000)
-    visibility: Literal["private", "public"] | None = None
-
-
-class StoryVisibilityRequest(BaseModel):
-    page_id: str = Field(min_length=1, max_length=80)
-    visibility: Literal["private", "public"]
-
-
-class StoryChatMessage(BaseModel):
-    role: Literal["user", "ayma"]
-    text: str = Field(default="", max_length=4000)
-
-
-class StoryEditRequest(BaseModel):
-    page_id: str = Field(min_length=1, max_length=80)
-    selection: str = Field(default="", max_length=8000)
-    messages: list[StoryChatMessage] = Field(default_factory=list, max_length=40)
-
-
-class StoryRemoveSectionRequest(BaseModel):
-    page_id: str = Field(min_length=1, max_length=80)
-
-
-class StorySectionRevertRequest(BaseModel):
-    page_id: str = Field(min_length=1, max_length=80)
-    version_id: str = Field(min_length=1, max_length=128)
-
-
-@app.get("/story")
-async def story_get(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """The whole story document once — every visible section (title, body,
-    visibility, flags). The client renders the Public preview by filtering
-    ``visibility == 'public'`` and stripping private spans locally. Each
-    section's version history lives at ``/story/section/{id}/versions``."""
-    return await asyncio.to_thread(story.get_story, get_db(), uid)
-
-
-@app.get("/story/ai-notes")
-async def story_ai_notes(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Every wiki page the caller has, regardless of visibility — public,
-    private, and anything still ai_only — each carrying its own real
-    visibility. Your Story's "AI notes" tab: a superset of "Everything",
-    colour-coded by that visibility. See story.get_ai_notes."""
-    return await asyncio.to_thread(story.get_ai_notes, get_db(), uid)
-
-
-@app.put("/story/section")
-async def story_save_section(
-    req: StorySaveSectionRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Persist an edited section body (as a ``user_edits`` override),
-    optionally changing its visibility, and commit a version to its history."""
-    try:
-        return await asyncio.to_thread(
-            story.save_section,
-            get_db(), uid, req.page_id, req.body, req.visibility,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such section.")
-
-
-@app.post("/story/section/visibility")
-async def story_set_visibility(
-    req: StoryVisibilityRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Flip a whole section between ``public`` and ``private``."""
-    try:
-        return await asyncio.to_thread(
-            story.set_visibility, get_db(), uid, req.page_id, req.visibility
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such section.")
-
-
-@app.post("/story/edit")
-async def story_edit(
-    req: StoryEditRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """One turn of the passage chat. Returns ``{reply, revised_body?, action,
-    target_visibility?}`` — ``revised_body`` set only when Ayma proposes a
-    concrete rewrite — or ``{usage_capped:true}``. Writes nothing."""
-    try:
-        return await story.edit_section(
-            get_db(),
-            uid,
-            req.page_id,
-            req.selection,
-            [m.model_dump() for m in req.messages],
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such section.")
-
-
-@app.post("/story/section/remove")
-async def story_remove_section(
-    req: StoryRemoveSectionRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Delete a section from the editor (``ai_only`` + ``user_hidden``,
-    ``ai_body`` untouched). Its pre-delete state stays in history so a revert
-    brings it back."""
-    try:
-        return await asyncio.to_thread(
-            story.remove_section, get_db(), uid, req.page_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such section.")
-
-
-class ProfileTextSaveRequest(BaseModel):
-    text: str = Field(default="", max_length=30000)
-    base_version: str = Field(min_length=1, max_length=64)
-
-
-class PartnerPreferencesRequest(BaseModel):
-    partner_age_min: int | None = Field(default=None, ge=18, le=99)
-    partner_age_max: int | None = Field(default=None, ge=18, le=99)
-    distance_pref: str | None = Field(default=None, max_length=16)
-
-
-@app.put("/profile/preferences")
-async def profile_preferences_save(
-    req: PartnerPreferencesRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Edit profile: save the partner age range and distance preference where
-    matching already reads them (questionnaire doc + ``qz_*`` profile mirror).
-    422 on a value the questionnaire would not accept."""
-    try:
-        recorded = await asyncio.to_thread(
-            lambda: questionnaire_skill.save_partner_preferences(
-                get_db(),
-                uid,
-                age_min=req.partner_age_min,
-                age_max=req.partner_age_max,
-                distance_pref=req.distance_pref,
-            )
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"ok": True, "recorded": recorded}
-
-
-@app.get("/profile/public-text")
-async def profile_public_text(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """The caller's public profile as one plain text (each section under a
-    ``## Title`` heading) for the manual editor, plus the ``version`` to send
-    back on save."""
-    return await asyncio.to_thread(profile_manual.get_text, get_db(), uid)
-
-
-@app.put("/profile/public-text")
-async def profile_public_text_save(
-    req: ProfileTextSaveRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Save a manual edit of the public text: moderated, diffed, removed facts
-    kept in the private AI notes, added facts pinned. 409 when the profile
-    changed since the editor loaded, 422 when the text is refused."""
-    try:
-        return await profile_manual.save_text(
-            get_db(), uid, req.text, req.base_version
-        )
-    except profile_manual.ProfileTextError as exc:
-        status = 409 if exc.code == "stale" else 503 if exc.code == (
-            "moderation_unavailable"
-        ) else 422
-        raise HTTPException(
-            status_code=status, detail={"code": exc.code, "message": str(exc)}
-        ) from exc
-
-
-@app.get("/profile/proposals")
-async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Ayma's pending public-profile updates, grouped by section — each change
-    an individual ``{id, op, text}`` row the user applies or dismisses on its
-    own. Apply shows it publicly; Dismiss keeps it in the private profile and
-    Ayma's notes."""
-    return {
-        "proposals": await asyncio.to_thread(
-            profile_manual.list_proposals, get_db(), uid
-        )
-    }
-
-
-@app.post("/profile/proposals/{page_id}/changes/{change_id}/apply")
-async def profile_change_apply(
-    page_id: str, change_id: str, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Apply one change — show that added sentence on the public profile (or
-    carry out that removal)."""
-    try:
-        return await asyncio.to_thread(
-            profile_manual.apply_change, get_db(), uid, page_id, change_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such pending change.")
-
-
-@app.post("/profile/proposals/{page_id}/changes/{change_id}/dismiss")
-async def profile_change_dismiss(
-    page_id: str, change_id: str, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Dismiss one change — keep it off the public profile but in the private
-    profile and Ayma's notes."""
-    try:
-        return await asyncio.to_thread(
-            profile_manual.dismiss_change, get_db(), uid, page_id, change_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such pending change.")
-
-
-@app.post("/profile/proposals/{page_id}/apply")
-async def profile_proposal_apply(
-    page_id: str, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Apply all of a section's remaining changes at once."""
-    try:
-        return await asyncio.to_thread(
-            profile_manual.apply_proposal, get_db(), uid, page_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No pending update.")
-
-
-@app.post("/profile/proposals/{page_id}/dismiss")
-async def profile_proposal_dismiss(
-    page_id: str, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Dismiss all of a section's remaining changes at once — each kept in the
-    private profile and Ayma's notes."""
-    try:
-        return await asyncio.to_thread(
-            profile_manual.dismiss_proposal, get_db(), uid, page_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No pending update.")
-
-
-@app.get("/story/section/{page_id}/versions")
-async def story_section_versions(
-    page_id: str, uid: str = Depends(require_uid)
-) -> list[dict[str, object]]:
-    """One section's version history, newest first."""
-    return await asyncio.to_thread(
-        story.list_section_versions, get_db(), uid, page_id
-    )
-
-
-@app.get("/story/section/{page_id}/versions/{version_id}")
-async def story_section_version(
-    page_id: str, version_id: str, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """One stored section version in full (body + visibility)."""
-    try:
-        return await asyncio.to_thread(
-            story.get_section_version, get_db(), uid, page_id, version_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such version.")
-
-
-@app.post("/story/section/revert")
-async def story_section_revert(
-    req: StorySectionRevertRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Restore one section's body + visibility from one of its own versions
-    (never ``ai_body``); a section deleted after that version comes back."""
-    try:
-        return await asyncio.to_thread(
-            story.revert_section, get_db(), uid, req.page_id, req.version_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such version.")
-
-
-@app.get("/story/section/{page_id}/provenance")
-async def story_section_provenance(
-    page_id: str, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """"Why Ayma believes this" for one section (§ Your Story provenance):
-    conversations that fed it + last-updated dates. Page-level only, by the
-    founder's own scope call — no fabricated per-sentence confidence. Real
-    confidence exists only on individual web-research facts, surfaced by the
-    deep-dive report itself, not here."""
-    try:
-        return await asyncio.to_thread(
-            story.get_section_provenance, get_db(), uid, page_id
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such section.")
-
-
-@app.get("/story/career-timeline")
-async def story_career_timeline(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """The structured career/education timeline (§ Your Story career
-    timeline): built lazily on first read, then cached on the ``career`` wiki
-    page. ``show_timeline`` is only ``true`` once Ayma has decent confidence
-    in every entry — otherwise the client renders Career & Education as
-    flowing prose only, same as any other section. Always carries
-    ``linkedin_url`` (``""`` if none on file yet)."""
-    return await career_timeline.get_or_build_timeline(get_db(), uid)
-
-
-@app.post("/story/career-timeline/refresh")
-async def story_career_timeline_refresh(
-    uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Force a fresh extraction pass — e.g. right after the user adds their
-    LinkedIn URL, or corrects the Career & Education prose."""
-    return await career_timeline.extract(get_db(), uid)
-
-
-class LinkedInUrlRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=300)
-
-
-@app.post("/story/linkedin")
-async def story_set_linkedin(
-    req: LinkedInUrlRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Save the user's own LinkedIn profile URL, given with their explicit
-    consent (§ Your Story career timeline). No scraper, no LinkedIn API call
-    of any kind: this URL is simply handed to Gemini's ``url_context`` tool on
-    the next self deep-dive, which reads that one page directly as part of
-    the same grounded research call "search me" already runs."""
-    try:
-        url = await asyncio.to_thread(
-            career_timeline.set_linkedin_url, get_db(), uid, req.url
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"linkedin_url": url}
+# --- Your Story & Profile endpoints (delegated to routes.story & routes.profile) ---
+from routes.story import (  # noqa: E402
+    LinkedInUrlRequest,
+    StoryChatMessage,
+    StoryEditRequest,
+    StoryRemoveSectionRequest,
+    StorySaveSectionRequest,
+    StorySectionRevertRequest,
+    StoryVisibilityRequest,
+    story_ai_notes,
+    story_career_timeline,
+    story_career_timeline_refresh,
+    story_edit,
+    story_get,
+    story_remove_section,
+    story_save_section,
+    story_section_provenance,
+    story_section_revert,
+    story_section_version,
+    story_section_versions,
+    story_set_linkedin,
+    story_set_visibility,
+)
+from routes.profile import (  # noqa: E402
+    PartnerPreferencesRequest,
+    ProfileTextSaveRequest,
+    profile_change_apply,
+    profile_change_dismiss,
+    profile_preferences_save,
+    profile_proposal_apply,
+    profile_proposal_dismiss,
+    profile_proposals,
+    profile_public_text,
+    profile_public_text_save,
+)
 
 
 @app.get("/usage")
@@ -5631,141 +5238,21 @@ async def voice_preview_endpoint(
     return {"url": url}
 
 
-@app.get("/media/photos")
-async def media_photos_list(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """The current profile-photo grid (§8.3)."""
-    import photo_ops
-
-    return {"photos": await asyncio.to_thread(photo_ops.list_photos, get_db(), uid)}
-
-
-class PhotoRef(BaseModel):
-    media_id: str = Field(min_length=1, max_length=128)
-
-
-def _media_record(uid: str, media_id: str) -> dict:
-    """The stored ``users/{uid}/user_media/{media_id}`` doc, or ``{}`` if it
-    can't be read."""
-    try:
-        snap = (
-            get_db()
-            .collection("users")
-            .document(uid)
-            .collection("user_media")
-            .document(media_id)
-            .get()
-        )
-        return snap.to_dict() or {}
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "media record lookup failed for %s/%s", uid, media_id
-        )
-        return {}
-
-
-def _resolve_new_photo(uid: str, media_id: str) -> tuple[str, list[float] | None, dict | None] | None:
-    """A newly-grid-added media id resolved to
-    ``(storage_path, embedding, attributes)`` for
-    :func:`appearance.run_batch_photos`, or ``None`` when it has no storage
-    path (shouldn't happen for an approved photo, but never block on it)."""
-    import photo_notes
-
-    record = _media_record(uid, media_id)
-    storage_path = str(record.get("storage_path") or "").strip()
-    if not storage_path:
-        return None
-    return (
-        storage_path, photo_notes._vec(record.get("embedding")),
-        record.get("attributes"),
-    )
-
-
-@app.post("/media/photos")
-async def media_photos_add(
-    req: PhotoRef,
-    background: BackgroundTasks,
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """Add an already-processed photo to the grid (§8.7 step 6). A single add
-    is a batch of one — see ``POST /media/photos/batch`` for adding several
-    photos picked in one action."""
-    import photo_ops
-
-    try:
-        photos = await asyncio.to_thread(
-            photo_ops.add_photo, get_db(), uid, req.media_id
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    resolved = await asyncio.to_thread(_resolve_new_photo, uid, req.media_id)
-    background.add_task(
-        appearance.run_batch_photos, get_db(), uid,
-        [resolved] if resolved else [], source="add_photo",
-    )
-    return {"ok": True, "photos": photos}
-
-
-class PhotoBatchRef(BaseModel):
-    media_ids: list[str] = Field(min_length=1, max_length=9)
-
-
-@app.post("/media/photos/batch")
-async def media_photos_add_batch(
-    req: PhotoBatchRef,
-    background: BackgroundTasks,
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """Add several already-processed photos to the grid in ONE call — the
-    batched add-photos flow (§ appearance batching) onboarding and "add more
-    photos" should use instead of looping ``POST /media/photos`` once per
-    photo: picking N photos in one action analyses them together, as one
-    update to the caller's single persistent Appearance report, instead of N
-    separate per-photo runs."""
-    import photo_ops
-
-    result = await asyncio.to_thread(
-        photo_ops.add_photos, get_db(), uid, req.media_ids
-    )
-    resolved = [
-        r for r in (
-            await asyncio.gather(
-                *[
-                    asyncio.to_thread(_resolve_new_photo, uid, mid)
-                    for mid in result["added"]
-                ]
-            )
-        ) if r is not None
-    ]
-    background.add_task(
-        appearance.run_batch_photos, get_db(), uid, resolved,
-        source="add_photos_batch",
-    )
-    return {
-        "ok": True, "photos": result["photos"],
-        "added": result["added"], "failed": result["failed"],
-    }
-
-
-@app.post("/media/photos/{media_id}/remove")
-async def media_photos_remove(
-    media_id: str,
-    background: BackgroundTasks,
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """Remove a photo from the PUBLIC profile — it moves to the hidden list, so
-    it leaves every public reader but stays in Ayma's analysis pool and its
-    ``user_media`` doc/Storage/embedding are untouched (§8.3, §8.7 step 5).
-    Reversible by re-adding. For an irreversible erase see
-    ``/media/photos/{id}/delete``."""
-    import photo_ops
-
-    photos = await asyncio.to_thread(
-        photo_ops.remove_photo, get_db(), uid, media_id
-    )
-    # The public lead photo may have changed — rebuild physical attributes.
-    background.add_task(physical_attributes.refresh, get_db(), uid)
-    return {"ok": True, "photos": photos}
+# --- Media photos endpoints (delegated to routes.media) --------------------
+from routes.media import (  # noqa: E402
+    PhotoBatchRef,
+    PhotoOrder,
+    PhotoRef,
+    _media_record,
+    _resolve_new_photo,
+    media_photos_add,
+    media_photos_add_batch,
+    media_photos_delete_permanent,
+    media_photos_list,
+    media_photos_remove,
+    media_photos_reorder,
+    media_photos_set_primary,
+)
 
 
 @app.post("/media/photos/{media_id}/primary")
@@ -6127,198 +5614,19 @@ async def physical_attributes_correct(
     return {"ok": True, "fields": accepted}
 
 
-# --- Appearance: one unified read of the user's photos (§ appearance) ------
-
-
-class AppearanceReportRequest(BaseModel):
-    # Extra chat-uploaded photos (each under ``uploads/{caller}/``) folded into
-    # the vision passes alongside the user's profile grid. Capped, best-effort.
-    image_paths: list[str] = Field(default_factory=list, max_length=6)
-    # Gate the face / physique sections — the client sets these from
-    # ``GET /appearance/coverage`` / ``/eligibility`` but the run is never
-    # hard-blocked. A skipped axis (``want_*=False``) reports as ``skipped``.
-    want_face: bool = True
-    want_body: bool = True
-    # The explicit grid photos the pre-run sheet chose for each axis. ``None``
-    # (field omitted) means "auto-pick the first eligible grid photo"; a list
-    # restricts the axis to those grid media ids, server-validated to the
-    # caller's own, currently-eligible photos.
-    face_media_ids: list[str] | None = Field(default=None, max_length=6)
-    body_media_ids: list[str] | None = Field(default=None, max_length=6)
-
-
-@app.post("/appearance/report")
-async def appearance_report_run(
-    req: AppearanceReportRequest | None = None,
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """Build the caller's unified Appearance report — structured attributes plus
-    an honest face and physique analysis — and persist it. Respects the credit
-    cap; ``image_paths`` adds chat attachments to the vision passes."""
-    req = req or AppearanceReportRequest()
-    paths = [p.strip() for p in req.image_paths if p.strip()]
-    for p in paths:
-        if not p.startswith(f"uploads/{uid}/"):
-            raise HTTPException(
-                status_code=403,
-                detail="image_paths must be under the caller's uploads/ tree.",
-            )
-
-    try:
-        await asyncio.to_thread(token_ledger.check, uid)
-    except token_ledger.TokenCapExceeded:
-        return {"usage_capped": True}
-
-    extra: list[tuple[bytes, str, str]] = []
-    for p in paths:
-        try:
-            data, mime = await asyncio.to_thread(media_embed.download_bytes, p)
-        except Exception:  # noqa: BLE001 - a bad attachment just isn't used
-            logger.warning("appearance: unreadable extra image %s", p)
-            continue
-        if data:
-            extra.append((data, mime or "image/jpeg", p))
-
-    try:
-        report = await appearance.run_appearance(
-            get_db(),
-            uid,
-            extra_images=extra or None,
-            want_face=bool(req.want_face),
-            want_body=bool(req.want_body),
-            face_media_ids=req.face_media_ids,
-            body_media_ids=req.body_media_ids,
-            source="endpoint",
-        )
-    except token_ledger.TokenCapExceeded:
-        return {"usage_capped": True}
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502, detail=f"Appearance report failed: {exc}"
-        ) from exc
-    if report is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No photo to analyse — add a profile photo first.",
-        )
-
-    report_id = report.get("id", "")
-    line = "Here's your Appearance report."
-    if report_id:
-        line = f"{line}\n\n[appearance:{report_id}]"
-    try:
-        chat_history.append(get_db(), uid, "ayma", line)
-    except Exception:  # noqa: BLE001
-        logger.exception("appearance: chat_history append failed for %s", uid)
-    return {"ok": True, "report": report, "report_id": report_id}
-
-
-@app.get("/appearance/report/{report_id}")
-async def appearance_report_get(
-    report_id: str, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Re-open a stored Appearance report by id — from an ``[appearance:<id>]``
-    chat marker or the Skills-screen history. ``current`` returns the latest;
-    404 when the caller has no such report."""
-    out = await asyncio.to_thread(
-        appearance.get_report, get_db(), uid, report_id
-    )
-    if out is None:
-        raise HTTPException(status_code=404, detail="No such report.")
-    return out
-
-
-@app.get("/appearance/history")
-async def appearance_history_get(
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """The caller's Appearance runs newest-first, with the pre-merge
-    ``face_reports`` / ``body_reports`` / ``physical_reports`` collections
-    folded in as read-only ``legacy: true`` rows."""
-    return {
-        "reports": await asyncio.to_thread(appearance.history, get_db(), uid)
-    }
-
-
-@app.get("/appearance/coverage")
-async def appearance_coverage_get(
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """``{has_face_photo, has_body_photo}`` for the caller — derived from the
-    shot-type tags on their current grid photos. Backs the Skills-screen
-    coverage line; never hard-blocks a run."""
-    return await asyncio.to_thread(photo_attrs.coverage, get_db(), uid)
-
-
-@app.get("/appearance/eligibility")
-async def appearance_eligibility_get(
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """``{face: [{media_id, url}], body: [...], has_face_photo,
-    has_body_photo}`` for the caller — their current grid photos grouped by
-    which Appearance axis each is eligible for, so the pre-run sheet can show
-    the Face and Body photo groups as thumbnails and let the user pick or skip
-    per axis. Derived from the shot-type tags; never hard-blocks a run."""
-    return await asyncio.to_thread(photo_attrs.eligibility, get_db(), uid)
-
-
-class AppearanceFindingCorrectRequest(BaseModel):
-    # A physical_attributes field name (e.g. "visible_tattoos"), or "face" /
-    # "body" for those two composite reads.
-    finding_id: str = Field(min_length=1, max_length=64)
-    message: str = Field(min_length=1, max_length=2000)
-
-
-@app.post("/appearance/finding/correct")
-async def appearance_finding_correct(
-    req: AppearanceFindingCorrectRequest,
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """Free-text correction for ONE finding in the caller's Appearance report
-    (§ appearance corrections) — the user taps a claim and tells Ayma in
-    plain language what's wrong, mirroring ``POST /story/edit``'s
-    passage-chat pattern but committed immediately (see
-    :func:`appearance.correct_finding`'s docstring for the full contract,
-    including how an attribute correction becomes a durable ``stated`` value
-    versus a face/body correction, which doesn't have that precedence slot).
-
-    Returns ``{ok, reply, finding_id, value}`` or ``{usage_capped: true}``."""
-    try:
-        return await appearance.correct_finding(
-            get_db(), uid, req.finding_id.strip(), req.message
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-class AppearanceCardHiddenRequest(BaseModel):
-    # Storage paths of the caller's OWN analysed photos to keep off the
-    # shareable report card (card-only — never deletes the photo or its
-    # analysis). Validated server-side against the caller's analysed pool.
-    hidden: list[str] = Field(default_factory=list, max_length=32)
-
-
-@app.post("/appearance/card/hidden")
-async def appearance_card_hidden_set(
-    req: AppearanceCardHiddenRequest,
-    uid: str = Depends(require_uid),
-) -> dict[str, object]:
-    """Set which of the caller's analysed photos are hidden from their
-    shareable Appearance report card (§ report card: remove-from-card). The
-    card builder and the exported 1080x1920 share image both honour this
-    list, so the shared picture matches what the user sees. Card-only: it does
-    NOT delete the underlying photo or its analysis — the full report still
-    shows every photo. 422 if an id isn't one of the caller's own analysed
-    photos. Returns ``{hidden: [...]}`` (the stored list)."""
-    try:
-        stored = await asyncio.to_thread(
-            appearance.set_card_hidden, get_db(), uid, req.hidden
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"hidden": stored}
+# --- Appearance endpoints (delegated to routes.appearance) -----------------
+from routes.appearance import (  # noqa: E402
+    AppearanceCardHiddenRequest,
+    AppearanceFindingCorrectRequest,
+    AppearanceReportRequest,
+    appearance_card_hidden_set,
+    appearance_coverage_get,
+    appearance_eligibility_get,
+    appearance_finding_correct,
+    appearance_history_get,
+    appearance_report_get,
+    appearance_report_run,
+)
 
 
 # --- generic reports (§ generic reports) --------------------------------
@@ -6867,197 +6175,20 @@ async def match_report(
     }
 
 
-@app.post("/cron/purge-deleted", dependencies=[Depends(require_cron)])
-async def cron_purge_deleted() -> dict:
-    """Permanent purge of soft-deleted accounts past the recovery window
-    (§3.6, §3.10 step 10). Daily Cloud Scheduler."""
-    return await asyncio.to_thread(
-        account_purge.purge_expired, get_db(), _bucket()
-    )
-
-
-@app.post("/cron/match", dependencies=[Depends(require_cron)])
-async def cron_match(user_limit: int | None = None) -> dict:
-    """Scheduled two-pass matching over the lighter pool (§5.3, §5.10 step 7)."""
-    return await matching_cron.run(get_db(), user_limit)
-
-
-@app.post("/cron/ingest-backfill", dependencies=[Depends(require_cron)])
-async def cron_ingest_backfill(user_limit: int = 200) -> dict:
-    """Nightly safety net (§15): re-ingest conversations that were skipped
-    while a user was out of credits, for any user that now has some."""
-    return await backfill_ops.sweep(get_db(), user_limit)
-
-
-@app.post("/cron/google-sync", dependencies=[Depends(require_cron)])
-async def cron_google_sync(user_limit: int = 100) -> dict:
-    """Periodic re-sync for every connected Google account, skipping anyone
-    synced within ``CONFIG.google_sync_min_interval_hours``. Needs a daily
-    Cloud Scheduler job hitting this with the ``X-Cron-Secret`` header."""
-    import google_account
-
-    return await google_account.sweep(get_db(), user_limit=user_limit)
-
-
-@app.post(
-    "/cron/physical-attributes-backfill",
-    dependencies=[Depends(require_cron)],
+# --- Cron endpoints (delegated to routes.cron) ------------------------------
+from routes.cron import (  # noqa: E402
+    cron_completeness_backfill,
+    cron_google_sync,
+    cron_image_variants_backfill,
+    cron_ingest_backfill,
+    cron_lint,
+    cron_match,
+    cron_persona_evolution,
+    cron_persona_snapshot,
+    cron_photo_tags_backfill,
+    cron_physical_attributes_backfill,
+    cron_purge_deleted,
+    cron_reengage,
+    cron_skill_backfill,
+    cron_usable_for_body_resync,
 )
-async def cron_physical_attributes_backfill(user_limit: int = 200) -> dict:
-    """Backfill (§ physical attributes): build the structured record for every
-    user who has photos but no ``physical_attributes/current`` doc yet."""
-    return await physical_attributes.backfill_missing(
-        get_db(), user_limit=user_limit
-    )
-
-
-@app.post("/cron/photo-tags-backfill", dependencies=[Depends(require_cron)])
-async def cron_photo_tags_backfill(user_limit: int = 200) -> dict:
-    """Backfill shot-type tags (§ appearance): re-run the per-photo attribute
-    pass for every approved ``user_media`` photo processed before shot-type
-    tagging existed. Needs a Cloud Scheduler job hitting this with the
-    ``X-Cron-Secret`` header."""
-    return await photo_attrs.backfill_missing_tags(
-        get_db(), user_limit=user_limit
-    )
-
-
-@app.post(
-    "/cron/usable-for-body-resync", dependencies=[Depends(require_cron)]
-)
-async def cron_usable_for_body_resync(user_limit: int = 500) -> dict:
-    """One-time fix (§ founder report — a sitting/clothed body photo and a
-    cropped mirror selfie both got excluded from the physique report under
-    the old "full-length / standing" rule): re-derive every already-tagged
-    photo's ``usable_for_body`` from its already-stored ``shot_type`` — no
-    Gemini calls, just a data fix, so existing photos benefit without a
-    re-upload. One-off; not meant to be scheduled recurring."""
-    return await photo_attrs.resync_usable_for_body(get_db(), user_limit=user_limit)
-
-
-@app.post("/cron/skill-backfill", dependencies=[Depends(require_cron)])
-async def cron_skill_backfill(user_limit: int = 100) -> dict:
-    """Run every profile-building skill that has never run for a user, so each
-    user's wiki gets fully populated (§ skill runs). Needs a daily Cloud
-    Scheduler job hitting this with the ``X-Cron-Secret`` header."""
-    return await skill_runs.sweep(get_db(), user_limit=user_limit)
-
-
-@app.post("/cron/completeness-backfill", dependencies=[Depends(require_cron)])
-async def cron_completeness_backfill(user_limit: int = 200) -> dict:
-    """Force-recompute the questionnaire completeness score for every user with
-    a profile (§ questionnaire revamp). Daily Cloud Scheduler job with the
-    ``X-Cron-Secret`` header."""
-    return await completeness.backfill(get_db(), user_limit=user_limit)
-
-
-@app.post("/cron/reengage", dependencies=[Depends(require_cron)])
-async def cron_reengage(user_limit: int | None = None) -> dict:
-    """Scheduled re-engagement sweep (§7.1, §7.9 step 7). For each user idle
-    past the threshold and out of backoff, Ayma writes one `raw_turns` message
-    and a check-in push."""
-    import reengagement
-
-    return await reengagement.run(get_db(), user_limit)
-
-
-@app.post("/cron/lint", dependencies=[Depends(require_cron)])
-async def cron_lint(limit: int | None = None) -> dict:
-    """Scheduled wiki lint (§2.3, §2.8 step 6). Cloud Scheduler hits this daily
-    with the ``X-Cron-Secret`` header; ``?limit=`` caps the sweep for manual
-    runs. Writes ``lint_flags`` onto affected pages, resolves nothing.
-
-    Runs on the Gemini Batch API (``gemini_batch.py``) — cheap, and nobody is
-    waiting on the result, so a tick may return ``{"status": "submitted"}``
-    or ``{"status": "pending"}`` instead of the final tally; a later tick
-    (this cron running again) applies the results once the job lands."""
-    return await lint_all(get_db(), limit=limit)
-
-
-@app.post("/cron/persona-evolution", dependencies=[Depends(require_cron)])
-async def cron_persona_evolution(window_days: int = persona_evolution.WINDOW_DAYS) -> dict:
-    """Daily crowd-feedback aggregation → base-persona evolution (§15 Part B).
-    Cloud Scheduler hits this once a day with the ``X-Cron-Secret`` header.
-    Aggregates the last ``window_days`` of ``feedback`` across every user,
-    proposes a `lessons.md` update, and either applies it (non-critical, eval
-    gate passes), or holds it on ``/admin/persona-changes`` for review
-    (critical, or the eval gate fails it)."""
-    return await persona_evolution.run(get_db(), window_days=window_days)
-
-
-@app.post("/cron/persona-snapshot", dependencies=[Depends(require_cron)])
-async def cron_persona_snapshot(user_limit: int | None = None) -> dict:
-    """Background refresh of the persistent AI-avatar snapshots (§18, founder
-    directive 2026-10-27). Cloud Scheduler hits this periodically with the
-    ``X-Cron-Secret`` header. Walks up to ``user_limit`` users
-    (``PERSONA_SNAPSHOT_SWEEP_LIMIT``) and rebuilds each stale/missing avatar —
-    strictly rate-limited to at most one LLM rebuild per hour per user
-    (``PERSONA_SNAPSHOT_MIN_INTERVAL_SECONDS``) and skipped entirely when the
-    user's source content (profile + wiki + style exemplars) is unchanged."""
-    import persona_snapshot
-
-    return await persona_snapshot.run_sweep(get_db(), user_limit)
-
-
-@app.post("/cron/image-variants-backfill", dependencies=[Depends(require_cron)])
-async def cron_image_variants_backfill(
-    prefix: str = "uploads/", limit: int = 200
-) -> dict[str, object]:
-    """Backfill / recover profile-photo variants over a bucket prefix (Perf
-    Phase 2 PREP, ``image_variants``). Manual trigger with ``X-Cron-Secret``,
-    per the no-staging-cron convention. STAGING ONLY — refuses unless
-    ``IMAGE_VARIANTS_ENABLED=true``. Idempotent: up-to-date variants are
-    skipped via their ``variant_of`` metadata. ``prefix`` must stay under
-    ``uploads/``; ``limit`` is clamped to 1..1000 objects per call."""
-    if not CONFIG.image_variants_enabled:
-        raise HTTPException(status_code=403, detail="Image variants disabled.")
-    if not prefix.startswith("uploads/"):
-        raise HTTPException(status_code=400, detail="Prefix must stay under uploads/.")
-    limit = max(1, min(int(limit), 1000))
-    bucket = _bucket()
-
-    def _sweep() -> dict[str, object]:
-        scanned = 0
-        processed = 0
-        skipped = 0
-        failed: list[str] = []
-        try:
-            blobs = list(bucket.list_blobs(prefix=prefix, max_results=limit))
-        except Exception as exc:  # noqa: BLE001
-            raise image_variants.TransientError(f"list failed: {exc}") from exc
-        for blob in blobs:
-            scanned += 1
-            try:
-                result = image_variants.process_object(
-                    bucket, blob.name, CONFIG.storage_bucket
-                )
-            except image_variants.TransientError as exc:
-                failed.append(f"{blob.name}: {exc}")
-                continue
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("variant backfill failed for %s", blob.name)
-                failed.append(f"{blob.name}: {exc}")
-                continue
-            if result.get("status") == "processed":
-                processed += 1
-            else:
-                skipped += 1
-        return {
-            "scanned": scanned,
-            "processed": processed,
-            "skipped": skipped,
-            "failed": failed[:10],
-            "failed_count": len(failed),
-        }
-
-    try:
-        outcome = await asyncio.to_thread(_sweep)
-    except image_variants.TransientError as exc:
-        raise HTTPException(status_code=500, detail="Transient failure.") from exc
-    logger.info(
-        "image variants backfill: bucket=%s prefix=%s -> %s",
-        CONFIG.storage_bucket,
-        prefix,
-        {k: outcome[k] for k in ("scanned", "processed", "skipped", "failed_count")},
-    )
-    return outcome
