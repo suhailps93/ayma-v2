@@ -49,6 +49,7 @@ revision fails to start.
 | `IMAGE_VARIANTS_ENABLED` (api) | `true` | **Staging-only** — cloud profile-photo variants (Perf Phase 2 PREP chunk A); set only when the data plane is `ayma-staging` (see `docs/perf/image-variants.md`); unset everywhere else (fail closed) |
 | `IMAGE_VARIANTS_PUSH_SA` (api) | `pubsub-push-invoker@ayma-staging.iam.gserviceaccount.com` | **Staging-only** — Pub/Sub push OIDC identity pinned by the variant endpoint |
 | `OPEN_WEIGHTS_BASE_URL` (api) | Modal `…/v1` endpoint | **Staging-only** — wires the open-weights cheap path (hackathon); routes **nothing** on its own (a surface reaches it only when its `LLM_PROVIDER_*` flag is `open-weights`; default stays `gemini`). Credit-guarded — see `scripts/modal_open_weights.py` |
+| `OPEN_WEIGHTS_COLD_START_TIMEOUT_S` (agent) | `120` | First-token timeout (seconds) for the VOICE cascade's **open-weights** LLM leg only (Modal scale-to-zero cold start ~100s). Widens *only* that leg from the 10s LiveKit default so a cold Modal still replies; Meta/Inference legs keep the default. See ARCHITECTURE.md §13.9 cold-start handling. |
 
 Model ids / voices / Vertex locations stay locked in
 `functions/bootstrap/config.py` — never env vars, same as prod. `LLM_PROVIDER`

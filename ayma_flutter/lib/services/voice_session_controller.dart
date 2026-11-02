@@ -48,12 +48,15 @@ class VoiceSessionController extends ChangeNotifier {
     CallPermissions? callPermissions,
     Duration? idleGuardTimeout,
     Duration? responseGuardTimeout,
+    Duration? openWeightsResponseGuardTimeout,
     ErrorReporter? errorReporter,
   })  : _store = transcriptStore,
         _reporter = errorReporter ?? ErrorReporter.instance,
         _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
         _responseGuardTimeout =
             responseGuardTimeout ?? const Duration(seconds: 20),
+        _openWeightsResponseBudget =
+            openWeightsResponseGuardTimeout ?? const Duration(seconds: 150),
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport()),
@@ -146,6 +149,26 @@ class VoiceSessionController extends ChangeNotifier {
   final Duration _responseGuardTimeout;
   Timer? _responseGuard;
 
+  /// A longer first-response budget for the open-weights (self-hosted Modal)
+  /// brain: its LLM endpoint is scale-to-zero and its first reply can take
+  /// ~100s on a cold start (the agent fires a warm-up at session start and
+  /// signals `open_weights_warming`). The generic 20s budget would trip during
+  /// that legitimate warm-up and show the wrong error, so when the agent tells
+  /// us open-weights is warming we re-arm the guard to this instead (§13.9,
+  /// founder bug 2026-11-02). Matched to the backend cold-start LLM timeout;
+  /// injectable for tests.
+  final Duration _openWeightsResponseBudget;
+
+  /// The `voice_status` state the agent sends while the open-weights Modal LLM
+  /// is cold-starting (mirrors `VOICE_STATUS_OPEN_WEIGHTS_WARMING` in agent.py).
+  static const _kOpenWeightsWarming = 'open_weights_warming';
+
+  /// Set when the agent signals the open-weights brain is warming from a cold
+  /// start (data topic `voice_status`, state `open_weights_warming`). Drives
+  /// the honest, open-weights-specific status line and failure copy, instead of
+  /// a silent "Listening…" / the generic "Couldn't reach the voice service".
+  bool _openWeightsWarming = false;
+
   /// Set once the agent has produced any genuine response this session (speech,
   /// transcript, or a tool call). Latches the brain as "alive" so the
   /// no-first-response guard can never fire after a real reply — later mid-call
@@ -180,6 +203,7 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<String>? _callEndingSub;
   StreamSubscription<bool>? _agentMuteSub;
   StreamSubscription<String>? _coachSub;
+  StreamSubscription<String>? _voiceStatusSub;
   StreamSubscription<Object>? _closedSub;
   StreamSubscription<double>? _micLevelSub;
   StreamSubscription<double>? _aymaLevelSub;
@@ -292,6 +316,17 @@ class VoiceSessionController extends ChangeNotifier {
   /// `listening` distinction.
   bool get isListening => _phase == VoiceSessionPhase.live;
 
+  /// The honest status line to show in place of "Listening…" while the
+  /// open-weights (self-hosted Modal) brain is warming from a cold start — the
+  /// agent signalled `open_weights_warming` and no first reply has landed yet
+  /// (§13.9). Null on every other path / once a reply arrives, so the UI falls
+  /// back to its normal "Listening…".
+  String? get warmingNotice =>
+      (_openWeightsWarming && !_agentRespondedOnce && isListening)
+          ? 'Warming up the open-weights model — first reply can take a minute '
+              'or two'
+          : null;
+
   /// The controller with a session currently starting or live, if any — the
   /// process-wide registry that enforces the single-active-voice-session
   /// invariant. [start] reads it to tear down any other live session before
@@ -335,6 +370,7 @@ class VoiceSessionController extends ChangeNotifier {
     _agentSpeaking = false;
     _agentReadySeen = false;
     _agentRespondedOnce = false;
+    _openWeightsWarming = false;
     _muted = false;
     _pendingToolLabels.clear();
     _activeToolLabel = null;
@@ -538,6 +574,10 @@ class VoiceSessionController extends ChangeNotifier {
       _coachHint = hint;
       notifyListeners();
     });
+    _voiceStatusSub = transport.voiceStatus.listen((state) {
+      if (!identical(_transport, transport)) return;
+      _onVoiceStatus(state);
+    });
     _closedSub = transport.closed.listen((_) {
       // A close event queued by a transport this controller has already torn
       // down (e.g. ice-relay-retry attempt 1's Room emitting RoomDisconnected
@@ -573,8 +613,31 @@ class VoiceSessionController extends ChangeNotifier {
     // guard so that silent-brain case fails loudly instead of hanging.
     if (!_agentRespondedOnce) {
       _responseGuard?.cancel();
-      _responseGuard = Timer(_responseGuardTimeout, _onResponseGuardFired);
+      _responseGuard = Timer(_firstResponseBudget, _onResponseGuardFired);
     }
+  }
+
+  /// The no-first-response budget for the running brain: the longer cold-start
+  /// budget once the open-weights brain has signalled it is warming, else the
+  /// generic 20s. Keeps a legitimate Modal warm-up from tripping the guard.
+  Duration get _firstResponseBudget =>
+      _openWeightsWarming ? _openWeightsResponseBudget : _responseGuardTimeout;
+
+  /// The agent's honest voice-stack status (data topic `voice_status`). So far
+  /// only the open-weights cold start: `open_weights_warming` means the Modal
+  /// LLM is spinning up and the first reply can take ~100s. Latch it so the
+  /// status line says so (not a silent "Listening…") and extend the
+  /// no-first-response guard past the cold start so it doesn't fire early.
+  void _onVoiceStatus(String state) {
+    if (state != _kOpenWeightsWarming || _openWeightsWarming) return;
+    _openWeightsWarming = true;
+    // Re-arm an already-armed first-response guard with the longer budget
+    // (warming can arrive after `live`, when the generic 20s guard is running).
+    if (!_agentRespondedOnce && _responseGuard != null) {
+      _responseGuard!.cancel();
+      _responseGuard = Timer(_firstResponseBudget, _onResponseGuardFired);
+    }
+    notifyListeners();
   }
 
   /// The agent produced a genuine response (speech / transcript / tool call) —
@@ -593,15 +656,26 @@ class VoiceSessionController extends ChangeNotifier {
   void _onResponseGuardFired() {
     _responseGuard = null;
     if (_phase != VoiceSessionPhase.live || _agentRespondedOnce) return;
+    // Capture BEFORE `_teardown()` — it runs synchronously up to its first
+    // await and clears `_openWeightsWarming`, so reading the field after it
+    // would always see `false` and show the generic copy.
+    final warming = _openWeightsWarming;
+    final budget = _firstResponseBudget;
     debugPrint('[voice] no first response — brain unreachable');
     _report(
-      VoiceStartError(
-          'no agent response within ${_responseGuardTimeout.inSeconds}s of live'),
+      VoiceStartError('no agent response within ${budget.inSeconds}s of live'
+          '${warming ? ' (open-weights)' : ''}'),
       null,
-      'no_response',
+      warming ? 'open_weights_no_response' : 'no_response',
     );
     unawaited(_teardown());
-    _fail("Couldn't reach the voice service — tap the mic to try again.");
+    // Honest, brain-specific copy: the open-weights (Modal) model never came up
+    // in time, so say exactly that and offer the real options — instead of the
+    // generic "Couldn't reach the voice service" (founder ask, 2026-11-02).
+    _fail(warming
+        ? 'The open-weights model is unavailable right now — try again or '
+            'switch models.'
+        : "Couldn't reach the voice service — tap the mic to try again.");
   }
 
   /// Restarts the client idle guard (see [_idleGuardTimeout]) — only while
@@ -963,6 +1037,7 @@ class VoiceSessionController extends ChangeNotifier {
     final callEndingSub = _callEndingSub;
     final agentMuteSub = _agentMuteSub;
     final coachSub = _coachSub;
+    final voiceStatusSub = _voiceStatusSub;
     final closedSub = _closedSub;
     final micLevelSub = _micLevelSub;
     final aymaLevelSub = _aymaLevelSub;
@@ -974,6 +1049,8 @@ class VoiceSessionController extends ChangeNotifier {
     _callEndingSub = null;
     _agentMuteSub = null;
     _coachSub = null;
+    _voiceStatusSub = null;
+    _openWeightsWarming = false;
     _aymaQuiet = false;
     _closedSub = null;
     _micLevelSub = null;
@@ -990,6 +1067,7 @@ class VoiceSessionController extends ChangeNotifier {
     await callEndingSub?.cancel();
     await agentMuteSub?.cancel();
     await coachSub?.cancel();
+    await voiceStatusSub?.cancel();
     await closedSub?.cancel();
     await micLevelSub?.cancel();
     await aymaLevelSub?.cancel();

@@ -1345,6 +1345,69 @@ void main() {
     });
 
     test(
+        'open-weights warming status shows the specific warming line (not a '
+        'silent "Listening") and extends the first-response budget', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+        // The generic guard would fire at 40ms — but the open-weights warming
+        // signal must re-arm it to the (longer) open-weights budget so the
+        // legitimate ~100s cold start is never mistaken for a dead brain.
+        responseGuardTimeout: const Duration(milliseconds: 40),
+        openWeightsResponseGuardTimeout: const Duration(seconds: 5),
+      );
+
+      await _startLive(c, transport);
+      expect(c.warmingNotice, isNull); // generic path: no special copy yet
+      transport.emitVoiceStatus('open_weights_warming');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(c.warmingNotice, isNotNull);
+      expect(c.warmingNotice, contains('Warming up the open-weights model'));
+
+      // Past the generic 40ms budget: the call must still be live (the warming
+      // re-arm moved the guard out to the open-weights budget), not errored.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(c.errorMessage, isNull);
+      await c.stop();
+    });
+
+    test(
+        'open-weights that never warms in time surfaces the open-weights-'
+        'specific "unavailable" copy, not the generic voice-service error',
+        () async {
+      final transport = FakeVoiceTransport();
+      final reporter = _RecordingReporter();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+        responseGuardTimeout: const Duration(seconds: 5),
+        openWeightsResponseGuardTimeout: const Duration(milliseconds: 40),
+        errorReporter: reporter,
+      );
+
+      await _startLive(c, transport);
+      transport.emitVoiceStatus('open_weights_warming');
+      await Future<void>.delayed(Duration.zero);
+
+      // The open-weights budget (40ms here) elapses with no reply.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      expect(c.phase, VoiceSessionPhase.error);
+      expect(c.errorMessage, contains('open-weights model is unavailable'));
+      expect(c.errorMessage, contains('switch models'));
+      expect(c.cappedError, isFalse);
+      expect(reporter.reports.map((r) => r.reason),
+          contains('voice_open_weights_no_response'));
+      // A fresh start clears the warming latch so the next call isn't tainted.
+      expect(c.warmingNotice, isNull);
+    });
+
+    test(
         'a genuine first response (speech) cancels the guard — a working call '
         'stays live and never errors', () async {
       final transport = FakeVoiceTransport();

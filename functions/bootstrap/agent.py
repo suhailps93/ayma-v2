@@ -140,6 +140,14 @@ TOPIC_VOICE_ACCENT_CONTROL = "voice_accent_control"
 # the USER as they talk to the simulated persona — shown as a side hint, never
 # spoken by the persona (immersion is preserved). Payload: {"text", "is_final"}.
 TOPIC_PRACTICE_COACH = "practice_coach"
+# Honest open-weights voice status (§13.9). The open-weights cascade brain runs
+# on a self-hosted, scale-to-zero Modal endpoint whose cold start is ~100s;
+# published on session start so the client shows a specific "warming up — first
+# reply can take a minute or two" instead of a silent "Listening…", and extends
+# its no-first-response budget past the cold start (founder bug, 2026-11-02).
+# Payload: {"state": "open_weights_warming"}.
+TOPIC_VOICE_STATUS = "voice_status"
+VOICE_STATUS_OPEN_WEIGHTS_WARMING = "open_weights_warming"
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -579,6 +587,8 @@ def build_cascade_session(
 
     Raises ``RuntimeError`` (missing key/plugin/model) so the caller falls back
     to Gemini Live. Model ids come from the catalog/config, never hardcoded."""
+    import voice_catalog
+
     # Brain first: its key/plugin checks fail fast (before any Inference call),
     # so an unavailable brain cleanly falls the caller back to Gemini Live.
     brain = _build_cascade_brain(brain_id)
@@ -598,7 +608,34 @@ def build_cascade_session(
         tts_kwargs["voice"] = chosen_tts_voice
     tts = inference.TTS(**tts_kwargs)
     vad = inference.VAD(model=CONFIG.meta_cascade_vad_model)
-    return AgentSession(stt=stt, llm=brain, tts=tts, vad=vad, allow_interruptions=True)
+    session_kwargs: dict[str, object] = {
+        "stt": stt,
+        "llm": brain,
+        "tts": tts,
+        "vad": vad,
+        "allow_interruptions": True,
+    }
+    # Open-weights brain only (§13.9): its LLM leg is a self-hosted, scale-to-zero
+    # Modal endpoint whose cold start is ~100s. The AgentSession default LLM conn
+    # options (timeout=10s × 4 attempts) can never survive that — every turn
+    # times out and the call never replies (founder bug, 2026-11-02). Widen ONLY
+    # this leg's timeout to cover the cold start and drop the wasteful fast-retry
+    # churn against a cold endpoint; fire a warm-up ping now so the cold start is
+    # already underway by the first turn. The Meta/Inference legs are untouched.
+    route_model = voice_catalog.brain_route(brain_id)
+    if route_model is not None and route_model[0] == voice_catalog.ROUTE_OPEN_WEIGHTS:
+        from livekit.agents.types import APIConnectOptions
+        from livekit.agents.voice.agent_session import SessionConnectOptions
+
+        session_kwargs["conn_options"] = SessionConnectOptions(
+            llm_conn_options=APIConnectOptions(
+                timeout=CONFIG.open_weights_cold_start_timeout_s,
+                max_retry=1,
+                retry_interval=2.0,
+            ),
+        )
+        _warm_open_weights_endpoint()
+    return AgentSession(**session_kwargs)
 
 
 def build_meta_cascade_session(
@@ -780,6 +817,56 @@ async def _publish_call_ending(ctx: JobContext, reason: str) -> None:
         )
     except Exception:  # noqa: BLE001 - the call must still end
         logger.exception("failed to publish call_ending (%s)", reason)
+
+
+async def _publish_voice_status(ctx: JobContext, state: str) -> None:
+    """Tell the client an honest, voice-stack-specific status (§13.9) — used so
+    far only for the open-weights cold start (``open_weights_warming``), so the
+    UI shows "warming up, first reply can take a minute or two" instead of a
+    silent "Listening…". Awaited best-effort; a dropped signal never affects the
+    call."""
+    payload = json.dumps({"state": state}).encode()
+    try:
+        await ctx.room.local_participant.publish_data(
+            payload, reliable=True, topic=TOPIC_VOICE_STATUS
+        )
+    except Exception:  # noqa: BLE001 - a dropped status must not kill the call
+        logger.exception("failed to publish voice_status (%s)", state)
+
+
+def _warm_open_weights_endpoint() -> None:
+    """Kick the open-weights (self-hosted Modal) endpoint awake at session setup
+    so its ~100s scale-to-zero cold start begins now — in parallel with STT/room
+    setup — instead of on the first user turn (founder bug, 2026-11-02: a cold
+    Modal + the 10s default LLM timeout meant the call never replied). A tiny,
+    fire-and-forget ``GET /models`` ping is enough to start the container.
+    Best-effort: a failed or slow warm-up never affects the call, and nothing
+    keeps Modal warm persistently (``$100`` credit — warm-on-use only)."""
+    base_url = CONFIG.open_weights_api_base_url
+    if not base_url:
+        return
+
+    async def _ping() -> None:
+        try:
+            import httpx
+
+            headers: dict[str, str] = {}
+            key = os.getenv("OPEN_WEIGHTS_API_KEY", "")
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+            timeout = CONFIG.open_weights_cold_start_timeout_s
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                await client.get(f"{base_url}/models", headers=headers)
+            logger.info("open-weights warm-up ping completed")
+        except Exception:  # noqa: BLE001 - warm-up is best-effort
+            logger.info("open-weights warm-up ping failed (non-fatal)", exc_info=True)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (a sync/unit-test context) — skip the warm-up task.
+        return
+    asyncio.create_task(_ping())
 
 
 class SessionFlush:
@@ -2299,14 +2386,27 @@ async def _open_main_call(
     (:func:`load_voice_session_seed`) is seeded so the opener generates normally.
     Realtime models (Gemini Live / Inference RealtimeModel) never hit that path,
     so they leave it False."""
+    brain = seed.brain_id or seed.realtime_model_id or "gemini-live"
     if seed.greeting_instructions:
         reply_kwargs: dict = {"instructions": seed.greeting_instructions}
         if seed_user_turn:
             reply_kwargs["user_input"] = load_voice_session_seed()
+        logger.info(
+            "voice opener FIRED kind=greeting brain=%s session=%s — awaiting "
+            "generate_reply", brain, seed.session_id or "?",
+        )
         try:
             await session.generate_reply(**reply_kwargs)
         except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
-            logger.exception("welcome greeting failed")
+            logger.exception(
+                "welcome greeting generate_reply ERRORED brain=%s session=%s",
+                brain, seed.session_id or "?",
+            )
+        else:
+            logger.info(
+                "voice opener generate_reply COMPLETED kind=greeting brain=%s "
+                "session=%s", brain, seed.session_id or "?",
+            )
     else:
         await maybe_open_conversation(
             session, seed, window=window, opener_chat_ctx=opener_chat_ctx,
@@ -2622,6 +2722,13 @@ async def _start_main_cascade_session(
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+    # Honest open-weights status (§13.9): the open-weights brain's LLM leg is a
+    # scale-to-zero Modal endpoint whose first reply can take ~100s on a cold
+    # start. Tell the client NOW (the room is joined) so it shows "warming up —
+    # first reply can take a minute or two" and extends its no-first-response
+    # budget, instead of a silent "Listening…" that looks broken.
+    if (seed.brain_id or voice_catalog.BRAIN_META) == voice_catalog.BRAIN_OPEN_WEIGHTS:
+        await _publish_voice_status(ctx, VOICE_STATUS_OPEN_WEIGHTS_WARMING)
     # Cold-start opener (founder behaviour, 2026-10-28): when there is prior
     # context the opener GREETS and OFFERS A CHOICE ("pick up where we left off
     # about X, or something else?") instead of resuming the old topic. That is
@@ -3039,12 +3146,26 @@ async def maybe_open_conversation(
     message list — which the OpenAI-compatible gateway (incl. LiveKit Inference)
     rejects with HTTP 400. Realtime paths leave it False (they don't hit that
     LLM request shape), so their opener is byte-identical to before."""
+    # Opener observability (2026-11-02): today a silent stall and a deliberately
+    # skipped opener look identical in the logs. Log, at INFO, whether the opener
+    # FIRED or was SKIPPED (+ why) and — once fired — whether generate_reply
+    # COMPLETED or errored, tagged with the brain id. This powers the honest
+    # open-weights status and gives a first-response trace on every path.
+    brain = seed.brain_id or seed.realtime_model_id or "gemini-live"
     grace = (
         CONFIG.voice_opener_grace_seconds if grace_seconds is None else grace_seconds
     )
     if grace <= 0 or seed.greeting_instructions:
+        logger.info(
+            "voice opener SKIPPED brain=%s reason=%s session=%s", brain,
+            "disabled" if grace <= 0 else "has_greeting", seed.session_id or "?",
+        )
         return False
     if seed.seed_turns and seed.seed_turns[-1].role == ROLE_USER:
+        logger.info(
+            "voice opener SKIPPED brain=%s reason=resumed_mid_user_turn session=%s",
+            brain, seed.session_id or "?",
+        )
         return False
 
     user_started = asyncio.Event()
@@ -3061,10 +3182,18 @@ async def maybe_open_conversation(
     seeded = len(window)
     try:
         await asyncio.wait_for(user_started.wait(), timeout=grace)
+        logger.info(
+            "voice opener SKIPPED brain=%s reason=caller_spoke_first session=%s",
+            brain, seed.session_id or "?",
+        )
         return False
     except asyncio.TimeoutError:
         pass
     if user_started.is_set() or _has_new_turns(window, seeded):
+        logger.info(
+            "voice opener SKIPPED brain=%s reason=activity_during_grace session=%s",
+            brain, seed.session_id or "?",
+        )
         return False
     has_prior, last_topic_hint = _opener_prior_context(seed.seed_turns)
     reply_kwargs: dict = {
@@ -3074,11 +3203,22 @@ async def maybe_open_conversation(
         reply_kwargs["chat_ctx"] = opener_chat_ctx
     if seed_user_turn:
         reply_kwargs["user_input"] = load_voice_session_seed()
+    logger.info(
+        "voice opener FIRED brain=%s session=%s — awaiting generate_reply",
+        brain, seed.session_id or "?",
+    )
     try:
         await session.generate_reply(**reply_kwargs)
     except Exception:  # noqa: BLE001 - a missed opener shouldn't kill the call
-        logger.exception("voice opener failed")
+        logger.exception(
+            "voice opener generate_reply ERRORED brain=%s session=%s", brain,
+            seed.session_id or "?",
+        )
         return False
+    logger.info(
+        "voice opener generate_reply COMPLETED brain=%s session=%s", brain,
+        seed.session_id or "?",
+    )
     return True
 
 

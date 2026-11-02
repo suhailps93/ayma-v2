@@ -45,6 +45,7 @@ const _agentMuteTopic = 'agent_mute';
 const _agentMuteControlTopic = 'agent_mute_control';
 const _voiceAccentControlTopic = 'voice_accent_control';
 const _practiceCoachTopic = 'practice_coach';
+const _voiceStatusTopic = 'voice_status';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -94,6 +95,13 @@ abstract class VoiceTransport {
   /// by the simulated persona. Emits only final hint text. Empty on a normal
   /// (non-practice) call.
   Stream<String> get practiceCoach;
+
+  /// Honest voice-stack status (topic `voice_status`, payload `{"state"}`).
+  /// Used for the open-weights (self-hosted Modal) cold start: emits
+  /// `open_weights_warming` on session start so the UI shows a specific
+  /// "warming up — first reply can take a minute or two" and extends its
+  /// no-first-response budget, instead of a silent "Listening…" (§13.9).
+  Stream<String> get voiceStatus;
 
   /// Asks the agent to change its "shut up" state (topic
   /// `agent_mute_control`, payload `{"muted": bool}`). The agent only honours
@@ -153,6 +161,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _callEnding = StreamController<String>.broadcast();
   final _agentMute = StreamController<bool>.broadcast();
   final _practiceCoach = StreamController<String>.broadcast();
+  final _voiceStatus = StreamController<String>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
   final _agentLevel = StreamController<double>.broadcast();
@@ -213,6 +222,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Stream<String> get practiceCoach => _practiceCoach.stream;
+
+  @override
+  Stream<String> get voiceStatus => _voiceStatus.stream;
 
   @override
   Stream<Object> get closed => _closed.stream;
@@ -320,6 +332,10 @@ class LiveKitVoiceTransport implements VoiceTransport {
         final isFinal = decoded['is_final'] as bool? ?? true;
         final text = decoded['text'] as String? ?? '';
         if (isFinal && text.isNotEmpty) _practiceCoach.add(text);
+      } else if (topic == _voiceStatusTopic) {
+        if (_voiceStatus.isClosed) return;
+        final state = decoded['state'] as String? ?? '';
+        if (state.isNotEmpty) _voiceStatus.add(state);
       } else if (topic == _agentStateTopic) {
         // Fallback readiness signal: the first agent_state message means the
         // agent's session is live even if its audio track hasn't subscribed yet.
@@ -399,6 +415,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_callEnding.isClosed) await _callEnding.close();
     if (!_agentMute.isClosed) await _agentMute.close();
     if (!_practiceCoach.isClosed) await _practiceCoach.close();
+    if (!_voiceStatus.isClosed) await _voiceStatus.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();
     if (!_agentLevel.isClosed) await _agentLevel.close();

@@ -90,7 +90,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                   ? 'Muted'
                   : (speaking
                         ? 'Ayma is speaking…'
-                        : (voice.activeToolLabel ?? 'Listening…')),
+                        : (voice.activeToolLabel ??
+                              voice.warmingNotice ??
+                              'Listening…')),
               _ => '',
             };
             return Stack(

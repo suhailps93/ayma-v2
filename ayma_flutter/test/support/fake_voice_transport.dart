@@ -11,6 +11,7 @@ class FakeVoiceTransport implements VoiceTransport {
   final callEndingController = StreamController<String>.broadcast();
   final agentMuteController = StreamController<bool>.broadcast();
   final practiceCoachController = StreamController<String>.broadcast();
+  final voiceStatusController = StreamController<String>.broadcast();
   final closedController = StreamController<Object>.broadcast();
   final localLevelController = StreamController<double>.broadcast();
   final agentLevelController = StreamController<double>.broadcast();
@@ -86,6 +87,15 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!practiceCoachController.isClosed) practiceCoachController.add(hint);
   }
 
+  @override
+  Stream<String> get voiceStatus => voiceStatusController.stream;
+
+  /// Emit an honest voice-stack status (test helper, §13.9) — e.g.
+  /// `open_weights_warming` for the Modal cold start.
+  void emitVoiceStatus(String state) {
+    if (!voiceStatusController.isClosed) voiceStatusController.add(state);
+  }
+
   /// Emit the agent's "I've gone quiet" / "I'm back" signal (test helper).
   void emitAgentMute(bool muted) {
     if (!agentMuteController.isClosed) agentMuteController.add(muted);
@@ -155,6 +165,7 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!practiceCoachController.isClosed) {
       await practiceCoachController.close();
     }
+    if (!voiceStatusController.isClosed) await voiceStatusController.close();
     if (!closedController.isClosed) await closedController.close();
     if (!localLevelController.isClosed) await localLevelController.close();
     if (!agentLevelController.isClosed) await agentLevelController.close();

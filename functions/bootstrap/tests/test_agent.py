@@ -2774,6 +2774,91 @@ def test_open_weights_cascade_brain_throws_without_model(monkeypatch):
         agent._build_cascade_brain(voice_catalog.BRAIN_OPEN_WEIGHTS)
 
 
+def test_open_weights_cascade_session_survives_cold_start_and_warms(monkeypatch):
+    """The open-weights cascade LLM leg must cover Modal's ~100s cold start:
+    an explicit ``conn_options`` with the configured cold-start timeout (not the
+    10s default that made the call never reply), fewer retries, and a warm-up
+    fired on session build so the cold start begins at setup, not the first turn.
+    """
+    import voice_catalog
+
+    cfg = dataclasses.replace(
+        CONFIG,
+        open_weights_api_base_url="https://modal.example/v1",
+        open_weights_model="meta-llama/Llama-3.1-8B-Instruct",
+        open_weights_cold_start_timeout_s=120.0,
+    )
+    monkeypatch.setattr(agent, "CONFIG", cfg)
+    monkeypatch.setattr(voice_catalog, "CONFIG", cfg)
+    voice_catalog.clear_cache()
+    monkeypatch.setenv("OPEN_WEIGHTS_API_KEY", "ow-secret")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    warmed: list[bool] = []
+    monkeypatch.setattr(
+        agent, "_warm_open_weights_endpoint", lambda: warmed.append(True)
+    )
+
+    agent.build_cascade_session(
+        voice_catalog.BRAIN_OPEN_WEIGHTS, "deepgram/nova-3", "fishaudio/s2.1-pro"
+    )
+
+    from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
+
+    conn = captured["session"]["conn_options"]
+    assert conn.llm_conn_options.timeout == 120.0
+    # Fewer attempts against a cold endpoint than the wasteful 4× default churn.
+    assert conn.llm_conn_options.max_retry <= 1
+    # STT/TTS legs are untouched — only the open-weights LLM leg gets the budget.
+    assert conn.stt_conn_options.timeout == DEFAULT_API_CONNECT_OPTIONS.timeout
+    assert warmed == [True]
+
+
+def test_meta_cascade_session_keeps_default_conn_options(monkeypatch):
+    """The Meta/Inference legs are always-on gateways — they must NOT get the
+    open-weights cold-start timeout, and no Modal warm-up is fired for them."""
+    import voice_catalog
+
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    warmed: list[bool] = []
+    monkeypatch.setattr(
+        agent, "_warm_open_weights_endpoint", lambda: warmed.append(True)
+    )
+
+    agent.build_cascade_session(
+        voice_catalog.BRAIN_META, "deepgram/nova-3", "fishaudio/s2.1-pro"
+    )
+
+    assert "conn_options" not in captured["session"]
+    assert warmed == []
+
+
+def test_publish_voice_status_sends_warming_on_its_topic():
+    """The honest open-weights status rides its own data-channel topic with the
+    warming state the client renders (not a silent 'Listening…')."""
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _Ctx:
+        room = _Room()
+
+    asyncio.run(
+        agent._publish_voice_status(
+            _Ctx(), agent.VOICE_STATUS_OPEN_WEIGHTS_WARMING
+        )
+    )
+    assert published == [
+        ("voice_status", {"state": "open_weights_warming"})
+    ]
+
+
 def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
     import config
 

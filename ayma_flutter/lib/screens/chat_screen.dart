@@ -2565,6 +2565,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       aymaQuiet: _voice.aymaQuiet,
                       agentSpeaking: _voice.agentSpeaking,
                       activeToolLabel: _voice.activeToolLabel,
+                      warmingNotice: _voice.warmingNotice,
                       onVoiceTap: _toggleVoice,
                       onMuteTap: _voice.toggleMute,
                       onUnmuteAyma: _voice.unmuteAyma,
@@ -3659,6 +3660,7 @@ class _Composer extends StatelessWidget {
     this.aymaQuiet = false,
     required this.agentSpeaking,
     this.activeToolLabel,
+    this.warmingNotice,
     required this.onVoiceTap,
     required this.onMuteTap,
     required this.onUnmuteAyma,
@@ -3700,6 +3702,10 @@ class _Composer extends StatelessWidget {
   /// transient "what she's doing" indicator for a slow tool call mid-turn
   /// (§1.7 step 3), shown in place of "Listening" while it's non-null.
   final String? activeToolLabel;
+
+  /// Honest status shown in place of "Listening…" while the open-weights
+  /// (Modal) brain is warming from a cold start (§13.9); null otherwise.
+  final String? warmingNotice;
   final Future<void> Function() onVoiceTap;
   final Future<void> Function() onMuteTap;
 
@@ -3744,7 +3750,7 @@ class _Composer extends StatelessWidget {
               ? 'Muted'
               : (agentSpeaking
                     ? 'Ayma is speaking…'
-                    : (activeToolLabel ?? 'Listening…')),
+                    : (activeToolLabel ?? warmingNotice ?? 'Listening…')),
       };
     }
 

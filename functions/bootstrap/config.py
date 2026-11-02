@@ -784,6 +784,16 @@ class Config:
     (never substitutes a hardcoded id, per AGENTS.md) if this is empty, falling
     the call safely back to Gemini Live."""
 
+    open_weights_cold_start_timeout_s: float
+    """First-token/connect timeout (seconds) for the VOICE cascade's
+    open-weights LLM leg. The open-weights endpoint is a self-hosted,
+    scale-to-zero Modal container whose cold start is ~100s; the LiveKit
+    AgentSession default (``APIConnectOptions(timeout=10)``, 3 retries) can never
+    survive that, so every turn times out and the call never replies (founder
+    bug, 2026-11-02). This widens ONLY the open-weights leg's timeout to cover
+    the cold start (§13.9). Env ``OPEN_WEIGHTS_COLD_START_TIMEOUT_S``, default
+    ``120``. Does not affect the Meta/Inference legs, which keep the default."""
+
     meta_transcribe_model: str
     """Meta Muse Voice Transcribe (STT) id. Listed in the Meta Model API's
     ``GET /v1/models``, but Meta serves no working OpenAI-compatible REST STT
@@ -1247,6 +1257,9 @@ def _load() -> Config:
             "OPEN_WEIGHTS_BASE_URL", ""
         ).rstrip("/"),
         open_weights_model=os.getenv("OPEN_WEIGHTS_MODEL", ""),
+        open_weights_cold_start_timeout_s=float(
+            os.getenv("OPEN_WEIGHTS_COLD_START_TIMEOUT_S", "120")
+        ),
         qloo_api_base_url=os.getenv(
             "QLOO_API_BASE_URL", "https://hackathon.api.qloo.com"
         ).rstrip("/"),
