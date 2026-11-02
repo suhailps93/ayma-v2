@@ -856,6 +856,40 @@ void main() {
     expect(transport.disposeCalls, 1);
   });
 
+  test('late transport events after dispose() never throw (AYMA-FLUTTER-31)',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+    c.dispose();
+
+    // Events queued by the transport racing teardown — every subscription
+    // dispose() covers must already be deaf, and notifyListeners must no-op.
+    transport.emitAgentMute(true);
+    transport.emitCallEnding('out_of_credits');
+    transport.agentSpeakingController.add(true);
+    transport.markAgentReady();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  });
+
+  test('disposing mid-bootstrap never throws when the token lands (AYMA-FLUTTER-31)',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    final f = c.start();
+    c.dispose();
+    await f;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  });
+
   test('relayed transcript segments land in the shared store', () async {
     final transport = FakeVoiceTransport();
     final store = TranscriptStore();

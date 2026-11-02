@@ -258,6 +258,20 @@ class VoiceSessionController extends ChangeNotifier {
   bool _relayRetrying = false;
   bool get relayRetrying => _relayRetrying;
 
+  /// Set by [dispose]. A disposed controller must never notify again: async
+  /// continuations already in flight (`_attempt()` awaiting the token fetch,
+  /// a timer or stream event queued before its cancel landed) can still reach
+  /// [notifyListeners] after disposal, which throws "used after being
+  /// disposed" in debug/profile (AYMA-FLUTTER-31). [notifyListeners] no-ops
+  /// once this is set, matching release behaviour on every build.
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
@@ -1031,10 +1045,13 @@ class VoiceSessionController extends ChangeNotifier {
     _readySub?.cancel();
     _transcriptSub?.cancel();
     _toolEventsSub?.cancel();
+    _callEndingSub?.cancel();
+    _agentMuteSub?.cancel();
     _coachSub?.cancel();
     _closedSub?.cancel();
     _micLevelSub?.cancel();
     _aymaLevelSub?.cancel();
+    _disposed = true;
     unawaited(_teardown());
     super.dispose();
   }
