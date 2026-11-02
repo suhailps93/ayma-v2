@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
 
@@ -49,25 +50,55 @@ class PhotoService {
     return u;
   }
 
+  /// How many times [loadGrid] re-tries resolving a server-listed photo whose
+  /// download URL didn't come back on the first pass, and the pause between
+  /// tries. A just-uploaded photo's `user_media` doc / Storage object can lag
+  /// the `GET /media/photos` list that already names it (read-your-writes
+  /// race), and a cold Firestore/Storage read can transiently fail — the
+  /// server already persisted the photo, so it must not be dropped on the
+  /// first miss. The happy path (every URL resolves at once) never waits.
+  static const _resolveAttempts = 4;
+  static const _resolveBackoff = Duration(milliseconds: 400);
+
   Future<List<GridPhoto>> loadGrid() async {
     final entries = await _api.listPhotos();
     final out = <GridPhoto>[];
-    for (final e in entries) {
-      final mediaId = e['media_id'] as String? ?? '';
-      if (mediaId.isEmpty) continue;
-      final url = await _downloadUrl(mediaId);
-      if (url == null) continue;
-      out.add(GridPhoto(
-        mediaId: mediaId,
-        order: (e['order'] as num?)?.toInt() ?? out.length,
-        downloadUrl: url,
-      ));
+    // Keep the server's order for each entry (fallback: its position in the
+    // list) so a photo resolved on a later retry still sorts into place.
+    var pending = <({String mediaId, int order})>[
+      for (var i = 0; i < entries.length; i++)
+        if ((entries[i]['media_id'] as String? ?? '').isNotEmpty)
+          (
+            mediaId: entries[i]['media_id'] as String,
+            order: (entries[i]['order'] as num?)?.toInt() ?? i,
+          ),
+    ];
+    for (var attempt = 0; attempt < _resolveAttempts && pending.isNotEmpty;
+        attempt++) {
+      if (attempt > 0) await Future<void>.delayed(_resolveBackoff);
+      final stillPending = <({String mediaId, int order})>[];
+      for (final e in pending) {
+        final url = await downloadUrlFor(e.mediaId);
+        if (url == null) {
+          stillPending.add(e);
+          continue;
+        }
+        out.add(
+            GridPhoto(mediaId: e.mediaId, order: e.order, downloadUrl: url));
+      }
+      pending = stillPending;
     }
     out.sort((a, b) => a.order.compareTo(b.order));
     return out;
   }
 
-  Future<String?> _downloadUrl(String mediaId) async {
+  /// Resolve [mediaId] to a public download URL, or null if it can't be
+  /// resolved right now (storage path not yet written, or a transient
+  /// Firestore/Storage failure). [loadGrid] retries the nulls rather than
+  /// dropping the photo. Exposed for tests that need to drive the retry
+  /// without a live Storage backend.
+  @visibleForTesting
+  Future<String?> downloadUrlFor(String mediaId) async {
     try {
       final doc = await _db
           .doc('users/$_uid/user_media/$mediaId')
