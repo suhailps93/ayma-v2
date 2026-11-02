@@ -26,7 +26,7 @@ from .app_control_queue import (
 # app's ScreenCapture numbers controls as <prefix><n>, e.g. "s3").
 _UI_OPS = frozenset(
     "tap long_press set_text increase decrease scroll_up scroll_down "
-    "dismiss back".split()
+    "scroll_to_top scroll_to_bottom dismiss back".split()
 )
 _UI_ID_TYPES = {
     "b": "button", "s": "switch", "c": "checkbox", "r": "radio", "f": "field",

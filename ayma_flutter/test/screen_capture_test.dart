@@ -123,6 +123,61 @@ class _PageState extends State<_Page> {
       );
 }
 
+/// A long but finite list (overflows the viewport, has a real end).
+class _LongList extends StatelessWidget {
+  const _LongList({this.controller});
+  final ScrollController? controller;
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: ListView(
+          controller: controller,
+          children: [
+            for (var i = 0; i < 60; i++)
+              SizedBox(height: 120, child: Text('Row $i')),
+          ],
+        ),
+      );
+}
+
+/// A paginated list: every time it nears the bottom it grows, so the end is a
+/// moving target and scroll-to-bottom can never truly settle.
+class _GrowingList extends StatefulWidget {
+  const _GrowingList();
+  @override
+  State<_GrowingList> createState() => _GrowingListState();
+}
+
+class _GrowingListState extends State<_GrowingList> {
+  final _ctrl = ScrollController();
+  int _count = 40;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl.addListener(() {
+      if (_ctrl.hasClients &&
+          _ctrl.position.pixels >= _ctrl.position.maxScrollExtent - 1) {
+        setState(() => _count += 40);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: ListView.builder(
+          controller: _ctrl,
+          itemCount: _count,
+          itemBuilder: (c, i) => SizedBox(height: 120, child: Text('Item $i')),
+        ),
+      );
+}
+
 Future<(ScreenCapture, PopupTracker)> _pump(WidgetTester tester,
     {String route = '/settings'}) async {
   final popups = PopupTracker();
@@ -347,6 +402,68 @@ void main() {
     final gone =
         await cap.perform(control: 'b99', label: 'No such thing', op: 'tap');
     expect(gone.ok, isFalse);
+    handle.dispose();
+  });
+
+  testWidgets('scroll_to_bottom reaches the end of a finite list in one op',
+      (tester) async {
+    final handle = tester.ensureSemantics();
+    await tester.pumpWidget(const MaterialApp(home: _LongList()));
+    final cap = ScreenCapture(
+      routeOf: () => '/explore',
+      settle: () => tester.pumpAndSettle(),
+    );
+    final list = cap.capture().controls.firstWhere((c) => c.type == 'list');
+    final r = await cap.perform(
+        control: list.id, label: list.label, op: 'scroll_to_bottom');
+    expect(r.ok, isTrue, reason: r.reason);
+    expect(r.result, contains('Reached the bottom.'));
+    // Genuinely at the end: a further scroll_down has nothing left to do.
+    final again = await cap.perform(
+        control: list.id, label: list.label, op: 'scroll_down');
+    expect(again.ok, isFalse);
+    handle.dispose();
+  });
+
+  testWidgets('scroll_to_bottom on a growing list stops at the cap, honestly',
+      (tester) async {
+    final handle = tester.ensureSemantics();
+    await tester.pumpWidget(const MaterialApp(home: _GrowingList()));
+    final cap = ScreenCapture(
+      routeOf: () => '/explore',
+      settle: () => tester.pumpAndSettle(),
+    );
+    final list = cap.capture().controls.firstWhere((c) => c.type == 'list');
+    final r = await cap.perform(
+        control: list.id, label: list.label, op: 'scroll_to_bottom');
+    expect(r.ok, isTrue, reason: r.reason);
+    expect(r.result, contains('more content may remain'));
+    expect(r.result,
+        contains('Stopped after $kScrollToEndMaxSteps scrolls'));
+    expect(r.result, isNot(contains('Reached the bottom')));
+    handle.dispose();
+  });
+
+  testWidgets('scroll_down with a repeat count moves further than one step',
+      (tester) async {
+    final handle = tester.ensureSemantics();
+    final ctrl = ScrollController();
+    await tester.pumpWidget(MaterialApp(home: _LongList(controller: ctrl)));
+    final cap = ScreenCapture(
+      routeOf: () => '/explore',
+      settle: () => tester.pumpAndSettle(),
+    );
+    final list = cap.capture().controls.firstWhere((c) => c.type == 'list');
+    final one = await cap.perform(
+        control: list.id, label: list.label, op: 'scroll_down');
+    expect(one.ok, isTrue, reason: one.reason);
+    final afterOne = ctrl.position.pixels;
+    ctrl.jumpTo(0);
+    await tester.pumpAndSettle();
+    final three = await cap.perform(
+        control: list.id, label: list.label, op: 'scroll_down', value: '3');
+    expect(three.ok, isTrue, reason: three.reason);
+    expect(ctrl.position.pixels, greaterThan(afterOne));
     handle.dispose();
   });
 
