@@ -40,7 +40,9 @@ class _FakeDm extends DmService {
   final List<({String text, String target})> translateCalls = [];
 
   @override
-  Stream<List<DmMessage>> watchMessages(String threadId) => _msgs.stream;
+  Stream<List<DmMessage>> watchMessages(String threadId,
+      {int limit = 30}) =>
+      _msgs.stream;
 
   @override
   Future<void> markThreadRead(String threadId) async {}

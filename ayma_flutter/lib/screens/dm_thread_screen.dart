@@ -73,6 +73,21 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   final _composerFocus = FocusNode();
   bool _sending = false;
 
+  /// Transcript window (Phase 2 pagination design §3.3): the live tail
+  /// (newest 30) streams in; [_olderMessages] holds paged history
+  /// (oldest-first), prepended without disturbing the reversed list.
+  final _listController = ScrollController();
+  final List<DmMessage> _olderMessages = [];
+  bool _fetchingOlder = false;
+  bool _olderDone = false;
+
+  /// Oldest merged message id (history anchor) and whether the live tail
+  /// filled its page, sampled each build for the scroll-up trigger.
+  String? _oldestId;
+  bool _tailFull = false;
+
+  static const _historyPageSize = 30;
+
   /// A picked-but-not-yet-sent attachment.
   File? _pending;
   String _pendingType = 'file'; // 'image' | 'file'
@@ -118,6 +133,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   @override
   void initState() {
     super.initState();
+    _listController.addListener(_onListScroll);
     reassertScreenContext();
     _loadOther();
     _preferredLang = _deviceLanguage();
@@ -154,6 +170,63 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     final l = lang.trim();
     if (l.isEmpty || l == _otherLang) return;
     setState(() => _otherLang = l);
+  }
+
+  /// Tail + paged history merged oldest-first, deduplicated by id (live
+  /// wins — design §6.2). Unstamped local writes sort as newest.
+  List<DmMessage> _mergeTail(List<DmMessage> tail) {
+    if (_olderMessages.isEmpty) return tail;
+    final byId = <String, DmMessage>{
+      for (final m in _olderMessages) m.id: m,
+      for (final m in tail) m.id: m,
+    };
+    return byId.values.toList()
+      ..sort((a, b) {
+        final ta = a.createdAt;
+        final tb = b.createdAt;
+        if (ta == null && tb == null) return a.id.compareTo(b.id);
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        final c = ta.compareTo(tb);
+        return c != 0 ? c : a.id.compareTo(b.id);
+      });
+  }
+
+  /// History paging trigger (design §3.3.2/§4.1): within 500px of the top
+  /// of the reversed transcript, fetch the next older page.
+  void _onListScroll() {
+    if (!_listController.hasClients || _fetchingOlder || _olderDone) return;
+    // A tail that never filled its page means no history exists (yet).
+    if (!_tailFull && _olderMessages.isEmpty) return;
+    final pos = _listController.position;
+    if (pos.pixels < pos.maxScrollExtent - 500) return;
+    final anchor = _oldestId;
+    if (anchor == null) return;
+    _loadOlder(anchor);
+  }
+
+  Future<void> _loadOlder(String lastMessageId) async {
+    setState(() => _fetchingOlder = true);
+    try {
+      final page = await _dm.fetchOlderMessages(
+        widget.threadId,
+        lastMessageId: lastMessageId,
+        limit: _historyPageSize,
+      );
+      if (!mounted) return;
+      final known = {for (final m in _olderMessages) m.id};
+      final fresh = page.where((m) => known.add(m.id)).toList();
+      setState(() {
+        _olderMessages.insertAll(0, fresh);
+        _fetchingOlder = false;
+        if (page.length < _historyPageSize) _olderDone = true;
+      });
+    } catch (_) {
+      // History is best-effort: the live tail stays fully usable, and the
+      // next scroll to the top retries.
+      if (!mounted) return;
+      setState(() => _fetchingOlder = false);
+    }
   }
 
   /// Id of the newest incoming message already marked read, so a rebuild
@@ -212,6 +285,9 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   @override
   void dispose() {
     _assistDebounce?.cancel();
+    _listController
+      ..removeListener(_onListScroll)
+      ..dispose();
     _composer.dispose();
     _composerFocus.dispose();
     super.dispose();
@@ -634,7 +710,10 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             child: StreamBuilder<List<DmMessage>>(
               stream: _dm.watchMessages(widget.threadId),
               builder: (context, snap) {
-                final msgs = snap.data ?? const <DmMessage>[];
+                final tail = snap.data ?? const <DmMessage>[];
+                final msgs = _mergeTail(tail);
+                _oldestId = msgs.isEmpty ? null : msgs.first.id;
+                _tailFull = tail.length >= _historyPageSize;
                 _markReadIfIncoming(msgs);
                 // Refresh the coaching chips/tip as the conversation grows —
                 // debounced, and only on an actual message change (see
@@ -667,6 +746,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                 // screens; items are keyed by id so the reversed indexing
                 // still animates each new bubble in once.
                 return ListView.builder(
+                  controller: _listController,
                   reverse: true,
                   // iOS has no keyboard-dismiss key — dragging the
                   // transcript away is the native escape hatch.
@@ -678,8 +758,22 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                     16,
                     kChatListBottomInset, // bottom 12
                   ),
-                  itemCount: msgs.length,
+                  itemCount: msgs.length + (_fetchingOlder ? 1 : 0),
                   itemBuilder: (context, i) {
+                    if (i >= msgs.length) {
+                      // History page in flight — pinned to the top of the
+                      // reversed transcript (last index).
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      );
+                    }
                     final m = msgs[msgs.length - 1 - i];
                     final mine = m.senderUid == me;
                     final bubble = _Bubble(

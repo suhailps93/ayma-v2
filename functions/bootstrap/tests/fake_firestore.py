@@ -6,9 +6,11 @@ subcollection / query semantics: ``account_ops``, ``account_purge``,
 Documents are keyed by a tuple path, e.g. ``("users", uid, "profile",
 "main")``. Supports the small slice of the real Firestore client API these
 modules actually use: ``get``/``set``/``update``/``delete``,
-``collection()``/``document()`` chaining to any depth, ``stream()``, and
+``collection()``/``document()`` chaining to any depth, ``stream()``,
 ``where()``/``limit()`` for the two query shapes this codebase issues
-(``"=="`` and ``"array_contains"``).
+(``"=="`` and ``"array_contains"``), ``order_by("__name__")`` +
+``start_after(snap)`` for id-paginated scans, and ``get_all(refs)`` for
+batched reads.
 
 ``SERVER_TIMESTAMP`` / ``DELETE_FIELD`` are fixed sentinel objects — tests
 monkeypatch each production module's imported ``firestore.SERVER_TIMESTAMP``
@@ -101,16 +103,29 @@ class DocRef:
 
 
 class Query:
-    def __init__(self, coll, filters=None, limit_n=None):
+    def __init__(self, coll, filters=None, limit_n=None, order_field=None,
+                 start_after_id=None):
         self._coll = coll
         self._filters = filters or []
         self._limit = limit_n
+        self._order = order_field
+        self._start_after_id = start_after_id
 
     def where(self, field, op, value):
-        return Query(self._coll, self._filters + [(field, op, value)], self._limit)
+        return Query(self._coll, self._filters + [(field, op, value)],
+                     self._limit, self._order, self._start_after_id)
 
     def limit(self, n):
-        return Query(self._coll, self._filters, n)
+        return Query(self._coll, self._filters, n, self._order,
+                     self._start_after_id)
+
+    def order_by(self, field):
+        return Query(self._coll, self._filters, self._limit, field,
+                     self._start_after_id)
+
+    def start_after(self, snap):
+        return Query(self._coll, self._filters, self._limit, self._order,
+                     snap.id)
 
     def stream(self):
         depth = len(self._coll.key)
@@ -120,6 +135,12 @@ class Query:
                 continue
             if self._matches(data):
                 out.append(StreamSnap(self._coll._store, key, data))
+        if self._order == "__name__":
+            out.sort(key=lambda s: s.id)
+        elif self._order is not None:  # pragma: no cover - only __name__ used
+            raise NotImplementedError(self._order)
+        if self._start_after_id is not None:
+            out = [s for s in out if s.id > self._start_after_id]
         if self._limit is not None:
             out = out[: self._limit]
         return iter(out)
@@ -162,6 +183,9 @@ class CollRef:
     def limit(self, n):
         return Query(self).limit(n)
 
+    def order_by(self, field):
+        return Query(self).order_by(field)
+
 
 class FakeDb:
     def __init__(self, seed: dict | None = None):
@@ -170,3 +194,6 @@ class FakeDb:
 
     def collection(self, name):
         return CollRef(self, (name,))
+
+    def get_all(self, refs):
+        return [r.get() for r in refs]

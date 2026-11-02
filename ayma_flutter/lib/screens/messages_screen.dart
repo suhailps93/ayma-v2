@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/dm_service.dart';
 import '../services/match_service.dart';
+import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
@@ -37,6 +38,22 @@ class _MessagesScreenState extends State<MessagesScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
   late final MatchService _matches = widget.matchService ?? MatchService();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+  final _scrollController = ScrollController();
+
+  /// Archive tier (Phase 2 pagination design §3.2.3): threads older than
+  /// the live top-25 listener, appended as the user scrolls.
+  final List<DmThread> _archived = [];
+  bool _fetchingArchive = false;
+  bool _archiveDone = false;
+
+  /// Every thread id currently shown (live + archive) for §6.2 dedup.
+  final Set<String> _knownThreadIds = {};
+
+  /// Threads feeding the current frame (live top-25 + archive), for the
+  /// archive cursor.
+  List<DmThread> _allThreads = const [];
+
+  static const _archivePageSize = 25;
 
   @override
   void initState() {
@@ -44,6 +61,58 @@ class _MessagesScreenState extends State<MessagesScreen> {
     // Belt-and-braces with the tab shell, which also sets this on tab change /
     // pop-back — but a lazily-built tab's first appearance is its own event.
     AppContext.instance.set(screen: 'messages');
+    _mini.addAll(TabPrefetchCoordinator.instance.takeMiniProfiles());
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients || _fetchingArchive || _archiveDone) {
+      return;
+    }
+    if (_scrollController.position.extentAfter >= 600) return;
+    if (_allThreads.isEmpty) {
+      _archiveDone = true;
+      return;
+    }
+    // Oldest visible first (unstamped threads sort last, like the query).
+    final oldest = _allThreads.reduce((a, b) {
+      final ta = a.lastMessageAt;
+      final tb = b.lastMessageAt;
+      if (ta == null) return a;
+      if (tb == null) return b;
+      return ta.isBefore(tb) ? a : b;
+    });
+    _loadArchive(oldest.threadId);
+  }
+
+  Future<void> _loadArchive(String lastThreadId) async {
+    setState(() => _fetchingArchive = true);
+    try {
+      final older = await _dm.fetchOlderThreads(
+        lastThreadId: lastThreadId,
+        limit: _archivePageSize,
+      );
+      if (!mounted) return;
+      final fresh =
+          older.where((t) => _knownThreadIds.add(t.threadId)).toList();
+      setState(() {
+        _archived.addAll(fresh);
+        _fetchingArchive = false;
+        if (older.length < _archivePageSize) _archiveDone = true;
+      });
+    } catch (_) {
+      // Archive paging is best-effort: the live tier stays fully usable.
+      if (!mounted) return;
+      setState(() => _fetchingArchive = false);
+    }
   }
 
   /// otherUid -> name + photo, resolved server-side (a client can't turn
@@ -100,10 +169,21 @@ class _MessagesScreenState extends State<MessagesScreen> {
               }
               final threads = threadSnap.data ?? const <DmThread>[];
               final matches = matchSnap.data ?? const <MatchView>[];
-              final threadByUid = {for (final t in threads) t.otherUid: t};
+              _knownThreadIds
+                ..clear()
+                ..addAll(threads.map((t) => t.threadId))
+                ..addAll(_archived.map((t) => t.threadId));
+              // Live tier first, then archive (dropping archive rows that a
+              // live update promoted back into the top 25).
+              final liveIds = threads.map((t) => t.threadId).toSet();
+              _allThreads = [
+                ...threads,
+                ..._archived.where((t) => !liveIds.contains(t.threadId)),
+              ];
+              final threadByUid = {for (final t in _allThreads) t.otherUid: t};
 
               final rows = <_Row>[
-                for (final t in threads)
+                for (final t in _allThreads)
                   _Row.thread(t, matched: matches
                       .any((m) => m.otherUid == t.otherUid)),
                 for (final m in matches)
@@ -125,14 +205,30 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 );
               }
               return ListView.separated(
+                controller: _scrollController,
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: rows.length,
+                itemCount: rows.length + (_fetchingArchive ? 1 : 0),
                 separatorBuilder: (_, __) =>
                     Divider(height: 1, color: ac.lineSoft),
-                itemBuilder: (context, i) => FadeSlideIn(
-                  delay: staggerDelay(i),
-                  child: rows[i].build(context, _mini[rows[i].otherUid]),
-                ),
+                itemBuilder: (context, i) {
+                  if (i >= rows.length) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child:
+                              CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    );
+                  }
+                  return FadeSlideIn(
+                    delay: staggerDelay(i),
+                    child: rows[i].build(context, _mini[rows[i].otherUid]),
+                  );
+                },
               );
             },
           );

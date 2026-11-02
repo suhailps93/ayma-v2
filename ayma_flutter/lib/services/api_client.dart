@@ -211,13 +211,22 @@ class ApiClient {
     );
   }
 
-  /// `GET /explore` — the live filtered feed (§6.1). [q] is a natural-language
-  /// search parsed once server-side; [filters] are exact dropdown values.
-  Future<List<ExploreCard>> explore({
+  /// `GET /explore` — the live filtered feed (§6.1), cursor-paginated
+  /// (Phase 2 pagination design §3.1). [q] is a natural-language search parsed
+  /// once server-side; [filters] are exact dropdown values; [limit] sizes the
+  /// page (24 cards = 12 two-column rows); [cursor] continues a feed.
+  Future<ExplorePage> explore({
     String q = '',
     Map<String, String> filters = const {},
+    int limit = 24,
+    String? cursor,
   }) async {
-    final params = <String, String>{if (q.isNotEmpty) 'q': q, ...filters};
+    final params = <String, String>{
+      'limit': '$limit',
+      if (q.isNotEmpty) 'q': q,
+      if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+      ...filters,
+    };
     final uri = _uri('/explore').replace(queryParameters: params);
     final response = await _http.get(uri, headers: await _headers());
     if (response.statusCode != 200) {
@@ -227,10 +236,8 @@ class ApiClient {
         body: response.body,
       );
     }
-    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    return ((decoded['cards'] as List?) ?? [])
-        .map((c) => ExploreCard.fromMap(c as Map<String, dynamic>))
-        .toList();
+    return ExplorePage.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   /// `GET /explore/profile/{uid}` — another user's public profile: photos,
@@ -1444,9 +1451,21 @@ class ApiClient {
   }
 
   /// `POST /profiles/mini` — name + resolved photo URL for a batch of users
-  /// (message-list rows, match cards). `{uid: MiniProfile}`.
+  /// (message-list rows, match cards). `{uid: MiniProfile}`. Chunked at the
+  /// server's 100-uid cap so long conversation lists never 422 (Phase 2
+  /// pagination design §2.2).
   Future<Map<String, MiniProfile>> miniProfiles(List<String> uids) async {
     if (uids.isEmpty) return const {};
+    final out = <String, MiniProfile>{};
+    for (var i = 0; i < uids.length; i += 100) {
+      final end = i + 100 > uids.length ? uids.length : i + 100;
+      out.addAll(await _miniProfilesChunk(uids.sublist(i, end)));
+    }
+    return out;
+  }
+
+  Future<Map<String, MiniProfile>> _miniProfilesChunk(
+      List<String> uids) async {
     final r = await _http.post(
       _uri('/profiles/mini'),
       headers: await _headers(),
@@ -2577,6 +2596,35 @@ class BiometricConsentStatus {
 }
 
 /// One Explore feed card (§6.4).
+/// One page of the Explore feed (Phase 2 pagination design §3.1):
+/// the cards plus the opaque cursor for the next page. Tolerates the legacy
+/// `{cards}` shape (no cursor fields) during backend rollout.
+class ExplorePage {
+  const ExplorePage({
+    this.cards = const [],
+    this.nextCursor,
+    this.hasMore = false,
+  });
+
+  final List<ExploreCard> cards;
+  final String? nextCursor;
+  final bool hasMore;
+
+  factory ExplorePage.fromJson(Map<String, dynamic> m) {
+    final cards = ((m['cards'] as List?) ?? [])
+        .map((c) => ExploreCard.fromMap(c as Map<String, dynamic>))
+        .toList();
+    final rawCursor = m['next_cursor'] as String?;
+    final nextCursor =
+        (rawCursor == null || rawCursor.isEmpty) ? null : rawCursor;
+    return ExplorePage(
+      cards: cards,
+      nextCursor: nextCursor,
+      hasMore: m['has_more'] == true || nextCursor != null,
+    );
+  }
+}
+
 class ExploreCard {
   const ExploreCard({
     required this.uid,

@@ -151,36 +151,87 @@ class DmService {
     return u;
   }
 
-  Stream<List<DmThread>> watchThreads() {
+  /// Active conversations, newest first, bounded to [limit] (Phase 2
+  /// pagination design §3.2.1: the top-25 real-time tier). Older threads
+  /// page in on demand via [fetchOlderThreads].
+  Stream<List<DmThread>> watchThreads({int limit = 25}) {
     final me = uid;
-    return _db
-        .collection('dm_threads')
-        .where('participants', arrayContains: me)
+    return _threadsQuery(limit: limit)
         .snapshots()
-        .map((snap) {
-      final threads = snap.docs
-          .where((d) =>
-              !((d.data()['hidden_for'] as List?)?.cast<String>() ?? const [])
-                  .contains(me))
-          .map((d) {
-        final data = d.data();
-        final parts = (data['participants'] as List).cast<String>();
-        return DmThread(
-          threadId: d.id,
-          otherUid: parts.firstWhere((p) => p != me, orElse: () => ''),
-          lastMessageAt: (data['last_message_at'] as Timestamp?)?.toDate(),
-          unread: (((data['unread'] as Map?)?[me]) as num?)?.toInt() ?? 0,
-        );
-      }).toList()
-        ..sort((a, b) => (b.lastMessageAt ?? DateTime(0))
-            .compareTo(a.lastMessageAt ?? DateTime(0)));
-      return threads;
-    });
+        .map((snap) => _mapThreads(snap, me));
   }
 
-  /// Total unread DM messages across all visible threads (nav-bar badge).
-  Stream<int> watchTotalUnread() =>
-      watchThreads().map((ts) => ts.fold(0, (total, t) => total + t.unread));
+  Query<Map<String, dynamic>> _threadsQuery({int? limit}) {
+    Query<Map<String, dynamic>> q = _db
+        .collection('dm_threads')
+        .where('participants', arrayContains: uid)
+        .orderBy('last_message_at', descending: true);
+    if (limit != null) q = q.limit(limit);
+    return q;
+  }
+
+  List<DmThread> _mapThreads(
+    QuerySnapshot<Map<String, dynamic>> snap,
+    String me,
+  ) {
+    final threads = snap.docs
+        .where((d) =>
+            !((d.data()['hidden_for'] as List?)?.cast<String>() ?? const [])
+                .contains(me))
+        .map((d) {
+      final data = d.data();
+      final parts = (data['participants'] as List).cast<String>();
+      return DmThread(
+        threadId: d.id,
+        otherUid: parts.firstWhere((p) => p != me, orElse: () => ''),
+        lastMessageAt: (data['last_message_at'] as Timestamp?)?.toDate(),
+        unread: (((data['unread'] as Map?)?[me]) as num?)?.toInt() ?? 0,
+      );
+    }).toList()
+      ..sort((a, b) => (b.lastMessageAt ?? DateTime(0))
+          .compareTo(a.lastMessageAt ?? DateTime(0)));
+    return threads;
+  }
+
+  /// One-shot top-[limit] threads, newest first — the idle tab warm-up's
+  /// conversation snapshot (design §4.2). Same query as [watchThreads].
+  Future<List<DmThread>> fetchActiveThreads({int limit = 25}) async {
+    final me = uid;
+    final snap = await _threadsQuery(limit: limit).get();
+    return _mapThreads(snap, me);
+  }
+
+  /// Total unread DM messages across ALL visible threads (nav-bar badge).
+  /// Deliberately unbounded: the badge must count threads past the §3.2.1
+  /// top-25 listener tier too.
+  Stream<int> watchTotalUnread() {
+    final me = uid;
+    return _threadsQuery()
+        .snapshots()
+        .map((snap) => _mapThreads(snap, me)
+            .fold(0, (total, t) => total + t.unread));
+  }
+
+  /// One-shot archive page (design §3.2.3): up to [limit] threads older
+  /// than [lastThreadId] (exclusive), newest first. Callers deduplicate by
+  /// thread id against the live tier (design §6.2). A deleted anchor ends
+  /// the archive rather than erroring it.
+  Future<List<DmThread>> fetchOlderThreads({
+    required String lastThreadId,
+    int limit = 25,
+  }) async {
+    final me = uid;
+    final anchor = await _db.doc('dm_threads/$lastThreadId').get();
+    if (!anchor.exists) return const [];
+    final snap = await _db
+        .collection('dm_threads')
+        .where('participants', arrayContains: me)
+        .orderBy('last_message_at', descending: true)
+        .startAfterDocument(anchor)
+        .limit(limit)
+        .get();
+    return _mapThreads(snap, me);
+  }
 
   /// Mark [threadId] read for me: zero my unread counter and stamp my read
   /// cursor. Writes only my own entries (see `firestore.rules`). Best-effort —
@@ -264,13 +315,45 @@ class DmService {
   /// Block & report the other participant (§6.5); hides the thread for us.
   Future<void> block(String otherUid) => _api.block(otherUid);
 
-  Stream<List<DmMessage>> watchMessages(String threadId) => _db
-      .collection('dm_threads/$threadId/messages')
-      .orderBy('created_at')
-      .snapshots()
-      .map((snap) => snap.docs
-          .map((d) => DmMessage.fromData(d.id, d.data()))
-          .toList());
+  /// Newest [limit] messages as a live tail, oldest-first (Phase 2
+  /// pagination design §3.3.1). Older history pages in on demand via
+  /// [fetchOlderMessages]. Oldest-first is the established contract (see
+  /// [assist]); the DESC limit is applied server-side.
+  Stream<List<DmMessage>> watchMessages(String threadId, {int limit = 30}) =>
+      _db
+          .collection('dm_threads/$threadId/messages')
+          .orderBy('created_at', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((snap) => snap.docs
+              .map((d) => DmMessage.fromData(d.id, d.data()))
+              .toList()
+              .reversed
+              .toList());
+
+  /// One-shot history page (design §3.3.2): up to [limit] messages older
+  /// than [lastMessageId] (exclusive), oldest-first. A deleted anchor ends
+  /// history rather than erroring it.
+  Future<List<DmMessage>> fetchOlderMessages(
+    String threadId, {
+    required String lastMessageId,
+    int limit = 30,
+  }) async {
+    final anchor =
+        await _db.doc('dm_threads/$threadId/messages/$lastMessageId').get();
+    if (!anchor.exists) return const [];
+    final snap = await _db
+        .collection('dm_threads/$threadId/messages')
+        .orderBy('created_at', descending: true)
+        .startAfterDocument(anchor)
+        .limit(limit)
+        .get();
+    return snap.docs
+        .map((d) => DmMessage.fromData(d.id, d.data()))
+        .toList()
+        .reversed
+        .toList();
+  }
 
   Future<void> sendText(String threadId, String text) =>
       _api.sendDmMessage(threadId, type: 'text', body: text);

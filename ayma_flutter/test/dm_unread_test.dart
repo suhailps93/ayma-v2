@@ -25,7 +25,8 @@ Future<void> _thread(FakeFirebaseFirestore fs, String other, int unread) =>
 class _NoMatches extends MatchService {
   _NoMatches() : super(auth: _auth());
   @override
-  Stream<List<MatchView>> watchMutualMatches() => Stream.value(const []);
+  Stream<List<MatchView>> watchMutualMatches({int limit = 25}) =>
+      Stream.value(const []);
 }
 
 class _NoApi extends ApiClient {

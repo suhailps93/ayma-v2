@@ -176,6 +176,33 @@ class _DocRef:
         return _CollRef(self.store, self.key + (name,))
 
 
+class _Query:
+    def __init__(self, store, key, limit_n=None, start_after_id=None):
+        self.store, self.key = store, key
+        self._limit = limit_n
+        self._start_after_id = start_after_id
+
+    def limit(self, n):
+        return _Query(self.store, self.key, n, self._start_after_id)
+
+    def start_after(self, snap):
+        return _Query(self.store, self.key, self._limit, snap.id)
+
+    def stream(self):
+        d = len(self.key)
+        rows = sorted(
+            (k[-1], v)
+            for k, v in list(self.store.docs.items())
+            if len(k) == d + 1 and k[:d] == self.key and v is not None
+        )
+        if self._start_after_id is not None:
+            rows = [(i, v) for i, v in rows if i > self._start_after_id]
+        if self._limit is not None:
+            rows = rows[: self._limit]
+        for i, v in rows:
+            yield _Snap(i, v)
+
+
 class _CollRef:
     def __init__(self, store, key):
         self.store, self.key = store, key
@@ -189,6 +216,13 @@ class _CollRef:
             if len(k) == d + 1 and k[:d] == self.key and v is not None:
                 yield _Snap(k[-1], v)
 
+    def order_by(self, field):
+        assert field == "__name__", field
+        return _Query(self.store, self.key)
+
+    def limit(self, n):
+        return _Query(self.store, self.key, limit_n=n)
+
 
 class FakeDb:
     def __init__(self):
@@ -196,6 +230,9 @@ class FakeDb:
 
     def collection(self, name):
         return _CollRef(self, (name,))
+
+    def get_all(self, refs):
+        return [r.get() for r in refs]
 
 
 def _u(db, uid, **profile):
@@ -369,6 +406,20 @@ def test_explore_never_shows_two_cards_for_the_same_person():
     different percentages), Explore must still emit exactly one card per
     person."""
 
+    class _DupQuery:
+        def __init__(self, real):
+            self._real = real
+
+        def limit(self, n):
+            return _DupQuery(self._real.limit(n))
+
+        def start_after(self, snap):
+            return _DupQuery(self._real.start_after(snap))
+
+        def stream(self):
+            snaps = list(self._real.stream())
+            return iter(snaps + snaps)  # simulate a duplicated doc id
+
     class _DupUsersColl:
         def __init__(self, real):
             self._real = real
@@ -379,6 +430,12 @@ def test_explore_never_shows_two_cards_for_the_same_person():
         def stream(self):
             snaps = list(self._real.stream())
             return iter(snaps + snaps)  # simulate a duplicated doc id
+
+        def order_by(self, field):
+            return _DupQuery(self._real.order_by(field))
+
+        def limit(self, n):
+            return _DupQuery(self._real.limit(n))
 
     class _DupDb:
         def __init__(self, real):
@@ -459,3 +516,91 @@ def test_explore_card_thumb_falls_back_to_original_when_variant_absent(monkeypat
     cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
     card = cards["hasphoto"]
     assert card["photo_url_thumb"] == card["photo_url"]  # == original
+
+
+# --- explore_page() cursor pagination ----------------------------------------
+
+def _seed_roster(db, n, prefix="u"):
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    for i in range(n):
+        _u(db, f"{prefix}{i:02d}", location="X", birthdate="1993-01-01")
+
+
+def test_cursor_round_trip_and_malformed_restarts_page_one():
+    token = ex._encode_cursor("u07")
+    assert ex._decode_cursor(token) == "u07"
+    assert ex._decode_cursor(None) is None
+    assert ex._decode_cursor("") is None
+    assert ex._decode_cursor("not-a-cursor!!!") is None
+    assert ex._decode_cursor("e30=") is None  # valid base64, no last_uid
+
+
+def test_explore_page_walks_disjoint_pages_to_exhaustion():
+    db = FakeDb()
+    _seed_roster(db, 5)
+    seen: set[str] = set()
+    cursor = None
+    pages = 0
+    while True:
+        cards, cursor = ex.explore_page(db, "me", {}, limit=2, cursor=cursor)
+        pages += 1
+        ids = [c["uid"] for c in cards]
+        assert not (set(ids) & seen), f"page {pages} repeats {set(ids) & seen}"
+        seen.update(ids)
+        if cursor is None:
+            break
+        assert pages < 10, "pagination did not terminate"
+    # me + 5 users, all reachable across pages, page 1 self-pinned.
+    assert seen == {"me", "u00", "u01", "u02", "u03", "u04"}
+    first, _ = ex.explore_page(db, "me", {}, limit=2)
+    assert first[0]["uid"] == "me"
+
+
+def test_explore_page_pins_self_first_even_when_uid_sorts_late():
+    db = FakeDb()
+    _u(db, "zzz-me", location="X", birthdate="1994-01-01")
+    _u(db, "aaa", location="X", birthdate="1993-01-01")
+    _u(db, "mmm", location="X", birthdate="1993-01-01")
+    cards, cursor = ex.explore_page(db, "zzz-me", {}, limit=2)
+    assert cards[0]["uid"] == "zzz-me"
+    assert cursor is not None
+    # ... and self never repeats on later pages.
+    rest, _ = ex.explore_page(db, "zzz-me", {}, limit=2, cursor=cursor)
+    assert "zzz-me" not in {c["uid"] for c in rest}
+
+
+def test_explore_page_prefers_batched_get_all():
+    db = FakeDb()
+    _seed_roster(db, 3)
+    calls = []
+    real_get_all = FakeDb.get_all
+
+    def _counting(self, refs):
+        calls.append(len(refs))
+        return real_get_all(self, refs)
+
+    FakeDb.get_all = _counting
+    try:
+        cards, _ = ex.explore_page(db, "me", {}, limit=10)
+    finally:
+        FakeDb.get_all = real_get_all
+    assert len(cards) == 4
+    assert calls, "expected at least one batched get_all"
+    # One candidate batch (profile + blocks + likes + match + cand refs),
+    # not one round trip per candidate per doc.
+    assert len(calls) <= 2, f"too many batch rounds: {calls}"
+
+
+def test_explore_page_empty_roster_and_unknown_caller():
+    db = FakeDb()
+    cards, cursor = ex.explore_page(db, "ghost", {}, limit=10)
+    assert cards == [] and cursor is None
+
+
+def test_explore_legacy_limit_truncates_after_global_sort():
+    db = FakeDb()
+    _seed_roster(db, 6)
+    cards = ex.explore(db, "me", {}, limit=3)
+    assert [c["uid"] for c in cards][0] == "me"
+    assert len(cards) == 3
+    assert ex.explore(db, "me", {}, limit=0) == []

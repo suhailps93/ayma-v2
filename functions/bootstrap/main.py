@@ -2555,10 +2555,14 @@ async def explore(
     age_min: int | None = None,
     age_max: int | None = None,
     limit: int = 30,
+    cursor: str = "",
     uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
-    """Live Explore feed (§6.1). ``q`` is parsed once into the filter schema;
-    dropdown params override it."""
+    """Live Explore feed (§6.1), cursor-paginated (Phase 2 pagination design
+    §3.1). ``q`` is parsed once into the filter schema; dropdown params
+    override it. ``limit`` defaults to 30 (unchanged prod default — the
+    paged client sends 24 explicitly); ``cursor`` pages forward, and the
+    response adds ``next_cursor`` (``None`` at the end) plus ``has_more``."""
     try:
         nl = await explore_mod.parse_nl_query(q, uid=uid) if q.strip() else {}
     except Exception:  # noqa: BLE001 - a bad NL parse falls back to no filter
@@ -2580,13 +2584,23 @@ async def explore(
     except Exception:  # noqa: BLE001 - no saved range just means no default
         logger.warning("explore: saved age range read failed", exc_info=True)
     try:
-        cards = await asyncio.to_thread(
-            explore_mod.explore, get_db(), uid, filters, min(limit, 60)
+        cards, next_cursor = await asyncio.to_thread(
+            explore_mod.explore_page,
+            get_db(),
+            uid,
+            filters,
+            max(1, min(limit, 60)),
+            cursor or None,
         )
     except Exception:  # noqa: BLE001 - Explore must render even if the feed errors
         logger.exception("explore: feed build failed for %s", uid)
-        cards = []
-    return {"cards": cards, "filters_applied": filters}
+        cards, next_cursor = [], None
+    return {
+        "cards": cards,
+        "next_cursor": next_cursor,
+        "has_more": next_cursor is not None,
+        "filters_applied": filters,
+    }
 
 
 @app.get("/explore/profile/{other_uid}")

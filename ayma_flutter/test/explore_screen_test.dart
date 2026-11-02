@@ -470,4 +470,126 @@ void main() {
         .toList();
     expect(urls, contains('https://x/full.jpg'));
   });
+
+  testWidgets('scrolling near the bottom appends the next page in place',
+      (tester) async {
+    ExploreScreenState.debugFlingVelocityThreshold = double.infinity;
+    addTearDown(
+        () => ExploreScreenState.debugFlingVelocityThreshold = 2500);
+
+    final seenCursors = <String?>[];
+    final api = _pagedApi(
+      seenCursors: seenCursors,
+      pages: (cursor) => cursor == null
+          ? _cardMaps('P1', 10)
+          : _cardMaps('P2', 5, age: 30),
+    );
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('P1-0'), findsOneWidget);
+    expect(find.text('P2-0'), findsNothing);
+
+    for (var i = 0; i < 8; i++) {
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pumpAndSettle();
+
+    expect(seenCursors, contains('c2')); // page 2 was fetched by cursor
+    await tester.scrollUntilVisible(find.text('P2-4'), 500,
+        scrollable: find.descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable)));
+    await tester.pumpAndSettle();
+    expect(find.text('P2-4'), findsOneWidget); // appended, page 1 kept
+    expect(seenCursors.where((c) => c == 'c2'), hasLength(1)); // fetched once
+  });
+
+  testWidgets('a failed next page keeps page 1 with a retry footer',
+      (tester) async {
+    ExploreScreenState.debugFlingVelocityThreshold = double.infinity;
+    addTearDown(
+        () => ExploreScreenState.debugFlingVelocityThreshold = 2500);
+
+    final seenCursors = <String?>[];
+    final failPage2 = [true]; // page-2 fetches fail until the retry tap
+    final api = _pagedApi(
+      seenCursors: seenCursors,
+      failPage2: failPage2,
+      pages: (cursor) => cursor == null
+          ? _cardMaps('P1', 10)
+          : _cardMaps('P2', 5, age: 30),
+    );
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 8; i++) {
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pumpAndSettle();
+
+    expect(seenCursors, contains('c2'));
+    expect(find.text('P2-0'), findsNothing);
+    await tester.scrollUntilVisible(
+        find.text('Could not load more \u00b7 Tap to retry'), 500,
+        scrollable: find.descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable)));
+    expect(
+        find.text('Could not load more \u00b7 Tap to retry'), findsOneWidget);
+
+    failPage2[0] = false; // the retry succeeds
+    await tester.tap(find.text('Could not load more \u00b7 Tap to retry'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('P2-4'), 500,
+        scrollable: find.descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable)));
+    await tester.pumpAndSettle();
+    expect(find.text('P2-4'), findsOneWidget); // retry appended page 2
+    await tester.scrollUntilVisible(find.text('P1-0'), -500,
+        scrollable: find.descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable)));
+    await tester.pumpAndSettle();
+    expect(find.text('P1-0'), findsOneWidget); // page 1 retained throughout
+  });
+
 }
+
+ApiClient _pagedApi({
+  required List<Map<String, dynamic>> Function(String? cursor) pages,
+  required List<String?> seenCursors,
+  List<bool>? failPage2,
+}) {
+  return ApiClient(
+    auth: MockFirebaseAuth(signedIn: true),
+    httpClient: MockClient((req) async {
+      if (req.url.path == '/explore') {
+        final cursor = req.url.queryParameters['cursor'];
+        seenCursors.add(cursor);
+        if (cursor != null && (failPage2?.isNotEmpty ?? false) && failPage2!.first) {
+          return http.Response('net down', 500);
+        }
+        final cards = pages(cursor);
+        final last = cursor != null;
+        return http.Response(
+            jsonEncode({
+              'cards': cards,
+              if (!last) 'next_cursor': 'c2',
+              'has_more': !last,
+            }),
+            200);
+      }
+      return http.Response('no', 404);
+    }),
+  );
+}
+
+List<Map<String, dynamic>> _cardMaps(String prefix, int n, {int age = 25}) => [
+      for (var i = 0; i < n; i++)
+        {'uid': '$prefix-$i', 'name': '$prefix-$i', 'age': age + i,
+         'location': 'X'},
+    ];
