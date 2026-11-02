@@ -13,6 +13,7 @@ import '../services/app_context.dart';
 import '../services/screen_capture.dart';
 import '../services/biometric_consent.dart';
 import '../services/dev_panel_session.dart';
+import '../services/tab_request.dart';
 import '../screens/biometric_consent_screen.dart';
 import '../screens/biometric_consent_settings_screen.dart';
 import '../screens/biometric_info_screen.dart';
@@ -492,9 +493,20 @@ final appRouter = GoRouter(
 /// lives under — and tests that pump it with their own router observe the
 /// navigation); otherwise the app-wide [appRouter] (the context-less tap /
 /// drain / Ayma-command paths). [router] overrides both, for direct unit tests.
+///
+/// The root shell holds four tabs and can already be live on any of them (J1
+/// LEG2: `go` reuses the single shell rather than `push`ing a duplicate). The
+/// root-shell deep link (`deepLinkToRoute` → '/', the web-search/skill-result/
+/// chat notification) means "show the chat", where the report card lives — so
+/// before the `go` we post a [TabRequest] for the Ayma/chat tab. A reused shell
+/// switches to it via its live `_consumeTabRequest` listener; a freshly-built
+/// one consumes the same request in `initState` (and already defaults to chat).
+/// Deep links that target another tab resolve to their own routes (`/matches`,
+/// …) and take the `push` branch, so they are untouched (§11.5).
 void navigateToRoute(String path, {BuildContext? context, GoRouter? router}) {
   final r = router ?? (context != null ? GoRouter.of(context) : appRouter);
   if (path == MainShellScreen.path) {
+    TabRequest.instance.request(MainShellScreen.aymaTabIndex);
     r.go(path);
   } else {
     r.push(path);

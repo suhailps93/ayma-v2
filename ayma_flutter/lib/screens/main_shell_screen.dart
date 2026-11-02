@@ -59,6 +59,12 @@ class MainShellScreen extends StatefulWidget {
 
   static const path = '/';
 
+  /// Slot of the Ayma / chat tab in the shell's [IndexedStack] — the home for
+  /// Ayma chat, where a web-search / skill-result report card is posted. The
+  /// root-shell deep link (`deepLinkToRoute` → '/') targets this tab via a
+  /// [TabRequest] so a reused live shell switches to it (see [navigateToRoute]).
+  static const aymaTabIndex = 0;
+
   /// Test-only injection point (mirrors [ChatScreen]'s own
   /// `voiceController`/`transcriptStore` params) — production always lets the
   /// shell fall through to the shared [AymaSession].
