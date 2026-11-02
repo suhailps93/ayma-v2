@@ -73,6 +73,8 @@ class StartupDAG {
     _nodes[node.id] = node;
   }
 
+  void register(StartupNode<dynamic> node) => addNode(node);
+
   void addEdge(String from, String to) {
     if (_nodes.containsKey(to)) {
       _nodes[to]!.dependencies.add(from);

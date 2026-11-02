@@ -1,19 +1,23 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../legal/biometric_consent_text.dart';
+import '../models/boot_config.dart';
 import '../routing/entry.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
+import '../services/deep_link_queue.dart';
 import '../services/report_cache.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/overflow_guards.dart';
 import 'biometric_consent_screen.dart';
+import 'main_shell_screen.dart';
 import 'sign_in_screen.dart';
 import 'underage_screen.dart';
 
@@ -160,21 +164,14 @@ class _SplashScreenState extends State<SplashScreen> {
     // bootstrap in the backend"). When we have a cached entry route for THIS
     // signed-in uid, paint the last-known UI immediately and move the full
     // bootstrap to the background — it corrects the route if the session has
-    // actually changed. Gated on BOTH a non-anonymous signed-in user (checked
-    // above) AND a cached route for that exact uid, so we never flash a
-    // signed-in UI for a user we have no record of, nor one belonging to a
-    // different account. Only the plain entry route is ever cached (see
-    // [_cacheEntryRoute]), so the optimistic replay can't show a stale
-    // consent / underage / recover gate. No cache (first run, or just after a
-    // sign-out cleared it) falls through to the original blocking resolve,
-    // with its watchdog / retry / backoff hardening fully intact.
-    final cachedRoute = await ReportCache.instance.readBootRoute(user.uid);
+    // actually changed.
+    final cachedConfig = await ReportCache.instance.readBootConfig(user.uid);
+    final cachedRoute = cachedConfig?.entryRoute ??
+        await ReportCache.instance.readBootRoute(user.uid);
     if (cachedRoute != null && cachedRoute.isNotEmpty && mounted) {
       _inFlight = false;
-      // Capture the router now: after we navigate, this widget's context is
-      // gone, so the background correction navigates via the router instance
-      // (which outlives the splash) rather than a stale context.
       final router = GoRouter.of(context);
+      DeepLinkQueue.instance.notifyNavigationSettled();
       router.go(cachedRoute);
       unawaited(_backgroundBootstrap(user.uid, auth, cachedRoute, router));
       return;
@@ -182,11 +179,14 @@ class _SplashScreenState extends State<SplashScreen> {
 
     _attempt++;
     try {
-      final result = await widget.apiClient!.bootstrap(sessionId: '');
+      final result = await widget.apiClient!
+          .bootstrap(sessionId: '')
+          .timeout(const Duration(milliseconds: 2500));
       if (!mounted) return;
       final route = await _resolveRoute(result);
       if (!mounted) return;
       _cacheEntryRoute(user.uid, result, route);
+      DeepLinkQueue.instance.notifyNavigationSettled();
       context.go(route);
     } on AuthSessionException catch (e) {
       // The restored auth session is unusable (keystore / decrypt failure after
@@ -217,8 +217,11 @@ class _SplashScreenState extends State<SplashScreen> {
         retryable: _isRetryable(e),
       );
     } catch (e) {
-      // SocketException / TimeoutException / Firebase network errors surface
-      // here — all transient plumbing failures, so retry rather than giving up.
+      // Degraded network / timeout: try local Firestore cache heuristic before
+      // surfacing the retry state (§5.4).
+      if (await _tryFirestoreCacheFallback(user.uid)) {
+        return;
+      }
       if (!mounted) return;
       _onTransientFailure(
         "Couldn't connect. Check your connection and try again.",
@@ -227,6 +230,28 @@ class _SplashScreenState extends State<SplashScreen> {
     } finally {
       _inFlight = false;
     }
+  }
+
+  Future<bool> _tryFirestoreCacheFallback(String uid) async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('profile')
+          .doc('main')
+          .get(const GetOptions(source: Source.cache))
+          .timeout(const Duration(milliseconds: 300));
+      final data = snap.data();
+      final hasCompleted = snap.exists &&
+          ((data?['name'] != null && data?['birthdate'] != null) ||
+              data?['onboarding_completed'] == true);
+      if (hasCompleted && mounted) {
+        DeepLinkQueue.instance.notifyNavigationSettled();
+        context.go(MainShellScreen.path);
+        return true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   /// Turns a successful [BootstrapResult] into the route to land on, applying
@@ -261,6 +286,16 @@ class _SplashScreenState extends State<SplashScreen> {
   void _cacheEntryRoute(String uid, BootstrapResult result, String route) {
     if (route == entryRouteFor(result.sessionMode)) {
       unawaited(ReportCache.instance.writeBootRoute(uid, route));
+      final config = BootConfig(
+        uid: uid,
+        sessionMode: result.sessionMode,
+        entryRoute: route,
+        cachedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+        biometricConsentRequiredHint: result.biometricConsentRequired,
+        ageBlockedHint: result.ageBlocked,
+        recoveryRequiredHint: result.recoveryRequired,
+      );
+      unawaited(ReportCache.instance.writeBootConfig(uid, config));
     }
   }
 

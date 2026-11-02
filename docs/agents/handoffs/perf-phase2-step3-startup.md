@@ -6,7 +6,7 @@
 **Base Commit**: `75eb2d2` (`origin/staging`)  
 **Author**: Antigravity (Engineer)  
 **Date**: 2026-11-01  
-**Status**: IN PROGRESS (Stage 3 Complete)
+**Status**: IN PROGRESS (Stage 4 Complete)
 
 ---
 
@@ -49,11 +49,12 @@ Target performance budgets:
   - Updated `ayma_flutter/lib/services/push_service.dart`: Added `ensureReady()` / `initDeferred()` and delegated cold/warm taps to `DeepLinkQueue.instance.handleIntent` while retaining backwards-compatible `resolveRoute` fallback.
   - Tests added: `ayma_flutter/test/launch_intent_resolver_test.dart` (4/4 passed), `ayma_flutter/test/deep_link_queue_test.dart` (3/3 passed), `ayma_flutter/test/push_service_test.dart` (13/13 passed).
 
-- [ ] **Stage 4: Main Entrypoint & SplashScreen Integration**
-  - Create `ayma_flutter/lib/core/dag/startup_nodes.dart` defining node catalog factories (N1 through N19).
-  - Refactor `main.dart` to assemble and execute `StartupDAG` up to N8, dynamic promotion, and trigger post-frame background DAG unawaited.
-  - Refactor `SplashScreen` to use optimistic `BootConfig`, 2.5s budget, and background refresher.
-  - Update existing tests (`splash_optimistic_boot_test.dart`, `splash_timeout_test.dart`).
+- [x] **Stage 4: Main Entrypoint & SplashScreen Integration**
+  - Created `ayma_flutter/lib/core/dag/startup_nodes.dart` defining node catalog factories for all 19 startup nodes (`N1` through `N19`) with M2/M6/M7 edge corrections.
+  - Refactored `ayma_flutter/lib/main.dart` to assemble `StartupDAG`, run `LaunchIntentResolver.extract()`, apply dynamic promotion (`configureDAGForIntent`), and execute pre-frame nodes up to `N8` (`first_frame_mount`), with remaining nodes scheduled concurrently in the background. Retained `guardStartupStep` for backward test compatibility.
+  - Refactored `ayma_flutter/lib/screens/splash_screen.dart` to read optimistic `BootConfig` on tick 0 via `ReportCache.instance.readBootConfig`, enforce 2.5s foreground budget on cache miss, apply local Firestore cache heuristic fallback (`Source.cache` checking `name` + `birthdate` and `onboarding_completed`), write `BootConfig` updates, and trigger `DeepLinkQueue.instance.notifyNavigationSettled()`.
+  - Connected `setupAuthDeepLinkDrain()` in `ayma_flutter/lib/routing/app_router.dart`.
+  - Tests added: `ayma_flutter/test/startup_nodes_test.dart` (3/3 passed). Existing splash tests (`splash_routing_test.dart`, `splash_optimistic_boot_test.dart`, `splash_timeout_test.dart`) and `startup_guard_test.dart` 100% green.
 
 - [ ] **Stage 5: Full Verification & Layout Matrix**
   - Full Flutter suite clean (1320+ tests).
