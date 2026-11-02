@@ -2599,8 +2599,11 @@ async def _deliver_deep_dive_result(
 
     Each side-effect lands at most once even across retries (re-appending would
     double the card), so the loop only re-attempts the parts still outstanding.
-    Returns True only when every requested side-effect was delivered. This path
-    never meters: the dive's spend is recorded exactly once inside
+    The CARD is the in-app delivery (the user sees the report in chat) and alone
+    decides success; the PUSH is a best-effort nudge that is retried but never
+    gates the result, because it legitimately fails on a device with no valid
+    FCM token (e.g. an emulator). Returns True once the card has landed. This
+    path never meters: the dive's spend is recorded exactly once inside
     ``deep_dive.run`` and is deliberately kept off the retry loop so a retry can
     never double-charge."""
     card_done = False
@@ -2629,7 +2632,19 @@ async def _deliver_deep_dive_result(
             )
             if attempt < _DEEP_DIVE_DELIVERY_ATTEMPTS:
                 await asyncio.sleep(_DEEP_DIVE_DELIVERY_BACKOFF * attempt)
-    return card_done and notify_done
+    # Retries exhausted. The CARD is the in-app delivery — the user sees the
+    # report in chat — so it alone gates the run to `done`. The PUSH is only a
+    # best-effort nudge and legitimately fails on a device with no valid FCM
+    # token (e.g. an emulator), so a push-only failure must NOT fail the run or
+    # hide the card. Report success on the card; warn if the push never landed.
+    if card_done and not notify_done:
+        logger.warning(
+            "deep-dive push could not be delivered for %s after %d attempts; "
+            "the card is in place, so the run is delivered (push is "
+            "best-effort)",
+            uid, _DEEP_DIVE_DELIVERY_ATTEMPTS,
+        )
+    return card_done
 
 
 async def _finish_deep_dive(
@@ -2638,9 +2653,9 @@ async def _finish_deep_dive(
     """Shared tail for a deep dive (cache hit or fresh): persist, drop Ayma's
     summary into the transcript, optionally push, and shape the response.
 
-    ``"delivered"`` in the returned dict reports whether the user-visible
-    side-effects (card + push) actually landed, so the background job can wait
-    to mark the run ``done`` until they did."""
+    ``"delivered"`` in the returned dict reports whether the user-visible CARD
+    landed (the push is best-effort and never gates this), so the background
+    job can wait to mark the run ``done`` until the card is actually in place."""
     # Only a lookup on *yourself* belongs in your wiki / Your Story. Research on
     # someone you're meeting is a private note for the chat + the reuse cache,
     # never your own story.
@@ -2729,12 +2744,14 @@ async def _deep_dive_job(
     even if the app is backgrounded or closed. Delivers via a push + the chat
     transcript. Never raises.
 
-    Finishes the run doc the endpoint opened only once the user-visible
-    side-effects actually landed: ``done`` when the digest is stored AND the
-    card + push were delivered, ``failed`` otherwise (digest failed, or it
-    succeeded server-side but the card/push could not be delivered even after
-    the bounded retry). Marking ``done`` before delivery once let a run read
-    ``done`` server-side while the user got no card and no notification (QA
+    Finishes the run doc the endpoint opened only once the user-visible CARD
+    actually landed: ``done`` when the digest is stored AND the card was
+    delivered, ``failed`` otherwise (digest failed, or it succeeded server-side
+    but the card could not be delivered even after the bounded retry). The push
+    is best-effort — it is retried but a final push failure never fails the run
+    or hides the card (it legitimately fails on a device with no valid FCM
+    token, e.g. an emulator). Marking ``done`` before delivery once let a run
+    read ``done`` server-side while the user got no card and no notification (QA
     00:41); the spend, metered inside ``deep_dive.run`` before this point, is
     never re-charged by the delivery retry. A job killed before its ``finally``
     is caught by the stale-run timeout in :func:`deep_dive.run_status`."""
@@ -2753,11 +2770,11 @@ async def _deep_dive_job(
             logger.exception("deep-dive job failed for %s", uid)
             return
         # Digest stored and spend already metered inside run(). Deliver the
-        # card + push BEFORE marking the run done — delivery has its own
-        # bounded retry, so only flip to `done` when it confirms the user
-        # actually got the result. On failure leave the run `failed` (honest +
-        # recoverable: the report is written, so it still opens from history)
-        # rather than a false `done`.
+        # card (and best-effort push) BEFORE marking the run done — delivery has
+        # its own bounded retry, so only flip to `done` once the card confirms
+        # the user actually got the result. If the card can't be delivered,
+        # leave the run `failed` (honest + recoverable: the report is written,
+        # so it still opens from history) rather than a false `done`.
         delivered = False
         try:
             result = await _finish_deep_dive(
@@ -2771,8 +2788,8 @@ async def _deep_dive_job(
         else:
             logger.error(
                 "deep-dive job for %s/%s completed server-side but could not "
-                "deliver the card/notification after retries; leaving the run "
-                "recoverable (not `done`)", uid, report_id,
+                "deliver the card after retries (push is best-effort); leaving "
+                "the run recoverable (not `done`)", uid, report_id,
             )
     finally:
         await asyncio.to_thread(deep_dive.mark_run, get_db(), uid, report_id, status)

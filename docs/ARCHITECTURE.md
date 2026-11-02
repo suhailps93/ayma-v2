@@ -386,12 +386,17 @@ flowchart LR
   deep-dive card + push are delivered by `_deliver_deep_dive_result` with a bounded in-job retry (3 attempts, short
   growing backoff) so a transient Firestore/push blip self-heals server-side (founder: auto-retry, no user tap); each
   side-effect lands at most once across retries, and the non-essential wiki writes (`skill_memory.save_web_findings`
-  / `promote`) are guarded so a failure there can never skip the card + push + the already-metered spend.
+  / `promote`) are guarded so a failure there can never skip the card + push + the already-metered spend. **The CARD
+  is the in-app delivery (the user sees the report in chat) and alone gates success; the PUSH is a best-effort nudge**
+  — retried, but a final push failure logs a warning and never fails the run or hides the card, because a push
+  legitimately fails on a device with no valid FCM token (e.g. an emulator). `_deliver_deep_dive_result` returns True
+  once the card has landed.
 - *Web research run status*: `POST /deep-dive` writes `users/{caller}/deep_dive_runs/{report_id}` as `running`
   before queueing the job. The job meters the spend exactly once inside `deep_dive.run` (never on the delivery retry,
-  so no double-charge) and uses **deliver-then-mark**: its `finally` writes `done` only after the card + push are
-  confirmed delivered, else `failed` (search error, credit cap, cancellation, or delivery that couldn't be completed
-  even after retries — the report is still written, so it stays openable from history). `GET /deep-dive-report/{id}`
+  so no double-charge) and uses **deliver-then-mark**: its `finally` writes `done` only after the **card** is
+  confirmed delivered (card = required-for-done; push = best-effort, never gates it), else `failed` (search error,
+  credit cap, cancellation, or the card couldn't be delivered even after retries — the report is still written, so it
+  stays openable from history). `GET /deep-dive-report/{id}`
   returns it as `run_status`; a run still `running` after
   `RUN_STALE_MINUTES` (10, e.g. an instance killed mid-job) is rewritten to `failed` on that read. The report
   screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`

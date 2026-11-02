@@ -1175,6 +1175,55 @@ def test_job_retry_after_notify_failure_does_not_duplicate_card_or_recharge(
     assert marked == [main.deep_dive.RUN_DONE]
 
 
+def test_job_marks_done_when_only_the_push_fails_and_card_lands(monkeypatch):
+    """Card = in-app delivery that gates `done`; push = best-effort nudge.
+
+    A finish where the PUSH fails on EVERY attempt (the emulator case — no valid
+    FCM token) but the CARD succeeds must still end `done`: the user sees the
+    report in chat, so a dead push must not fail the run or hide the card. The
+    card lands exactly once and run() (the one metering site) runs once — no
+    duplicate card, no double-charge. (QA rev-00076 refresh: a persistent-push
+    failure used to flip the whole run to `failed`.)"""
+    _patch_finish_env(monkeypatch)
+    runs = []
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        runs.append(uid)
+        return {**_DIGEST, "name": name, "is_self": True}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append(text),
+    )
+    notify_attempts = {"n": 0}
+
+    async def _dead_push(_db, uid, preview, deep_link):
+        notify_attempts["n"] += 1
+        raise RuntimeError("no FCM token on this device")
+
+    monkeypatch.setattr(
+        main.notifications_triggers, "notify_skill_done", _dead_push
+    )
+    marked = []
+    monkeypatch.setattr(
+        main.deep_dive, "mark_run",
+        lambda _db, uid, rid, status: marked.append(status),
+    )
+
+    _run(main._deep_dive_job("me", "Me", "", True, "", True))
+    # Card present → run is delivered → `done`, despite the push never landing.
+    assert marked == [main.deep_dive.RUN_DONE]
+    assert len(appended) == 1  # card appended exactly once (never duplicated)
+    assert len(runs) == 1  # metered exactly once — no double-charge
+    # The push was genuinely retried the full bounded number of times…
+    assert notify_attempts["n"] == main._DEEP_DIVE_DELIVERY_ATTEMPTS
+    # …then given up on as best-effort, not escalated to a run failure.
+
+
 def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
     stored = {
         "digest": {**_DIGEST, "name": "Dana Reyes"},
@@ -2193,8 +2242,12 @@ def test_job_marks_its_run_done_after_storing_the_dive(monkeypatch):
     async def _fake_run(*a, **k):
         return {**_DIGEST, "name": "Me"}
 
+    # Done now requires the user-visible card to have been delivered, which
+    # `_finish_deep_dive` reports via `delivered` (card gates done; push is
+    # best-effort). A stored-but-undelivered dive stays `failed` — see
+    # test_job_does_not_mark_done_when_delivery_keeps_failing.
     async def _finish(*a, **k):
-        return {}
+        return {"delivered": True}
 
     monkeypatch.setattr(main.deep_dive, "run", _fake_run)
     monkeypatch.setattr(main, "_finish_deep_dive", _finish)
