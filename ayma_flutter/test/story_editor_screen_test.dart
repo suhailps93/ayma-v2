@@ -1039,4 +1039,81 @@ void main() {
     expect(call['page_id'], 'career');
     expect(call['timeline_entry_id'], 'e1');
   });
+
+  // --- privacy: the cover stats header never shows another account's data ---
+  //
+  // R2-C6/C7 regression. The "N TOPICS / N PHOTOS / N WEB FINDS" cover
+  // (`_StoryCover`) is derived from the story screen's own in-memory
+  // `_sections`/`_photos`, loaded once in `initState` for whoever was signed
+  // in then. If the signed-in user changes while this screen stays mounted
+  // (e.g. a route left over from an account switch), it must NEVER paint the
+  // previous account's cover — a ghost of another user's stats. See the
+  // `_userChanged` guard in `story_editor_screen.dart`.
+
+  /// Pumps the Story screen whose injected `myUid` is driven by [uid], so a
+  /// test can flip the signed-in user WITHOUT recreating the screen's State
+  /// (the exact "same screen, different account" condition the ghost needs).
+  Future<void> pumpSwappable(
+      WidgetTester tester, _FakeApi api, ValueNotifier<String> uid) async {
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final router = GoRouter(
+      initialLocation: '/story',
+      routes: [
+        GoRoute(
+          path: '/story',
+          builder: (_, __) => ValueListenableBuilder<String>(
+            valueListenable: uid,
+            builder: (_, u, __) => StoryEditorScreen(api: api, myUid: u),
+          ),
+        ),
+        GoRoute(
+            path: '/deep-dive/:id',
+            builder: (_, state) => Scaffold(
+                body: Text('DEEP DIVE ${state.pathParameters['id']}'))),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'the cover never shows a previous account\'s stats after the signed-in '
+      'user changes under the mounted screen', (tester) async {
+    // Account A has a story, so its cover renders.
+    final api = _FakeApi();
+    final uid = ValueNotifier<String>('userA');
+    addTearDown(uid.dispose);
+    await pumpSwappable(tester, api, uid);
+
+    // A's cover is on screen.
+    expect(find.text('Your Story'), findsOneWidget);
+    expect(find.textContaining('your story takes'), findsNothing);
+
+    // A DIFFERENT account signs in under the still-mounted screen, with its
+    // own (here: empty) story. The backend now answers for account B.
+    api.data = const StoryData(sections: []);
+    api.photos = const [];
+    uid.value = 'userB';
+    await tester.pumpAndSettle();
+
+    // The previous account's cover must be GONE — only B's own clean empty
+    // state, never A's "N topics / N photos" ghost stacked on top.
+    expect(find.text('Your Story'), findsNothing);
+    expect(find.textContaining('your story takes'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a fresh/empty-story account renders a clean empty state with no cover '
+      'stats at all', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [])
+      ..photos = const [];
+    await _pumpWithRouter(tester, api);
+
+    // No cover block (no "Your Story" / topics / photos), just the empty state.
+    expect(find.text('Your Story'), findsNothing);
+    expect(find.textContaining('your story takes'), findsOneWidget);
+  });
 }

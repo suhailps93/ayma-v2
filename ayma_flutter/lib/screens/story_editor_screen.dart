@@ -279,6 +279,21 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   String? _error;
   List<StorySection> _sections = const [];
 
+  /// The signed-in uid the currently-held story data (`_sections`/`_photos`/
+  /// web-findings → the cover stats) was fetched for. Guards against this
+  /// still-mounted screen painting a PREVIOUS account's cover stats if the
+  /// signed-in user changes under it (e.g. a route left over from an account
+  /// switch): see [_userChanged] and the guard in [_content]. Null until the
+  /// first load resolves.
+  String? _loadedForUid;
+
+  /// The signed-in user changed while this screen stayed mounted, so the data
+  /// in hand belongs to a different account — it must never be shown.
+  bool get _userChanged {
+    final live = _uid;
+    return _loadedForUid != null && live.isNotEmpty && live != _loadedForUid;
+  }
+
   CareerTimeline? _careerTimeline;
 
   @override
@@ -300,15 +315,28 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   }
 
   Future<void> _load() async {
+    final loadUid = _uid;
     setState(() {
       _loading = true;
       _error = null;
+      if (loadUid != _loadedForUid) {
+        // Switching users (or the very first load): drop any data held for a
+        // different account so a previous user's cover stats / photos can
+        // never flash while the new fetch is in flight. Re-key the embedded
+        // narrative report too so it refetches for the current user.
+        _sections = const [];
+        _photos = const [];
+        _webFindingsReport = null;
+        _webFindingsLoadedFor = null;
+        _reportGen++;
+      }
     });
     try {
       final data = await _api.storyGet();
       if (!mounted) return;
       setState(() {
         _sections = data.sections;
+        _loadedForUid = loadUid;
         _loading = false;
       });
     } catch (e) {
@@ -514,6 +542,16 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           FilledButton(onPressed: _load, child: const Text('Retry')),
         ]),
       );
+    }
+
+    if (_userChanged) {
+      // The signed-in user changed while this Story screen stayed mounted —
+      // NEVER paint the previous account's cover stats. Drop them and refetch
+      // for the current user, showing a clean skeleton until it lands.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _userChanged) _load();
+      });
+      return const _StorySkeleton();
     }
 
     final rows = _narrativeSections;
