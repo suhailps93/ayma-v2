@@ -2,98 +2,144 @@
 
 From: Muse (Engineer — Deployment), for Astro. Task: exact Vertex cost of the Nov 2 flip window (read-only).
 
-## Status: BLOCKED — flip-window usage not yet in the billing export (no access error)
+## Status: BLOCKED — flip window still not fully exported (no access error)
 
-`bq` access works. The billing export simply has not caught up to the flip window yet, so the EXACT figure cannot be computed right now. Nothing below is a guess; window cost is reported as unknown, not zero.
+`bq` access works. Retry check at 2026-11-02 23:45 UTC / 15:45 PT: `MAX(usage_end_time)` advanced to
+**2026-11-02 17:00:00 UTC**, but the **15:00–16:00 UTC bucket — holding 15:00–15:29 of the flip window —
+has 0 rows across ALL services** (export hole / delayed file; the 16:00-bucket rows landed 21:38 UTC).
+The EXACT 14:55–15:29 UTC figure is still not computable. Nothing below is a guess; the window cost
+is reported as unknown, not zero.
 
-## Export freshness (checked 2026-11-02 21:06 UTC / 13:06 PT)
+Structural finding this retry: **Vertex rows are hourly-aggregated** (0 of 287 Nov-2 Vertex rows have
+a sub-hour `usage_start_time`). Even once the 15:00 bucket lands, the export can only give exact
+HOURLY figures (14:00–15:00 and 15:00–16:00 buckets); isolating exactly 14:55–15:29 from the export
+alone is impossible — the 14:00 bucket mixes 5 window minutes with 55 pre-flip minutes, and the
+15:00 bucket will mix 29 window minutes with 31 post-window minutes. Founder call: whether the two
+exact hourly buckets suffice, or the window figure stays an estimate bounded by them.
+
+## Export freshness (checked 2026-11-02 23:45 UTC / 15:45 PT)
 
 - Table: `ayma-ai.billing_export.gcp_billing_export_resource_v1_01F253_37B91E_1A2E78`
-- Latest `usage_end_time`: **2026-11-02 13:00:00 UTC (05:00 PT)** — ~8h behind real time
-- Latest `export_time`: 2026-11-02 17:45:47 UTC
-- Nov 2 hourly coverage ends at the 12:00–13:00 UTC bucket (10 rows — that hour itself is still partial vs ~60–170 rows/hour for complete hours)
-- Flip window 14:55–15:29 UTC (06:55–07:29 PT): **0 Vertex rows** in the export
+- Latest `usage_end_time`: **2026-11-02 17:00:00 UTC (09:00 PT)** — ~7h behind real time
+- Latest `export_time`: 2026-11-02 21:51:42 UTC
+- Hourly-bucket row counts (all services), 12:00–17:00 UTC: 12h ✓, 13h ✓, 14h ✓ (25 Vertex rows),
+  **15h MISSING (0 rows, every service)**, 16h ✓ (60 rows, exported 21:38 UTC)
+- Flip window 14:55–15:29 UTC (06:55–07:29 PT): minute-level query still returns **0 rows** —
+  not because cost is zero, but because rows only exist on hour boundaries and the 15:00 bucket is absent
 
-## Exact figures available now (Nov 2 usage, 00:00–13:00 UTC only — PRE-window)
+## Exact figures available now
 
-### (a) Flip window 2026-11-02 14:55–15:29 UTC: UNKNOWN (no rows exported yet)
+### (a) Flip window 2026-11-02 14:55–15:29 UTC: UNKNOWN (15:00 bucket not yet exported)
 
 Do not report $0 — rows are absent, not zero-cost.
 
-### (b) Nov 2 Vertex AI total so far (through 13:00 UTC cutoff)
+Closest exact enclosing figure (hourly bucket, NOT the window): 14:00–15:00 UTC Vertex AI:
+
+| Project | Rows | Gross | Credits (50% promo) | Net |
+|---|---|---|---|---|
+| ayma-staging | 12 | $0.1897 | −$0.0948 | **$0.0948** |
+| ayma-ai | 13 | $0.0233 | −$0.0116 | $0.0116 |
+| Total 14:00 bucket | 25 | $0.2130 | −$0.1065 | $0.1065 |
+
+Raw: staging gross 0.189689 / net 0.094847; ayma-ai gross 0.023262 / net 0.011627.
+This bucket contains only 5 window minutes (14:55–15:00) plus 55 pre-flip minutes — do not quote it as the window cost.
+
+Corroborating (non-cost) signal: staging Vertex collapses to ~$0 in the 16:00 bucket (1 row, gross
+$0.000005) — consistent with the ~15:34 UTC revert; and the 13:00 bucket staging Vertex was $0.0005
+gross. The flip traffic spike sits in the 14:00 + missing 15:00 buckets.
+
+### (b) Nov 2 Vertex AI total so far (00:00–17:00 UTC buckets as exported; 15:00 bucket missing)
 
 | | Gross | Credits | Net |
 |---|---|---|---|
-| Vertex AI | $1.9200 | −$0.9600 | **$0.9600** |
+| Vertex AI (287 rows) | $2.4119 | −$1.2057 | **$1.2062** |
 
-Raw sums: gross 1.9200139999999999, credits −0.9600129999999992, net 0.9600010000000007 (float display dust; 4dp values are exact to billing precision).
+Raw sums: gross 2.411938, credits −1.205744, net 1.206194. NOT a full-day total: the 15:00 bucket
+is missing and usage after 17:00 UTC is not yet exported (real time 23:45 UTC).
 
-Credit applied (single credit, 203 of 217 Vertex rows): **"Gemini 3.7 Flash Launch Promotion - 50% off - include offpeak"**, −$0.9600. It halves every billed SKU below.
+Staging vs prod, new buckets since the 13:06 PT check (net): 13h staging $0.0005; 14h staging
+$0.0948 / ayma-ai $0.0116; 16h ayma-ai $0.0742 / staging ~$0.0000.
 
-By project: `ayma-ai` gross $1.7852 / net $0.8926; `ayma-staging` gross $0.1348 / net $0.0674.
+### (c) SKUs / models (14:00–15:00 bucket — the window-adjacent hour; all USD)
 
-For reference, the prior partial check (cutoff 01:00 PT / 09:00 UTC) was Vertex net $0.8599, day ≈ $0.89 — consistent with 4 more hours of usage since.
+| Project | SKU | Rows | Gross | Credits (50% promo) | Net |
+|---|---|---|---|---|---|
+| ayma-staging | Gemini 3.7 Flash Global Text Input - Predictions | 5 | $0.1091 | −$0.0545 | $0.0545 |
+| ayma-staging | Gemini 3.7 Flash Global Text Output - Predictions | 5 | $0.0788 | −$0.0394 | $0.0394 |
+| ayma-staging | Gemini 3.7 Flash Global Text Input Caching | 2 | $0.0018 | −$0.0009 | $0.0009 |
+| ayma-ai | Gemini 3.7 Flash Global Text Output - Predictions | 6 | $0.0118 | −$0.0059 | $0.0059 |
+| ayma-ai | Gemini 3.7 Flash Global Text Input - Predictions | 7 | $0.0115 | −$0.0057 | $0.0057 |
 
-### (c) SKUs / models (Nov 2 through 13:00 UTC; all USD)
-
-| SKU | Rows | Gross | Credits (50% promo) | Net |
-|---|---|---|---|---|
-| Gemini 3.7 Flash Global Text Output - Predictions | 91 | $1.1427 | −$0.5714 | $0.5713 |
-| Gemini 3.7 Flash Global Text Input - Predictions | 107 | $0.7133 | −$0.3566 | $0.3567 |
-| Gemini 3.7 Flash Global Text Output - Batch Predictions | 4 | $0.0420 | −$0.0210 | $0.0210 |
-| Gemini 3.7 Flash Global Text Input - Batch Predictions | 4 | $0.0220 | −$0.0110 | $0.0110 |
-| Grounding with Google Search | 11 | $0.0000 | $0.0000 | $0.0000 |
-
-Day grand total (all services, same cutoff): gross $4.0679 / net $1.0012. (Cloud Run gross $2.1067 nets to $0.0000 after its credits.)
+Credit applied: **"Gemini 3.7 Flash Launch Promotion - 50% off - include offpeak"** — still halving
+every billed Vertex row, including the new buckets. (Full-day SKU table from the 13:06 PT check
+stands for the earlier buckets; re-run the SKU query below for the final full-day table once the
+15:00 bucket lands.)
 
 ## Queries run (BigQuery Standard SQL, project ayma-ai)
 
 Freshness / coverage:
 
 ```sql
-SELECT MAX(usage_end_time) AS latest_usage_end, MAX(export_time) AS latest_export
+SELECT MAX(usage_end_time) AS latest_usage_end, MAX(export_time) AS latest_export, COUNT(*) AS n
 FROM `ayma-ai.billing_export.gcp_billing_export_resource_v1_01F253_37B91E_1A2E78`;
 ```
 
-Flip-window check (returns 0 rows today; re-run for the answer):
+Hourly coverage by service (reveals the 15:00-bucket hole):
 
 ```sql
-SELECT COUNT(*) AS n, SUM(cost) AS gross,
-       SUM(cost) + SUM((SELECT COALESCE(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) AS net
+SELECT TIMESTAMP_TRUNC(usage_start_time, HOUR) AS h, service.description AS svc, COUNT(*) AS n
 FROM `ayma-ai.billing_export.gcp_billing_export_resource_v1_01F253_37B91E_1A2E78`
-WHERE usage_start_time >= TIMESTAMP '2026-11-02 14:55:00+00'
-  AND usage_start_time < TIMESTAMP '2026-11-02 15:30:00+00'
-  AND service.description = 'Vertex AI';
+WHERE usage_start_time >= TIMESTAMP '2026-11-02 12:00:00+00'
+  AND usage_start_time < TIMESTAMP '2026-11-02 18:00:00+00'
+GROUP BY h, svc ORDER BY h, svc;
 ```
 
-Nov 2 Vertex by SKU (swap the WHERE clause for the window above once covered):
+Granularity proof (subhour_rows = 0 → hourly aggregates only):
 
 ```sql
-SELECT sku.description AS sku, currency, COUNT(*) AS n, SUM(cost) AS gross,
+SELECT COUNT(*) AS n_vertex_nov2,
+       COUNTIF(EXTRACT(MINUTE FROM usage_start_time) != 0 OR EXTRACT(SECOND FROM usage_start_time) != 0) AS subhour_rows,
+       COUNT(DISTINCT usage_start_time) AS distinct_buckets
+FROM `ayma-ai.billing_export.gcp_billing_export_resource_v1_01F253_37B91E_1A2E78`
+WHERE DATE(usage_start_time) = DATE '2026-11-02' AND service.description = 'Vertex AI';
+```
+
+Exact hourly-bucket figure (re-run with the 15:00 bucket once it lands; swap timestamps):
+
+```sql
+SELECT project.id AS proj, sku.description AS sku, COUNT(*) AS n, SUM(cost) AS gross,
        SUM((SELECT COALESCE(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) AS credits,
        SUM(cost) + SUM((SELECT COALESCE(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) AS net
 FROM `ayma-ai.billing_export.gcp_billing_export_resource_v1_01F253_37B91E_1A2E78`
-WHERE DATE(usage_start_time) = DATE '2026-11-02'
+WHERE usage_start_time >= TIMESTAMP '2026-11-02 14:00:00+00'
+  AND usage_start_time < TIMESTAMP '2026-11-02 15:00:00+00'
   AND service.description = 'Vertex AI'
-GROUP BY sku, currency ORDER BY net DESC;
+GROUP BY proj, sku ORDER BY proj, net DESC;
 ```
 
-Credit names:
+Nov 2 Vertex by hour × project (shows the 15:00 gap inline):
 
 ```sql
-SELECT c.name AS credit_name, SUM(c.amount) AS amount, COUNT(*) AS n
-FROM `ayma-ai.billing_export.gcp_billing_export_resource_v1_01F253_37B91E_1A2E78`, UNNEST(credits) AS c
-WHERE DATE(usage_start_time) = DATE '2026-11-02'
-  AND service.description = 'Vertex AI'
-GROUP BY credit_name ORDER BY amount;
+SELECT TIMESTAMP_TRUNC(usage_start_time, HOUR) AS h, project.id AS proj, COUNT(*) AS n,
+       SUM(cost) AS gross,
+       SUM(cost) + SUM((SELECT COALESCE(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) AS net
+FROM `ayma-ai.billing_export.gcp_billing_export_resource_v1_01F253_37B91E_1A2E78`
+WHERE DATE(usage_start_time) = DATE '2026-11-02' AND service.description = 'Vertex AI'
+GROUP BY h, proj ORDER BY h, proj;
 ```
 
 ## Retry instruction
 
-Re-run the freshness query; once `MAX(usage_end_time)` is past 2026-11-02 16:00 UTC (1h margin past the window), re-run the flip-window query plus the SKU/credit queries with the window WHERE clause. At the observed ~8h lag, Nov 2 evening PT / Nov 3 morning UTC should cover it. No GCP changes were made (read-only; only `bq query` SELECTs).
+Re-run the freshness query AND the hourly-coverage query — `MAX(usage_end_time)` alone is not
+sufficient proof, since the 15:00 bucket is missing while later buckets exist. Done when the 15:00
+bucket shows rows for Vertex AI. Then report the two exact hourly buckets (14:00 + 15:00) with the
+bucket query above, and flag to the founder that exact 14:55–15:29 isolation is impossible from this
+export (hourly granularity). No GCP changes were made (read-only; only `bq query` SELECTs).
 
 ## Caveats
 
-- The 50% Gemini 3.7 Flash launch promo applied to all billed pre-window Vertex rows, but do NOT assume it applies to the flip-window rows until they are queried.
-- The 12:00–13:00 UTC hour is partial (10 rows), so even the "through 13:00 UTC" figures will grow slightly for that hour.
-- Staging vs prod split for the window must come from the window rows themselves (`project.id`); pre-window staging Vertex net ($0.0674) is unrelated traffic.
+- The 50% Gemini 3.7 Flash launch promo applied to all billed Vertex rows through the 16:00 bucket,
+  but do NOT assume it applies to the missing 15:00-bucket rows until they are queried.
+- The 15:00-bucket hole affects all services (0 rows), so it is an export delay, not zero usage.
+- Prior partial check (cutoff 01:00 PT / 09:00 UTC): Vertex net $0.8599, day ≈ $0.89. First retry
+  cutoff (13:00 UTC): Vertex net $0.9600. Current (17:00 UTC buckets minus the 15:00 hole): $1.2062.
