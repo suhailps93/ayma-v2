@@ -34,6 +34,7 @@ import feature_flags
 import gemini
 import report_blocks as rb
 import schema
+import token_ledger
 from token_ledger import FEATURE_DEEPDIVE
 
 _PROMPTS_PATH = Path(__file__).with_name("prompts") / "deep_dive.md"
@@ -993,6 +994,69 @@ _MAX_NAME = 120
 # handful of short lines, never paragraphs.
 _MAX_CONTEXT = 1000
 
+# The deep dive runs as a polled BACKGROUND job (the client POSTs /deep-dive
+# then polls /deep-dive/mine), so it is NOT bound by the client's long-request
+# budget — a longer grounded-research timeout plus one retry is safe here and
+# never leaves the user staring at a bare failure (founder directive: the
+# backend auto-retries, the user never has to re-tap). Bounded: 2 attempts
+# total, short backoff, worst case ≈ 2 × the per-attempt research timeout. We
+# stay on the chosen Brain — NO model fallback / fallback_to_google (that flag
+# flip is the founder's call, not this reliability change).
+_RESEARCH_ATTEMPTS = 2
+_RESEARCH_RETRY_BACKOFF_SECONDS = 2.0
+
+
+def _research_error_retryable(exc: Exception) -> bool:
+    """A grounded-research failure worth one more attempt: an inference
+    timeout or a transient server-side error (5xx, plus 408/429), or a
+    transport error with no HTTP status. A deterministic bad request (a 4xx
+    other than those) would just fail again, so it is NOT retried. A credit
+    cap is terminal for this job, so it is NOT retried either."""
+    if isinstance(exc, token_ledger.TokenCapExceeded):
+        return False
+    if isinstance(exc, asyncio.TimeoutError):
+        return True
+    code = getattr(exc, "code", None)
+    if code is None:
+        code = getattr(exc, "status_code", None)
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        # No HTTP status (e.g. a connection/transport error): treat as transient.
+        return True
+    if code in (408, 429):
+        return True
+    return code >= 500
+
+
+async def _grounded_research(ask: str, *, uid: str | None) -> tuple[str, list]:
+    """Run the dive's grounded web-research call, retrying ONCE on an inference
+    TimeoutError (or a transient 5xx) — never on a deterministic bad request.
+
+    No double-charge: :func:`gemini.research` records the spend only after the
+    call returns, so a timed-out attempt (which raises before ``record``) bills
+    nothing; only the succeeding attempt is metered, exactly once."""
+    for attempt in range(_RESEARCH_ATTEMPTS):
+        try:
+            return await gemini.research(
+                ask,
+                system_prompt=_RESEARCH_SYSTEM,
+                uid=uid,
+                feature=FEATURE_DEEPDIVE,
+                max_output_tokens=6000,
+                timeout=gemini.RESEARCH_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 - classified by _research_error_retryable
+            last = attempt + 1 >= _RESEARCH_ATTEMPTS
+            if not _research_error_retryable(exc) or last:
+                raise
+            logger.warning(
+                "deep-dive research failed (%s: %s) on attempt %d/%d — retrying",
+                type(exc).__name__, exc, attempt + 1, _RESEARCH_ATTEMPTS,
+            )
+            await asyncio.sleep(_RESEARCH_RETRY_BACKOFF_SECONDS * (attempt + 1))
+    raise RuntimeError("unreachable: research retry loop exhausted")  # pragma: no cover
+
 
 async def run(
     name: str,
@@ -1067,13 +1131,7 @@ async def run(
         f"Research {who} and write up everything you can find, with source "
         f"URLs inline.{linkedin_note}"
     )
-    prose, sources = await gemini.research(
-        ask,
-        system_prompt=_RESEARCH_SYSTEM,
-        uid=uid,
-        feature=FEATURE_DEEPDIVE,
-        max_output_tokens=6000,
-    )
+    prose, sources = await _grounded_research(ask, uid=uid)
 
     validate_links = feature_flags.enabled("deepdive_validate_links")
     if validate_links:

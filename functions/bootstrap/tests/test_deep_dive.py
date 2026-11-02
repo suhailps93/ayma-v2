@@ -2334,3 +2334,139 @@ def test_self_dive_notification_id_opens_the_stored_report():
     blocks = {b["block_id"]: b for s in out["sections"] for b in s["blocks"]}
     assert "fact:f1" in blocks
     assert blocks["confidence"]["value"] == "Medium"  # humanized, not raw enum
+
+
+# --- deep-dive research: bounded retry + longer timeout on inference ---------
+# TimeoutError (no model fallback). The dive is a polled background job, so a
+# research call that times out is retried once rather than failing the run.
+
+async def _no_sleep(*_a, **_k):
+    return None
+
+
+class _BadRequest(Exception):
+    """A deterministic 4xx (would fail again) — must NOT be retried."""
+
+    code = 400
+
+
+class _ServerError(Exception):
+    """A transient 5xx — worth one more attempt."""
+
+    code = 503
+
+
+def test_run_completes_after_a_single_research_timeout(_patch, monkeypatch):
+    """A grounded-research call that times out ONCE then succeeds still
+    produces a complete dive. Pre-fix a single timeout failed the whole run."""
+    attempts = {"n": 0}
+
+    async def _flaky(prompt, system_prompt=None, **kw):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise asyncio.TimeoutError()
+        return ("web notes about Dana…",
+                [{"url": "https://oceanario.pt/team", "title": "Team"}])
+
+    monkeypatch.setattr(gemini, "research", _flaky)
+    monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
+
+    d = _run(deep_dive.run("Dana Reis", uid="u1", context="Lisbon"))
+    assert attempts["n"] == 2  # timed out once, succeeded on the retry
+    assert d["name"] == "Dana Reis"
+    assert d["confidence"] == "high"
+
+
+def test_both_research_attempts_timeout_fails_the_run(monkeypatch):
+    """Both attempts time out → the research helper re-raises TimeoutError
+    (honest failure), having tried exactly the bounded number of times."""
+    attempts = {"n": 0}
+
+    async def _always_timeout(prompt, system_prompt=None, **kw):
+        attempts["n"] += 1
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(gemini, "research", _always_timeout)
+    monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(asyncio.TimeoutError):
+        _run(deep_dive._grounded_research("research Dana", uid="u1"))
+    assert attempts["n"] == deep_dive._RESEARCH_ATTEMPTS  # tried twice, no more
+
+
+def test_research_timeout_bills_nothing(monkeypatch):
+    """No-double-charge proof at the metering layer: gemini.research records
+    the spend only AFTER the underlying call returns, so a timed-out attempt
+    raises first and bills nothing — a retry can never charge twice, and a
+    success bills exactly once."""
+    recorded = {"n": 0}
+
+    async def _timeout(*_a, **_k):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(gemini, "_generate", _timeout)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    monkeypatch.setattr(
+        token_ledger, "record",
+        lambda *a, **k: recorded.__setitem__("n", recorded["n"] + 1),
+    )
+
+    with pytest.raises(asyncio.TimeoutError):
+        _run(gemini.research("anything", uid="u1", feature="deepdive"))
+    assert recorded["n"] == 0  # timed-out attempt → zero charges
+
+
+def test_research_success_bills_once(monkeypatch):
+    """Counterpart to the above: a succeeding attempt bills exactly once."""
+    recorded = {"n": 0}
+
+    class _Resp:
+        text = "found them"
+        candidates = []
+
+    async def _ok(*_a, **_k):
+        return _Resp()
+
+    monkeypatch.setattr(gemini, "_generate", _ok)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    monkeypatch.setattr(
+        token_ledger, "record",
+        lambda *a, **k: recorded.__setitem__("n", recorded["n"] + 1),
+    )
+
+    prose, _sources = _run(gemini.research("anything", uid="u1", feature="deepdive"))
+    assert prose == "found them"
+    assert recorded["n"] == 1  # one completion → one charge
+
+
+def test_deterministic_bad_request_is_not_retried(monkeypatch):
+    """A 4xx bad request would just fail again — it is raised, not retried."""
+    attempts = {"n": 0}
+
+    async def _bad(prompt, system_prompt=None, **kw):
+        attempts["n"] += 1
+        raise _BadRequest()
+
+    monkeypatch.setattr(gemini, "research", _bad)
+    monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(_BadRequest):
+        _run(deep_dive._grounded_research("research Dana", uid="u1"))
+    assert attempts["n"] == 1  # no retry on a deterministic 4xx
+
+
+def test_transient_server_error_is_retried(monkeypatch):
+    """A transient 5xx gets one more attempt and can then succeed."""
+    attempts = {"n": 0}
+
+    async def _flaky(prompt, system_prompt=None, **kw):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _ServerError()
+        return ("ok", [])
+
+    monkeypatch.setattr(gemini, "research", _flaky)
+    monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
+
+    prose, _sources = _run(deep_dive._grounded_research("research Dana", uid="u1"))
+    assert attempts["n"] == 2 and prose == "ok"

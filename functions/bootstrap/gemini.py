@@ -113,6 +113,15 @@ _RETRY_BACKOFF = 0.6
 # tests can shrink them.
 _GENERATE_TIMEOUT_SECONDS = 75.0
 _TOOL_TIMEOUT_SECONDS = 120.0
+# Grounded web research (google_search + url_context) legitimately runs longer
+# than a plain generate — and the deep-dive path that uses it is a polled
+# BACKGROUND job (the client POSTs /deep-dive then polls /deep-dive/mine), so
+# it is not bound by the client's long-request budget and can afford a longer
+# wait than the 75s synchronous default. Callers on a client-blocking path
+# (e.g. the chat web-search tool) pass no timeout and keep the 75s default; the
+# deep-dive research call passes this explicitly. Kept bounded so a retry's
+# worst case stays ≈ 2× this. See deep_dive._grounded_research.
+RESEARCH_TIMEOUT_SECONDS = 120.0
 
 
 @lru_cache(maxsize=1)
@@ -128,19 +137,20 @@ def _client() -> genai.Client:
     return genai.Client()  # picks up GOOGLE_API_KEY from the environment
 
 
-async def _generate(client, **kwargs):
+async def _generate(client, *, timeout: float | None = None, **kwargs):
     """`client.aio.models.generate_content` with a couple of backed-off
-    retries — see the note above."""
+    retries — see the note above. ``timeout`` overrides the 75s synchronous
+    default for callers that can afford longer (grounded research on the
+    background deep-dive path)."""
+    deadline = _GENERATE_TIMEOUT_SECONDS if timeout is None else timeout
     for attempt in range(_RETRIES + 1):
         try:
             return await asyncio.wait_for(
                 client.aio.models.generate_content(**kwargs),
-                timeout=_GENERATE_TIMEOUT_SECONDS,
+                timeout=deadline,
             )
         except asyncio.TimeoutError:
-            logger.error(
-                "gemini generate timed out after %.0fs", _GENERATE_TIMEOUT_SECONDS
-            )
+            logger.error("gemini generate timed out after %.0fs", deadline)
             raise
         except Exception as exc:  # noqa: BLE001 - broad on purpose; see note
             if attempt >= _RETRIES:
@@ -523,11 +533,14 @@ async def research(
     uid: str | None = None,
     feature: str = "misc",
     max_output_tokens: int = 4096,
+    timeout: float | None = None,
 ) -> tuple[str, list[dict]]:
     """A single grounded web-research call: ``google_search`` + ``url_context``
     on, no function tools, no JSON schema. Returns ``(prose, sources)`` where
     ``sources`` is ``[{"url", "title"}]`` pulled from the grounding metadata.
-    Metered like any Gemini call."""
+    Metered like any Gemini call — the spend is recorded only after the call
+    returns, so a timed-out attempt (which raises before ``record``) bills
+    nothing. ``timeout`` overrides the 75s default for background callers."""
     token_ledger.check(uid)
     cfg = types.GenerateContentConfig(
         system_instruction=system_prompt,
@@ -539,7 +552,8 @@ async def research(
         ],
     )
     response = await _generate(
-        _client(), model=CONFIG.gemini_model, contents=prompt, config=cfg
+        _client(), model=CONFIG.gemini_model, contents=prompt, config=cfg,
+        timeout=timeout,
     )
     token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
 

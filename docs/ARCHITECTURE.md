@@ -402,6 +402,17 @@ flowchart LR
   screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`
   polls it, capped at the same 10 minutes of wall-clock time); `failed` shows "Search didn't finish." with
   Try again. The background link re-validation of an older report never touches it.
+  - **Research retry + timeout (reliability).** Because the dive is this polled *background* job (not bound by the
+    client's 55s long-request budget), the grounded discovery call (`deep_dive._grounded_research` → `gemini.research`)
+    runs with a longer per-attempt timeout — `gemini.RESEARCH_TIMEOUT_SECONDS` (120s) rather than the 75s synchronous
+    default (`gemini._GENERATE_TIMEOUT_SECONDS`, still used by client-blocking callers like the chat web-search tool) —
+    and **auto-retries once** on an inference `TimeoutError` or a transient server error (5xx / 408 / 429 / a
+    status-less transport error), with a short backoff (`_RESEARCH_ATTEMPTS = 2`). It does **not** retry a deterministic
+    4xx bad request, and it stays on the chosen Brain — **no** model fallback / `fallback_to_google` (that flag flip is a
+    separate, founder-gated change). Worst case stays bounded at ≈ 2× the per-attempt timeout. **No double-charge:**
+    `gemini.research` records the spend only *after* the underlying call returns, so a timed-out attempt (which raises
+    first) bills nothing — only the succeeding attempt is metered, exactly once. On final failure after the retry the
+    job keeps its honest contract: the run is marked `failed` and logged loudly (nothing silently swallowed).
 - *Ayma sends a DM for the user* (`skills/dm_outreach.py`, text and voice): one tool, `send_dm_message`, and
   exactly one confirmation. `confirmed=false` records a pending send (recipient, exact text, id, 5 min expiry) in
   `users/{uid}/sessions/{id}.pending_dm` and returns the preview; Ayma asks once. `confirmed=true` sends only when the
