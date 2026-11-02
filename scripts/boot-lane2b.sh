@@ -21,12 +21,12 @@
 #   boot-lane2b.sh alive <minutes>     poll: emulator + app process alive
 #   boot-lane2b.sh collisions [log]    count 'more than one emulator' in a log
 #
-# Env overrides: LANE2_AVD (Lane2b_API_36), LANE2_ADB_SERIAL (emulator-5556),
+# Env overrides: LANE2_AVD (Lane2b_API_36), ADB_SERIAL/LANE2_ADB_SERIAL (emulator-5556),
 # LANE2_PORT (5556), LANE2_LOGDIR (~/.fleet-logs), ANDROID_SDK_ROOT.
 set -euo pipefail
 
 AVD="${LANE2_AVD:-Lane2b_API_36}"
-SERIAL="${LANE2_ADB_SERIAL:-emulator-5556}"
+SERIAL="${ADB_SERIAL:-${LANE2_ADB_SERIAL:-emulator-5556}}"
 PORT="${LANE2_PORT:-5556}"
 SDK="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}"
 EMU="$SDK/emulator/emulator"
@@ -61,15 +61,23 @@ build_shim() {
 # execs adb (the inner bash), not in adb itself.
 self_test_shim() {
   local probe="emulator-5599" out
-  out="$(LD_PRELOAD="$SHIM" LANE2_ADB_SERIAL="$probe" \
+  out="$(LD_PRELOAD="$SHIM" ADB_SERIAL="$probe" LANE2_ADB_SERIAL="$probe" \
     bash -c 'exec "$0" -e shell echo SCOPE_PROBE' "$ADB" 2>&1)" || true
   if [[ "$out" == *"device '$probe' not found"* ]]; then
     log "shim self-test PASS (-e rewritten to -s $probe; no device touched)"
   else
-    die "shim self-test FAIL (output: $out) — refusing to boot unscoped"
+    die "shim self-test FAIL (-e output: $out) — refusing to boot unscoped"
+  fi
+  # Safe self-test 2: bare unscoped adb calls must also be rewritten to -s $probe
+  out="$(LD_PRELOAD="$SHIM" ADB_SERIAL="$probe" LANE2_ADB_SERIAL="$probe" \
+    bash -c 'exec "$0" shell echo SCOPE_PROBE' "$ADB" 2>&1)" || true
+  if [[ "$out" == *"device '$probe' not found"* ]]; then
+    log "shim self-test PASS (unscoped adb rewritten to -s $probe; no device touched)"
+  else
+    die "shim self-test FAIL (unscoped output: $out) — refusing to boot unscoped"
   fi
   # Passthrough sanity: plain `adb devices` must still work under the shim.
-  LD_PRELOAD="$SHIM" LANE2_ADB_SERIAL="$probe" \
+  LD_PRELOAD="$SHIM" ADB_SERIAL="$probe" LANE2_ADB_SERIAL="$probe" \
     bash -c 'exec "$0" devices' "$ADB" >/dev/null 2>&1 \
     || die "shim breaks adb passthrough — refusing to boot"
 }
@@ -93,7 +101,7 @@ cmd_boot() {
   [[ -z "${DISPLAY:-}" ]] && flags+=(-no-window)
   log "booting $AVD as $SERIAL (log: $logfile)"
   # shellcheck disable=SC2086
-  LANE2_ADB_SERIAL="$SERIAL" ANDROID_ADB_SERIAL="$SERIAL" LD_PRELOAD="$SHIM" \
+  ADB_SERIAL="$SERIAL" ANDROID_SERIAL="$SERIAL" LANE2_ADB_SERIAL="$SERIAL" ANDROID_ADB_SERIAL="$SERIAL" LD_PRELOAD="$SHIM" \
     setsid -f "$EMU" "${flags[@]}" >>"$logfile" 2>&1 </dev/null
 
   log "waiting for device..."

@@ -55,12 +55,20 @@ def resolve_device(requested: str | None) -> Device:
                 f"[argon] device '{requested}' not connected. "
                 f"Connected: {serials or 'none'}")
         return Device(requested)
+    env_serial = os.environ.get("ADB_SERIAL") or os.environ.get("ANDROID_SERIAL")
+    if env_serial:
+        if env_serial not in serials:
+            raise SystemExit(
+                f"[argon] device '{env_serial}' from env not connected. "
+                f"Connected: {serials or 'none'}")
+        return Device(env_serial)
     if not serials:
         raise SystemExit("[argon] no connected devices (adb devices is empty)")
+    default_serial = "emulator-5556" if "emulator-5556" in serials else serials[0]
     if len(serials) > 1:
-        print(f"[argon] multiple devices {serials}; using {serials[0]}. "
-              "Pass --device to choose.", file=sys.stderr)
-    return Device(serials[0])
+        print(f"[argon] multiple devices {serials}; using {default_serial}. "
+              "Pass --device or set ADB_SERIAL to choose.", file=sys.stderr)
+    return Device(default_serial)
 
 
 def resolve_credentials(scenario: dict) -> tuple[dict, list[str]]:

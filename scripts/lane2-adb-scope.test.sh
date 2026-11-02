@@ -27,12 +27,26 @@ gcc -shared -fPIC -O2 -Wall -Wextra -o "$TMP/scope.so" "$SCRIPT_DIR/lane2-adb-sc
   || { fail "shim does not compile"; exit 1; }
 pass "shim compiles clean"
 
-# 1. -e rewritten to the fake serial: must fail 'not found', touching nothing.
+# 1a. -e rewritten to the fake serial: must fail 'not found', touching nothing.
 out="$(LD_PRELOAD="$TMP/scope.so" LANE2_ADB_SERIAL="$FAKE" \
   bash -c 'exec "$0" -e shell echo SCOPE_PROBE' "$ADB" 2>&1)"
 [[ "$out" == *"device '$FAKE' not found"* ]] \
   && pass "-e rewritten to -s $FAKE (no device touched)" \
   || fail "-e not rewritten (got: $out)"
+
+# 1b. Unscoped adb shell rewritten to the fake serial: must fail 'not found'.
+out="$(LD_PRELOAD="$TMP/scope.so" ADB_SERIAL="$FAKE" \
+  bash -c 'exec "$0" shell echo SCOPE_PROBE' "$ADB" 2>&1)"
+[[ "$out" == *"device '$FAKE' not found"* ]] \
+  && pass "unscoped adb shell rewritten to -s $FAKE (no device touched)" \
+  || fail "unscoped adb shell not rewritten (got: $out)"
+
+# 1c. -d rewritten to the fake serial: must fail 'not found'.
+out="$(LD_PRELOAD="$TMP/scope.so" ADB_SERIAL="$FAKE" \
+  bash -c 'exec "$0" -d shell echo SCOPE_PROBE' "$ADB" 2>&1)"
+[[ "$out" == *"device '$FAKE' not found"* ]] \
+  && pass "-d rewritten to -s $FAKE (no device touched)" \
+  || fail "-d not rewritten (got: $out)"
 
 # 2a. `adb devices` passes through under the shim.
 LD_PRELOAD="$TMP/scope.so" bash -c 'exec "$0" devices' "$ADB" >/dev/null 2>&1 \
@@ -53,7 +67,14 @@ out="$(LD_PRELOAD="$TMP/scope.so" LANE2_ADB_SERIAL="$FAKE" \
   && pass "explicit -s preserved alongside -e" \
   || fail "explicit -s call altered (got: $out)"
 
-# 4. The launcher at least parses and answers --help.
+# 4. ADB_SERIAL env var takes precedence and works across calls.
+out="$(LD_PRELOAD="$TMP/scope.so" ADB_SERIAL="$FAKE" LANE2_ADB_SERIAL="bogus" \
+  bash -c 'exec "$0" shell echo ADB_SERIAL_TEST' "$ADB" 2>&1)"
+[[ "$out" == *"device '$FAKE' not found"* ]] \
+  && pass "ADB_SERIAL env var respected over fallback" \
+  || fail "ADB_SERIAL env var ignored (got: $out)"
+
+# 5. The launcher at least parses and answers --help.
 bash -n "$SCRIPT_DIR/boot-lane2b.sh" \
   && pass "boot-lane2b.sh parses" \
   || fail "boot-lane2b.sh has a syntax error"

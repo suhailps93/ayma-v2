@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ADB_BIN="${ADB_BIN:-/home/suhailps/Android/Sdk/platform-tools/adb}"
-DEFAULT_DEVICE="${ANDROID_DEVICE_ID:-}"
+DEFAULT_DEVICE="${ADB_SERIAL:-${ANDROID_DEVICE_ID:-emulator-5556}}"
 DEFAULT_ACTIVITY="${ANDROID_ACTIVITY:-com.ayma.ayma_flutter/.MainActivity}"
 OUT_DIR_DEFAULT="${OUT_DIR_DEFAULT:-/home/suhailps/workspace/ayma/ayma_flutter/tmp_ui}"
 
@@ -44,7 +44,7 @@ device_arg() {
     printf '%s' "${DEFAULT_DEVICE}"
     return
   fi
-  echo "No device id provided and ANDROID_DEVICE_ID is unset" >&2
+  echo "No device id provided and ADB_SERIAL/ANDROID_DEVICE_ID is unset" >&2
   exit 1
 }
 
