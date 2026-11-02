@@ -67,9 +67,32 @@ android {
                 keyPassword = signingValue("keyPassword", "CM_KEY_PASSWORD")
             }
         }
+        // Dedicated keystore for --staging dev builds ONLY. It carries a SHA-1
+        // distinct from the shared default debug keystore so ayma-staging can own
+        // its own Android OAuth client (OAuth Android clients are globally unique
+        // per package+SHA-1, and prod ayma-ai already owns the default-debug pair,
+        // which is why staging had no Android OAuth client and Google sign-in
+        // failed). Wired in only when build-apk.sh --staging passes -PaymaStagingSign;
+        // absent, this config stays empty and nothing changes. See docs/STAGING.md.
+        create("stagingDebug") {
+            if (project.hasProperty("aymaStagingSign")) {
+                storeFile = file(project.property("aymaStagingStore") as String)
+                storePassword = project.property("aymaStagingStorePw") as String
+                keyAlias = project.property("aymaStagingAlias") as String
+                keyPassword = project.property("aymaStagingKeyPw") as String
+            }
+        }
     }
 
     buildTypes {
+        // Default debug signing is untouched unless --staging passes -PaymaStagingSign,
+        // in which case debug builds are signed with the staging keystore so the APK
+        // matches the Android OAuth client registered on ayma-staging.
+        getByName("debug") {
+            if (project.hasProperty("aymaStagingSign")) {
+                signingConfig = signingConfigs.getByName("stagingDebug")
+            }
+        }
         release {
             // Real upload key when a keystore is available (CI / local release),
             // otherwise debug keys so `flutter run --release` still works.

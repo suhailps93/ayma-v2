@@ -65,6 +65,9 @@ ENVIRONMENT=development
 
 # --- staging: swap native Firebase config + inject staging dart-defines ---- #
 STAGING_DEFINES=()
+# Gradle -P properties for the staging build (empty for normal/prod builds, so
+# the default debug keystore is used and nothing changes off the staging path).
+STAGING_GRADLE_ARGS=()
 if (( STAGING == 1 )); then
   GS="$ROOT/ayma_flutter/android/app/google-services.json"
   GS_STAGING="$ROOT/ayma_flutter/android/app/google-services.staging.json"
@@ -107,6 +110,20 @@ PY
   cp "$GS" "$GS.prod.bak"
   cp "$GS_STAGING" "$GS"
   trap 'mv -f "$GS.prod.bak" "$GS" 2>/dev/null || true' EXIT
+  # Sign the staging debug APK with the DEDICATED staging keystore (its SHA-1 is
+  # registered on the ayma-staging Android app, which is what makes Google
+  # sign-in work on staging). Flutter forwards -P... straight to Gradle, where
+  # build.gradle.kts reads these properties. Prod/default --debug (no --staging)
+  # never sets -PaymaStagingSign, so it keeps the shared default debug keystore.
+  STAGING_KEYSTORE="$ROOT/ayma_flutter/android/ayma-staging-debug.keystore"
+  [[ -f "$STAGING_KEYSTORE" ]] || { echo "staging build needs $STAGING_KEYSTORE (missing)." >&2; exit 1; }
+  STAGING_GRADLE_ARGS=(
+    -PaymaStagingSign=true
+    -PaymaStagingStore="$STAGING_KEYSTORE"
+    -PaymaStagingAlias=aymastaging
+    -PaymaStagingStorePw=ayma-staging
+    -PaymaStagingKeyPw=ayma-staging
+  )
   # CRITICAL: the google-services Gradle task caches its generated native config
   # (google_app_id / project_id resources) under build/.../generated/res/
   # google-services. On an incremental build it stays UP-TO-DATE and silently
@@ -133,4 +150,5 @@ flutter build apk "$MODE" \
   --dart-define=SENTRY_RELEASE="ayma@$VERSION" \
   --dart-define=SENTRY_DIST="${VERSION##*+}" \
   "${STAGING_DEFINES[@]}" \
+  "${STAGING_GRADLE_ARGS[@]}" \
   "${ARGS[@]}"

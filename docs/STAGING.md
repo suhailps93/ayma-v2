@@ -91,6 +91,53 @@ Verify the artifact before delivery: `strings`/`aapt dump` the APK must show
 exact staging artifact on the emulator — sign in, cold start, chat history, no
 error block — before it is offered to the founder. No exceptions.**
 
+### Google Sign-In: dedicated staging keystore (third axis)
+
+Google sign-in needs a **third** thing beyond the two axes above: an **Android
+OAuth client** on the Firebase Android app, keyed by `(package, signing-SHA-1)`.
+Those clients are **globally unique** per `(package, SHA-1)` across all of
+Google Cloud, and prod (`ayma-ai`) already globally owns the pair
+`(com.ayma.ayma_flutter, 47:95:21:…:3F:5D)` — the **shared default debug
+keystore** SHA-1. So ayma-staging could never create an Android OAuth client for
+that pair: `google-services.staging.json` had only a `client_type: 3` (web)
+entry, no `client_type: 1` (android), and on-device Google sign-in failed with
+`GoogleSignatureVerifier: package info is not set correctly` / `unknownError`.
+
+Fix: `--staging` builds are signed with a **dedicated staging debug keystore**
+with a **different SHA-1**, so ayma-staging owns its own Android OAuth client.
+
+- Keystore: `ayma_flutter/android/ayma-staging-debug.keystore`, alias
+  `aymastaging`, store/key password `ayma-staging` (committed — it only ever
+  signs dev/staging test builds, never a store release, exactly like Android's
+  shared default debug keystore; it carries no release trust).
+  - SHA-1: `0D:AA:76:6D:4F:17:E3:BB:07:66:2E:E1:33:0D:30:31:26:2F:F3:C2`
+  - SHA-256: `90:65:5F:15:65:C0:29:9C:01:8F:B1:1B:ED:D4:C2:31:DD:27:AA:11:FC:F9:E7:D8:9B:2F:54:ED:49:18:94:28`
+- Both SHAs are registered on the ayma-staging Android app (App ID
+  `1:187469876115:android:adb41422d11627ddcd3666`); Firebase then created the
+  staging Android OAuth client
+  (`187469876115-fosufjrncr5cingnvs2aa47l13pumd79.apps.googleusercontent.com`),
+  now present in `google-services.staging.json` as the `client_type: 1` entry
+  whose `certificate_hash` is the staging SHA-1 (lowercased, no colons).
+- Wiring: `build.gradle.kts` defines a `stagingDebug` signing config and applies
+  it to the `debug` build type **only** when the Gradle property
+  `aymaStagingSign` is present; `build-apk.sh --staging` passes
+  `-PaymaStagingSign=true` plus the keystore path/alias/passwords. With the
+  property absent (normal/prod/default `--debug`), nothing changes and the build
+  stays on the shared default debug keystore.
+
+Verify a `--staging` APK is staging-signed:
+
+    apksigner verify --print-certs app-debug.apk
+    # Signer #1 SHA-256 must equal the staging keystore's 90655f15…189428,
+    # NOT the default debug keystore's 16581138…10b5.
+
+> **⚠️ Reinstall caveat.** The staging APK's signature now **differs** from any
+> previously-installed build (which used the default debug keystore). `adb
+> install -r` will FAIL with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (signature
+> mismatch). To install the new staging build, first
+> `adb uninstall com.ayma.ayma_flutter`, then `adb install app-debug.apk`.
+> Uninstall wipes local app data, so the user signs in fresh.
+
 ## Data isolation
 
 - **Default (no `--firebase-project`): staging shares prod Firestore/Auth/Storage.**
