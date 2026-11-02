@@ -81,7 +81,7 @@ class AppCommandService {
         _uiAction = uiAction ?? _performUiAction,
         _fsOverride = firestore,
         _authOverride = auth,
-        _navigate = navigate ?? appRouter.push,
+        _navigate = navigate ?? ((p) => navigateToRoute(p)),
         _go = go ?? appRouter.go,
         _theme = themeController ?? themeControllerGlobal,
         _orbAnim = orbAnimationSettings ?? orbAnimationSettingsGlobal,

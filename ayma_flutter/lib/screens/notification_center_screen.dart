@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../routing/app_router.dart';
 import '../services/api_client.dart';
 import '../services/notification_service.dart';
 import '../theme.dart';
@@ -287,7 +288,8 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
       // badge is stream-driven and heals on the next open.
     }
     if (!mounted) return;
-    context.push(deepLinkToRoute(e.notif.deepLink, myUid: _myUid));
+    navigateToRoute(deepLinkToRoute(e.notif.deepLink, myUid: _myUid),
+        context: context);
   }
 }
 

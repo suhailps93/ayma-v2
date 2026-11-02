@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../dev_mode.dart';
@@ -102,7 +103,7 @@ void setupAuthDeepLinkDrain([FirebaseAuth? auth]) {
     if (user != null && !user.isAnonymous) {
       DeepLinkQueue.instance.drainPostAuth(
         user.uid,
-        navigate: (path) => appRouter.push(path),
+        navigate: (path) => navigateToRoute(path),
       );
     }
   });
@@ -471,3 +472,31 @@ final appRouter = GoRouter(
     ),
   ],
 );
+
+/// Navigates to [path] for a notification deep link, a post-auth queued deep
+/// link or an Ayma `navigate` command, but never stacks a second copy of the
+/// root shell ([MainShellScreen.path]) on top of a live one.
+///
+/// The root shell is always at the base of the stack, and two `MainShellScreen`
+/// instances alive at once each mount the SAME shared feature-tour anchor
+/// GlobalKeys (`TourAnchors.keyFor` — the chat composer, the orb, the tab bar).
+/// Two live widgets holding one GlobalKey is a Flutter "Duplicate GlobalKey"
+/// error that retakes the inactive element mid-layout, mutates a `RenderFlex`
+/// and corrupts the tree (J1: the warm web-search notification tap used to
+/// `push('/')` a second shell over the open one). So returning to the root
+/// shell is a `go` (reuse the single existing shell); every other route still
+/// `push`es, so Back returns to the prior screen.
+///
+/// When a [context] is given the nearest router is used (so a caller inside the
+/// widget tree, e.g. the notification center, routes through the navigator it
+/// lives under — and tests that pump it with their own router observe the
+/// navigation); otherwise the app-wide [appRouter] (the context-less tap /
+/// drain / Ayma-command paths). [router] overrides both, for direct unit tests.
+void navigateToRoute(String path, {BuildContext? context, GoRouter? router}) {
+  final r = router ?? (context != null ? GoRouter.of(context) : appRouter);
+  if (path == MainShellScreen.path) {
+    r.go(path);
+  } else {
+    r.push(path);
+  }
+}

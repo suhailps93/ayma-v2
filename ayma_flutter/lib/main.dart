@@ -74,13 +74,13 @@ Future<void> main() async {
       unawaited(push.syncToken());
       unawaited(DeepLinkQueue.instance.drainPostAuth(
         user.uid,
-        navigate: (path) => appRouter.push(path),
+        navigate: (path) => navigateToRoute(path),
       ));
     }
   });
 
   unawaited(push.listenForTaps(
-    navigate: (path) => appRouter.push(path),
+    navigate: (path) => navigateToRoute(path),
     queue: DeepLinkQueue.instance,
     router: appRouter,
     authService: AuthService.instance,
