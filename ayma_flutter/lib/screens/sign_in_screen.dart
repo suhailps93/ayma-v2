@@ -495,6 +495,21 @@ class _SignInScreenState extends State<SignInScreen> {
                         ),
                       ),
                     ),
+                    // Small hint under the orb while Ayma's greeting is live,
+                    // so a user who doesn't want to be spoken to can silence
+                    // her. Tapping it (or the orb) stops the voice session.
+                    if (_voice.isActive) ...[
+                      const SizedBox(height: 10),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _voice.stop(),
+                        child: Text(
+                          'Tap to mute',
+                          textAlign: TextAlign.center,
+                          style: AymaType.sans(size: 12, color: ac.fgMute),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Text(
                       'AYMA',
