@@ -129,6 +129,12 @@ TOPIC_AGENT_MUTE = "agent_mute"
 # nav-bar orb, or the call notification's "Unmute Ayma" action). Payload:
 # {"muted": false}. Only unmuting is accepted; muting stays a spoken command.
 TOPIC_AGENT_MUTE_CONTROL = "agent_mute_control"
+# Client -> agent: the user saved the voice settings mid-call ("Ayma's
+# models" screen, §13.9). Payload: {"accent": free-text ayma_voice_accent,
+# "language": saved ayma_voice_language label}; a missing key means unchanged,
+# "" clears the accent back to the provider default. The agent hot-swaps the
+# live session to it (``VoiceSwapper``) instead of waiting for the next call.
+TOPIC_VOICE_ACCENT_CONTROL = "voice_accent_control"
 # Practice Date voice (hackathon B): an out-of-character live coaching nudge to
 # the USER as they talk to the simulated persona — shown as a side hint, never
 # spoken by the persona (immersion is preserved). Payload: {"text", "is_final"}.
@@ -1289,9 +1295,9 @@ class RoomSeed:
     voice_language: str = ""
     # The user's dedicated free-text ACCENT (``ayma_voice_accent``, §13.9) — HOW
     # Ayma should sound, separate from ``voice_language`` (WHICH language). Fed
-    # into the session instructions at boot ONLY on an accent-capable provider
-    # (``voice_catalog.provider_supports_accent``); fixed-voice providers ignore
-    # it. Empty = the provider's default accent.
+    # into the session instructions on an accent-capable provider (at boot, and
+    # live through the hot-swap on Gemini); fixed-voice providers ignore it
+    # (``voice_catalog.provider_supports_accent``). Empty = the default accent.
     voice_accent: str = ""
     # Per-user MAIN-voice STACK selection (§13.9), resolved in
     # ``main._voice_engine_seed`` from the saved preference. ``voice_mode`` empty
@@ -1685,14 +1691,21 @@ class VoiceSwapper:
 
     The swap is an ``AgentSession.update_agent`` handoff to a
     :class:`SwappedVoiceAgent` whose ``llm`` is a freshly built realtime model
-    (same builder, same provider route, new voice / language hint): the
-    framework closes the old Live session and opens a new one on the same room,
-    seeded with the conversation so far. The ``AgentSession`` itself stays, so
-    everything wired onto it — transcript relay into the raw_turns window, mute
-    control, agent-state relay, token metering, the idle watchdog — carries on
-    untouched. Function-call items are dropped from the carried history (their
-    ids belong to the closed Live session); the spoken turns, the instructions
-    (system prompt with wiki memory) and the tools carry over as they were.
+    (same builder, same provider route, new voice / language hint / accent):
+    the framework closes the old Live session and opens a new one on the same
+    room, seeded with the conversation so far. The ``AgentSession`` itself
+    stays, so everything wired onto it — transcript relay into the raw_turns
+    window, mute control, agent-state relay, token metering, the idle watchdog
+    — carries on untouched. Function-call items are dropped from the carried
+    history (their ids belong to the closed Live session); the spoken turns,
+    the instructions (system prompt with wiki memory) and the tools carry over
+    as they were.
+
+    The dedicated free-text accent (``ayma_voice_accent``, §13.9) hot-swaps
+    the same way: a new effective language (explicit language first, else the
+    BCP-47 hint of the accent — the same derivation boot uses) reaches the
+    rebuilt model, and the accent instruction block is rebuilt for the new
+    accent instead of replaying the old one.
 
     Each new session is verified: it must start speaking within
     ``_SWAP_VERIFY_SECONDS`` of settling. One that doesn't is interrupted and
@@ -1710,6 +1723,8 @@ class VoiceSwapper:
         route: str,
         voice_name: str = "",
         voice_language: str = "",
+        voice_accent: str = "",
+        accent_block: Callable[[str], str] | None = None,
         model_factory: Callable[..., object] | None = None,
         session_id: str = "",
         provider: str = "",
@@ -1718,7 +1733,11 @@ class VoiceSwapper:
         verify_seconds: float = _SWAP_VERIFY_SECONDS,
     ) -> None:
         self._session = session
+        # The RAW system prompt (no accent block): the block is composed per
+        # accent at handoff time (``_base_prompt``) so an accent change
+        # rebuilds the instructions instead of replaying the boot accent.
         self._system_prompt = system_prompt
+        self._accent_block = accent_block or (lambda _a: "")
         self._route = route
         self._factory = model_factory or build_realtime_model
         self._session_id = session_id
@@ -1731,8 +1750,10 @@ class VoiceSwapper:
             voice_name if voices.is_valid_voice(voice_name) else CONFIG.gemini_live_voice
         )
         self._language = voice_language
+        self._accent = voice_accent
         # What the running Live session was actually built with.
         self._live_voice, self._live_language = self._voice, voice_language
+        self._live_accent = voice_accent
         self._task: asyncio.Task | None = None
         self._closed = False
         session.on("close", self._on_close)
@@ -1748,26 +1769,45 @@ class VoiceSwapper:
 
     @property
     def _live(self) -> tuple[str, str | None]:
-        return self._live_voice, self._hint(self._live_language)
+        return self._live_voice, self._hint(self._live_language, self._live_accent)
 
-    def _hint(self, language: str) -> str | None:
+    def _hint(self, language: str, accent: str = "") -> str | None:
         # The LiveKit Inference gateway ignores the language hint (see
         # build_inference_realtime_model), so only the Google route has one.
-        if self._route == "inference" or not language:
+        # Otherwise the same precedence boot uses: the explicit language, else
+        # the BCP-47 hint derived from the free-text accent.
+        if self._route == "inference" or (not language and not accent):
             return None
-        return voices.bcp47_hint(language)
+        return voices.bcp47_hint(language or voices.bcp47_hint(accent) or "")
 
-    def _describe(self, voice: str, language: str) -> str:
+    def _base_prompt(self, accent: str) -> str:
+        """The handoff instructions' base: raw system prompt plus the accent
+        block for ``accent`` ("" when the provider ignores accents)."""
+        block = self._accent_block(accent)
+        return f"{self._system_prompt}\n\n{block}" if block else self._system_prompt
+
+    def _describe(self, voice: str, language: str, accent: str = "") -> str:
         desc = voices.VOICE_PRESETS.get(voice, "")
         text = f"the {voice} voice" + (f" ({desc})" if desc else "")
         if language:
             text += f", speaking: {language}"
+        if accent:
+            text += f", accent: {accent}"
         return text
 
-    def request(self, preset: str | None, accent: str) -> tuple[bool, str]:
+    def request(
+        self, preset: str | None, accent_language: str,
+        *, voice_accent: str | None = None,
+    ) -> tuple[bool, str]:
         """The ``set_voice_preference`` live hook: record the new target and,
         when it needs a new Live session, schedule the reconnect. Returns
         ``(reconnecting, detail)`` — ``detail`` says truthfully what changes.
+
+        ``voice_accent`` (the dedicated ``ayma_voice_accent``) is ``None`` when
+        no accent change was asked for; ``""`` clears back to the provider's
+        default accent. An accent change always reconnects — even where the
+        BCP-47 hint is unchanged — because the accent instructions can only
+        reach the running session through the rebuild.
 
         Never blocks: the tool returns straight away (its result is what makes
         the model say the heads-up), and the reconnect runs as its own task
@@ -1781,11 +1821,11 @@ class VoiceSwapper:
                 + (" — that is already the current voice" if same else "")
             )
             self._voice = preset
-        if accent:
-            self._language = accent
-            hint = self._hint(accent)
+        if accent_language:
+            self._language = accent_language
+            hint = self._hint(accent_language, self._accent)
             parts.append(
-                f"accent/language → {accent}: Gemini Live has no accent "
+                f"accent/language → {accent_language}: Gemini Live has no accent "
                 + (
                     f"setting, so the speech-language hint is set to {hint} and "
                     if hint
@@ -1793,7 +1833,33 @@ class VoiceSwapper:
                 )
                 + "you speak that way yourself from now on"
             )
-        reconnecting = (self._voice, self._hint(self._language)) != self._live
+        if voice_accent is not None:
+            new_accent = voice_accent.strip()[:200]
+            if new_accent == self._accent:
+                parts.append(
+                    f"accent → {new_accent or 'default'}"
+                    " — that is already the current accent"
+                )
+            else:
+                self._accent = new_accent
+                hint = self._hint(self._language, new_accent)
+                if not new_accent:
+                    parts.append("accent → default (cleared)")
+                elif hint:
+                    parts.append(
+                        f"accent → {new_accent}: the speech-language hint is "
+                        f"set to {hint} and you speak that way yourself "
+                        "from now on"
+                    )
+                else:
+                    parts.append(
+                        f"accent → {new_accent}: no speech-language hint for "
+                        "that accent, so you speak that way yourself "
+                        "from now on"
+                    )
+        reconnecting = (
+            self._voice, self._hint(self._language, self._accent), self._accent
+        ) != (*self._live, self._live_accent)
         if reconnecting:
             self._task = asyncio.get_running_loop().create_task(
                 self._swap(self._task)
@@ -1815,15 +1881,19 @@ class VoiceSwapper:
             # Serialise back-to-back requests; each one already logged its
             # own failure.
             await asyncio.gather(previous, return_exceptions=True)
-        voice, language = self._voice, self._language
-        if (voice, self._hint(language)) == self._live:
+        voice, language, accent = self._voice, self._language, self._accent
+        if (voice, self._hint(language, accent), accent) == (
+            *self._live, self._live_accent
+        ):
             return
-        old_voice, old_language = self._live_voice, self._live_language
-        change = self._describe(voice, language)
+        old_voice, old_language, old_accent = (
+            self._live_voice, self._live_language, self._live_accent
+        )
+        change = self._describe(voice, language, accent)
         logger.info(
             "voice-swap start session=%s provider=%s voice=%s->%s hint=%s",
             self._session_id or "?", self._provider, old_voice, voice,
-            self._hint(language),
+            self._hint(language, accent),
         )
         try:
             await _await_heads_up(self._session)
@@ -1832,12 +1902,17 @@ class VoiceSwapper:
                 step = f"attempt {attempt}"
                 try:
                     if await self._handoff(
-                        voice, language,
+                        voice, language, accent,
                         confirm=voice_swap_confirm(change),
-                        instructions=f"{self._system_prompt}\n\n{voice_swap_note(change)}",
+                        instructions=(
+                            f"{self._base_prompt(accent)}\n\n"
+                            f"{voice_swap_note(change)}"
+                        ),
                         step=step,
                     ):
-                        self._live_voice, self._live_language = voice, language
+                        self._live_voice = voice
+                        self._live_language = language
+                        self._live_accent = accent
                         return
                     handed_off = True
                     self._report(
@@ -1854,13 +1929,17 @@ class VoiceSwapper:
                     return
             # Back to the voice the call was on, and say so. The saved default
             # (already written by the tool) stays, so the next call uses it.
-            if (self._voice, self._language) == (voice, language):
-                self._voice, self._language = old_voice, old_language
+            if (self._voice, self._language, self._accent) == (
+                voice, language, accent
+            ):
+                self._voice, self._language, self._accent = (
+                    old_voice, old_language, old_accent
+                )
             if handed_off:
                 restored = await self._handoff(
-                    old_voice, old_language,
+                    old_voice, old_language, old_accent,
                     confirm=voice_swap_failed(change),
-                    instructions=self._system_prompt,
+                    instructions=self._base_prompt(old_accent),
                     step="restore",
                 )
                 if not restored:
@@ -1881,15 +1960,18 @@ class VoiceSwapper:
         self,
         voice: str,
         language: str,
+        accent: str,
         *,
         confirm: str,
         instructions: str,
         step: str,
     ) -> bool:
-        """Hand the call to a new Live session on ``voice``/``language`` and
-        return whether it started speaking in time. A silent one is
-        interrupted so its stuck reply no longer blocks the turn queue."""
-        model = self._factory(voice, language, route=self._route)
+        """Hand the call to a new Live session on ``voice``/``language`` (+ the
+        free-text ``accent`` when no explicit language is set) and return
+        whether it started speaking in time. A silent one is interrupted so
+        its stuck reply no longer blocks the turn queue. The builder derives
+        the BCP-47 hint itself, exactly as at boot."""
+        model = self._factory(voice, language or accent, route=self._route)
         history = self._session.current_agent.chat_ctx.copy(
             exclude_function_call=True,
             exclude_instructions=True,
@@ -1918,7 +2000,7 @@ class VoiceSwapper:
             logger.info(
                 "voice-swap %s handoff session=%s provider=%s voice=%s hint=%s items=%d",
                 step, self._session_id or "?", self._provider, voice,
-                self._hint(language), len(history.items),
+                self._hint(language, accent), len(history.items),
             )
             try:
                 await asyncio.wait_for(spoke.wait(), timeout=self._settle + self._verify)
@@ -1950,6 +2032,40 @@ class VoiceSwapper:
             await asyncio.wait_for(self._session.interrupt(force=True), timeout=2.0)
         except Exception:  # noqa: BLE001 - the next handoff closes it anyway
             logger.warning("voice-swap interrupt of the silent reply failed", exc_info=True)
+
+
+def voice_accent_control_handler(
+    swapper: VoiceSwapper,
+) -> Callable[[object], None]:
+    """The ``voice_accent_control`` data listener: the settings screen saved
+    mid-call, so hot-swap the live session to the saved accent/language
+    (§13.9). A missing key means unchanged, ``""`` clears the accent back to
+    the provider default; anything malformed is dropped, and an unchanged
+    save is a no-op inside :meth:`VoiceSwapper.request`, so a voice-only save
+    never rebuilds the session."""
+
+    def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
+        if getattr(packet, "topic", None) != TOPIC_VOICE_ACCENT_CONTROL:
+            return
+        try:
+            payload = json.loads(bytes(packet.data).decode())
+        except (ValueError, TypeError, UnicodeDecodeError):
+            logger.warning("malformed voice_accent_control payload dropped")
+            return
+        if not isinstance(payload, dict):
+            logger.warning("malformed voice_accent_control payload dropped")
+            return
+        accent = payload.get("accent")
+        language = payload.get("language")
+        reconnecting, detail = swapper.request(
+            None,
+            language.strip()[:200] if isinstance(language, str) else "",
+            voice_accent=accent.strip()[:200] if isinstance(accent, str) else None,
+        )
+        if reconnecting:
+            logger.info("voice-accent control hot-swap: %s", detail)
+
+    return _on_data
 
 
 def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
@@ -2194,7 +2310,8 @@ def _voice_vocab(
 
 
 def _accent_block(rv, accent: str) -> str:
-    """The boot-time ACCENT instruction for this session, or ``""`` (§13.9).
+    """The ACCENT instruction for this session, or ``""`` (§13.9) — used at
+    boot and rebuilt on every hot-swapped session.
 
     Routed ONLY to an accent-capable provider (``rv.supports_accent`` — Gemini
     Live / OpenAI Realtime): the saved ``ayma_voice_accent`` becomes a style
@@ -2327,13 +2444,11 @@ async def _start_main_gemini_session(
         current_voice_id=current_voice_id,
     )
     # Boot-time accent (§13.9): fed into the instructions only on an accent-capable
-    # realtime provider (Gemini Live / OpenAI Realtime). Folded into the base
-    # prompt the hot-swapper reuses too, so a mid-call voice swap keeps the accent
-    # instead of rebuilding without it.
+    # realtime provider (Gemini Live / OpenAI Realtime). The hot-swapper gets
+    # the RAW prompt plus the boot accent and the same builder, so a mid-call
+    # accent change rebuilds the instructions for the NEW accent instead of
+    # replaying the boot one.
     accent_block = _accent_block(rv, seed.voice_accent)
-    base_prompt = (
-        f"{seed.system_prompt}\n\n{accent_block}" if accent_block else seed.system_prompt
-    )
     _instructions = _compose_instructions(seed.system_prompt, accent_block, vocab)
     # Mid-call voice hot-swap (``VoiceSwapper``) only rebuilds Gemini Live, so it
     # is wired only on the Gemini path; a non-Gemini realtime model
@@ -2342,10 +2457,12 @@ async def _start_main_gemini_session(
     swapper = (
         VoiceSwapper(
             session,
-            system_prompt=base_prompt,
+            system_prompt=seed.system_prompt,
             route=route,
             voice_name=seed.voice_name,
             voice_language=seed.voice_language,
+            voice_accent=seed.voice_accent,
+            accent_block=lambda a: _accent_block(rv, a),
             session_id=seed.session_id,
             provider=voice_provider,
             is_muted=lambda: mute.muted,
@@ -2368,6 +2485,8 @@ async def _start_main_gemini_session(
     )
     if swapper:
         swapper.tools = tools
+        # A settings save mid-call arrives on the data channel (§13.9).
+        ctx.room.on("data_received", voice_accent_control_handler(swapper))
     agent_kwargs: dict = {"instructions": _instructions, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx

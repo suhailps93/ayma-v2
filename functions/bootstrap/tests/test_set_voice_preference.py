@@ -156,13 +156,22 @@ def _rv_fish():
 
 
 def test_accent_persists_on_an_accent_capable_live_model():
+    # Live contract (accent hot-swap 2026-11-01): the accent is persisted AND
+    # routed through the hot-swap hook, and the reply is the hook's live
+    # detail — no more "next call" clause on a live call.
     db = _Chain()
-    msg = svp.bind_live(db, "u1", lambda *_: (False, "ok"))(
-        accent="a southern American accent"
-    )
+    calls = []
+
+    def _hook(preset, accent, *, voice_accent=None):
+        calls.append((preset, accent, voice_accent))
+        return False, f"accent → {voice_accent} (already current)"
+
+    msg = svp.bind_live(db, "u1", _hook)(accent="a southern American accent")
+    assert calls == [(None, "", "a southern American accent")]
     assert db.written[voices.PF_AYMA_VOICE_ACCENT] == "a southern American accent"
     assert "southern American accent" in msg
     assert "can't change its accent" not in msg
+    assert "next" not in msg
 
 
 def test_accent_switch_on_fixed_voice_stack_tells_user_to_switch_models():
@@ -207,10 +216,19 @@ def test_text_chat_accent_gated_by_saved_stack():
 
 
 def test_accent_and_voice_change_combine_in_one_reply():
+    # Live contract (accent hot-swap 2026-11-01): voice + accent ride one hook
+    # call and the reply is the hook's combined live detail.
     db = _Chain()
-    msg = svp.bind_live(db, "u1", lambda *_: (False, "voice set"))(
+    calls = []
+
+    def _hook(preset, accent, *, voice_accent=None):
+        calls.append((preset, accent, voice_accent))
+        return False, "voice set; accent → a British accent (switching now)"
+
+    msg = svp.bind_live(db, "u1", _hook)(
         request="a deeper voice", accent="a British accent"
     )
+    assert calls == [("Charon", "", "a British accent")]
     assert "British accent" in msg and "voice set" in msg
     assert db.written[voices.PF_AYMA_VOICE_ACCENT] == "a British accent"
 

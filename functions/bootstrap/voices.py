@@ -110,7 +110,8 @@ LANGUAGE_EXAMPLES = (
 # sound, not WHICH language she speaks. "southern American accent", "California
 # accent", "internet accent", "Indian who's been in America a while". Lives in
 # ``ayma_voice_accent`` on ``profile/main``, set on the "Ayma's models" screen
-# or by ``set_voice_preference``. It is handed to accent-capable providers at
+# or by ``set_voice_preference``. On a live Gemini call it hot-swaps the
+# running session; otherwise it is handed to accent-capable providers at
 # session boot (Gemini Live / OpenAI Realtime, via the instruction/style text);
 # providers that ship only fixed voices ignore it (``voice_catalog.
 # provider_supports_accent``). Empty = the provider's default accent.

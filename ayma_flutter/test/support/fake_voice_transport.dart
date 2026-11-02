@@ -101,6 +101,19 @@ class FakeVoiceTransport implements VoiceTransport {
     muteControlCalls.add(muted);
   }
 
+  /// Every [sendVoiceAccentControl] request, in order (accent, language).
+  final List<({String accent, String language})> accentControlCalls = [];
+  bool failAccentControl = false;
+
+  @override
+  Future<void> sendVoiceAccentControl({
+    required String accent,
+    required String language,
+  }) async {
+    if (failAccentControl) throw StateError('data channel closed');
+    accentControlCalls.add((accent: accent, language: language));
+  }
+
   @override
   Stream<Object> get closed => closedController.stream;
 

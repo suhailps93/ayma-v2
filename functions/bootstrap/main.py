@@ -5040,8 +5040,10 @@ async def set_voice_preference_endpoint(
     """Persist the per-user MAIN-voice stack on ``users/{uid}/profile/main``
     (§13.9): ``{mode, realtime_model_id?, brain_id?, stt_id?, tts_id?, voice_id,
     language_code}``. The agent reads it at the next voice session
-    (``main._voice_engine_seed`` → room seed → ``agent._run_session``); the dev
-    screen may also trigger a reconnect so a switch feels real-time."""
+    (``main._voice_engine_seed`` → room seed → ``agent._run_session``); a
+    changed accent/language additionally hot-swaps the live Gemini call at
+    once (the app nudges the agent over ``voice_accent_control``) — voice and
+    stack changes still take effect from the next call."""
     from firebase_admin import firestore
     import voice_catalog
     import voices as _voices
@@ -5056,9 +5058,10 @@ async def set_voice_preference_endpoint(
     payload: dict[str, object] = {
         schema.PF_AYMA_VOICE_MODE: mode,
         _voices.PF_AYMA_VOICE_LANGUAGE: voice_catalog.language_label(body.language_code),
-        # Dedicated free-text ACCENT (§13.9), saved verbatim. It applies only on
-        # an accent-capable provider at the next call; a fixed-voice stack keeps
-        # the saved text but ignores it (``agent._accent_block``).
+        # Dedicated free-text ACCENT (§13.9), saved verbatim. On an
+        # accent-capable provider it hot-swaps the live call at once (and
+        # applies at boot otherwise); a fixed-voice stack keeps the saved text
+        # but ignores it (``agent._accent_block``).
         _voices.PF_AYMA_VOICE_ACCENT: body.accent.strip()[:200],
         "updated_at": firestore.SERVER_TIMESTAMP,
     }

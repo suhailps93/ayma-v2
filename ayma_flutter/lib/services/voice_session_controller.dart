@@ -745,6 +745,31 @@ class VoiceSessionController extends ChangeNotifier {
     }
   }
 
+  /// The voice settings were saved mid-call (§13.9): tell the live agent the
+  /// saved accent/language so it hot-swaps this call instead of waiting for
+  /// the next one. Returns whether the message was delivered — `false` when
+  /// no call is live (the save still applies from the next call) or the send
+  /// failed (best effort; the save itself already succeeded).
+  Future<bool> notifyVoiceAccentChanged({
+    required String accent,
+    required String language,
+  }) async {
+    final transport = _transport;
+    if (_phase != VoiceSessionPhase.live || transport == null) {
+      return false;
+    }
+    try {
+      await transport.sendVoiceAccentControl(
+        accent: accent,
+        language: language,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('[voice] accent-control send failed: $e');
+      return false;
+    }
+  }
+
   void _setPhase(VoiceSessionPhase phase) {
     _phase = phase;
     if (phase == VoiceSessionPhase.live) _startScreenAwareness();
