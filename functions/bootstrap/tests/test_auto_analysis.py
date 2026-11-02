@@ -642,3 +642,38 @@ def test_analyse_web_stays_silent_when_the_dive_found_nothing(monkeypatch):
 
     assert sent == []  # nothing found -> no "ready" notification worth firing
     assert db.docs[("users", "u1")]["auto_dive_done"] is True  # still one-shot
+
+
+def test_analyse_web_stays_silent_when_the_name_has_no_usable_slug(monkeypatch):
+    # SWEEP91-J1R [S2]: a display name that slugs to nothing (e.g. an all
+    # non-latin name) has no `dive_report_id` — and the dive doc was never
+    # stored under one either (`store_dive` no-ops on an empty key). Emitting a
+    # notification then produces the dangling `deep_dive/` link the client
+    # can't match, so it silently drops onto the chat tab ("routes to chat"
+    # instead of the report). Stay silent rather than point at a report that
+    # doesn't exist.
+    db = FakeDb()
+    db.docs[("users", "u1", "profile", "main")] = {"name": "中文名字"}
+    monkeypatch.setattr(auto_analysis.firestore, "SERVER_TIMESTAMP", "TS")
+
+    # Sanity: this name really does slug to nothing (so the link would dangle).
+    assert deep_dive.dive_report_id(name="中文名字") == ""
+
+    async def _dive(name, *, uid=None, context="", is_self=False, db=None,
+                    target_uid="", force=False):
+        return dict(_DIGEST)  # confidence "medium" + a summary -> would notify
+
+    monkeypatch.setattr(deep_dive, "run", _dive)
+
+    sent = []
+
+    async def _spy(db_, uid, preview, deep_link="chat"):
+        sent.append((uid, preview, deep_link))
+
+    monkeypatch.setattr(auto_analysis.notifications_triggers,
+                        "notify_skill_done", _spy)
+
+    _run(auto_analysis.analyse_web(db, "u1"))
+
+    assert sent == []  # no dangling `deep_dive/` link emitted
+    assert db.docs[("users", "u1")]["auto_dive_done"] is True  # still one-shot

@@ -40,4 +40,22 @@ void main() {
       ErrorWidget.builder = previous;
     }
   });
+
+  testWidgets(
+      'SWEEP91-J1R S2: the fallback offers a Go back affordance so it is never a dead end',
+      (tester) async {
+    await tester.pumpWidget(
+      gracefulErrorWidget(FlutterErrorDetails(exception: StateError('x'))),
+    );
+    // A chromeless full-screen error (it can replace a whole route's AppBar +
+    // back button) must still give the user a way out — otherwise system BACK
+    // sometimes can't pop it and only a force-stop recovers.
+    final goBack = find.text('Go back');
+    expect(goBack, findsOneWidget);
+    // Tapping it is self-guarded (drives the global router, try/caught) and
+    // must never itself throw out of the error screen.
+    await tester.tap(goBack);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
 }

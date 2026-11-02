@@ -226,7 +226,8 @@ def test_deep_dive_adapter_carries_summary_facts_links_socials_photos(monkeypatc
 
     assert blocks["summary:sent:0"]["text"] == "Works as a designer."
     assert blocks["summary:sent:1"]["text"] == "Lives in Austin."
-    assert blocks["confidence"]["value"] == "high"
+    # The raw ``high`` enum is shown as the human label "High", never the token.
+    assert blocks["confidence"]["value"] == "High"
     assert blocks["caveats"]["text"] == "Common name, some ambiguity."
 
     assert blocks["fact:f1"]["text"] == "Studied at MIT"
@@ -266,6 +267,57 @@ def test_deep_dive_adapter_omits_empty_sections(monkeypatch):
     report, *_ = ra.deep_dive_blocks(object(), "u1", "name_nobody")
     headings = [sec["heading"] for sec in report["sections"]]
     assert headings == ["Summary"]
+
+
+# SWEEP91-J1R [S3]: the "Confidence" stat must render a human label, never the
+# raw digest enum. A report was printing "not_found" / "medium" verbatim as the
+# stat VALUE in the Living Report.
+
+
+def test_deep_dive_adapter_humanizes_the_confidence_enum(monkeypatch):
+    for raw, label in (
+        ("high", "High"),
+        ("medium", "Medium"),
+        ("low", "Low"),
+        ("confirmed", "Confirmed"),
+        ("reported", "Reported"),
+        ("unconfirmed", "Unconfirmed"),
+    ):
+        doc = dict(_DIVE_DOC)
+        doc["digest"] = {
+            "name": "Jane Doe", "summary": "Works as a designer.",
+            "confidence": raw, "facts": [], "links": [],
+        }
+        monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid, _d=doc: dict(_d))
+        report, *_ = ra.deep_dive_blocks(object(), "u1", "name_jane-doe")
+        value = _blocks(report)["confidence"]["value"]
+        assert value == label, f"{raw!r} -> {value!r}, expected {label!r}"
+        assert "_" not in value  # never the raw snake_case token
+
+
+def test_deep_dive_adapter_omits_the_confidence_stat_when_not_found(monkeypatch):
+    # A `not_found` dive that still renders (opened directly) must NOT show a
+    # "Confidence: not_found" stat — the raw enum was leaking as the value.
+    doc = dict(_DIVE_DOC)
+    doc["digest"] = {
+        "name": "Nobody", "summary": "Some text we still show.",
+        "confidence": "not_found", "facts": [], "links": [],
+    }
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: doc)
+    report, *_ = ra.deep_dive_blocks(object(), "u1", "name_nobody")
+    assert "confidence" not in _blocks(report)
+
+
+def test_deep_dive_adapter_confidence_unknown_value_is_not_raw_enum(monkeypatch):
+    doc = dict(_DIVE_DOC)
+    doc["digest"] = {
+        "name": "Jane Doe", "summary": "Works as a designer.",
+        "confidence": "some_new_state", "facts": [], "links": [],
+    }
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: doc)
+    report, *_ = ra.deep_dive_blocks(object(), "u1", "name_jane-doe")
+    # An unmapped enum is title-cased, never shown with its snake_case token.
+    assert _blocks(report)["confidence"]["value"] == "Some New State"
 
 
 # --- pending reverse-image-search candidates (§ founder: replaces the ------

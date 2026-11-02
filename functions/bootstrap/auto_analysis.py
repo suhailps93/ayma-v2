@@ -281,11 +281,22 @@ async def analyse_web(db, uid: str) -> None:
     # A dive that found nothing has no report worth pointing at — mirror the
     # user-initiated ``report_id`` gate exactly so the two never disagree.
     try:
-        has_report = digest.get("confidence") != "not_found" and (
-            digest.get("facts") or digest.get("summary")
+        # The deep-link MUST carry the exact id the report is stored under
+        # (``deep_dive.run(is_self=True)`` -> ``store_dive`` writes the
+        # name-keyed ``name_{slug}`` doc), so an unchanged client resolves
+        # ``deep_dive/<id>`` straight to the rendered /deep-dive/<id> report.
+        # An empty ``report_id`` (a name that slugs to nothing — and so was
+        # never stored either, ``store_dive`` no-ops on an empty key) would
+        # emit the dangling ``deep_dive/`` link, which the client can't match
+        # and silently drops onto the chat tab — so gate on it too and stay
+        # silent rather than point at a report that doesn't exist.
+        report_id = deep_dive.dive_report_id(name=name)
+        has_report = (
+            report_id
+            and digest.get("confidence") != "not_found"
+            and (digest.get("facts") or digest.get("summary"))
         )
         if has_report:
-            report_id = deep_dive.dive_report_id(name=name)
             await notifications_triggers.notify_skill_done(
                 db, uid,
                 "Your web search on yourself is ready.",

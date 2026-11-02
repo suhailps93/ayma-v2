@@ -256,6 +256,35 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
 # --- Deep-dive / web-search --------------------------------------------
 
 
+# A deep-dive digest carries a raw confidence ENUM, never a display string:
+# the research-level band (``high``/``medium``/``low``, or ``not_found`` when a
+# dive pinned nothing to one person) and the fact-level provenance words
+# (``confirmed``/``reported``/``unconfirmed``). The "Confidence" stat must show
+# a human label, not the raw token (a report was leaking e.g. "not_found" /
+# "medium" verbatim as the stat value). ``not_found`` maps to no label at all —
+# the summary already renders "Nothing found yet.", so a "Confidence: Not found"
+# stat beside it is noise; it's omitted entirely (see caller).
+_CONFIDENCE_LABELS = {
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "confirmed": "Confirmed",
+    "reported": "Reported",
+    "unconfirmed": "Unconfirmed",
+    "not_found": "",
+}
+
+
+def _confidence_label(raw: str) -> str:
+    """Human label for a deep-dive confidence enum. An unmapped value falls
+    back to a title-cased version of the token (``some_state`` -> "Some State")
+    rather than leaking the raw enum; ``not_found`` (and empty) -> ``""``."""
+    key = (raw or "").strip().lower()
+    if key in _CONFIDENCE_LABELS:
+        return _CONFIDENCE_LABELS[key]
+    return key.replace("_", " ").replace("-", " ").title()
+
+
 def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | None = None):
     """Adapter for a stored deep-dive doc (``deep_dive.read_dive``) — works
     identically for a self dive and a dive on someone else; the caller
@@ -291,7 +320,7 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
             rb.text_block(f"summary:sent:{i}", sent)
             for i, sent in enumerate(rb.split_sentences(summary_text))
         ] or [rb.section_head_block("summary:status", "Nothing found yet.")]
-    conf = str(digest.get("confidence") or "")
+    conf = _confidence_label(str(digest.get("confidence") or ""))
     if conf:
         summary_blocks.append(
             rb.stat_block("confidence", "Confidence", conf, editable=False)

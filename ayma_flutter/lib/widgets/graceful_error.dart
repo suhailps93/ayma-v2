@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../routing/app_router.dart';
+import '../screens/main_shell_screen.dart';
 import '../theme.dart';
 
 /// App-wide replacement for Flutter's default **red** [ErrorWidget].
@@ -53,8 +55,68 @@ Widget gracefulErrorWidget(FlutterErrorDetails details) {
             textAlign: TextAlign.center,
             style: TextStyle(color: muted, fontSize: 14, height: 1.3),
           ),
+          // This fallback can replace a whole route's chrome (AppBar + back
+          // button included) when the build threw high in the subtree, leaving
+          // a chromeless screen that Android's system BACK sometimes can't pop
+          // — a dead end only force-stop recovered from (Scout SWEEP91 S2).
+          // A self-contained, context-free "Go back" affordance guarantees a
+          // way out regardless: it pops the top route, or returns Home when
+          // there's nothing to pop. Built WITHOUT Material/Theme (an ancestor
+          // of those may be exactly what failed) — a plain tappable box.
+          SizedBox(height: 22),
+          _GoBackButton(),
         ],
       ),
     ),
   );
+}
+
+/// A context-free recovery button for [gracefulErrorWidget] — no
+/// Material/Theme/Navigator-of-context lookups (any of them may be the thing
+/// that failed to build). It drives the global [appRouter] directly: pop the
+/// stranded route when possible, else go Home. Every call is guarded so a tap
+/// can never itself throw out of the error screen.
+class _GoBackButton extends StatelessWidget {
+  const _GoBackButton();
+
+  void _recover() {
+    try {
+      if (appRouter.canPop()) {
+        appRouter.pop();
+      } else {
+        appRouter.go(MainShellScreen.path);
+      }
+    } catch (_) {
+      // Last resort: a direct Home navigation can't be worse than the
+      // dead-end the user is already stranded on.
+      try {
+        appRouter.go(MainShellScreen.path);
+      } catch (_) {/* nothing more we can safely do */}
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const fg = AymaColors.darkFg;
+    const muted = AymaColors.darkFgMute;
+    return GestureDetector(
+      onTap: _recover,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 11),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: muted),
+        ),
+        child: const Text(
+          'Go back',
+          style: TextStyle(
+            color: fg,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
 }

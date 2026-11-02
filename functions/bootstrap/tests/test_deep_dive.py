@@ -2014,3 +2014,42 @@ def test_deep_dive_report_endpoint_returns_the_callers_run_status(monkeypatch):
     assert r.status_code == 200
     assert r.json()["run_status"] == "running"
     assert seen == [("me", "name_me")]
+
+
+# SWEEP91-J1R [S2]: the self web-search completion notification deep-links to
+# `deep_dive/<report_id>`, and that <report_id> must resolve to the SELF dive
+# the auto run just stored (`deep_dive.run(is_self=True)` -> `store_dive` writes
+# the name-keyed `name_{slug}` doc) so the unchanged client opens the rendered
+# /deep-dive/<id> report instead of landing on an empty / "Something didn't
+# load" screen. The pre-existing notification test only asserts the emitted
+# string; this one closes the store <-> notify-id <-> open contract end to end.
+def test_self_dive_notification_id_opens_the_stored_report():
+    import report_hub
+
+    db = _FakeDb()
+    name = "Ana Reis"
+    # Exactly what deep_dive.run(is_self=True) persists on completion:
+    # subject_uid = target_uid or uid = uid; target_uid="" -> name-keyed doc.
+    result = {
+        "name": name, "is_self": True,
+        "summary": "Ana is a robotics engineer in Austin.",
+        "confidence": "medium",
+        "facts": [{"id": "f1", "claim": "Works at Acme", "category": "career",
+                   "confidence": "high"}],
+        "links": [], "web_images": [], "social_handles": [], "caveats": "",
+    }
+    deep_dive.store_dive(db, "u1", result, target_uid="", name=name)
+
+    # The id the notification deep_link carries (auto_analysis.analyse_web and
+    # main._finish_deep_dive both emit `deep_dive/{dive_report_id(name=name)}`).
+    report_id = deep_dive.dive_report_id(name=name)
+    assert report_id == "name_ana-reis"
+
+    # The unchanged client routes `deep_dive/<id>` -> GET /report/deep_dive/<id>.
+    out = report_hub.get_report(db, "deep_dive", report_id, "u1")
+    assert out["title"] == "Web search: Ana Reis"
+    assert out["meta"]["owner_uid"] == "u1"
+    # Real content rendered (not an empty / 404 -> "No web research yet").
+    blocks = {b["block_id"]: b for s in out["sections"] for b in s["blocks"]}
+    assert "fact:f1" in blocks
+    assert blocks["confidence"]["value"] == "Medium"  # humanized, not raw enum
