@@ -24,6 +24,7 @@ import '../widgets/chat_composer.dart'
 import '../widgets/freshness_indicator.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/keyboard_dismiss.dart';
+import '../widgets/message_timestamp.dart';
 import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
@@ -792,6 +793,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 }
                                 final m = msgs[msgs.length - 1 - i];
                                 final mine = m.senderUid == me;
+                                final prev = (msgs.length - 1 - i > 0)
+                                    ? msgs[msgs.length - 1 - i - 1]
+                                    : null;
+                                final showDivider = shouldShowDateDivider(
+                                    prev?.createdAt, m.createdAt);
                                 final bubble = _Bubble(
                                   message: m,
                                   mine: mine,
@@ -809,6 +815,19 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                   onDetected: _onOtherLangDetected,
                                   preferredLang: _preferredLang,
                                 );
+                                final content =
+                                    (showDivider && m.createdAt != null)
+                                        ? Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              DateDividerChip(
+                                                  date: m.createdAt!),
+                                              bubble,
+                                            ],
+                                          )
+                                        : bubble;
                                 return FadeSlideIn(
                                   key: ValueKey(m.id),
                                   delay: staggerDelay(i),
@@ -817,8 +836,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                   // newest few messages of a private
                                   // conversation.
                                   child: i < _kContextMessages
-                                      ? bubble
-                                      : NoScreenContext(child: bubble),
+                                      ? content
+                                      : NoScreenContext(child: content),
                                 );
                               },
                             ),
@@ -1404,12 +1423,43 @@ class _Bubble extends StatelessWidget {
       );
     }
 
+    // WhatsApp-style time label appended at the bottom-right of the bubble
+    // (display-only; shown when the message carries a createdAt).
+    final timeStr = message.createdAt != null
+        ? formatMessageTime(message.createdAt!)
+        : null;
+    final withTime = timeStr == null
+        ? content
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              content,
+              const SizedBox(height: 2),
+              Padding(
+                padding: EdgeInsets.only(
+                  right: tight ? 4 : 0,
+                  bottom: tight ? 2 : 0,
+                ),
+                child: Text(
+                  timeStr,
+                  style: AymaType.sans(
+                    size: 10.5,
+                    color: (mine && !message.moderated)
+                        ? ac.onAccent.withValues(alpha: 0.72)
+                        : ac.fgMute,
+                  ),
+                ),
+              ),
+            ],
+          );
+
     return ChatBubble(
       mine: mine,
       tight: tight,
       flagged: message.moderated,
       copyText: message.body,
-      child: content,
+      child: withTime,
     );
   }
 

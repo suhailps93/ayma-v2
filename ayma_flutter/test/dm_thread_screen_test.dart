@@ -7,6 +7,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:ayma_flutter/services/fresh_data.dart';
 import 'package:ayma_flutter/widgets/freshness_indicator.dart';
+import 'package:ayma_flutter/widgets/message_timestamp.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1184,6 +1185,58 @@ void main() {
 
       expect(find.byType(FreshnessIndicator), findsOneWidget);
       expect(find.text('Offline — showing saved data'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'bubbles show WhatsApp-style time labels on both sent + received, with a '
+    'date divider chip between different days',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final d1 = DateTime(2026, 10, 30, 9, 41); // received, day 1
+      final d2 = DateTime(2026, 10, 31, 14, 15); // sent, day 2
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      ctrl.add([
+        DmMessage(
+          id: '1',
+          senderUid: 'a',
+          type: 'text',
+          body: 'morning!',
+          createdAt: d1,
+        ),
+        DmMessage(
+          id: '2',
+          senderUid: 'me',
+          type: 'text',
+          body: 'hey there',
+          createdAt: d2,
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      // A time label on each bubble (received + sent).
+      expect(find.text(formatMessageTime(d1)), findsOneWidget);
+      expect(find.text(formatMessageTime(d2)), findsOneWidget);
+
+      // A divider chip for each distinct day (the first dated message always
+      // gets one; the day change adds the second).
+      expect(find.byType(DateDividerChip), findsNWidgets(2));
     },
   );
 }
