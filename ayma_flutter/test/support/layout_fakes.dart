@@ -285,6 +285,7 @@ Object? _bodyFor(String path) {
           'provider': 'gemini',
           'available': true,
           'requires_secret': '',
+          'supports_accent': true,
           'voices': gemVoices,
           'languages': langs,
         },

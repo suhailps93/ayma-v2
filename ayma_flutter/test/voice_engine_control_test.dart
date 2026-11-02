@@ -191,19 +191,103 @@ void main() {
     expect(_posted.first['accent'], 'a southern American accent');
   });
 
-  testWidgets('a fixed-voice cascade TTS shows the switch-models accent note',
+  // --- Accent card gated on accent-capability (fix/accent-card-gate-capable) ---
+
+  testWidgets(
+      '(i) accent card is VISIBLE for an accent-capable model (Gemini Live)',
       (tester) async {
     await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
     await tester.pumpAndSettle();
 
-    // Switch to cascade (inworld TTS = fixed voices, no accent).
+    // Default current selection is realtime Gemini Live (supports_accent=true).
+    expect(find.byKey(const ValueKey('voice-accent-field')), findsOneWidget);
+    expect(find.text('ACCENT'), findsOneWidget);
+    expect(find.textContaining('from the first word'), findsOneWidget);
+  });
+
+  testWidgets(
+      '(ii) accent card is HIDDEN (no orphan note) for a fixed-accent model',
+      (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    // Switch to cascade → inworld TTS (supports_accent=false), mirroring the
+    // repro's fishaudio/s2.1-pro fixed-accent TTS.
     await tester.tap(find.byType(DropdownButton<String>).first); // mode
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('one fixed accent'), findsOneWidget);
+    // The card AND its helper note are both gone — no orphan note left behind.
+    expect(find.byKey(const ValueKey('voice-accent-field')), findsNothing);
+    expect(find.text('ACCENT'), findsNothing);
+    expect(find.textContaining('one fixed accent'), findsNothing);
+    expect(find.textContaining('from the first word'), findsNothing);
+  });
+
+  testWidgets('(iii) accent value is PRESERVED across a hide/show model switch',
+      (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    // Type an accent on the accent-capable Gemini Live.
+    await tester.enterText(
+      find.byKey(const ValueKey('voice-accent-field')),
+      'a British accent',
+    );
+    await tester.pumpAndSettle();
+
+    // Switch to cascade (non-capable) — the card disappears.
+    await tester.tap(find.byType(DropdownButton<String>).first); // mode
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('voice-accent-field')), findsNothing);
+
+    // Switch back to realtime — the card returns with the prior value intact.
+    await tester.tap(find.byType(DropdownButton<String>).first); // mode
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Realtime (native audio)').last);
+    await tester.pumpAndSettle();
+
     expect(find.byKey(const ValueKey('voice-accent-field')), findsOneWidget);
+    expect(find.text('a British accent'), findsOneWidget);
+  });
+
+  testWidgets(
+      "(iv) saving on a non-capable model keeps the accent (hide-don't-delete) "
+      'and fires NO accent-change notification',
+      (tester) async {
+    final voice = _FakeVoice();
+    VoiceSessionController.active = voice;
+    addTearDown(() => VoiceSessionController.active = null);
+
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    // Type an accent while on the accent-capable Gemini Live (don't save yet).
+    await tester.enterText(
+      find.byKey(const ValueKey('voice-accent-field')),
+      'a British accent',
+    );
+    await tester.pumpAndSettle();
+
+    // Switch to cascade (inworld TTS, non-capable) — the card hides.
+    await tester.tap(find.byType(DropdownButton<String>).first); // mode
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('voice-accent-field')), findsNothing);
+
+    // Save while on the non-capable model.
+    await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
+    await tester.pumpAndSettle();
+
+    // Persisted (hide-don't-delete), but the live call is NOT nudged with an
+    // accent the model can't honour.
+    expect(_posted, hasLength(1));
+    expect(_posted.first['accent'], 'a British accent');
+    expect(voice.notifyCalls, 0);
   });
 
   testWidgets('a changed accent nudges the live call (§13.9 hot-swap)',
