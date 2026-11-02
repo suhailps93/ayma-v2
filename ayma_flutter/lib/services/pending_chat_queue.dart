@@ -261,7 +261,10 @@ class PendingChatQueue extends ChangeNotifier {
   /// The Ayma reply the server already finished for [item], if any.
   Future<ChatMessage?> _landedReply(QueuedChatMessage item) async {
     try {
-      final page = await _api.chatHistory(limit: 10);
+      // Fail fast: the queue has its own retry/dedup, so the landed-reply
+      // check must not incur the GET retry-backoff (a backoff would outlive
+      // this flush and skip the online retry, PERF_PLAN GATE-RED).
+      final page = await _api.chatHistory(limit: 10, noRetry: true);
       for (final m in page.messages) {
         if (m.role == 'ayma' && m.clientMsgId == item.clientMsgId) return m;
       }

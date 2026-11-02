@@ -47,12 +47,26 @@ class BudgetHttpClient extends http.BaseClient {
     return interactiveTimeout;
   }
 
+  /// Long/streaming runs whose duration is driven by the server, not the
+  /// client: they must never hit the interactive budget (mirrors `/chat/stream`,
+  /// which bypasses this wrapper via [send]). A date simulation streams its
+  /// transcript into Firestore for the whole run — minutes, not seconds — so
+  /// the POST (and its `/continue`) is exempt from any client timeout.
+  bool _noClientTimeout(Uri url) {
+    final p = url.path;
+    return p == '/date-sim' ||
+        (p.startsWith('/date-sim/') && p.endsWith('/continue'));
+  }
+
   Map<String, String>? _cleanHeaders(Map<String, String>? headers) {
-    if (headers == null || !headers.containsKey('X-Request-Timeout')) {
+    if (headers == null ||
+        !(headers.containsKey('X-Request-Timeout') ||
+            headers.containsKey('X-No-Retry'))) {
       return headers;
     }
-    final copy = Map<String, String>.from(headers);
-    copy.remove('X-Request-Timeout');
+    final copy = Map<String, String>.from(headers)
+      ..remove('X-Request-Timeout')
+      ..remove('X-No-Retry');
     return copy;
   }
 
@@ -69,7 +83,11 @@ class BudgetHttpClient extends http.BaseClient {
     if (existing != null) return existing;
 
     final timeout = _timeoutFor(url, headers);
-    final future = _executeGet(url, clean, timeout);
+    // The pending-chat-queue flush has its own retry/dedup and must fail fast
+    // offline (a backoff here would outlive the flush and skip the online
+    // retry, PERF_PLAN GATE-RED). Such callers opt out with `X-No-Retry`.
+    final maxAttempts = headers?['X-No-Retry'] == '1' ? 1 : 2;
+    final future = _executeGet(url, clean, timeout, maxAttempts);
     _inFlightGets[key] = future;
     future.whenComplete(() => _inFlightGets.remove(key)).ignore();
     return future;
@@ -79,8 +97,8 @@ class BudgetHttpClient extends http.BaseClient {
     Uri url,
     Map<String, String>? headers,
     Duration timeout,
+    int maxAttempts, // Bounded retry for idempotent GETs (1 = no retry)
   ) async {
-    const maxAttempts = 2; // Bounded retry for idempotent GETs
     final deadline = DateTime.now().add(timeout);
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -129,12 +147,14 @@ class BudgetHttpClient extends http.BaseClient {
     Object? body,
     Encoding? encoding,
   }) async {
-    final timeout = _timeoutFor(url, headers);
     final clean = _cleanHeaders(headers);
     try {
-      return await _inner
-          .post(url, headers: clean, body: body, encoding: encoding)
-          .timeout(timeout);
+      final send =
+          _inner.post(url, headers: clean, body: body, encoding: encoding);
+      // Streaming/long runs drive their own duration — no client timeout.
+      return _noClientTimeout(url)
+          ? await send
+          : await send.timeout(_timeoutFor(url, headers));
     } on TimeoutException {
       throw ApiException('Request timed out — please try again.', statusCode: 408);
     } on http.ClientException catch (e) {
@@ -2494,6 +2514,7 @@ class ApiClient {
   Future<({List<ChatMessage> messages, String? nextBefore})> chatHistory({
     String? before,
     int limit = 40,
+    bool noRetry = false,
   }) async {
     final uri = _uri('/chat/history').replace(
       queryParameters: {
@@ -2501,7 +2522,11 @@ class ApiClient {
         if (before != null && before.isNotEmpty) 'before': before,
       },
     );
-    final r = await _http.get(uri, headers: await _headers());
+    final headers = await _headers();
+    // The offline queue flush opts out of the GET retry-backoff so it fails
+    // fast and the online flush isn't skipped (PERF_PLAN GATE-RED).
+    if (noRetry) headers['X-No-Retry'] = '1';
+    final r = await _http.get(uri, headers: headers);
     if (r.statusCode != 200) {
       throw ApiException(
         'chat history failed.',

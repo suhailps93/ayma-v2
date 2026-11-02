@@ -258,6 +258,7 @@ class _FakeApi extends ApiClient {
   Future<({List<ChatMessage> messages, String? nextBefore})> chatHistory({
     String? before,
     int limit = 40,
+    bool noRetry = false,
   }) async {
     calls.add('chatHistory');
     return (messages: const <ChatMessage>[], nextBefore: null);
