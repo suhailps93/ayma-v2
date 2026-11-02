@@ -24,9 +24,15 @@ company (referred to as "Ayma", "we", or "us"). Justabot LLC is the controller
 of the personal data described in this policy. You can reach us at
 founder@justabot.info.
 
-> **Internal note (not shown in the app or on the web):** If Ayma has an EU/EEA or UK presence or targets those markets, add
-> the EU/UK representative and the Data Protection Officer (or a statement that
-> none is required) here.
+If you are in the European Union, the EEA, or the United Kingdom, you can
+contact us about your data at founder@justabot.info or at the postal
+address in "Contact us" below.
+
+> **Internal note (not shown in the app or on the web):** Before EU/UK launch:
+> appoint an EU representative (GDPR Art. 27), a UK representative, and a Data
+> Protection Officer, and insert their names and contacts here; complete the
+> DPIA and records of processing; confirm the transfer mechanism (Data Privacy
+> Framework certification or SCCs).
 
 ## The short version
 
@@ -182,12 +188,22 @@ contract.
 | RevenueCat | Subscription and in-app purchase management | App user ID, purchase history, subscription status |
 | Sentry | Error, crash and performance monitoring for the app and backend | Device and app diagnostics, error reports, user ID where attached to an error |
 
-> **Internal note (not shown in the app or on the web):** Confirm this list before launch and keep a current subprocessor
-> list published. Confirm the exact Google entities and regions, whether
-> Gemini is used via Vertex AI or the Gemini API, and that data-processing
-> agreements and Standard Contractual Clauses are in place with each,
-including with LiveKit for LiveKit Inference. Attorney review of this section is
-still needed.
+**Our subprocessors.** We use the following service providers to run Ayma.
+Each processes personal data only on our instructions and under a
+data-processing agreement; where a provider processes data outside the
+United States, that agreement includes the Standard Contractual Clauses
+(and the UK addendum where applicable):
+
+| Provider | What it does for us | Where data is processed |
+| --- | --- | --- |
+| Google LLC (Google Cloud, Firebase, Firebase Crashlytics, Vertex AI / Gemini) | Hosting, database, storage, sign-in, crash reporting, and the AI models that power Ayma | United States |
+| LiveKit, Inc. | Real-time voice infrastructure for calls with Ayma | United States |
+| RevenueCat, Inc. | Subscription and purchase management | United States |
+| Qloo LLC | Taste and cultural-interest data used to enrich matching signals | United States |
+| Functional Software, Inc. (Sentry) | Error and performance monitoring | United States |
+
+We will update this list before any new provider starts processing
+personal data.
 
 ### AI providers and training
 
@@ -293,8 +309,13 @@ including in the United States. Where the law requires it, we use appropriate
 safeguards for these transfers, such as the European Commission's Standard
 Contractual Clauses (or the UK equivalent) with our providers.
 
-> **Internal note (not shown in the app or on the web):** State the specific transfer mechanism relied on and the countries
-> involved once the entity and hosting regions are fixed.
+Ayma is hosted in the United States (Google Cloud, us-central1 region),
+and your data is stored and processed there. If you use Ayma from outside
+the United States, your data is transferred to the United States under
+this policy. Where our service providers transfer personal data
+internationally on our behalf, the transfer is covered by the Standard
+Contractual Clauses (and, for the United Kingdom, the UK International
+Data Transfer Addendum) included in their data-processing agreements.
 
 ## Biometric information (face matching)
 
@@ -348,8 +369,13 @@ these Terms and the Privacy Policy). **Ayma cannot be used without it.**
   security, or dispute-resolution reasons (a "legal hold"),** and only for as
   long as that purpose lasts.
 
-> **Internal note (not shown in the app or on the web):** Insert concrete backup rotation, log retention and legal-hold
-> periods once operations confirm them.
+Concretely: when you delete your account, deletion becomes permanent
+after the 30-day recovery window described above. Copies of your data in
+encrypted backups are overwritten within 90 days of deletion. Security
+and operational logs are kept for up to 12 months. Records we must keep
+by law (for example, payment and tax records held by the app stores and
+our payment providers) are kept for the period the law requires, and data
+subject to a legal hold is kept until the hold is released.
 
 ## How we protect your data
 
@@ -416,8 +442,9 @@ Ayma after a change takes effect, that means you accept the updated policy.**
 For any privacy question or request, email founder@justabot.info or use the
 **in-app feedback tool** (Profile, then "Send feedback").
 
+Postal address for privacy questions and formal notices: Justabot LLC,
+c/o Harvard Business Services, Inc., 16192 Coastal Highway, Lewes, DE
+19958, USA. Email: founder@justabot.info.
+
 See also our [Child Safety Standards](https://justabot.info/child-safety.html)
 and the [account deletion page](https://justabot.info/delete-account.html).
-
-> **Internal note (not shown in the app or on the web):** Before launch, add the postal address and, if applicable, the
-> EU/UK representative's contact details.

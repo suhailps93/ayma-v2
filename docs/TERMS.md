@@ -39,9 +39,11 @@ them. If you do not agree, please do not use Ayma.**
 These Terms work together with our [Privacy Policy](PRIVACY.md), which explains
 in more detail what we collect and why.
 
-> **Internal note (not shown in the app or on the web):** A lawyer must still insert the registered address and governing
-> law / jurisdiction, and confirm any consumer-law carve-outs for the launch
-> markets.
+## Who we are
+
+Ayma is operated by Justabot LLC, a Delaware limited liability company,
+with its registered office at 16192 Coastal Highway, Lewes, DE 19958,
+USA (c/o Harvard Business Services, Inc., registered agent).
 
 ## Age: 18 and over only
 
@@ -365,16 +367,34 @@ appropriate safeguards for those transfers.
 - We do not guarantee that any particular feature will stay free, stay a given
   price, or remain available. We may add, change, or remove paid features.
 
-> **Internal note (not shown in the app or on the web):** A lawyer should confirm the refund, cancellation, and cooling-off
-> wording against consumer-protection law in each launch market (for example
-> the EU/UK right of withdrawal for digital content), and align it with the
-> Apple and Google billing rules that apply.
+**Refunds and cancellation.** Paid plans are billed through the Apple
+App Store or Google Play, and those stores — not Ayma — process your
+payment. You can cancel at any time in your store subscription settings;
+cancellation stops the next renewal and your plan stays active until the
+end of the period you have paid for. Refunds are handled by Apple or
+Google under their own refund policies, and we cannot issue refunds for
+store purchases directly. If you live in a jurisdiction that gives you a
+statutory cooling-off or withdrawal right for digital content, nothing
+in these Terms takes that right away; where the law provides that the
+right lapses for digital content or services that begin immediately with
+your consent and acknowledgement, you agree the service begins as soon
+as your plan activates.
 
 ## No warranty and limitation of liability
 
 **Ayma is provided "as is". We work to keep it running and useful, but we do
 not promise it will be uninterrupted, error-free, or that it will find you a
 match. To the extent the law allows, our liability to you is limited.**
+
+## Governing law
+
+**Governing law.** These Terms are governed by the laws of the State of
+Delaware, without regard to its conflict-of-laws rules. Any dispute
+arising from these Terms or from Ayma will be brought in the state or
+federal courts located in Delaware, and you and we consent to their
+jurisdiction. Nothing in this section limits any right you have under
+consumer-protection law in your home jurisdiction that cannot lawfully
+be waived.
 
 ## Changes to these Terms
 
@@ -394,5 +414,9 @@ The best way to reach us about these Terms, a safety concern, or a privacy
 request is the **in-app feedback tool** (Profile, then "Send feedback"), or
 email founder@justabot.info.
 
-> **Internal note (not shown in the app or on the web):** Add the postal address for formal / regulatory notices before
-> launch.
+## Notices
+
+**Notices.** Formal and regulatory notices to Ayma must be sent to:
+Justabot LLC, c/o Harvard Business Services, Inc., 16192 Coastal
+Highway, Lewes, DE 19958, USA, with a copy by email to
+founder@justabot.info.

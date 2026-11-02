@@ -32,6 +32,10 @@ company (referred to as "Ayma", "we", or "us"). Justabot LLC is the controller
 of the personal data described in this policy. You can reach us at
 founder@justabot.info.
 
+If you are in the European Union, the EEA, or the United Kingdom, you can
+contact us about your data at founder@justabot.info or at the postal
+address in "Contact us" below.
+
 ## The short version
 
 - **We collect and store** what you give us (sign-in details, profile,
@@ -161,6 +165,21 @@ contract.
 - **RevenueCat** — Subscription and in-app purchase management. Data involved: App user ID, purchase history, subscription status.
 - **Sentry** — Error, crash and performance monitoring for the app and backend. Data involved: Device and app diagnostics, error reports, user ID where attached to an error.
 
+**Our subprocessors.** We use the following service providers to run Ayma.
+Each processes personal data only on our instructions and under a
+data-processing agreement; where a provider processes data outside the
+United States, that agreement includes the Standard Contractual Clauses
+(and the UK addendum where applicable):
+
+- **Google LLC (Google Cloud, Firebase, Firebase Crashlytics, Vertex AI / Gemini)** — Hosting, database, storage, sign-in, crash reporting, and the AI models that power Ayma. Where data is processed: United States.
+- **LiveKit, Inc.** — Real-time voice infrastructure for calls with Ayma. Where data is processed: United States.
+- **RevenueCat, Inc.** — Subscription and purchase management. Where data is processed: United States.
+- **Qloo LLC** — Taste and cultural-interest data used to enrich matching signals. Where data is processed: United States.
+- **Functional Software, Inc. (Sentry)** — Error and performance monitoring. Where data is processed: United States.
+
+We will update this list before any new provider starts processing
+personal data.
+
 ### AI providers and training
 
 We instruct our AI providers to process your content only to return results to
@@ -242,6 +261,14 @@ including in the United States. Where the law requires it, we use appropriate
 safeguards for these transfers, such as the European Commission's Standard
 Contractual Clauses (or the UK equivalent) with our providers.
 
+Ayma is hosted in the United States (Google Cloud, us-central1 region),
+and your data is stored and processed there. If you use Ayma from outside
+the United States, your data is transferred to the United States under
+this policy. Where our service providers transfer personal data
+internationally on our behalf, the transfer is covered by the Standard
+Contractual Clauses (and, for the United Kingdom, the UK International
+Data Transfer Addendum) included in their data-processing agreements.
+
 ## Biometric information (face matching)
 
 **Ayma uses face recognition.** Before you sign in you give a **separate,
@@ -293,6 +320,14 @@ these Terms and the Privacy Policy). **Ayma cannot be used without it.**
 - **We may keep specific records longer where we must for legal, tax,
   security, or dispute-resolution reasons (a "legal hold"),** and only for as
   long as that purpose lasts.
+
+Concretely: when you delete your account, deletion becomes permanent
+after the 30-day recovery window described above. Copies of your data in
+encrypted backups are overwritten within 90 days of deletion. Security
+and operational logs are kept for up to 12 months. Records we must keep
+by law (for example, payment and tax records held by the app stores and
+our payment providers) are kept for the period the law requires, and data
+subject to a legal hold is kept until the hold is released.
 
 ## How we protect your data
 
@@ -358,6 +393,10 @@ Ayma after a change takes effect, that means you accept the updated policy.**
 
 For any privacy question or request, email founder@justabot.info or use the
 **in-app feedback tool** (Profile, then "Send feedback").
+
+Postal address for privacy questions and formal notices: Justabot LLC,
+c/o Harvard Business Services, Inc., 16192 Coastal Highway, Lewes, DE
+19958, USA. Email: founder@justabot.info.
 
 See also our [Child Safety Standards](https://justabot.info/child-safety.html)
 and the [account deletion page](https://justabot.info/delete-account.html).
