@@ -6,6 +6,7 @@ import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_rail_icons.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 import 'notification_prefs_screen.dart';
@@ -209,7 +210,20 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
       ),
     );
     if (ok != true) return;
-    _svc.markReadMany(unread.map((n) => n.id));
+    await _markAllRead(unread.map((n) => n.id).toList());
+  }
+
+  /// Catches internally, so the toast's Retry can safely re-invoke it.
+  Future<void> _markAllRead(List<String> ids) async {
+    try {
+      await _svc.markReadMany(ids);
+    } catch (e) {
+      if (!mounted) return;
+      AymaToast.show(context, 'Could not mark read ($e).',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+              label: 'Retry', onPressed: () => _markAllRead(ids)));
+    }
   }
 
   Future<void> _confirmClearAll(List<AppNotification> items) async {
@@ -232,18 +246,46 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
       ),
     );
     if (ok != true) return;
-    _svc.dismissAll(items);
+    await _clearAll(items);
+  }
+
+  /// Catches internally, so the toast's Retry can safely re-invoke it.
+  Future<void> _clearAll(List<AppNotification> items) async {
+    try {
+      await _svc.dismissAll(items);
+    } catch (e) {
+      if (!mounted) return;
+      AymaToast.show(context, 'Could not clear ($e).',
+          kind: AymaToastKind.error,
+          action:
+              AymaToastAction(label: 'Retry', onPressed: () => _clearAll(items)));
+    }
   }
 
   Future<void> _dismissEntry(_Entry e) async {
-    // Reuse the soft-dismiss write for every id the row covers.
-    for (final id in e.ids) {
-      await _svc.dismiss(id);
+    // Reuse the soft-dismiss write for every id the row covers. The list is
+    // stream-driven, so a refused write reconciles itself (the row comes
+    // back); the toast says why, with Retry from the same ids.
+    try {
+      for (final id in e.ids) {
+        await _svc.dismiss(id);
+      }
+    } catch (err) {
+      if (!mounted) return;
+      AymaToast.show(context, 'Could not dismiss ($err).',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+              label: 'Retry', onPressed: () => _dismissEntry(e)));
     }
   }
 
   Future<void> _open(_Entry e) async {
-    await _svc.markReadMany(e.ids);
+    try {
+      await _svc.markReadMany(e.ids);
+    } catch (_) {
+      // Best-effort — the user asked to open, not to mark read; the unread
+      // badge is stream-driven and heals on the next open.
+    }
     if (!mounted) return;
     context.push(deepLinkToRoute(e.notif.deepLink, myUid: _myUid));
   }

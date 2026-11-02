@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'api_client.dart';
+import 'fresh_data.dart';
 
 class DmThread {
   const DmThread({
@@ -152,14 +153,19 @@ class DmService {
   }
 
   /// Active conversations, newest first, bounded to [limit] (Phase 2
-  /// pagination design §3.2.1: the top-25 real-time tier). Older threads
-  /// page in on demand via [fetchOlderThreads].
-  Stream<List<DmThread>> watchThreads({int limit = 25}) {
+  /// pagination design §3.2.1: the top-25 real-time tier) with Firestore
+  /// [SnapshotMetadata] freshness (PERF_PLAN Phase 1). Older threads page in
+  /// on demand via [fetchOlderThreads]. Uses `includeMetadataChanges` so
+  /// cache→server transitions emit.
+  Stream<FreshData<List<DmThread>>> watchThreadsFresh({int limit = 25}) {
     final me = uid;
     return _threadsQuery(limit: limit)
-        .snapshots()
-        .map((snap) => _mapThreads(snap, me));
+        .snapshots(includeMetadataChanges: true)
+        .map((snap) => FreshData.fromQuery(snap, (s) => _mapThreads(s, me)));
   }
+
+  Stream<List<DmThread>> watchThreads({int limit = 25}) =>
+      watchThreadsFresh(limit: limit).map((f) => f.data ?? const <DmThread>[]);
 
   Query<Map<String, dynamic>> _threadsQuery({int? limit}) {
     Query<Map<String, dynamic>> q = _db
@@ -316,20 +322,32 @@ class DmService {
   Future<void> block(String otherUid) => _api.block(otherUid);
 
   /// Newest [limit] messages as a live tail, oldest-first (Phase 2
-  /// pagination design §3.3.1). Older history pages in on demand via
+  /// pagination design §3.3.1) with Firestore [SnapshotMetadata] freshness
+  /// (PERF_PLAN Phase 1). Older history pages in on demand via
   /// [fetchOlderMessages]. Oldest-first is the established contract (see
-  /// [assist]); the DESC limit is applied server-side.
-  Stream<List<DmMessage>> watchMessages(String threadId, {int limit = 30}) =>
+  /// [assist]); the DESC limit is applied server-side. Uses
+  /// `includeMetadataChanges` so cache→server transitions emit.
+  Stream<FreshData<List<DmMessage>>> watchMessagesFresh(
+    String threadId, {
+    int limit = 30,
+  }) =>
       _db
           .collection('dm_threads/$threadId/messages')
           .orderBy('created_at', descending: true)
           .limit(limit)
-          .snapshots()
-          .map((snap) => snap.docs
-              .map((d) => DmMessage.fromData(d.id, d.data()))
-              .toList()
-              .reversed
-              .toList());
+          .snapshots(includeMetadataChanges: true)
+          .map((snap) => FreshData.fromQuery(
+                snap,
+                (s) => s.docs
+                    .map((d) => DmMessage.fromData(d.id, d.data()))
+                    .toList()
+                    .reversed
+                    .toList(),
+              ));
+
+  Stream<List<DmMessage>> watchMessages(String threadId, {int limit = 30}) =>
+      watchMessagesFresh(threadId, limit: limit)
+          .map((f) => f.data ?? const <DmMessage>[]);
 
   /// One-shot history page (design §3.3.2): up to [limit] messages older
   /// than [lastMessageId] (exclusive), oldest-first. A deleted anchor ends

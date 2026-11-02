@@ -169,7 +169,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       AymaToast.show(context, 'Profile saved', kind: AymaToastKind.success);
     } catch (e) {
       if (!mounted) return;
-      AymaToast.show(context, 'Save failed ($e)', kind: AymaToastKind.error);
+      // The form keeps every field, so Retry saves exactly the original input.
+      AymaToast.show(context, 'Save failed ($e)',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(label: 'Retry', onPressed: _save));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

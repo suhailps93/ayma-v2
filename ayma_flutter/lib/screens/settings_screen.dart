@@ -56,6 +56,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _verified; // null while loading
   bool _verifying = false;
 
+  /// True while the pause-matching write waits for its server ack.
+  bool _pausedSaving = false;
+
   /// Clean release version (e.g. "1.30.0") from package info, shown to users.
   String _version = '';
 
@@ -174,6 +177,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Pause-matching toggle: the switch is stream-driven, so a refused write
+  /// reconciles itself (the switch flips back); the toast says why. Catches
+  /// internally, so the toast's Retry can safely re-invoke it.
+  Future<void> _setPaused(bool value) async {
+    if (_pausedSaving) return;
+    setState(() => _pausedSaving = true);
+    try {
+      await _profiles.setPaused(value);
+    } catch (e) {
+      if (!mounted) return;
+      AymaToast.show(context, 'Could not save ($e).',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+              label: 'Retry', onPressed: () => _setPaused(value)));
+    } finally {
+      if (mounted) setState(() => _pausedSaving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -248,7 +270,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     style: AymaType.sans(
                         size: 12, soft: true, color: ac.fgMute)),
                 value: paused,
-                onChanged: (v) => _profiles.setPaused(v),
+                onChanged: _pausedSaving ? null : _setPaused,
               );
             },
           ),

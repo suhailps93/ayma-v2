@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'api_client.dart' show kInteractiveTimeout;
+
 final _log = Logger('meta_integrations');
 
 /// Runtime flag `meta_integrations` (Firestore `app_config/meta_integrations`,
@@ -45,7 +47,7 @@ class MetaIntegrations {
           .collection(collection)
           .doc(docId)
           .get()
-          .timeout(const Duration(seconds: 10));
+          .timeout(kInteractiveTimeout);
       final value = parse(snap.data());
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kEnabled, value);
