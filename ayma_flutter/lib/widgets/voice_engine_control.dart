@@ -15,9 +15,9 @@ import 'ayma_toast.dart';
 ///
 /// Dropdown contents are pulled from the cloud catalog (LiveKit Inference, live),
 /// so new providers appear without a client change. Saving calls
-/// `POST /voice/preference`; a changed accent/language also hot-swaps the
-/// live call when one is active AND the active model is accent-capable (§13.9),
-/// everything else takes effect on the next voice call.
+/// `POST /voice/preference`; a changed language (any model) or a changed accent
+/// (accent-capable models only) also hot-swaps the live call when one is active
+/// (§13.9); everything else takes effect on the next voice call.
 ///
 /// This is the user-facing "Ayma's voice" control (ARCHITECTURE §13.9): it shows
 /// the whole stack — mode, brain, STT, TTS, voice and language — so a normal user
@@ -166,16 +166,19 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       // so THIS call hot-swaps instead of waiting for the next one (§13.9).
       // Best effort — the save itself already succeeded.
       //
-      // Only nudge when the active component can actually honour a free-text
-      // accent: a fixed-accent model must NOT announce an accent change it
-      // would silently ignore. The accent is still persisted above
-      // (hide-don't-delete); it simply isn't applied to a live call here, and
-      // the saved-accent bookkeeping is left untouched so switching back to an
-      // accent-capable model still re-applies it on the next save.
+      // A LANGUAGE change always nudges (a fixed-accent TTS can still switch
+      // language live). An ACCENT change only nudges when the active component
+      // can honour a free-text accent — a fixed-accent model must NOT announce
+      // an accent change it would silently ignore. The accent is still
+      // persisted above (hide-don't-delete); it simply isn't applied to a live
+      // call here. We only advance the saved-accent bookkeeping when the accent
+      // was actually honoured, so switching back to an accent-capable model
+      // still re-applies the accent on the next save.
+      final supportsAccent = _activeSupportsAccent();
+      final accentChanged = sel.accent != _savedAccent;
+      final languageChanged = sel.languageCode != _savedLanguageCode;
       var appliedLive = false;
-      if (_activeSupportsAccent() &&
-          (sel.accent != _savedAccent ||
-              sel.languageCode != _savedLanguageCode)) {
+      if (languageChanged || (accentChanged && supportsAccent)) {
         try {
           appliedLive = await VoiceSessionController.active
                   ?.notifyVoiceAccentChanged(
@@ -186,8 +189,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         } catch (_) {
           appliedLive = false;
         }
-        _savedAccent = sel.accent;
         _savedLanguageCode = sel.languageCode;
+        if (supportsAccent) _savedAccent = sel.accent;
       }
       if (mounted) {
         AymaToast.show(
