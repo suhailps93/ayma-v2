@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/widgets.dart';
 
 import 'api_client.dart';
@@ -32,8 +33,12 @@ class TabPrefetchCoordinator {
     if (_warming) return;
     _warming = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future<void>.delayed(const Duration(milliseconds: 400));
       try {
+        // No signed-in session (or no Firebase at all, as in widget
+        // tests): default services can't work, so don't even start the
+        // idle timer. Explicit deps (tests) always run.
+        if (api == null && dm == null && !_signedIn) return;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
         await _warm(api ?? ApiClient(), dm);
       } catch (_) {
         // Best-effort: tabs load normally on visit.
@@ -41,6 +46,14 @@ class TabPrefetchCoordinator {
         _warming = false;
       }
     });
+  }
+
+  bool get _signedIn {
+    try {
+      return FirebaseAuth.instance.currentUser != null;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _warm(ApiClient api, DmService? dm) async {
