@@ -12,3 +12,9 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# EXCEPTION: the dedicated staging DEBUG keystore is committed on purpose. It
+# only ever signs --staging dev/test builds (never a store release) and carries
+# no release trust, exactly like Android's shared default debug keystore — but
+# with a distinct SHA-1 so ayma-staging can own its own Android OAuth client for
+# Google sign-in. See docs/STAGING.md "Google Sign-In: dedicated staging keystore".
+!ayma-staging-debug.keystore

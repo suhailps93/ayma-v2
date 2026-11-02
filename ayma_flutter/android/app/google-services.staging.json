@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "187469876115-fosufjrncr5cingnvs2aa47l13pumd79.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ayma.ayma_flutter",
+            "certificate_hash": "0daa766d4f17e3bb07662ee1330d3031262ff3c2"
+          }
+        },
+        {
           "client_id": "187469876115-0vjlp9i9u7n3j3hhfkrdjehiknhsh02m.apps.googleusercontent.com",
           "client_type": 3
         }
