@@ -38,6 +38,46 @@ def room_name_for(uid: str) -> str:
     return f"{CONFIG.livekit_room_prefix}{uid}-{secrets.token_urlsafe(8)}"
 
 
+# --- staging/prod agent dispatch guard (ARCHITECTURE §1.1a) -----------------
+# Staging and prod share one funded LiveKit project ("Aimma"), so LiveKit offers
+# every room in that project to BOTH the staging and the prod agent worker. The
+# only thing that distinguishes a staging room from a prod room is its NAME:
+# staging names every room ``ayma-staging-*`` (its LIVEKIT_ROOM_PREFIX), prod
+# uses ``ayma-*``. On 2026-11-01 the prod agent, offered a staging room, joined
+# it and wrote an app_command into PROD Firestore. These helpers let each worker
+# decline rooms that belong to the OTHER environment BEFORE it accepts the job.
+STAGING_ROOM_PREFIX = "ayma-staging-"
+
+
+def is_staging_room_name(name: str | None) -> bool:
+    """Whether ``name`` is a staging room (its name starts with the staging
+    prefix). ``ayma-staging-`` deliberately also starts with the prod prefix
+    ``ayma-``, so a plain ``startswith('ayma-')`` can never separate the two —
+    the staging prefix is matched explicitly here."""
+    return (name or "").startswith(STAGING_ROOM_PREFIX)
+
+
+def this_agent_serves_staging() -> bool:
+    """Whether THIS worker process is the staging agent, decided solely by the
+    room prefix it is configured with (``LIVEKIT_ROOM_PREFIX`` →
+    ``CONFIG.livekit_room_prefix``). Default-safe: only an explicit
+    ``ayma-staging-`` prefix counts as staging; the prod default ``ayma-`` and
+    any blank/other value are NOT staging, so a prod — or ambiguously
+    configured — worker is never treated as staging."""
+    return CONFIG.livekit_room_prefix.startswith(STAGING_ROOM_PREFIX)
+
+
+def room_env_mismatch(name: str | None) -> bool:
+    """Whether this worker must DECLINE ``name`` because it belongs to the other
+    environment: a staging room may be served only by the staging agent, and a
+    non-staging (prod) room only by a non-staging agent. Default-safe — a blank
+    or unparsable name is treated as a prod room, so the prod agent still serves
+    it while the staging agent (which serves only ``ayma-staging-`` rooms)
+    declines it, and the prod agent never joins a staging room no matter how its
+    env is set."""
+    return is_staging_room_name(name) != this_agent_serves_staging()
+
+
 def mint_access_token(uid: str, room: str) -> str:
     """Return a signed LiveKit JWT granting ``uid`` join access to ``room``.
 

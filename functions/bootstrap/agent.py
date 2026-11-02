@@ -79,6 +79,7 @@ from monitoring import capture_exception, capture_message, init_sentry  # noqa: 
 
 init_sentry("ayma-agent")  # no-op without SENTRY_DSN
 from db import get_db  # noqa: E402
+from livekit_token import room_env_mismatch, this_agent_serves_staging  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
 from prompt import (  # noqa: E402
     compose_system_prompt,
@@ -3139,7 +3140,23 @@ async def _request_fnc(req: JobRequest) -> None:
 
     Fail-open: any error reading the marker ends in ``accept`` on the Cloud Run
     worker so a guard bug can never take production voice down; the LiveKit
-    worker (explicit dispatch only ever receives its own rooms) also accepts."""
+    worker (explicit dispatch only ever receives its own rooms) also accepts.
+
+    Before the cloud guard, a STAGING/PROD environment guard (ARCHITECTURE
+    §1.1a) runs first: staging and prod share one LiveKit project, so each
+    worker declines rooms whose name belongs to the other environment
+    (``room_env_mismatch``) BEFORE accepting — the prod worker never joins or
+    writes for a ``ayma-staging-*`` room, which on 2026-11-01 corrupted prod
+    Firestore. This decision is by room NAME and is default-safe, so it holds
+    even if the cloud-marker read below would otherwise fail open to accept."""
+    room_name = req.room.name if req.room else None
+    if room_env_mismatch(room_name):
+        logger.info(
+            "declining room %s: wrong environment (this_agent_serves_staging=%s)",
+            room_name or "?", this_agent_serves_staging(),
+        )
+        await req.reject()
+        return
     mine = _this_runtime_cloud()
     try:
         target = _room_target_cloud(req.room.metadata if req.room else None)
