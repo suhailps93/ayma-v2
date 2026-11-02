@@ -557,6 +557,26 @@ void main() {
     expect(find.text('P1-0'), findsOneWidget); // page 1 retained throughout
   });
 
+  testWidgets('card with empty photoUrl renders graceful initial placeholder',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // No photo at all (empty photo_url / photo_url_thumb) — the tile must
+    // show the seeded gradient with the name's initial, never a blank dark
+    // square (Issue F1).
+    final api = _api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X',
+           'photo_url': ''},
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ash'), findsOneWidget); // the name label
+    expect(find.text('A'), findsOneWidget); // the placeholder initial
+  });
+
 }
 
 ApiClient _pagedApi({

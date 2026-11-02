@@ -310,32 +310,42 @@ def _like_state(db, uid: str, other: str) -> tuple[bool, bool]:
 
 
 def _primary_photo_path(db, other: str, photos: list) -> str | None:
-    """Storage path of the profile's first photo, or ``None``.
+    """Storage path of the profile's first *resolvable* photo, or ``None``.
 
     ``profile.photos`` is ``[{media_id, order}]`` — the real ``storage_path``
     lives on ``users/{other}/user_media/{media_id}``. Older docs inlined
-    ``storage_path`` on the entry itself; both shapes are handled. Any lookup
-    failure just yields ``None`` — a missing photo never breaks the feed.
+    ``storage_path`` on the entry itself; both shapes are handled. Entries are
+    walked in ``order``, and the FIRST that resolves to a real storage path
+    wins — a broken lowest-order entry (empty ``media_id`` or a dangling
+    ``user_media`` doc) is skipped rather than blanking the tile (Issue F1;
+    mirrors ``main._primary_profile_photo_path``). ``None`` only when every
+    entry is exhausted. Any lookup failure just yields ``None`` — a missing
+    photo never breaks the feed.
     """
     try:
         entries = [p for p in (photos or []) if isinstance(p, dict)]
         if not entries:
             return None
-        first = min(entries, key=lambda p: p.get("order", 0))
-        if first.get("storage_path"):  # legacy inline shape
-            return str(first["storage_path"])
-        media_id = str(first.get("media_id") or "").strip()
-        if not media_id:
-            return None
-        media = (
-            db.collection("users")
-            .document(other)
-            .collection("user_media")
-            .document(media_id)
-            .get()
-            .to_dict()
-        ) or {}
-        return str(media["storage_path"]) if media.get("storage_path") else None
+        entries.sort(key=lambda p: p.get("order", 0))
+        for e in entries:
+            sp = str(e.get("storage_path") or "").strip()  # legacy inline shape
+            if sp:
+                return sp
+            media_id = str(e.get("media_id") or "").strip()
+            if not media_id:
+                continue
+            media = (
+                db.collection("users")
+                .document(other)
+                .collection("user_media")
+                .document(media_id)
+                .get()
+                .to_dict()
+            ) or {}
+            sp = str(media.get("storage_path") or "").strip()
+            if sp:
+                return sp
+        return None
     except Exception:  # noqa: BLE001 - a photo lookup must never 500 Explore
         logger.warning("explore: photo lookup failed for %s", other, exc_info=True)
         return None
@@ -474,16 +484,25 @@ def _hydrate_candidates(db, uid: str, others: list[str]) -> dict:
 
 
 def _first_media_id(photos) -> str | None:
-    """Media id needing a ``user_media`` lookup, or ``None`` (legacy inline
-    entries carry the path already; no photos needs nothing)."""
+    """Media id the batched page read should resolve, or ``None``.
+
+    Walks entries in ``order`` and returns the first non-empty ``media_id``,
+    skipping a lowest-order entry whose ``media_id`` is empty (Issue F1) so a
+    valid later photo still gets batched. Returns ``None`` once an entry
+    carries an inline ``storage_path`` (legacy shape — no lookup needed;
+    :func:`_first_photo_path` reads it directly) or no photo needs resolving.
+    """
     entries = [p for p in (photos or []) if isinstance(p, dict)]
     if not entries:
         return None
-    first = min(entries, key=lambda p: p.get("order", 0))
-    if first.get("storage_path"):
-        return None
-    media_id = str(first.get("media_id") or "").strip()
-    return media_id or None
+    entries.sort(key=lambda p: p.get("order", 0))
+    for e in entries:
+        if e.get("storage_path"):  # legacy inline — no user_media lookup
+            return None
+        media_id = str(e.get("media_id") or "").strip()
+        if media_id:
+            return media_id
+    return None
 
 
 def _first_photo_path(prof: dict, media_path: str | None) -> str | None:
@@ -518,6 +537,7 @@ def _media_paths(db, jobs: list[tuple[str, str]]) -> dict[str, str | None]:
 
 
 def _build_card(
+    db,
     uid: str,
     other: str,
     prof: dict,
@@ -525,6 +545,16 @@ def _build_card(
     media_path: str | None,
 ) -> dict:
     photo_path = _first_photo_path(prof, media_path)
+    # Fast batched read resolved nothing for the lowest-order photo (a
+    # dangling user_media doc, or an inline path that sits on a later entry),
+    # yet the profile does list photos — walk them to recover the first that
+    # resolves instead of blanking the tile (Issue F1). Only this broken
+    # entry-0 case pays the extra per-row read; normal accounts keep the
+    # single batched lookup above.
+    if not photo_path and any(
+        isinstance(p, dict) for p in (prof.get("photos") or [])
+    ):
+        photo_path = _primary_photo_path(db, other, prof.get("photos"))
     # A ready token URL, not a raw storage path — Storage rules only let a
     # user read their *own* uploads/ tree, so the client can't resolve
     # another person's photo itself.
@@ -688,7 +718,7 @@ def explore_page(
         for other, prof in passers:
             try:
                 cards.append(
-                    _build_card(uid, other, prof, docs, media.get(other))
+                    _build_card(db, uid, other, prof, docs, media.get(other))
                 )
             except Exception:  # noqa: BLE001 - one bad row never sinks a page
                 logger.warning(
@@ -716,7 +746,7 @@ def explore_page(
                 )
                 cards.insert(
                     0,
-                    _build_card(uid, uid, me, {(uid, "profile"): me},
+                    _build_card(db, uid, uid, me, {(uid, "profile"): me},
                                 self_media),
                 )
         except Exception:  # noqa: BLE001 - a bad self row never sinks page 1

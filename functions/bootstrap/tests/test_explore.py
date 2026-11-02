@@ -370,6 +370,19 @@ def test_primary_photo_path_handles_legacy_inline_and_missing():
     assert ex._primary_photo_path(db, "u", [{"media_id": "ghost"}]) is None
 
 
+def test_primary_photo_path_falls_back_when_first_has_no_storage_path():
+    # Lowest-order entry resolves to a user_media doc with no storage_path
+    # (a dangling upload); the next valid entry must be used instead of
+    # blanking the tile (Issue F1).
+    db = FakeDb()
+    db.docs[("users", "u", "user_media", "m1")] = {}  # no storage_path
+    db.docs[("users", "u", "user_media", "m2")] = {
+        "storage_path": "uploads/u/b.jpg"
+    }
+    photos = [{"media_id": "m1", "order": 0}, {"media_id": "m2", "order": 1}]
+    assert ex._primary_photo_path(db, "u", photos) == "uploads/u/b.jpg"
+
+
 def test_explore_populates_photo_path_and_survives_a_bad_photo_entry():
     db = FakeDb()
     _u(db, "me", location="X", birthdate="1994-01-01")
@@ -524,6 +537,35 @@ def test_explore_card_thumb_falls_back_to_original_when_variant_absent(monkeypat
     cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
     card = cards["hasphoto"]
     assert card["photo_url_thumb"] == card["photo_url"]  # == original
+
+
+def test_explore_page_recovers_photo_past_a_dangling_first_entry(monkeypatch):
+    # The batched fast path (`_first_media_id` / `_media_paths`) resolves the
+    # lowest-order photo to a dangling user_media doc (no storage_path); the
+    # per-row `_primary_photo_path` fallback in `_build_card` must recover the
+    # next valid photo so the card still carries a photo_url (Issue F1). This
+    # drives `explore_page()`/`_build_card`, the path `_primary_photo_path` is
+    # NOT otherwise invoked on.
+    monkeypatch.setattr(pp, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    monkeypatch.setattr(
+        pp, "_variant_url", lambda sp, spec, w: f"https://cdn/{sp}__{spec}_{w}"
+    )
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "hasphoto", location="X", birthdate="1993-01-01",
+       photos=[{"media_id": "m1", "order": 0}, {"media_id": "m2", "order": 1}])
+    db.docs[("users", "hasphoto", "user_media", "m1")] = {}  # dangling entry 0
+    db.docs[("users", "hasphoto", "user_media", "m2")] = {
+        "storage_path": "uploads/hasphoto/b.jpg"
+    }
+    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    card = cards["hasphoto"]
+    assert card["photo_path"] == "uploads/hasphoto/b.jpg"
+    assert card["photo_url"] == "https://cdn/uploads/hasphoto/b.jpg"
+    assert (
+        card["photo_url_thumb"]
+        == "https://cdn/uploads/hasphoto/b.jpg__thumb_400"
+    )
 
 
 # --- explore_page() cursor pagination ----------------------------------------

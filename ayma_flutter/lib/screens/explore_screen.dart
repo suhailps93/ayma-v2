@@ -551,7 +551,7 @@ class _Card extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _Photo(seed: card.uid, url: card.gridPhotoUrl),
+                  _Photo(seed: card.uid, url: card.gridPhotoUrl, name: card.name),
                   // Like / Message / Match all live on the profile now — the
                   // card is just a way in. A small heart flags a like / mutual.
                   if (!card.isSelf && (card.liked || card.mutual))
@@ -634,14 +634,20 @@ class _Card extends StatelessWidget {
 
 /// turn another user's photo path into a URL itself.
 class _Photo extends StatelessWidget {
-  const _Photo({required this.seed, this.url});
+  const _Photo({required this.seed, this.url, this.name = ''});
 
   final String seed;
   final String? url;
+  final String name;
 
   @override
   Widget build(BuildContext context) {
     final h1 = (seed.hashCode.abs() % 360).toDouble();
+    // When there's no photo (or it fails to load), the tile is a seeded
+    // gradient with a centred initial — the same graceful placeholder the
+    // Messages avatars use — rather than a blank dark square (Issue F1).
+    final initial =
+        name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : '';
     final fallback = DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -652,6 +658,22 @@ class _Photo extends StatelessWidget {
             HSLColor.fromAHSL(1, (h1 + 40) % 360, 0.22, 0.18).toColor(),
           ],
         ),
+      ),
+      child: Center(
+        child: initial.isNotEmpty
+            ? Text(
+                initial,
+                style: AymaType.sans(
+                  size: 32,
+                  weight: FontWeight.w600,
+                  color: Colors.white.withValues(alpha: 0.8),
+                ),
+              )
+            : Icon(
+                Icons.person_outline,
+                size: 36,
+                color: Colors.white.withValues(alpha: 0.6),
+              ),
       ),
     );
     if (url == null || url!.isEmpty) return fallback;

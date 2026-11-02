@@ -1007,6 +1007,8 @@ If a self-reported value elsewhere in the wiki conflicts with a photo-derived at
 
 Each card shows `profile_photo`, `name`, age (from `birthdate`), distance (from `location`), and either a score badge (if already Pass-2 scored) or a "check compatibility" action (triggers the §5.3 per-profile manual check). Tapping opens the full public profile view (§2.1).
 
+**Photo resolution — recover past a broken first entry (Issue F1).** The card photo is the first **resolvable** entry of `profile.photos` (sorted by `order`), not blindly `order: 0`. The backend (`explore.py`) walks entries in order and returns the first that resolves to a real `storage_path`, skipping a lowest-order entry whose `media_id` is empty or whose `users/{uid}/user_media/{mediaId}` doc is dangling (no `storage_path`) — mirroring `main._primary_profile_photo_path`. The paginated feed keeps its single batched `user_media` read for the common case (`_first_media_id` now also skips an empty-`media_id` entry-0); only a broken entry-0 pays an extra per-row `_primary_photo_path` lookup to recover a later photo. When no photo resolves at all, the card carries an empty `photo_url`, and the client (`explore_screen.dart` `_Photo`) renders a seeded gradient tile with the name's centred initial (or a person icon) — the same graceful placeholder the Messages avatars use, never a blank dark square.
+
 ### 6.5 Explore interactions
 
 - **Like** — records interest toward the other user; mutual likes flip `matches/{matchId}.status` to `mutual_interest` (creating the doc if Pass-2 hasn't run yet).
