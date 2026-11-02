@@ -250,6 +250,9 @@ class NotificationService {
 /// Maps a notification `deep_link` (§7.6) to a client route.
 /// `profile/{uid}` opens the DM thread with that user (sorted-pair id).
 String deepLinkToRoute(String deepLink, {required String myUid}) {
+  assert(myUid.isNotEmpty, 'deepLinkToRoute requires confirmed non-empty myUid');
+  if (deepLink == 'plan') return '/profile/plan';
+  if (deepLink == 'trial') return '/profile/usage/trial';
   final dm = RegExp(r'^dm_thread/(.+)$').firstMatch(deepLink);
   if (dm != null) return '/dm/${dm.group(1)}';
   final profile = RegExp(r'^profile/(.+)$').firstMatch(deepLink);
