@@ -22,6 +22,14 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
 - Each call gets a fresh room (`livekit_token.room_name_for`: `<prefix><uid>-<nonce>`),
   so every call creates a new room and therefore a new agent job; a reused
   per-user room left callers in an empty room after a quick redial.
+- **Staging/prod dispatch guard** (ARCHITECTURE §1.1a): when staging and prod
+  share the Aimma LiveKit project, the dispatch seam `_request_fnc` declines any
+  room belonging to the *other* environment **before** it accepts — decided by
+  the room-name prefix (`livekit_token.room_env_mismatch`). The staging agent
+  (`LIVEKIT_ROOM_PREFIX=ayma-staging-`) serves only `ayma-staging-*` rooms; the
+  prod agent (default `ayma-` prefix) rejects `ayma-staging-*` and serves the
+  rest. Default-safe: a prod/ambiguous worker never joins a staging room, so it
+  can never write a staging call into **prod** Firestore (2026-11-01 incident).
 - The Live model comes from the `voice_provider` flag (`docs/FEATURE_FLAGS.md`):
   `inference` = `inference.RealtimeModel` through the LiveKit Inference gateway
   (`build_inference_realtime_model`, `google/gemini-3.8-live`; only

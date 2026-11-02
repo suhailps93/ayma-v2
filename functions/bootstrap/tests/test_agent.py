@@ -3641,3 +3641,97 @@ def test_cascade_instructions_append_the_tool_use_directive():
     gemini = agent._compose_instructions("SYS", "ACCENT", "VOCAB")
     assert directive not in gemini
     assert gemini == "SYS\n\nACCENT\n\nVOCAB"
+
+
+# --- staging/prod environment dispatch guard at the seam (ARCHITECTURE §1.1a) -
+
+import dataclasses as _dataclasses  # noqa: E402
+import livekit_token as _livekit_token  # noqa: E402
+
+
+class _FakeRoom:  # noqa: F811 - local to the dispatch-guard tests below
+    def __init__(self, name, metadata=""):
+        self.name = name
+        self.metadata = metadata
+
+
+class _FakeJobRequest:
+    """Records whether the dispatch seam accepted or rejected the job. A reject
+    happens BEFORE any room join or Firestore write (``_request_fnc`` returns on
+    reject without touching the entrypoint)."""
+
+    def __init__(self, room):
+        self.room = room
+        self.accepted = False
+        self.rejected = False
+
+    async def accept(self):
+        self.accepted = True
+
+    async def reject(self):
+        self.rejected = True
+
+
+def _run_request(monkeypatch, *, agent_prefix, runtime, room_name, metadata=""):
+    # Simulate this worker's env: LIVEKIT_ROOM_PREFIX (staging vs prod) and
+    # AGENT_RUNTIME (cloudrun = prod default). The env guard reads the room
+    # prefix via livekit_token.CONFIG; the cloud guard reads agent.CONFIG.
+    monkeypatch.setattr(
+        _livekit_token,
+        "CONFIG",
+        _dataclasses.replace(_livekit_token.CONFIG, livekit_room_prefix=agent_prefix),
+    )
+    monkeypatch.setattr(
+        agent, "CONFIG", _dataclasses.replace(agent.CONFIG, agent_runtime=runtime)
+    )
+    req = _FakeJobRequest(_FakeRoom(room_name, metadata))
+    asyncio.run(agent._request_fnc(req))
+    return req
+
+
+def test_prod_agent_rejects_a_staging_room_before_any_join_or_write(monkeypatch):
+    # The 2026-11-01 specimen: the prod agent (cloudrun, ayma- prefix) is offered
+    # a staging room on the shared LiveKit project. It MUST reject it, never
+    # accept — accepting is what wrote an app_command into PROD Firestore.
+    req = _run_request(
+        monkeypatch, agent_prefix="ayma-", runtime="cloudrun",
+        room_name="ayma-staging-abc",
+    )
+    assert req.rejected and not req.accepted
+
+
+def test_prod_agent_accepts_a_normal_prod_room(monkeypatch):
+    # A plain prod room (no staging prefix, no routing marker) is served exactly
+    # as before — the env guard adds nothing to the prod happy path.
+    req = _run_request(
+        monkeypatch, agent_prefix="ayma-", runtime="cloudrun",
+        room_name="ayma-me-xyz",
+    )
+    assert req.accepted and not req.rejected
+
+
+def test_staging_agent_accepts_its_staging_room(monkeypatch):
+    req = _run_request(
+        monkeypatch, agent_prefix="ayma-staging-", runtime="cloudrun",
+        room_name="ayma-staging-abc",
+    )
+    assert req.accepted and not req.rejected
+
+
+def test_staging_agent_rejects_a_prod_room(monkeypatch):
+    req = _run_request(
+        monkeypatch, agent_prefix="ayma-staging-", runtime="cloudrun",
+        room_name="ayma-me-xyz",
+    )
+    assert req.rejected and not req.accepted
+
+
+def test_env_guard_runs_before_the_cloud_guards_fail_open(monkeypatch):
+    # Even if the room marker is unreadable (the cloud guard fails OPEN to
+    # accept), the prod agent still rejects a staging room: the env guard runs
+    # first and is default-safe.
+    req = _run_request(
+        monkeypatch, agent_prefix="ayma-", runtime="cloudrun",
+        room_name="ayma-staging-abc", metadata="{not json",
+    )
+    assert req.rejected and not req.accepted

@@ -466,6 +466,29 @@ Text and voice are separate transports. Text is a stateless REST call and never 
 
 Voice stack (hackathon Deliverable A): both the **MAIN** Ayma call (`agent._run_session`) and the **Practice Date** call (`agent._run_practice_session`) can run either the LOCKED Gemini Live `RealtimeModel` or a Meta **cascade** (LiveKit Inference STT + Meta Muse Spark LLM + Fish Audio TTS + Silero VAD, `agent.build_meta_cascade_session`), behind their own independent env flags — `LLM_PROVIDER_VOICE_MAIN` for the main call, `LLM_PROVIDER_VOICE` for practice. The **MAIN** call QLOO-PHASE defaults to the **locked Gemini Live voice** (`config.llm_provider_voice_main` default `gemini`, founder directive — Qloo is judged before Meta, best-experience stack): a user with no saved voice preference gets `realtime` mode / Gemini Live native audio / voice **Aoede** — both the `/voice/engines` user-facing default (`voice_catalog._default_from`) and the stack the agent builds at call time (`agent.py`). **Flips back to the Meta cascade (`meta` — Muse Spark / `deepgram/nova-3` / `fishaudio/s2.1-pro` / voice Hannah) post-Qloo for the Meta hackathon**; `LLM_PROVIDER_VOICE_MAIN=meta` sets the cascade explicitly. **Practice** still defaults to `gemini`. A build failure or a mid-call cascade error falls back to Gemini Live on the same room, so the default can never take voice down. Detail: `docs/META_PROVIDER.md` → "Voice cascade"; flags: `docs/FEATURE_FLAGS.md`. Practice voice is **gender-matched**: a simulated persona speaks in a voice matching its profile gender (Gemini preset via `voices.voice_for_gender`, or the Fish Audio `config.meta_cascade_tts_voice_female`/`_male` on the cascade — default `Hannah`/`Adrian` so gender is matched out of the box; non-binary/unknown → the default voice, Hannah). The practice persona prompt is also composed with a **live-voice-call framing** (`prompts/practice_persona_voice.md`) and the caller's first name, so the match answers a phone call from a known caller rather than acting like a chatbot or texting; and the live coach is given the persona's pronouns so it never mis-genders the match. Detail: `docs/PRACTICE_DATE.md` → "Voice realism".
 
+### 1.1a Staging/prod agent dispatch guard (shared LiveKit project)
+
+Staging and prod can share **one** funded LiveKit project (the "Aimma" project, `p_4jk3pqz7u9r` / `wss://aimma-wt34nu3l.livekit.cloud`) — the only no-charge path, since staging's own LiveKit project carries no credits. But LiveKit offers **every** room in a project to **every** registered worker, so without a guard the **prod** agent (which runs on the shared project too) can be dispatched a **staging** room, join it, and write an `app_command` into **PROD** Firestore — exactly what happened on 2026-11-01. The agent image is shared between the two environments (same code, env-differentiated), so the two workers are told apart only by their environment config.
+
+The one signal that separates a staging room from a prod room is its **name**. `POST /bootstrap` mints every room as `<LIVEKIT_ROOM_PREFIX><uid>-<nonce>` (`livekit_token.room_name_for`): staging sets `LIVEKIT_ROOM_PREFIX=ayma-staging-`, prod uses the default `ayma-`. Note `ayma-staging-` deliberately *also* starts with `ayma-`, so a bare `startswith("ayma-")` cannot separate the two — the staging prefix is matched explicitly (`livekit_token.STAGING_ROOM_PREFIX`).
+
+At the dispatch seam `agent._request_fnc` (which already carries the dual-cloud marker guard, §1.1 / `docs/agent.md`), an **environment guard runs first**, before the cloud guard and before any room join or Firestore write:
+
+- **Staging agent** (`LIVEKIT_ROOM_PREFIX=ayma-staging-`): accepts **only** rooms whose name starts with `ayma-staging-`; rejects every other (prod) room.
+- **Prod agent** (`LIVEKIT_ROOM_PREFIX` unset → default `ayma-`): rejects **any** room whose name starts with `ayma-staging-`; accepts the rest (prod rooms) exactly as before.
+- **Default-safe:** "am I staging?" is `CONFIG.livekit_room_prefix.startswith("ayma-staging-")`, so only an explicit staging prefix counts as staging. A blank/unset/other prefix (the prod default, or a misconfigured worker) is treated as **not** staging, and a blank/unparsable room name is treated as a **prod** room — so a prod (or ambiguously configured) worker **never** serves a staging room regardless of how its env is set. The decision is by room name and is independent of the fail-open dual-cloud marker read, so it holds even when that read fails open to accept.
+
+Prod serving its own rooms is byte-for-byte unchanged (real prod users unaffected). Decision logic: `livekit_token.room_env_mismatch` / `this_agent_serves_staging` / `is_staging_room_name`.
+
+**Required env per environment (for the guard to protect prod):**
+
+| Worker | `LIVEKIT_ROOM_PREFIX` | Effect |
+| --- | --- | --- |
+| **prod agent** (`ayma-agent`) | unset (default `ayma-`) | rejects `ayma-staging-*`, serves prod rooms — **this is what protects prod Firestore** |
+| **staging agent** (`ayma-agent-staging`) | `ayma-staging-` | serves only `ayma-staging-*`, rejects prod rooms |
+
+The staging agent **must** be deployed with `LIVEKIT_ROOM_PREFIX=ayma-staging-` (the same prefix the staging api already uses to name rooms). The prod agent must **not** set a `ayma-staging-` prefix (leaving it unset = the `ayma-` default is correct and sufficient). This guard is the prerequisite to repointing staging's services at the shared Aimma project; without it, sharing the project corrupts prod data.
+
 ### 1.2 Component architecture
 
 ```mermaid
