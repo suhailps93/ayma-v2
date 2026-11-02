@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/auto_retry.dart';
 import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
 import '../services/date_sim_service.dart';
@@ -66,7 +67,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     reassertScreenContext();
     MatchActivity.instance.recalculating.addListener(_onRecalcChanged);
     _lastActive = MatchActivity.instance.recalculating.value;
-    _future = _api.publicProfile(widget.uid);
+    _future = _loadProfile();
     _future.then((p) {
       if (mounted) {
         _subjectName = p.name;
@@ -96,9 +97,20 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final finished = _lastActive.difference(now).isNotEmpty;
     _lastActive = now;
     if (finished) {
-      setState(() => _future = _api.publicProfile(widget.uid));
+      setState(() => _future = _loadProfile());
     }
   }
+
+  /// The profile GET, with transparent auto-retry (founder 2026-11-01: a
+  /// transient blip shouldn't drop the user on "Couldn't load this profile." /
+  /// Retry — it should self-heal first). A clean 404 is a definitive
+  /// "no such profile", not transient, so it is NOT retried; everything else
+  /// (5xx / network) is, bounded. Shared by the first load, the post-recalc
+  /// refresh and the manual Retry.
+  Future<PublicProfile> _loadProfile() => withAutoRetry(
+        () => _api.publicProfile(widget.uid),
+        retryIf: (e) => !(e is ApiException && e.statusCode == 404),
+      );
 
   bool _liking = false;
   bool _scoring = false;
@@ -329,8 +341,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           } else if (snap.hasError || p == null) {
             content = _Message(
               text: "Couldn't load this profile.",
-              onRetry: () => setState(
-                  () => _future = _api.publicProfile(widget.uid)),
+              onRetry: () => setState(() => _future = _loadProfile()),
             );
           } else {
             // Self (by uid) shows exactly the You tab's page: the owner's

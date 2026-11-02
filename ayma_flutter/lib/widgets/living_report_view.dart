@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/living_report.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/auto_retry.dart';
 import '../services/report_cache.dart';
 import '../services/report_events.dart';
 import '../theme.dart';
@@ -202,6 +203,25 @@ class LivingReportViewState extends State<LivingReportView>
   /// instead of the retry error.
   bool _neverRun = false;
 
+  /// Silent auto-retry before ever surfacing the manual "Retry" affordance
+  /// (founder 2026-11-01: a transient backend cold-start blip should
+  /// self-heal, not dump the user on an error screen). A load that fails with
+  /// anything OTHER than a definitive 404 is retried up to [kAutoRetryMax]
+  /// times with the [kAutoRetryBackoff] delays (the ONE shared load-retry
+  /// policy — see `auto_retry.dart`), staying on the loading/spinner (or
+  /// stale) state the whole time; only once those are exhausted does
+  /// [_loadFailed] flip and the manual Retry show. This sits ABOVE the HTTP
+  /// layer's own per-request handling — it covers the case where the whole
+  /// load still failed (e.g. a cold-start timeout) — and is bounded (at most
+  /// [kAutoRetryMax] extra attempts + the summed backoff) so it can never
+  /// retry forever.
+  ///
+  /// Bumped on every fresh [_load] invocation so an in-flight auto-retry loop
+  /// from a superseded call (a background [ReportEvents] reload, a manual
+  /// Retry, a post-exchange reload) abandons itself mid-backoff instead of
+  /// racing the newer one.
+  int _loadGeneration = 0;
+
   /// The signed-in uid the report cache is scoped to (own-data only). Empty
   /// in tests / signed out, which disables caching gracefully.
   String get _uid {
@@ -295,41 +315,65 @@ class LivingReportViewState extends State<LivingReportView>
   }
 
   Future<void> _load() async {
-    try {
-      final r = await (widget.loader?.call() ??
-          _api.getReport(widget.reportType, widget.reportId));
-      if (_cacheable && r.source.isNotEmpty) {
-        // Refresh the cache so the next open paints this instantly, and so the
-        // background auto-refresh keeps the cache current too. `source` is the
-        // exact server JSON this report was parsed from.
-        unawaited(ReportCache.instance.writeReport(
-            _uid, widget.reportType, widget.reportId, jsonEncode(r.source)));
-      }
-      if (!mounted) return;
+    final generation = ++_loadGeneration;
+    // Re-running after a prior failure (a manual Retry, or a re-trigger):
+    // drop the error state up front so the loading indicator — not the stale
+    // error screen — is what shows during the fresh auto-retry sequence.
+    if ((_loadFailed || _neverRun) && mounted) {
       setState(() {
-        _report = r;
         _loadFailed = false;
         _neverRun = false;
       });
-      widget.onLoaded?.call(r);
-    } catch (e) {
-      if (!mounted) return;
-      // A background reload failing leaves the still-good `_report` on
-      // screen rather than blanking it out; only the very first load
-      // surfaces the retry / empty screen (§ build: both only show when
-      // `_report` is still null). A clean 404 is the server's "never run"
-      // signal — route it to [emptyBuilder], NOT the error retry; anything
-      // else (5xx, a connection-class `ApiException` with no statusCode) is a
-      // genuine load failure.
-      final neverRun = e is ApiException && e.statusCode == 404;
-      setState(() {
-        if (neverRun) {
-          _neverRun = true;
-          _loadFailed = false;
-        } else {
-          _loadFailed = true;
+    }
+    for (var attempt = 0;; attempt++) {
+      try {
+        final r = await (widget.loader?.call() ??
+            _api.getReport(widget.reportType, widget.reportId));
+        // A newer _load superseded this one while the fetch was in flight —
+        // let the newer one win rather than clobbering its result.
+        if (generation != _loadGeneration || !mounted) return;
+        if (_cacheable && r.source.isNotEmpty) {
+          // Refresh the cache so the next open paints this instantly, and so
+          // the background auto-refresh keeps the cache current too. `source`
+          // is the exact server JSON this report was parsed from.
+          unawaited(ReportCache.instance.writeReport(
+              _uid, widget.reportType, widget.reportId, jsonEncode(r.source)));
         }
-      });
+        setState(() {
+          _report = r;
+          _loadFailed = false;
+          _neverRun = false;
+        });
+        widget.onLoaded?.call(r);
+        return;
+      } catch (e) {
+        if (generation != _loadGeneration || !mounted) return;
+        // A clean 404 is the server's definitive "never run" signal — route
+        // it to [emptyBuilder], NOT the error retry, and never auto-retry it
+        // (it isn't transient). Anything else (5xx, a connection-class
+        // `ApiException` with no statusCode, a timeout) is a genuine —
+        // typically transient — load failure, so silently retry it a few
+        // times before surfacing the manual Retry.
+        final neverRun = e is ApiException && e.statusCode == 404;
+        if (!neverRun && attempt < kAutoRetryMax) {
+          await Future<void>.delayed(kAutoRetryBackoff[attempt]);
+          if (generation != _loadGeneration || !mounted) return;
+          continue; // stay on the loading/stale state; try again
+        }
+        // Exhausted (or a never-run 404): surface the terminal state. A
+        // background reload that fails here still leaves the already-good
+        // `_report` on screen rather than blanking it out — the retry / empty
+        // screen only shows when `_report` is still null (§ build).
+        setState(() {
+          if (neverRun) {
+            _neverRun = true;
+            _loadFailed = false;
+          } else {
+            _loadFailed = true;
+          }
+        });
+        return;
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/auto_retry.dart';
 import '../theme.dart';
 import 'app_loading_indicator.dart';
 import 'ayma_toast.dart';
@@ -76,8 +77,10 @@ class _StoredFaceReportSheet extends StatefulWidget {
 }
 
 class _StoredFaceReportSheetState extends State<_StoredFaceReportSheet> {
-  late final Future<StoredFaceReport> _future =
-      fetchStoredFaceReport(widget.reportId, api: widget.api);
+  // Auto-retry a transient load failure before showing the error (founder
+  // 2026-11-01). The GET is idempotent; worst case stays bounded.
+  late final Future<StoredFaceReport> _future = withAutoRetry(
+      () => fetchStoredFaceReport(widget.reportId, api: widget.api));
 
   @override
   Widget build(BuildContext context) {

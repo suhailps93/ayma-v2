@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/auto_retry.dart';
 import '../services/match_activity.dart';
 import '../services/match_report_cache.dart';
 import '../widgets/ayma_orb.dart';
@@ -109,11 +110,20 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 
   /// A plain cache-aware GET of the stored report (never a forced recompute),
   /// writing whatever comes back into the shared [MatchReportCache].
-  Future<MatchReport?> _fetch() async {
-    final r = await _api.matchReport(widget.matchId);
-    if (r != null) MatchReportCache.instance.put(r);
-    return r;
-  }
+  ///
+  /// Wrapped in [withAutoRetry] (founder 2026-11-01: a transient backend
+  /// cold-start blip on tapping a Match report showed "Couldn't load this
+  /// report." / Retry — it should instead silently self-heal). The GET is
+  /// idempotent and a 404 comes back as `null` (not an exception), so every
+  /// THROWN failure here is a genuine transient error worth retrying; the
+  /// bounded backoff keeps the worst case finite before the manual Retry (the
+  /// `snap.hasError` branch in [build]) ever shows. Every caller — the uncached
+  /// first load, the manual Retry, the post-recalc refresh — inherits this.
+  Future<MatchReport?> _fetch() => withAutoRetry(() async {
+        final r = await _api.matchReport(widget.matchId);
+        if (r != null) MatchReportCache.instance.put(r);
+        return r;
+      });
 
   /// Re-GETs the report behind an already-shown cached copy and swaps it in if
   /// it still differs; failures are swallowed so the cached view stays put.

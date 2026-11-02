@@ -640,4 +640,53 @@ void main() {
     expect(find.text('powered by Qloo'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'founder 2026-11-01 regression: tapping a Match report whose GET '
+      '/match/{id} transiently fails twice then succeeds auto-recovers — the '
+      '"Couldn\'t load this report." / Retry screen never appears, the report '
+      'just loads', (tester) async {
+    var seen = 0;
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.method == 'GET' && req.url.path == '/match/a__me') {
+          seen++;
+          if (seen <= 2) return http.Response('transient', 503);
+          return http.Response(jsonEncode(matchMeta()), 200);
+        }
+        if (req.method == 'GET' && req.url.path == '/report/match/a__me') {
+          return http.Response(
+            jsonEncode(_livingReport()),
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (req.url.path == '/chat/stream') {
+          return http.Response('stream unavailable', 500);
+        }
+        return http.Response('{}', 200);
+      }),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    // Drive the real backoff timers (~400ms, 900ms) to completion — a plain
+    // pumpAndSettle can't wait out a Future.delayed that schedules no frame.
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.pumpAndSettle();
+
+    // The founder's exact error screen never showed...
+    expect(find.textContaining("Couldn't load this report"), findsNothing);
+    expect(find.text('Retry'), findsNothing);
+    // ...and both the header chrome and the report body rendered.
+    expect(find.text('You'), findsOneWidget);
+    expect(find.text('52%'), findsOneWidget);
+    // Initial GET + 2 silent retries, the third succeeding.
+    expect(seen, 3);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -14,6 +14,7 @@
 //   which read as narrative prose being entirely non-tappable).
 import 'dart:convert';
 
+import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
@@ -985,6 +986,103 @@ void main() {
 
     expect(find.textContaining("Couldn't load that report"), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
+  });
+
+  // --- silent auto-retry of a transient load failure (§ founder 2026-11-01:
+  // "the app should auto retry in the backend without users having to click a
+  // button") ------------------------------------------------------------------
+  //
+  // Driven through LivingReportView.loader so the count is the SCREEN-level
+  // attempt count exactly — the loader replaces `_api.getReport`, bypassing the
+  // HTTP layer (which does its OWN bounded GET retry; counting MockClient hits
+  // would conflate the two layers). A host whose loader fails its first
+  // [failFirst] calls with an ApiException([status]) then returns the report;
+  // every call bumps [calls].
+  Widget hostLoader({
+    required int failFirst,
+    int status = 503,
+    required List<int> calls,
+  }) =>
+      MaterialApp(
+        home: Scaffold(
+          body: LivingReportView(
+            reportType: 'deep_dive',
+            reportId: 'rid1',
+            loader: () async {
+              calls.add(calls.length + 1);
+              if (calls.length <= failFirst) {
+                throw ApiException('transient', statusCode: status);
+              }
+              return LivingReport.fromMap(_report());
+            },
+          ),
+        ),
+      );
+
+  // Drive the real backoff timers (~400ms, 900ms, 2s) to completion. A plain
+  // pumpAndSettle can't: during a backoff gap there's a pending Timer but NO
+  // scheduled frame, so it would return early — pump explicit time instead.
+  Future<void> settleRetries(WidgetTester tester) async {
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'a transient load that fails twice then succeeds auto-recovers: the '
+      'report renders with NO error and NO manual Retry ever shown',
+      (tester) async {
+    final calls = <int>[];
+    await tester.pumpWidget(hostLoader(failFirst: 2, calls: calls));
+    await settleRetries(tester);
+
+    // Self-healed: the report content is on screen...
+    expect(find.text('Web search: Jane'), findsOneWidget);
+    expect(find.textContaining('Graduated in 2020.'), findsOneWidget);
+    // ...and the error affordance never appeared.
+    expect(find.textContaining("Couldn't load"), findsNothing);
+    expect(find.text('Retry'), findsNothing);
+    expect(tester.takeException(), isNull);
+    // Exactly 3 load attempts: the initial + 2 silent retries, 3rd succeeding.
+    expect(calls, hasLength(3));
+  });
+
+  testWidgets(
+      'a transient load that fails every attempt shows the manual Retry only '
+      'after the bounded auto-retries are exhausted — no crash, no red '
+      'ErrorWidget; the manual Retry then re-runs the whole sequence',
+      (tester) async {
+    final calls = <int>[];
+    await tester.pumpWidget(hostLoader(failFirst: 999, calls: calls));
+    await settleRetries(tester);
+
+    expect(find.textContaining("Couldn't load that report"), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(tester.takeException(), isNull); // no red ErrorWidget / crash
+    // Bounded: initial + exactly kAutoRetryMax (3) retries = 4 attempts.
+    expect(calls, hasLength(4));
+
+    // The manual Retry re-runs the full auto-retry sequence (another 4),
+    // showing the loading state during it, not the stale error.
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    expect(find.textContaining("Couldn't load"), findsNothing); // spinner, not error
+    await settleRetries(tester);
+    expect(calls, hasLength(8));
+    expect(find.text('Retry'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a clean 404 is NOT auto-retried (definitive "never run"): the error '
+      'shows immediately after a single attempt', (tester) async {
+    final calls = <int>[];
+    await tester
+        .pumpWidget(hostLoader(failFirst: 999, status: 404, calls: calls));
+    await settleRetries(tester);
+
+    expect(find.text('Retry'), findsOneWidget);
+    expect(calls, hasLength(1)); // no retries for a definitive 404
   });
 
   // --- "Links" vs "Social profiles" tappability (§ bug 2) -------------------

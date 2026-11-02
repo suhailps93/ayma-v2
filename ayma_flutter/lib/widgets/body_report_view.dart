@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/auto_retry.dart';
 import '../theme.dart';
 import 'app_loading_indicator.dart';
 import 'face_report_view.dart' show AddToStoryButton, resolvePhotoUrl;
@@ -55,8 +56,10 @@ class _StoredBodyReportSheet extends StatefulWidget {
 }
 
 class _StoredBodyReportSheetState extends State<_StoredBodyReportSheet> {
-  late final Future<StoredBodyReport> _future =
-      fetchStoredBodyReport(widget.reportId, api: widget.api);
+  // Auto-retry a transient load failure before showing the error (founder
+  // 2026-11-01). The GET is idempotent; worst case stays bounded.
+  late final Future<StoredBodyReport> _future = withAutoRetry(
+      () => fetchStoredBodyReport(widget.reportId, api: widget.api));
 
   @override
   Widget build(BuildContext context) {
