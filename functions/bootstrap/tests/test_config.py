@@ -38,19 +38,35 @@ def test_voice_surface_defaults_to_gemini(monkeypatch):
     assert cfg.llm_provider_voice == "gemini"
 
 
-def test_dm_coach_surface_defaults_to_meta(monkeypatch):
-    # Founder directive: the DM assistant runs on Muse, so this one surface
-    # defaults to meta (unlike every other surface).
+def test_dm_coach_surface_defaults_to_gemini(monkeypatch):
+    # Routing-audit H1 (2026-11-02): dm_coach now defaults to gemini (the
+    # funded, LiveKit-routed brain) like every other surface, so an unset env
+    # can never send the DM assistant off LiveKit to Meta-direct.
     monkeypatch.delenv("LLM_PROVIDER_DM_COACH", raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    cfg = config._load()
+    assert cfg.llm_provider_dm_coach == "gemini"
+
+
+def test_dm_coach_surface_honours_explicit_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER_DM_COACH", "meta")
     cfg = config._load()
     assert cfg.llm_provider_dm_coach == "meta"
 
 
-def test_dm_coach_surface_honours_explicit_override(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER_DM_COACH", "gemini")
+def test_translate_surface_defaults_to_gemini(monkeypatch):
+    # Routing-audit H2 (2026-11-02): DM translation now defaults to gemini
+    # (was Meta-direct by default, and live on staging). Unset env = LiveKit.
+    monkeypatch.delenv("LLM_PROVIDER_TRANSLATE", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     cfg = config._load()
-    assert cfg.llm_provider_dm_coach == "gemini"
+    assert cfg.llm_provider_translate == "gemini"
+
+
+def test_translate_surface_honours_explicit_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER_TRANSLATE", "meta")
+    cfg = config._load()
+    assert cfg.llm_provider_translate == "meta"
 
 
 def test_meta_cascade_defaults(monkeypatch):

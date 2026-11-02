@@ -78,7 +78,9 @@ Both are limited to exactly these accounts and change nothing globally
 2. **All feature flags on.** The three demo uids (`CONFIG.all_flags_on_uids`)
    resolve every boolean feature flag ON via a per-user override in the flag
    reader (`feature_flags.resolve(name, uid=…)`), **without flipping any global
-   flag**.
+   flag** — except flags in `feature_flags.ALL_FLAGS_ON_DENYLIST`
+   (`llm_fallback_to_google`, routing-audit H11), which stay at their normal
+   value so a demo uid never gets a silent off-LiveKit direct-Google fallback.
 
 ## Rebuilding / resetting
 

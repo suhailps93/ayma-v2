@@ -116,10 +116,14 @@ def test_translate_no_op_without_text_or_target(monkeypatch):
     assert provider.calls == []  # the model is never called with nothing to do
 
 
-def test_translate_surface_defaults_to_meta():
-    from config import CONFIG
+def test_translate_surface_defaults_to_gemini(monkeypatch):
+    # Routing-audit H2: translation defaults to the LiveKit-routed gemini brain
+    # when the env is unset (was Meta-direct, and live on staging).
+    import config
 
-    assert CONFIG.llm_provider_translate == "meta"
+    monkeypatch.delenv("LLM_PROVIDER_TRANSLATE", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    assert config._load().llm_provider_translate == "gemini"
 
 
 # --- confidence / script decision (§6.12) -------------------------------- #

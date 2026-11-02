@@ -56,6 +56,20 @@ def test_non_bool_flag_never_overridden(_flag_config):
     assert source != "user_override"
 
 
+def test_fallback_to_google_never_force_enabled_for_demo_uid(_flag_config):
+    # Routing-audit H11: llm_fallback_to_google is a BOOL flag, but forcing it
+    # ON would arm a silent off-LiveKit direct-Google retry on a gateway 429
+    # (founder-banned). The all-flags-on override MUST skip it (denylist), so it
+    # resolves normally — never the dedicated user_override source.
+    assert "llm_fallback_to_google" in ff.ALL_FLAGS_ON_DENYLIST
+    value, source = ff.resolve("llm_fallback_to_google", DEMO_UID)
+    assert source != "user_override"
+    # It resolves exactly as it would for any other uid (the code default).
+    assert value == ff.resolve("llm_fallback_to_google", OTHER_UID)[0]
+    # Other bool flags still flip ON for the demo uid — the denylist is surgical.
+    assert ff.resolve("meta_integrations", DEMO_UID) == (True, "user_override")
+
+
 def test_global_flag_doc_is_untouched(_flag_config):
     # The override is read-only: resolving for the demo uid writes nothing.
     captured = {}

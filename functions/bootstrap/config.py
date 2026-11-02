@@ -1271,16 +1271,19 @@ def _load() -> Config:
         llm_provider_voice=os.getenv(
             "LLM_PROVIDER_VOICE", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),
-        # Founder directive (hackathon): the DM assistant runs on Muse, so this
-        # one surface defaults to ``meta`` (still overridable per-surface or via
-        # a global LLM_PROVIDER, still Gemini-fallback-guarded).
+        # Defaults to ``gemini`` (the funded, LiveKit-routed brain) like every
+        # other surface — H1 routing-audit fix (2026-11-02): no longer pinned to
+        # Meta-direct, so an unset env can never send the DM assistant off
+        # LiveKit. Still per-surface overridable + Gemini-fallback-guarded.
         llm_provider_dm_coach=os.getenv(
-            "LLM_PROVIDER_DM_COACH", os.getenv("LLM_PROVIDER", "meta")
+            "LLM_PROVIDER_DM_COACH", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),
-        # Cross-language DM translation runs on Muse by default (same hackathon
-        # directive as dm_coach); still per-surface overridable + Gemini-guarded.
+        # Cross-language DM translation defaults to ``gemini`` too — H2
+        # routing-audit fix (2026-11-02): was Meta-direct by default (and live on
+        # staging), now the LiveKit-routed brain. Per-surface overridable +
+        # Gemini-fallback-guarded.
         llm_provider_translate=os.getenv(
-            "LLM_PROVIDER_TRANSLATE", os.getenv("LLM_PROVIDER", "meta")
+            "LLM_PROVIDER_TRANSLATE", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),
         llm_meta_fallback=os.getenv("LLM_META_FALLBACK", "true").strip().lower()
         == "true",

@@ -210,10 +210,14 @@ def test_assist_swallows_generation_errors(monkeypatch):
     }
 
 
-def test_dm_coach_surface_defaults_to_meta():
-    from config import CONFIG
+def test_dm_coach_surface_defaults_to_gemini(monkeypatch):
+    # Routing-audit H1: dm_coach defaults to the LiveKit-routed gemini brain
+    # when the env is unset (no longer Meta-direct by default).
+    import config
 
-    assert CONFIG.llm_provider_dm_coach == "meta"
+    monkeypatch.delenv("LLM_PROVIDER_DM_COACH", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    assert config._load().llm_provider_dm_coach == "gemini"
 
 
 # --- safety red-flag coach (§6.9.1) -------------------------------------- #

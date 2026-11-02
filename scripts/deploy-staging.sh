@@ -101,7 +101,15 @@ OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal
 # separate LiveKit project means the prod agent never sees staging rooms. Key +
 # secret are the staging project's, in ayma-ai Secret Manager under the _STAGING
 # names (prod's bare LIVEKIT_API_KEY/SECRET are left untouched).
-API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_484u2zjk8ob,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=cloudrun,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL}"
+# LLM_PROVIDER pins (routing-audit W1): --set-env-vars below is a FULL replace,
+# so without these a --full deploy would wipe the manual provider pins and
+# silently revert surfaces to Meta-direct (off LiveKit — founder-banned). Pin
+# every text surface that runs on the api + the global knob to gemini (the
+# funded, LiveKit-routed brain). voice is pinned on the agent base, not here.
+# These are gemini (gateway) only — NEVER add FLAG_LLM_ROUTE_*=vertex /
+# FLAG_VOICE_PROVIDER / FLAG_LLM_FALLBACK_TO_GOOGLE here (that reroutes off
+# LiveKit).
+API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_484u2zjk8ob,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=cloudrun,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini"
 
 # Cloud image variants (Perf Phase 2 PREP chunk A, staging-only): enabled ONLY
 # when the staging data plane is the staging Firebase project. A staging
@@ -110,7 +118,12 @@ API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=$
 if [[ "$DATA_PROJECT" == "ayma-staging" ]]; then
   API_ENV_BASE="${API_ENV_BASE},IMAGE_VARIANTS_ENABLED=true,IMAGE_VARIANTS_PUSH_SA=pubsub-push-invoker@ayma-staging.iam.gserviceaccount.com"
 fi
-AGENT_ENV_BASE="LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging"
+# LLM_PROVIDER pins (routing-audit W1): same full-replace wipe risk as the api
+# base. The voice surface runs on the agent, so pin it (+ the global knob) to
+# gemini here. LLM_PROVIDER_VOICE_MAIN is deliberately left unpinned (explicit-
+# only, no global inheritance). gemini (gateway) only — never a vertex/google
+# direct override here.
+AGENT_ENV_BASE="LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging,LLM_PROVIDER=gemini,LLM_PROVIDER_VOICE=gemini"
 
 # Same env names as prod, staging-only values where it matters — see docs/STAGING.md.
 # META_API_KEY: the Meta Model API key (Muse Spark) shared with prod — required

@@ -100,15 +100,12 @@ def _with_flags(monkeypatch, **flags):
 
 
 def test_default_is_gemini_for_every_surface(monkeypatch):
-    # Defaults as loaded: gemini everywhere EXCEPT dm_coach and translate,
-    # which the founder directed onto the Meta/Muse brain for the hackathon
-    # (cross-language DM translation is "powered by Muse"; both default ``meta``).
+    # Routing-audit H1/H2 (2026-11-02): every surface now defaults to gemini
+    # (the funded, LiveKit-routed brain) — the last two holdouts dm_coach and
+    # translate were flipped off their Meta-direct default so no surface runs
+    # off LiveKit without an explicit env opt-in.
     for surface in llm_provider.SURFACES:
-        provider = get_llm_provider(surface)
-        if surface in ("dm_coach", "translate"):
-            assert isinstance(provider, MetaProvider)
-        else:
-            assert isinstance(provider, GeminiProvider)
+        assert isinstance(get_llm_provider(surface), GeminiProvider)
 
 
 def test_per_surface_flip_is_independent(monkeypatch):

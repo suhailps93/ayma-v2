@@ -51,6 +51,14 @@ ROUTES = ("vertex", "inference")
 VOICE_PROVIDERS = ("google", "inference")
 ROUTE_GROUPS = ("json", "vision", "chat", "voice")
 
+# Flags the demo/judge ``all_flags_on_uids`` override must NEVER force ON:
+# forcing them would arm an off-LiveKit (direct-Google) inference path, which
+# the founder has permanently banned (see AGENT_ALL inference-on-LiveKit rule,
+# routing-audit H11). ``llm_fallback_to_google`` makes a gateway 429 silently
+# retry on direct Google — exactly the banned off-LiveKit spend. These flags
+# resolve normally (env/Firestore/default) even for an all-flags-on uid.
+ALL_FLAGS_ON_DENYLIST = frozenset({"llm_fallback_to_google"})
+
 
 @dataclass(frozen=True)
 class Flag:
@@ -222,12 +230,16 @@ def resolve(name: str, uid: str | None = None) -> tuple[Any, str]:
     When ``uid`` is one of ``CONFIG.all_flags_on_uids`` (the demo/judge
     accounts, see ``docs/DEMO_ACCOUNTS.md``) every *boolean* flag resolves ON
     for that user, without touching any global flag. Non-bool flags (routes,
-    percents, lists, ints) have no meaningful "on" and are resolved normally."""
+    percents, lists, ints) have no meaningful "on" and are resolved normally.
+    Flags in ``ALL_FLAGS_ON_DENYLIST`` (e.g. ``llm_fallback_to_google``) are
+    never force-enabled by this path — they would arm a banned off-LiveKit
+    direct-Google path — and resolve normally instead."""
     flag = REGISTRY[name]
     if (
         uid
         and flag.kind == "bool"
         and uid in CONFIG.all_flags_on_uids
+        and name not in ALL_FLAGS_ON_DENYLIST
     ):
         return True, "user_override"
     env_text = os.environ.get(ENV_PREFIX + name.upper())
