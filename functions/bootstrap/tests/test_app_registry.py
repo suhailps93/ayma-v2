@@ -262,6 +262,23 @@ def test_bare_open_my_story_is_still_a_navigation_not_an_edit():
         assert app_registry.find_destination(words)["key"] == "story", words
 
 
+def test_model_selection_resolves_to_voice_preference():
+    # Founder bug 2026-11-01: /settings/voice IS the model/brain picker
+    # ("Ayma's models"), but its aliases omitted every word for the model
+    # picker, so "open the model selection page" resolved to None and the
+    # voice agent replied "no such page". Every model-picker phrasing must now
+    # land on voice_preference (/settings/voice).
+    for words in (
+        "model selection", "models", "model", "brain", "ayma's models",
+        "aymas models", "pick her brain", "her brain", "model stack",
+        "change her brain", "the model selection page", "llm",
+    ):
+        d = app_registry.find_destination(words)
+        assert d is not None, f"{words!r} -> None"
+        assert d["key"] == "voice_preference", f"{words!r} -> {d['key']}"
+        assert d["path"] == "/settings/voice", f"{words!r} -> {d}"
+
+
 def test_profile_completeness_card_resolves_to_complete_profile():
     for words in ("profile completeness", "Your profile is 59% complete"):
         assert app_registry.find_destination(words)["key"] == "complete_profile"

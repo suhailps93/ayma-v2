@@ -604,3 +604,55 @@ def test_explore_legacy_limit_truncates_after_global_sort():
     assert [c["uid"] for c in cards][0] == "me"
     assert len(cards) == 3
     assert ex.explore(db, "me", {}, limit=0) == []
+
+
+def test_default_feed_ignores_saved_partner_age_range_shows_no_birthdate():
+    """Founder bug 2026-11-01: a viewer WITH a saved partner age range
+    (qz_partner_age_min/max) saw "No one matches that yet." on the default
+    "Everyone" feed, because the saved range was injected unconditionally and
+    dropped every candidate missing a birthdate. The default feed must ignore
+    the saved range (a dealbreaker is a 0% score, not a hidden person); only an
+    EXPLICIT search age must still filter. Exercised through the real /explore
+    route so the regression is the exact founder path."""
+    import main
+    from fastapi.testclient import TestClient
+
+    db = FakeDb()
+    # Viewer HAS a saved partner age range (the trigger for the bug).
+    _u(db, "viewer", birthdate="1990-01-01",
+       qz_partner_age_min=26, qz_partner_age_max=38)
+    _u(db, "cand_nobd")  # no birthdate at all
+    _u(db, "cand_young", birthdate="1996-01-01")  # ~30yo
+
+    main_get_db = main.get_db
+    main.get_db = lambda: db
+    main.app.dependency_overrides[main.require_adult_uid] = lambda: "viewer"
+    client = TestClient(main.app)
+    try:
+        # Default feed: no q, no age params -> both candidates returned.
+        resp = client.get("/explore")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        uids = {c["uid"] for c in body["cards"]}
+        assert "cand_nobd" in uids, body
+        assert "cand_young" in uids, body
+        assert body["filters_applied"].get("age_min") is None
+        assert body["filters_applied"].get("age_max") is None
+
+        # Explicit age search STILL filters: age_min=50 drops both.
+        hi = client.get("/explore", params={"age_min": 50}).json()
+        hi_uids = {c["uid"] for c in hi["cards"]}
+        assert "cand_nobd" not in hi_uids
+        assert "cand_young" not in hi_uids
+
+        # An explicit range matching the young candidate keeps them and still
+        # drops the no-birthdate one (no age -> excluded by an explicit bound).
+        rng = client.get(
+            "/explore", params={"age_min": 25, "age_max": 35}
+        ).json()
+        rng_uids = {c["uid"] for c in rng["cards"]}
+        assert "cand_young" in rng_uids
+        assert "cand_nobd" not in rng_uids
+    finally:
+        main.app.dependency_overrides.pop(main.require_adult_uid, None)
+        main.get_db = main_get_db

@@ -72,9 +72,11 @@ _STALE_SECONDS = 300
 # How long a command tool waits for the client's ack before reporting the
 # navigation as NOT having happened. The client acks the instant it executes
 # (one snapshot delivery + one write), so a healthy round trip is well under
-# a second; 3s rides out one watch-stream hiccup without stalling the voice
-# turn unnaturally long. Module-level so tests can shrink them.
-_ACK_TIMEOUT_SECONDS = 3.0
+# a second; 6s rides out a watch-stream hiccup on a foregrounded-but-laggy
+# app (founder bug 2026-11-01: "open Ayma's settings" resolved but hit the
+# old 3s ack cutoff) without stalling the voice turn unnaturally long.
+# Module-level so tests can shrink them.
+_ACK_TIMEOUT_SECONDS = 6.0
 _ACK_POLL_SECONDS = 0.25
 
 # After a search_explore is acked, how long to wait for the client to report

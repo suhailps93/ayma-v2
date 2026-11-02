@@ -608,7 +608,10 @@ def explore_page(
             # Explore lists everyone with a profile, the caller included — no
             # orientation or community gating (product decision, 2026-08-30).
             # Only blocks / paused / already-passed, practice-date personas
-            # and the active search filters cut the roster down.
+            # and the EXPLICIT search filters cut the roster down. The viewer's
+            # saved partner age range (qz_partner_age_min/max) is never a hard
+            # filter on the default feed — a dealbreaker surfaces as a 0% score,
+            # not a hidden person (founder bug 2026-11-01).
             if other in passed:
                 continue
             # Practice-date simulator personas are never real people (BUG E).

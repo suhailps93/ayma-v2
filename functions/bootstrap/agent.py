@@ -2271,9 +2271,17 @@ async def _start_main_gemini_session(
     rebuilds Gemini Live, so a non-Gemini realtime model keeps the right voice."""
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
+    # Boot-time accent for native-audio realtime (§13.9, founder bug 2026-11-01):
+    # Gemini Live native audio IGNORES the prompt-text accent for pronunciation —
+    # the only locale lever it honours is the BCP-47 ``language`` passed here.
+    # Prefer the explicit saved ``voice_language``; otherwise derive the locale
+    # from the free-text accent ("indian" -> "en-IN", via voices.bcp47_hint) so a
+    # bare accent still reaches the model. The prompt-text accent directive below
+    # stays untouched; this just ALSO feeds the real lever.
+    effective_language = seed.voice_language or voices.bcp47_hint(seed.voice_accent)
     session = AgentSession(
         llm=llm or build_realtime_model(
-            seed.voice_name, seed.voice_language, route=route
+            seed.voice_name, effective_language, route=route
         ),
         allow_interruptions=True,
     )

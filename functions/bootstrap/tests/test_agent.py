@@ -3302,6 +3302,71 @@ def test_gemini_session_instructions_carry_accent_cascade_does_not(monkeypatch):
     assert "a southern American accent" not in captured["instructions"]
 
 
+def test_realtime_accent_reaches_build_realtime_model_as_bcp47(monkeypatch):
+    """Founder bug 2026-11-01: a free-text accent ("indian") did nothing on a
+    Gemini Live native-audio call because ``seed.voice_accent`` was never passed
+    as the BCP-47 ``language`` to ``build_realtime_model`` (native audio ignores
+    the prompt-text accent for pronunciation). With ``voice_accent="indian"`` and
+    an empty ``voice_language``, the realtime model must be built with language
+    "en-IN" — AND the prompt accent directive must still be present."""
+    captured: dict = {}
+    build_args: dict = {}
+    monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
+    for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
+                 "relay_token_usage", "relay_cascade_usage", "watch_for_idle",
+                 "_session_tools"):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+    async def _fake_open(*_a, **_k):
+        pass
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+
+    def _fake_build(*a, **k):
+        build_args["args"] = a
+        build_args["kwargs"] = k
+        return object()
+
+    monkeypatch.setattr(agent, "build_realtime_model", _fake_build)
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    class _Sess:
+        def on(self, n, cb=None):
+            return (lambda f: f) if cb is None else cb
+
+        async def start(self, **_k):
+            pass
+
+    monkeypatch.setattr(agent, "AgentSession", lambda **k: _Sess())
+
+    # Gemini realtime path (llm=None): free-text accent, no explicit language.
+    seed = agent.RoomSeed(system_prompt="SYS", uid="u1", session_id="s1",
+                          voice_accent="indian", voice_language="")
+    asyncio.run(agent._start_main_gemini_session(
+        _practice_ctx(), seed, flush=_FakeFlush(), window=[], route="vertex",
+        use_inference=False, voice_provider="p"))
+    # language is the 2nd positional arg to build_realtime_model.
+    assert build_args["args"][1] == "en-IN", build_args
+    # The prompt-text accent directive still rides along.
+    assert "indian" in captured["instructions"].lower()
+
+    # Explicit saved voice_language still wins over the accent-derived hint.
+    build_args.clear()
+    captured.clear()
+    seed2 = agent.RoomSeed(system_prompt="SYS", uid="u1", session_id="s1",
+                           voice_accent="indian", voice_language="fr-FR")
+    asyncio.run(agent._start_main_gemini_session(
+        _practice_ctx(), seed2, flush=_FakeFlush(), window=[], route="vertex",
+        use_inference=False, voice_provider="p"))
+    assert build_args["args"][1] == "fr-FR", build_args
+
+
 # --- cascade must not act on a stale seeded user turn (founder bug 2026-10-27)-
 def _ctx_with(*turns):
     from livekit.agents import llm

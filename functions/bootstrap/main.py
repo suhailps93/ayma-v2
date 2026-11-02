@@ -2575,14 +2575,14 @@ async def explore(
         "age_min": age_min,
         "age_max": age_max,
     }
+    # The default "Everyone" feed never hard-filters by the viewer's saved
+    # partner age range (qz_partner_age_min/max): a dealbreaker surfaces as a
+    # 0% score, not a hidden person, and candidates with no birthdate must
+    # still show. Only EXPLICIT age bounds from the search itself (dropdown
+    # or NL, merged above) narrow the feed. (Founder bug 2026-11-01: the saved
+    # range was injected unconditionally, so "Everyone" returned empty for any
+    # candidate missing a birthdate.)
     filters = explore_mod.merge_filters(dropdown, nl)
-    try:
-        snap = await asyncio.to_thread(schema.profile_doc(get_db(), uid).get)
-        filters = explore_mod.apply_saved_age_range(
-            filters, snap.to_dict() if snap.exists else None
-        )
-    except Exception:  # noqa: BLE001 - no saved range just means no default
-        logger.warning("explore: saved age range read failed", exc_info=True)
     try:
         cards, next_cursor = await asyncio.to_thread(
             explore_mod.explore_page,
