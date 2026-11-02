@@ -6,7 +6,7 @@
 **Base Commit**: `75eb2d2` (`origin/staging`)  
 **Author**: Antigravity (Engineer)  
 **Date**: 2026-11-01  
-**Status**: IN PROGRESS (Stage 4 Complete)
+**Status**: DONE (All 5 Stages Complete — Ready for Astro to Merge)
 
 ---
 
@@ -56,9 +56,19 @@ Target performance budgets:
   - Connected `setupAuthDeepLinkDrain()` in `ayma_flutter/lib/routing/app_router.dart`.
   - Tests added: `ayma_flutter/test/startup_nodes_test.dart` (3/3 passed). Existing splash tests (`splash_routing_test.dart`, `splash_optimistic_boot_test.dart`, `splash_timeout_test.dart`) and `startup_guard_test.dart` 100% green.
 
-- [ ] **Stage 5: Full Verification & Layout Matrix**
-  - Full Flutter suite clean (1320+ tests).
-  - Backend suite clean (matching the 2 pre-existing failures).
+- [x] **Stage 5: Full Verification & Layout Matrix**
+  - Full Flutter suite clean: 1,345/1,345 tests passed (100% green, 0 failures).
+  - Layout matrix suite clean: 27/27 tests passed (`test/layout_matrix_test.dart`), 0 layout/overflow defects across device matrix (compact phone, standard phone, tablet, desktop, RTL, font-scaling 0.8x-2.0x).
+  - Backend pytest suite clean: 2,921 passed, 7 skipped, 2 failed matching exactly the two known pre-existing failures (`test_notification_settings_cover_every_category`, `test_stale_list_flags_stale_and_unavailable_only`).
+  - Performance startup unit tests clean:
+    - DAG Engine: 5/5 passed (`test/startup_dag_test.dart`)
+    - BootConfig cache & expiration: 4/4 passed (`test/boot_config_test.dart`)
+    - Subsystem readiness completers: 4/4 passed (`test/subsystem_readiness_test.dart`)
+    - Launch intent resolver: 4/4 passed (`test/launch_intent_resolver_test.dart`)
+    - DeepLinkQueue & PushService: 16/16 passed (`test/deep_link_queue_test.dart`, `test/push_service_test.dart`)
+    - Startup nodes catalog: 3/3 passed (`test/startup_nodes_test.dart`)
+    - Splash routing, optimistic boot & timeouts: 19/19 passed (`test/splash_routing_test.dart`, `test/splash_optimistic_boot_test.dart`, `test/splash_timeout_test.dart`, `test/startup_guard_test.dart`)
+    - Paywalls & subscriptions: 26/26 passed (`test/plan_screen_test.dart`)
 
 ---
 
