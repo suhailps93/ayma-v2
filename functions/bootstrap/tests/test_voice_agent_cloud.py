@@ -55,6 +55,29 @@ def test_flag_defaults_to_livekit_when_unset(monkeypatch):
     assert schema.VOICE_AGENT_CLOUD_DEFAULT == "livekit"
 
 
+def test_default_env_override_per_environment(monkeypatch):
+    # Each environment picks its own default via the VOICE_AGENT_CLOUD_DEFAULT
+    # env var (staging sets "cloudrun" so no-pref rooms route to its Cloud Run
+    # worker — its separate LiveKit project has no ayma-lk; prod leaves it unset
+    # = "livekit"). The constant is read from the env at import, so reload the
+    # module to exercise it, and always reload back so the rest of the suite
+    # sees the prod default. (founder bug R2-E2 / staging voice, 2026-11-02)
+    import importlib
+
+    try:
+        monkeypatch.setenv("VOICE_AGENT_CLOUD_DEFAULT", "cloudrun")
+        importlib.reload(schema)
+        assert schema.VOICE_AGENT_CLOUD_DEFAULT == "cloudrun"
+        # An invalid value falls back to "livekit", never crashes a voice start.
+        monkeypatch.setenv("VOICE_AGENT_CLOUD_DEFAULT", "bogus")
+        importlib.reload(schema)
+        assert schema.VOICE_AGENT_CLOUD_DEFAULT == "livekit"
+    finally:
+        monkeypatch.delenv("VOICE_AGENT_CLOUD_DEFAULT", raising=False)
+        importlib.reload(schema)
+    assert schema.VOICE_AGENT_CLOUD_DEFAULT == "livekit"
+
+
 def test_flag_resolves_livekit_when_set(monkeypatch):
     _patch_db(monkeypatch, _ProfileDoc({schema.PF_AYMA_VOICE_CLOUD: "livekit"}))
     assert main._voice_agent_cloud("me") == "livekit"

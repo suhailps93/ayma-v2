@@ -11,6 +11,8 @@ re-exported below so one import gives the whole picture.
 
 from __future__ import annotations
 
+import os
+
 # --- re-exports: the per-domain schema pieces -------------------------------
 from dm_schema import (  # noqa: F401
     DM_MESSAGES_COLLECTION,
@@ -286,7 +288,16 @@ PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
 # deploy). This single constant is the one authoritative default.
 PF_AYMA_VOICE_CLOUD = "voice_agent_cloud"
 VOICE_AGENT_CLOUDS = ("cloudrun", "livekit")
-VOICE_AGENT_CLOUD_DEFAULT = "livekit"
+# Env-overridable so each environment can pick its own default without a code
+# change: PROD (env unset) stays "livekit" (the hosted ``ayma-lk`` worker);
+# STAGING sets VOICE_AGENT_CLOUD_DEFAULT=cloudrun so rooms route to the staging
+# Cloud Run worker (its separate LiveKit project has no ``ayma-lk``). An invalid
+# value falls back to "livekit". This is still the one authoritative default.
+VOICE_AGENT_CLOUD_DEFAULT = os.getenv(
+    "VOICE_AGENT_CLOUD_DEFAULT", "livekit"
+).strip().lower()
+if VOICE_AGENT_CLOUD_DEFAULT not in VOICE_AGENT_CLOUDS:
+    VOICE_AGENT_CLOUD_DEFAULT = "livekit"
 # The user's own LinkedIn profile URL, given with their consent (§ Your Story
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.

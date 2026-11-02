@@ -101,7 +101,7 @@ OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal
 # separate LiveKit project means the prod agent never sees staging rooms. Key +
 # secret are the staging project's, in ayma-ai Secret Manager under the _STAGING
 # names (prod's bare LIVEKIT_API_KEY/SECRET are left untouched).
-API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_484u2zjk8ob,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL}"
+API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_484u2zjk8ob,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=cloudrun,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL}"
 
 # Cloud image variants (Perf Phase 2 PREP chunk A, staging-only): enabled ONLY
 # when the staging data plane is the staging Firebase project. A staging
