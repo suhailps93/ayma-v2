@@ -444,9 +444,32 @@ def _hydrate_candidates(db, uid: str, others: list[str]) -> dict:
              users.document(uid).collection("match_candidates").document(other)),
         ])
     snaps = _batch_docs(db, [ref for _, ref in keyed])
+    # Firestore get_all() returns documents in ARBITRARY order, not the request
+    # order, so results MUST be matched back to each requested ref by document
+    # path — never by list position. A positional zip mismaps every candidate's
+    # profile/blocks/likes: the feed comes back blank (profiles resolve to None
+    # → candidates dropped) or, worse, one person's data lands under another's
+    # name. (founder bug 2026-11-01)
+    by_path = {
+        snap.reference.path: snap
+        for snap in snaps
+        if getattr(snap, "reference", None) is not None
+        and getattr(snap.reference, "path", None) is not None
+    }
     out: dict[tuple[str, str], dict | None] = {}
-    for key, snap in zip([k for k, _ in keyed], snaps):
-        out[key] = snap.to_dict() if snap.exists else None
+    if len(by_path) == len(keyed) == len(snaps):
+        for key, ref in keyed:
+            snap = by_path.get(ref.path)
+            out[key] = (
+                snap.to_dict() if (snap is not None and snap.exists) else None
+            )
+    else:
+        # Fallback for test fakes whose get_all() returns snapshots without a
+        # resolvable .reference: those fakes always preserve request order, so
+        # positional mapping is correct for them (real Firestore snapshots
+        # always carry .reference, so the path map above is always used there).
+        for key, snap in zip([k for k, _ in keyed], snaps):
+            out[key] = snap.to_dict() if snap.exists else None
     return out
 
 

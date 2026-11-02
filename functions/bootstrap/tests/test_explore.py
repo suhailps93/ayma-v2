@@ -153,9 +153,13 @@ def test_passes_filters_private_field_treated_exactly_like_an_unset_one():
 # --- explore() over a fake db ------------------------------------------------
 
 class _Snap:
-    def __init__(self, doc_id, data):
+    def __init__(self, doc_id, data, reference=None):
         self.id = doc_id
         self._data = data
+        # Real Firestore snapshots carry a .reference (with .path); hydration
+        # matches get_all() results back to requests by that path, so the fake
+        # must expose it too.
+        self.reference = reference
 
     @property
     def exists(self):
@@ -169,8 +173,12 @@ class _DocRef:
     def __init__(self, store, key):
         self.store, self.key = store, key
 
+    @property
+    def path(self):
+        return "/".join(self.key)
+
     def get(self):
-        return _Snap(self.key[-1], self.store.docs.get(self.key))
+        return _Snap(self.key[-1], self.store.docs.get(self.key), reference=self)
 
     def collection(self, name):
         return _CollRef(self.store, self.key + (name,))
@@ -589,6 +597,37 @@ def test_explore_page_prefers_batched_get_all():
     # One candidate batch (profile + blocks + likes + match + cand refs),
     # not one round trip per candidate per doc.
     assert len(calls) <= 2, f"too many batch rounds: {calls}"
+
+
+def test_explore_page_maps_scrambled_get_all_results_by_path():
+    """Regression (founder bug 2026-11-01): Firestore get_all() returns
+    documents in ARBITRARY order, not request order. Hydration must match
+    results to requests by document path, not list position — a positional zip
+    empties the feed (profiles resolve to None → candidates dropped, "Explore
+    only shows me") or, worse, shows one person's profile/score under another's
+    name. This fake reverses get_all()'s order to prove the mapping never
+    relies on position."""
+    db = FakeDb()
+    _seed_roster(db, 6)  # me + u00..u05, each profile name == its uid
+    real_get_all = FakeDb.get_all
+
+    def _reversed(self, refs):
+        return list(reversed(real_get_all(self, refs)))
+
+    FakeDb.get_all = _reversed
+    try:
+        cards, _ = ex.explore_page(db, "me", {}, limit=10)
+    finally:
+        FakeDb.get_all = real_get_all
+    # Every seeded person appears — the feed is not emptied by mismapping.
+    assert {c["uid"] for c in cards} == {
+        "me", "u00", "u01", "u02", "u03", "u04", "u05"
+    }
+    # And every card carries ITS OWN profile (name == uid), never another's.
+    for c in cards:
+        assert c["name"] == c["uid"], (
+            f"{c['uid']} shows {c['name']!r} — cross-mapped to another person"
+        )
 
 
 def test_explore_page_empty_roster_and_unknown_caller():
