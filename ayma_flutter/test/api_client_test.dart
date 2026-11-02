@@ -1416,5 +1416,71 @@ void main() {
       await client.photoPublish('https://example.com/p.jpg', source: 'chat');
       expect(received, isTrue);
     });
+
+    // SWEEP451-M1: every match report showed "Couldn't load this report."
+    // while the server logged `GET /match/{id} 200 OK` in ~13–15s. Root cause:
+    // the 8s interactive budget aborted the read (TimeoutException -> 408), and
+    // the bounded GET retry ran inside the same deadline so it could not heal a
+    // deterministic >8s latency. The read paths must get the long budget.
+    test('matchReport respects longTimeout over interactiveTimeout (/match/)',
+        () async {
+      var received = false;
+      final mockHttp = MockClient((request) async {
+        if (request.url.path.startsWith('/match/')) {
+          // Stalls past a 40ms interactive timeout but within 200ms longTimeout
+          await Future.delayed(const Duration(milliseconds: 80));
+          received = true;
+          return http.Response('{"match_id": "m1", "score": 0.8}', 200);
+        }
+        return http.Response('{}', 200);
+      });
+
+      final client = ApiClient(
+        httpClient: mockHttp,
+        auth: MockFirebaseAuth(signedIn: true),
+        interactiveTimeout: const Duration(milliseconds: 40),
+        longTimeout: const Duration(milliseconds: 200),
+      );
+
+      final report = await client.matchReport('m1');
+      expect(received, isTrue);
+      expect(report?.matchId, 'm1');
+    });
+
+    test(
+        'BudgetHttpClient routes /match/ and /report/match/ to the long budget, '
+        'non-exempt GET to the interactive budget', () async {
+      // Exercises `_timeoutFor` through the public `get`: an inner response
+      // that stalls 80ms is aborted by a 40ms interactive budget but completes
+      // under the 200ms long budget. The report read paths must take the long
+      // budget; a non-exempt path must not.
+      http.Client stall() => MockClient((request) async {
+            await Future.delayed(const Duration(milliseconds: 80));
+            return http.Response('{}', 200);
+          });
+
+      for (final path in ['/match/m1', '/report/match/m1']) {
+        final client = BudgetHttpClient(
+          stall(),
+          interactiveTimeout: const Duration(milliseconds: 40),
+          longTimeout: const Duration(milliseconds: 200),
+        );
+        final res = await client.get(Uri.parse('https://api.test$path'));
+        expect(res.statusCode, 200, reason: '$path should use the long budget');
+      }
+
+      // A non-exempt GET at the same 80ms stall is aborted by the 40ms
+      // interactive budget and surfaces as a 408 ApiException.
+      final nonExempt = BudgetHttpClient(
+        stall(),
+        interactiveTimeout: const Duration(milliseconds: 40),
+        longTimeout: const Duration(milliseconds: 200),
+      );
+      await expectLater(
+        nonExempt.get(Uri.parse('https://api.test/explore')),
+        throwsA(isA<ApiException>()
+            .having((e) => e.statusCode, 'statusCode', 408)),
+      );
+    });
   });
 }

@@ -53,6 +53,17 @@ class BudgetHttpClient extends http.BaseClient {
     if (url.path.startsWith('/practice/')) {
       return longTimeout;
     }
+    // The match-report read resolves taste/Qloo affinity server-side on every
+    // read and warm-returns in ~13–15s. The 8s interactive budget aborts it
+    // (TimeoutException -> ApiException 408) while the server logs `200 OK`, so
+    // every report fetch shows "Couldn't load this report." The bounded GET
+    // retry runs inside the same 8s deadline and cannot heal a deterministic
+    // >8s latency. Give the report read paths the long (but still bounded)
+    // budget, like `/practice/`. See SWEEP451-M1.
+    if (url.path.startsWith('/match/') ||
+        url.path.startsWith('/report/match/')) {
+      return longTimeout;
+    }
     return interactiveTimeout;
   }
 
