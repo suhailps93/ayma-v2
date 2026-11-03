@@ -1268,6 +1268,22 @@ async def _prepare_chat(
             None,
         )
 
+    # Deterministic model-stack switch (§13.9/§13.10): a clear "change my brain /
+    # voice mode / realtime model to X" is executed BEFORE the model, so it works
+    # regardless of which brain is active. Needed because when the active Brain is
+    # Meta (Muse Spark), the switch turn itself runs on Muse Spark, whose weaker
+    # tool-calling often fails to emit set_brain — making "change back to Gemini"
+    # silently do nothing (founder 2026-11-02). Mirrors the #28 determinism fix.
+    if not req.image_path.strip() and not req.photo_url.strip():
+        from skills import set_model_stack
+
+        stack_cmd = set_model_stack.detect_stack_command(req.message)
+        if stack_cmd is not None:
+            reply = await set_model_stack.run_stack_command(
+                get_db(), uid, *stack_cmd
+            )
+            return ({"reply": reply}, None)
+
     image_path = req.image_path.strip()
     image: tuple[bytes, str] | None = None
     if image_path:

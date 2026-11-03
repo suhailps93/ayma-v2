@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
@@ -16,10 +20,20 @@ import 'ayma_toast.dart';
 /// and is independent of it — the Voice section (mode / model / voice /
 /// language / accent) is unchanged.
 class BrainSelectorControl extends StatefulWidget {
-  const BrainSelectorControl({super.key, required this.api, this.onSaved});
+  const BrainSelectorControl({
+    super.key,
+    required this.api,
+    this.onSaved,
+    this.firestore,
+    this.uid,
+  });
 
   final ApiClient api;
   final VoidCallback? onSaved;
+
+  /// Test seams for the live-update listener; default to the app globals.
+  final FirebaseFirestore? firestore;
+  final String? uid;
 
   @override
   State<BrainSelectorControl> createState() => _BrainSelectorControlState();
@@ -31,10 +45,68 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
   String? _error;
   bool _saving = false;
 
+  // Live update: when Ayma (or any surface) saves a new brain to the user's
+  // model-settings doc (`ayma_brain_model` on users/{uid}/profile/main), the
+  // open screen reflects it at once instead of only on reopen (founder 2026-11-02).
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileSub;
+  String? _watchedBrain;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _listenForSavedBrain();
+  }
+
+  @override
+  void dispose() {
+    _profileSub?.cancel();
+    super.dispose();
+  }
+
+  DocumentReference<Map<String, dynamic>>? _profileRef() {
+    // Best-effort: in a context with no Firebase app (unit tests that don't
+    // inject a fake), reading the globals throws — caught by the caller so the
+    // control still renders, just without live updates.
+    try {
+      final uid = widget.uid ?? FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null || uid.isEmpty) return null;
+      return (widget.firestore ?? FirebaseFirestore.instance)
+          .collection('users')
+          .doc(uid)
+          .collection('profile')
+          .doc('main');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Reflect a brain change written to the model-settings doc while this screen
+  /// is open (e.g. Ayma's `set_brain`). Reads the vendor id directly — the same
+  /// field `GET /brain/preference` reads — so no extra round-trip is needed; the
+  /// first snapshot only seeds the baseline (initial render is `_load`'s job).
+  void _listenForSavedBrain() {
+    final ref = _profileRef();
+    if (ref == null) return;
+    try {
+      _profileSub = ref.snapshots().listen(_onBrainSnap, onError: (_) {});
+    } catch (_) {
+      // No live updates in this environment; initial _load still rendered.
+    }
+  }
+
+  void _onBrainSnap(DocumentSnapshot<Map<String, dynamic>> snap) {
+    final v = (snap.data()?['ayma_brain_model'] as String? ?? '').trim();
+    if (_watchedBrain == null) {
+      _watchedBrain = v;
+      return;
+    }
+    if (v == _watchedBrain) return;
+    _watchedBrain = v;
+    if (!mounted || _saving || v.isEmpty) return;
+    final cat = _cat;
+    if (cat == null || !cat.brains.any((b) => b.id == v)) return;
+    setState(() => _selected = v);
   }
 
   Future<void> _load() async {

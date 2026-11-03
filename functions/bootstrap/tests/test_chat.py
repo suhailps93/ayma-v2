@@ -1588,3 +1588,24 @@ def test_out_of_credits_turn_is_not_persisted_so_a_resend_runs_normally(
     assert retry.json()["reply"] == "welcome back"
     assert retry.json()["duplicate"] is True
     assert state["calls"] == 2  # capped attempt + the one real generation
+
+
+def test_chat_switch_brain_is_deterministic_regardless_of_active_brain(monkeypatch):
+    # Founder bug 2026-11-02: Meta->Gemini brain switch was one-way because the
+    # switch turn ran on Muse Spark and often didn't emit set_brain. The
+    # deterministic pre-model intercept (_prepare_chat) must handle it WITHOUT
+    # ever calling the model, so it works whichever brain is active.
+    called = {"model": False}
+
+    async def _fake(_message, **_kw):
+        called["model"] = True
+        return type("R", (), {"text": "nope", "tools_used": []})()
+
+    monkeypatch.setattr(gemini, "generate_reply", _fake)
+    r = client.post(
+        "/chat", json={"message": "change back to gemini"},
+        headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 200
+    assert r.json().get("reply")  # a confirmation was returned
+    assert called["model"] is False  # handled deterministically; model never ran

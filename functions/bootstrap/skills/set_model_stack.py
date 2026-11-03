@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Callable
 
 from firebase_admin import firestore
@@ -265,6 +266,81 @@ def _bind_reconnect_voice(db, uid: str) -> Callable[..., object]:
         )
 
     return reconnect_voice
+
+
+# --- deterministic pre-model intent (text chat, brain-agnostic) ---------------
+#
+# When the user's active unified Brain is Meta (Muse Spark), the brain-switch
+# CHAT turn is itself handled by Muse Spark (main._generate_chat_reply →
+# get_user_brain_provider("chat", needs="tools") → MetaProvider), whose weaker
+# tool-calling at reasoning_effort="minimal" often answers in prose WITHOUT
+# emitting set_brain — and the no-tool path never raises, so the Gemini fallback
+# never engages. Result: "change back to Gemini" silently did nothing — the
+# switch was one-way (founder 2026-11-02). Mirroring the #28 determinism fix,
+# main._prepare_chat runs this matcher BEFORE the model, so a clear model-stack
+# command is executed and confirmed regardless of which brain is active (the
+# model still handles everything else). Kept strict — a change verb AND a
+# resolvable target — so ordinary chat is never hijacked. Voice is unaffected:
+# a realtime (Gemini Live) call already emits set_brain reliably.
+
+_CHANGE_VERB = re.compile(
+    r"\b(switch|change|set|use|put|make|flip|turn|go to|go back|change back)\b", re.I
+)
+_TO_BRAIN = re.compile(
+    r"\bto\s+(?:the\s+)?(gemini|google|muse spark|muse|meta)\b", re.I
+)
+_ANY_BRAIN = re.compile(r"\b(gemini|google|muse spark|muse|meta)\b", re.I)
+_TO_MODE = re.compile(r"\bto\s+(?:the\s+)?(cascade|realtime|real time|native audio)\b", re.I)
+
+
+def _scan_brain(m: str) -> str | None:
+    hit = _TO_BRAIN.search(m) or _ANY_BRAIN.search(m)
+    if not hit:
+        return None
+    tok = hit.group(1).lower()
+    return PROVIDER_GEMINI if tok in ("gemini", "google") else PROVIDER_META
+
+
+def detect_stack_command(message: str) -> tuple[str, str] | None:
+    """A clear, unambiguous "change my brain / voice mode / realtime model to X"
+    command → ``(tool_name, resolved_value)``, else ``None``. Strict: requires a
+    change verb AND a resolvable target, so ordinary chat is never intercepted.
+    The value is the canonical id; the bound setter re-resolves it idempotently."""
+    m = (message or "").strip().lower()
+    if not m or len(m) > 200 or not _CHANGE_VERB.search(m):
+        return None
+    # Realtime model first (most specific: a NAMED realtime model).
+    if re.search(r"\bgemini live\b", m):
+        return ("set_realtime_model", voice_catalog.REALTIME_GEMINI)
+    if re.search(r"\bopenai realtime\b|\bgpt[- ]?realtime\b", m) or (
+        "openai" in m and "realtime" in m
+    ):
+        return ("set_realtime_model", voice_catalog.REALTIME_OPENAI)
+    # Brain (either direction) — gated by the word "brain" or an explicit
+    # "to <brain>" so a stray brand mention ("I use Gemini at work") can't trip it.
+    if "brain" in m or _TO_BRAIN.search(m):
+        brain = _scan_brain(m)
+        if brain:
+            return ("set_brain", brain)
+    # Voice mode — gated by "mode" or an explicit "to <mode>".
+    if "mode" in m or _TO_MODE.search(m) or "text mode" in m:
+        if re.search(r"\bcascade\b", m) or "text mode" in m:
+            return ("set_voice_mode", voice_catalog.MODE_CASCADE)
+        if re.search(r"\b(realtime|real time|native audio)\b", m):
+            return ("set_voice_mode", voice_catalog.MODE_REALTIME)
+    return None
+
+
+async def run_stack_command(db, uid: str, name: str, value: str) -> str:
+    """Execute a detected model-stack command through the SAME bound setter the
+    model would call, so the write and the confirmation text are identical."""
+    if name == "set_brain":
+        return await _bind_set_brain(db, uid)(brain=value)
+    if name == "set_voice_mode":
+        return await _bind_set_voice_mode(db, uid)(mode=value)
+    if name == "set_realtime_model":
+        return await _bind_set_realtime_model(db, uid)(model=value)
+    raise ValueError(f"unknown model-stack command {name!r}")
 
 
 # --- declarations -------------------------------------------------------------

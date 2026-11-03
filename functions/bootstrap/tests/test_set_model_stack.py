@@ -186,6 +186,56 @@ def test_reconnect_voice_is_honest_when_no_call_is_live(monkeypatch):
 # --- registration -------------------------------------------------------------
 
 
+@pytest.mark.parametrize("msg,expected", [
+    # brain — both directions (the one-way bug was Meta->Gemini)
+    ("change back to gemini", ("set_brain", "gemini")),
+    ("switch to muse", ("set_brain", "meta")),
+    ("switch my brain to gemini", ("set_brain", "gemini")),
+    ("use the muse spark brain", ("set_brain", "meta")),
+    ("change the brain to meta", ("set_brain", "meta")),
+    # voice mode
+    ("switch to cascade", ("set_voice_mode", "cascade")),
+    ("use cascade mode", ("set_voice_mode", "cascade")),
+    ("go to realtime mode", ("set_voice_mode", "realtime")),
+    ("switch to text mode", ("set_voice_mode", "cascade")),
+    # realtime model
+    ("switch to gemini live", ("set_realtime_model", "gemini-live")),
+])
+def test_detect_stack_command_matches_clear_commands(msg, expected):
+    assert set_model_stack.detect_stack_command(msg) == expected
+
+
+@pytest.mark.parametrize("msg", [
+    "I love how you use Gemini at work",   # brand mention, not a command
+    "tell me about your brain",            # question, no change verb target
+    "change the subject",                  # change verb, no stack target
+    "set a reminder for tomorrow",         # unrelated 'set'
+    "how does cascade work?",              # no change verb
+    "",                                    # empty
+])
+def test_detect_stack_command_ignores_non_commands(msg):
+    assert set_model_stack.detect_stack_command(msg) is None
+
+
+def test_run_stack_command_writes_the_right_field_both_directions():
+    db = _Db()
+    msg = _run(set_model_stack.run_stack_command(db, "u1", "set_brain", "meta"))
+    assert db.store[_PROFILE][schema.PF_AYMA_BRAIN_MODEL] == "meta"
+    assert "Muse Spark" in msg
+    # and back again — symmetry (the reported bug)
+    msg2 = _run(set_model_stack.run_stack_command(db, "u1", "set_brain", "gemini"))
+    assert db.store[_PROFILE][schema.PF_AYMA_BRAIN_MODEL] == "gemini"
+    assert "Gemini" in msg2
+
+
+def test_run_stack_command_voice_mode_and_realtime_model():
+    db = _Db()
+    _run(set_model_stack.run_stack_command(db, "u1", "set_voice_mode", "cascade"))
+    assert db.store[_PROFILE][schema.PF_AYMA_VOICE_MODE] == "cascade"
+    _run(set_model_stack.run_stack_command(db, "u1", "set_realtime_model", "gemini-live"))
+    assert db.store[_PROFILE][schema.PF_AYMA_REALTIME_MODEL] == "gemini-live"
+
+
 def test_all_four_tools_are_registered_for_text_and_voice():
     names = {d["name"] for d in session_tool_declarations()}
     assert {

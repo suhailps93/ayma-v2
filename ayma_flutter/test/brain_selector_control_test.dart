@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/brain_selector_control.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,5 +91,26 @@ void main() {
 
     expect(_posted, hasLength(1));
     expect(_posted.first['brain'], 'gemini');
+  });
+
+  testWidgets('live-updates the selection when Ayma saves a new brain',
+      (tester) async {
+    // Founder bug 2026-11-02: the open models screen kept showing the old brain
+    // after Ayma changed+saved it. The control listens to the model-settings doc
+    // and reflects the change at once.
+    final fs = FakeFirebaseFirestore();
+    final doc =
+        fs.collection('users').doc('u1').collection('profile').doc('main');
+    await doc.set({'ayma_brain_model': ''});
+
+    await tester.pumpWidget(_host(
+        BrainSelectorControl(api: _api(current: ''), firestore: fs, uid: 'u1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Meta Muse Spark'), findsOneWidget); // default pre-selected
+
+    await doc.set({'ayma_brain_model': 'gemini'}, SetOptions(merge: true));
+    await tester.pumpAndSettle();
+    expect(find.text('Gemini'), findsOneWidget);
+    expect(find.text('Meta Muse Spark'), findsNothing);
   });
 }

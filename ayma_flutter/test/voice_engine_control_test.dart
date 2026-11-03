@@ -5,6 +5,8 @@ import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/voice_engine_control.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -171,6 +173,45 @@ void main() {
     expect(find.textContaining('OpenAI Realtime'), findsNothing);
     expect(find.textContaining('needs OPENAI_API_KEY'), findsNothing);
     expect(find.text('Gemini Live (native audio)'), findsWidgets);
+  });
+
+  testWidgets('live-reloads the stack when Ayma saves a mode change',
+      (tester) async {
+    // Founder bug 2026-11-02: the open models screen kept showing the old stack
+    // after Ayma changed+saved it. A watched-field change re-fetches the
+    // catalog's recomputed `current` so the dropdowns refresh in place.
+    var mode = 'realtime';
+    var gets = 0;
+    final mock = MockClient((req) async {
+      if (req.url.path == '/voice/engines') {
+        gets++;
+        final cat = _catalog();
+        (cat['current'] as Map)['mode'] = mode;
+        return http.Response(jsonEncode(cat), 200,
+            headers: const {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode({'ok': true}), 200,
+          headers: const {'content-type': 'application/json'});
+    });
+    final api = ApiClient(httpClient: mock, auth: MockFirebaseAuth(signedIn: true));
+    final fs = FakeFirebaseFirestore();
+    final doc =
+        fs.collection('users').doc('u1').collection('profile').doc('main');
+    await doc.set({'ayma_voice_mode': 'realtime'});
+
+    await tester.pumpWidget(
+        _host(VoiceEngineControl(api: api, firestore: fs, uid: 'u1')));
+    await tester.pumpAndSettle();
+    expect(gets, 1);
+    expect(find.text('BRAIN (LLM)'), findsNothing); // realtime: no cascade controls
+
+    // Ayma switches to cascade and saves it to the model-settings doc.
+    mode = 'cascade';
+    await doc.set({'ayma_voice_mode': 'cascade'}, SetOptions(merge: true));
+    await tester.pump(const Duration(milliseconds: 300)); // debounce window
+    await tester.pumpAndSettle();
+    expect(gets, greaterThanOrEqualTo(2)); // re-fetched on the change
+    expect(find.text('BRAIN (LLM)'), findsOneWidget); // cascade controls now shown
   });
 
   testWidgets('the free-text accent is typed and posted to /voice/preference',

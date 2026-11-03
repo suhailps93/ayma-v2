@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
@@ -29,10 +33,16 @@ class VoiceEngineControl extends StatefulWidget {
     super.key,
     required this.api,
     this.onSaved,
+    this.firestore,
+    this.uid,
   });
 
   final ApiClient api;
   final VoidCallback? onSaved;
+
+  /// Test seams for the live-update listener; default to the app globals.
+  final FirebaseFirestore? firestore;
+  final String? uid;
 
   @override
   State<VoiceEngineControl> createState() => _VoiceEngineControlState();
@@ -54,16 +64,90 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   // caret; the selection's `accent` is the source of truth on save.
   final TextEditingController _accentCtrl = TextEditingController();
 
+  // Live update: when Ayma (or any surface) saves a stack change to the user's
+  // model-settings doc, the open screen reflects it at once (founder 2026-11-02).
+  // A watched-field change re-fetches `GET /voice/engines`, reusing the server's
+  // canonical raw-fields→selection mapping rather than duplicating it here.
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileSub;
+  String? _watchedSig;
+  Timer? _reloadDebounce;
+
+  // The model-settings doc fields this control renders (§13.9); a change in any
+  // of them means Ayma updated the stack and the dropdowns must refresh.
+  static const _watchedFields = <String>[
+    'ayma_voice_mode',
+    'ayma_realtime_model',
+    'ayma_cascade_brain',
+    'ayma_cascade_stt',
+    'ayma_cascade_tts',
+    'ayma_tts_voice',
+    'ayma_voice_name',
+    'ayma_voice_language',
+    'ayma_voice_accent',
+  ];
+
   @override
   void initState() {
     super.initState();
     _load();
+    _listenForSavedStack();
   }
 
   @override
   void dispose() {
+    _reloadDebounce?.cancel();
+    _profileSub?.cancel();
     _accentCtrl.dispose();
     super.dispose();
+  }
+
+  DocumentReference<Map<String, dynamic>>? _profileRef() {
+    // Best-effort: with no Firebase app (unit tests that don't inject a fake),
+    // reading the globals throws — caught so the control still renders.
+    try {
+      final uid = widget.uid ?? FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null || uid.isEmpty) return null;
+      return (widget.firestore ?? FirebaseFirestore.instance)
+          .collection('users')
+          .doc(uid)
+          .collection('profile')
+          .doc('main');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Refresh the whole control when a stack field changes under us (Ayma's
+  /// set_voice_mode / set_realtime_model / set_voice_preference). The first
+  /// snapshot only seeds the baseline (initial render is `_load`'s job); a later
+  /// change re-fetches the catalog's recomputed `current`. Skipped while saving
+  /// so the user's own in-flight edit is never clobbered.
+  void _listenForSavedStack() {
+    final ref = _profileRef();
+    if (ref == null) return;
+    try {
+      _profileSub = ref.snapshots().listen(_onStackSnap, onError: (_) {});
+    } catch (_) {
+      // No live updates in this environment; initial _load still rendered.
+    }
+  }
+
+  void _onStackSnap(DocumentSnapshot<Map<String, dynamic>> snap) {
+    final data = snap.data() ?? const <String, dynamic>{};
+    final sig = [
+      for (final f in _watchedFields) '$f=${data[f] ?? ''}',
+    ].join('|');
+    if (_watchedSig == null) {
+      _watchedSig = sig;
+      return;
+    }
+    if (sig == _watchedSig) return;
+    _watchedSig = sig;
+    if (!mounted || _saving) return;
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (mounted && !_saving) _load();
+    });
   }
 
   Future<void> _load() async {

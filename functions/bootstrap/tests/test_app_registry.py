@@ -405,3 +405,17 @@ def test_imperative_pushes_target_registered_routes_or_listed_subviews():
         assert cls not in paths_by_class, (
             f"{cls} now declares a route; register it instead of listing it"
         )
+
+
+def test_models_page_resolves_distinctly_not_to_generic_settings():
+    # Founder bug 2026-11-02: "open my models" opened the generic Settings page;
+    # STT also garbles "Ayma's" to AMS/iMAS. Every natural phrasing (and the
+    # garbles) must land on voice_preference, never settings/ayma_settings.
+    for words in (
+        "my models", "the models page", "models", "models page", "models screen",
+        "your models", "ayma's models", "aymas models", "ayma models",
+        "ams models", "imas models", "open my models", "the models",
+        "change your brain", "switch your brain", "your brain", "voice mode",
+    ):
+        d = app_registry.find_destination(words)
+        assert d and d["key"] == "voice_preference", f"{words!r} -> {d}"
