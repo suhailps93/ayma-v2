@@ -49,6 +49,7 @@ _VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
 _VOICE_TOOL_USE_PATH = _DIR / "prompts" / "voice_tool_use.md"
 _PRACTICE_GREETING_PATH = _DIR / "prompts" / "practice_greeting.md"
 _VOICE_SESSION_SEED_PATH = _DIR / "prompts" / "voice_session_seed.md"
+_VOICE_DANGLING_REPLY_PATH = _DIR / "prompts" / "voice_dangling_reply.md"
 _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
@@ -289,6 +290,22 @@ def load_voice_session_seed() -> str:
     generates normally. Realtime models (Gemini Live / Inference RealtimeModel)
     do not go through that path and are never seeded."""
     return _VOICE_SESSION_SEED_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def load_voice_dangling_reply() -> str:
+    """Instruction for Ayma's opening line when the caller's most recent
+    message never got a reply (``prompts/voice_dangling_reply.md``).
+
+    The caller is opening a voice call with an UNANSWERED user turn at the
+    tail of their history (e.g. a text turn that failed before Ayma replied).
+    Instead of a greeting, Ayma opens by ANSWERING that dangling message
+    directly — briefly, warmly, in spoken sentences (founder behaviour,
+    2026-11-02 — a user-initiated call never opens in silence). Static text:
+    the dangling message itself reaches the model through the conversation
+    (realtime: already the tail of the agent's context; cascade: passed as
+    the reply's ``user_input``), never interpolated here."""
+    return _VOICE_DANGLING_REPLY_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)

@@ -145,7 +145,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// hangs on "Listening…" until the 4-minute idle guard ends it with a benign
   /// "silence" notice; this instead surfaces an honest error within a bounded
   /// window. Armed on entering `live`, cancelled for good on the first agent
-  /// response ([_noteAgentResponse]).
+  /// response ([_noteAgentResponse]). The 20s default comfortably clears a
+  /// slow-but-healthy LiveKit Inference Realtime first reply (measured
+  /// ~9–12s, staging audit 2026-11-02) while still failing a dead brain fast;
+  /// never shrink it near that generation time (a regression test pins it).
   final Duration _responseGuardTimeout;
   Timer? _responseGuard;
 
@@ -337,6 +340,15 @@ class VoiceSessionController extends ChangeNotifier {
           ? 'Warming up the open-weights model — first reply can take a minute '
               'or two'
           : null;
+
+  /// True while the call is live but the agent's FIRST genuine response
+  /// (speech, transcript, or tool call) hasn't landed yet — the opener is
+  /// still in flight. The UI shows an honest "Connecting…" here instead of
+  /// "Listening…", so a slow first reply (~9–12s on LiveKit Inference
+  /// Realtime) never looks like a silently dead call; if no reply arrives
+  /// inside the first-response budget the guard surfaces an honest error
+  /// instead (never a stuck fake-listening state).
+  bool get awaitingFirstResponse => isListening && !_agentRespondedOnce;
 
   /// The controller with a session currently starting or live, if any — the
   /// process-wide registry that enforces the single-active-voice-session
@@ -652,6 +664,12 @@ class VoiceSessionController extends ChangeNotifier {
   Duration get _firstResponseBudget =>
       _openWeightsWarming ? _openWeightsResponseBudget : _responseGuardTimeout;
 
+  /// Test-only view of [_firstResponseBudget] so a regression test can pin the
+  /// default first-response window (it must stay clear of a slow-but-healthy
+  /// ~9–12s first reply — never shrink back toward the generation time).
+  @visibleForTesting
+  Duration get firstResponseBudgetForTest => _firstResponseBudget;
+
   /// The agent's honest voice-stack status (data topic `voice_status`). So far
   /// only the open-weights cold start: `open_weights_warming` means the Modal
   /// LLM is spinning up and the first reply can take ~100s. Latch it so the
@@ -676,6 +694,10 @@ class VoiceSessionController extends ChangeNotifier {
     _agentRespondedOnce = true;
     _responseGuard?.cancel();
     _responseGuard = null;
+    // A transcript-only first reply otherwise rebuilds nothing on this
+    // controller: the "Connecting…" -> "Listening…" status flip below rides
+    // on this notification. Fires at most once per session (see the latch).
+    notifyListeners();
   }
 
   /// Live, but the agent never produced a first response within

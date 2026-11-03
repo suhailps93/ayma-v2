@@ -84,6 +84,7 @@ from post_turn import persist_and_ingest  # noqa: E402
 from prompt import (  # noqa: E402
     compose_system_prompt,
     load_practice_greeting,
+    load_voice_dangling_reply,
     load_voice_opener,
     load_voice_session_seed,
     load_voice_tool_use,
@@ -3197,6 +3198,32 @@ def _opener_prior_context(seed_turns: list[Turn]) -> tuple[bool, str]:
     return bool(hint), hint
 
 
+async def _attempt_voice_reply(
+    session: AgentSession, **kwargs: object
+) -> BaseException | None:
+    """Fire one opener ``generate_reply``; None on success, the error on failure.
+
+    A try/except around the await alone can NEVER see a generation failure:
+    awaiting a LiveKit ``SpeechHandle`` never raises — the error is swallowed
+    and only exposed via ``handle.exception()`` (livekit-agents 1.8.9
+    ``speech_handle.py``; staging voice-silence audit, 2026-11-02). So check
+    both: a synchronous raise (session not running / closing, or a raising
+    test fake) AND the returned handle's ``exception()``."""
+    try:
+        handle = session.generate_reply(**kwargs)  # type: ignore[arg-type]
+        await handle
+    except Exception as exc:  # noqa: BLE001 - any failure fails this attempt only
+        return exc
+    get_error = getattr(handle, "exception", None)
+    if not callable(get_error):
+        return None
+    try:
+        error = get_error()
+    except Exception as exc:  # noqa: BLE001 - an unreadable handle fails it too
+        return exc
+    return error
+
+
 async def maybe_open_conversation(
     session: AgentSession,
     seed: RoomSeed,
@@ -3214,9 +3241,17 @@ async def maybe_open_conversation(
     short contextual opener from ``prompts/voice_opener.md`` through the same
     ``generate_reply`` path (so the turn is metered by the usual
     ``metrics_collected`` ledger relay). Returns True if the opener fired.
-    Skipped for the welcome room (it has its own greeting), when the last
-    seeded turn is the caller's (a resumed call mid-turn), or when the opener
+    Skipped for the welcome room (it has its own greeting) or when the opener
     is disabled by config. Runs at most once per session by construction.
+
+    A history ending on an UNANSWERED caller turn is NOT skipped (founder
+    behaviour, 2026-11-02 — a user-initiated call never opens in silence):
+    when the caller stays silent through the grace window, Ayma opens by
+    ANSWERING that dangling message (``prompts/voice_dangling_reply.md``),
+    and only if that reply cannot be generated (error, or a blank message
+    with nothing to answer) does she fall back to the standard greeting
+    opener. A history ending on an agent turn follows the greeting path
+    exactly as before.
 
     Opener behaviour (founder, 2026-10-28): when this caller HAS prior
     conversation context, the opener is a GREET + a choice — "pick up where we
@@ -3236,12 +3271,14 @@ async def maybe_open_conversation(
     instruction above regardless); left NOT_GIVEN (Gemini Live / every other
     path), the opener generates against the agent's full context.
 
-    ``seed_user_turn`` is the cascade (text-LLM) guard: the opener's
+    ``seed_user_turn`` is the cascade (text-LLM) guard: the greeting opener's
     ``generate_reply`` carries a synthetic opening user turn
     (:func:`load_voice_session_seed`) so the chat LLM never receives a system-only
     message list — which the OpenAI-compatible gateway (incl. LiveKit Inference)
-    rejects with HTTP 400. Realtime paths leave it False (they don't hit that
-    LLM request shape), so their opener is byte-identical to before."""
+    rejects with HTTP 400. The dangling-message answer carries the REAL message
+    as its ``user_input`` instead (which satisfies the same guard). Realtime
+    paths leave it False (they don't hit that LLM request shape), so their
+    opener is byte-identical to before."""
     # Opener observability (2026-11-02): today a silent stall and a deliberately
     # skipped opener look identical in the logs. Log, at INFO, whether the opener
     # FIRED or was SKIPPED (+ why) and — once fired — whether generate_reply
@@ -3257,12 +3294,17 @@ async def maybe_open_conversation(
             "disabled" if grace <= 0 else "has_greeting", seed.session_id or "?",
         )
         return False
+    # A trailing UNANSWERED caller turn no longer skips the opener (founder,
+    # 2026-11-02): after the grace window below, a silent caller gets an
+    # answer to that dangling message instead of silence. A blank tail has
+    # nothing to answer, so it takes the plain greeting path instead.
+    dangling = ""
     if seed.seed_turns and seed.seed_turns[-1].role == ROLE_USER:
+        dangling = seed.seed_turns[-1].text.strip()
         logger.info(
-            "voice opener SKIPPED brain=%s reason=resumed_mid_user_turn session=%s",
-            brain, seed.session_id or "?",
+            "voice opener DANGLING_USER_TAIL brain=%s chars=%d session=%s",
+            brain, len(dangling), seed.session_id or "?",
         )
-        return False
 
     user_started = asyncio.Event()
 
@@ -3292,6 +3334,34 @@ async def maybe_open_conversation(
         )
         return False
     has_prior, last_topic_hint = _opener_prior_context(seed.seed_turns)
+    if dangling:
+        # Option (c): open by ANSWERING the dangling message. The answer
+        # generates against the agent's own context on BOTH stacks — realtime
+        # already holds the tail turn; the cascade's agent context had it
+        # stripped, so the message rides as this reply's user_input (which
+        # also satisfies the cascade's never-system-only guard with a real
+        # user turn instead of the synthetic seed). The history-free
+        # opener_chat_ctx stays exclusive to the greeting below, where "don't
+        # continue the old topic" is the point; here the old topic IS the job.
+        answer_kwargs: dict = {"instructions": load_voice_dangling_reply()}
+        if seed_user_turn:
+            answer_kwargs["user_input"] = dangling
+        logger.info(
+            "voice opener FIRED kind=dangling_reply brain=%s session=%s — "
+            "awaiting generate_reply", brain, seed.session_id or "?",
+        )
+        answer_error = await _attempt_voice_reply(session, **answer_kwargs)
+        if answer_error is None:
+            logger.info(
+                "voice opener generate_reply COMPLETED kind=dangling_reply "
+                "brain=%s session=%s", brain, seed.session_id or "?",
+            )
+            return True
+        logger.warning(
+            "voice opener generate_reply ERRORED kind=dangling_reply brain=%s "
+            "session=%s err=%s — falling back to greeting", brain,
+            seed.session_id or "?", answer_error,
+        )
     reply_kwargs: dict = {
         "instructions": load_voice_opener(has_prior, last_topic_hint)
     }
@@ -3303,12 +3373,14 @@ async def maybe_open_conversation(
         "voice opener FIRED brain=%s session=%s — awaiting generate_reply",
         brain, seed.session_id or "?",
     )
-    try:
-        await session.generate_reply(**reply_kwargs)
-    except Exception:  # noqa: BLE001 - a missed opener shouldn't kill the call
-        logger.exception(
-            "voice opener generate_reply ERRORED brain=%s session=%s", brain,
-            seed.session_id or "?",
+    greeting_error = await _attempt_voice_reply(session, **reply_kwargs)
+    if greeting_error is not None:
+        # logger.error, not logger.exception: the error usually arrives via
+        # handle.exception(), outside any except block, so there is no active
+        # traceback to attach — the carried error string is the signal.
+        logger.error(
+            "voice opener generate_reply ERRORED brain=%s session=%s err=%s",
+            brain, seed.session_id or "?", greeting_error,
         )
         return False
     logger.info(

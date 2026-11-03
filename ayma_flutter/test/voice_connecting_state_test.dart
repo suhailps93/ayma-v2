@@ -1,9 +1,12 @@
 // Both voice entry points — the chat composer's mic button and the Ayma orb's
 // "Ask Ayma" push-to-talk sheet — must show a distinct "Connecting…" /
-// "Waking Ayma…" state while the session is still being established, and only
-// flip to "Listening…" once the agent has genuinely joined (controller phase
-// `live`). These tests drive the REAL [VoiceSessionController] phase machine
-// through a [FakeVoiceTransport], so both paths are proven to share the same
+// "Waking Ayma…" state while the session is still being established. The
+// full-duplex chat composer then holds an honest "Connecting…" while live
+// with no first reply yet (the opener is still in flight — a slow ~9–12s
+// first reply must never read as a silently dead call), and only flips to
+// "Listening…" once Ayma's first response actually lands. These tests drive
+// the REAL [VoiceSessionController] phase machine through a
+// [FakeVoiceTransport], so both paths are proven to share the same
 // phase -> label/mode mapping rather than each asserting a hand-set state.
 import 'dart:async';
 import 'dart:convert';
@@ -12,6 +15,7 @@ import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
+import 'package:ayma_flutter/services/voice_transport.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/chat_composer.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -65,7 +69,8 @@ void main() {
 
   testWidgets(
     'chat composer mic: connecting shows "Connecting/Waking" + animated logo '
-    'loader, not "Listening"; agent join flips to "Listening"',
+    'loader, not "Listening"; agent join holds "Connecting…" until the '
+    'first reply lands, then flips to "Listening"',
     (tester) async {
       final transport = FakeVoiceTransport();
       final voice = VoiceSessionController(
@@ -94,15 +99,30 @@ void main() {
       // The lit capturing mic (listening) must be absent while connecting.
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
 
-      // The agent joins — now, and only now, we are genuinely listening.
+      // The agent joins: the mic is live (listening mode + capturing mic),
+      // but the opener hasn't landed yet, so the label honestly still reads
+      // "Connecting…" instead of "Listening…".
       transport.markAgentReady();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(voice.phase, VoiceSessionPhase.live);
       expect(_composerMode(tester), ComposerMode.listening);
-      expect(find.text('Listening…'), findsOneWidget);
+      expect(find.text('Connecting…'), findsOneWidget);
+      expect(find.text('Listening…'), findsNothing);
       expect(find.byIcon(Icons.mic_none_rounded), findsNothing);
+
+      // Ayma's first reply lands — now, and only now, "Listening…".
+      transport.transcriptsController.add(const TranscriptSegment(
+        topic: 'agent_transcript',
+        text: 'Hey — good to hear you.',
+        isFinal: true,
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Listening…'), findsOneWidget);
+      expect(find.text('Connecting…'), findsNothing);
 
       // Tear down the live session cleanly: `stop()` is fire-and-forget (its
       // awaited teardown only advances under `pump`, never a bare `await`, so

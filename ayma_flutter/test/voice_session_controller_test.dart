@@ -1479,6 +1479,81 @@ void main() {
     });
   });
 
+  // --- First-response window + honest "Connecting…" wait state -------------- //
+  // Staging voice-silence audit (2026-11-02): a healthy LiveKit Inference
+  // Realtime first reply takes ~9–12s. The no-first-response guard must stay
+  // clear of that (20s — never shrink back toward the generation time), and
+  // while the opener is in flight the UI shows an honest "Connecting…"
+  // instead of "Listening…", so a slow first reply never reads as a silently
+  // dead call. If no reply lands inside the window the guard above still
+  // surfaces the honest error.
+  group('first-response window and honest waiting state', () {
+    test('the default first-response window stays clear of a slow (~9–12s) '
+        'first reply', () async {
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => FakeVoiceTransport(),
+      );
+      // Pinned: shrinking this toward the ~9–12s generation time re-opens
+      // the audit's race (slow-but-healthy replies treated as failed calls).
+      expect(
+        c.firstResponseBudgetForTest,
+        greaterThanOrEqualTo(const Duration(seconds: 20)),
+      );
+      c.dispose();
+    });
+
+    test('awaitingFirstResponse is true at live, false once the first agent '
+        'transcript lands (and the flip notifies)', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+      );
+
+      expect(c.awaitingFirstResponse, isFalse); // idle: nothing awaited
+
+      await _startLive(c, transport);
+      expect(c.phase, VoiceSessionPhase.live);
+      // Live, but the opener hasn't landed: the UI reads "Connecting…".
+      expect(c.awaitingFirstResponse, isTrue);
+
+      var notified = 0;
+      c.addListener(() => notified++);
+      transport.transcriptsController.add(const TranscriptSegment(
+        topic: 'agent_transcript',
+        text: 'Hey — good to hear you.',
+        isFinal: true,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      // A transcript-only first reply still flips (and rebuilds) the status.
+      expect(c.awaitingFirstResponse, isFalse);
+      expect(notified, greaterThan(0));
+      await c.stop();
+    });
+
+    test('awaitingFirstResponse also clears on first speech', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+      );
+
+      await _startLive(c, transport);
+      expect(c.awaitingFirstResponse, isTrue);
+
+      transport.agentSpeakingController.add(true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(c.awaitingFirstResponse, isFalse);
+      await c.stop();
+    });
+  });
+
   // Founder report 2026-11-02: tapping the orb rapidly opened MULTIPLE
   // concurrent LiveKit sessions that spoke over each other. `start()` must be
   // single-flight — at most ONE session ever starts no matter how many
