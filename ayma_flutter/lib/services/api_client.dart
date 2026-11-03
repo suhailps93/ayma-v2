@@ -513,6 +513,28 @@ class ApiClient {
     );
   }
 
+  /// `POST /auth/email-exists` — whether a Firebase account holds this email.
+  /// Unauthenticated by design (the caller isn't signed in yet): this is how
+  /// sign-in tells "wrong password" from "unknown email" under Firebase's
+  /// email-enumeration protection, which reports both to the client as
+  /// `invalid-credential`. Throws [ApiException] on any non-200 — the caller
+  /// must treat that as "unknown", never as either answer.
+  Future<bool> emailExists(String email) async {
+    final r = await _http.post(
+      _uri('/auth/email-exists'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'email-exists check failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['exists'] == true;
+  }
+
   /// `GET /explore` — the live filtered feed (§6.1), cursor-paginated
   /// (Phase 2 pagination design §3.1). [q] is a natural-language search parsed
   /// once server-side; [filters] are exact dropdown values; [limit] sizes the

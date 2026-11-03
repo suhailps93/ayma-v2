@@ -23,13 +23,16 @@ export 'ask_ayma_context.dart';
 /// other Ayma surface in the app uses.
 ///
 /// ONE chat (§ D13): this is the main chat conversation, not a silo — the
-/// sheet shows the main history ([AymaSession]'s store, unless a test passes
-/// its own [transcriptStore]) and the exchange lands in it (and, for the
-/// report path, in server chat history too), so it reads the same from the
-/// Ayma tab afterwards. The sheet opens docked (a partial page of the main
-/// chat) with the host's bottom nav bar visible (resolved from the nearest
-/// [AymaNavBarScope]; unwrapped routes simply get no bar, as before), and a
-/// second orb tap grows it to the full chat in place ([orbTapOnOpenSheet]).
+/// sheet is built against the main history ([AymaSession]'s store, unless a
+/// test passes its own [transcriptStore]) and the exchange lands in it (and,
+/// for the report path, in server chat history too), so it reads the same
+/// from the Ayma tab afterwards. The partial sheet does not LIST that
+/// history (founder rule, Nov 2026 — context card, chips and composer
+/// only); expanding reveals the whole conversation. The sheet opens docked
+/// (a partial page of the main chat) with the host's bottom nav bar visible
+/// (resolved from the nearest [AymaNavBarScope]; unwrapped routes simply get
+/// no bar, as before), and a second orb tap grows it to the full chat in
+/// place ([orbTapOnOpenSheet]).
 ///
 /// [onExchange] fires after every reply Ayma gives while the modal is open
 /// (not just once at the end) so the caller can quietly re-fetch the section
@@ -85,10 +88,12 @@ Future<void> showAskAymaOverlay(
 /// see [ChatScreen.askAymaContext]'s doc), this embeds [ChatScreen] via its
 /// plain [ChatScreen.pageContext] field instead, against the app-wide
 /// [AymaSession] store/voice controller [MainShellScreen]'s own Ayma tab
-/// already uses — so the popup shows the SAME real conversation history (and
-/// any live call) as the main tab, with that tab's own plain "Ayma" header
+/// already uses — so the popup shares the SAME real conversation (and any
+/// live call) as the main tab, with that tab's own plain "Ayma" header
 /// and message styling, not the separate sparkle-icon "Ask Ayma" branded
-/// chrome [showAskAymaOverlay]'s scoped turns use. The "you were looking
+/// chrome [showAskAymaOverlay]'s scoped turns use. While partial the popup
+/// lists none of that history (founder rule, Nov 2026 — composer only);
+/// expanding reveals the whole conversation. The "you were looking
 /// at…" chip above the composer (`ChatScreen`'s existing
 /// `pageContext`/`_pageContext` chip) carries the context instead of a
 /// quoted-passage card, since there's no single passage here — just "whatever

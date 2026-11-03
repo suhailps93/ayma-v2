@@ -630,6 +630,55 @@ def test_rerun_with_unchanged_photo_set_skips_gemini_and_reuses_report(_mocks):
     assert led["last_status"] == "skipped" and led["detail"] == "unchanged_photos"
 
 
+def test_rerun_recomputes_when_the_model_changed_even_with_the_same_photos(_mocks):
+    # § appearance re-run staleness (founder, 2026-11-02 "it's just showing the
+    # old report"): a report minted by one Gemini model, then re-run on the
+    # no-explicit-selection (chat / auto) path with the SAME photos after the
+    # model was upgraded, must RECOMPUTE under the current model — never
+    # re-serve the prior model's report. Before the fix the unchanged-photo-set
+    # dedup keyed ONLY on the photo set, so an unchanged set short-circuited to
+    # the cached report regardless of which model produced it. The report stored
+    # ``model`` but nothing consulted it for invalidation.
+    db = FakeDb()
+    rep1 = _run(appearance.run_appearance(db, "u1"))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (1, 1, 1)
+    assert rep1["model"] == appearance.CONFIG.gemini_model
+
+    # Simulate the persisted report having been produced by a PREVIOUS model (a
+    # model upgrade since). The grid / photo set is identical across both runs,
+    # so only the model differs — exactly the condition that falsely re-served.
+    stored = db.docs[("users", "u1", "appearance_reports", "current")]
+    assert stored["model"] == appearance.CONFIG.gemini_model
+    stored["model"] = "gemini-old-model"
+
+    rep2 = _run(appearance.run_appearance(db, "u1"))
+    # The same-photos cache must MISS on the model change -> a full, fresh
+    # recompute (all three vision passes fire a SECOND time), not a cache
+    # re-serve; the refreshed report carries the CURRENT model.
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (2, 2, 2)
+    assert rep2["model"] == appearance.CONFIG.gemini_model
+    refreshed = db.docs[("users", "u1", "appearance_reports", "current")]
+    assert refreshed["model"] == appearance.CONFIG.gemini_model
+    # Recorded as a real run, never the "unchanged_photos" skip.
+    led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
+    assert led["last_status"] == "ok" and led["detail"] != "unchanged_photos"
+
+
+def test_rerun_with_same_photos_and_same_model_still_reshares_without_recompute(
+    _mocks,
+):
+    # Non-regression for the founder's earlier call ("rerun without new photos ->
+    # just share the last aggregated one"): when BOTH the photo set and the model
+    # are unchanged, the model-aware dedup must still short-circuit (no second
+    # Gemini pass), so the model check narrows invalidation without defeating it.
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+    _run(appearance.run_appearance(db, "u1"))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (1, 1, 1)
+    led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
+    assert led["last_status"] == "skipped" and led["detail"] == "unchanged_photos"
+
+
 def test_explicit_selection_of_a_different_in_grid_photo_forces_a_fresh_run(
     monkeypatch, _mocks
 ):

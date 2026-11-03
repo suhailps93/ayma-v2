@@ -76,6 +76,9 @@ def _route_rates() -> dict[str, str]:
         "/credits/topup": c.rate_credits_topup,
         "/mcp": c.rate_mcp,
         "/dev/verify": "10/minute",
+        # Pre-sign-in existence oracle: generous for a human tapping sign-in,
+        # tight against bulk address harvesting.
+        "/auth/email-exists": "20/minute",
         "/webhooks/": c.rate_webhooks,
         # Covers both the conduct endpoint ``/feedback`` and the product
         # catcher ``/feedback/submit`` (longest-prefix match).

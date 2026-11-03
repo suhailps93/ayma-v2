@@ -737,3 +737,137 @@ def test_default_feed_ignores_saved_partner_age_range_shows_no_birthdate():
     finally:
         main.app.dependency_overrides.pop(main.require_adult_uid, None)
         main.get_db = main_get_db
+
+
+def test_parse_nl_query_keywords(monkeypatch):
+    async def _fake(text, system_prompt, response_schema=None, **kw):
+        return {"keywords": ["pottery", "quiet mornings"]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    out = asyncio.run(
+        ex.parse_nl_query(
+            "someone who loves pottery and quiet mornings", uid="u1"
+        )
+    )
+    assert out.get("keywords") == ["pottery", "quiet mornings"]
+
+
+def test_parse_nl_query_fallback_keywords(monkeypatch):
+    async def _fake(text, system_prompt, response_schema=None, **kw):
+        return {}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    out = asyncio.run(ex.parse_nl_query("pottery quiet mornings", uid="u1"))
+    assert "keywords" in out
+    assert "pottery" in out["keywords"]
+
+
+def test_passes_filters_keywords():
+    cand_pottery = {
+        "name": "Daniel",
+        "headline": "Ceramics artist loving pottery and quiet mornings",
+        "location": "Seattle",
+    }
+    cand_other = {
+        "name": "Sarah",
+        "headline": "Software engineer and runner",
+        "location": "Seattle",
+    }
+
+    # Matches headline
+    assert ex._passes_filters(cand_pottery, {"keywords": ["pottery"]}) is True
+    assert ex._passes_filters(cand_other, {"keywords": ["pottery"]}) is False
+
+    # Matches extra_text (e.g. wiki page)
+    assert (
+        ex._passes_filters(
+            cand_other, {"keywords": ["pottery"]}, extra_text=["Loves pottery"]
+        )
+        is True
+    )
+
+    # Multi-word keyword requires all content words
+    assert (
+        ex._passes_filters(cand_pottery, {"keywords": ["quiet mornings"]})
+        is True
+    )
+    cand_morning_only = {"name": "Bob", "headline": "Early mornings at the gym"}
+    assert (
+        ex._passes_filters(cand_morning_only, {"keywords": ["quiet mornings"]})
+        is False
+    )
+
+    # Stem matching (pottery -> potter)
+    cand_potter = {"name": "Alice", "headline": "I am a potter"}
+    assert ex._passes_filters(cand_potter, {"keywords": ["pottery"]}) is True
+
+    # Empty / non-matching gibberish fails
+    assert ex._passes_filters(cand_pottery, {"keywords": ["asdfghjk"]}) is False
+
+
+def test_explore_page_keyword_search_and_empty_state():
+    db = FakeDb()
+    _u(db, "viewer", name="Viewer")
+    _u(db, "daniel", name="Daniel", headline="Ceramics and pottery lover")
+    _u(db, "sofia", name="Sofia", headline="Architect")
+    db.docs[("users", "sofia", "wiki_pages", "bio")] = {
+        "content": "I love quiet mornings reading books and drinking coffee.",
+        "visibility": "public",
+    }
+    _u(db, "marcus", name="Marcus", headline="Tech founder")
+
+    # Keyword search for pottery matches Daniel
+    cards, _ = ex.explore_page(db, "viewer", {"keywords": ["pottery"]})
+    uids = {c["uid"] for c in cards}
+    assert "daniel" in uids
+    assert "sofia" not in uids
+    assert "marcus" not in uids
+
+    # Keyword search for "quiet mornings" matches Sofia (via wiki text)
+    cards, _ = ex.explore_page(db, "viewer", {"keywords": ["quiet mornings"]})
+    uids = {c["uid"] for c in cards}
+    assert "sofia" in uids
+    assert "daniel" not in uids
+    assert "marcus" not in uids
+
+    # Gibberish search returns empty list (empty state reachable! Issue 4 / F9)
+    cards, _ = ex.explore_page(db, "viewer", {"keywords": ["asdfghjk"]})
+    assert len(cards) == 0
+
+
+def test_explore_route_with_search_query():
+    import main
+    from fastapi.testclient import TestClient
+
+    db = FakeDb()
+    _u(db, "viewer", name="Viewer")
+    _u(db, "daniel", name="Daniel", headline="Ceramics and pottery lover")
+    _u(db, "marcus", name="Marcus", headline="Tech founder")
+
+    main_get_db = main.get_db
+    main.get_db = lambda: db
+    main.app.dependency_overrides[main.require_adult_uid] = lambda: "viewer"
+    client = TestClient(main.app)
+    try:
+        # Default explore feed returns cards
+        resp = client.get("/explore")
+        assert resp.status_code == 200
+        uids = {c["uid"] for c in resp.json()["cards"]}
+        assert "daniel" in uids
+        assert "marcus" in uids
+
+        # Search query filters results
+        resp_search = client.get("/explore", params={"q": "pottery"})
+        assert resp_search.status_code == 200
+        search_uids = {c["uid"] for c in resp_search.json()["cards"]}
+        assert "daniel" in search_uids
+        assert "marcus" not in search_uids
+
+        # Gibberish search returns 0 results -> Empty state reachable!
+        resp_empty = client.get("/explore", params={"q": "asdfghjk"})
+        assert resp_empty.status_code == 200
+        assert len(resp_empty.json()["cards"]) == 0
+    finally:
+        main.app.dependency_overrides.pop(main.require_adult_uid, None)
+        main.get_db = main_get_db
+

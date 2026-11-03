@@ -1,8 +1,10 @@
 // D13: ONE chat — a scoped Ask-Ayma turn IS the main chat conversation: the
-// sheet shows main-chat history, the exchange lands in it, the bottom nav
-// bar stays visible, and a second orb tap expands the sheet to the full
-// chat (never voice from a scoped turn — the voice agent doesn't bind its
-// correction tools; scoped voice stays push-to-talk via the mic button).
+// exchange lands in the main history, the bottom nav bar stays visible, and
+// a second orb tap expands the sheet to the full chat (never voice from a
+// scoped turn — the voice agent doesn't bind its correction tools; scoped
+// voice stays push-to-talk via the mic button). Founder refinement (Nov
+// 2026): the PARTIAL sheet lists no history — context card, chips and
+// composer only; expanding reveals the whole conversation.
 import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/ayma_session.dart';
@@ -86,8 +88,9 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('scoped sheet shows main history and the exchange lands in it',
-      (tester) async {
+  testWidgets(
+      'partial scoped sheet hides history; the exchange still lands in main '
+      'chat and expanding reveals it', (tester) async {
     AymaSession.instance.store.seed([
       TranscriptTurn(
         role: TurnRole.ayma,
@@ -97,10 +100,17 @@ void main() {
     ]);
     await pumpHost(tester);
 
-    // The main conversation is right there in the sheet…
-    expect(find.text('Main history hello'), findsOneWidget);
-    // …alongside the scoped context card.
+    // Partial: no history turns listed, not even the divider…
+    expect(find.text('Main history hello'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('chat-conversation-divider')),
+      findsNothing,
+    );
+    // …just the scoped context card, the quick chips and the composer.
     expect(find.text('"https://example.com/me"'), findsOneWidget);
+    expect(find.text('Make private'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+    expect(find.byType(TextField), findsWidgets);
 
     await tester.enterText(find.byType(TextField).last, 'Delete');
     await tester.pump();
@@ -114,6 +124,20 @@ void main() {
     expect(texts, contains('Main history hello'));
     expect(texts, contains('Delete'));
     expect(texts, contains('Done — removed.'));
+
+    // Expanding reveals the whole conversation, new turns included.
+    await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
+    await tester.pumpAndSettle();
+    expect(aymaSheet.isExpanded, isTrue);
+    expect(
+      find.byKey(const ValueKey('chat-conversation-divider')),
+      findsOneWidget,
+    );
+    expect(find.text('Main history hello'), findsOneWidget);
+    expect(find.text('Done — removed.'), findsOneWidget);
+    // The sent turn, plus the 'Delete' quick chip now pinned above the
+    // composer (history listed again, so the body placement stands down).
+    expect(find.text('Delete'), findsWidgets);
   });
 
   testWidgets('scoped sheet keeps the nav bar and expands to full chat',

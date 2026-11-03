@@ -131,16 +131,18 @@ class ChatScreen extends StatefulWidget {
   /// what a future Living Report caller should use too (see
   /// `AskAymaContext`'s own doc for the forward-compat fields). ONE chat
   /// (§ D13): this is the main chat conversation, not a silo — the sheet is
-  /// built against the shared [AymaSession] store (so it opens onto the real
-  /// history) and the exchange lands in it (and, for the report path, in
-  /// server history too). No server history is (re)loaded here — the shared
+  /// built against the shared [AymaSession] store and the exchange lands in
+  /// it (and, for the report path, in server history too). The partial sheet
+  /// does not LIST that history (founder rule, Nov 2026 — context card,
+  /// chips and composer only); expanding to full screen reveals the whole
+  /// conversation. No server history is (re)loaded here — the shared
   /// store already carries it, and scroll-up older paging stands down (no
   /// cursor of its own). Changes this screen in several ways, all gated on
   /// this being non-null: the header becomes the compact "Ask Ayma" title +
   /// quoted-passage card instead of the full tab header; [askAymaContext]'s
   /// fields ride along on every turn alongside the message (see [_send]);
-  /// [quickSuggestionsFor]'s chips show as the empty-transcript body, and —
-  /// since the transcript is rarely empty now — pinned above the composer
+  /// [quickSuggestionsFor]'s chips show as the body while partial (history
+  /// hidden) or with a truly empty transcript, and pinned above the composer
   /// otherwise, so the scoped affordance never vanishes mid-conversation;
   /// voice is push-to-talk (tap the mic, speak, the finalized transcript is
   /// sent through the exact same [_send] text path, then the session tears
@@ -2151,6 +2153,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         // Short (popup at its lowest snap, split-screen, landscape
         // phone): the 34pt "Ayma" title drops to a compact header.
         final short = h < 400;
+        // Founder rule (Nov 2026): a partial sheet never lists conversation
+        // history — the scoped correction/ask sheets and the plain
+        // page-context popup alike show only their context (card/chip),
+        // quick chips and the composer. Full screen (this same sheet
+        // expanded, or the Ayma tab, which has no sheet at all) shows the
+        // whole conversation. Partial and full are literally the same
+        // ChatScreen — nothing re-mounts — so this is one presentation gate
+        // on the host sheet's live expanded state (rebuilt via this
+        // `maybeOf` dependency, same as [_sheetExpanded]); `_send` and
+        // persistence are untouched, so turns sent from the sheet still land
+        // in the shared store and appear on expand.
+        final hostSheet = AymaChatSheetController.maybeOf(context);
+        final partialSheet = hostSheet != null && !hostSheet.isExpanded;
         return Scaffold(
           body: SafeArea(
             bottom: false,
@@ -2360,13 +2375,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       final waiting = _canQueue
                           ? _queue.waiting
                           : const <QueuedChatMessage>[];
-                      if (turns.isEmpty && waiting.isEmpty) {
+                      if ((turns.isEmpty && waiting.isEmpty) || partialSheet) {
                         if (askAyma != null) {
-                          // No history at all yet (a brand-new conversation) —
-                          // the quick-suggestion chips show here, as the body,
-                          // instead of "Say hello…"; once turns exist they pin
-                          // above the composer instead (see below), so the
-                          // scoped affordance is always exactly one place.
+                          // The quick-suggestion chips show here, as the body:
+                          // for a brand-new conversation with no history yet,
+                          // and — per the partial-sheet rule above — whenever
+                          // this turn is still docked, since the transcript
+                          // list below stands down there. Once expanded (or
+                          // with turns outside a sheet) they pin above the
+                          // composer instead (see below), so the scoped
+                          // affordance is always exactly one place.
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 20),
                             child: Align(
@@ -2380,6 +2398,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               ),
                             ),
                           );
+                        }
+                        if (partialSheet) {
+                          // The plain partial sheet shows no history list at
+                          // all — just the composer (with its context chip)
+                          // below. Turns sent from here still land in the
+                          // shared store; expanding reveals them.
+                          return const SizedBox.shrink();
                         }
                         if (_loadingHistory) {
                           return const Center(child: CircularProgressIndicator());
@@ -2558,10 +2583,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     h * 0.5,
                     reverse: true,
                     // The scoped quick-suggestion chips pin above the composer
-                    // once turns exist (§ D13: the sheet opens onto real main
-                    // history now, so the empty-body placement above would
-                    // almost never show) — inside this same cap, so they can
-                    // never push the column past its bounds.
+                    // once turns exist AND the history is actually listed (§
+                    // D13: the sheet shares the real main history, so the
+                    // empty-body placement above would almost never show) —
+                    // inside this same cap, so they can never push the column
+                    // past its bounds. Stood down while partial: the chips
+                    // already show as the body there (see above), and showing
+                    // them twice would duplicate the affordance.
                     ListenableBuilder(
                       listenable: _store,
                       builder: (context, _) {
@@ -2570,7 +2598,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            if (_store.turns.isNotEmpty &&
+                            if (!partialSheet &&
+                                _store.turns.isNotEmpty &&
                                 suggestions.isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),

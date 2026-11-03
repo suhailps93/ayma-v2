@@ -2,7 +2,9 @@
 // persistent, always-visible Upgrade affordance — not rely solely on a
 // toast, which is easy to miss or may have already auto-dismissed by the
 // time the user looks (see `ask_ayma_overlay.dart`'s `_send`). Same treatment
-// `chat_screen.dart`'s `_TranscriptLine` gives `turn.capped`.
+// `chat_screen.dart`'s `_TranscriptLine` gives `turn.capped`. The partial
+// sheet lists no history (founder rule, Nov 2026), so each test below
+// expands to full screen before asserting on the rendered reply.
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
@@ -128,14 +130,19 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
+    // The upgrade sheet opens automatically on the capped reply; dismiss it,
+    // then expand — the reply renders in the full transcript, not the
+    // partial sheet.
+    await tester.tap(find.text('Keep exploring'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
+    await tester.pumpAndSettle();
+
     // The message itself still renders…
     expect(find.textContaining("I've used up the shared assistant budget"),
         findsOneWidget);
     // …alongside a persistent, always-visible Upgrade affordance, not just a
     // toast that could already be gone.
-    // The upgrade sheet opens automatically on the capped reply; dismiss it.
-    await tester.tap(find.text('Keep exploring'));
-    await tester.pumpAndSettle();
     expect(find.text('Upgrade'), findsOneWidget);
     expect(find.byIcon(Icons.bolt), findsOneWidget);
   });
@@ -153,6 +160,10 @@ void main() {
 
     await tester.tap(find.text('Keep exploring'));
     await tester.pumpAndSettle();
+    // The transcript pill only renders once expanded (partial lists no
+    // history) — expand before tapping through it.
+    await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Upgrade'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Upgrade').last);
@@ -169,6 +180,9 @@ void main() {
     await tester.enterText(find.byType(TextField).last, 'hi');
     await tester.pump();
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('all good'), findsOneWidget);
