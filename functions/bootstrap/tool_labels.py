@@ -36,6 +36,7 @@ TOOL_LABELS = {
     "google_maps": "Checked the map",
     # Research / vision
     "deep_dive": "Researched them online",
+    "rerun_web_research": "Re-ran your web research",
     "face_report": "Analysed the photo",
     "body_report": "Analysed the photo",
     "analyze_physical_attributes": "Read your photos",
@@ -158,6 +159,7 @@ WORKING_LABELS = {
     "google_maps": "Checking the map…",
     # Research / vision
     "deep_dive": "Searching the web…",
+    "rerun_web_research": "Re-running your web research…",
     "face_report": "Analysing the photo…",
     "body_report": "Analysing the photo…",
     "analyze_physical_attributes": "Reading your photos…",

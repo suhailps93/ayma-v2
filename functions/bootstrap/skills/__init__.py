@@ -15,9 +15,35 @@ filter parser (§6.2) land here in their own steps.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
+import logging
 from typing import Callable
+
+logger = logging.getLogger(__name__)
+
+# Per-tool wall-clock bound for VOICE tool calls (:func:`_bounded`). The text
+# tool loop already wraps every tool await in ``asyncio.wait_for`` (gemini.py
+# ``_TOOL_TIMEOUT_SECONDS``); voice had NO such backstop, so a tool whose own
+# sub-calls hung (an inline ``deep_dive`` self-lookup whose grounded search
+# stalled) blocked the turn forever and never emitted its "end" event, leaving
+# a stuck "Searching the web…" (founder bug 2026-11-03). This bounds every
+# voice tool and returns an honest "took too long" result instead of hanging —
+# the model relays it and the live indicator clears. Kept ABOVE the guided
+# tour's 110s voice tap-wait (``guided_tour._TAP_TIMEOUT_SECONDS`` — a tool
+# that legitimately waits that long must not be cut) and BELOW the Flutter
+# voice client's 180s tool-guard (``voice_session_controller._toolGuardTimeout``),
+# so the server reports the honest finish first and the client clears cleanly
+# via the normal "end" event rather than the guard fallback.
+_VOICE_TOOL_TIMEOUT_SECONDS = 150.0
+
+# Honest result handed back to the model when a voice tool exceeds the bound —
+# matches the text loop's wording (gemini.py) so both surfaces say the same.
+_TOOL_TIMEOUT_RESULT = (
+    "error: that took too long and was not completed — tell the user it "
+    "didn't work and they can try again."
+)
 
 from . import (
     app_control,
@@ -35,6 +61,7 @@ from . import (
     record_feedback,
     remember,
     report_bug,
+    rerun_web_research,
     run_appearance_report,
     set_model_stack,
     set_profile_field,
@@ -74,6 +101,11 @@ _REGISTRY: list[Skill] = [
     read_dm_thread.SKILL,
     *dm_outreach.SKILLS,
     deep_dive.SKILL,
+    # Re-run / refresh the user's OWN web-research report (self deep-dive) — the
+    # chat/voice counterpart to the report screen's "Search again" button. Queues
+    # the SAME background refresh and returns at once, so it never blocks/hangs the
+    # turn the way an inline `deep_dive` self-lookup did (founder bug 2026-11-03).
+    rerun_web_research.SKILL,
     face_report.SKILL,
     body_report.SKILL,
     physical_attributes.SKILL,
@@ -381,6 +413,32 @@ def _guarded(
     return _wrapper
 
 
+def _bounded(
+    fn: Callable[..., object], name: str, timeout: float = _VOICE_TOOL_TIMEOUT_SECONDS
+) -> Callable[..., object]:
+    """Wrap a voice tool so it can never block the turn forever: its call is
+    bounded by ``asyncio.wait_for(timeout)`` and a timeout RETURNS an honest
+    ``error:`` string (never raises) so the model relays it and the outer
+    ``_instrumented`` still fires its "end" event (clearing the client's "…ing"
+    indicator). This is the voice-side counterpart to the text loop's
+    ``asyncio.wait_for`` guard; it is applied INSIDE ``_instrumented`` so the
+    returned error flows through the normal result path. Always async, for the
+    same reason as :func:`_instrumented`."""
+
+    @functools.wraps(fn)
+    async def _wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        if not inspect.isawaitable(result):
+            return result
+        try:
+            return await asyncio.wait_for(result, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error("voice tool %s timed out after %.0fs", name, timeout)
+            return _TOOL_TIMEOUT_RESULT
+
+    return _wrapper
+
+
 def make_livekit_tools(
     db,
     uid: str,
@@ -449,6 +507,12 @@ def make_livekit_tools(
             fn = s.bind(db, uid, voice=True)
         else:
             fn = s.bind(db, uid)
+        # Innermost: bound the tool's wall-clock so a stuck sub-call (e.g. an
+        # inline deep_dive whose grounded search hangs) returns an honest error
+        # instead of blocking the turn forever (founder bug 2026-11-03). Wrapped
+        # by _instrumented below so its "end" event still fires and clears the
+        # client's "…ing" indicator.
+        fn = _bounded(fn, s.name)
         if on_call is not None:
             fn = _instrumented(fn, s.name, on_call)
         if guard is not None:

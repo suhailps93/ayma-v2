@@ -219,13 +219,14 @@ async def _run_report_action(db, uid: str, report: dict) -> str:
         from . import run_appearance_report as _report
 
         return await _report.SKILL.bind(db, uid)()
-    if via == "deep_dive":
-        from . import deep_dive as _report
+    if via == "rerun_web_research":
+        from . import rerun_web_research as _report
 
         # A re-run of the user's own web research — self only (never a third
-        # party from an app-control phrase); the bind resolves their profile
-        # name, so no name is passed.
-        return await _report.SKILL.bind(db, uid)(full_name="", subject="self")
+        # party from an app-control phrase). Queues the SAME background refresh
+        # the report screen's "Search again" button does and returns at once,
+        # so this path never blocks on an inline search (founder bug 2026-11-03).
+        return await _report.SKILL.bind(db, uid)()
     logger.error("report action %r has no runnable via (%r)", report.get("key"), via)
     return _NOT_APPLIED
 

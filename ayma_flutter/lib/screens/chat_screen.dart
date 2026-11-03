@@ -1889,30 +1889,54 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (!mounted) return;
         _store.resolvePending(res.combinedReply, capped: res.usageCapped);
         if (!res.usageCapped) widget.onExchange?.call();
-      } on ApiException {
+      } on ApiException catch (e) {
         if (!mounted) return;
-        _store.dropPending();
-        AymaToast.show(
-          context,
-          "Couldn't reach Ayma. Check your connection.",
-          kind: AymaToastKind.error,
-          action: AymaToastAction(
-            label: 'Retry',
-            onPressed: () => _send(retry: message),
-          ),
-        );
-      } catch (_) {
+        // A connection-class death (timeout / dropped socket — far likelier
+        // when a live voice call is contending for the network) is NOT a
+        // failure: `report_hub.correct` commits the delete/correction
+        // server-side and only the RESPONSE was lost. Flashing "Couldn't
+        // reach Ayma" then falsely reports a success as a failure — the
+        // founder's exact voice-mode bug (2026-11-03: a web-research item
+        // delete during a call toasted a connection error though the item was
+        // gone). Reconcile instead: reload the report so the UI reflects what
+        // actually committed, and show no error (mirrors the `/chat` branch's
+        // `_shouldReconcile`). A genuine server rejection (a real status code)
+        // still surfaces its honest error below.
+        if (_shouldReconcile(e)) {
+          _store.dropPending();
+          widget.onExchange?.call();
+        } else {
+          _store.dropPending();
+          AymaToast.show(
+            context,
+            "Couldn't reach Ayma. Check your connection.",
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+              label: 'Retry',
+              onPressed: () => _send(retry: message),
+            ),
+          );
+        }
+      } catch (e) {
         if (!mounted) return;
-        _store.dropPending();
-        AymaToast.show(
-          context,
-          'Something went wrong sending that message.',
-          kind: AymaToastKind.error,
-          action: AymaToastAction(
-            label: 'Retry',
-            onPressed: () => _send(retry: message),
-          ),
-        );
+        // Same reconcile for a raw connection-class error (SocketException /
+        // TimeoutException that didn't come wrapped) — the server may well
+        // have committed, so don't flash a false failure.
+        if (_shouldReconcile(e)) {
+          _store.dropPending();
+          widget.onExchange?.call();
+        } else {
+          _store.dropPending();
+          AymaToast.show(
+            context,
+            'Something went wrong sending that message.',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+              label: 'Retry',
+              onPressed: () => _send(retry: message),
+            ),
+          );
+        }
       } finally {
         if (mounted) {
           setState(() => _sending = false);

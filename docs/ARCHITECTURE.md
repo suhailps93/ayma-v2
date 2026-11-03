@@ -169,7 +169,8 @@ flowchart LR
   `functions/bootstrap/app_registry.json` (tests fail if a `GoRoute` is missing from it). `open_screen`'s
   tool description lists every destination as `key (label)` (not bare keys) so the model maps the user's words
   — "appearance report" → `my_appearance` — deterministically rather than guessing. The registry's
-  `report_actions` (e.g. `rerun_appearance` → the `run_appearance_report` tool, `rerun_web_research` → `deep_dive`)
+  `report_actions` (e.g. `rerun_appearance` → the `run_appearance_report` tool, `rerun_web_research` → the
+  `rerun_web_research` tool)
   turn "re-run / regenerate my report" into the tool that actually re-runs it. When a re-run phrase is instead
   routed to `open_screen` or `app_action` (probabilistic Meta tool-selection), those tools now *run the report
   themselves* via `_run_report_action` and return its real `[appearance:<id>]`/`[deep_dive:<id>]` card marker —
@@ -179,6 +180,15 @@ flowchart LR
   open its words also match; `find_report_action` matches strictly (an exact name or a full re-run alias contained
   in the request, never the reverse), so a bare "appearance report" stays an open. `run_appearance_report` is the
   chat/voice counterpart of the Appearance screen's Recalculate button (`POST /appearance/report` → `appearance.run_appearance`).
+  `rerun_web_research` (`skills/rerun_web_research.py`) is the same for the **Web research** report screen's "Search
+  again" button: it QUEUES the identical background self-dive refresh (`deep_dive_delivery.schedule_self_refresh` —
+  the shared delivery tail `POST /deep-dive` also uses) and returns at once, so it never blocks or hangs the turn. It
+  exists because the generic `deep_dive` tool runs the grounded search INLINE; asking in a voice call to "re-run the web
+  search report" ran that inline dive and, with no voice-side per-tool timeout, left a stuck "Searching the web…"
+  (founder bug 2026-11-03). Two guards landed with it: (a) `rerun_web_research` queues instead of searching inline, and
+  (b) `skills._bounded` now wraps EVERY voice tool in an `asyncio.wait_for` (the voice counterpart to the text loop's
+  `_TOOL_TIMEOUT_SECONDS`), returning an honest "took too long" result — never a silent hang — kept above the guided
+  tour's 110s tap-wait and below the Flutter client's 180s tool-guard.
 - *Conversations / DM navigation (`skills/app_control.py`)*: `list_conversations` reads the signed-in user's own
   `dm_threads` (scoped by `participants array_contains uid`, excluding `hidden_for` self) and returns each thread's
   other-person name, recency and unread flag, most-recent first — never message bodies (privacy-safe; `read_dm_thread`
@@ -441,20 +451,31 @@ flowchart LR
 - *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
   `meta_integrations` is off.
 - *Errors*: Sentry (API, agent, app; DSN from Secret Manager, `sentry` flag) and Firebase Crashlytics (app).
-- *Background skill results in chat*: a finished deep dive (`_finish_deep_dive`) or match (`_match_job`) writes an
+- *Background skill results in chat*: a finished deep dive (`deep_dive_delivery.finish`, shared by `POST /deep-dive`
+  and the `rerun_web_research` tool) or match (`_match_job`) writes an
   Ayma turn to `users/{uid}/chat_messages` ending in a `[deep_dive:<id>]` / `[match:<matchId>]` marker, plus the
   `skill_result` push. The chat renders the marker as a card (web research report; match report with the current
   score) that opens the report. Whoever started the job (a profile button, Recalculate, or Ayma tapping it for the
   user by voice or text), the card lands in the conversation: an open chat pulls new marker turns on app resume and
   when the app sees the job finish (`ChatInbox.resultsLanded`), otherwise the next history load shows it. The
-  deep-dive card + push are delivered by `_deliver_deep_dive_result` with a bounded in-job retry (3 attempts, short
+  deep-dive card + push are delivered by `deep_dive_delivery.deliver_result` with a bounded in-job retry (3 attempts, short
   growing backoff) so a transient Firestore/push blip self-heals server-side (founder: auto-retry, no user tap); each
   side-effect lands at most once across retries, and the non-essential wiki writes (`skill_memory.save_web_findings`
   / `promote`) are guarded so a failure there can never skip the card + push + the already-metered spend. **The CARD
   is the in-app delivery (the user sees the report in chat) and alone gates success; the PUSH is a best-effort nudge**
   — retried, but a final push failure logs a warning and never fails the run or hides the card, because a push
-  legitimately fails on a device with no valid FCM token (e.g. an emulator). `_deliver_deep_dive_result` returns True
+  legitimately fails on a device with no valid FCM token (e.g. an emulator). `deep_dive_delivery.deliver_result` returns True
   once the card has landed.
+- *Report "Ask Ayma" correction over a dropped socket*: a tap-to-correct / delete on a Living Report ("Ask Ayma"
+  sheet) goes straight to `POST /report/{type}/{id}/correct` (`chat_screen.dart`, `AskAymaOrigin.report`), not `/chat`.
+  A live voice call contends for the network, so that request's socket can die while the server still COMMITS the
+  delete — and the branch used to flash "Couldn't reach Ayma" for a turn that succeeded (founder bug 2026-11-03: a
+  web-research item delete in a call toasted a connection error though the item was gone; text mode was clean). The
+  branch now runs the same `_shouldReconcile` the `/chat` path does: a connection-class `ApiException` (no HTTP
+  status) reloads the report (`onExchange`) so the UI reflects what committed and shows NO error; a genuine 4xx/5xx
+  still surfaces its honest error + Retry. (Same FAMILY as the guided-tour tap and scroll-ack bugs — a voice-mode
+  action commits but a bounded client wait elapses/the ack races — though those live on the `app_commands` ack layer
+  (`_await_ack` + `firestore.rules`), while this one is the direct report-correct HTTP path.)
 - *Web research run status*: `POST /deep-dive` writes `users/{caller}/deep_dive_runs/{report_id}` as `running`
   before queueing the job. The job meters the spend exactly once inside `deep_dive.run` (never on the delivery retry,
   so no double-charge) and uses **deliver-then-mark**: its `finally` writes `done` only after the **card** is

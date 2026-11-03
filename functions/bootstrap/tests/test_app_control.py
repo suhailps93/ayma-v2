@@ -922,28 +922,32 @@ def _patch_appearance_run(monkeypatch, rid="rpt-9"):
 
 
 def _patch_deep_dive_run(monkeypatch):
-    """Make a self web-research re-run runnable in-process, returning the
-    ``[deep_dive:<id>]`` card marker. Returns a dict the fake engine fills."""
-    import skill_memory
-    import skill_runs
+    """Make a self web-research re-run runnable in-process. The re-run now QUEUES
+    the same background refresh the report screen's "Search again" button does
+    (``deep_dive_delivery.schedule_self_refresh``) and returns the
+    ``[deep_dive:<id>]`` card marker at once — it never runs the search inline
+    (founder bug 2026-11-03: the inline dive hung a voice turn). Returns a dict
+    with the run-status marks and the scheduled background job's kwargs."""
+    import deep_dive
+    import deep_dive_delivery
     import token_ledger
-    from skills import deep_dive as dd
 
     monkeypatch.setattr(token_ledger, "check", lambda uid: None)
-    seen: dict = {}
+    captured: dict = {"marks": [], "jobs": []}
 
-    async def _fake_run(full_name, db=None, uid=None, context="", is_self=False):
-        seen.update(name=full_name, is_self=is_self)
-        return {"confidence": "ok", "facts": ["x"], "summary": "s"}
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Sam Doe")
+    monkeypatch.setattr(deep_dive, "profile_dive_context", lambda db, uid, n: "")
+    monkeypatch.setattr(deep_dive, "dive_report_id", lambda name: "dive-1")
+    monkeypatch.setattr(
+        deep_dive, "mark_run",
+        lambda db, uid, rid, status: captured["marks"].append((rid, status)),
+    )
 
-    monkeypatch.setattr(dd.engine, "profile_full_name", lambda db, uid: "Sam Doe")
-    monkeypatch.setattr(dd.engine, "profile_dive_context", lambda db, uid, n: "")
-    monkeypatch.setattr(dd.engine, "run", _fake_run)
-    monkeypatch.setattr(dd.engine, "teaser", lambda d: "Here's what I found")
-    monkeypatch.setattr(dd.engine, "dive_report_id", lambda name: "dive-1")
-    monkeypatch.setattr(skill_memory, "save_web_findings", lambda db, uid, d: None)
-    monkeypatch.setattr(skill_runs, "record", lambda *a, **k: None)
-    return seen
+    async def _fake_job(db, uid, **kw):
+        captured["jobs"].append(kw)
+
+    monkeypatch.setattr(deep_dive_delivery, "run_job", _fake_job)
+    return captured
 
 
 def test_app_action_rerun_report_executes_the_report(monkeypatch):
@@ -985,15 +989,27 @@ def test_open_screen_bare_appearance_report_still_opens(monkeypatch):
     assert "source" not in seen  # run_appearance was never called
 
 
-def test_rerun_web_research_executes_deep_dive(monkeypatch):
-    # The web-research re-run must execute too (a self deep dive), via both
-    # open_screen and app_action.
-    db = _Db()
+def test_rerun_web_research_queues_the_self_refresh(monkeypatch):
+    # The web-research re-run must QUEUE the same background self-dive refresh
+    # the report screen's "Search again" button does (never an inline search),
+    # via both open_screen and app_action, and return the card marker at once.
+    async def _drive(tool, db):
+        out = await getattr(app_control, tool)(db, "me")("rerun web research")
+        await asyncio.sleep(0)  # let the detached refresh task start
+        return out
+
     for tool in ("_bind_open_screen", "_bind_app_action"):
-        seen = _patch_deep_dive_run(monkeypatch)
-        out = _run(getattr(app_control, tool)(db, "me")("rerun web research"))
+        db = _Db()
+        captured = _patch_deep_dive_run(monkeypatch)
+        out = _run(_drive(tool, db))
         assert "[deep_dive:dive-1]" in out, tool
-        assert seen["is_self"] is True, tool
+        # The run was marked running and a FORCED self-dive was queued — the
+        # exact shape the "Search again" button triggers.
+        assert ("dive-1", "running") in captured["marks"], tool
+        assert captured["jobs"], tool
+        assert captured["jobs"][0]["is_self"] is True, tool
+        assert captured["jobs"][0]["force"] is True, tool
+        assert captured["jobs"][0]["target"] == "", tool
 
 
 def test_run_appearance_report_skill_is_registered_and_triggers(monkeypatch):

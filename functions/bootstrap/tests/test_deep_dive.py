@@ -1220,7 +1220,7 @@ def test_job_marks_done_when_only_the_push_fails_and_card_lands(monkeypatch):
     assert len(appended) == 1  # card appended exactly once (never duplicated)
     assert len(runs) == 1  # metered exactly once — no double-charge
     # The push was genuinely retried the full bounded number of times…
-    assert notify_attempts["n"] == main._DEEP_DIVE_DELIVERY_ATTEMPTS
+    assert notify_attempts["n"] == main.deep_dive_delivery._DELIVERY_ATTEMPTS
     # …then given up on as best-effort, not escalated to a run failure.
 
 
@@ -2362,7 +2362,9 @@ def test_job_marks_its_run_done_after_storing_the_dive(monkeypatch):
         return {"delivered": True}
 
     monkeypatch.setattr(main.deep_dive, "run", _fake_run)
-    monkeypatch.setattr(main, "_finish_deep_dive", _finish)
+    # The job delegates its delivery tail to deep_dive_delivery.finish (shared
+    # with the rerun_web_research skill), so patch it there.
+    monkeypatch.setattr(main.deep_dive_delivery, "finish", _finish)
     _run(main._deep_dive_job("me", "Me", "", True, "", True))
     assert marks == [("me", "name_me", "done")]
 

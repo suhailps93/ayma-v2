@@ -286,15 +286,19 @@ def test_make_livekit_tools_instruments_every_tool_when_on_call_is_given():
         assert getattr(t._func, "__wrapped__", None) is not None
 
 
-def test_make_livekit_tools_omits_instrumentation_when_on_call_is_absent():
+def test_make_livekit_tools_bounds_every_tool_even_without_on_call():
     import pytest
 
     pytest.importorskip("livekit.agents")
 
     tools = skills.make_livekit_tools(object(), "u9")
-    # no on_call given -> the raw bound callables go straight to function_tool,
-    # none of them happen to define their own __wrapped__.
-    assert all(getattr(t._func, "__wrapped__", None) is None for t in tools)
+    # Even with no on_call (no instrumentation), every tool is wrapped by
+    # _bounded (the per-tool wall-clock backstop against a voice hang — founder
+    # bug 2026-11-03), so each carries __wrapped__ back to its raw bound skill
+    # (which also preserves the signature for livekit schema introspection).
+    assert tools
+    for t in tools:
+        assert getattr(t._func, "__wrapped__", None) is not None
 
 
 # --- _guarded (voice misheard-fragment guard) -----------------------------
@@ -323,3 +327,56 @@ def test_guarded_runs_sync_and_async_tools_when_clear():
 
     assert asyncio.run(skills._guarded(lambda x: "sync-" + x, lambda: None)("a")) == "sync-a"
     assert asyncio.run(skills._guarded(afn, lambda: None)("b")) == "async-b"
+
+
+# --- _bounded (voice per-tool wall-clock backstop) ------------------------
+# Founder bug 2026-11-03: a voice tool whose sub-call hung (an inline deep_dive
+# whose grounded search stalled) blocked the turn forever with a stuck
+# "Searching the web…". The text loop already bounds every tool await; this is
+# the voice counterpart.
+
+
+def test_bounded_passes_a_fast_async_tool_through_untouched():
+    import asyncio
+
+    async def afn(x):
+        return "ok-" + x
+
+    wrapped = skills._bounded(afn, "afn", timeout=5.0)
+    assert asyncio.iscoroutinefunction(wrapped)
+    assert asyncio.run(wrapped("a")) == "ok-a"
+
+
+def test_bounded_passes_a_sync_tool_through_untouched():
+    import asyncio
+
+    wrapped = skills._bounded(lambda x: "sync-" + x, "fn", timeout=5.0)
+    assert asyncio.run(wrapped("b")) == "sync-b"
+
+
+def test_bounded_returns_an_honest_error_instead_of_hanging():
+    import asyncio
+
+    async def _hangs():
+        await asyncio.sleep(60)
+        return "never"
+
+    wrapped = skills._bounded(_hangs, "deep_dive", timeout=0.05)
+    result = asyncio.run(wrapped())
+    # Honest, model-relayable result — NOT a raise (so _instrumented's "end"
+    # still fires and clears the live indicator) and NOT a silent hang.
+    assert result == skills._TOOL_TIMEOUT_RESULT
+    assert "too long" in result
+
+
+def test_bounded_preserves_the_wrapped_signature_for_schema_introspection():
+    import inspect
+
+    async def deep_dive(full_name, subject="other", context=""):
+        return "x"
+
+    wrapped = skills._bounded(deep_dive, "deep_dive")
+    assert list(inspect.signature(wrapped).parameters) == [
+        "full_name", "subject", "context",
+    ]
+    assert getattr(wrapped, "__wrapped__", None) is deep_dive
