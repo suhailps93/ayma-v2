@@ -154,15 +154,33 @@ async def _spotlight(db, uid: str, index: int, total: int, step: dict) -> bool:
     return bool(ack and ack.get("ok"))
 
 
-async def _present_from(db, uid: str, start: int) -> tuple[int, dict | None]:
-    """Spotlight the first presentable step at or after ``start`` (skipping any
-    whose anchor the client reports absent). Returns ``(index, step)`` on
-    success, or ``(-1, None)`` when no further step can be shown. Clears the tap
-    event and records the shown index on the state doc."""
+def _skip_in_voice(step: dict, voice: bool) -> bool:
+    """True when this step can't be completed in the current mode. In a VOICE
+    session the chat composer is the call bar (mute / status / Stop), not a text
+    box, so a "tap the message box to type" step is both wrong and destructive —
+    it is marked ``skip_in_voice`` in the registry and dropped here (founder,
+    2026-11-03: the composer step hung / mis-fired when the tour ran during a
+    voice call). The nav-bar tabs/bell/orb and Profile rows are tappable in both
+    modes, so only the composer step carries the flag."""
+    return bool(voice and step.get("skip_in_voice"))
+
+
+async def _present_from(
+    db, uid: str, start: int, voice: bool = False
+) -> tuple[int, dict | None]:
+    """Spotlight the first presentable step at or after ``start`` — skipping any
+    whose anchor the client reports absent, and any that can't be done in the
+    current mode (``skip_in_voice`` during a voice session). Returns
+    ``(index, step)`` on success, or ``(-1, None)`` when no further step can be
+    shown. Clears the tap event and records the shown index on the state doc."""
     steps = _steps()
     total = len(steps)
     i = start
     while 0 <= i < total:
+        if _skip_in_voice(steps[i], voice):
+            logger.info("guided tour: step %d not available in voice — skipping", i)
+            i += 1
+            continue
         await asyncio.to_thread(_clear_event, db, uid)
         if await _spotlight(db, uid, i, total, steps[i]):
             await asyncio.to_thread(_write_state, db, uid, i, True)
@@ -212,12 +230,12 @@ _NO_TOUR = (
 # --- start --------------------------------------------------------------------
 
 
-def _bind_start_guided_tour(db, uid: str) -> Callable[..., object]:
+def _bind_start_guided_tour(db, uid: str, voice: bool = False) -> Callable[..., object]:
     async def start_guided_tour() -> str:
         steps = _steps()
         if not steps:
             return _NO_STEPS
-        index, step = await _present_from(db, uid, 0)
+        index, step = await _present_from(db, uid, 0, voice)
         if step is None:
             await _end(db, uid)
             return _NOT_SHOWN
@@ -229,7 +247,7 @@ def _bind_start_guided_tour(db, uid: str) -> Callable[..., object]:
 # --- advance ------------------------------------------------------------------
 
 
-def _bind_advance_guided_tour(db, uid: str) -> Callable[..., object]:
+def _bind_advance_guided_tour(db, uid: str, voice: bool = False) -> Callable[..., object]:
     async def advance_guided_tour() -> str:
         # Advancement is gated STRICTLY on the user's real tap of the currently
         # spotlighted control — never on a spoken/typed "next" and never on the
@@ -262,7 +280,7 @@ def _bind_advance_guided_tour(db, uid: str) -> Callable[..., object]:
                 "The user ended the guided tour. Acknowledge warmly and let "
                 "them know they can ask for it again anytime."
             )
-        index, step = await _present_from(db, uid, current + 1)
+        index, step = await _present_from(db, uid, current + 1, voice)
         if step is None:
             await _end(db, uid)
             return (

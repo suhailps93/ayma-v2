@@ -94,6 +94,13 @@ _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 # attributes the write to (§ fact-source-of-truth, 2026-09-21).
 _PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_intent"}
 
+# The guided-tour tools that must know whether this session is VOICE or TEXT, so
+# they skip steps that can't be completed in the current mode (the chat composer
+# is the call bar, not a text box, during a voice call — §11.2b, founder
+# 2026-11-03). ``stop_guided_tour`` needs no surface. Bound with voice=True in
+# make_livekit_tools (voice) and voice=False in make_session_tool_fns (text).
+_GUIDED_TOUR_VOICE_NAMES = {"start_guided_tour", "advance_guided_tour"}
+
 
 from . import edit_profile_section, photo_edit, story_edit, story_manage, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
 
@@ -239,6 +246,9 @@ def make_session_tool_fns(
                 session_id=(session_ctx or {}).get("session_id", ""),
                 turns=(session_ctx or {}).get("turns"),
             )
+        elif s.name in _GUIDED_TOUR_VOICE_NAMES:
+            # Text surface — the composer is a real text box here.
+            out[s.name] = s.bind(db, uid, voice=False)
         else:
             out[s.name] = s.bind(db, uid)
     for s in _TEXT_ONLY_REGISTRY:
@@ -423,6 +433,10 @@ def make_livekit_tools(
             description = set_voice_preference.stack_description(voice_pref)
         elif s.name in _DM_OUTREACH_NAMES:
             fn = s.bind(db, uid, session_id=session_id, turns=turns)
+        elif s.name in _GUIDED_TOUR_VOICE_NAMES:
+            # Voice surface — the composer is the call bar, so voice-only steps
+            # (e.g. "type in the message box") are skipped (§11.2b).
+            fn = s.bind(db, uid, voice=True)
         else:
             fn = s.bind(db, uid)
         if on_call is not None:

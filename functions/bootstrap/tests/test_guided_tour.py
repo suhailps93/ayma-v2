@@ -128,6 +128,42 @@ def test_start_spotlights_step_0_and_returns_its_line():
     assert "step 1 of" in msg and _steps()[0]["say"] in msg
 
 
+def test_text_start_spotlights_the_composer_step_first():
+    # In TEXT mode the composer is a real text box, so step 0 (the composer) is
+    # shown normally.
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1", voice=False)())
+    assert db.store[_PENDING]["anchor"] == "home_composer"
+    assert db.store[_STATE]["index"] == 0
+
+
+def test_voice_start_skips_the_composer_step():
+    # Founder 2026-11-03: in a VOICE session the composer is the call bar (no
+    # text box), so the "tap the message box to type" step must be skipped —
+    # the tour must never instruct an action that can't be done in this mode.
+    steps = _steps()
+    assert steps[0]["anchor"] == "home_composer" and steps[0].get("skip_in_voice")
+    db = _Db()
+    msg = _run(guided_tour._bind_start_guided_tour(db, "u1", voice=True)())
+    # Step 0 (composer) was skipped; the first spotlight is step 1 (Explore),
+    # and that is where the tour state sits.
+    assert db.store[_PENDING]["anchor"] == steps[1]["anchor"]  # explore_tab
+    assert db.store[_STATE]["index"] == 1
+    assert steps[1]["say"] in msg
+    # The composer was never queued.
+    assert db.store[_PENDING]["anchor"] != "home_composer"
+
+
+def test_voice_skip_is_registered_in_the_voice_tool_set_with_voice_true():
+    # The voice surface binds start/advance with voice=True so the skip applies;
+    # the text surface binds them with voice=False. (Guards the wiring that
+    # make_livekit_tools / make_session_tool_fns set up.)
+    import inspect
+    src = inspect.getsource(skills)
+    assert "_GUIDED_TOUR_VOICE_NAMES" in src
+    assert "voice=True" in src and "voice=False" in src
+
+
 def test_start_with_no_steps_is_honest(monkeypatch):
     monkeypatch.setattr(app_registry, "guided_tour_steps", list)
     db = _Db()

@@ -141,7 +141,7 @@
     "event_doc": "users/{uid}/app_commands/tour_event",
     "state_doc": "users/{uid}/app_commands/tour_state",
     "steps": [
-      {"anchor": "home_composer", "tab": 0, "headline": "This is us", "say": "This is where you and I talk. Tap the message box — you can type to me here anytime."},
+      {"anchor": "home_composer", "tab": 0, "skip_in_voice": true, "headline": "This is us", "say": "This is where you and I talk. Tap the message box — you can type to me here anytime."},
       {"anchor": "explore_tab", "headline": "Explore", "say": "Now tap Explore. This is where you meet the people I match you with, by real taste and not just looks."},
       {"anchor": "messages_tab", "headline": "Messages", "say": "Tap Messages. Your conversations live here, and when you're stuck for words I'll coach you line by line."},
       {"anchor": "profile_tab", "headline": "Your hub", "say": "Tap You to open your profile — your story, your look and my settings all live here."},

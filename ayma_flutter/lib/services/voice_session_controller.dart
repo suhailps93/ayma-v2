@@ -49,12 +49,23 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? idleGuardTimeout,
     Duration? responseGuardTimeout,
     Duration? openWeightsResponseGuardTimeout,
+    Duration? toolGuardTimeout,
     ErrorReporter? errorReporter,
   })  : _store = transcriptStore,
         _reporter = errorReporter ?? ErrorReporter.instance,
         _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
         _responseGuardTimeout =
             responseGuardTimeout ?? const Duration(seconds: 20),
+        // Backstop for a tool "start" whose "end" never arrives (agent crash
+        // mid-tool, dropped data message, orphaned/superseded turn): without it
+        // `activeToolLabel` stays set forever, the status line shows a frozen
+        // "Working…"/tool label, and BOTH other guards are neutralized (the
+        // response guard is cancelled on tool start; the idle guard refuses to
+        // fire while a tool label is set) — a silent hang (AGENTS.md: voice must
+        // recover, never spin). Must sit ABOVE the longest legitimate tool wait,
+        // the guided tour's bounded tap-wait (~110s, skills/guided_tour.py), so
+        // a normal tour step never trips it.
+        _toolGuardTimeout = toolGuardTimeout ?? const Duration(seconds: 180),
         _openWeightsResponseBudget =
             openWeightsResponseGuardTimeout ?? const Duration(seconds: 150),
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
@@ -151,6 +162,13 @@ class VoiceSessionController extends ChangeNotifier {
   /// never shrink it near that generation time (a regression test pins it).
   final Duration _responseGuardTimeout;
   Timer? _responseGuard;
+
+  /// Backstop timeout for a running tool whose completion never arrives (see
+  /// the constructor note). Arms on a tool "start", cancels on its "end" and on
+  /// teardown; on expiry it clears the stuck [activeToolLabel] and lets the
+  /// normal guards resume — non-destructively, so the call stays live.
+  final Duration _toolGuardTimeout;
+  Timer? _toolGuard;
 
   /// A longer first-response budget for the open-weights (self-hosted Modal)
   /// brain: its LLM endpoint is scale-to-zero and its first reply can take
@@ -737,6 +755,23 @@ class VoiceSessionController extends ChangeNotifier {
     _idleGuard = Timer(_idleGuardTimeout, _onIdleGuardFired);
   }
 
+  /// A running tool never reported completion within [_toolGuardTimeout] — its
+  /// "end" event was lost (agent crash mid-tool, dropped data message, orphaned
+  /// turn). Clear the frozen tool label so the status line stops showing a
+  /// perpetual "Working…" and the idle guard can resume; keep the call LIVE
+  /// (non-destructive recovery — the user can keep talking). AGENTS.md: voice
+  /// recovers, never spins.
+  void _onToolGuardFired() {
+    _toolGuard = null;
+    if (_phase != VoiceSessionPhase.live || _activeToolLabel == null) return;
+    debugPrint('[voice] tool guard fired — clearing a stuck tool label');
+    _activeToolLabel = null;
+    notifyListeners();
+    // Resume the idle backstop (it had been re-arming itself as long as a tool
+    // label was set), so a now-genuinely-silent call can still end cleanly.
+    _noteActivity();
+  }
+
   void _onIdleGuardFired() {
     _idleGuard = null;
     if (_phase != VoiceSessionPhase.live) return;
@@ -804,6 +839,15 @@ class VoiceSessionController extends ChangeNotifier {
       // resolved into a finalized ayma turn (e.g. the agent was interrupted)
       // rather than letting them leak into a much later reply.
       _pendingToolLabels.clear();
+      // Also clear a still-"active" tool label the moment the user speaks
+      // again: if a tool's "end" was lost, its "Working…" would otherwise stay
+      // frozen on screen through the user's next turns (the fast path out of
+      // the silent hang the tool guard also backstops).
+      if (_activeToolLabel != null) {
+        _toolGuard?.cancel();
+        _toolGuard = null;
+        _activeToolLabel = null;
+      }
     }
     final tools = (role == TurnRole.ayma && seg.isFinal)
         ? _flushPendingToolLabels()
@@ -820,9 +864,13 @@ class VoiceSessionController extends ChangeNotifier {
     _noteAgentResponse();
     if (e.isStart) {
       _activeToolLabel = e.label;
+      _toolGuard?.cancel();
+      _toolGuard = Timer(_toolGuardTimeout, _onToolGuardFired);
       notifyListeners();
       return;
     }
+    _toolGuard?.cancel();
+    _toolGuard = null;
     _activeToolLabel = null;
     if (e.label.isNotEmpty && !_pendingToolLabels.contains(e.label)) {
       _pendingToolLabels.add(e.label);
@@ -1053,6 +1101,8 @@ class VoiceSessionController extends ChangeNotifier {
     _idleGuard = null;
     _responseGuard?.cancel();
     _responseGuard = null;
+    _toolGuard?.cancel();
+    _toolGuard = null;
 
     // Snapshot every session-scoped handle (subscriptions + transport) and
     // null the instance fields *synchronously*, before the first `await`
