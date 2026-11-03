@@ -35,6 +35,7 @@ import gemini
 import report_blocks as rb
 import schema
 import token_ledger
+from timefmt import iso_or_str
 from token_ledger import FEATURE_DEEPDIVE
 
 _PROMPTS_PATH = Path(__file__).with_name("prompts") / "deep_dive.md"
@@ -783,6 +784,140 @@ _URL_TARGET_LISTS = {
 }
 
 
+# --- provenance questions (#28) -------------------------------------------
+# Founder retest Nov 2, 2026: "where did you get this information from?"
+# about a summary item dodged ("I don't have a single specific link saved")
+# while the keyword "source" ask returned the stored URL. Prompt-only routing
+# proved fragile, so provenance turns are detected structurally and answered
+# from the stored source deterministically — no model round-trip, repeat asks
+# answer alike.
+
+# A message that SUPPLIES a link, or that also corrects/rejects the finding,
+# is not a pure provenance question — it must still reach Gemini (which sees
+# the populated Source line and can do both).
+_PROVENANCE_URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+_PROVENANCE_CORRECTION_RE = re.compile(
+    r"\b(wrong|incorrect|untrue|false|made up"
+    r"|not (mine|me|my|true|right|correct|accurate)"
+    r"|didn'?t|never|delete|remove|change|fix|update|correct)\b",
+    re.IGNORECASE,
+)
+
+_PROVENANCE_PATTERNS = (
+    # "where did you get/find this ... from", "where's this from"
+    r"\bwhere\b.{0,25}\b(from|get|gets|got|find|finds|found|come|comes|came)\b",
+    r"\bwheres?\b.{0,25}\bfrom\b",
+    r"\bhow\b.{0,25}\bknow\b",  # "how do you know"
+    r"\bbased on\b",  # "what's this based on"
+    r"\bwho says\b",  # "who says that"
+    r"\bprove it\b",
+    r"\bwhat\b.{0,15}\blink\b",  # "what's the link"
+    r"\bshow\b.{0,20}\blink\b",  # "show me the link"
+    r"\bwhich\b.{0,20}\b(sites?|websites?|pages?|urls?|links?|sources?)\b",
+    # "source" only with an asking trigger before it — "my income source is
+    # Acme" (a correction) must not fire.
+    r"\b(what|which|where|show|give|gave|share|see|saw|post|send|sent|quote"
+    r"|have|has|had|got|gotten|please|links?)\b.{0,25}\bsources?\b",
+    r"\bsources?\b.{0,6}([?]|$)",  # trailing "source?" / bare "source"
+)
+_PROVENANCE_RES = tuple(re.compile(p, re.IGNORECASE) for p in _PROVENANCE_PATTERNS)
+
+
+def is_provenance_question(text: str) -> bool:
+    """Whether ``text`` purely asks where a finding came from — any phrasing,
+    not just the keyword "source". ``False`` for corrections (even mixed
+    "that's wrong, where did you get it?"), link supplies, and chatter."""
+    text = (text or "").strip()
+    if not text:
+        return False
+    if _PROVENANCE_URL_RE.search(text) or _PROVENANCE_CORRECTION_RE.search(text):
+        return False
+    return any(r.search(text) for r in _PROVENANCE_RES)
+
+
+_SUMMARY_SOURCE_STOPWORDS = frozenset({
+    "the", "and", "for", "from", "with", "that", "this", "these", "those",
+    "his", "her", "their", "its", "your", "you", "has", "have", "had", "was",
+    "were", "are", "been", "also", "into", "over", "such", "more", "most",
+    "very", "who", "what", "about",
+})
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(w) >= 3 and w not in _SUMMARY_SOURCE_STOPWORDS
+    }
+
+
+def _summary_source_url(digest: dict) -> str:
+    """The stored URL behind a report summary: the ``source_url`` of the fact
+    whose claim overlaps the summary text most (the summary is synthesised
+    from the facts, so the top-overlap fact is the sentence's backing).
+    ``""`` when no sourced fact overlaps — the honest-empty case."""
+    summary_tokens = _content_tokens(str(digest.get("summary") or ""))
+    if not summary_tokens:
+        return ""
+    best_url, best_score = "", 0
+    for fact in digest.get("facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        url = str(fact.get("source_url") or "").strip()
+        if not url:
+            continue
+        score = len(summary_tokens & _content_tokens(str(fact.get("claim") or "")))
+        if score > best_score:
+            best_url, best_score = url, score
+    return best_url
+
+
+def focused_item_source(db, uid: str, report_id: str, target: str) -> dict:
+    """The stored source of one report item — ``{"url", "quote", "when"}``,
+    or ``{}`` when the item has no stored source. ``target`` is a
+    :func:`correct_finding` target (``"summary"`` resolves to its backing
+    fact's URL). Best-effort: any read failure is ``{}``. Used by
+    ``find_fact_source`` so a bare sheet ask ("where's this from") resolves
+    deictically to the focused item."""
+    report_id = (report_id or "").strip()
+    target = (target or "").strip()
+    if not db or not uid or not report_id or not target:
+        return {}
+    try:
+        data = read_dive(db, uid, report_id)
+    except Exception:  # noqa: BLE001 - a read failure is "no source"
+        return {}
+    if not data:
+        return {}
+    digest = data.get("digest") or {}
+    when = iso_or_str(data.get("created_at"), none="")
+    if target == "summary":
+        url = _summary_source_url(digest)
+        if not url:
+            return {}
+        return {
+            "url": url,
+            "quote": str(digest.get("summary") or "").strip()[:300],
+            "when": when,
+        }
+    if target.startswith("fact:"):
+        fid = target[len("fact:"):]
+        for fact in digest.get("facts") or []:
+            if not isinstance(fact, dict):
+                continue
+            if (str(fact.get("id") or "") or fact_id(fact)) != fid:
+                continue
+            url = str(fact.get("source_url") or "").strip()
+            return {"url": url, "quote": str(fact.get("claim") or ""), "when": when} if url else {}
+        return {}
+    kind, _, url = target.partition(":")
+    if kind in _URL_TARGET_LISTS and url.strip():
+        digest_key = _URL_TARGET_LISTS[kind][0]
+        for entry in digest.get(digest_key) or []:
+            if isinstance(entry, dict) and str(entry.get("url") or "").strip() == url.strip():
+                return {"url": url.strip(), "quote": url.strip(), "when": when}
+    return {}
+
+
 async def correct_finding(
     db, uid: str, report_id: str, *, target: str, feedback: str
 ) -> dict | None:
@@ -803,6 +938,12 @@ async def correct_finding(
     ``disputed_*`` entry forward). Every turn — whatever
     Gemini decides — is appended to ``corrections`` as a short audit trail,
     capped at :data:`_MAX_CORRECTIONS` (oldest dropped first).
+
+    One turn type never reaches Gemini: a pure provenance question
+    (:func:`is_provenance_question` — any phrasing, not just "source") about
+    an item WITH a stored source is answered from that source directly
+    (``keep``, deterministic — #28). An item with no stored source still goes
+    through Gemini, which answers honestly from ``Source: (none)``.
 
     Returns ``{report_id, digest, reply, action}`` on success. ``None`` when
     there's no such report, or ``target`` names a fact that isn't on it.
@@ -837,6 +978,10 @@ async def correct_finding(
     url_entry: dict | None = None
     if target == "summary":
         claim_text = str(digest.get("summary", "")).strip()
+        # The summary is synthesised from the facts — its Source is the
+        # backing fact's URL, not "(none)" (#28: every summary turn used to
+        # send "(none)" even when backing URLs existed).
+        source_url = _summary_source_url(digest)
     elif target.startswith("fact:"):
         fid = target[len("fact:"):]
         for f in digest.get("facts") or []:
@@ -874,30 +1019,39 @@ async def correct_finding(
     else:
         return None
 
-    result = await gemini.generate_json(
-        f"Targeted item: {claim_text or '(empty)'}\n"
-        f"Source: {source_url or '(none)'}\n"
-        f"User's feedback: {feedback}",
-        system_prompt=(
-            _CORRECTION_SYSTEM_URL if url_entry is not None else _CORRECTION_SYSTEM
-        ),
-        response_schema=_CORRECTION_SCHEMA,
-        uid=uid,
-        feature=FEATURE_DEEPDIVE,
-    )
-    result = result if isinstance(result, dict) else {}
-    action = str(result.get("action") or "keep").strip().lower()
-    if action not in ("remove", "revise", "caveat", "keep"):
+    if source_url and is_provenance_question(feedback):
+        # #28: the stored source, quoted directly — no model round-trip, so
+        # every phrasing and every re-ask answers alike. (No source, or a
+        # correction mixed in, falls through to Gemini below.)
         action = "keep"
-    if url_entry is not None and action in ("revise", "caveat"):
-        # A bare link or photo has no wording to revise — audit-only.
-        action = "keep"
-    reply = (
-        str(result.get("reply") or "").strip()
-        or "Got it — thanks for the correction."
-    )
-    note = str(result.get("note") or "").strip()
-    revised_claim = str(result.get("revised_claim") or "").strip()
+        reply = f"I found that here: {source_url}"
+        note = ""
+        revised_claim = ""
+    else:
+        result = await gemini.generate_json(
+            f"Targeted item: {claim_text or '(empty)'}\n"
+            f"Source: {source_url or '(none)'}\n"
+            f"User's feedback: {feedback}",
+            system_prompt=(
+                _CORRECTION_SYSTEM_URL if url_entry is not None else _CORRECTION_SYSTEM
+            ),
+            response_schema=_CORRECTION_SCHEMA,
+            uid=uid,
+            feature=FEATURE_DEEPDIVE,
+        )
+        result = result if isinstance(result, dict) else {}
+        action = str(result.get("action") or "keep").strip().lower()
+        if action not in ("remove", "revise", "caveat", "keep"):
+            action = "keep"
+        if url_entry is not None and action in ("revise", "caveat"):
+            # A bare link or photo has no wording to revise — audit-only.
+            action = "keep"
+        reply = (
+            str(result.get("reply") or "").strip()
+            or "Got it — thanks for the correction."
+        )
+        note = str(result.get("note") or "").strip()
+        revised_claim = str(result.get("revised_claim") or "").strip()
 
     digest = dict(digest)
     disputed = list(data.get("disputed_facts") or [])
