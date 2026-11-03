@@ -45,7 +45,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, MULTI-SELECT per axis (tap to tick several, up to 6; ALL ticked photos read together in ONE combined face/body call) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini<br/>no-selection rerun cache keyed on photo SET + MODEL version (model change → recompute, §appearance re-run staleness)<br/>approved profile upload auto-grids server-side on POST /media so the newest image (HEIC/HEIF incl.) reliably enters the analysis set — no dropped client grid-add can orphan it]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, MULTI-SELECT per axis (tap to tick several, up to 6; ALL ticked photos read together in ONE combined face/body call) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini<br/>no-selection rerun cache keyed on photo SET + MODEL version (model change → recompute, §appearance re-run staleness)<br/>approved profile upload auto-grids server-side on POST /media so the newest image (HEIC/HEIF incl.) reliably enters the analysis set — no dropped client grid-add can orphan it<br/>card hero = pool[0] (primary FACE photo) is NEVER hidden by card_hidden, so the share card re-maps to the current selection on every re-run (a stale/accumulated hide list can't pin an old hero or empty the card)]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -259,6 +259,17 @@ flowchart LR
   meta (`report_hub.get_report` → `card_hidden_photos`), so both the on-screen card and the exported PNG show the
   same photos across sessions. Each `photo`/`photo_grid` block the adapter builds carries a stable `photo_id`
   (the Storage path) as the hide key, since the download url bears a rotatable token.
+  **The card's representative (hero) is never hidden (founder bug, 2026-11-02).** `report_adapters.appearance_blocks`
+  drops the pool's first id (`analysed_photo_ids`[0] — the primary selected FACE photo, the hero) from
+  `card_hidden_photos` before surfacing it, so the hero always reflects the user's **current** selection and re-maps
+  on every re-run; the hide-from-card control still curates the **secondary** photos within the current analysed set.
+  Before this, `report_card_hidden_photos` is a persistent, append-only profile list that is **not** reset when the
+  analysed set / selection changes on a re-run, so across re-runs it had accumulated until it covered the user's
+  **whole current pool** — `visible = pool − hidden = ∅`, so the share card showed no current photo (and looked pinned
+  to a stale image) even though the report sections had refreshed to the new selection. Intersecting with the live
+  pool already drops ids no longer analysed; the representative guard additionally stops a still-in-pool id (hidden
+  under an **older** selection) from pinning an old hero or emptying the card. This is server-side in the report meta,
+  so it fixes both the on-screen card and the exported PNG on the next report fetch — no client change.
 - *Appearance pre-run photo grouping*: before a run/rerun the Skills-screen sheet (and the report screen's Re-run) call
   `GET /appearance/eligibility` (`photo_attrs.eligibility`) and show the current grid photos as two thumbnail groups —
   **Face analysis** and **Body analysis**. Every grid photo is surfaced (not only the shot-type-tagged ones): a photo

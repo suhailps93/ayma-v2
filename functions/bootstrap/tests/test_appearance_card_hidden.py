@@ -141,6 +141,58 @@ def test_report_meta_carries_only_live_pool_hidden_ids(monkeypatch):
     assert report["card_hidden_photos"] == ["users/u1/photos/a.jpg"]
 
 
+def test_representative_face_photo_is_never_hidden_from_the_card(monkeypatch):
+    """§ founder bug 2026-11-02: the share card stayed on a stale photo after a
+    re-run while the report sections updated. Root cause: ``card_hidden``
+    accumulated across selections until it covered the WHOLE current pool, so
+    the card had no photo to draw (visible = pool − hidden = none). The card's
+    representative (pool[0], the primary FACE photo) is the hero and must always
+    survive so the card reflects the CURRENT selection — the hide-from-card
+    control curates only the SECONDARY photos."""
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(_DOC))
+    pool = appearance._pool_from_data(_DOC)  # face, body, a, b
+    # The user has hidden EVERY current pool photo (the accumulated stale list).
+    monkeypatch.setattr(appearance, "read_card_hidden", lambda db, uid: list(pool))
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    hidden = report["card_hidden_photos"]
+    assert pool[0] == "users/u1/photos/face.jpg"
+    # The hero is never hidden (fails without the fix, which hid the whole pool);
+    # the rest stay hidden exactly as the user chose.
+    assert pool[0] not in hidden
+    assert hidden == pool[1:]
+
+
+def test_rerun_with_a_new_face_selection_remaps_the_card_hero(monkeypatch):
+    """On a re-run the user selects a DIFFERENT face photo; the card hero must
+    follow the new selection (the new pool[0]) and never stay pinned by a stale
+    card_hidden entry from the old selection."""
+    doc = dict(_DOC)
+    doc["face"] = {
+        "usable": True, "overall_score": 7.0,
+        "source_photos": ["users/u1/photos/new_face.jpg"],
+    }
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(doc))
+    # Stale hidden list: the OLD face photo, the NEW face photo, and the body —
+    # all carried over from the prior selection's curation.
+    monkeypatch.setattr(
+        appearance, "read_card_hidden",
+        lambda db, uid: [
+            "users/u1/photos/face.jpg",       # old hero — no longer in the pool
+            "users/u1/photos/new_face.jpg",   # the new hero
+            "users/u1/photos/body.jpg",       # a secondary, still in the pool
+        ],
+    )
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    pool = appearance._pool_from_data(doc)
+    hidden = report["card_hidden_photos"]
+    assert pool[0] == "users/u1/photos/new_face.jpg"
+    # The new representative is the hero (not hidden); the old-face id self-heals
+    # out (no longer in the pool); body stays hidden within the current set.
+    assert "users/u1/photos/new_face.jpg" not in hidden
+    assert "users/u1/photos/face.jpg" not in hidden
+    assert "users/u1/photos/body.jpg" in hidden
+
+
 def test_endpoint_requires_auth():
     assert client.post("/appearance/card/hidden").status_code in (401, 403)
 
