@@ -5,6 +5,10 @@ Those bases MUST carry every ``LLM_PROVIDER_*=gemini`` pin (+ the global
 a surface to Meta-direct (off LiveKit). They must also carry NO direct-provider
 override (``FLAG_LLM_ROUTE_*=vertex`` / ``FLAG_VOICE_PROVIDER=google`` /
 ``FLAG_LLM_FALLBACK_TO_GOOGLE=true``), which would reroute off LiveKit.
+
+Staging repoint 2026-11-03: the bases must also reproduce the LIVE staging
+config exactly — the funded Aimma LiveKit project on both services — so a
+``--full`` deploy can't flip staging back to the unfunded staging project.
 """
 
 from __future__ import annotations
@@ -74,3 +78,32 @@ def test_bases_still_carry_the_other_critical_env():
     assert "STORAGE_BUCKET=" in api
     assert "VOICE_AGENT_CLOUD_DEFAULT=cloudrun" in api
     assert "OPEN_WEIGHTS_BASE_URL=" in api
+
+
+# Live staging runs on the funded Aimma LiveKit project (verified 2026-11-03
+# via gcloud run services describe on both staging services).
+_LIVEKIT_URL = "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud"
+_LIVEKIT_PROJECT_ID = "LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r"
+_LIVEKIT_ROOM_PREFIX = "LIVEKIT_ROOM_PREFIX=ayma-staging-"
+
+
+def test_bases_pin_the_funded_livekit_project():
+    text = _script_text()
+    api = _base(text, "API_ENV_BASE")
+    agent = _base(text, "AGENT_ENV_BASE")
+    for base in (api, agent):
+        assert _LIVEKIT_URL in base
+        assert _LIVEKIT_PROJECT_ID in base
+        assert _LIVEKIT_ROOM_PREFIX in base
+        # The old unfunded staging project must not come back via the script.
+        assert "ayma-staging-cyofszqr" not in base
+        assert "p_484u2zjk8ob" not in base
+
+
+def test_livekit_secrets_use_the_staging_names():
+    text = _script_text()
+    api_secrets = _base(text, "API_SECRETS")
+    agent_secrets = _base(text, "AGENT_SECRETS")
+    for secrets in (api_secrets, agent_secrets):
+        assert "LIVEKIT_API_KEY=LIVEKIT_API_KEY_STAGING:latest" in secrets
+        assert "LIVEKIT_API_SECRET=LIVEKIT_API_SECRET_STAGING:latest" in secrets
