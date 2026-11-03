@@ -17,6 +17,7 @@ import physical_attributes
 import schema
 import skill_memory
 import token_ledger
+from config import CONFIG
 from appearance_storage import (
     CAT_NO_ELIGIBLE,
     CAT_RAN,
@@ -193,15 +194,29 @@ def _identified_paths(
 
 
 def _unchanged_since_last_run(db, uid: str, current_paths: list[str] | None) -> dict | None:
-    """The persisted ``appearance_reports/current`` doc when ``current_paths``
-    (this run's fully-identified photo set) is exactly the set already
-    reflected there — ``attributes.source_photos``, which
-    :func:`physical_attributes.refresh` always derives from the *whole*
-    grid + extra set, so it's the one field that captures everything this run
-    would otherwise re-analyse. Set comparison — order doesn't matter, but
-    any addition or removal counts as a change. ``None`` (never dedup) when
-    ``current_paths`` is ``None``/empty, there's no previous report yet, or
-    it has no recorded photo set to compare against."""
+    """The persisted ``appearance_reports/current`` doc when this run would
+    reproduce it exactly — i.e. the cache is still valid. The validity key (the
+    "fingerprint") is two parts, BOTH of which must match the persisted report:
+
+    * the input photo SET — ``current_paths`` (this run's fully-identified
+      grid + extra photos) compared, as a set, against
+      ``attributes.source_photos``, which :func:`physical_attributes.refresh`
+      always derives from the *whole* grid + extra set, so it's the one field
+      that captures everything this run would otherwise re-analyse. Order
+      doesn't matter, but any addition or removal counts as a change.
+    * the Gemini MODEL that produced it — ``prev["model"]`` compared against the
+      current :data:`config.CONFIG.gemini_model`. The same photos re-analysed by
+      a *different* model must recompute, never re-serve the prior model's
+      report: a model upgrade that silently kept serving the old report was the
+      appearance re-run staleness bug (the report stored ``model`` but nothing
+      ever consulted it for invalidation). The model name flows only from
+      ``config.py`` — never a hardcoded default here.
+
+    ``None`` (never dedup — a cache miss, so the caller recomputes) when
+    ``current_paths`` is ``None``/empty, there's no previous report yet, it has
+    no recorded photo set to compare against, its photo set differs, or it was
+    produced by a different model (a legacy doc with no ``model`` recorded also
+    misses, so it recomputes once under the current model and self-heals)."""
     import appearance
 
     read_doc_fn = getattr(appearance, "_read_report_doc", _read_report_doc)
@@ -209,6 +224,9 @@ def _unchanged_since_last_run(db, uid: str, current_paths: list[str] | None) -> 
         return None
     prev = read_doc_fn(db, uid)
     if not prev:
+        return None
+    cfg = getattr(appearance, "CONFIG", CONFIG)
+    if str(prev.get("model") or "") != str(cfg.gemini_model):
         return None
     prev_attrs = prev.get("attributes")
     prev_paths = prev_attrs.get("source_photos") if isinstance(prev_attrs, dict) else None
@@ -346,7 +364,9 @@ async def run_appearance(
     always drives a fresh read (§ founder 2026-10-28), so selecting different
     already-in-grid photos yields a report reflecting them, never the prior one.
     Any addition or removal — or a photo that can't be reliably identified by
-    storage path — also falls through to a normal run.
+    storage path, or a change of the Gemini model that produced the persisted
+    report (:func:`_unchanged_since_last_run` keys the cache on the photo set
+    AND the model version) — also falls through to a normal run.
     """
     import appearance
 

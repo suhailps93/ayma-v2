@@ -45,7 +45,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, MULTI-SELECT per axis (tap to tick several, up to 6; ALL ticked photos read together in ONE combined face/body call) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet shows ALL photos sorted Face/Body<br/>via /appearance/eligibility, MULTI-SELECT per axis (tap to tick several, up to 6; ALL ticked photos read together in ONE combined face/body call) + Add photo both groups<br/>Add photo uploads PRIVATELY uploads/{uid} with an Uploading… spinner tile, rides run as image_paths, never published<br/>each section shows guidance copy + a no-other-people note<br/>Run analysis fires the run in the BACKGROUND (non-blocking toast, Back does not cancel), not chat<br/>report screen shows a LOADING STATE while a run is in flight (Re-run control spins, Updating… banner)<br/>rerun never wipes the untouched axis; vision calls route to Gemini<br/>no-selection rerun cache keyed on photo SET + MODEL version (model change → recompute, §appearance re-run staleness)]
     UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
@@ -341,6 +341,18 @@ flowchart LR
   skipped (`skill_runs/appearance` → `last_status: skipped, detail: unchanged_photos`), silently re-showing the previous
   report. A prior axis is now reused **only** when that axis was genuinely skipped (`want_*=False` / nothing eligible) — the
   per-axis merge above — never because the grid set as a whole looked unchanged.
+  **Model-version cache invalidation (§ appearance re-run staleness, founder 2026-11-02).** The no-selection dedup keys the
+  cache on a two-part fingerprint — the input photo **set** *and* the Gemini **model** that produced the report
+  (`prev["model"]` vs the current `config.CONFIG.gemini_model`). Before this fix it keyed on the photo set **alone**, so a
+  re-run with the *same* photos after a model change (e.g. the meta→Gemini brain flip) re-served the report the **old**
+  model had produced instead of recomputing — "it's just showing the old report." Now a model change is a cache **miss**
+  (`_unchanged_since_last_run` returns `None` → full recompute under the current model); the model name flows only from
+  `config.py` (no hardcoded default), and a legacy report with no `model` recorded also misses, so it recomputes once and
+  self-heals. Same photos **and** same model still re-share the last report (the founder's earlier "rerun without new
+  photos just share the last aggregated one" call is preserved). Verified against the founder's own staging specimen: the
+  Nov-2 re-run itself *did* fully recompute all three axes (the "cache re-serve, no recompute" framing did not reproduce —
+  `physical_attributes`, `face-analysis` and `body-analysis` were all re-written and the body verdict changed); the real
+  latent gap was the model-version-blind key.
 - *Appearance report vision routing*: the face and body reports are vision-dependent, so their image call goes through
   `llm_provider.get_vision_provider("reports")` — the configured `reports` provider only when it genuinely does vision
   (`supports_vision`), else **Gemini**. A text/reasoning-only provider (Muse Spark, `supports_vision=False`) would
