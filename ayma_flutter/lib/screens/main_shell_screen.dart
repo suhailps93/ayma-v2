@@ -125,26 +125,47 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
 
-  /// [AymaTabBar]'s `onSelected` here — the orb tap gets special treatment
-  /// (founder ask: opening it from another tab should pop up the scoped
-  /// "Ask Ayma" chat, not jump to the main Ayma tab); the other three tabs
-  /// go straight through to [_selectTab]. While that popup is open (its own
-  /// on-top copy of this same bar is wired to this same method — see
-  /// [_navBar]), a second orb tap grows it to full screen in place instead
-  /// of stacking a second popup, and any other tab closes it first so the
-  /// switch is actually visible (an expanded popup covers the whole page).
+  /// [AymaTabBar]'s `onSelected` here — the orb tap runs a progression
+  /// ([_onOrbTap]); the other three tabs go straight through to [_selectTab]
+  /// (closing the page-context popup first if it's open, so the switch is
+  /// actually visible — an expanded popup covers the whole page).
   void _onTabTap(int i) {
-    if (isPageContextAymaPopupOpen) {
-      if (i == 0) {
-        pageContextAymaPopupSheet.expand();
-        return;
-      }
-      Navigator.of(context).pop();
+    if (i == 0) {
+      _onOrbTap();
+      return;
     }
-    if (i == 0 && _index != 0) {
-      showPageContextAymaPopup(context, navBarBuilder: _navBar);
+    if (isPageContextAymaPopupOpen) Navigator.of(context).pop();
+    _selectTab(i);
+  }
+
+  /// The center orb's tap progression (founder ask): half sheet -> full main
+  /// chat -> voice. The 1-second hold ([_navBar]'s `onOrbLongPress`) still
+  /// activates voice directly from anywhere, unchanged and independent of
+  /// this.
+  ///
+  /// - Popup open and expanded to full screen (the plain main chat) -> voice.
+  /// - Popup open but still docked (half, with the page-context chip) -> grow
+  ///   it to full screen; the chip drops itself at full size
+  ///   (`ChatScreen._activePageContext`).
+  /// - No popup, already on the Ayma tab (the full-screen main chat) -> voice.
+  /// - No popup, on another tab -> open the half popup scoped to that page.
+  ///
+  /// Reuses the same `toggleVoiceCall` the hold does, and the same
+  /// `pageContextAymaPopupSheet.expand()` / `showPageContextAymaPopup` the UI
+  /// already uses — nothing here reimplements voice start or the expand.
+  void _onOrbTap() {
+    if (isPageContextAymaPopupOpen) {
+      if (pageContextAymaPopupSheet.isExpanded) {
+        toggleVoiceCall(context, _voice);
+      } else {
+        pageContextAymaPopupSheet.expand();
+      }
+      return;
+    }
+    if (_index == 0) {
+      toggleVoiceCall(context, _voice);
     } else {
-      _selectTab(i);
+      showPageContextAymaPopup(context, navBarBuilder: _navBar);
     }
   }
 

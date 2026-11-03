@@ -2,6 +2,8 @@ import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
 import 'package:ayma_flutter/services/tab_request.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
+import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
@@ -9,6 +11,24 @@ import 'package:ayma_flutter/widgets/notification_bell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+
+/// Idle voice stub that just records `start()` — the orb tap on the Ayma tab
+/// now activates voice (see `MainShellScreen._onOrbTap`), with no real LiveKit
+/// round trip in a widget test.
+class _ShellFakeVoice extends VoiceSessionController {
+  _ShellFakeVoice() : super(transcriptStore: TranscriptStore());
+
+  int startCalls = 0;
+
+  @override
+  VoiceSessionPhase get phase => VoiceSessionPhase.idle;
+  @override
+  bool get isActive => false;
+  @override
+  bool get isListening => false;
+  @override
+  Future<void> start() async => startCalls++;
+}
 
 void main() {
   // A stray pending request from another test file (TabRequest is a
@@ -200,24 +220,32 @@ void main() {
     },
   );
 
-  testWidgets('tapping the orb while already on the Ayma tab stays put', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1080, 2400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  testWidgets(
+    'tapping the orb while already on the Ayma tab activates voice (the '
+    'full-screen main chat is the progression shortcut)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(host());
-    await tester.pump();
+      final voice = _ShellFakeVoice();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: MainShellScreen(voiceController: voice),
+        ),
+      );
+      await tester.pump();
 
-    await tester.tap(find.byTooltip('Ayma'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
 
-    // No popup — tapping the orb while already on the Ayma tab is a no-op,
-    // same as before this task.
-    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
-  });
+      // Voice started, no chat sheet — the orb on the main chat goes straight
+      // to voice (tap progression's last rung / shortcut).
+      expect(voice.startCalls, 1);
+      expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+    },
+  );
 
   testWidgets('back walks tab history instead of leaving the app', (
     tester,

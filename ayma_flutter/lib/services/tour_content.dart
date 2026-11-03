@@ -72,6 +72,15 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.homeOrb,
   ),
   TourFeature(
+    featureId: 'orb_tap_progression',
+    headline: 'Tap the orb to go deeper',
+    subtitle: 'Tap once for a quick chat about the page you\'re on, tap again '
+        'to open it full screen, and tap on the full chat to talk out loud. '
+        '(Holding the orb still jumps straight to voice.)',
+    icon: Icons.touch_app_outlined,
+    anchorId: TourAnchors.homeOrb,
+  ),
+  TourFeature(
     featureId: 'profile_building',
     headline: 'Or just say hi',
     subtitle: 'Type right here — Ayma builds your profile as you chat.',
