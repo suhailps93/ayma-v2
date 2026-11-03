@@ -61,3 +61,25 @@ Run 21:48–21:58 PT. Specimen: a FRESH HEIF still (j8heif.heic, converted from 
 - Restore: HEIF photo deleted everywhere; eligibility verified back to the exact seed baseline (4 entries).
 Verdict: J8 PASS (auto-grid fix verified on the HEIF path — the October orphan failure mode does not reproduce for a freshly-added photo).
 Evidence: staging-dcd228d-retests_2026-11-02/j8heif-runsheet.png, j8heif-card-photos.png (also in this chat).
+
+## Addendum 5 — B12 + F3 + F9 retests (build 2266 / staging 5899fec)
+Run 23:16–23:50 PT. Build verified: aapt versionCode 2266, on-device dumpsys 2266.
+
+### B12 (wrong-password behavior) — FAIL [S2], split
+- Existing account + wrong password (test1@gmail.com + WrongPass123, two separate submits, button center verified by uiautomator bounds): form STAYS on sign-in, never flips to create-account — the founder's original complaint is fixed. BUT no wrong-password error appears at all: no inline error, no snackbar, no spinner, across 45s+ of observation per attempt.
+- Unknown email (nosuchuser-xyz123@example.com + password, submit + 55s wait): NO flip to sign-up either — the form sits inert, same as the wrong-password case.
+- Control: correct password (Test123) signs in immediately, so the button and success path work; only failed-credential feedback is missing. Likely single root cause: failed sign-in attempts produce no UI feedback (the submit handler swallows the failure, or the email-exists oracle call stalls silently).
+- Daniel's session restored after the run (signed back in as test1; chat history intact).
+Evidence: staging-dcd228d-retests_2026-11-02/b12-wrongpw-noerror.png (this chat).
+
+### F3 (Explore search) — PASS, all legs
+- Baseline Everyone grid: Daniel (self), Sofia 91%, Priya 17%, Alexander 0%, + more.
+- Query "someone who loves pottery and quiet mornings" via keyboard search key: thin pink progress bar shows during search; grid changes — Alexander removed (Daniel, Sofia, Priya remain).
+- Query "loves pottery" via the field's magnifier icon: grid filters to exactly Daniel + Sofia (Priya, Alexander removed).
+- Same query via Enter key (adb keyevent 66): grid stays filtered to Daniel + Sofia (typing alone does not filter, proven by the pre-submit screenshots).
+- Clear (x): field back to placeholder, grid back to full baseline.
+Evidence: staging-dcd228d-retests_2026-11-02/f3-filtered.png (this chat).
+
+### F9 (Explore empty state) — PASS
+- Gibberish "asdfghjk" via keyboard search: clean empty state "No one matches that yet." — no cards, no crash, no stale results. Cleared afterward; baseline grid restored.
+Evidence: staging-dcd228d-retests_2026-11-02/f9-empty.png (this chat).
