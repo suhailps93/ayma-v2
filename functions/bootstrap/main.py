@@ -1286,6 +1286,21 @@ async def _prepare_chat(
             )
             return ({"reply": reply}, None)
 
+        # Deterministic navigation (§13.9): a clear "open / go to <known page>"
+        # is executed BEFORE the model, so it works regardless of which brain is
+        # active. The open-weights brain (Llama-3.1-8B) is weak at tool-calling
+        # and otherwise leaks the raw tool name ("open_model_page") as the reply
+        # instead of navigating (founder bug 2026-11-03); the capable brains
+        # (Gemini / Meta gateway) reach the same navigation a hair sooner. Strict
+        # (nav verb + a registry-resolvable destination), so ordinary chat is
+        # never intercepted. Mirrors the model-stack determinism just above.
+        app_dest = app_control_mod.detect_app_command(req.message)
+        if app_dest is not None:
+            reply = await app_control_mod.run_app_command(
+                get_db(), uid, app_dest
+            )
+            return ({"reply": reply}, None)
+
     image_path = req.image_path.strip()
     image: tuple[bytes, str] | None = None
     if image_path:

@@ -246,3 +246,151 @@ def test_open_weights_base_url_defaults_to_empty(monkeypatch):
 
     monkeypatch.delenv("OPEN_WEIGHTS_BASE_URL", raising=False)
     assert config._load().open_weights_api_base_url == ""
+
+
+# --- garbage-leak suppression (founder bug 2026-11-03) -------------------- #
+#
+# The 8B open-weights brain is weak at tool-calling and often emits the function
+# NAME as plain content ("open_model_page", "openamodelspace") that the
+# llama3_json parser never captured as a tool call. That raw token must NEVER be
+# surfaced as the reply — it is suppressed in favour of an honest fallback.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leaked", [
+    "open_model_page",        # snake_case invented tool name
+    "openamodelspace",        # long mashed verb-led token
+    "<function=open_screen>", # vLLM/Llama tool-call wrapper in content
+    '{"name": "open_screen"}',  # bare JSON tool call that wasn't parsed
+])
+async def test_leaked_tool_name_is_suppressed_not_shown(leaked):
+    client = _FakeClient([_FakeResponse(_FakeMessage(content=leaked))])
+    events = [
+        ev async for ev in OpenWeightsProvider(client=client).generate_reply_events(
+            "open the models page", system_prompt="s", uid="u1", feature="chat",
+        )
+    ]
+    reply = events[-1]
+    assert reply["type"] == "reply"
+    # The raw token is gone; the user sees an honest fallback instead.
+    assert reply["text"] == llm_provider._TOOL_LEAK_FALLBACK
+    assert leaked not in reply["text"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prose", [
+    "Opening the models page for you now.",
+    "Sure — I can help you with that.",
+    "Opening",          # short one-word reply, not a tool name
+    "done",
+])
+async def test_real_prose_reply_is_never_suppressed(prose):
+    client = _FakeClient([_FakeResponse(_FakeMessage(content=prose))])
+    events = [
+        ev async for ev in OpenWeightsProvider(client=client).generate_reply_events(
+            "hi", system_prompt="s", uid="u1", feature="chat",
+        )
+    ]
+    assert events[-1]["text"] == prose
+
+
+@pytest.mark.asyncio
+async def test_final_summary_after_a_real_tool_call_is_not_suppressed():
+    # When the model DID emit a structured tool call, the follow-up summary is a
+    # genuine reply and must pass through untouched even if it is terse.
+    call = type("TC", (), {})()
+    call.id = "c1"
+    call.function = type("F", (), {"name": "open_screen", "arguments": "{}"})()
+    first = _FakeResponse(_FakeMessage(content="", tool_calls=[call]))
+    second = _FakeResponse(_FakeMessage(content="Opened."))
+    client = _FakeClient([first, second])
+    events = [
+        ev async for ev in OpenWeightsProvider(client=client).generate_reply_events(
+            "open it", system_prompt="s",
+            tool_declarations=[{
+                "name": "open_screen", "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            }],
+            tool_fns={"open_screen": lambda **kw: "navigated: screen=x — done."},
+            uid="u1", feature="chat",
+        )
+    ]
+    assert events[-1]["text"] == "Opened."
+
+
+def test_looks_like_leaked_tool_call_unit():
+    f = llm_provider._looks_like_leaked_tool_call
+    decls = [{"name": "open_screen"}, {"name": "recall"}]
+    # Flagged: identifiers, wrappers, exact declared names.
+    assert f("open_model_page")
+    assert f("openamodelspace")
+    assert f("<|python_tag|>open_screen")
+    assert f("[TOOL_CALLS]")
+    assert f("recall", decls)          # exact declared tool name, standing alone
+    # Not flagged: genuine prose, short words, empty.
+    assert not f("Opening the models page for you.")
+    assert not f("Opening")
+    assert not f("okay")
+    assert not f("")
+    assert not f("I'll do that.")
+
+
+# --- persona-break suppression (founder addendum 2026-11-03) -------------- #
+#
+# The same 8B brain also ignores the Ayma system prompt and reverts to a
+# base-assistant disclaimer ("I'm just a language model") or a generic refusal.
+# The clean-language guardrail is prompt-level only, so the break is caught on
+# the OUTPUT and replaced with a warm in-persona line — never shown.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broken", [
+    "I'm just a language model and can't help with that.",
+    "As an AI language model, I cannot do that.",
+    "As an AI assistant, I'm unable to help with this.",
+    "I'm just an AI, so I don't have personal opinions.",
+    "I am an artificial intelligence and cannot feel emotions.",
+    "Sorry, I can't help with that.",
+])
+async def test_persona_break_is_replaced_not_shown(broken):
+    client = _FakeClient([_FakeResponse(_FakeMessage(content=broken))])
+    events = [
+        ev async for ev in OpenWeightsProvider(client=client).generate_reply_events(
+            "who are you?", system_prompt="You are Ayma.", uid="u1", feature="chat",
+        )
+    ]
+    reply = events[-1]
+    assert reply["text"] == llm_provider._PERSONA_BREAK_FALLBACK
+    # The disclaimer wording never reaches the user.
+    assert "language model" not in reply["text"].lower()
+    assert "as an ai" not in reply["text"].lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("in_persona", [
+    "I'm your AI matchmaker — let's find you someone great.",
+    "I can help you with that — where should we start?",
+    "I think you two would really hit it off!",
+    "As a friend, I'd say go for it.",
+])
+async def test_in_persona_reply_is_never_replaced(in_persona):
+    client = _FakeClient([_FakeResponse(_FakeMessage(content=in_persona))])
+    events = [
+        ev async for ev in OpenWeightsProvider(client=client).generate_reply_events(
+            "hi", system_prompt="You are Ayma.", uid="u1", feature="chat",
+        )
+    ]
+    assert events[-1]["text"] == in_persona
+
+
+def test_looks_like_persona_break_unit():
+    f = llm_provider._looks_like_persona_break
+    assert f("I'm just a language model.")
+    assert f("as an AI, I can't do that")
+    assert f("I'm an AI assistant")
+    assert f("I cannot help with that")
+    # In-persona and Ayma truthfully being an AI matchmaker are NOT breaks.
+    assert not f("I'm your AI matchmaker.")
+    assert not f("I can help with that!")
+    assert not f("Let's find you a great match.")
+    assert not f("")

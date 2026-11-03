@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
+import re
 from typing import Callable
 from urllib.parse import quote
 
@@ -285,6 +286,84 @@ def _bind_open_screen(db, uid: str) -> Callable[..., str]:
         return await _navigate(db, uid, dest["key"], path, label)
 
     return open_screen
+
+
+# --- deterministic pre-model navigation intent (brain-agnostic) ---------------
+#
+# The open-weights voice/chat brain (Llama-3.1-8B over the Modal vLLM endpoint,
+# scripts/modal_open_weights.py --tool-call-parser llama3_json) is weak at
+# tool-calling: it frequently emits the function NAME as plain assistant content
+# ("open_model_page", "openamodelspace") instead of a structured tool call the
+# parser recognises, so nothing runs and the raw token leaks as the reply
+# (founder bug 2026-11-03). Mirroring set_model_stack.detect_stack_command (and
+# the #28 provenance determinism), main._prepare_chat runs this matcher BEFORE
+# the model, so a clear "open / go to <known page>" command fires the correct
+# app-command regardless of which brain is active — and the weak brain never
+# gets the chance to garble it. The capable brains (Gemini, Meta gateway) still
+# emit the tool reliably; for them this only short-circuits the exact same
+# navigation a hair sooner.
+#
+# Kept strict: a navigation verb AND a destination that resolves in the registry
+# (app_registry.find_destination — the single source of truth), so ordinary chat
+# is never intercepted. Story-edit and report-re-run phrasings (which also carry
+# a verb and brush a destination's words) are deliberately excluded here so they
+# still reach their own tools / the model with full context.
+_APP_NAV_VERB = re.compile(
+    r"\b(?:"
+    r"open(?:\s+up|\s+back)?|"
+    r"go(?:\s+back)?\s+to|goto|"
+    r"take\s+me(?:\s+back)?\s+to|"
+    r"bring\s+(?:me\s+)?(?:up|to)|pull\s+up|"
+    r"show\s+me|"
+    r"navigate(?:\s+back)?\s+to|"
+    r"jump(?:\s+back)?\s+to|"
+    r"back\s+to|"
+    r"switch\s+to"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def detect_app_command(message: str) -> str | None:
+    """A clear, unambiguous "open / go to <known page>" command → the registry
+    destination ``key`` to navigate to, else ``None``.
+
+    Strict by design (so ordinary chat is never hijacked): requires a navigation
+    verb AND a destination that resolves in ``app_registry``. A story-edit or a
+    report-re-run request is excluded — those carry their own intent and must
+    still reach their own tools / the model. :func:`run_app_command` executes the
+    match through the same bound ``open_screen`` the model would call."""
+    m = (message or "").strip()
+    if not m or len(m) > 200:
+        return None
+    if not _APP_NAV_VERB.search(m):
+        return None
+    # A "change/remove … my story" or "rerun the appearance report" also brushes
+    # a destination's words — leave those for their own tools / the model.
+    if app_registry.find_story_edit_action(m) or app_registry.find_report_action(m):
+        return None
+    dest = app_registry.find_destination(m)
+    if dest is None:
+        return None
+    return str(dest["key"])
+
+
+async def run_app_command(db, uid: str, dest_key: str) -> str:
+    """Execute a detected navigation command through the SAME bound
+    ``open_screen`` the model would call, then translate its model-facing return
+    into a short, honest line to show the user directly (the deterministic path
+    has no model turn to relay it). A confirmed navigation reads as a plain
+    "opening X"; anything else is relayed as an honest "couldn't switch" rather
+    than a false success."""
+    dest = app_registry.find_destination(dest_key)
+    label = dest["label"] if dest else dest_key
+    result = await _bind_open_screen(db, uid)(screen=dest_key)
+    if isinstance(result, str) and result.startswith("navigated:"):
+        return f"Opening {label} for you."
+    return (
+        f"I tried to open {label}, but the app didn't switch screens just now — "
+        "you can also reach it yourself from the menu."
+    )
 
 
 def _bind_open_match_report(db, uid: str) -> Callable[..., str]:

@@ -98,9 +98,59 @@ Endpoint and key come ONLY from `OPEN_WEIGHTS_BASE_URL` (non-secret config) and 
 Meta path there is deliberately NO paid fallback: if either var is unset the call raises
 the explicit `OpenWeightsUnconfiguredError`, and any endpoint failure propagates — the
 cheap path can never silently become paid-vendor spend. Same text/JSON/tool capability
-profile as Meta (no vision, no web — those still resolve to Gemini); not in the
-user-facing Brain catalog (backend flag only). Tests: `functions/bootstrap/tests/test_open_weights_provider.py`
+profile as Meta (no vision, no web — those still resolve to Gemini). Tests: `functions/bootstrap/tests/test_open_weights_provider.py`
 (mocked endpoint, no live HTTP).
+
+### Honest limit: 8B tool-calling is weak — secondary/demo brain (2026-11-03)
+
+When `OPEN_WEIGHTS_BASE_URL` is set the open-weights brain is **also user-selectable**
+as the unified Brain ("Llama 3.1 8B (open weights)", `voice_catalog.BRAIN_OPEN_WEIGHTS`)
+— it exists primarily for the **Meta open-weights prize** (self-hosted, scale-to-zero
+on Modal, `scripts/modal_open_weights.py`). An 8B Llama is **weak at tool-calling**: it
+frequently emits the function *name* as plain assistant text ("open_model_page",
+"openamodelspace") instead of a structured tool call the vLLM `llama3_json` parser
+captures — so nothing ran and the raw token leaked as the reply (founder bug 2026-11-03).
+This is an inherent small-model limitation, not a config bug; Gemini and the Meta gateway
+(bigger model) parse the same tools reliably and are the capable tool brains.
+
+The same 8B weakness shows up as a **persona break**: it ignores the Ayma system prompt
+and reverts to base-assistant boilerplate — "I'm just a language model", "as an AI
+assistant", a generic "I can't help with that" (founder addendum 2026-11-03). The existing
+clean-language guardrail (vc 2241) is **prompt-level only** (`persona.md` etc.), so it does
+**nothing** for a model that ignores the prompt — the break has to be caught on the output.
+
+Three-part mitigation (brain-agnostic, so it also benefits the weak brain specifically):
+
+1. **Garbage-leak guard** (`llm_provider._looks_like_leaked_tool_call`): when the model
+   emits **no** structured tool call but its content is really a bare/malformed tool name,
+   the raw token is **suppressed** and replaced with an honest short fallback — never shown.
+2. **Persona-break guard** (`llm_provider._looks_like_persona_break`): a base-assistant
+   disclaimer / AI-boilerplate / generic refusal is **replaced** with a warm in-character
+   line — the "I'm just a language model" disclaimer never reaches the user. High-precision
+   (Ayma truthfully calling herself *your AI matchmaker* is NOT flagged). Both guards run in
+   one place (`guard_open_weights_text`, applied in `OpenWeightsProvider._open_weights_reply_events`
+   where the reply is finalized).
+3. **Deterministic intent matching** (`skills.app_control.detect_app_command` /
+   `run_app_command`, run in `main._prepare_chat` *before* the model, mirroring
+   `set_model_stack.detect_stack_command`): a clear "open / go to `<known page>`" command
+   — resolved against `app_registry` (the destination vocabulary) — fires the correct
+   app-command deterministically regardless of which brain is active, so common
+   navigation ("open the models page", "go back to the main chat", "open notifications")
+   always works even on the weak brain.
+
+**A guardrail makes open-weights less embarrassing; it does NOT make it a production-grade
+brain.** Gemini and the Meta gateway remain the capable brains (reliable tool-calling and
+persona adherence); open-weights is the **Meta open-weights prize / demo** option. Anything
+beyond the common app-control surface **degrades gracefully** on the 8B brain (honest
+in-persona fallback, never garbage or a disclaimer) rather than working well. Scope: both
+guards live in **`OpenWeightsProvider`** (the text-chat path, ayma-api), where the reply is
+finalized before display. The **voice** open-weights cascade (ayma-agent) runs its LLM leg
+directly through `livekit-plugins-openai` inside the LiveKit pipeline, so it does **not**
+pass through `OpenWeightsProvider`; it shares the same 8B weakness and its realtime default
+(Gemini Live) remains the capable voice brain — an output-level guard on the cascade's
+pre-TTS text is a documented follow-up (it would need a LiveKit `tts_node`/`llm_node` hook).
+Tests: the garbage-suppression, persona-break and deterministic-matcher repros in
+`tests/test_open_weights_provider.py` and `tests/test_app_control.py`.
 
 ## Status (2026-10-26) — live
 

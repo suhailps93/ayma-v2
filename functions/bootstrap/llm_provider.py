@@ -640,6 +640,138 @@ class MetaProvider(LLMProvider):
 # --- Open-weights cheap path (OpenAI-compatible) --------------------------- #
 
 
+# Honest fallback when the open-weights brain leaks a bare / garbled tool name
+# as its reply content instead of calling the tool (see
+# :func:`_looks_like_leaked_tool_call`). Short and truthful: the common
+# navigation / app-control commands are already executed deterministically
+# BEFORE the model (``main._prepare_chat`` → ``app_control.detect_app_command``
+# and ``set_model_stack.detect_stack_command``), so this only covers the long
+# tail the weak 8B brain mangles — and the raw token is never shown to the user.
+_TOOL_LEAK_FALLBACK = (
+    "Sorry — I couldn't do that just now. Could you say it another way?"
+)
+
+# In-persona fallback when the open-weights brain BREAKS CHARACTER — reverts to
+# a base-assistant disclaimer ("I'm just a language model", "as an AI
+# assistant") or a generic refusal instead of answering as Ayma (founder bug
+# 2026-11-03). The existing clean-language guardrail is prompt-level only
+# (persona.md etc.), and the 8B brain ignores the system prompt, so the break
+# has to be caught on the OUTPUT and replaced with a warm, in-character line —
+# the disclaimer is never shown. Short and non-committal so it fits any turn.
+_PERSONA_BREAK_FALLBACK = (
+    "I'm right here with you — tell me a little more and I'll help with it."
+)
+
+# Base-model persona breaks / AI disclaimers Ayma must never utter. High-
+# precision by design (she is an AI matchmaker, so a bare "I'm an AI …
+# matchmaker" is legitimate and deliberately NOT matched): only the unmistakable
+# base-assistant disclaimers and the generic "I can't help with that" refusal.
+_PERSONA_BREAK_RE = re.compile(
+    r"\b("
+    r"language model"                               # "(just a|as a) language model"
+    r"|as an? ai\b"                                 # "as an AI, I…"
+    r"|(?:just|merely|only|simply) an? ai\b"        # "I'm just an AI"
+    r"|ai (?:language )?(?:assistant|model)"        # "AI assistant" / "AI model"
+    r"|artificial intelligence"                     # "I'm an artificial intelligence"
+    r"|i (?:can'?t|cannot|can ?not|am (?:not able|unable) to|'m (?:not able|unable) to) "
+    r"(?:really |actually )?(?:help|assist)(?: you)? with (?:that|this)"  # generic refusal
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_persona_break(text: str) -> bool:
+    """True when ``text`` is an out-of-character base-assistant disclaimer /
+    AI boilerplate / generic refusal Ayma must never say (she answers as a warm
+    matchmaker, never "I'm just a language model"). Narrow on purpose so ordinary
+    in-persona text — including Ayma truthfully describing herself as *your AI
+    matchmaker* — is never flagged."""
+    t = (text or "").strip()
+    return bool(t) and bool(_PERSONA_BREAK_RE.search(t))
+
+
+def guard_open_weights_text(
+    text: str, had_tool_call: bool, tool_declarations=None
+) -> str:
+    """Finalize weak open-weights assistant text before it is shown: replace a
+    leaked raw tool name (only meaningful as the whole content, so when no tool
+    actually ran) or an out-of-character persona break with an honest in-persona
+    fallback. A genuine reply passes through untouched. One place so the text
+    chat path and any future cascade-output hook share the exact same rules."""
+    if not had_tool_call and _looks_like_leaked_tool_call(text, tool_declarations):
+        logger.warning(
+            "open-weights leaked a bare tool name as content (suppressed): %r", text
+        )
+        return _TOOL_LEAK_FALLBACK
+    if _looks_like_persona_break(text):
+        logger.warning(
+            "open-weights broke character / gave an AI disclaimer (replaced): %r",
+            text,
+        )
+        return _PERSONA_BREAK_FALLBACK
+    return text
+
+# Wrappers vLLM / Llama emit around a (mis)formatted tool call that the
+# ``llama3_json`` parser (scripts/modal_open_weights.py) failed to capture, so
+# they land in ``message.content`` verbatim rather than ``message.tool_calls``.
+_TOOL_WRAPPER_RE = re.compile(
+    r"(<\|?python_tag\|?>|<function\b|</?tool_call>|\[/?TOOL_CALLS?\]|"
+    r"^\s*functools\.|^\s*\{\s*\"(?:name|type)\"\s*:)",
+    re.IGNORECASE,
+)
+
+# A bare identifier that is really a tool name, not prose.
+_BARE_IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_TOOL_VERB_PREFIX_RE = re.compile(
+    r"^(?:open|close|set|go|goto|show|search|run|navigate|take|bring|pull|"
+    r"switch|list|send|edit|remove|record|report|analyze|start|advance)",
+    re.IGNORECASE,
+)
+
+
+def _declared_tool_names(tool_declarations) -> set[str]:
+    """Lower-cased tool names from a list of OpenAI/Gemini-style declarations."""
+    out: set[str] = set()
+    for d in tool_declarations or []:
+        name = d.get("name") if isinstance(d, dict) else None
+        if name:
+            out.add(str(name).lower())
+    return out
+
+
+def _looks_like_leaked_tool_call(text: str, tool_declarations=None) -> bool:
+    """True when ``text`` — an assistant reply that carried NO structured tool
+    call — is really a bare / malformed tool name the weak open-weights brain
+    (Llama-3.1-8B) emitted as content instead of actually calling the tool, so
+    it must be suppressed and never shown (founder bug 2026-11-03:
+    "open_model_page" / "openamodelspace" surfaced as the reply).
+
+    Conservative: a genuine prose reply — which has whitespace / punctuation and
+    reads as a sentence — is never flagged. Only an obvious tool-call wrapper, an
+    exact declared tool name standing alone, a snake_case identifier, or a long
+    mashed verb-led token (no spaces, not an English word) trips it."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _TOOL_WRAPPER_RE.search(t):
+        return True
+    low = t.lower()
+    # An exact declared tool name, even standing alone with no arguments.
+    if low in _declared_tool_names(tool_declarations):
+        return True
+    # From here on, only single-token content can qualify — real prose has
+    # whitespace between words.
+    if any(c.isspace() for c in t):
+        return False
+    if not _BARE_IDENT_RE.match(t):
+        return False
+    # snake_case identifier → unmistakably a tool name (prose is never snake_case).
+    if "_" in t:
+        return True
+    # A long, mashed, verb-led token ("openamodelspace") — not an English word.
+    return len(t) >= 12 and bool(_TOOL_VERB_PREFIX_RE.match(low))
+
+
 class OpenWeightsUnconfiguredError(RuntimeError):
     """A surface is routed to ``open-weights`` but the deployment has not set
     ``OPEN_WEIGHTS_BASE_URL`` and/or ``OPEN_WEIGHTS_API_KEY``. Raised instead
@@ -885,6 +1017,14 @@ class OpenWeightsProvider(LLMProvider):
             msg = resp.choices[0].message
 
         text = gemini.strip_inline_refs((msg.content or "").strip())
+        # Weak-brain output guard (founder bug 2026-11-03): the 8B open-weights
+        # brain both (a) leaks a raw tool name as content instead of calling it
+        # and (b) breaks character into a base-assistant disclaimer ("I'm just a
+        # language model") / generic refusal. Neither may ever reach the user —
+        # replace with an honest in-persona fallback. Common commands are already
+        # executed deterministically before the model, so this is the safety net
+        # for the long tail the weak brain mangles.
+        text = guard_open_weights_text(text, bool(calls), tool_declarations)
         if not text:
             raise RuntimeError("Open-weights returned an empty response.")
         yield {"type": "reply", "text": text, "tools_used": used}

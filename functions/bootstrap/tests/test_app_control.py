@@ -1726,3 +1726,57 @@ def test_founder_asks_navigate_when_their_tool_runs():
 def test_feature_phrasings_resolve_to_their_destination(phrase, key):
     dest = app_registry.find_destination(phrase)
     assert dest and dest["key"] == key, (phrase, dest)
+
+
+# --- deterministic pre-model navigation (open-weights brain fix 2026-11-03) ---
+#
+# The weak open-weights brain leaks a raw tool name instead of calling it, so a
+# clear "open <known page>" must fire deterministically BEFORE the model —
+# brain-agnostic — exactly like set_model_stack.detect_stack_command.
+
+@pytest.mark.parametrize("phrase,key", [
+    ("Can you open up the models space?", "voice_preference"),
+    ("open the models page", "voice_preference"),
+    ("go back to the main chat", "ayma"),
+    ("take me back to the main chat", "ayma"),
+    ("open notifications", "notifications"),
+    ("open explore", "explore"),
+    ("go to my messages", "messages"),
+    ("switch to explore", "explore"),
+])
+def test_detect_app_command_resolves_a_clear_open(phrase, key):
+    assert app_control.detect_app_command(phrase) == key
+
+
+@pytest.mark.parametrize("phrase", [
+    "I love hiking and long walks on the beach",
+    "what can you do for me?",
+    "tell me about the models you use",          # no nav verb
+    "the models page is my favorite screen",     # no nav verb
+    "open and rerun the appearance report",      # report re-run → its own tool
+    "change my story to say I grew up in Texas",  # story edit → its own tool
+    "",
+    "x" * 201,                                   # over the length guard
+])
+def test_detect_app_command_leaves_ordinary_chat_alone(phrase):
+    assert app_control.detect_app_command(phrase) is None
+
+
+def test_run_app_command_navigates_through_open_screen():
+    db = _acking_db()
+    out = _run(app_control.run_app_command(db, "me", "voice_preference"))
+    assert out.startswith("Opening "), out
+    # It executed the SAME navigate open_screen would — a real queued command.
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "navigate" and cmd["screen"] == "voice_preference"
+    # The raw model-facing "navigated:" directive is NOT what the user sees.
+    assert "navigated:" not in out and "the user is now on" not in out
+
+
+def test_run_app_command_is_honest_when_the_app_never_navigates(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()  # no client ever acks
+    out = _run(app_control.run_app_command(db, "me", "voice_preference"))
+    assert "didn't switch screens" in out
+    # Never a false success and never the raw directive string.
+    assert not out.startswith("Opening ") and "navigated:" not in out
