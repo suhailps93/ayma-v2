@@ -2137,6 +2137,14 @@ def test_correct_finding_remove_drops_the_photo_and_records_a_dispute(monkeypatc
     assert stored["disputed_photos"][0]["url"] == "https://img.example/a.jpg"
 
 
+def test_correction_prompts_direct_answering_source_questions_from_the_saved_url():
+    # J7: a "what's the source link?" turn must quote the saved Source URL —
+    # never claim it isn't saved, never ask the user to supply it.
+    for prompt in (deep_dive._CORRECTION_SYSTEM, deep_dive._CORRECTION_SYSTEM_URL):
+        assert "quote" in prompt
+        assert "never ask the user" in prompt
+
+
 def test_correct_finding_targets_the_summary(monkeypatch):
     db = _FakeDb()
     key = deep_dive._cache_key("", "Dana Reis")

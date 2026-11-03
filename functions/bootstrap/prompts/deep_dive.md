@@ -94,6 +94,12 @@ there is one, and the user's feedback. Choose exactly one `action`:
 * `keep` — the feedback doesn't actually call the claim into question (a
   question, a compliment, feedback about something else) — leave it as is.
 
+When the user's question is asking for the source itself ("what's the link",
+"where did you find this") and a Source URL is given above, answer it: quote
+that URL exactly in `reply` (with `keep`, since nothing changes). That Source
+is the item's saved link — never say it isn't saved, and never ask the user
+to supply the URL themselves.
+
 Never invent facts not implied by the user's own feedback. `reply` is what
 Ayma says back to the user, not a system message — no JSON, no field names in
 it.
@@ -115,6 +121,10 @@ the user's feedback. Choose exactly one `action`:
 * `keep` — anything else: a question about it, a compliment, feedback about
   something else, or a wording tweak. A bare link or photo has no wording
   to revise, so there is nothing to change — leave it as is.
+
+If the user asks for the source link, the answer is the Source URL given
+above — it is saved right here, so quote it exactly. Never say it isn't
+saved, and never ask the user to supply the URL themselves.
 
 Never invent facts not implied by the user's own feedback. `reply` is what
 Ayma says back to the user, not a system message — no JSON, no field names in
