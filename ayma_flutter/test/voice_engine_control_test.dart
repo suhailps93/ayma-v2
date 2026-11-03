@@ -214,6 +214,83 @@ void main() {
     expect(find.text('BRAIN (LLM)'), findsOneWidget); // cascade controls now shown
   });
 
+  testWidgets(
+      'a slow/cold backend on the INITIAL load: stays on the spinner and '
+      'recovers — never the hard "Could not load voices" error',
+      (tester) async {
+    // Founder bug (2026-11-03): switching the brain re-fetched /voice/engines
+    // against the cold staging backend and 408'd into a hard error. The same
+    // pattern on the initial open must instead ride the cold start. The first
+    // logical load fails transiently; the retry succeeds.
+    final api = _ColdVoiceApi(failCall: (n) => n == 1);
+
+    await tester.pumpWidget(_host(VoiceEngineControl(api: api)));
+    // First load failed + retry scheduled: loading spinner, NO hard error.
+    await tester.pump();
+    expect(find.byKey(const ValueKey('voice-engine-error')), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    // Ride out the backoff into the warm, successful load.
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('voice-engine-error')), findsNothing);
+    expect(find.text('Aoede — warm'), findsOneWidget); // catalog rendered
+    expect(api.calls, 2);
+  });
+
+  testWidgets(
+      'a slow/cold backend on the LIVE RE-FETCH (brain switch): no hard error, '
+      'recovers in place', (tester) async {
+    // Open (call 1) succeeds; the re-fetch's first logical call (call 2)
+    // cold-starts, its retry (call 3) succeeds with the new stack.
+    final api = _ColdVoiceApi(failCall: (n) => n == 2);
+    final fs = FakeFirebaseFirestore();
+    final doc =
+        fs.collection('users').doc('u1').collection('profile').doc('main');
+    await doc.set({'ayma_voice_mode': 'realtime'});
+
+    await tester.pumpWidget(
+        _host(VoiceEngineControl(api: api, firestore: fs, uid: 'u1')));
+    await tester.pumpAndSettle();
+    expect(api.calls, 1);
+    expect(find.text('BRAIN (LLM)'), findsNothing); // realtime, no cascade
+
+    // Ayma switches to cascade → the watched doc changes → re-fetch, which
+    // cold-starts. The control must never flash the hard error, and recovers.
+    api.mode = 'cascade';
+    await doc.set({'ayma_voice_mode': 'cascade'}, SetOptions(merge: true));
+    await tester.pump(const Duration(milliseconds: 300)); // debounce → re-fetch
+    // The re-fetch's first call cold-starts (fails); the current dropdowns stay
+    // up (no spinner) and the hard error must NOT flash.
+    expect(find.byKey(const ValueKey('voice-engine-error')), findsNothing);
+    // Advance past the 1s backoff explicitly: with no spinner animating there
+    // is no scheduled frame for pumpAndSettle to ride, so step the clock.
+    await tester.pump(const Duration(seconds: 1)); // backoff elapses → retry
+    await tester.pump(); // apply the successful re-fetch's setState
+    expect(find.byKey(const ValueKey('voice-engine-error')), findsNothing);
+    expect(find.text('BRAIN (LLM)'), findsOneWidget); // cascade controls now
+    expect(api.calls, 3);
+  });
+
+  testWidgets(
+      'a genuinely-unreachable backend ends on the error + Retry after the '
+      'budget, and Retry restarts the load', (tester) async {
+    // Every auto-retry fails while `down`; the founder's Retry tap (with the
+    // backend now reachable) restarts the sequence and succeeds.
+    final api = _ColdVoiceApi(failCall: (_) => true);
+
+    await tester.pumpWidget(_host(VoiceEngineControl(api: api)));
+    await tester.pumpAndSettle(); // exhaust the cold-start budget
+    expect(find.byKey(const ValueKey('voice-engine-error')), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+
+    api.down = false; // backend reachable again
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    // Retry restarted the sequence cleanly and this time it succeeded.
+    expect(find.byKey(const ValueKey('voice-engine-error')), findsNothing);
+    expect(find.text('Aoede — warm'), findsOneWidget);
+  });
+
   testWidgets('the free-text accent is typed and posted to /voice/preference',
       (tester) async {
     await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
@@ -420,6 +497,38 @@ void main() {
     expect(_posted, hasLength(1));
     expect(voice.notifyCalls, 0);
   });
+}
+
+/// An [ApiClient] that controls `/voice/engines` at the LOGICAL call level, so
+/// a test drives cold-start failures deterministically (the HTTP layer's own
+/// 5xx inner-retry would otherwise double-count a MockClient's calls). While
+/// [down], a logical call whose number matches [failCall] throws a transient
+/// 503 (cold start); otherwise it returns the catalog with the current [mode].
+class _ColdVoiceApi extends ApiClient {
+  _ColdVoiceApi({required this.failCall})
+      : super(
+          httpClient: MockClient((req) async => http.Response(
+              jsonEncode({'ok': true}), 200,
+              headers: const {'content-type': 'application/json'})),
+          auth: MockFirebaseAuth(signedIn: true),
+        );
+
+  final bool Function(int call) failCall;
+  bool down = true;
+  String mode = 'realtime';
+  int calls = 0;
+
+  @override
+  Future<VoiceCatalog> voiceEngines({Duration? timeout}) async {
+    calls++;
+    if (down && failCall(calls)) {
+      throw ApiException('Request timed out — please try again.',
+          statusCode: 503);
+    }
+    final cat = _catalog();
+    (cat['current'] as Map)['mode'] = mode;
+    return VoiceCatalog.fromMap(cat);
+  }
 }
 
 /// A live call stand-in: records accent hot-swap nudges instead of reaching a

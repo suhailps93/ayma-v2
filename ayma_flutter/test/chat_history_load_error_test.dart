@@ -67,6 +67,49 @@ void main() {
   });
 
   testWidgets(
+      'a slow/cold backend: the first history calls fail then succeed — stays '
+      'on LOADING and recovers, NEVER a hard error on the first timeout',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Models a scale-to-zero cold start: the first two `/chat/history` calls
+    // fail transiently (503), the third (warm) succeeds.
+    var calls = 0;
+    final mockHttp = MockClient((request) async {
+      if (request.url.path == '/chat/history') {
+        calls++;
+        if (calls <= 2) {
+          return http.Response('cold', 503, headers: _jsonUtf8);
+        }
+        final page = _history.sublist(_history.length - 40);
+        return http.Response(
+          jsonEncode({'messages': page, 'next_before': null}),
+          200,
+          headers: _jsonUtf8,
+        );
+      }
+      return http.Response('{}', 200, headers: _jsonUtf8);
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(MaterialApp(home: ChatScreen(apiClient: api)));
+    // One frame: the first load has failed and a retry is scheduled. The
+    // screen must still be LOADING — never the hard-fail error on attempt 1.
+    await tester.pump();
+    expect(find.text("Couldn't load your conversation history."), findsNothing);
+
+    // Ride out the backoff into the successful (warm) attempt.
+    await tester.pumpAndSettle();
+    expect(find.text("Couldn't load your conversation history."), findsNothing);
+    expect(find.text('hist message 89'), findsOneWidget);
+    expect(calls, 3);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an older-page history load failure flips the loader row without ErrorWidget',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);

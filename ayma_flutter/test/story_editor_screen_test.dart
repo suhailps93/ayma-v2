@@ -261,6 +261,7 @@ class _FakeApi extends ApiClient {
     String? before,
     int limit = 40,
     bool noRetry = false,
+    Duration? timeout,
   }) async {
     calls.add('chatHistory');
     return (messages: const <ChatMessage>[], nextBefore: null);

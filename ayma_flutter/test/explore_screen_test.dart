@@ -78,6 +78,37 @@ ApiClient _api(
   );
 }
 
+/// An [ApiClient] controlling `/explore` at the LOGICAL call level, so a test
+/// drives cold-start failures deterministically (the HTTP layer's own 5xx
+/// inner-retry would otherwise double-count a MockClient's calls).
+class _ColdExploreApi extends ApiClient {
+  _ColdExploreApi({required this.failCall})
+      : super(
+          httpClient: MockClient((req) async => http.Response('{}', 200)),
+          auth: MockFirebaseAuth(signedIn: true),
+        );
+
+  final bool Function(int call) failCall;
+  bool down = true;
+  int calls = 0;
+
+  @override
+  Future<ExplorePage> explore({
+    String q = '',
+    Map<String, String> filters = const {},
+    int limit = 24,
+    String? cursor,
+    Duration? timeout,
+  }) async {
+    calls++;
+    if (down && failCall(calls)) {
+      throw ApiException('Request timed out — please try again.',
+          statusCode: 503);
+    }
+    return const ExplorePage();
+  }
+}
+
 Widget _app(ApiClient api, {List<String>? pushed}) {
   final router = GoRouter(
     initialLocation: '/explore',
@@ -142,6 +173,30 @@ void main() {
     expect(find.text('hiking in Austin'), findsOneWidget); // in the search box
     expect(sentQuery, 'hiking in Austin'); // and actually searched
     expect(AppContext.instance.pendingExploreQuery, isNull); // consumed once
+  });
+
+  testWidgets(
+      'a slow/cold backend: the first Explore load fails then succeeds — stays '
+      'on LOADING and recovers, never the hard "Could not load" on attempt 1',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    addTearDown(AppContext.instance.clear);
+    AppContext.instance.clear();
+
+    // The first logical load fails transiently (503 cold start); the retry
+    // succeeds. (The genuinely-unreachable → error + Retry → recover path is
+    // covered by the 'page-1 offline failure' A7 test below.)
+    final api = _ColdExploreApi(failCall: (n) => n == 1);
+    await tester.pumpWidget(_app(api));
+    // First load failed + retry scheduled: no hard error on the first timeout.
+    await tester.pump();
+    expect(find.text("Couldn't load Explore."), findsNothing);
+
+    await tester.pumpAndSettle(); // ride the backoff into the warm load
+    expect(find.text("Couldn't load Explore."), findsNothing);
+    expect(api.calls, 2);
   });
 
   testWidgets('renders the feed cards', (tester) async {

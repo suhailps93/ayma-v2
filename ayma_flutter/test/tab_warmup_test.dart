@@ -29,6 +29,7 @@ class _WarmApi extends ApiClient {
     Map<String, String> filters = const {},
     int limit = 24,
     String? cursor,
+    Duration? timeout,
   }) async {
     exploreCalls++;
     return const ExplorePage(

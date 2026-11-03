@@ -93,6 +93,41 @@ void main() {
     expect(_posted.first['brain'], 'gemini');
   });
 
+  testWidgets(
+      'a slow/cold backend on the brain load: stays on the spinner and '
+      'recovers — never the hard "Could not load brains" error', (tester) async {
+    // Addendum (2026-11-03): the cold staging backend 408'd the first
+    // /brain/preference load into a hard error. It must ride the cold start.
+    final api = _ColdBrainApi(failCall: (n) => n == 1);
+
+    await tester.pumpWidget(_host(BrainSelectorControl(api: api)));
+    await tester.pump(); // first load failed, retry scheduled
+    expect(find.byKey(const ValueKey('brain-selector-error')), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.pumpAndSettle(); // ride backoff into the warm load
+    expect(find.byKey(const ValueKey('brain-selector-error')), findsNothing);
+    expect(find.text('Meta Muse Spark'), findsOneWidget);
+    expect(api.calls, 2);
+  });
+
+  testWidgets(
+      'a genuinely-unreachable brain backend ends on error + Retry, and Retry '
+      'restarts the load', (tester) async {
+    final api = _ColdBrainApi(failCall: (_) => true);
+
+    await tester.pumpWidget(_host(BrainSelectorControl(api: api)));
+    await tester.pumpAndSettle(); // exhaust the budget
+    expect(find.byKey(const ValueKey('brain-selector-error')), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+
+    api.down = false;
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('brain-selector-error')), findsNothing);
+    expect(find.text('Meta Muse Spark'), findsOneWidget);
+  });
+
   testWidgets('live-updates the selection when Ayma saves a new brain',
       (tester) async {
     // Founder bug 2026-11-02: the open models screen kept showing the old brain
@@ -113,4 +148,31 @@ void main() {
     expect(find.text('Gemini'), findsOneWidget);
     expect(find.text('Meta Muse Spark'), findsNothing);
   });
+}
+
+/// An [ApiClient] controlling `/brain/preference` at the LOGICAL call level, so
+/// a test drives cold-start failures deterministically (the HTTP layer's own
+/// 5xx inner-retry would otherwise double-count a MockClient's calls).
+class _ColdBrainApi extends ApiClient {
+  _ColdBrainApi({required this.failCall})
+      : super(
+          httpClient: MockClient((req) async => http.Response(
+              jsonEncode({'ok': true}), 200,
+              headers: const {'content-type': 'application/json'})),
+          auth: MockFirebaseAuth(signedIn: true),
+        );
+
+  final bool Function(int call) failCall;
+  bool down = true;
+  int calls = 0;
+
+  @override
+  Future<BrainCatalog> brainPreference({Duration? timeout}) async {
+    calls++;
+    if (down && failCall(calls)) {
+      throw ApiException('Request timed out — please try again.',
+          statusCode: 503);
+    }
+    return BrainCatalog.fromMap(_catalog());
+  }
 }

@@ -23,6 +23,7 @@ import '../services/thumbs_down_store.dart';
 import '../services/voice_session_controller.dart';
 import '../services/voice_transport.dart';
 import '../theme.dart';
+import '../util/cold_start_retry.dart';
 import '../widgets/ask_ayma_context.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_orb.dart';
@@ -1120,7 +1121,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? null
           : DateTime.tryParse(widget.targetTimestamp);
 
-      var page = await _api.chatHistory(limit: 40);
+      // Ride through a scale-to-zero cold start: the first page uses a
+      // cold-start-tolerant timeout and auto-retries with exponential backoff
+      // over a generous budget, staying on the loading spinner the whole time.
+      // Only a sustained failure (budget spent) falls through to the catch and
+      // the manual "Couldn't load — Retry" state — never the first timeout.
+      var page = await withColdStartRetry(
+        () => _api.chatHistory(limit: 40, timeout: kColdStartCallTimeout),
+      );
       var messages = page.messages;
       // A target may sit further back than the most recent page — keep
       // paging older until it's covered or history runs out. This is a

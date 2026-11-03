@@ -9,6 +9,7 @@ import '../services/chat_inbox.dart';
 import '../services/paged_fresh_data.dart';
 import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
+import '../util/cold_start_retry.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
@@ -169,7 +170,17 @@ class ExploreScreenState extends State<ExploreScreen> {
       _feed = _feed.copyWith(refreshing: true, clearError: true);
     });
     try {
-      final page = await _api.explore(q: _searchController.text.trim());
+      // Ride through a scale-to-zero cold start: the first feed page uses a
+      // cold-start-tolerant timeout and auto-retries with exponential backoff
+      // over a generous budget, staying on the loading indicator the whole
+      // time. Only a sustained failure (budget spent) sets `_feed.error` and
+      // the manual "Couldn't load — Retry" state — never the first timeout.
+      final page = await withColdStartRetry(
+        () => _api.explore(
+          q: _searchController.text.trim(),
+          timeout: kColdStartCallTimeout,
+        ),
+      );
       if (!mounted) return;
       _seenUids
         ..clear()
@@ -369,6 +380,8 @@ class ExploreScreenState extends State<ExploreScreen> {
               return const AppLoadingIndicator();
             }
             if (_feed.error != null && !_feed.hasData) {
+              // Shown only after the cold-start retry budget is spent (see
+              // [_loadInitial]); Retry restarts the whole load sequence.
               return CenteredScroll(
                 padding: const EdgeInsets.symmetric(horizontal: 40),
                 child: Column(

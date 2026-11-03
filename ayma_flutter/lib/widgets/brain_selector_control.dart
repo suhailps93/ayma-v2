@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../util/cold_start_retry.dart';
 import 'ayma_toast.dart';
 
 /// The unified **Brain** picker (ARCHITECTURE §13.10). Reads
@@ -110,8 +111,17 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
   }
 
   Future<void> _load() async {
+    // Ride through a scale-to-zero cold start (founder bug, 2026-11-03): the
+    // cold staging backend used to 408 the first `/brain/preference` call into
+    // a hard "Could not load brains" error. Now it uses a cold-start-tolerant
+    // timeout and auto-retries with exponential backoff over a generous budget,
+    // staying on the loading spinner; only a sustained failure surfaces the
+    // error + Retry.
+    if (mounted && _error != null) setState(() => _error = null);
     try {
-      final cat = await widget.api.brainPreference();
+      final cat = await withColdStartRetry(
+        () => widget.api.brainPreference(timeout: kColdStartCallTimeout),
+      );
       if (!mounted) return;
       setState(() {
         _cat = cat;
@@ -146,9 +156,22 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     if (_error != null) {
-      return Text('Could not load brains ($_error).',
-          key: const ValueKey('brain-selector-error'),
-          style: AymaType.sans(size: 13, color: AymaColors.error));
+      // Shown only after the cold-start retry budget is spent (see [_load]);
+      // Retry restarts the whole load sequence from scratch.
+      return Column(
+        key: const ValueKey('brain-selector-error'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Could not load brains ($_error).',
+              style: AymaType.sans(size: 13, color: AymaColors.error)),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _load,
+            child: const Text('Retry'),
+          ),
+        ],
+      );
     }
     if (_cat == null || _selected == null) {
       return const Padding(

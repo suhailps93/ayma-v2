@@ -567,6 +567,7 @@ class ApiClient {
     Map<String, String> filters = const {},
     int limit = 24,
     String? cursor,
+    Duration? timeout,
   }) async {
     final params = <String, String>{
       'limit': '$limit',
@@ -575,7 +576,14 @@ class ApiClient {
       ...filters,
     };
     final uri = _uri('/explore').replace(queryParameters: params);
-    final response = await _http.get(uri, headers: await _headers());
+    final headers = await _headers();
+    // The on-open feed load raises this past the 8s interactive budget so the
+    // first call can ride through a scale-to-zero cold start instead of 408-ing
+    // (ExploreScreen._loadInitial wraps it in a cold-start retry on top).
+    if (timeout != null) {
+      headers['X-Request-Timeout'] = '${timeout.inMilliseconds}';
+    }
+    final response = await _http.get(uri, headers: headers);
     if (response.statusCode != 200) {
       throw ApiException(
         'explore failed.',
@@ -2013,8 +2021,12 @@ class ApiClient {
   /// `GET /voice/engines` — the selectable voice STACK (§13.9): modes, realtime
   /// models, and cascade brains/STT/TTS (sourced live from LiveKit Inference,
   /// config fallback otherwise), plus the user's current selection.
-  Future<VoiceCatalog> voiceEngines() async {
-    final m = await _getJson('/voice/engines');
+  Future<VoiceCatalog> voiceEngines({Duration? timeout}) async {
+    // The models page raises [timeout] past the 8s interactive budget so the
+    // initial load and the on-brain-switch re-fetch can ride through a
+    // scale-to-zero cold start instead of 408-ing (VoiceEngineControl._load
+    // wraps it in a cold-start retry on top).
+    final m = await _getJson('/voice/engines', const {}, timeout);
     return VoiceCatalog.fromMap(m);
   }
 
@@ -2026,8 +2038,11 @@ class ApiClient {
   /// `GET /brain/preference` — the unified **Brain** catalog + the user's
   /// current choice (§13.10): the ONE LLM that drives every text surface, with
   /// web/vision always on Gemini.
-  Future<BrainCatalog> brainPreference() async {
-    final m = await _getJson('/brain/preference');
+  Future<BrainCatalog> brainPreference({Duration? timeout}) async {
+    // The models page raises [timeout] past the 8s interactive budget so the
+    // initial brain load can ride through a scale-to-zero cold start instead of
+    // 408-ing (BrainSelectorControl._load wraps it in a cold-start retry).
+    final m = await _getJson('/brain/preference', const {}, timeout);
     return BrainCatalog.fromMap(m);
   }
 
@@ -2640,6 +2655,7 @@ class ApiClient {
     String? before,
     int limit = 40,
     bool noRetry = false,
+    Duration? timeout,
   }) async {
     final uri = _uri('/chat/history').replace(
       queryParameters: {
@@ -2651,6 +2667,12 @@ class ApiClient {
     // The offline queue flush opts out of the GET retry-backoff so it fails
     // fast and the online flush isn't skipped (PERF_PLAN GATE-RED).
     if (noRetry) headers['X-No-Retry'] = '1';
+    // The on-open load raises this past the 8s interactive budget so the first
+    // call can ride through a scale-to-zero cold start instead of 408-ing
+    // (ChatScreen._loadHistory wraps it in a cold-start retry on top).
+    if (timeout != null) {
+      headers['X-Request-Timeout'] = '${timeout.inMilliseconds}';
+    }
     final r = await _http.get(uri, headers: headers);
     if (r.statusCode != 200) {
       throw ApiException(
