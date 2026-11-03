@@ -1,7 +1,9 @@
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
+import 'package:ayma_flutter/services/guided_tour_controller.dart';
 import 'package:ayma_flutter/services/tab_request.dart';
+import 'package:ayma_flutter/services/tour_content.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -297,6 +299,51 @@ void main() {
       expect(find.byType(ExploreScreen), findsOneWidget);
       // Consumed, not left to leak into a later navigation.
       expect(TabRequest.instance.pending.value, isNull);
+    },
+  );
+
+  testWidgets(
+    'system back while a driven tour step is up stops the tour instead of '
+    'popping tabs (Antigravity review 2026-11-03)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      GuidedTourController.instance.endSession();
+      addTearDown(GuidedTourController.instance.endSession);
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      // A driven step, as AppCommandService would show it: stop reports back
+      // (the 'stop' tour_event the backend's advance is polling for).
+      var stopped = 0;
+      GuidedTourController.instance.show(GuidedTourStep(
+        token: 'back-test',
+        feature: const TourFeature(
+            featureId: 'g', headline: 'H', subtitle: 'S'),
+        index: 0,
+        total: 3,
+        onShown: () {},
+        onAbsent: () {},
+        onTapped: () {},
+        onStop: () {
+          stopped++;
+          GuidedTourController.instance.endSession();
+        },
+      ));
+      await tester.pump();
+      expect(GuidedTourController.instance.active, isTrue);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+
+      // The tour was stopped (its backend-visible signal fired) and the shell
+      // is still showing — back never reached the tab history or the route.
+      expect(stopped, 1);
+      expect(GuidedTourController.instance.active, isFalse);
+      expect(GuidedTourController.instance.sessionActive, isFalse);
+      expect(find.byType(MainShellScreen), findsOneWidget);
     },
   );
 

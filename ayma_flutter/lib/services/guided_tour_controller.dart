@@ -97,4 +97,19 @@ class GuidedTourController extends ChangeNotifier {
     _sessionActive = false;
     notifyListeners();
   }
+
+  /// Back pressed while the driven tour is up (see `MainShellScreen`'s
+  /// `PopScope`): run the showing step's stop — the same callback the tiny
+  /// "Skip tour" fires, which reports the 'stop' event the backend's
+  /// `advance_guided_tour` is polling for — and end the session. Between
+  /// steps (session alive, no step showing) there is nothing to signal, so it
+  /// just ends the session.
+  void stopFromBack() {
+    final step = _step;
+    if (step == null) {
+      endSession();
+      return;
+    }
+    step.onStop();
+  }
 }

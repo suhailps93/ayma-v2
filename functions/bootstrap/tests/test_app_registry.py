@@ -407,6 +407,32 @@ def test_imperative_pushes_target_registered_routes_or_listed_subviews():
         )
 
 
+def test_guided_tour_resolves_from_the_users_own_words():
+    # Antigravity review 2026-11-03: "open the tour" was denied as nonexistent
+    # even though the guided_tour block exists — the overlay-only tour has no
+    # route, so it can't be a destination/non_navigable (both are validated
+    # against the router); instead its own key/label/aliases resolve it.
+    for words in (
+        "tour", "open the tour", "guided tour", "app tour",
+        "tour of the app", "walkthrough", "app walkthrough",
+        "walk me through the app", "give me a tour", "show me around",
+    ):
+        entry = app_registry.find_guided_tour(words)
+        assert entry is not None, f"{words!r} -> None"
+        assert entry["key"] == "guided_tour", f"{words!r} -> {entry}"
+        assert entry.get("steps"), f"{words!r} -> entry has no steps"
+
+
+def test_open_tour_redirects_to_the_tour_skill_instead_of_denying_it():
+    # "Open the tour" is not a page — but it must redirect to the tour skill,
+    # never the "doesn't exist" denial.
+    from skills import app_control_navigation as nav
+
+    msg = nav._not_a_page("open the tour")
+    assert "start_guided_tour" in msg, msg
+    assert "doesn't exist" not in msg, msg
+
+
 def test_models_page_resolves_distinctly_not_to_generic_settings():
     # Founder bug 2026-11-02: "open my models" opened the generic Settings page;
     # STT also garbles "Ayma's" to AMS/iMAS. Every natural phrasing (and the

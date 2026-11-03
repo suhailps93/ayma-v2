@@ -7,6 +7,8 @@ reported honestly without hanging.
 from __future__ import annotations
 
 import asyncio
+import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -261,3 +263,112 @@ def test_stop_tool_dismisses_and_marks_inactive():
     assert "ended" in msg.lower()
     assert db.store[_STATE]["active"] is False
     assert db.store[_PENDING]["action"] == "tour_end"
+
+
+# --- stale state TTL (Antigravity review 2026-11-03 finding 2) ----------------
+#
+# tour_state kept active:true forever across app kills, so a later advance
+# polled a dead overlay for the full tap wait. State older than 15 minutes is
+# now expired: the orphan is dismissed and cleared, honestly, without waiting.
+
+
+def _age_state(db, minutes: float) -> None:
+    db.store[_STATE]["updated_at"] = datetime.now(timezone.utc) - timedelta(
+        minutes=minutes
+    )
+
+
+def test_advance_on_stale_state_expires_it_without_waiting(monkeypatch):
+    monkeypatch.setattr(guided_tour, "_TAP_TIMEOUT_SECONDS", 5.0)
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _age_state(db, 16)
+    start = time.monotonic()
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert time.monotonic() - start < 5.0  # never polled the dead overlay
+    assert "timed out" in msg.lower() or "expired" in msg.lower()
+    assert db.store[_STATE]["active"] is False  # orphan cleared
+    assert db.store[_PENDING]["action"] == "tour_end"  # overlay dismissed
+
+
+def test_advance_on_fresh_or_undated_state_still_waits():
+    # A recent state — or an old doc from before updated_at existed — is a
+    # live tour: advance waits for the tap, it doesn't expire.
+    for undated in (False, True):
+        db = _Db()
+        _run(guided_tour._bind_start_guided_tour(db, "u1")())
+        if undated:
+            del db.store[_STATE]["updated_at"]
+        else:
+            _age_state(db, 1)
+        msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+        assert "not tapped" in msg.lower()
+        assert db.store[_STATE]["active"] is True
+
+
+# --- null index guard (Antigravity review 2026-11-03 finding 4) ----------------
+#
+# int(data.get("index", -1)) throws TypeError when Firestore holds an explicit
+# null — outside any try/except. A null/garbage index must read as "no event" /
+# "no runnable tour", never crash. (Note: `or` would be wrong here — step 0 is
+# valid and falsy — so the guard checks None explicitly.)
+
+
+def test_advance_ignores_a_null_index_tap_event_without_crashing():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    db.store[_EVENT] = {"index": None, "event": "tapped"}
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "not tapped" in msg.lower()  # the null event matched nothing
+    assert db.store[_STATE]["index"] == 0  # still on step 0
+
+
+def test_advance_on_null_index_state_ends_honestly_without_crashing():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    db.store[_STATE]["index"] = None
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "no guided tour running" in msg.lower()
+    assert db.store[_STATE]["active"] is False
+
+
+def test_step_zero_index_is_not_treated_as_missing():
+    # Regression pin for the `or`-style guard: index 0 is a real step and a
+    # tap event for it must still advance.
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    assert _steps()[1]["say"] in msg
+
+
+# --- sync-path tap bound (Antigravity review 2026-11-03 finding 5) -------------
+#
+# advance's 110s tap wait held a /chat HTTP turn open. The text surface now
+# binds a short sync bound; voice keeps the long quiet wait. A lapse still
+# reports honestly and the persisted tap is picked up by the next advance, so
+# progress is never lost on either surface.
+
+
+def test_text_surface_advance_uses_the_short_sync_bound(monkeypatch):
+    monkeypatch.setattr(guided_tour, "_TAP_TIMEOUT_SYNC_SECONDS", 0.05)
+    monkeypatch.setattr(guided_tour, "_TAP_TIMEOUT_SECONDS", 5.0)
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    fns = skills.make_session_tool_fns(db, "u1")
+    start = time.monotonic()
+    msg = _run(fns["advance_guided_tour"]())
+    assert time.monotonic() - start < 5.0  # the sync bound, not the voice one
+    assert "not tapped" in msg.lower()
+    assert db.store[_STATE]["active"] is True  # still waiting, tour intact
+
+
+def test_advance_accepts_an_explicit_tap_timeout(monkeypatch):
+    monkeypatch.setattr(guided_tour, "_TAP_TIMEOUT_SECONDS", 5.0)
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    start = time.monotonic()
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1", tap_timeout=0.05)())
+    assert time.monotonic() - start < 5.0
+    assert "not tapped" in msg.lower()

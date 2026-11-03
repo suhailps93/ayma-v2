@@ -248,7 +248,17 @@ def make_session_tool_fns(
             )
         elif s.name in _GUIDED_TOUR_VOICE_NAMES:
             # Text surface — the composer is a real text box here.
-            out[s.name] = s.bind(db, uid, voice=False)
+            if s.name == "advance_guided_tour":
+                # The short sync tap bound, so one /chat turn never holds its
+                # HTTP request open for the voice-length wait (Antigravity
+                # review 2026-11-03). Voice (make_livekit_tools) binds the
+                # default long wait, untouched.
+                out[s.name] = s.bind(
+                    db, uid, voice=False,
+                    tap_timeout=guided_tour._TAP_TIMEOUT_SYNC_SECONDS,
+                )
+            else:
+                out[s.name] = s.bind(db, uid, voice=False)
         else:
             out[s.name] = s.bind(db, uid)
     for s in _TEXT_ONLY_REGISTRY:

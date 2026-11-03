@@ -189,6 +189,53 @@ void main() {
       c.endSession();
       expect(c.sessionActive, isFalse);
     });
+
+    test('stopFromBack runs the step stop (the backend-visible signal) and '
+        'ends the session', () {
+      final c = GuidedTourController.instance;
+      c.endSession();
+      var stopped = 0;
+      c.show(GuidedTourStep(
+        token: 't1',
+        feature: const TourFeature(
+            featureId: 'x', headline: 'H', subtitle: 'S'),
+        index: 0,
+        total: 1,
+        onShown: () {},
+        onAbsent: () {},
+        onTapped: () {},
+        // As AppCommandService wires it: report 'stop', then end the session.
+        onStop: () {
+          stopped++;
+          c.endSession();
+        },
+      ));
+      c.stopFromBack();
+      expect(stopped, 1);
+      expect(c.active, isFalse);
+      expect(c.sessionActive, isFalse);
+    });
+
+    test('stopFromBack between steps just ends the session (nothing to signal)',
+        () {
+      final c = GuidedTourController.instance;
+      c.endSession();
+      c.show(GuidedTourStep(
+        token: 't1',
+        feature: const TourFeature(
+            featureId: 'x', headline: 'H', subtitle: 'S'),
+        index: 0,
+        total: 2,
+        onShown: () {},
+        onAbsent: () {},
+        onTapped: () {},
+        onStop: () {},
+      ));
+      c.clearStep(); // the tap gap: session alive, no step showing
+      expect(c.sessionActive, isTrue);
+      c.stopFromBack();
+      expect(c.sessionActive, isFalse);
+    });
   });
 
   group('AppCommandService tour_step/tour_end (full client loop)', () {
