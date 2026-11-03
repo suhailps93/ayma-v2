@@ -10,6 +10,7 @@ import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_auth_mocks/src/mock_user_credential.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -23,6 +24,9 @@ class _FakeAuth extends AuthService {
 
   /// When set, the next email sign-in / create / reset call throws this.
   FirebaseAuthException? nextError;
+
+  /// When true, the next email sign-in succeeds with a mock credential.
+  bool succeedSignIn = false;
 
   Never _throwNext() {
     final e = nextError!;
@@ -41,6 +45,10 @@ class _FakeAuth extends AuthService {
       String email, String password) async {
     calls.add('signIn:$email');
     if (nextError != null) _throwNext();
+    if (succeedSignIn) {
+      succeedSignIn = false;
+      return MockUserCredential(false);
+    }
     throw StateError('stubbed');
   }
 
@@ -524,6 +532,45 @@ void main() {
           'Tap “Sign up” below.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('correct password signs in and routes to splash (control leg)',
+      (tester) async {
+    final auth = _FakeAuth()..succeedSignIn = true;
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final router = GoRouter(
+      initialLocation: SignInScreen.path,
+      routes: [
+        GoRoute(
+          path: SignInScreen.path,
+          builder: (_, __) => SignInScreen(
+              auth: auth, voiceController: _FakeVoice()),
+        ),
+        GoRoute(
+          path: SplashScreen.path,
+          builder: (_, __) => const Text('SPLASH'),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await _acceptConsents(tester);
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(auth.calls, contains('signIn:a@b.com'));
+    expect(find.text('SPLASH'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Password'), findsNothing);
   });
 
   testWidgets(
