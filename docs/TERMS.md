@@ -9,6 +9,17 @@ _Last updated: 2026-10-25_
 > priority. `ayma_flutter/lib/legal/terms_text.dart` and `public/terms.html`
 > are generated from this file and must be kept in step with it.
 
+> **Internal note — DRAFT, member-to-member research (2026-11-03, not yet
+> live):** the "Researching other members (web search and deep dive)" section
+> and related edits disclose the new feature that lets a member run a web search
+> / deep dive (including face/photo matching) on any other member whose profile
+> they open. These are draft edits to the canonical source only. Before
+> go-live: (1) counsel review; (2) regenerate `terms_text.dart` / `terms.html`
+> / `privacy_text.dart` / `privacy.html` and update `biometric_consent_text.dart`;
+> (3) bump the biometric consent version and the "Last updated" date, which
+> re-prompts existing users to accept — a founder/counsel decision, not done
+> here.
+
 > **Key points (please read)**
 >
 > - **Ayma is for adults only. You must be 18 or older to use it.**
@@ -62,9 +73,15 @@ To build your profile and to improve the quality of the matches we suggest,
   a web search for your name and reads what it finds on the open web (for
   example professional pages, social profiles, news, personal sites).
 
-This analysis is always and only about **you, the account holder** — your own
-photos and your own name. Ayma does not run this automatic analysis on other
-people, on your matches, or on anyone you are talking to.
+The **automatic** analysis described above is always and only about **you, the
+account holder** — your own photos and your own name. Ayma does not run that
+background analysis on other people for you.
+
+**Separately, Ayma lets members research one another.** When you open another
+member's profile, you can ask Ayma to run a web search or a deeper "deep dive"
+on that member — and, because you are an Ayma member, any other member who opens
+your profile can do the same to you. That member-to-member research is described
+in "Researching other members" immediately below.
 
 The results are used by Ayma to understand you better and to match you more
 accurately. They are kept in Ayma's own working memory and are **not shown in
@@ -77,6 +94,62 @@ private to Ayma.
 how the service works. If you do not want your photos and public information
 analysed in this way, please do not use Ayma. You can delete your account at
 any time, which removes this data as described below.
+
+## Researching other members (web search and deep dive)
+
+Ayma is a matchmaking product, and part of how it helps you decide is by letting
+you learn more about the members you are considering.
+
+- **When you open another member's profile, you can ask Ayma to run a web search
+  or a "deep dive" on that member.** Ayma searches the open, public web for
+  information about that person — for example public social profiles, personal
+  or professional pages, posts, and news — and surfaces a summary, links, and
+  photos it finds back to you.
+- **This works both ways. Because you are an Ayma member, any other member who
+  opens your profile can run the same web search and deep dive on you, and your
+  own publicly available web information may be found, summarised, and shown to
+  them. You are not told when, or by whom, a dive is run on you.**
+- **Photos are part of the deep dive, and face data is used to match them.**
+  Ayma uses the face data described in "Biometric information" below to check
+  that web photos actually depict the member being researched, so a dive only
+  surfaces photos that match that member. **Deep dives only ever run against
+  Ayma members who have given the mandatory face-matching consent** — never
+  against non-members, and never against a member who has not consented.
+- **What this research can and cannot reach.** Ayma reads only information that
+  is already publicly available on the open web. It does not log in to any
+  account, defeat a paywall or a privacy setting, or read anything private, and
+  it never exposes a researched member's Ayma private notes, messages, voice
+  transcripts, or connected-Google data to the member running the dive.
+- **What is kept.** Ayma does not store copies of the web pages or web photos it
+  finds. For a matched photo it keeps only the link and how closely it matched;
+  it also keeps the text summary, facts, and links produced for the report.
+  **A dive report about a member can be stored and reused, so different members
+  who research the same person may be shown the same saved report** rather than
+  a fresh search each time. This is retained with account data as described in
+  "Retention and deletion".
+- **The results can be wrong.** Public-web information can be out of date, about
+  a different person with the same name, or simply inaccurate, and the AI
+  summary of it can be wrong. **It is not a background check, not verification of
+  identity, and not a statement of fact about anyone.** Use your own judgement,
+  and **do not use what Ayma surfaces to harass, stalk, intimidate, or harm
+  anyone, or to contact them outside Ayma — doing so breaks these Terms** (see
+  "Your conduct").
+- **Your choices.** You can ask what a deep-dive report about you contains and
+  ask us to correct or remove information surfaced about you (see the Privacy
+  Policy, "Your rights and choices"). **Ayma's face matching is mandatory, so
+  the only way to stop your face being matched to web photos is to withdraw your
+  face-matching consent, which also deletes your account; other than deleting
+  your account, Ayma does not currently offer a way to stop other members from
+  running this research on your public-web information.**
+
+> **Internal note (not shown in the app or on the web):** This member-to-member
+> research — especially the "any member whose profile you open" scope and the
+> biometric face-matching of a researched member — must be reviewed by an
+> attorney before it goes live (BIPA/CUBI/Washington biometric law, GDPR/UK GDPR
+> Art. 9 and Art. 14 notice, and whether disclosure suffices or affirmative
+> consent/notice to the researched member is required). The lack of a
+> non-destructive opt-out is a known gap for counsel to assess. See
+> `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
 
 ## Biometric information (face matching)
 
@@ -94,9 +167,9 @@ these Terms and the Privacy Policy). **Ayma cannot be used without it.**
   reverse-image search of your own photos, against photos you share with Ayma,
   and against other accounts' verification selfies so one person cannot claim
   the free starter credits more than once. **When another Ayma member runs a
-  deep dive on you from Explore, your face data is used the same way**, so the
-  photos shown to them are actually you. Deep dives only ever look at Ayma
-  members who have given this consent.
+  deep dive on you — for example by opening your profile — your face data is
+  used the same way**, so the photos shown to them are actually you. Deep dives
+  only ever look at Ayma members who have given this consent.
 - **What we keep:** your face data, plus the links to web photos that matched
   you and how closely they matched. We do not keep copies of web photos.
 - **Retention:** **we keep your face data only while your account exists.**
@@ -277,9 +350,9 @@ detail, including legal bases and how to exercise your rights.
 - **Advertising partners, once ads launch**, as described in "Advertising"
   below.
 - **Other users**, but only to the extent your public profile, the messages you
-  send, and deep dives other members run on you expose information to them.
-  Ayma does not show other users your private wiki notes or your derived
-  analyses.
+  send, and **the web searches and deep dives other members run on you** expose
+  information to them (see "Researching other members" above). Ayma does not
+  show other users your private wiki notes or your derived analyses.
 - **Legal and safety recipients**: authorities or others where we reasonably
   believe disclosure is required by law or necessary to prevent serious harm.
 - **We do not sell your personal data today.** When ads launch, some sharing

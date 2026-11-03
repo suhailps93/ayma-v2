@@ -8,6 +8,17 @@ _Last updated: 2026-10-25_
 > `public/privacy.html` are generated from this file and must be kept in step
 > with it.
 
+> **Internal note — DRAFT, member-to-member research (2026-11-03, not yet
+> live):** the "Research other members can run on you" subsection and related
+> edits disclose the new feature that lets a member run a web search / deep dive
+> (including face/photo matching) on any other member whose profile they open.
+> These are draft edits to the canonical source only. Before go-live: (1)
+> counsel review (see NEEDS COUNSEL REVIEW); (2) regenerate
+> `privacy_text.dart` / `privacy.html` / `terms_text.dart` / `terms.html` from
+> these docs and update `biometric_consent_text.dart`; (3) bump the biometric
+> consent version and the Terms/Privacy "Last updated" date, which re-prompts
+> existing users to accept — a founder/counsel decision, not done here.
+
 This Privacy Policy explains what personal data Ayma collects, why we collect
 it, who we share it with, and the choices and rights you have. It works
 alongside our [Terms of Service](TERMS.md).
@@ -51,8 +62,9 @@ address in "Contact us" below.
 - **We share it with the service providers that run Ayma's infrastructure and
   AI** (Google Firebase including Firebase Crashlytics, Google Gemini / Vertex
   AI, LiveKit, RevenueCat, Sentry), **with advertising partners once ads
-  launch**, with other users to the extent your profile and messages expose
-  it, and with authorities where the law requires.
+  launch**, with other users to the extent your profile, your messages, and
+  **the web search / deep dive other members can run on you** expose it, and
+  with authorities where the law requires.
 - **Ayma is not end-to-end encrypted.** See "How we protect your data" below.
 - You can access, export, correct, and delete your data from within the app.
 
@@ -130,6 +142,17 @@ Where GDPR-style law applies, the legal bases are noted in plain terms.
 - **To suggest matches and rank compatibility.**
   _Basis: performance of our contract; legitimate interest in making the
   product work well._
+- **To let members research one another** — to run the web search and deep dive
+  a member asks for on another member whose profile they open, including
+  matching web photos to the member being researched using their face data, and
+  to store and reuse the resulting report (see "Research other members can run
+  on you").
+  _Basis: our legitimate interest, and the researching member's, in helping
+  members make informed matchmaking decisions. For the biometric face-matching
+  part we rely on the mandatory face-matching consent every member gives. Where
+  local law requires explicit consent or another GDPR Article 9 basis to process
+  this data about the member being researched, that basis is the face-matching
+  consent — see the attorney-review notes in this policy._
 - **To make your own AI persona sound like you** — when you run features that
   simulate a chat on your behalf (such as the AI date simulation), your persona
   may be grounded in a small, recent sample of **your own sent messages** so it
@@ -218,6 +241,44 @@ choose to send them. They do not see your private wiki notes, your raw
 facial/physique analyses, your voice transcripts, or your web-search summary
 unless you have deliberately added that content to your public profile or a
 message.
+
+#### Research other members can run on you
+
+Because Ayma is a matchmaking product, when another member opens your profile
+they can ask Ayma to run a web search or a "deep dive" on you. **Ayma then
+searches the open, public web for information about you — public social
+profiles, personal or professional pages, posts, news — and surfaces a summary,
+links, and photos it finds to that member.** **Photos are matched using your
+face data (see "Biometric information (face matching)" below) so a dive only
+shows photos that are actually you; this matching is why a dive can only be run
+on members who have given the mandatory face-matching consent.** Ayma reads only
+what is already public; it never logs in, defeats a privacy setting, or exposes
+your Ayma private notes, messages, voice transcripts, or connected-Google data
+to the researching member. **You can run the same research on other members
+whose profiles you open, and you are not told when, or by whom, it is run on
+you.**
+
+Ayma does not keep copies of the web pages or photos it finds — for a matched
+photo it keeps only the link and the similarity score; it also keeps the text
+summary, facts, and links produced for the report. **A deep-dive report about a
+member can be stored and reused across the members who research that person,**
+and is retained with account data (see "How long we keep your data").
+
+**Limiting this.** Ayma's face matching is mandatory, so the only way to stop
+your face being matched to web photos is to withdraw your face-matching consent
+in Settings, which also deletes your account. **Other than deleting your
+account, Ayma does not currently offer a setting to stop other members from
+running a web search or deep dive on your public-web information.** You can
+still ask us what a report about you contains and ask us to correct or remove
+information it has surfaced, as described in "Your rights and choices".
+
+> **Internal note (not shown in the app or on the web):** The "any member whose
+> profile you open" scope, the biometric face-matching of a researched member,
+> and the absence of a non-destructive opt-out must be reviewed by an attorney
+> before this goes live (BIPA/CUBI/Washington biometric law; GDPR/UK GDPR Art. 9
+> and the Art. 14 notice owed to the researched member; whether disclosure
+> suffices or affirmative consent/notice is required; defamation/accuracy of
+> surfaced information). See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
 
 #### Appearance analysis photos stay private
 
@@ -333,9 +394,9 @@ these Terms and the Privacy Policy). **Ayma cannot be used without it.**
   reverse-image search of your own photos, against photos you share with Ayma,
   and against other accounts' verification selfies so one person cannot claim
   the free starter credits more than once. **When another Ayma member runs a
-  deep dive on you from Explore, your face data is used the same way**, so the
-  photos shown to them are actually you. Deep dives only ever look at Ayma
-  members who have given this consent.
+  deep dive on you — for example by opening your profile — your face data is
+  used the same way**, so the photos shown to them are actually you. Deep dives
+  only ever look at Ayma members who have given this consent.
 - **What we keep:** your face data, plus the links to web photos that matched
   you and how closely they matched. We do not keep copies of web photos.
 - **Retention:** **we keep your face data only while your account exists.**
@@ -403,6 +464,11 @@ Depending on where you live, you may have some or all of these rights:
 
 - **Access and portability** — get a copy of your data.
 - **Correction** — fix inaccurate profile information.
+- **Correct or remove research surfaced about you** — ask us to correct or
+  remove public-web information a deep dive has surfaced about you to other
+  members. **Note that, apart from deleting your account (which withdraws the
+  mandatory face-matching consent), Ayma does not currently provide a way to opt
+  out of other members researching your public-web information.**
 - **Deletion** — delete your account and associated data.
 - **Restriction and objection** — ask us to limit or stop certain processing.
 - **Opt out of advertising use** — once ads launch, opt out of the sale or
