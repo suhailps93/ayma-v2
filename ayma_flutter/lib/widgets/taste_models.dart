@@ -86,6 +86,20 @@ class TasteMatch {
   final List<TasteDomain> domains;
   final List<TasteDateIdea> dateIdeas;
 
+  /// Whether there is real taste-overlap substance to render. A `200` from
+  /// `/taste/pair` always carries a [score] and a [summary] (even for two
+  /// people whose Qloo graphs don't overlap — score 0, "quite different taste
+  /// graphs"), so those alone would paint a header + "0/100" + one sentence
+  /// that reads as a broken, empty card. The card is shown only when at least
+  /// one substantive section exists — per-domain bars, shared favourites,
+  /// "why you match" tags, or date ideas — and is otherwise fully absent (§
+  /// founder: never a blank taste card on the sim screen).
+  bool get hasOverlap =>
+      domains.isNotEmpty ||
+      shared.isNotEmpty ||
+      sharedTags.isNotEmpty ||
+      dateIdeas.isNotEmpty;
+
   factory TasteMatch.fromMap(Map<String, dynamic> m) => TasteMatch(
         isSample: m['source'] == 'fixture',
         score: (m['score'] as num?)?.toInt() ?? 0,

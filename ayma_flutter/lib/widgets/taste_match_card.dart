@@ -32,12 +32,16 @@ Future<TasteMatchLoad> loadTasteMatch(ApiClient api, String otherUid) async {
 /// "Taste match · powered by Qloo" — the overlap score, summary, shared tastes
 /// and date ideas. Shown under the date-sim compatibility read and as a section
 /// in the match report. While [load] is pending it shows a muted "comparing"
-/// line; when there's a match it shows that. When there's NO taste content to
-/// show — one side has no public Taste page, or the Qloo lookup failed /
-/// degraded — the card is simply ABSENT (an empty [SizedBox]), never an error
-/// card: Taste is an optional enrichment, not something whose absence the user
-/// needs told about (§ founder BUG A — a 200 "no taste data" was being turned
-/// into a "Taste match unavailable right now." error card).
+/// line; when there's a match with real overlap substance it shows that. When
+/// there's NO taste content to show — one side has no public Taste page, the
+/// Qloo lookup failed / degraded, OR the pair's graphs simply don't overlap
+/// (a 200 with no per-domain bars / shared favourites / tags / date ideas, only
+/// a bare score + "quite different taste graphs" line) — the card is simply
+/// ABSENT (an empty [SizedBox]), never a bare/blank card: Taste is an optional
+/// enrichment, not something whose absence the user needs told about (§ founder
+/// BUG A — a 200 "no taste data" was being turned into a "Taste match
+/// unavailable right now." error card; § founder: a 200 with no overlap was
+/// painting a blank/near-empty card on the sim screen).
 class TasteMatchCard extends StatelessWidget {
   const TasteMatchCard({super.key, required this.load});
 
@@ -55,10 +59,12 @@ class TasteMatchCard extends StatelessWidget {
       future: load,
       builder: (context, snap) {
         final m = snap.data?.match;
-        // Resolved with no match to show (no Taste page, a failure, or any
-        // other non-match state) → the card is absent, not an error card. Only
-        // a still-pending load keeps the card up, for its "comparing" line.
-        if (snap.connectionState == ConnectionState.done && m == null) {
+        // Resolved with nothing substantive to show — no Taste page, a failure,
+        // or a 200 whose graphs don't overlap (no bars/shared/tags/ideas, just a
+        // bare score + summary) → the card is absent, not a blank/error card.
+        // Only a still-pending load keeps the card up, for its "comparing" line.
+        final show = m != null && m.hasOverlap;
+        if (snap.connectionState == ConnectionState.done && !show) {
           return const SizedBox.shrink();
         }
         return Container(
@@ -75,6 +81,9 @@ class TasteMatchCard extends StatelessWidget {
             children: [
               _header(ac, sample: m?.isSample == true),
               const SizedBox(height: 12),
+              // Reached only when pending (m == null → the comparing line) or
+              // with a substantive match (the `!show` guard above returned for
+              // a resolved-but-empty one), so a non-null m here always renders.
               if (m != null)
                 ..._body(ac, m)
               else

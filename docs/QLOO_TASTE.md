@@ -21,11 +21,16 @@ shared-taste chips and date ideas, plus **per-domain bars** — one horizontal
 tabular figures), ordered Music → Film → Food & places (`dining` → "Food &
 places"), reproducing the public demo `taste_demo.html`. Bars appear only when
 both sides have taste (`domains` non-empty); when there's no taste MATCH to show
-— one/both sides have no public Taste page, or the Qloo lookup failed/degraded —
-the **card is absent entirely** (an empty `SizedBox`), never a note or an error
-card (§ BUG A, 2026-11-01: a 200 "no taste data" / any failure used to render a
-"Taste match unavailable right now." error card). Taste is optional enrichment,
-so its absence is simply not surfaced in the app. Below the summary it also
+— one/both sides have no public Taste page, the Qloo lookup failed/degraded, OR
+the pair's graphs don't actually overlap (a 200 carrying only a bare `score` +
+"quite different taste graphs" `summary`, with no `domains`/`shared`/
+`shared_tags`/`date_ideas`) — the **card is absent entirely** (an empty
+`SizedBox`), never a note, an error card, or a bare/blank card (§ BUG A,
+2026-11-01: a 200 "no taste data" / any failure used to render a "Taste match
+unavailable right now." error card; § 2026-11-03: a 200 with no overlap was
+painting a blank/near-empty card — header + "0/100" + one sentence — on the sim
+screen; `TasteMatch.hasOverlap` now gates rendering on real overlap substance).
+Taste is optional enrichment, so its absence is simply not surfaced in the app. Below the summary it also
 surfaces the depth fields: a
 **"Why you match"** row of outline tag chips from `shared_tags` (wrapping,
 visually distinct from the filled `shared` entity chips, hidden when empty) and

@@ -263,6 +263,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a 200 with no overlap substance hides the card (no blank card)',
+      (tester) async {
+    // § founder: two people with Taste pages whose Qloo graphs don't overlap
+    // get a 200 carrying only a bare score + "quite different taste graphs"
+    // summary — no per-domain bars, shared favourites, tags or date ideas.
+    // That used to paint a header + "0/100" + one sentence that reads as a
+    // broken, empty card. It must now be fully ABSENT, like any no-data state.
+    await _runSim(
+      tester,
+      _api(() => _json({
+            'source': 'qloo',
+            'a': {'name': 'Sam'},
+            'b': {'name': 'Maya'},
+            'score': 0,
+            'score_label': 'Different tastes',
+            'summary': 'Sam and Maya have quite different taste graphs.',
+            'shared': <String>[],
+            'shared_tags': <String>[],
+            'domains': <Map<String, dynamic>>[],
+            'date_ideas': <Map<String, dynamic>>[],
+          })),
+      expectCard: false,
+    );
+
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text('Taste match'), findsNothing);
+    expect(find.byKey(const Key('tasteMatchScore')), findsNothing);
+    expect(find.text('Sam and Maya have quite different taste graphs.'),
+        findsNothing);
+    // The date-sim result itself is unaffected.
+    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a hung taste fetch degrades to absent, never a stuck spinner',
       (tester) async {
     // § SIMTASTE: the sim-screen card waits on a live taste future while the
