@@ -47,6 +47,19 @@ def test_list_conversations_has_both_labels():
     assert tool_labels.WORKING_LABELS["list_conversations"]
 
 
+def test_is_guided_tour_turn_detects_tour_labels_only():
+    # Every guided-tour tool's label is recognised; nothing else is (so only
+    # tour narration is suppressed from persistence — §11.2b).
+    for name in tool_labels.GUIDED_TOUR_TOOLS:
+        assert tool_labels.is_guided_tour_turn([tool_labels.TOOL_LABELS[name]])
+    assert not tool_labels.is_guided_tour_turn(["Opened that for you"])
+    assert not tool_labels.is_guided_tour_turn([])
+    assert not tool_labels.is_guided_tour_turn(None)
+    # A mixed turn that ran a tour tool still counts.
+    assert tool_labels.is_guided_tour_turn(
+        ["Opened that for you", "Moved to the next step"])
+
+
 def tool_labels_not_navigated() -> str:
     from skills import app_control
 

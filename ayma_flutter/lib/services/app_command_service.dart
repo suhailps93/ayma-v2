@@ -369,11 +369,18 @@ class AppCommandService {
     }
 
     void event(String name) {
+      // Surface a failed write (don't swallow it): a silently-denied tour_event
+      // write — e.g. a missing Firestore rule for the doc — is exactly what hung
+      // the tour with no trace (founder/Scout, 2026-11-03). The tour degrades
+      // honestly (advance_guided_tour times out), but the log makes the cause
+      // obvious instead of invisible.
       eventRef.set(<String, dynamic>{
         'index': index,
         'event': name,
         'ts': FieldValue.serverTimestamp(),
-      }).catchError((_) {});
+      }).catchError((Object e) {
+        debugPrint('Ayma tour_event "$name" (step $index) write failed: $e');
+      });
     }
 
     // Starting a driven tour takes over the screen — close any passive

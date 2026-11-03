@@ -1437,6 +1437,130 @@ def test_relay_transcripts_collects_finalized_turns():
     ]
 
 
+# --- Guided-tour narration must not persist (§11.2b, founder/Scout 2026-11-03) ---
+
+
+def _tour_relay_harness():
+    """Shared fakes for the TourNarrationGate relay tests."""
+    handlers: dict = {}
+
+    class _FakeSession:
+        def on(self, name):
+            def _reg(fn):
+                handlers[name] = fn
+                return fn
+
+            return _reg
+
+    class _FakeCtx:
+        class room:  # noqa: N801
+            class local_participant:  # noqa: N801
+                @staticmethod
+                async def publish_data(*a, **k):
+                    pass
+
+    class _UserEv:
+        def __init__(self, transcript, is_final):
+            self.transcript = transcript
+            self.is_final = is_final
+
+    def _item(text):
+        class _I:
+            role = "assistant"
+            text_content = text
+
+        class _Ev:
+            item = _I()
+
+        return _Ev()
+
+    return handlers, _FakeSession, _FakeCtx, _UserEv, _item
+
+
+def test_relay_transcripts_drops_guided_tour_narration():
+    """A guided-tour tool ran (gate.pending), so the assistant turn it produces
+    is ephemeral tour narration — it must NOT be relayed or collected into the
+    raw_turns window; a normal turn right after is kept."""
+    import asyncio
+
+    handlers, _FakeSession, _FakeCtx, _UserEv, _item = _tour_relay_harness()
+    collected: list = []
+    gate = agent.TourNarrationGate()
+
+    async def _run():
+        agent.relay_transcripts(
+            _FakeCtx(), _FakeSession(), collector=collected, tour_gate=gate)
+        gate.pending = True  # a guided-tour tool just ran this turn
+        handlers["conversation_item_added"](
+            _item("Now tap Explore to meet people."))  # narration -> dropped
+        handlers["conversation_item_added"](
+            _item("Sure, here's that."))  # normal reply -> kept
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+    assert [(t.role, t.text) for t in collected] == [("ayma", "Sure, here's that.")]
+    assert gate.pending is False
+
+
+def test_a_new_user_turn_resets_the_tour_gate():
+    """If a tour tool ran but produced no narration, a new user turn resets the
+    latch so a later normal reply is not wrongly dropped."""
+    import asyncio
+
+    handlers, _FakeSession, _FakeCtx, _UserEv, _item = _tour_relay_harness()
+    collected: list = []
+    gate = agent.TourNarrationGate()
+
+    async def _run():
+        agent.relay_transcripts(
+            _FakeCtx(), _FakeSession(), collector=collected, tour_gate=gate)
+        gate.pending = True
+        handlers["user_input_transcribed"](_UserEv("ok what now", True))  # resets
+        handlers["conversation_item_added"](_item("Here's the thing."))  # kept
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+    assert gate.pending is False
+    assert [(t.role, t.text) for t in collected] == [
+        ("user", "ok what now"),
+        ("ayma", "Here's the thing."),
+    ]
+
+
+def test_session_tools_latch_tour_gate_only_on_guided_tour_tools(monkeypatch):
+    """_session_tools' on_call hook arms the TourNarrationGate on a guided-tour
+    tool start and leaves it alone for any other tool."""
+    import asyncio
+
+    import skills
+
+    def _fake_make_livekit_tools(db, uid, *, on_call=None, **k):
+        _fake_make_livekit_tools.on_call = on_call
+        return ["tool-stub"]
+
+    monkeypatch.setattr(skills, "make_livekit_tools", _fake_make_livekit_tools)
+
+    class _Ctx:
+        class room:  # noqa: N801
+            class local_participant:  # noqa: N801
+                @staticmethod
+                async def publish_data(*a, **k):
+                    pass
+
+    gate = agent.TourNarrationGate()
+    agent._session_tools(_Ctx(), "u1", tour_gate=gate)
+    on_call = _fake_make_livekit_tools.on_call
+
+    async def _run():
+        on_call("start", "record_feedback", None)  # a normal tool — no latch
+        assert gate.pending is False
+        on_call("start", "advance_guided_tour", None)  # tour tool — latch armed
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+    assert gate.pending is True
+
+
 # --- §F3 mid-call credit cap (founder cost bug, 2026-09-21) ----------------
 #
 # Root cause: credits were checked only once, at /bootstrap (session token

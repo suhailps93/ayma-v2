@@ -139,9 +139,14 @@ service cloud.firestore {
       // The client also writes the single `ack` doc ({id, ok}) the backend
       // tool is polling for; without this the ack was silently denied and
       // every successful navigation was reported as failed.
+      // It likewise writes the `tour_event` doc ({index, event}) the Ayma-driven
+      // tour's `advance_guided_tour` polls for the user's tap on the spotlighted
+      // control (§11.2b); without this the tap was silently denied and the tour
+      // hung ~110s then surfaced an error turn (founder/Scout, 2026-11-03). The
+      // backend owns `pending`/`tour_state` via the Admin SDK (rules bypassed).
       match /app_commands/{id} {
         allow read, delete: if isOwner(uid);
-        allow create, update: if isOwner(uid) && id == 'ack';
+        allow create, update: if isOwner(uid) && (id == 'ack' || id == 'tour_event');
       }
     }
 

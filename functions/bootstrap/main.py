@@ -135,6 +135,7 @@ from skills import (  # noqa: E402
 from skills import questionnaire as questionnaire_skill  # noqa: E402
 import turn_caps  # noqa: E402
 import context_opt  # noqa: E402
+import tool_labels  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn, format_recent_turns  # noqa: E402
 from wiki_ingest import ingest_or_defer as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
@@ -1721,6 +1722,11 @@ def _finalize_chat(
 ) -> None:
     """Durable transcript + raw_turns + wiki-ingest kickoff after a reply
     (shared by both endpoints). Best-effort — never raises."""
+    # Ayma-DRIVEN tour narration (§11.2b) is ephemeral step guidance ("Tap the
+    # message box…"), not a chat turn — never persist the reply for a turn that
+    # ran a guided-tour tool (founder, 2026-11-03). The user's own message still
+    # persists below; only Ayma's tour narration is dropped.
+    tour_narration = tool_labels.is_guided_tour_turn(tools_used)
     client_msg_id = (req.client_msg_id or "").strip()
     if client_msg_id:
         # A twin of this send (a cross-instance retry racing the shielded
@@ -1749,36 +1755,41 @@ def _finalize_chat(
             if reply_text == _USAGE_CAPPED_REPLY
             else (client_msg_id or None)
         )
-        chat_history.append(
-            get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
-            image_path=ctx.photo_edit_result.get("image_path") or None,
-            # The durable token URL too: a generated image's ayma_generated/…
-            # path is NOT client-resolvable (Storage rules only open
-            # uploads/{uid}), so without the URL the image vanishes from the
-            # transcript on reload (founder bug 2026-09-27).
-            image_url=ctx.photo_edit_result.get("image_url") or None,
-            # On the reply too, so a client reconciling a dropped connection
-            # can find this send's finished reply by exact id. A capped reply
-            # leaves this unset so a queued re-send once credits are back is
-            # not deduped against the limit message.
-            client_msg_id=reply_client_id,
-        )
+        # Guided-tour narration: keep the user turn (appended above) but do not
+        # persist Ayma's ephemeral step guidance as a durable chat turn.
+        if not tour_narration:
+            chat_history.append(
+                get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
+                image_path=ctx.photo_edit_result.get("image_path") or None,
+                # The durable token URL too: a generated image's ayma_generated/…
+                # path is NOT client-resolvable (Storage rules only open
+                # uploads/{uid}), so without the URL the image vanishes from the
+                # transcript on reload (founder bug 2026-09-27).
+                image_url=ctx.photo_edit_result.get("image_url") or None,
+                # On the reply too, so a client reconciling a dropped connection
+                # can find this send's finished reply by exact id. A capped reply
+                # leaves this unset so a queued re-send once credits are back is
+                # not deduped against the limit message.
+                client_msg_id=reply_client_id,
+            )
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", ctx.uid)
     else:
-        background.add_task(
-            notifications_triggers.notify_ayma_reply,
-            get_db(), ctx.uid, reply_text,
-        )
+        if not tour_narration:
+            background.add_task(
+                notifications_triggers.notify_ayma_reply,
+                get_db(), ctx.uid, reply_text,
+            )
 
     if req.session_id:
         user_text = req.message
         if ctx.image is not None:
             user_text = f"{req.message}\n[shared a photo]".strip()
-        full_window = ctx.window + [
-            Turn(ROLE_USER, user_text),
-            Turn(ROLE_AYMA, reply_text),
-        ]
+        # Tour narration is ephemeral — keep the user turn in the rolling
+        # session window, but never persist Ayma's step guidance into raw_turns.
+        full_window = ctx.window + [Turn(ROLE_USER, user_text)]
+        if not tour_narration:
+            full_window = full_window + [Turn(ROLE_AYMA, reply_text)]
         _persist_session(ctx.uid, req.session_id, full_window)
         # Phase 2 (cost program 2026-09-26): keep the rolling summary fresh in
         # the background. maybe_update_summary is itself threshold-gated (only

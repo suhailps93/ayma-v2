@@ -101,6 +101,27 @@ def tool_label(name: str) -> str:
     return TOOL_LABELS.get(name, name.replace("_", " ").capitalize())
 
 
+# The guided-tour tools (skills/guided_tour.py). A turn that ran one of these is
+# the Ayma-DRIVEN tour narrating a step — ephemeral guidance that must NOT be
+# persisted to the chat history / raw_turns (founder, 2026-11-03: the step line
+# "This is where you and I talk. Tap the message box…" was saved as a chat
+# turn). Both surfaces detect a tour turn through these.
+GUIDED_TOUR_TOOLS = frozenset(
+    "start_guided_tour advance_guided_tour stop_guided_tour".split()
+)
+# The past-tense labels those tools contribute to a turn's ``tools_used`` (what
+# the text path sees at the persist point).
+GUIDED_TOUR_LABELS = frozenset(TOOL_LABELS[n] for n in GUIDED_TOUR_TOOLS)
+
+
+def is_guided_tour_turn(tools_used: list[str] | None) -> bool:
+    """True when this turn ran a guided-tour tool (by label) — so its narration
+    reply is ephemeral tour guidance, not a chat turn to persist."""
+    return bool(tools_used) and any(
+        label in GUIDED_TOUR_LABELS for label in tools_used
+    )
+
+
 def outcome_label(name: str, result: object) -> str | None:
     """A label read from what the tool actually did, for the tools whose one
     name covers different outcomes; ``None`` means use :func:`tool_label`, and

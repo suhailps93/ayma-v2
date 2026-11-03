@@ -97,6 +97,7 @@ from prompt import (  # noqa: E402
 import skills  # noqa: E402
 import voices  # noqa: E402
 from tool_labels import NO_CHIP as _NO_CHIP  # noqa: E402
+from tool_labels import GUIDED_TOUR_TOOLS as _GUIDED_TOUR_TOOLS  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
@@ -1232,10 +1233,25 @@ def _strip_leaked_tool_artifact(text: str) -> str:
     return text
 
 
+class TourNarrationGate:
+    """Per-voice-session latch marking that the NEXT assistant turn is Ayma-DRIVEN
+    tour narration (§11.2b) — ephemeral step guidance that must NOT be relayed to
+    the client transcript nor recorded in the ``raw_turns`` window, so it never
+    persists as a chat turn (founder/Scout, 2026-11-03). Set when a guided-tour
+    tool runs (``_session_tools`` ``_on_call``), consumed by the next assistant
+    ``conversation_item_added`` (``relay_transcripts`` ``_on_item``), and reset on
+    a new user turn so a tool that produced no narration can't leak the latch
+    forward. One gate is created per call build and passed to both."""
+
+    def __init__(self) -> None:
+        self.pending = False
+
+
 def relay_transcripts(
     ctx: JobContext,
     session: AgentSession,
     collector: list[Turn] | None = None,
+    tour_gate: "TourNarrationGate | None" = None,
 ) -> None:
     """Relay Gemini Live's native transcription to the client as
     ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6), and
@@ -1257,6 +1273,10 @@ def relay_transcripts(
         _publish_transcript(
             ctx, TOPIC_USER_TRANSCRIPT, ev.transcript, ev.is_final
         )
+        if ev.is_final and tour_gate is not None:
+            # A new user turn: whatever Ayma says next is a fresh reply, not the
+            # pending tour narration — reset the latch so it can't leak forward.
+            tour_gate.pending = False
         if collector is not None and ev.is_final and ev.transcript.strip():
             collector.append(Turn(ROLE_USER, ev.transcript.strip()))
 
@@ -1267,6 +1287,13 @@ def relay_transcripts(
         text = _strip_leaked_tool_artifact(
             (ev.item.text_content or "").strip()
         ).strip()
+        if tour_gate is not None and tour_gate.pending:
+            # Ayma-driven tour step narration — ephemeral guidance, not a chat
+            # turn (§11.2b). Consume the latch and drop it: neither relay it to
+            # the client transcript nor record it in the raw_turns window, so it
+            # never persists (founder/Scout, 2026-11-03).
+            tour_gate.pending = False
+            return
         _publish_transcript(ctx, TOPIC_AGENT_TRANSCRIPT, text, True)
         if collector is not None and text:
             collector.append(Turn(ROLE_AYMA, text))
@@ -1795,6 +1822,7 @@ def _session_tools(
     guard: Callable[[], str | None] | None = None,
     session_id: str = "",
     window: list[Turn] | None = None,
+    tour_gate: "TourNarrationGate | None" = None,
 ) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
@@ -1812,6 +1840,11 @@ def _session_tools(
     def _on_call(phase: str, name: str, label: str | None) -> None:
         if on_activity is not None:
             on_activity()
+        # A guided-tour tool ran this turn → the assistant turn it produces is
+        # ephemeral tour narration; latch it so relay_transcripts drops it
+        # (§11.2b). Set on start, so it's armed before the narration is spoken.
+        if tour_gate is not None and phase == "start" and name in _GUIDED_TOUR_TOOLS:
+            tour_gate.pending = True
         _publish_tool_event(ctx, phase, name, label)
 
     return skills.make_livekit_tools(
@@ -2633,7 +2666,8 @@ async def _start_main_gemini_session(
         ),
         allow_interruptions=True,
     )
-    relay_transcripts(ctx, session, collector=window)
+    tour_gate = TourNarrationGate()
+    relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
     # Session closed = the conversation is over (no more turns can arrive):
     # start the memory write now rather than at job shutdown (see
     # SessionFlush.start).
@@ -2713,6 +2747,7 @@ async def _start_main_gemini_session(
         ),
         session_id=seed.session_id,
         window=window,
+        tour_gate=tour_gate,
     )
     if swapper:
         swapper.tools = tools
@@ -2752,7 +2787,8 @@ async def _start_main_cascade_session(
     flush is NOT started on an ERROR close here — the runtime fallback continues
     the call on a fresh Gemini Live session on the same window, which flushes at
     its own close."""
-    relay_transcripts(ctx, session, collector=window)
+    tour_gate = TourNarrationGate()
+    relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
     session.on("close", _flush_on_non_error_close(flush))
     relay_agent_state(ctx, session)
     mute = MuteState()
@@ -2796,6 +2832,7 @@ async def _start_main_cascade_session(
         ),
         session_id=seed.session_id,
         window=window,
+        tour_gate=tour_gate,
     )
     agent_kwargs: dict = {
         # The voice tool-use directive is appended HERE (cascade only): Meta Muse

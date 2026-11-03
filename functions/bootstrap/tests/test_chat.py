@@ -257,6 +257,32 @@ def test_chat_stream_normal_turn_persists_one_user_and_one_ayma(monkeypatch):
     assert ("user", "hey") in appended and ("ayma", "all set") in appended
 
 
+def test_chat_stream_guided_tour_narration_is_not_persisted(monkeypatch):
+    """A guided-tour turn narrates an ephemeral step line ("Tap Explore…"); its
+    tools_used carries a guided-tour label, so the user's own message persists
+    but Ayma's tour narration must NOT be written to chat history (founder/Scout,
+    2026-11-03)."""
+    async def _events(_message, *_a, **_kw):
+        yield {
+            "type": "reply",
+            "text": "Tap Explore to meet the people I match you with.",
+            "tools_used": ["Moved to the next step"],  # advance_guided_tour label
+        }
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    appended = _recording_history(monkeypatch)
+    resp = client.post(
+        "/chat/stream",
+        json={"message": "give me a tour", "client_msg_id": "c-tour"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    roles = [r for r, _ in appended]
+    assert roles.count("user") == 1, appended  # the user's own turn still persists
+    assert roles.count("ayma") == 0, appended  # tour narration is NOT persisted
+    assert ("user", "give me a tour") in appended
+
+
 def test_chat_feeds_recent_turns_into_the_system_prompt(monkeypatch):
     seen = {}
 
