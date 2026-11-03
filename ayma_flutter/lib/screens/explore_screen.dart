@@ -273,10 +273,16 @@ class ExploreScreenState extends State<ExploreScreen> {
     });
   }
 
+  void _submitSearch() {
+    _debounce?.cancel();
+    _loadInitial();
+  }
+
   void _onSearchChanged(String _) {
     _syncContext();
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), _loadInitial);
+    setState(() {});
   }
 
   @override
@@ -299,11 +305,26 @@ class ExploreScreenState extends State<ExploreScreen> {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
               child: TextField(
                 controller: _searchController,
+                textInputAction: TextInputAction.search,
                 onChanged: _onSearchChanged,
-                onSubmitted: (_) => _loadInitial(),
-                decoration: const InputDecoration(
+                onSubmitted: (_) => _submitSearch(),
+                decoration: InputDecoration(
                   hintText: 'Describe who you’re looking for…',
-                  prefixIcon: Icon(Icons.search),
+                  prefixIcon: IconButton(
+                    icon: const Icon(Icons.search),
+                    onPressed: _submitSearch,
+                    tooltip: 'Search',
+                  ),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            _submitSearch();
+                          },
+                          tooltip: 'Clear',
+                        )
+                      : null,
                   isDense: true,
                 ),
               ),
@@ -338,7 +359,10 @@ class ExploreScreenState extends State<ExploreScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 4),
+            if (_feed.refreshing && _feed.hasData)
+              const LinearProgressIndicator(minHeight: 2)
+            else
+              const SizedBox(height: 2),
           ],
           body: Builder(builder: (context) {
             if (_feed.refreshing && !_feed.hasData) {
@@ -353,14 +377,20 @@ class ExploreScreenState extends State<ExploreScreen> {
               );
             }
             final cards = _visibleCards;
-            if (cards.isEmpty) {
-              return Center(
+            final isSearching = _searchController.text.trim().isNotEmpty;
+            final hasNoMatches =
+                cards.isEmpty || (isSearching && cards.every((c) => c.isSelf));
+            if (hasNoMatches) {
+              return CenteredScroll(
+                padding: const EdgeInsets.all(24),
                 child: Text(
-                    _filter == _Filter.all
-                        ? 'No one matches that yet.'
-                        : 'Nothing here for this filter.',
-                    style: AymaType.sans(
-                        size: 15, soft: true, color: ac.fgMute)),
+                  _filter == _Filter.all
+                      ? 'No one matches that yet.'
+                      : 'Nothing here for this filter.',
+                  textAlign: TextAlign.center,
+                  style: AymaType.sans(
+                      size: 15, soft: true, color: ac.fgMute),
+                ),
               );
             }
             // Search field above: dragging the results
