@@ -487,6 +487,17 @@ flowchart LR
   screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`
   polls it, capped at the same 10 minutes of wall-clock time); `failed` shows "Search didn't finish." with
   Try again. The background link re-validation of an older report never touches it.
+  - **Empty sweep never destroys a richer report (`deep_dive._digest_has_content`).** A self dive always
+    re-searches (no cache) and the live web legitimately varies run to run, so a re-run can come back with "no
+    confirmed public footprint". Before, `deep_dive.run` persisted *and* returned that empty sweep over the stored
+    report, wiping a link-rich report and dropping its Links section (Scout regression 2026-11-03; the search
+    path/scope/inputs are identical between the original and the re-run — same name + `profile_dive_context` + `is_self`
+    — so it is variance, not a degraded-params bug). Now `store_dive` **refuses** an empty-over-rich write (a new sweep
+    *with* content still wins outright, as before), and `run()` mirrors that by **re-surfacing the kept richer report**
+    as its return value — so the stored doc, the returned digest and the chat card stay consistent (the user gets their
+    report back, never an empty one). A genuine *first* dive that finds nothing is still stored (so the report screen
+    can show an honest "no footprint" rather than 404). This protects every re-run path — the `rerun_web_research`
+    tool, the report screen's "Search again" button (`POST /deep-dive force`), and the auto self-dive.
   - **Research retry + timeout (reliability).** Because the dive is this polled *background* job (not bound by the
     client's 55s long-request budget), the grounded discovery call (`deep_dive._grounded_research` → `gemini.research`)
     runs with a longer per-attempt timeout — `gemini.RESEARCH_TIMEOUT_SECONDS` (120s) rather than the 75s synchronous

@@ -114,6 +114,22 @@ def cached_dive(
         return None
 
 
+def _digest_has_content(digest: dict | None) -> bool:
+    """Whether a dive digest actually found anything worth keeping — any fact,
+    link, social handle or web photo. An empty digest is a "no confirmed public
+    footprint" sweep: it must never be allowed to overwrite a richer stored
+    report (Scout regression 2026-11-03 — a self re-run that turned up nothing
+    wiped a link-rich report, dropping the Links section)."""
+    if not isinstance(digest, dict):
+        return False
+    return bool(
+        digest.get("facts")
+        or digest.get("links")
+        or digest.get("social_handles")
+        or digest.get("web_images")
+    )
+
+
 def store_dive(
     db, uid: str, digest: dict, *, target_uid: str = "", name: str = ""
 ) -> None:
@@ -149,6 +165,22 @@ def store_dive(
                 prior = snap.to_dict() or {}
         except Exception:  # noqa: BLE001
             prior = {}
+
+        # Never let an empty sweep destroy a richer stored report. A re-run
+        # (self dives always re-search; the web legitimately varies run to
+        # run) that finds nothing must KEEP the existing report rather than
+        # replace a link-rich one with "no confirmed public footprint" (Scout
+        # regression 2026-11-03). Only an empty-over-rich write is skipped: a
+        # new sweep WITH content still wins outright, as before.
+        if not _digest_has_content(digest) and _digest_has_content(
+            (prior.get("digest") or {})
+        ):
+            logger.info(
+                "deep-dive store skipped for %s/%s: an empty sweep would have "
+                "overwritten a richer stored report — keeping the existing one",
+                uid, key,
+            )
+            return
 
         digest = dict(digest)
         prior_confirmed = (prior.get("digest") or {}).get("confirmed_photos") or []
@@ -1547,6 +1579,23 @@ async def run(
         # web-search report). Self dives are unaffected (target_uid is empty,
         # subject_uid falls back to the caller = the subject).
         subject_uid = target_uid or uid
+        # A re-run whose sweep turned up nothing must NOT destroy a previously
+        # richer report (Scout regression 2026-11-03). `store_dive` already
+        # refuses the empty-over-rich write; mirror that here so the RETURNED
+        # report — which the chat card / teaser is built from — is the kept
+        # richer one, not the empty sweep (otherwise the stored report would
+        # stay rich while the user got a bare "nothing found" turn).
+        if not _digest_has_content(result):
+            prior = read_dive(db, subject_uid, _cache_key(target_uid, name))
+            prior_digest = (prior or {}).get("digest")
+            if isinstance(prior_digest, dict) and _digest_has_content(prior_digest):
+                logger.info(
+                    "deep-dive re-run for %s found nothing; keeping and "
+                    "re-surfacing the richer stored report", subject_uid,
+                )
+                kept = dict(prior_digest)
+                kept["is_self"] = is_self
+                return kept
         store_dive(db, subject_uid, result, target_uid=target_uid, name=name)
         if target_uid and not is_self:
             # Also land it at the subject's own name-keyed self-dive slot —

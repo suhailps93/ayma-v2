@@ -2850,3 +2850,108 @@ def test_correction_prompts_name_natural_source_phrasings():
     for prompt in (deep_dive._CORRECTION_SYSTEM, deep_dive._CORRECTION_SYSTEM_URL):
         assert "where did you get this" in prompt
         assert "where's this from" in prompt
+
+
+# --- re-run must not destroy a richer report with an empty sweep -------------
+# Scout regression 2026-11-03: a self re-run returned "no confirmed public
+# footprint" and OVERWROTE a link-rich report — the Links section vanished.
+# The cause was `run()` persisting (and returning) an empty fresh sweep over a
+# richer stored report. The search path/scope/inputs are identical between the
+# original and the re-run (same name + profile_dive_context + is_self), so this
+# is web-search variance destroying good content, not a degraded-params bug.
+
+
+def _rich_mocks(monkeypatch):
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
+
+    async def _research(prompt, system_prompt=None, **kw):
+        return ("notes about Daniel", [{"url": "https://example.com/me", "title": "Me"}])
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {
+            "summary": "Found plenty", "confidence": "high",
+            "facts": [{"claim": "Works at Acme", "category": "career",
+                       "confidence": "high", "source_url": "https://example.com/me"}],
+            "links": [{"url": "https://example.com/me", "title": "Me",
+                       "is_them": "likely", "note": ""}],
+        }
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+
+
+def _empty_mocks(monkeypatch):
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
+
+    async def _research(prompt, system_prompt=None, **kw):
+        return ("", [])
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+
+
+def test_self_rerun_keeps_the_links_when_the_fresh_sweep_finds_nothing(monkeypatch):
+    db = _CacheDb()
+    key = deep_dive._cache_key("", "Daniel Fox")
+
+    # Original run: a rich, link-bearing report is found and stored.
+    _rich_mocks(monkeypatch)
+    d1 = _run(deep_dive.run("Daniel Fox", db=db, uid="u1", is_self=True))
+    assert d1["links"] and d1["links"][0]["url"] == "https://example.com/me"
+    assert db.store[key]["digest"]["links"], "the rich report must be stored"
+
+    # Re-run: the live web turns up nothing this time.
+    _empty_mocks(monkeypatch)
+    d2 = _run(deep_dive.run("Daniel Fox", db=db, uid="u1", is_self=True))
+
+    # run() re-surfaces the KEPT richer report (links intact) rather than the
+    # empty sweep, so the chat card / teaser built from it still shows links…
+    assert d2["links"], "re-run must not drop the Links section"
+    assert d2["links"][0]["url"] == "https://example.com/me"
+    assert d2["confidence"] == "high"
+    # …and the stored report was never overwritten by the empty sweep.
+    assert db.store[key]["digest"]["links"][0]["url"] == "https://example.com/me"
+    assert db.store[key]["digest"]["facts"], "facts preserved too"
+
+
+def test_store_dive_refuses_to_overwrite_a_rich_report_with_an_empty_one():
+    db = _CacheDb()
+    rich = {
+        "name": "Daniel Fox", "is_self": True, "summary": "Found plenty",
+        "confidence": "high",
+        "facts": [{"claim": "Works at Acme", "id": "f1"}],
+        "links": [{"url": "https://example.com/me", "title": "Me"}],
+        "web_images": [], "social_handles": [],
+    }
+    deep_dive.store_dive(db, "u1", rich, target_uid="", name="Daniel Fox")
+    key = deep_dive._cache_key("", "Daniel Fox")
+    assert db.store[key]["digest"]["links"]
+
+    # An empty sweep must be refused — the richer report stays put.
+    empty = {
+        "name": "Daniel Fox", "is_self": True, "summary": "",
+        "confidence": "not_found", "facts": [], "links": [],
+        "web_images": [], "social_handles": [],
+    }
+    deep_dive.store_dive(db, "u1", empty, target_uid="", name="Daniel Fox")
+    assert db.store[key]["digest"]["links"][0]["url"] == "https://example.com/me"
+    assert db.store[key]["digest"]["confidence"] == "high"
+
+
+def test_store_dive_still_writes_a_first_empty_report_when_nothing_prior():
+    # A genuine first dive that finds nothing is NOT guarded away — the report
+    # screen must be able to show an honest "no footprint" rather than 404.
+    db = _CacheDb()
+    empty = {
+        "name": "Ghost Nobody", "is_self": True, "summary": "",
+        "confidence": "not_found", "facts": [], "links": [],
+        "web_images": [], "social_handles": [],
+    }
+    deep_dive.store_dive(db, "u1", empty, target_uid="", name="Ghost Nobody")
+    key = deep_dive._cache_key("", "Ghost Nobody")
+    assert db.store[key]["digest"]["confidence"] == "not_found"
