@@ -278,6 +278,21 @@ class VoiceSessionController extends ChangeNotifier {
   Timer? _ctxHeartbeat;
   AppLifecycleListener? _lifecycle;
 
+  /// App-lifecycle observer for the WHOLE session (installed at [start], torn
+  /// down on every terminal path), so the mic and the OS call surface are
+  /// GUARANTEED released when the app is closed/detached — never left held
+  /// behind a backgrounded or killed app (privacy, founder bug 2026-11-03). A
+  /// raw [WidgetsBindingObserver] (not [AppLifecycleListener]) so it fires on
+  /// every reported state regardless of prior-state transitions. Distinct from
+  /// [_lifecycle] above, which only re-pushes screen context on resume and
+  /// exists only while screen-awareness is running.
+  _VoiceLifecycleObserver? _sessionLifecycle;
+
+  /// What we last asked the transport to do with the local mic track — the
+  /// idempotency latch for [_syncMicCapture], so the mic is published exactly
+  /// once per ready call and never double-toggled.
+  bool _micCaptured = false;
+
   /// The screen mirror is only re-pushed on change, so a long call sitting on
   /// one screen would let the backend doc age past its staleness window and
   /// `current_screen` would start coming up blank. Re-push on this cadence to
@@ -381,6 +396,25 @@ class VoiceSessionController extends ChangeNotifier {
   /// instead (never a stuck fake-listening state).
   bool get awaitingFirstResponse => isListening && !_agentRespondedOnce;
 
+  /// The single privacy gate for "the call is genuinely live and ready for the
+  /// user to speak": the agent has joined (`live`) AND has produced its first
+  /// real response (speech, transcript, or a tool call), so Ayma is actually
+  /// conversing — NOT merely connecting, waking, or warming a cold open-weights
+  /// brain (during all of which the UI shows "Connecting…" / "Warming up the
+  /// open-weights model…" and nothing can yet hear the caller).
+  ///
+  /// The microphone ([_syncMicCapture]) and the OS call surface
+  /// ([CallBackgroundService] — the Android ongoing-call notification / iOS
+  /// CallKit call) both gate on THIS, never on [isListening] alone. That is the
+  /// privacy invariant the founder asked for (2026-11-03): the mic is captured
+  /// and the call notification shown ONLY during a live, conversing call — the
+  /// agent reaches `live` *before* it signals the open-weights warm-up
+  /// (agent.py publishes its track first, then `open_weights_warming`), so
+  /// gating on `live` alone would hold the mic + notification through the whole
+  /// ~100s warm-up. Requiring the first genuine response closes that window
+  /// with no event-ordering race and no momentary mic/notification flash.
+  bool get isConversationReady => isListening && _agentRespondedOnce;
+
   /// The controller with a session currently starting or live, if any — the
   /// process-wide registry that enforces the single-active-voice-session
   /// invariant. [start] reads it to tear down any other live session before
@@ -441,10 +475,17 @@ class VoiceSessionController extends ChangeNotifier {
       _pendingToolLabels.clear();
       _activeToolLabel = null;
       _noJoinRetried = false;
+      _micCaptured = false;
       _provider = '';
       _coachHint = '';
       active = this;
       _setPhase(VoiceSessionPhase.connecting);
+      // Guarantee the mic + OS call surface are released when the app closes,
+      // for the WHOLE session (connecting/waking/warming included), not just a
+      // live call — survives the ice-relay / no-join retries (they go through
+      // `_teardown`, which no longer touches this), torn down on every terminal
+      // path (`stop`, `_endForIdle`, `_fail`, `dispose`).
+      _installSessionLifecycle();
       // Best-effort and fire-before-connect: ask for whatever the call will
       // need in the background while the user still has full context for the
       // OS prompt, so it's (hopefully) already settled by the time
@@ -512,10 +553,10 @@ class VoiceSessionController extends ChangeNotifier {
         return;
       }
 
-      VoiceTransport transport;
       try {
-        transport =
-            await _connectTransport(url: url, token: token, forceRelay: false);
+        // Sets `_transport` internally; the mic is NOT published here (see the
+        // comment below) so the return value is not needed.
+        await _connectTransport(url: url, token: token, forceRelay: false);
       } catch (e) {
         if (!isIceConnectivityFailure(e)) rethrow;
         // The PeerConnection never reached connected — ICE connectivity
@@ -529,24 +570,18 @@ class VoiceSessionController extends ChangeNotifier {
         await _teardown();
         _relayRetrying = true;
         notifyListeners(); // status line: "Connecting…" -> "Reconnecting…"
-        transport =
-            await _connectTransport(url: url, token: token, forceRelay: true);
+        await _connectTransport(url: url, token: token, forceRelay: true);
         debugPrint('[voice] ice-relay-retry: relay connect succeeded');
       }
 
-      try {
-        await transport.setMicrophoneEnabled(true);
-      } catch (e, st) {
-        _report(e, st, 'mic_permission');
-        await _teardown();
-        _fail('Ayma needs microphone access for voice.');
-        return;
-      }
-
-      // The room is connected and our mic is publishing, but the agent
-      // (scale-to-zero worker) may still be cold-starting. Hold `waking` — NOT
-      // `live` — until `agentReady` fires so the UI never claims "Listening"
-      // while nothing is there to hear the caller (§1.7).
+      // The room is connected, but the mic is deliberately NOT published yet:
+      // capture is deferred until the call is genuinely conversation-ready (see
+      // [_syncMicCapture] / [isConversationReady]), so nothing holds the OS
+      // microphone during connecting/waking or the open-weights warm-up
+      // (privacy, founder bug 2026-11-03). The agent (scale-to-zero worker) may
+      // still be cold-starting, so hold `waking` — NOT `live` — until
+      // `agentReady` fires, and the mic comes up only on Ayma's first genuine
+      // response (§1.7).
       debugPrint('[voice] phase -> waking');
       _setPhase(VoiceSessionPhase.waking);
       if (_agentReadySeen) {
@@ -741,10 +776,46 @@ class VoiceSessionController extends ChangeNotifier {
     _agentRespondedOnce = true;
     _responseGuard?.cancel();
     _responseGuard = null;
+    // Ayma's first genuine response is the moment the call is truly live and
+    // ready for the user to speak: publish the mic now, and let the OS call
+    // surface come up (it gates on [isConversationReady] too) — never during
+    // connecting/waking/warming (privacy, founder bug 2026-11-03).
+    unawaited(_syncMicCapture());
     // A transcript-only first reply otherwise rebuilds nothing on this
     // controller: the "Connecting…" -> "Listening…" status flip below rides
     // on this notification. Fires at most once per session (see the latch).
     notifyListeners();
+  }
+
+  /// Drives the LiveKit local mic track to match the privacy invariant: the mic
+  /// is captured ONLY during a live, conversation-ready, unmuted call, and
+  /// released otherwise. This is the one place (besides [toggleMute], which
+  /// keeps [_micCaptured] in step) that publishes/unpublishes the track, so the
+  /// OS mic indicator can never light during connecting/waking/warming or linger
+  /// after teardown. Idempotent via [_micCaptured]; best-effort on release and
+  /// honest-failure on a denied enable.
+  Future<void> _syncMicCapture() async {
+    final transport = _transport;
+    if (transport == null) return;
+    final want = isConversationReady && !_muted;
+    if (want == _micCaptured) return;
+    _micCaptured = want;
+    try {
+      await transport.setMicrophoneEnabled(want);
+    } catch (e, st) {
+      if (!want) {
+        // Releasing the mic must never throw its way out of a teardown.
+        debugPrint('[voice] mic release failed: $e');
+        return;
+      }
+      // Enabling raised the OS mic prompt and it was denied (or the track
+      // failed to publish): release everything and surface the same honest
+      // error the old inline enable did, rather than a half-open call.
+      _micCaptured = false;
+      _report(e, st, 'mic_permission');
+      await _teardown();
+      _fail('Ayma needs microphone access for voice.');
+    }
   }
 
   /// Live, but the agent never produced a first response within
@@ -817,6 +888,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// idle with a non-error [endNotice], never the error phase.
   Future<void> _endForIdle() async {
     if (active == this) active = null;
+    _disposeSessionLifecycle();
     await _teardown();
     _agentSpeaking = false;
     _muted = false;
@@ -943,6 +1015,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
     if (active == this) active = null;
+    _disposeSessionLifecycle();
     await _teardown();
     _persistSession();
     _agentSpeaking = false;
@@ -984,11 +1057,14 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   Future<void> toggleMute() async {
-    if (_phase != VoiceSessionPhase.live || _transport == null) return;
+    // Only a genuinely ready call has a published mic to toggle — during
+    // connecting/waking/warming there is nothing captured yet (mute is a no-op).
+    if (!isConversationReady || _transport == null) return;
     _muted = !_muted;
     notifyListeners();
     try {
       await _transport!.setMicrophoneEnabled(!_muted);
+      _micCaptured = !_muted; // keep the capture latch in step with the track
     } catch (_) {
       _muted = !_muted; // revert on failure
       notifyListeners();
@@ -1120,6 +1196,13 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _fail(String message) {
     _errorMessage = message;
+    // Guarantee the mic is released and the session fully torn down on EVERY
+    // failure path (idempotent — callers that already tore down hit a no-op).
+    // Closes paths that previously reached `error` with a still-held mic, e.g.
+    // the agent ending the call for `out_of_credits`, which relied on a later
+    // `closed` event that may never arrive (privacy, founder bug 2026-11-03).
+    _disposeSessionLifecycle();
+    unawaited(_teardown());
     _setPhase(VoiceSessionPhase.error);
   }
 
@@ -1186,40 +1269,131 @@ class VoiceSessionController extends ChangeNotifier {
     _closedSub = null;
     _micLevelSub = null;
     _aymaLevelSub = null;
+    _micCaptured = false;
     _transport = null;
 
-    unawaited(WakelockPlus.disable().catchError(
-        (e) => debugPrint('[voice] wakelock disable failed: $e')));
-    await _stopScreenAwareness();
-    await speakingSub?.cancel();
-    await readySub?.cancel();
-    await transcriptSub?.cancel();
-    await toolEventsSub?.cancel();
-    await callEndingSub?.cancel();
-    await agentMuteSub?.cancel();
-    await coachSub?.cancel();
-    await voiceStatusSub?.cancel();
-    await closedSub?.cancel();
-    await micLevelSub?.cancel();
-    await aymaLevelSub?.cancel();
-    micLevel.value = 0;
-    aymaLevel.value = 0;
-    // A session's tool-call bookkeeping never survives it — the next call
-    // starts clean (also reset at the top of start(), belt and braces).
-    _pendingToolLabels.clear();
-    _activeToolLabel = null;
-    if (transport != null) {
-      try {
-        await transport.disconnect();
-      } finally {
-        await transport.dispose();
+    // Everything below is wrapped so the privacy-critical mic release in the
+    // `finally` ALWAYS runs — even if an earlier cleanup step throws. The old
+    // version disconnected the transport (which releases the OS mic) only at
+    // the very end, after several `await`s; a throw in any of them (a plugin
+    // hiccup in `_stopScreenAwareness`, a subscription cancel) would skip the
+    // release entirely and leave the mic held (founder privacy bug
+    // 2026-11-03). Idempotent: a concurrent/second call sees null fields and
+    // does nothing.
+    try {
+      unawaited(WakelockPlus.disable().catchError(
+          (e) => debugPrint('[voice] wakelock disable failed: $e')));
+      await _stopScreenAwareness();
+      await speakingSub?.cancel();
+      await readySub?.cancel();
+      await transcriptSub?.cancel();
+      await toolEventsSub?.cancel();
+      await callEndingSub?.cancel();
+      await agentMuteSub?.cancel();
+      await coachSub?.cancel();
+      await voiceStatusSub?.cancel();
+      await closedSub?.cancel();
+      await micLevelSub?.cancel();
+      await aymaLevelSub?.cancel();
+      micLevel.value = 0;
+      aymaLevel.value = 0;
+      // A session's tool-call bookkeeping never survives it — the next call
+      // starts clean (also reset at the top of start(), belt and braces).
+      _pendingToolLabels.clear();
+      _activeToolLabel = null;
+    } catch (e, st) {
+      debugPrint('[voice] teardown cleanup error (continuing to release '
+          'the mic): $e\n$st');
+    } finally {
+      if (transport != null) {
+        try {
+          await transport.disconnect();
+        } catch (e) {
+          debugPrint('[voice] transport disconnect failed: $e');
+        }
+        try {
+          await transport.dispose();
+        } catch (e) {
+          debugPrint('[voice] transport dispose failed: $e');
+        }
       }
+    }
+  }
+
+  /// Installs the whole-session app-lifecycle observer (see [_sessionLifecycle]).
+  /// Best-effort: without a widgets binding (a plain unit test) it is simply not
+  /// installed and the ordinary teardown paths still apply.
+  void _installSessionLifecycle() {
+    _disposeSessionLifecycle();
+    try {
+      final observer = _VoiceLifecycleObserver(_onAppLifecycleState);
+      WidgetsBinding.instance.addObserver(observer);
+      _sessionLifecycle = observer;
+    } catch (e) {
+      // No widgets binding (a plain unit test) — not installed; the ordinary
+      // teardown paths still apply.
+      debugPrint('[voice] session lifecycle observer unavailable: $e');
+    }
+  }
+
+  void _disposeSessionLifecycle() {
+    final observer = _sessionLifecycle;
+    _sessionLifecycle = null;
+    if (observer != null) {
+      try {
+        WidgetsBinding.instance.removeObserver(observer);
+      } catch (_) {
+        // Binding already gone (teardown during app shutdown) — nothing to do.
+      }
+    }
+  }
+
+  void _onAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.detached:
+        _onAppDetached();
+      case AppLifecycleState.paused:
+        _onAppPaused();
+      case AppLifecycleState.resumed:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+        break;
+    }
+  }
+
+  /// Test seam for the app-lifecycle teardown (the same entry the installed
+  /// [WidgetsBindingObserver] forwards to), so the detach/pause behaviour can
+  /// be driven deterministically without depending on the test binding's
+  /// lifecycle dispatch.
+  @visibleForTesting
+  void debugDispatchLifecycle(AppLifecycleState state) =>
+      _onAppLifecycleState(state);
+
+  /// The app (and its Flutter engine) is being destroyed. Release the mic and
+  /// dismiss the OS call surface before it goes — a mic must NEVER stay held
+  /// behind a dead app. Best-effort; the isolate may not live long enough to
+  /// finish, but [stop] releases the mic synchronously up to its first await.
+  void _onAppDetached() {
+    if (!isActive && _phase != VoiceSessionPhase.error) return;
+    unawaited(stop());
+  }
+
+  /// The app was backgrounded. A genuinely live, conversation-ready call is the
+  /// intended ChatGPT-style background call — its foreground service / CallKit
+  /// surface keeps it alive, so leave it running. But a session that is only
+  /// connecting/waking/warming has no such surface (and on Android a mic FGS
+  /// cannot legally start once backgrounded), so tear it down rather than let a
+  /// half-started session linger holding a room while the user isn't looking.
+  void _onAppPaused() {
+    if (isActive && !isConversationReady) {
+      unawaited(stop());
     }
   }
 
   @override
   void dispose() {
     if (active == this) active = null;
+    _disposeSessionLifecycle();
     // Cancel every listener subscription synchronously — i.e. the `.cancel()`
     // calls themselves, not their returned futures — *before* `super.dispose()`
     // marks this ChangeNotifier disposed below. `_teardown()`'s own
@@ -1247,4 +1421,18 @@ class VoiceSessionController extends ChangeNotifier {
     unawaited(_teardown());
     super.dispose();
   }
+}
+
+/// A minimal [WidgetsBindingObserver] that forwards every reported app
+/// lifecycle state to a callback — used by [VoiceSessionController] to
+/// guarantee the mic + OS call surface are released when the app is
+/// backgrounded/closed. A raw observer (rather than `AppLifecycleListener`)
+/// fires on each reported state without depending on prior-state transitions.
+class _VoiceLifecycleObserver with WidgetsBindingObserver {
+  _VoiceLifecycleObserver(this._onState);
+
+  final void Function(AppLifecycleState state) _onState;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) => _onState(state);
 }

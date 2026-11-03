@@ -53,6 +53,15 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!agentReadyController.isClosed) agentReadyController.add(true);
   }
 
+  /// Emit an agent-speaking change (test helper). A `true` is also the
+  /// simplest way to simulate Ayma's first genuine response, which is what
+  /// flips a live call to conversation-ready (mic published, OS call surface).
+  void emitAgentSpeaking(bool speaking) {
+    if (!agentSpeakingController.isClosed) {
+      agentSpeakingController.add(speaking);
+    }
+  }
+
   @override
   Stream<bool> get agentSpeaking => agentSpeakingController.stream;
 

@@ -35,11 +35,30 @@ final voiceContextCalls = <Map<String, dynamic>>[];
 
 /// Drive a controller from `idle` all the way to `live`: `start()` lands in
 /// `waking`, then the fake transport's one-shot `agentReady` promotes it.
+/// Drives the controller to `live` (agent joined), i.e. the honest
+/// "Connecting…"/awaiting-first-response window — NOT yet conversation-ready, so
+/// the mic/OS call surface are intentionally still held back. Tests that need a
+/// genuinely conversing call emit Ayma's first response themselves (an
+/// `emitAgentSpeaking(true)` / agent transcript).
 Future<void> _startLive(
     VoiceSessionController c, FakeVoiceTransport transport) async {
   await c.start();
   transport.markAgentReady();
   await Future<void>.delayed(Duration.zero);
+}
+
+/// Drives a `failMic`-configured controller to the point the mic is published
+/// — Ayma's first genuine response — and pumps until the denial lands it in
+/// `error` (the mic is no longer enabled at connect, so a denial surfaces here).
+Future<void> _driveToDeniedMic(
+    VoiceSessionController c, FakeVoiceTransport Function() transport) async {
+  await c.start();
+  transport().markAgentReady();
+  await Future<void>.delayed(Duration.zero);
+  transport().emitAgentSpeaking(true); // first response → mic publish attempt
+  for (var i = 0; i < 100 && c.phase != VoiceSessionPhase.error; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 ApiClient _api({
@@ -156,7 +175,8 @@ void main() {
     expect(voiceContextCalls.last['screen'], '');
   });
 
-  test('start() bootstraps, connects the transport, and publishes the mic',
+  test('start() bootstraps and connects, but does NOT publish the mic until '
+      'the call is conversation-ready (no mic during connecting/waking)',
       () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(
@@ -167,12 +187,91 @@ void main() {
 
     await c.start();
 
-    // Room + mic are up, but the agent hasn't joined yet.
+    // Room is connected, but the agent hasn't joined — privacy invariant: the
+    // OS mic is NOT captured yet (founder bug 2026-11-03: the mic/notification
+    // used to come up the instant a call began connecting).
     expect(c.phase, VoiceSessionPhase.waking);
     expect(c.isActive, isTrue);
+    expect(c.isConversationReady, isFalse);
     expect(transport.connectedUrl, 'wss://example.livekit.cloud');
     expect(transport.connectedToken, 'tok-abc');
+    expect(transport.micCalls, isEmpty);
+
+    // The agent joins — still NOT ready (its first reply hasn't landed), so
+    // the mic stays released all through the "Connecting…"/warm-up window.
+    transport.markAgentReady();
+    await Future<void>.delayed(Duration.zero);
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(c.awaitingFirstResponse, isTrue);
+    expect(c.isConversationReady, isFalse);
+    expect(transport.micCalls, isEmpty);
+
+    // Ayma's first genuine response — only NOW is the mic published.
+    transport.emitAgentSpeaking(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.isConversationReady, isTrue);
     expect(transport.micCalls, [true]);
+
+    await c.stop();
+  });
+
+  test('open-weights warm-up never captures the mic; the first reply does',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+
+    await c.start();
+    transport.markAgentReady();
+    await Future<void>.delayed(Duration.zero);
+    // The agent joins, then signals the open-weights cold start — production
+    // ordering: `live` precedes warming. The UI shows "Warming up…" but the
+    // call is NOT conversation-ready, so the mic must stay released the whole
+    // ~100s warm-up (the founder's exact privacy bug, 2026-11-03).
+    transport.emitVoiceStatus('open_weights_warming');
+    await Future<void>.delayed(Duration.zero);
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(c.warmingNotice, isNotNull); // "Warming up the open-weights model…"
+    expect(c.isConversationReady, isFalse);
+    expect(transport.micCalls, isEmpty);
+
+    // The first real reply ends the warm-up — only now is the mic published.
+    transport.emitAgentSpeaking(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.isConversationReady, isTrue);
+    expect(transport.micCalls, [true]);
+
+    await c.stop();
+  });
+
+  test('a crash/dropped connection releases the mic (disconnect) and leaves '
+      'no conversation-ready state (so the notification is dismissed)',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+    transport.emitAgentSpeaking(true); // reach conversation-ready, mic published
+    await Future<void>.delayed(Duration.zero);
+    expect(c.isConversationReady, isTrue);
+    expect(transport.micCalls, [true]);
+
+    // The transport drops unexpectedly (network / server close / a crash).
+    transport.closedController.add('network error');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.error);
+    // The OS surface gates on this — false means the notification is dismissed.
+    expect(c.isConversationReady, isFalse);
+    // The mic/room were torn down — the privacy-critical release always runs.
+    expect(transport.disconnectCalls, 1);
+    expect(transport.disposeCalls, 1);
   });
 
   test('waking -> live when the agent signals ready', () async {
@@ -224,7 +323,9 @@ void main() {
     expect(c.phase, VoiceSessionPhase.waking);
     transports.add(FakeVoiceTransport()); // used by the automatic retry
 
-    for (var i = 0; i < 100 && transports.last.micCalls.isEmpty; i++) {
+    // The retry re-connects a fresh transport. The mic is no longer published
+    // during waking (privacy fix), so key the wait on the new room connecting.
+    for (var i = 0; i < 100 && transports.last.connectCalls.isEmpty; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 2));
     }
     // First miss: torn down and re-bootstrapped (a new room), not failed.
@@ -318,14 +419,17 @@ void main() {
 
   test('a denied mic is reported', () async {
     final reporter = _RecordingReporter();
+    late FakeVoiceTransport transport;
     final c = VoiceSessionController(
       transcriptStore: TranscriptStore(),
       apiClient: _api(),
-      transportFactory: () => FakeVoiceTransport()..failMic = true,
+      transportFactory: () => transport = FakeVoiceTransport()..failMic = true,
       errorReporter: reporter,
     );
 
-    await c.start();
+    // The mic is published on Ayma's first response (not at connect), so the
+    // denial surfaces there — drive the call to that point.
+    await _driveToDeniedMic(c, () => transport);
 
     expect(c.errorMessage, contains('microphone'));
     expect(reporter.reports.single.reason, 'voice_mic_permission');
@@ -333,6 +437,7 @@ void main() {
 
   test('the configured voice provider tags reports', () async {
     final reporter = _RecordingReporter();
+    late FakeVoiceTransport transport;
     final c = VoiceSessionController(
       transcriptStore: TranscriptStore(),
       apiClient: _api(bootstrapBody: {
@@ -345,11 +450,11 @@ void main() {
           'voice_provider': 'inference',
         },
       }),
-      transportFactory: () => FakeVoiceTransport()..failMic = true,
+      transportFactory: () => transport = FakeVoiceTransport()..failMic = true,
       errorReporter: reporter,
     );
 
-    await c.start();
+    await _driveToDeniedMic(c, () => transport);
 
     expect(reporter.reports.single.tags['provider'], 'inference');
   });
@@ -394,7 +499,8 @@ void main() {
     expect(transport.disposeCalls, 1);
   });
 
-  test('start() fails cleanly when the mic cannot be enabled', () async {
+  test('fails cleanly when the mic cannot be enabled (on first response)',
+      () async {
     final transport = FakeVoiceTransport()..failMic = true;
     final c = VoiceSessionController(
       transcriptStore: TranscriptStore(),
@@ -402,7 +508,7 @@ void main() {
       transportFactory: () => transport,
     );
 
-    await c.start();
+    await _driveToDeniedMic(c, () => transport);
 
     expect(c.phase, VoiceSessionPhase.error);
     expect(c.errorMessage, contains('microphone'));
@@ -454,11 +560,17 @@ void main() {
     expect(transports[1].connectCalls, [true]);
     expect(c.relayRetrying, isTrue);
     expect(c.phase, VoiceSessionPhase.waking);
-    expect(transports[1].micCalls, [true]); // mic published on the retry path
+    // The relay retry connected its room but has NOT published the mic — that
+    // waits for the call to become conversation-ready (privacy fix).
+    expect(transports[1].micCalls, isEmpty);
 
     transports[1].markAgentReady();
     await Future<void>.delayed(Duration.zero);
     expect(c.phase, VoiceSessionPhase.live);
+    // Ayma's first response publishes the mic on this live (retry) transport.
+    transports[1].emitAgentSpeaking(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(transports[1].micCalls, [true]);
 
     await c.stop();
   });
@@ -589,13 +701,16 @@ void main() {
 
     transport.emitCallEnding('out_of_credits');
     await Future<void>.delayed(Duration.zero);
-    // The room actually closing shortly after, exactly like a real forced
-    // disconnect from the backend.
-    transport.closedController.add('room deleted');
-    await Future<void>.delayed(Duration.zero);
 
+    // The agent ending the call for out-of-credits now tears the session down
+    // immediately (releasing the mic — the privacy fix no longer waits for a
+    // `closed` event that may never arrive), and latches the capped error. A
+    // dropped-connection `closed` arriving afterwards hits an already-torn-down
+    // transport (identity check in the listener) and cannot clobber it.
     expect(c.cappedError, isTrue);
     expect(c.errorMessage, isNot(contains('connection dropped')));
+    expect(c.errorMessage, contains('Out of credits'));
+    expect(transport.disconnectCalls, 1);
   });
 
   test('an ordinary dropped connection (no call_ending) still surfaces the '
@@ -799,6 +914,16 @@ void main() {
 
     transport.markAgentReady();
     await Future<void>.delayed(Duration.zero);
+    // Live but awaiting Ayma's first response — still not conversation-ready,
+    // so there is no published mic to toggle yet (mute is a no-op).
+    await c.toggleMute();
+    expect(c.muted, isFalse);
+    expect(transport.micCalls, isEmpty);
+
+    // Ayma's first response publishes the mic; now mute actually toggles it.
+    transport.emitAgentSpeaking(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(transport.micCalls, [true]);
     await c.toggleMute();
     expect(c.muted, isTrue);
     expect(transport.micCalls, [true, false]);

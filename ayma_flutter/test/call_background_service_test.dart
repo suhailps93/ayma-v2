@@ -62,6 +62,12 @@ Future<VoiceSessionController> _liveController(
   await c.start();
   transport.markAgentReady();
   await Future<void>.delayed(Duration.zero);
+  // The OS call surface (and the mic) only come up once Ayma is genuinely
+  // conversing — her first response — not merely when the agent joins. Emit one
+  // so the call reaches the conversation-ready state the surface gates on.
+  transport.emitAgentSpeaking(true);
+  transport.emitAgentSpeaking(false);
+  await Future<void>.delayed(Duration.zero);
   return c;
 }
 
@@ -137,9 +143,9 @@ void main() {
     });
   });
 
-  group('the call notification is gated on the listening state', () {
-    test('no call notification while connecting/waking; it appears only once '
-        'Ayma is genuinely listening', () async {
+  group('the call notification is gated on the conversation-ready state', () {
+    test('no call notification while connecting/waking OR warming; it appears '
+        'only once Ayma is genuinely conversing', () async {
       final transport = FakeVoiceTransport();
       final gateway = _FakeGateway(granted: true);
       final voice = VoiceSessionController(
@@ -149,9 +155,8 @@ void main() {
         callPermissions: CallPermissions(gateway: gateway),
       );
       // Start the call but DO NOT mark the agent ready — the controller
-      // settles in `waking` (room connected, mic published, agent still
-      // cold-starting), exactly the window the founder saw the call
-      // notification appear in.
+      // settles in `waking` (room connected, agent still cold-starting),
+      // exactly the window the founder saw the call notification appear in.
       await voice.start();
       expect(voice.phase, VoiceSessionPhase.waking);
 
@@ -174,11 +179,25 @@ void main() {
       expect(service.debugUiActive, isFalse);
       expect(calls, isEmpty);
 
-      // The agent joins — now, and only now, the call surface appears.
+      // The agent joins AND signals the open-weights warm-up — the UI would
+      // show "Warming up…", but the call still isn't conversation-ready, so the
+      // surface MUST stay down (the founder's exact bug: notification during
+      // warm-up). This matches production ordering: `live` precedes warming.
       transport.markAgentReady();
+      transport.emitVoiceStatus('open_weights_warming');
       await Future<void>.delayed(Duration.zero);
 
       expect(voice.phase, VoiceSessionPhase.live);
+      expect(voice.awaitingFirstResponse, isTrue);
+      expect(voice.isConversationReady, isFalse);
+      expect(service.debugUiActive, isFalse);
+      expect(calls, isEmpty);
+
+      // Ayma's first genuine response — now, and only now, the surface appears.
+      transport.emitAgentSpeaking(true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(voice.isConversationReady, isTrue);
       expect(service.debugUiActive, isTrue);
       expect(calls, hasLength(1));
       expect(calls.single.method, 'start');

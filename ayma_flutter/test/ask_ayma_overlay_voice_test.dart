@@ -163,6 +163,14 @@ Future<void> _startListening(
   await tester.pump();
   transport.markAgentReady();
   await tester.pump();
+  // The mic is published only once Ayma is genuinely conversing (her first
+  // response), not merely when the agent joins — emit one so the session
+  // reaches the real conversation-ready state (privacy fix 2026-11-03). Toggle
+  // back to not-speaking so the composer settles on "listening", not
+  // "aiSpeaking".
+  transport.emitAgentSpeaking(true);
+  transport.emitAgentSpeaking(false);
+  await tester.pump();
   // Let the composer's AnimatedSwitcher/AnimatedSize crossfade from the text
   // row to the voice row fully finish (220ms) before asserting on which
   // icons are present — otherwise both rows are briefly in the tree mid-fade.

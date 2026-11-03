@@ -26,24 +26,27 @@ import 'voice_session_controller.dart';
 ///   `UNUserNotificationCenter`); the trade-off is every call surfaces in the
 ///   Phone app's Recents list — see CallKitManager's doc comment.
 ///
-/// Started the moment Ayma is genuinely **listening** ([VoiceSessionController
-/// .isListening] — the agent has joined and reached the `live` state), NOT
-/// while the call is still `connecting`/`waking`, and kept running for the
-/// rest of the call — **never** started only on backgrounding.
+/// Started the moment Ayma is genuinely **conversing**
+/// ([VoiceSessionController.isConversationReady] — the agent has joined, reached
+/// `live`, AND produced its first real response), NOT while the call is still
+/// `connecting`/`waking` or warming a cold open-weights brain, and kept running
+/// for the rest of the call — **never** started only on backgrounding.
 ///
-/// **Why gate on listening, and the Android microphone-FGS constraint.**
-/// This service's notification is backed by a mandatory
+/// **Why gate on conversation-ready, and the Android microphone-FGS
+/// constraint.** This service's notification is backed by a mandatory
 /// `foregroundServiceType="microphone"` foreground service — on Android there
 /// is no such thing as a silent FGS: `startForeground()` *requires* a
 /// notification, so a running mic FGS always has a user-visible notification.
-/// The founder's report was that the full ongoing-**call** notification
-/// ("Ayma • Voice call" with Hang Up / Mute pills) appeared the instant a call
-/// began connecting, long before Ayma could actually hear anything. The fix
-/// here is to **delay starting the FGS (and therefore its notification) until
-/// the listening state** — the connect/wake window shows no call notification
-/// at all (the task's preferred outcome), and the OS surface appears exactly
-/// when Ayma starts listening, the same signal the in-app composer and orb
-/// already gate on.
+/// The founder's report (2026-11-03) was that the full ongoing-**call**
+/// notification ("Ayma • Voice call" with Hang Up / Mute pills) appeared while
+/// the app still showed "Warming up the open-weights model…", long before Ayma
+/// could actually hear anything — because the agent reaches `live` *before* it
+/// signals the warm-up. Gating on `isListening` (= `live`) alone therefore lit
+/// the surface through the whole ~100s warm-up. The fix is to gate on
+/// `isConversationReady` — Ayma's first genuine response — so the
+/// connect/wake/warming window shows **no** call notification at all and the OS
+/// surface appears exactly when Ayma starts conversing, the same `live`→first
+/// response flip the in-app composer already uses ("Connecting…"→"Listening…").
 ///
 /// Delaying is safe because a microphone FGS is only needed to keep mic
 /// capture alive once the app is **backgrounded**: a foreground app records
@@ -131,6 +134,13 @@ class CallBackgroundService {
 
   bool _started = false;
   bool _uiActive = false;
+
+  /// Set synchronously while a [_startUi] is in flight (between claiming the
+  /// surface and the native `start` actually posting), so a second
+  /// `_onVoiceChanged` tick during the permission await can neither launch a
+  /// duplicate `start` nor race an `update` ahead of it. Distinct from
+  /// [_uiActive] (the surface is actually up).
+  bool _uiStarting = false;
   Timer? _ticker;
   DateTime? _liveSince;
   VoidCallback? _voiceListener;
@@ -145,12 +155,13 @@ class CallBackgroundService {
     _channel.setMethodCallHandler(_onNativeCall);
     _voiceListener = _onVoiceChanged;
     _voice.addListener(_voiceListener!);
-    // Cover attaching to an already-listening call (e.g. a hot restart
-    // mid-call, or the shared shell acquiring the service after the call is
-    // live) — the edge-triggered listener above only fires on a *future*
-    // change. Gated on `isListening`, not `isActive`: a service attached
-    // while the call is still connecting/waking must wait for listening too.
-    if (_voice.isListening) unawaited(_startUi());
+    // Cover attaching to an already-ready call (e.g. a hot restart mid-call,
+    // or the shared shell acquiring the service after the call is live) — the
+    // edge-triggered listener above only fires on a *future* change. Gated on
+    // `isConversationReady`, not `isActive`/`isListening`: a service attached
+    // while the call is still connecting/waking/warming must wait until Ayma is
+    // genuinely conversing.
+    if (_voice.isConversationReady) unawaited(_startUi());
   }
 
   void dispose() {
@@ -165,50 +176,69 @@ class CallBackgroundService {
     unawaited(_stopUi());
   }
 
-  /// Ayma reached (or left) the listening state, or the call muted while the
-  /// OS surface is up — keep it honest without waiting for the next tick.
-  /// Gating on [VoiceSessionController.isListening] (not `isActive`) is what
-  /// holds the call notification back through connecting/waking: the surface
-  /// only appears once Ayma is genuinely listening, and tears down the moment
-  /// the call leaves `live` (ended, failed, or idle-timed-out).
+  /// Ayma became (or stopped being) genuinely conversation-ready, or the call
+  /// muted while the OS surface is up — keep it honest without waiting for the
+  /// next tick. Gating on [VoiceSessionController.isConversationReady] (not
+  /// `isActive`/`isListening`) is what holds the call notification back through
+  /// connecting/waking AND the open-weights warm-up: the surface appears only
+  /// once Ayma is actually conversing (her first response has landed), and
+  /// tears down the moment the call ends (ended, failed, or idle-timed-out).
   void _onVoiceChanged() {
-    if (!_voice.isListening) {
-      if (_uiActive) unawaited(_stopUi());
+    if (!_voice.isConversationReady) {
+      if (_uiActive || _uiStarting) unawaited(_stopUi());
       return;
     }
-    if (!_uiActive) {
+    if (!_uiActive && !_uiStarting) {
       unawaited(_startUi());
-    } else {
+    } else if (_uiActive) {
       unawaited(_pushUpdate());
     }
+    // While only `_uiStarting` (start in flight): drop the update — the
+    // pending `start` already serializes the latest state via `_statusArgs()`.
   }
 
   Future<void> _startUi() async {
-    if (!_voice.isListening || _uiActive) return;
+    if (!_voice.isConversationReady || _uiActive || _uiStarting) return;
+    // Claim the start SYNCHRONOUSLY, before the first await below. The
+    // conversation-ready transition rides on more than one `notifyListeners`
+    // (the controller flips `_agentRespondedOnce` and then its agent-speaking
+    // state on the same first response), so a second `_onVoiceChanged` tick can
+    // reach here before the permission await resolves — without this latch it
+    // would post a duplicate `start`, or an `update` ahead of the `start`.
+    // Reset on every early-out below.
+    _uiStarting = true;
 
     final granted = await _permissions.ensureBackgroundCallPermission();
+    // The call may have ended (or dropped out of the ready state) while the
+    // permission check awaited — don't put up an OS surface for a dead call.
+    if (!_voice.isConversationReady) {
+      _uiStarting = false;
+      return;
+    }
     if (!granted) {
       // Same reasoning the old bubble had: holding the mic open with no way
       // for the user to see or end it would block every other app's mic
       // access for as long as the call lasts. The difference now is the
       // user is actually told why, with a way to fix it for next time,
       // instead of the call just silently dying.
+      _uiStarting = false;
       await _voice.stop();
       _voice.reportBackgroundBlocked();
       return;
     }
 
-    _uiActive = true;
     _liveSince = DateTime.now();
     try {
       await _channel.invokeMethod('start', _statusArgs());
     } catch (e) {
       debugPrint('[call-ui] start failed: $e');
-      _uiActive = false;
+      _uiStarting = false;
       _liveSince = null;
       await _voice.stop();
       return;
     }
+    _uiActive = true;
+    _uiStarting = false;
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _pushUpdate());
   }
@@ -217,6 +247,8 @@ class CallBackgroundService {
     _ticker?.cancel();
     _ticker = null;
     _liveSince = null;
+    // Abandon any start still in flight so its post is discarded on resume.
+    _uiStarting = false;
     if (!_uiActive) return;
     _uiActive = false;
     try {
