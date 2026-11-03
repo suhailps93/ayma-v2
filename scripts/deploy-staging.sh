@@ -92,14 +92,11 @@ STORAGE_BUCKET="${DATA_PROJECT}.firebasestorage.app"
 # solely when its LLM_PROVIDER_* flag is `open-weights` (prod/staging default stays
 # gemini), so wiring it here just makes the hackathon surface available behind flags.
 OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal.run/v1"
-# DEDICATED staging LiveKit project (wss://ayma-staging-cyofszqr.livekit.cloud /
-# p_484u2zjk8ob), NOT prod's (aimma-wt34nu3l / p_4jk3pqz7u9r). This is a hard
-# isolation boundary: staging + prod agents are both Cloud Run workers, and the
-# dispatch guard only separates cloudrun-vs-livekit-cloud, so on a SHARED LiveKit
-# project the prod agent could grab a staging call and write app_commands to prod
-# Firestore (voice app-nav silently failed on staging, founder 2026-11-01). A
-# separate LiveKit project means the prod agent never sees staging rooms. Key +
-# secret are the staging project's, in ayma-ai Secret Manager under the _STAGING
+# Staging shares the FUNDED Aimma LiveKit project (wss://aimma-wt34nu3l.livekit.cloud /
+# p_4jk3pqz7u9r): live staging services were re-pointed here 2026-11-03 because the
+# old dedicated staging project (ayma-staging-cyofszqr / p_484u2zjk8ob) is unfunded.
+# Staging rooms stay separated from prod by the ayma-staging- room prefix. Key +
+# secret are the funded project's, in ayma-ai Secret Manager under the _STAGING
 # names (prod's bare LIVEKIT_API_KEY/SECRET are left untouched).
 # LLM_PROVIDER pins (routing-audit W1): --set-env-vars below is a FULL replace,
 # so without these a --full deploy would wipe the manual provider pins and
@@ -109,7 +106,7 @@ OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal
 # These are gemini (gateway) only — NEVER add FLAG_LLM_ROUTE_*=vertex /
 # FLAG_VOICE_PROVIDER / FLAG_LLM_FALLBACK_TO_GOOGLE here (that reroutes off
 # LiveKit).
-API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_484u2zjk8ob,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=cloudrun,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini"
+API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=cloudrun,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini"
 
 # Cloud image variants (Perf Phase 2 PREP chunk A, staging-only): enabled ONLY
 # when the staging data plane is the staging Firebase project. A staging
@@ -123,7 +120,7 @@ fi
 # gemini here. LLM_PROVIDER_VOICE_MAIN is deliberately left unpinned (explicit-
 # only, no global inheritance). gemini (gateway) only — never a vertex/google
 # direct override here.
-AGENT_ENV_BASE="LIVEKIT_URL=wss://ayma-staging-cyofszqr.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging,LLM_PROVIDER=gemini,LLM_PROVIDER_VOICE=gemini"
+AGENT_ENV_BASE="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging,LLM_PROVIDER=gemini,LLM_PROVIDER_VOICE=gemini"
 
 # Same env names as prod, staging-only values where it matters — see docs/STAGING.md.
 # META_API_KEY: the Meta Model API key (Muse Spark) shared with prod — required
@@ -213,10 +210,10 @@ deploy_agent() {
     --no-allow-unauthenticated
     # STAGING keeps ONE warm worker (unlike prod's scale-to-zero + ayma-lk):
     # staging routes voice to this automatic-dispatch Cloud Run worker
-    # (VOICE_AGENT_CLOUD_DEFAULT=cloudrun) on its own LiveKit project, which has
-    # no hosted ayma-lk. At min-instances=0 the worker drains between calls and
-    # a call's room finds no registered worker -> stuck connecting. min=1 keeps
-    # it registered so staging voice reliably joins (within the Cloud credit).
+    # (VOICE_AGENT_CLOUD_DEFAULT=cloudrun). At min-instances=0 the worker drains
+    # between calls and a call's room finds no registered worker -> stuck
+    # connecting. min=1 keeps it registered so staging voice reliably joins
+    # (within the Cloud credit).
     --min-instances 1 --max-instances 20
     --no-cpu-throttling --cpu-boost --memory 2Gi
     --timeout 3600)
