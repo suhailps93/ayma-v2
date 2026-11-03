@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Callable
 
 import app_registry
@@ -59,11 +60,21 @@ _SPOTLIGHT_ACK_TIMEOUT_SECONDS = 8.0
 
 # How long one ``advance`` waits for the user to tap the spotlighted control
 # before returning a gentle "still waiting" (the tap event persists, so the
-# next advance picks it up — a timeout never loses progress). Under the text
-# tool-call cap (gemini.py ``_TOOL_TIMEOUT_SECONDS`` = 120s) so it returns
-# honestly in /chat too; voice has no such cap.
-_TAP_TIMEOUT_SECONDS = 110.0
+# next advance picks it up — a timeout never loses progress).
+_TAP_TIMEOUT_SECONDS = 110.0  # voice: the long quiet wait (no cap pressure)
+# Text (/chat) binds this shorter bound instead (Antigravity review
+# 2026-11-03): one turn must not hold its HTTP request open for ~2min. Still
+# far under the 120s tool cap with headroom for the reply round-trip; a lapse
+# reports honestly and the next advance resumes, so nothing is lost.
+_TAP_TIMEOUT_SYNC_SECONDS = 25.0
 _TAP_POLL_SECONDS = 0.4
+
+# How long a tour state counts as live. ``tour_state`` kept ``active:true``
+# forever across app kills, so a later ``advance`` polled a dead overlay for
+# the full tap wait (Antigravity review 2026-11-03) — state older than this is
+# expired instead: the orphan is dismissed and cleared, honestly, without
+# waiting. Only a provably old state expires (see ``_state_expired``).
+_TOUR_STATE_TTL_SECONDS = 15 * 60
 
 
 # --- firestore docs -----------------------------------------------------------
@@ -89,6 +100,49 @@ def _read_state(db, uid: str) -> dict:
         return snap.to_dict() or {} if getattr(snap, "exists", False) else {}
     except Exception:  # noqa: BLE001 - a missing/unreadable doc is "no tour"
         return {}
+
+
+def _index_of(data: dict, default: int = -1) -> int:
+    """A Firestore ``index`` that may be missing, explicitly null, or garbage —
+    never raises. ``None`` needs an explicit check: ``or`` would also swallow
+    the valid step ``0`` (Antigravity review 2026-11-03)."""
+    value = data.get("index", default)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _updated_epoch(value: object) -> float | None:
+    """Epoch seconds for a Firestore ``updated_at``, or ``None`` when it can't
+    be read (missing, an unresolved server-timestamp sentinel, or anything
+    unexpected — treated as fresh: only a provably old state expires)."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return aware.timestamp()
+    if isinstance(value, (int, float)):
+        return float(value)
+    to_dt = getattr(value, "to_datetime", None)
+    if callable(to_dt):
+        try:
+            return _updated_epoch(to_dt())
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def _state_expired(state: dict) -> bool:
+    """Whether an ACTIVE tour state is older than the TTL — an orphan from an
+    app killed mid-tour (or a user who walked away): the overlay it points at
+    is long gone, so advancing must expire it, not poll it."""
+    epoch = _updated_epoch(state.get("updated_at"))
+    if epoch is None:
+        return False
+    return (time.time() - epoch) > _TOUR_STATE_TTL_SECONDS
 
 
 def _write_state(db, uid: str, index: int, active: bool) -> None:
@@ -119,7 +173,7 @@ async def _await_tour_event(db, uid: str, index: int, timeout: float) -> dict | 
             data = snap.to_dict() if getattr(snap, "exists", False) else None
         except Exception:  # noqa: BLE001
             data = None
-        if data and int(data.get("index", -1)) == index and data.get("event"):
+        if data and _index_of(data) == index and data.get("event"):
             return data
         if time.monotonic() >= deadline:
             return None
@@ -207,6 +261,10 @@ _NO_TOUR = (
     "There's no guided tour running — call start_guided_tour first if the user "
     "wants the walkthrough."
 )
+_EXPIRED = (
+    "That guided tour went quiet a while ago, so it has ended — tell the user "
+    "it timed out and offer to start it over if they still want the walkthrough."
+)
 
 
 # --- start --------------------------------------------------------------------
@@ -229,7 +287,9 @@ def _bind_start_guided_tour(db, uid: str) -> Callable[..., object]:
 # --- advance ------------------------------------------------------------------
 
 
-def _bind_advance_guided_tour(db, uid: str) -> Callable[..., object]:
+def _bind_advance_guided_tour(
+    db, uid: str, tap_timeout: float | None = None
+) -> Callable[..., object]:
     async def advance_guided_tour() -> str:
         # Advancement is gated STRICTLY on the user's real tap of the currently
         # spotlighted control — never on a spoken/typed "next" and never on the
@@ -238,14 +298,22 @@ def _bind_advance_guided_tour(db, uid: str) -> Callable[..., object]:
         # did that"). There is deliberately no skip parameter: this tool returns
         # the next step ONLY after the client reports the tap event for the
         # current step; otherwise it returns an honest "still waiting" and the
-        # tour stays put.
+        # tour stays put. ``tap_timeout`` is a surface bind knob (the text
+        # surface passes the short sync bound), never a model parameter.
         steps = _steps()
         total = len(steps)
         state = await asyncio.to_thread(_read_state, db, uid)
         if not state.get("active"):
             return _NO_TOUR
-        current = int(state.get("index", -1))
-        event = await _await_tour_event(db, uid, current, _TAP_TIMEOUT_SECONDS)
+        if _state_expired(state):
+            await _end(db, uid)
+            return _EXPIRED
+        current = _index_of(state)
+        if current < 0 or current >= total:
+            await _end(db, uid)
+            return _NO_TOUR
+        wait = _TAP_TIMEOUT_SECONDS if tap_timeout is None else tap_timeout
+        event = await _await_tour_event(db, uid, current, wait)
         if event is None:
             step = steps[current] if 0 <= current < total else {}
             control = str(step.get("headline") or "the highlighted control")

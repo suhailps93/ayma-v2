@@ -239,6 +239,14 @@ def make_session_tool_fns(
                 session_id=(session_ctx or {}).get("session_id", ""),
                 turns=(session_ctx or {}).get("turns"),
             )
+        elif s.name == "advance_guided_tour":
+            # Text (/chat) only: the short sync tap bound, so one turn never
+            # holds its HTTP request open for the voice-length wait (Antigravity
+            # review 2026-11-03). Voice (make_livekit_tools) binds the default
+            # long wait, untouched.
+            out[s.name] = s.bind(
+                db, uid, tap_timeout=guided_tour._TAP_TIMEOUT_SYNC_SECONDS
+            )
         else:
             out[s.name] = s.bind(db, uid)
     for s in _TEXT_ONLY_REGISTRY:

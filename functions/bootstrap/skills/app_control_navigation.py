@@ -121,11 +121,26 @@ def _not_a_page(asked: str) -> str:
             f"'{asked}' is a setting — change it with app_action "
             f"{setting['key']}, or open the page it's on."
         )
+    if app_registry.find_guided_tour(asked):
+        return _tour_redirect(asked)
     return (
         f"There is no '{asked}' page in the app — tell the user plainly it "
         "doesn't exist. Pages that do: "
         + ", ".join(f"{d['key']} ({d['label']})" for d in app_registry.destinations())
         + "."
+    )
+
+
+def _tour_redirect(asked: str) -> str:
+    """The directive handed back when an open_screen request names the guided
+    walkthrough: it is overlay-only (no page to open), so do NOT deny it —
+    start it with the tour skill, which spotlights each control and waits for
+    the user's real tap (Antigravity review 2026-11-03)."""
+    return (
+        f"'{asked}' isn't a page — it's the guided walkthrough, and there is "
+        "no tour screen to open. Call start_guided_tour to begin it now (it "
+        "spotlights each control in turn and waits for the user to tap); tell "
+        "the user you're starting the tour."
     )
 
 

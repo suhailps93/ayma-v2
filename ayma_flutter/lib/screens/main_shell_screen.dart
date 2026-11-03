@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/app_context.dart';
 import '../services/feature_tour_store.dart';
+import '../services/guided_tour_controller.dart';
 import '../services/screen_capture.dart';
 import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
@@ -306,11 +307,13 @@ class _MainShellScreenState extends State<MainShellScreen>
     // over the live shell. A request that landed before this shell existed is
     // still handled by the first-frame gate ([_maybeShowFeatureTour]).
     TourRequest.instance.pending.addListener(_consumeTourRequest);
-    // Rebuild when the tour starts/ends so this shell's PopScope `canPop`
-    // reflects it: back while the tour is up skips it (the overlay is hosted at
-    // the app root and owns no navigation, and a root `BackButtonListener`
-    // can't reach the Router — so back is handled here, where there is one).
+    // Rebuild when either tour starts/ends so this shell's PopScope `canPop`
+    // reflects it: back while a tour is up dismisses it (the overlays are
+    // hosted at the app root and own no navigation, and a root
+    // `BackButtonListener` can't reach the Router — so back is handled here,
+    // where there is one).
     TourController.instance.addListener(_onTourChanged);
+    GuidedTourController.instance.addListener(_onTourChanged);
     // F4: backgrounding during a live call surfaces a real OS call UI — an
     // ongoing notification with Hang Up / Mute on Android, a CallKit call on
     // iOS — so the call is always visible and controllable, never silently
@@ -422,6 +425,7 @@ class _MainShellScreenState extends State<MainShellScreen>
     TabRequest.instance.pending.removeListener(_consumeTabRequest);
     TourRequest.instance.pending.removeListener(_consumeTourRequest);
     TourController.instance.removeListener(_onTourChanged);
+    GuidedTourController.instance.removeListener(_onTourChanged);
     _callBackground.release();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,
@@ -432,18 +436,22 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   @override
   Widget build(BuildContext context) {
-    // The feature tour is no longer hosted here: it lives in a single root
-    // overlay above the Navigator ([TourHost]) so it survives route pushes
-    // (§11.2a). But back while the tour is up is handled HERE — this is the
-    // nearest `PopScope` with a `Router` ancestor — and skips the tour (marking
-    // its features seen) rather than popping a tab. Otherwise this PopScope just
-    // walks the tab history.
-    final tourActive = TourController.instance.active;
+    // The tours are no longer hosted here: they live in a single root overlay
+    // above the Navigator ([TourHost]) so they survive route pushes (§11.2a).
+    // But back while a tour is up is handled HERE — this is the nearest
+    // `PopScope` with a `Router` ancestor. The driven tour (on top when both
+    // somehow run) stops first — signalling 'stop' so the backend ends it —
+    // then the passive tour skips (marking its features seen) rather than
+    // popping a tab. Otherwise this PopScope just walks the tab history.
+    final tourActive = TourController.instance.active ||
+        GuidedTourController.instance.active;
     return PopScope<Object?>(
       canPop: !tourActive && _tabHistory.length <= 1,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        if (TourController.instance.active) {
+        if (GuidedTourController.instance.active) {
+          GuidedTourController.instance.stopFromBack();
+        } else if (TourController.instance.active) {
           TourController.instance.skipFromBack();
         } else {
           _popTab();

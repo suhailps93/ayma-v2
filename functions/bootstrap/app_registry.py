@@ -78,6 +78,18 @@ def guided_tour_steps() -> list[dict]:
     return list(guided_tour().get("steps") or [])
 
 
+def find_guided_tour(text: str) -> dict | None:
+    """The driven-tour entry when ``text`` names the guided walkthrough in the
+    user's own words ("open the tour", "walk me through the app", …), else
+    ``None``. The tour is overlay-only — no route, so no destination entry —
+    and ``open_screen`` redirects a match to the ``start_guided_tour`` skill
+    instead of denying it (Antigravity review 2026-11-03)."""
+    entry = guided_tour()
+    if not entry or not entry.get("aliases"):
+        return None
+    return _lookup([entry], text)
+
+
 def normalise(text: str) -> str:
     """Lowercase words with filler and numbers dropped, so the card's own
     text ("Your profile is 59% complete") matches its alias."""
