@@ -88,6 +88,14 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.homeComposer,
     tab: 0,
   ),
+  TourFeature(
+    featureId: 'ayma_guided_tour',
+    headline: 'Let Ayma show you around',
+    subtitle: 'Say "walk me through the app" and Ayma gives you a live, guided '
+        'tour — she opens each page, highlights what to tap, and waits for you.',
+    icon: Icons.tour_outlined,
+    anchorId: TourAnchors.homeOrb,
+  ),
   // The Profile walkthrough: tap the Profile tab to open it (press-through,
   // §11.2a), then sub-steps spotlight the real rows inside — Story, Appearance
   // and Ayma's settings — top to bottom, each scrolled into view.

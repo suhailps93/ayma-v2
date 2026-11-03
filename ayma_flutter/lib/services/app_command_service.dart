@@ -11,6 +11,7 @@ import '../screens/sign_in_screen.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
 import 'app_context.dart';
+import 'guided_tour_controller.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
 import 'pair_key.dart';
@@ -18,6 +19,7 @@ import 'profile_service.dart';
 import 'push_service.dart';
 import 'screen_capture.dart';
 import 'theme_controller.dart';
+import 'tour_content.dart';
 import 'voice_session_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
@@ -284,6 +286,14 @@ class AppCommandService {
       unawaited(_runUiAction(snap.reference, data, id));
       return;
     }
+    if (data['action'] == 'tour_step') {
+      // The Ayma-driven tour spotlights one step and acks it only once the
+      // overlay reports it shown (or its anchor absent), then waits for the
+      // user's real tap on a separate `tour_event` doc — so it owns its ack,
+      // like ui_action (§11.2b).
+      _runTourStep(snap.reference, data, id);
+      return;
+    }
     var ok = false;
     try {
       ok = handleCommand(data);
@@ -322,6 +332,74 @@ class AppCommandService {
       'ts': FieldValue.serverTimestamp(),
     }).catchError((_) {});
     await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Show one Ayma-driven tour step (§11.2b) and wire its reports back to the
+  /// backend: ack `ok:true` once spotlighted, ack `ok:false` (anchor absent) so
+  /// the backend skips it, and — on the user's real tap or a "Skip tour" — a
+  /// `tour_event` write the backend's `advance_guided_tour` is polling for.
+  @visibleForTesting
+  void runTourStep(
+      DocumentReference<Map<String, dynamic>> ref, Map<String, dynamic> cmd,
+      {required String id}) {
+    _runTourStep(ref, cmd, id);
+  }
+
+  void _runTourStep(DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd, String id) {
+    final index = (cmd['index'] as num?)?.toInt() ?? 0;
+    final total = (cmd['total'] as num?)?.toInt() ?? 0;
+    final anchor = (cmd['anchor'] as String?)?.trim();
+    final tab = (cmd['tab'] as num?)?.toInt();
+    final headline = (cmd['headline'] as String? ?? '').trim();
+    final say = (cmd['say'] as String? ?? '').trim();
+    final commands = ref.parent; // users/{uid}/app_commands
+    final ackRef = commands.doc('ack');
+    final eventRef = commands.doc('tour_event');
+
+    Future<void> ack(bool ok) async {
+      await ackRef.set(<String, dynamic>{
+        'id': id,
+        'ok': ok,
+        if (!ok) 'reason': 'anchor_absent',
+        'ts': FieldValue.serverTimestamp(),
+      }).catchError((_) {});
+      await _deleteIfStillCommand(ref, id);
+    }
+
+    void event(String name) {
+      eventRef.set(<String, dynamic>{
+        'index': index,
+        'event': name,
+        'ts': FieldValue.serverTimestamp(),
+      }).catchError((_) {});
+    }
+
+    GuidedTourController.instance.show(GuidedTourStep(
+      token: id,
+      feature: TourFeature(
+        featureId: 'guided_tour_step_$index',
+        headline: headline,
+        subtitle: say,
+        anchorId: (anchor == null || anchor.isEmpty) ? null : anchor,
+        tab: tab,
+      ),
+      index: index,
+      total: total,
+      onShown: () => unawaited(ack(true)),
+      onAbsent: () {
+        GuidedTourController.instance.dismiss();
+        unawaited(ack(false));
+      },
+      onTapped: () {
+        event('tapped');
+        GuidedTourController.instance.dismiss();
+      },
+      onStop: () {
+        event('stop');
+        GuidedTourController.instance.dismiss();
+      },
+    ));
   }
 
   /// Runs one `ui_action` command; any failure is reported, never thrown.
@@ -430,6 +508,11 @@ class AppCommandService {
         // apply on their next call (`skills/set_model_stack.reconnect_voice`).
         if (!_hasActiveVoice()) return false;
         _afterAck = _reconnectVoice;
+        return true;
+      case 'tour_end':
+        // The Ayma-driven tour finished or was stopped — dismiss the spotlight.
+        // Always acks ok (there's nothing that can fail).
+        GuidedTourController.instance.dismiss();
         return true;
     }
     return false;

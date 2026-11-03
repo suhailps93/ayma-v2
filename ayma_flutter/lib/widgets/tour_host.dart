@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../routing/app_router.dart';
 import '../screens/main_shell_screen.dart';
+import '../services/guided_tour_controller.dart';
 import '../services/tab_request.dart';
 import '../services/tour_content.dart';
 import '../services/tour_controller.dart';
@@ -50,9 +51,19 @@ class TourHost extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: TourController.instance,
+      // Watch both the passive feature tour and the Ayma-driven tour; only one
+      // renders at a time (driven takes priority — it's user-initiated).
+      animation: Listenable.merge(
+        [TourController.instance, GuidedTourController.instance],
+      ),
       child: child,
       builder: (context, child) {
+        final driven = GuidedTourController.instance.step;
+        if (driven != null) {
+          return Stack(
+            children: [child!, Positioned.fill(child: _drivenOverlay(driven))],
+          );
+        }
         final controller = TourController.instance;
         final features = controller.features;
         if (features == null) return child!;
@@ -77,6 +88,27 @@ class TourHost extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  /// The Ayma-driven tour's single spotlighted step (§11.2b): the same
+  /// [CoachMarkOverlay] engine, but a single backend-pushed step with no local
+  /// advancing — the user taps the real control to move on (so the Next button
+  /// is hidden), and the overlay reports shown / absent / tapped / stop back to
+  /// [GuidedTourController] (wired by `AppCommandService`). Keyed by the step's
+  /// token so each pushed step gets a fresh measure.
+  Widget _drivenOverlay(GuidedTourStep step) {
+    return CoachMarkOverlay(
+      key: ValueKey('guided-tour-${step.token}'),
+      features: [step.feature],
+      spotlight: true,
+      onPrepareStep: _prepareStep,
+      onFinish: GuidedTourController.instance.dismiss,
+      onAnchorShown: step.onShown,
+      onAnchorAbsent: step.onAbsent,
+      onAnchorTapped: step.onTapped,
+      onStopPressed: step.onStop,
+      hideNextButton: true,
     );
   }
 }

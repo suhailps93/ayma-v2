@@ -134,5 +134,22 @@
     "secret_field_pattern": "password|passcode|\\bpin\\b|\\bcode\\b|otp|one-time|verification|card number|card|cvv|cvc|expiry|expiration|iban|account number",
     "secret_field_say": "Passwords, codes and payment details are only ever typed by the user.",
     "dialog_note": "Inside a dialog or sheet whose text matches a deny pattern, every control except an escape (cancel/close/no) is denied, so Ayma never confirms a denied action."
+  },
+  "guided_tour": {
+    "_doc": "Ayma-DRIVEN interactive tour (ARCHITECTURE §11.2b): a predefined, ordered walkthrough Ayma narrates step by step. Per step she opens the page/tab, spotlights the step's anchor (reusing the coach-mark engine + tour_anchors) and WAITS for the user to tap that control before continuing. Started by skills/guided_tour.py (start_guided_tour / advance_guided_tour / stop_guided_tour); driven on the client by AppCommandService 'tour_step'/'tour_end' commands + GuidedTourController. 'anchor' is a tour_anchors.dart id; 'tab' is the shell IndexedStack index the anchor lives on (0 Ayma, 1 Explore, 2 Messages, 3 Profile) or null for the always-visible nav bar. Additive to — and never replaces — the passive coach-mark tour (ayma_flutter/lib/services/tour_content.dart).",
+    "actions": ["tour_step", "tour_end"],
+    "event_doc": "users/{uid}/app_commands/tour_event",
+    "state_doc": "users/{uid}/app_commands/tour_state",
+    "steps": [
+      {"anchor": "home_composer", "tab": 0, "headline": "This is us", "say": "This is where you and I talk. Tap the message box — you can type to me here anytime."},
+      {"anchor": "explore_tab", "headline": "Explore", "say": "Now tap Explore. This is where you meet the people I match you with, by real taste and not just looks."},
+      {"anchor": "messages_tab", "headline": "Messages", "say": "Tap Messages. Your conversations live here, and when you're stuck for words I'll coach you line by line."},
+      {"anchor": "profile_tab", "headline": "Your hub", "say": "Tap You to open your profile — your story, your look and my settings all live here."},
+      {"anchor": "profile_story_row", "tab": 3, "headline": "Your Story", "say": "This is your Story — everything I learn about you, in your words. Tap it to read or edit."},
+      {"anchor": "profile_appearance_row", "tab": 3, "headline": "Appearance", "say": "Tap Appearance for a private, honest read across your photos — just for you."},
+      {"anchor": "profile_ayma_settings_row", "tab": 3, "headline": "Make me yours", "say": "Tap my settings to choose my brain and my voice — or just ask me to switch them anytime."},
+      {"anchor": "notifications_bell", "headline": "The bell", "say": "Tap the bell. This is where I nudge you when there's something worth your time."},
+      {"anchor": "home_orb", "headline": "Always here", "say": "And this orb is always me, one tap away. That's the tour — ask me anything whenever you like."}
+    ]
   }
 }

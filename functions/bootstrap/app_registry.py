@@ -63,6 +63,21 @@ def unavailable() -> list[dict]:
     return list(registry()["unavailable"])
 
 
+def guided_tour() -> dict:
+    """The Ayma-driven interactive tour config (ARCHITECTURE §11.2b): its
+    metadata and the ordered ``steps`` Ayma narrates. Empty dict when the
+    registry predates the feature (tolerant read)."""
+    return dict(registry().get("guided_tour") or {})
+
+
+def guided_tour_steps() -> list[dict]:
+    """The predefined, ordered tour steps — each ``{anchor, tab?, headline,
+    say}`` (``anchor`` a tour_anchors id, ``tab`` the shell tab or absent for a
+    nav-bar anchor). The single source of truth for the driven tour's order and
+    copy; ``skills/guided_tour.py`` reads it."""
+    return list(guided_tour().get("steps") or [])
+
+
 def normalise(text: str) -> str:
     """Lowercase words with filler and numbers dropped, so the card's own
     text ("Your profile is 59% complete") matches its alias."""

@@ -1,0 +1,3 @@
+Start the Ayma-driven interactive tour: a guided, step-by-step walkthrough of the app where YOU drive. Use this whenever the user asks you to "walk me through the app", "give me a tour", "show me around", "show me what everything does", or otherwise wants to be shown how the app works — in chat or on a call.
+
+It opens the first page, highlights the first control on screen, and returns the line to say for that step. Say that line in your own warm voice, then call advance_guided_tour to wait for the user to tap the highlighted control and move on. The tour follows a fixed order; you don't choose the steps. Takes no arguments. If a tour is already running, this restarts it from the top.
