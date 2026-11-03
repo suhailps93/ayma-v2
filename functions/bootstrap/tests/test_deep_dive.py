@@ -1864,6 +1864,34 @@ def test_store_dive_preserves_disputed_facts_across_a_fresh_run():
     ]
 
 
+def test_store_dive_preserves_link_disputes_and_filters_the_fresh_run():
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {
+            "digest": {"name": "Dana Reis", "facts": [], "links": []},
+            "disputed_links": [{"url": "https://example.com/me", "title": "Personal Website"}],
+        },
+    )
+    deep_dive.store_dive(
+        db, "u1",
+        {
+            "name": "Dana Reis", "facts": [],
+            "links": [
+                {"url": "https://example.com/me", "title": "Personal Website"},
+                {"url": "https://example.com/new", "title": "New Find"},
+            ],
+        },
+        name="Dana Reis",
+    )
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["disputed_links"] == [
+        {"url": "https://example.com/me", "title": "Personal Website"}
+    ]
+    assert [ln["url"] for ln in stored["digest"]["links"]] == ["https://example.com/new"]
+
+
 def test_store_dive_preserves_corrections_across_a_fresh_run():
     db = _FakeDb()
     key = deep_dive._cache_key("", "Dana Reis")
@@ -2031,6 +2059,90 @@ def test_correct_finding_keep_leaves_the_fact_untouched(monkeypatch):
         )
     )
     assert result["digest"]["facts"] == facts
+
+
+def test_correct_finding_remove_drops_the_link_and_records_a_dispute(monkeypatch):
+    db = _FakeDb()
+    links = [
+        {"url": "https://example.com/me", "title": "Personal Website"},
+        {"url": "https://example.com/other", "title": "Someone Else"},
+    ]
+    key = _seed_self_report_links(db, "u1", "Dana Reis", links)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        assert "https://example.com/me" in contents
+        assert "not my site" in contents
+        return _correction_result("remove")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="link:https://example.com/me",
+            feedback="that's not my site",
+        )
+    )
+    assert result["action"] == "remove"
+    assert [ln["url"] for ln in result["digest"]["links"]] == [
+        "https://example.com/other"
+    ]
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["disputed_links"][0]["url"] == "https://example.com/me"
+    assert stored["corrections"][0]["feedback"] == "that's not my site"
+
+
+def test_correct_finding_keep_leaves_the_link_untouched(monkeypatch):
+    db = _FakeDb()
+    links = [{"url": "https://example.com/me", "title": "Personal Website"}]
+    key = _seed_self_report_links(db, "u1", "Dana Reis", links)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return _correction_result("keep")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="link:https://example.com/me",
+            feedback="what is this?",
+        )
+    )
+    assert result["digest"]["links"] == links
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert "disputed_links" not in stored
+    assert stored["corrections"][0]["action"] == "keep"
+
+
+def test_correct_finding_remove_drops_the_photo_and_records_a_dispute(monkeypatch):
+    db = _FakeDb()
+    images = [
+        {"url": "https://img.example/a.jpg", "source_page": "https://example.com/a"},
+        {"url": "https://img.example/b.jpg", "source_page": "https://example.com/b"},
+    ]
+    key = _seed_self_report_images(db, "u1", "Dana Reis", images)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        assert "https://img.example/a.jpg" in contents
+        return _correction_result("remove")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="photo:https://img.example/a.jpg",
+            feedback="that's not me",
+        )
+    )
+    assert [im["url"] for im in result["digest"]["web_images"]] == [
+        "https://img.example/b.jpg"
+    ]
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["disputed_photos"][0]["url"] == "https://img.example/a.jpg"
+
+
+def test_correction_prompts_direct_answering_source_questions_from_the_saved_url():
+    # J7: a "what's the source link?" turn must quote the saved Source URL —
+    # never claim it isn't saved, never ask the user to supply it.
+    for prompt in (deep_dive._CORRECTION_SYSTEM, deep_dive._CORRECTION_SYSTEM_URL):
+        assert "quote" in prompt
+        assert "never ask the user" in prompt
 
 
 def test_correct_finding_targets_the_summary(monkeypatch):

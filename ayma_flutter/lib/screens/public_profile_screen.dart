@@ -280,35 +280,36 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   /// The orb gets the same treatment `NavBarShell` gives it everywhere else:
   /// this screen is never the Ayma tab, so tapping it opens the scoped
   /// page-context popup instead of navigating back to the shell (founder
-  /// ask: "like the story edit"). A second orb tap while that popup is
+  /// ask: "like the story edit"). A second orb tap while that sheet is
   /// already open (its own on-top copy of this same bar, wired to this same
-  /// method — see [_navBar]) grows the popup to full screen in place instead
+  /// method — see [_navBar]) grows the sheet to full screen in place instead
   /// of stacking a second one; a third tap, once it's full screen, activates
-  /// voice (the same `toggleVoiceCall` the hold uses).
-  /// Any other tab while the popup is open closes it first (same reason as
+  /// voice (the same `toggleVoiceCall` the hold uses) — except from a scoped
+  /// Ask-Ayma correction sheet, which never takes the voice rung (see
+  /// [orbTapOnOpenSheet]).
+  /// Any other tab while the sheet is open closes it first (same reason as
   /// `NavBarShell._onTabTap`: a declarative `context.go` would strand it).
   Future<void> _onTabTap(int i) async {
     if (i == 0) {
-      // Orb tap progression (founder ask): no popup -> open the half sheet
+      // Orb tap progression (founder ask): no sheet -> open the half sheet
       // scoped to this page; docked half sheet -> grow it to the full-screen
       // main chat (the context chip drops itself at full size); already full
       // screen -> activate voice (the same `toggleVoiceCall` the 1s hold
-      // uses). This screen is never the Ayma tab, so the expanded popup is the
+      // uses). This screen is never the Ayma tab, so the expanded sheet is the
       // only "full-screen main chat" rung.
-      if (isPageContextAymaPopupOpen) {
-        if (pageContextAymaPopupSheet.isExpanded) {
-          toggleVoiceCall(context, AymaSession.instance.voice);
-        } else {
-          pageContextAymaPopupSheet.expand();
-        }
+      if (isAymaSheetOpen) {
+        orbTapOnOpenSheet(
+          onVoice: () =>
+              toggleVoiceCall(context, AymaSession.instance.voice),
+        );
       } else {
         showPageContextAymaPopup(context, navBarBuilder: _navBar);
       }
       return;
     }
-    if (isPageContextAymaPopupOpen) {
+    if (isAymaSheetOpen) {
       Navigator.of(context).pop();
-      await pendingPageContextAymaPopup;
+      await pendingAymaSheet;
       if (!mounted) return;
     }
     _goToTab(i);
@@ -336,7 +337,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // Exposes this screen's own bar to Ask-Ayma sheets opened from it
+    // (§ D13: a scoped correction sheet keeps the bar visible).
+    return AymaNavBarScope(
+      navBarBuilder: _navBar,
+      child: Scaffold(
       body: FutureBuilder<PublicProfile>(
         future: _future,
         builder: (context, snap) {
@@ -441,6 +446,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             ],
           );
         },
+      ),
       ),
     );
   }

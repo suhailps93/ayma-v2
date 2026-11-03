@@ -45,7 +45,8 @@ void main() {
     // Same singleton hygiene as `main_shell_screen_test.dart` — a stray
     // pending request or a left-open popup flag must not leak between tests.
     TabRequest.instance.consume();
-    isPageContextAymaPopupOpen = false;
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
     AppContext.instance.set(screen: '');
   });
 
@@ -97,7 +98,7 @@ void main() {
       // Docked half sheet over the still-showing Explore tab, carrying the
       // page-context chip.
       expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(pageContextAymaPopupSheet.isExpanded, isFalse);
+      expect(aymaSheet.isExpanded, isFalse);
       expect(find.text(_chip), findsOneWidget);
       expect(
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
@@ -122,7 +123,7 @@ void main() {
 
       await tapPopupOrb(tester);
 
-      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+      expect(aymaSheet.isExpanded, isTrue);
       expect(tester.getRect(find.byKey(_sheetBox)).top, 0);
       expect(find.text(_chip), findsNothing);
       // Still the same popup over Explore, not a tab switch or a new surface.
@@ -145,14 +146,14 @@ void main() {
       await goToExplore(tester);
       await tapShellOrb(tester); // half
       await tapPopupOrb(tester); // full
-      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+      expect(aymaSheet.isExpanded, isTrue);
       expect(voice.startCalls, 0);
 
       await tapPopupOrb(tester); // voice
 
       expect(voice.startCalls, 1);
       // Still on the full chat — voice does not close or shrink it.
-      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+      expect(aymaSheet.isExpanded, isTrue);
       expect(find.byKey(_modalHandle), findsOneWidget);
     },
   );
@@ -221,7 +222,7 @@ void main() {
       expect(voice.startCalls, 1);
       // A completed hold swallows the tap, so the progression never runs.
       expect(find.byKey(_modalHandle), findsNothing);
-      expect(isPageContextAymaPopupOpen, isFalse);
+      expect(isAymaSheetOpen, isFalse);
     },
   );
 }

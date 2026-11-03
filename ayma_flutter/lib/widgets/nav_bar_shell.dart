@@ -65,38 +65,39 @@ class NavBarShell extends StatelessWidget {
   /// there" case to check for — every screen wrapped by this shell gets the
   /// scoped page-context popup (founder ask: "like the story edit", not a
   /// navigation back to the main tab) instead of [_goTab]. A second orb tap
-  /// while that popup is already open (its own on-top copy of this same bar,
-  /// wired to this same method — see [_navBar]) grows the popup to full
+  /// while that sheet is already open (its own on-top copy of this same bar,
+  /// wired to this same method — see [_navBar]) grows the sheet to full
   /// screen in place instead of stacking a second one; a third tap, once it's
-  /// full screen, activates voice (the same `toggleVoiceCall` the hold uses).
+  /// full screen, activates voice (the same `toggleVoiceCall` the hold uses)
+  /// — except from a scoped Ask-Ayma correction sheet, which never takes
+  /// the voice rung (see [orbTapOnOpenSheet]).
   ///
-  /// Any other tab while the popup is open closes it first: `_goTab`'s
+  /// Any other tab while the sheet is open closes it first: `_goTab`'s
   /// `context.go` replaces this route but would leave the imperatively-pushed
-  /// popup stranded on top (it sits outside go_router's page stack), and
+  /// sheet stranded on top (it sits outside go_router's page stack), and
   /// navigating before its pop has completed tears the transition down
   /// mid-flight.
   Future<void> _onTabTap(BuildContext context, int i) async {
     if (i == 0) {
-      // Orb tap progression (founder ask): no popup -> open the half sheet
+      // Orb tap progression (founder ask): no sheet -> open the half sheet
       // scoped to this page; docked half sheet -> grow it to the full-screen
       // main chat (the context chip drops itself at full size); already full
       // screen -> activate voice (the same `toggleVoiceCall` the 1s hold
       // uses). From out here the user is never on the Ayma tab itself, so the
-      // expanded popup is the only "full-screen main chat" rung.
-      if (isPageContextAymaPopupOpen) {
-        if (pageContextAymaPopupSheet.isExpanded) {
-          toggleVoiceCall(context, AymaSession.instance.voice);
-        } else {
-          pageContextAymaPopupSheet.expand();
-        }
+      // expanded sheet is the only "full-screen main chat" rung.
+      if (isAymaSheetOpen) {
+        orbTapOnOpenSheet(
+          onVoice: () =>
+              toggleVoiceCall(context, AymaSession.instance.voice),
+        );
       } else {
         showPageContextAymaPopup(context, navBarBuilder: _navBar);
       }
       return;
     }
-    if (isPageContextAymaPopupOpen) {
+    if (isAymaSheetOpen) {
       Navigator.of(context).pop();
-      await pendingPageContextAymaPopup;
+      await pendingAymaSheet;
       if (!context.mounted) return;
     }
     _goTab(context, i);
@@ -141,11 +142,16 @@ class NavBarShell extends StatelessWidget {
     // applies, leaving a dead gap above the keyboard and, in a short window
     // (landscape, split-screen), squeezing the page until it overflows.
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-    return Column(
-      children: [
-        Expanded(child: child),
-        if (!keyboardOpen) _navBar(context),
-      ],
+    // Exposes this shell's own bar to Ask-Ayma sheets opened from [child]
+    // (§ D13: a scoped correction sheet keeps the bar visible).
+    return AymaNavBarScope(
+      navBarBuilder: _navBar,
+      child: Column(
+        children: [
+          Expanded(child: child),
+          if (!keyboardOpen) _navBar(context),
+        ],
+      ),
     );
   }
 }

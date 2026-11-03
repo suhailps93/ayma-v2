@@ -11,6 +11,7 @@ import '../screens/sign_in_screen.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
 import 'app_context.dart';
+import 'notification_service.dart';
 import 'orb_animation_settings.dart';
 import 'pair_key.dart';
 import 'profile_service.dart';
@@ -48,7 +49,9 @@ import 'theme_controller.dart';
 /// Three kinds of command land here, all dispatched by `action`:
 /// * navigation — `navigate` (the route `path` the backend resolved from
 ///   `functions/bootstrap/app_registry.json`, the single source of truth for
-///   destinations), `search_explore`, `open_profile`, `open_dm_thread`;
+///   destinations), `search_explore`, `open_profile`, `open_dm_thread`,
+///   `open_notification` (the backend-resolved latest unread notification's
+///   `deep_link`, routed exactly like a notification-centre tap);
 /// * `app_action` — the registry's client-held settings (theme, accent,
 ///   pause matching, orb animation), each calling the exact method its
 ///   screen's switch/radio calls, plus the confirmed `sign_out`, which the
@@ -73,7 +76,7 @@ class AppCommandService {
     bool Function()? chatPopupOpen,
     Future<void> Function()? closeChatPopup,
     String Function()? currentPath,
-  })  : _chatPopupOpen = chatPopupOpen ?? (() => isPageContextAymaPopupOpen),
+  })  : _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
         _closeChatPopup =
             closeChatPopup ?? ScreenCapture.instance.closeAymaPopup,
         _currentPath = currentPath ?? _routerPath,
@@ -369,6 +372,18 @@ class AppCommandService {
         final me = _auth.currentUser?.uid;
         if (me == null || me.isEmpty) return false;
         _navigate('/dm/${sortedPairKey(me, uid)}');
+        return true;
+      case 'open_notification':
+        // The backend already picked the latest unread notification and hands
+        // over its `deep_link`; route it exactly like a notification-centre
+        // tap (same `deepLinkToRoute`, same popup-close-then-push). Read
+        // state stays the backend's job: it marks it read only once this
+        // open acks (§ L6: one ask opens the destination directly).
+        final link = (cmd['deep_link'] as String? ?? '').trim();
+        if (link.isEmpty) return false;
+        final self = _auth.currentUser?.uid;
+        if (self == null || self.isEmpty) return false;
+        _open(deepLinkToRoute(link, myUid: self));
         return true;
       case 'app_action':
         return _handleAppAction(

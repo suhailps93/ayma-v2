@@ -34,12 +34,24 @@ def test_match_doc_is_complete_distinguishes_lite_from_full():
         "structured_score": 72.0,
         "method": "This score blends ...",
         "dimensions": [{"key": "values"}],
+        "names_in_narrative": True,
     }
     assert main._match_doc_is_complete(full) is True
     # a 0% hard-dealbreaker report is still a COMPLETE report (score 0.0,
     # structured_score 0.0, method set)
-    zero = {"score": 0.0, "structured_score": 0.0, "method": "m", "dimensions": []}
+    zero = {
+        "score": 0.0,
+        "structured_score": 0.0,
+        "method": "m",
+        "dimensions": [],
+        "names_in_narrative": True,
+    }
     assert main._match_doc_is_complete(zero) is True
+    # a pre-names full doc (scored before § G8 — narrative says "A"/"B") is a
+    # cache MISS so it silently recomputes with first names on next open.
+    legacy = dict(full)
+    del legacy["names_in_narrative"]
+    assert main._match_doc_is_complete(legacy) is False
 
 
 # --- endpoint: fake db + dependency override ---------------------------------
@@ -129,6 +141,7 @@ def test_check_compatibility_serves_a_complete_doc_from_cache(monkeypatch):
                 "shared": ["loves hiking"],
                 "tensions": [],
                 "user_explanation": {uid: "you two line up"},
+                "names_in_narrative": True,
             }
         }
     )
@@ -298,12 +311,51 @@ def test_check_compatibility_recomputes_a_stale_complete_doc(monkeypatch):
         "structured_score": 65.0,
         "method": "blended",
         "dimensions": [{"key": "values"}],
+        "names_in_narrative": True,
         "updated_at": scored,
     }
     db = _UsersDb(
         profiles={uid: {"updated_at": newer}, other: {}},
         questionnaires={},
         matches={mid: complete_stale},
+    )
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    called = {}
+
+    async def _fake_job(a, b, *, notify=True):
+        called["job"] = (a, b, notify)
+
+    monkeypatch.setattr(main, "_match_job", _fake_job)
+    _override_uid(uid)
+    try:
+        resp = client.post("/check-compatibility", json={"other_uid": other})
+    finally:
+        _clear_override()
+    assert resp.status_code == 200
+    assert resp.json()["queued"] is True
+    assert called["job"] == (uid, other, True)
+
+
+def test_check_compatibility_recomputes_a_pre_names_doc(monkeypatch):
+    # § G8: a full doc scored before first-names narrative (no marker) is a
+    # cache MISS even with fresh inputs — it recomputes so the report shows
+    # names instead of "A"/"B".
+    uid, other = "u1", "u2"
+    mid = sorted_pair_key(uid, other)
+    scored = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    older = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    legacy = {
+        "score": 0.65,
+        "structured_score": 65.0,
+        "method": "blended",
+        "dimensions": [{"key": "values"}],
+        "updated_at": scored,
+    }
+    db = _UsersDb(
+        profiles={uid: {"updated_at": older}, other: {"updated_at": older}},
+        questionnaires={},
+        matches={mid: legacy},
     )
     monkeypatch.setattr(main, "get_db", lambda: db)
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)

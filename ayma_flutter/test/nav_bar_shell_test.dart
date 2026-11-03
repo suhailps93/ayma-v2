@@ -52,7 +52,8 @@ void main() {
     // own teardown discards the widget tree out from under it, so this
     // top-level flag never gets the chance to flip back — reset it
     // explicitly so it can't leak a false "already open" into a later test.
-    isPageContextAymaPopupOpen = false;
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
   });
 
   testWidgets('wraps the screen with a bottom nav bar, no tab highlighted', (
@@ -148,7 +149,7 @@ void main() {
         find.byKey(const ValueKey('aymaChatModalHandle')),
         findsOneWidget,
       );
-      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+      expect(aymaSheet.isExpanded, isTrue);
       expect(find.text('screen:shell'), findsNothing);
     },
   );

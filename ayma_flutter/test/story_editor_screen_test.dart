@@ -4,7 +4,9 @@ import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/ayma_session.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_action.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -401,6 +403,13 @@ Future<void> _pumpNotes(WidgetTester tester, _FakeApi api) async {
 }
 
 void main() {
+  setUp(() {
+    // The sheet is the main chat now (§ D13) — reset its shared store and
+    // open-state between tests so exchanges never leak across them.
+    AymaSession.instance.store.seed(const []);
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
+  });
   testWidgets(
       'the Story screen has neither the Public view nor the Ayma\'s notes tab',
       (tester) async {

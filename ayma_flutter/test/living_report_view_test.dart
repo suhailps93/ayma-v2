@@ -16,6 +16,8 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/ayma_session.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
@@ -525,6 +527,13 @@ ApiClient _aiNotesToneApi() {
 }
 
 void main() {
+  setUp(() {
+    // The sheet is the main chat now (§ D13) — reset its shared store and
+    // open-state between tests so exchanges never leak across them.
+    AymaSession.instance.store.seed(const []);
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
+  });
   testWidgets(
       "a fact's raw tag/confidence annotation shows only in the dev-only "
       "Ayma's-notes report, never in the normal UI", (tester) async {

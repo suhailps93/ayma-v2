@@ -5,6 +5,7 @@
 // into the `/chat` request exactly like `storyPageId`/`storyPassage`/
 // `storyTimelineEntryId` already do for Story.
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -92,7 +93,7 @@ Future<void> _openSheet(WidgetTester tester, ApiClient api, AskAymaContext ctx) 
     home: Scaffold(
       body: Builder(
         builder: (context) => ElevatedButton(
-          onPressed: () => showAskAymaOverlay(context, api: api, ctx: ctx),
+          onPressed: () => showAskAymaOverlay(context, api: api, ctx: ctx, transcriptStore: TranscriptStore()),
           child: const Text('open'),
         ),
       ),

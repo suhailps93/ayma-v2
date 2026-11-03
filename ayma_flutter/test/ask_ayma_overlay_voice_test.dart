@@ -139,6 +139,7 @@ Future<void> _openSheet(
         builder: (context) => ElevatedButton(
           onPressed: () => showAskAymaOverlay(
             context,
+            transcriptStore: TranscriptStore(),
             api: api,
             ctx: AskAymaContext(pageId: pageId, selectedText: selectedText),
             voiceApiClient: voiceApi,
@@ -307,7 +308,15 @@ void main() {
     expect(composer.mode, ComposerMode.text);
 
     // The transcribed line and the reply both landed in the transcript.
-    expect(find.text('Make this more concise'), findsOneWidget);
+    // (Scoped to the transcript list: the same "Make this more concise"
+    // quick chip also pins above the composer once turns exist — § D13.)
+    expect(
+      find.descendant(
+        of: find.byType(ListView),
+        matching: find.text('Make this more concise'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Done — made that more concise.'), findsOneWidget);
   });
 

@@ -228,6 +228,20 @@ void main() {
     expect(ok, isTrue);
   });
 
+  test('open_notification routes the notification deep link (§ L6)', () {
+    final nav = <String>[];
+    final auth =
+        MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+    final ok = AppCommandService(navigate: nav.add, auth: auth)
+        .handleCommand({
+      'action': 'open_notification',
+      'notification_id': 'n1',
+      'deep_link': 'match/me__u-jordan',
+    });
+    expect(nav, ['/match/me__u-jordan']);
+    expect(ok, isTrue);
+  });
+
   test('app_action dispatches theme changes to the ThemeController', () {
     final theme = ThemeController();
     final svc = AppCommandService(themeController: theme);
@@ -298,6 +312,8 @@ void main() {
       {'action': 'frobnicate'},
       {'action': 'open_profile', 'uid': ''},
       {'action': 'open_dm_thread', 'uid': ''},
+      {'action': 'open_notification'},
+      {'action': 'open_notification', 'deep_link': ''},
       {'action': 'app_action', 'name': 'delete_everything'},
     ]) {
       expect(svc.handleCommand(cmd), isFalse, reason: '$cmd');

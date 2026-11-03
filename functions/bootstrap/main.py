@@ -5871,6 +5871,7 @@ async def report_correct(
     report_type: str,
     report_id: str,
     req: ReportCorrectRequest,
+    background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Generic tap-to-correct: one block, a whole section (every block that
@@ -5880,11 +5881,15 @@ async def report_correct(
     ``deep_dive.correct_finding``/``.dispute_*``, or a small composition of
     Story's own passage-privacy/edit/remove primitives). Only the report's
     OWNER may mutate it: a non-owner's attempt is rejected with 403 here,
-    before any producer call. See ``report_hub.correct``."""
+    before any producer call. See ``report_hub.correct``.
+
+    ONE chat (§ D13): a tap-to-correct turn is a main-chat exchange, so it
+    is persisted to chat history like any ``/chat`` turn — otherwise the
+    next history load would wipe it from the shared transcript."""
     if report_type not in report_hub.REPORT_TYPES:
         raise HTTPException(status_code=404, detail="No such report type.")
     try:
-        return await report_hub.correct(
+        out = await report_hub.correct(
             get_db(), report_type, report_id, uid,
             block_ids=req.block_ids, scope=req.scope, message=req.message,
         )
@@ -5894,6 +5899,33 @@ async def report_correct(
         raise HTTPException(status_code=404, detail="No such report.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # The reply mirrors the client's `combinedReply` (`ReportCorrectResult`
+    # in `models/living_report.dart`): distinct non-empty per-block replies
+    # joined, with the same never-empty fallback — so history shows exactly
+    # what the sheet showed. Best-effort, like `_finalize_chat`.
+    replies: list[str] = []
+    ok = False
+    if isinstance(out, dict):
+        ok = bool(out.get("ok"))
+        for r in out.get("results") or []:
+            if not isinstance(r, dict):
+                continue
+            text = str(r.get("reply") or "").strip()
+            if text and text not in replies:
+                replies.append(text)
+    reply_text = (
+        "\n\n".join(replies) if replies else ("Done." if ok else "Couldn't do that.")
+    )
+    try:
+        db = get_db()
+        chat_history.append(db, uid, "user", req.message)
+        chat_history.append(db, uid, "ayma", reply_text)
+    except Exception:  # noqa: BLE001 - best-effort; never fail the correction
+        logger.exception("report_correct history append failed for %s", uid)
+    background.add_task(
+        notifications_triggers.notify_ayma_reply, get_db(), uid, reply_text
+    )
+    return out
 
 
 @app.get("/skill-runs")
@@ -6050,16 +6082,24 @@ def _match_doc_is_complete(d: dict | None) -> bool:
     """A stored ``matches/{id}`` doc counts as a COMPLETE, cacheable report
     only when the full scorer (`matching_skill.score_pair` via `_match_job`)
     wrote it — a score *plus* the structured breakdown (`structured_score`,
-    `method`). The demo seed once wrote score-only "lite" docs (no dimension
-    breakdown, no `structured_score`/`method`); those must be treated as a
-    cache MISS so the report is recomputed via the full pipeline rather than
-    served half-empty (bugs F/H). A complete doc is served instantly and only
-    recomputed when the caller forces it (the "Recalculate" button) OR its
-    inputs changed since it was scored (``_match_doc_is_stale`` — a silent
-    background recompute, bug F staleness invalidation)."""
+    `method`) *plus* the first-names narrative marker (`names_in_narrative`).
+    The demo seed once wrote score-only "lite" docs (no dimension breakdown,
+    no `structured_score`/`method`); those must be treated as a cache MISS so
+    the report is recomputed via the full pipeline rather than served
+    half-empty (bugs F/H). Likewise a pre-names doc (scored before § G8, so
+    its narrative says "A"/"B") is a cache MISS — served as-is this once and
+    silently recomputed in the background, so the next open shows names. A
+    complete doc is served instantly and only recomputed when the caller
+    forces it (the "Recalculate" button) OR its inputs changed since it was
+    scored (``_match_doc_is_stale`` — a silent background recompute, bug F
+    staleness invalidation)."""
     if not d or d.get("score") is None:
         return False
-    return d.get("structured_score") is not None and bool(d.get("method"))
+    return (
+        d.get("structured_score") is not None
+        and bool(d.get("method"))
+        and d.get("names_in_narrative") is True
+    )
 
 
 def _latest_ts(*values):
@@ -6167,6 +6207,7 @@ async def _match_job(uid: str, other: str, *, notify: bool = True) -> None:
         "confidence_note": result.get("confidence_note") or "",
         "method": result.get("method") or "",
         "trust_flags": result["trust_flags"],
+        "names_in_narrative": bool(result.get("names_in_narrative")),
         "updated_at": _server_ts(),
     }
     if not ref.get().exists:
@@ -6285,8 +6326,9 @@ async def match_report(
     the pair has never been scored.
 
     A complete, still-fresh stored report is served as-is (no recompute — bug
-    F). A stale "lite" doc (score only, no dimension breakdown), OR a complete
-    doc whose scored inputs changed since it was computed
+    F). A stale "lite" doc (score only, no dimension breakdown), a pre-names
+    doc (scored before § G8 — narrative says "A"/"B"), OR a complete doc
+    whose scored inputs changed since it was computed
     (``_match_doc_is_stale`` — e.g. a party narrowed their age range), is
     served as-is this once but silently recomputed in the background via the
     full scorer, so the next open is correct (bugs F/H)."""

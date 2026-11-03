@@ -50,9 +50,10 @@ import '../theme.dart';
 /// complaint: "Navbar don't show when chat popup is open" — the sheet used
 /// to sit in a full-screen modal route that simply painted over the whole
 /// screen, `AymaTabBar` included, no matter how short its own configured
-/// sizes were). Left null by [showAskAymaOverlay]'s scoped correction turns
-/// (Story/deep-dive/Appearance edits), which predate that nav-bar-everywhere
-/// feature and have no bar of their own to reserve space for.
+/// sizes were). [showAskAymaOverlay]'s scoped correction turns resolve the
+/// same copy from the nearest [AymaNavBarScope] (§ D13: ONE chat — the sheet
+/// is a partial page of the main chat with the bar visible); routes with no
+/// scope above them leave it null and open bar-less, as before.
 ///
 /// This is deliberately NOT "shrink the modal route's barrier so the bar
 /// underneath peeks through": `showModalBottomSheet`'s `ModalBarrier` always

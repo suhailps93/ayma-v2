@@ -5,8 +5,10 @@ they're allowed to view today (a deep-dive/web-search report on someone
 else) and would be allowed to chat/ask about it, but their correction
 attempt is rejected with 403 while the owner's own succeeds."""
 
+import chat_history
 import deep_dive
 import main
+import notifications_triggers
 import report_hub
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
@@ -159,6 +161,70 @@ def test_report_correct_success_shape(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == out
+
+
+def test_report_correct_persists_the_exchange_to_chat_history(monkeypatch):
+    # ONE chat (§ D13): a tap-to-correct turn lands in chat history like any
+    # /chat turn, with the reply mirroring the client's combinedReply
+    # (distinct non-empty per-block replies joined).
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    out = {"ok": True, "results": [
+        {"block_id": "b1", "ok": True, "reply": "got it — updated"},
+        {"block_id": "b2", "ok": True, "reply": "got it — updated"},
+        {"block_id": "b3", "ok": True, "reply": "and flagged for review"},
+    ]}
+
+    async def _correct(db, t, rid, uid, *, block_ids, scope, message):
+        return out
+
+    monkeypatch.setattr(report_hub, "correct", _correct)
+    appended = []
+    monkeypatch.setattr(
+        chat_history, "append",
+        lambda db, uid, role, text, **kw: appended.append((role, text)),
+    )
+    notified = []
+
+    async def _notify(db, uid, text):
+        notified.append(text)
+
+    monkeypatch.setattr(notifications_triggers, "notify_ayma_reply", _notify)
+    resp = client.post(
+        "/report/deep_dive/r1/correct",
+        json={"block_ids": ["b1", "b2", "b3"], "scope": "block", "message": "Delete"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 200
+    assert appended == [
+        ("user", "Delete"),
+        ("ayma", "got it — updated\n\nand flagged for review"),
+    ]
+    assert notified == ["got it — updated\n\nand flagged for review"]
+
+
+def test_report_correct_history_falls_back_when_no_block_replied(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    out = {"ok": False, "results": [{"block_id": "b1", "ok": False, "reply": ""}]}
+
+    async def _correct(db, t, rid, uid, *, block_ids, scope, message):
+        return out
+
+    monkeypatch.setattr(report_hub, "correct", _correct)
+    appended = []
+    monkeypatch.setattr(
+        chat_history, "append",
+        lambda db, uid, role, text, **kw: appended.append((role, text)),
+    )
+    monkeypatch.setattr(
+        notifications_triggers, "notify_ayma_reply", lambda *a, **k: None
+    )
+    resp = client.post(
+        "/report/deep_dive/r1/correct",
+        json={"block_ids": ["b1"], "scope": "block", "message": "Delete"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 200
+    assert appended == [("user", "Delete"), ("ayma", "Couldn't do that.")]
 
 
 # --- the centerpiece: ownership enforcement end to end, through report_hub

@@ -1,7 +1,8 @@
 """``find_fact_source`` — § fact-source-of-truth, 2026-09-21 (founder bug
 report: asked Ayma "where did you get this from" about his child's name/
-daycare and got a generic non-answer). Covers the four provenance sources it
-aggregates: profile-field, questionnaire, wiki source_log, deep-dive facts."""
+daycare and got a generic non-answer). Covers the provenance sources it
+aggregates: profile-field, questionnaire, wiki source_log, deep-dive finds
+(facts, links, social profiles, photos)."""
 
 import json
 
@@ -188,6 +189,82 @@ def test_finds_a_deep_dive_web_search_match():
     assert m["exact"] is True
     assert m["url"] == "https://acme.example.com/team/jordan"
     assert "designer" in m["quote"]
+
+
+def test_finds_a_deep_dive_link_match():
+    # A plain web-link find (J7: the PERSONAL WEBSITE find) is traceable too —
+    # not just fact claims.
+    db = FakeDb({
+        ("users", "u1", "deep_dives", "uid_target1"): {
+            "digest": {
+                "name": "Jordan Rivers",
+                "facts": [],
+                "links": [
+                    {
+                        "url": "https://jordanrivers.example.com",
+                        "title": "Personal Website",
+                    }
+                ],
+            },
+            "created_at": "2026-07-01T00:00:00+00:00",
+        }
+    })
+    out = json.loads(_tool(db)("personal website source link"))
+    assert len(out["matches"]) == 1
+    m = out["matches"][0]
+    assert m["type"] == "web_search"
+    assert m["exact"] is True
+    assert m["url"] == "https://jordanrivers.example.com"
+
+
+def test_finds_a_deep_dive_social_match():
+    db = FakeDb({
+        ("users", "u1", "deep_dives", "uid_target1"): {
+            "digest": {
+                "name": "Jordan Rivers",
+                "facts": [],
+                "social_handles": [
+                    {
+                        "platform": "instagram",
+                        "handle": "jorivers",
+                        "url": "https://instagram.com/jorivers",
+                    }
+                ],
+            },
+            "created_at": "2026-07-01T00:00:00+00:00",
+        }
+    })
+    out = json.loads(_tool(db)("jorivers instagram profile"))
+    assert len(out["matches"]) == 1
+    m = out["matches"][0]
+    assert m["type"] == "web_search"
+    assert m["exact"] is True
+    assert m["url"] == "https://instagram.com/jorivers"
+
+
+def test_finds_a_deep_dive_photo_match_by_its_source_page():
+    # A "photos found online" thumbnail traces to the page it was found on.
+    db = FakeDb({
+        ("users", "u1", "deep_dives", "uid_target1"): {
+            "digest": {
+                "name": "Jordan Rivers",
+                "facts": [],
+                "web_images": [
+                    {
+                        "url": "https://cdn.example.com/jordan.jpg",
+                        "source_page": "https://blog.example.com/team-post",
+                    }
+                ],
+            },
+            "created_at": "2026-07-01T00:00:00+00:00",
+        }
+    })
+    out = json.loads(_tool(db)("blog team photo"))
+    assert len(out["matches"]) == 1
+    m = out["matches"][0]
+    assert m["type"] == "web_search"
+    assert m["exact"] is True
+    assert m["url"] == "https://blog.example.com/team-post"
 
 
 def test_finds_a_face_body_correction_match():

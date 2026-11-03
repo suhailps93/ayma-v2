@@ -192,10 +192,16 @@ flowchart LR
   profile "Sofia" directly instead of the old "I couldn't find someone called Sophia" reject-then-confirm (founder bug
   2026-10-29).
   **Chip-on-success:** the navigation tools (`open_message_thread`, `open_screen`, `open_profile`, `open_match_report`,
-  `search_explore`) earn their "Opened …" chip only when the tool result starts with `navigated:`. Any other result
+  `search_explore`, `open_notification`) earn their "Opened …" chip only when the tool result starts with `navigated:`. Any other result
   (not found, the app never navigated) returns `tool_labels.NO_CHIP`, which both surfaces honour — text drops it from
   `tools_used`, voice sends an empty-label `tool_used` end event that clears the "…ing" indicator and queues no settled
   chip — so a failed open no longer shows a false "Opened that conversation" chip (founder bug 2026-10-28).
+- *Notification navigation (`skills/app_control_navigation.py`)*: `open_notification` opens the latest unread notification's
+  destination directly in one ask (founder bug 2026-11-02: "open the Android notification" went to notification *preferences*,
+  then just the list, and only a third screen-reading ask reached the report). It picks the newest `read == False`,
+  non-dismissed, non-DM centre entry (the same list the bell badge counts), queues an `open_notification` command carrying
+  its `deep_link`, and marks it read only once the client acks the open — the client routes it through the same
+  `deepLinkToRoute` a centre tap uses. `open_screen`'s prompt redirects item phrasing here (`notifications` stays the list).
 - *Person-targeted simulation navigation (`skills/app_control_navigation.py`)*: `open_date_sim` and `open_practice_date` open the
   AI Date Simulation (Agent Date / agent-to-agent sim, `/date-sim/:uid`) and Practice Date (`/practice/:uid`) with a
   named person, resolving the name through the same `_resolve_person` (and fuzzy fallback) as `open_profile`, then
@@ -1676,13 +1682,14 @@ to the full-screen main chat (the page-context chip drops itself at full size, `
 a tap on the full-screen main chat **activates voice** (reusing `toggleVoiceCall`, the exact path the hold uses).
 When the user is already on the Ayma tab (which *is* the full-screen main chat), the first tap goes straight to
 voice. Each host (`MainShellScreen._onOrbTap`, `NavBarShell`/`PublicProfileScreen._onTabTap`) reads the live state —
-`isPageContextAymaPopupOpen`, `pageContextAymaPopupSheet.isExpanded`, and, for the shell, whether the Ayma tab is
-current — to pick the rung; `AymaTabBar` itself just always dispatches the orb's `onSelected(0)`, even when the orb
+`isAymaSheetOpen`, `aymaSheet.isExpanded`, `isAymaSheetScoped`, and, for the shell, whether the Ayma tab is
+current — to pick the rung, via the one shared `orbTapOnOpenSheet` helper; `AymaTabBar` itself just always dispatches the orb's `onSelected(0)`, even when the orb
 reads as selected (the plain already-selected no-op is kept for the other three tabs only). **The 1-second HOLD is
 unchanged** — `onOrbLongPress` -> `toggleVoiceCall` activates voice directly from every page, independent of the tap
-rung the orb is currently on.
+rung the orb is currently on. A scoped Ask-Ayma correction sheet takes the expand rung at any size but never the voice
+rung (ONE chat, § D13 — the voice agent doesn't bind its correction tools, so scoped voice stays push-to-talk).
 
-`AymaChatSheetController` (one shared `pageContextAymaPopupSheet` instance) drives it: `expand()`/`collapse()` animate
+`AymaChatSheetController` (one shared `aymaSheet` instance) drives it: `expand()`/`collapse()` animate
 the sheet, and `isExpanded` (flipped mid-gesture as the extent crosses the docked/full midpoint) is read via
 `AymaChatSheetController.maybeOf(context)` by the header icon (expand vs collapse), the `AymaTabBar` copy (highlights
 the orb while full) and `ChatScreen` (which sets the pinned page-context chip aside while full, restoring it on
