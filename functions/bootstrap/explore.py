@@ -145,8 +145,12 @@ def _extract_fallback_keywords(text: str) -> list[str]:
 
 
 async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
-    """One LLM call → the filter shape. ``{}`` on anything unclear or on error.
-    Billed to ``uid`` in the token ledger (``explore`` feature)."""
+    """One LLM call → the filter shape. ``{}`` on anything unclear.
+    Billed to ``uid`` in the token ledger (``explore`` feature).
+
+    On an LLM failure the deterministic demographic backstop below still runs,
+    so an ethnicity/gender query ("Indian women") keeps filtering on the
+    attribute instead of silently falling back to an unfiltered feed."""
     text = text.strip()
     if not text:
         return {}
@@ -158,11 +162,30 @@ async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
             uid=uid,
             feature=token_ledger.FEATURE_EXPLORE,
         )
+        llm_ok = True
     except Exception:  # noqa: BLE001
         logger.exception("NL filter parse failed")
-        return {}
+        result = {}
+        llm_ok = False
 
     out = dict(result) if isinstance(result, dict) else {}
+
+    # Ethnicity: a demographic query ("Indian women") must filter on the coarse
+    # `race_ethnicity` attribute, not leak the demonym into keyword text. Back
+    # the LLM up deterministically when it didn't map one, and normalize what
+    # it did return ("indian" -> "south asian") to the stored grouping so it
+    # actually matches the attribute.
+    if not out.get("race_ethnicity"):
+        grouping = _ethnicity_from_text(text)
+        if grouping:
+            out["race_ethnicity"] = grouping
+    elif out.get("race_ethnicity"):
+        out["race_ethnicity"] = _normalize_ethnicity(out["race_ethnicity"])
+    if not out.get("gender"):
+        gender = _gender_from_text(text)
+        if gender:
+            out["gender"] = gender
+
     raw_kw = out.get("keywords")
     keywords = (
         [str(k).strip().lower() for k in raw_kw if str(k).strip()]
@@ -170,8 +193,11 @@ async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
         else []
     )
     # When no keywords were returned by the model, extract fallback keywords
-    # if unmapped search terms remain in text.
-    if not keywords and text:
+    # if unmapped search terms remain in text. Only on a real parse — an LLM
+    # failure leaves keyword extraction to the endpoint's raw-`q` fallback
+    # (so this returns {} for a non-demographic query, unchanged), while the
+    # demographic backstop above still runs so ethnicity/gender keep working.
+    if not keywords and text and llm_ok:
         structured_vals = {
             str(v).lower() for k, v in out.items() if k != "keywords" and v
         }
@@ -181,6 +207,11 @@ async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
         ]
         if candidate_kws:
             keywords = candidate_kws
+
+    # A term already consumed by a demographic filter (gender/ethnicity) must
+    # not also run as a loose keyword text match (false positives + hides a
+    # real match whose ethnicity is only on the attribute).
+    keywords = _strip_consumed_terms(keywords, out)
 
     if keywords:
         out["keywords"] = keywords
@@ -196,6 +227,129 @@ _GENDER_ALIASES = {
     "non-binary": "non-binary", "nonbinary": "non-binary", "nb": "non-binary",
     "enby": "non-binary",
 }
+
+# A demographic/ethnicity search ("Indian women") names a *nationality or
+# region*, but the stored `race_ethnicity` attribute is a coarse grouping (the
+# §6.2 schema vocabulary: "south asian", "east asian", "latino", …). This map
+# resolves a demonym the user actually types to that coarse grouping, so the
+# search filters on the ethnicity ATTRIBUTE instead of leaking the word into
+# loose keyword text matching (which false-positives on "indie"/"individual"
+# and misses a real match whose ethnicity lives only in the attribute).
+# Each coarse grouping also maps to itself so a model- or dropdown-supplied
+# grouping normalizes idempotently. Ambiguous colour words ("black"/"white",
+# also hair colours) are intentionally left to the LLM's `race_ethnicity`
+# field and the `_ETHNICITY_TEXT_UNAMBIGUOUS` backstop never sets them.
+_ETHNICITY_ALIASES = {
+    # South Asian
+    "south asian": "south asian", "desi": "south asian",
+    "indian": "south asian", "pakistani": "south asian",
+    "bangladeshi": "south asian", "sri lankan": "south asian",
+    "nepali": "south asian", "punjabi": "south asian", "tamil": "south asian",
+    # East Asian
+    "east asian": "east asian", "chinese": "east asian",
+    "japanese": "east asian", "korean": "east asian",
+    "taiwanese": "east asian", "mongolian": "east asian",
+    # Southeast Asian
+    "southeast asian": "southeast asian", "filipino": "southeast asian",
+    "filipina": "southeast asian", "vietnamese": "southeast asian",
+    "thai": "southeast asian", "indonesian": "southeast asian",
+    "malaysian": "southeast asian",
+    # Latino / Hispanic
+    "latino": "latino", "latina": "latino", "latinx": "latino",
+    "hispanic": "latino", "mexican": "latino", "brazilian": "latino",
+    "colombian": "latino",
+    # Middle Eastern
+    "middle eastern": "middle eastern", "arab": "middle eastern",
+    "persian": "middle eastern", "iranian": "middle eastern",
+    "lebanese": "middle eastern", "turkish": "middle eastern",
+    # Black
+    "black": "black", "african": "black", "african american": "black",
+    "nigerian": "black", "ethiopian": "black", "caribbean": "black",
+    # White
+    "white": "white", "caucasian": "white", "european": "white",
+    # Mixed
+    "mixed": "mixed", "biracial": "mixed", "multiracial": "mixed",
+}
+
+# Physical-mirror fields that search treats as DEMOGRAPHIC (like gender / age /
+# location) rather than as a private Story-appearance attribute: filtered on
+# regardless of the per-field Story visibility flag, used only to narrow the
+# feed, never displayed on the Explore card (§ founder 2026-11-03 ethnicity
+# search ruling — see `_passes_filters`).
+_DEMOGRAPHIC_SEARCH_FIELDS = frozenset({"race_ethnicity"})
+
+# Multi-word ethnicity phrases, longest first, for the free-text backstop.
+_ETHNICITY_PHRASES = tuple(
+    sorted((k for k in _ETHNICITY_ALIASES if " " in k), key=len, reverse=True)
+)
+
+# Single-word demonyms the backstop may set `race_ethnicity` from when the LLM
+# missed it. Excludes bare colour/loose words ("black", "white", "mixed",
+# "african", "european", "caribbean") that are ambiguous out of context — the
+# LLM owns those; they're still normalized if it returns them.
+_ETHNICITY_TEXT_UNAMBIGUOUS = frozenset(
+    w for w, g in _ETHNICITY_ALIASES.items()
+    if " " not in w
+    and w not in {"black", "white", "mixed", "african", "european",
+                  "caribbean", "arab"}
+)
+
+
+def _normalize_ethnicity(value) -> str:
+    """Resolve a race/ethnicity value (a demonym or a coarse grouping) to its
+    coarse grouping, lower-cased. Unknown values pass through unchanged so a
+    richer stored string (e.g. ``"Latino/Hispanic"``) still substring-matches."""
+    v = str(value or "").strip().lower()
+    return _ETHNICITY_ALIASES.get(v, v)
+
+
+def _gender_from_text(text: str) -> str | None:
+    """Canonical gender implied by an explicit gender word in ``text``, or
+    ``None``. A deterministic backstop so "women" filters on gender (and is
+    consumed, not left as a loose keyword) even if the LLM returned nothing."""
+    for word in re.findall(r"[\w'-]+", str(text or "").lower()):
+        canon = _GENDER_ALIASES.get(word)
+        # Skip the one-letter aliases ("m"/"f") — too noisy for free text.
+        if canon and len(word) > 1:
+            return canon
+    return None
+
+
+def _ethnicity_from_text(text: str) -> str | None:
+    """Coarse grouping implied by an unambiguous ethnicity term in ``text``,
+    or ``None``. A deterministic backstop for the NL filter so a demographic
+    query filters on the ethnicity attribute even if the LLM didn't map it."""
+    low = f" {str(text or '').lower()} "
+    for phrase in _ETHNICITY_PHRASES:
+        if f" {phrase} " in low:
+            return _ETHNICITY_ALIASES[phrase]
+    for word in re.findall(r"[\w'-]+", low):
+        if word in _ETHNICITY_TEXT_UNAMBIGUOUS:
+            return _ETHNICITY_ALIASES[word]
+    return None
+
+
+def _strip_consumed_terms(keywords: list[str], filters: dict) -> list[str]:
+    """Drop keyword entries whose every token was already consumed by a
+    structured demographic filter (gender and/or race_ethnicity). Without this
+    the raw query ("indian women") leaks "indian"/"women" into loose keyword
+    text matching, which false-positives on substrings like "indie" and hides
+    a real match whose ethnicity lives only in the attribute."""
+    gender_set = bool(str(filters.get("gender") or "").strip())
+    race_set = bool(str(filters.get("race_ethnicity") or "").strip())
+    if not (gender_set or race_set):
+        return list(keywords)
+    out = []
+    for kw in keywords:
+        toks = re.findall(r"[\w'-]+", str(kw).lower())
+        if toks and all(
+            (gender_set and t in _GENDER_ALIASES)
+            or (race_set and t in _ETHNICITY_ALIASES)
+            for t in toks
+        ):
+            continue
+        out.append(kw)
+    return out
 
 
 def _is_test_fixture(uid: str, user_doc: dict) -> bool:
@@ -246,16 +400,25 @@ def _passes_filters(
     is dropped from ``physical_attrs`` before any filter below ever reads
     it — so it's treated exactly as an unset/unknown value already is on
     that same field (never excludes, for the ``_PHYSICAL_ENUM_FIELDS``
-    group plus race/height/weight; excludes the same as a real mismatch,
+    group plus height/weight; excludes the same as a real mismatch,
     for the ``_PHOTO_FIELDS`` group, which forgives no missing value even
     today) — never something more lenient invented for privacy specifically.
-    Either way, a search can't use a physical attribute the candidate chose
-    to keep off their public Story to find OR rule them out (§ founder
-    2026-09-21: repurposing the per-field visibility flag that used to only
-    gate the Story-public Living Report's since-removed Attributes section
-    — "Use it for the heuristic search tho"). ``None`` (the default) applies
-    no such restriction — every direct unit test of this function short of
-    :func:`explore` itself calls it this way."""
+    Either way, a search can't use a *Story-appearance* physical attribute
+    the candidate chose to keep off their public Story to find OR rule them
+    out (§ founder 2026-09-21: repurposing the per-field visibility flag that
+    used to only gate the Story-public Living Report's since-removed
+    Attributes section — "Use it for the heuristic search tho").
+
+    ``_DEMOGRAPHIC_SEARCH_FIELDS`` (race_ethnicity) are the exception: a
+    demographic/ethnicity query ("Indian women") is treated like the other
+    demographic filters (gender, age, location — all ungated) and filters on
+    the attribute regardless of the Story visibility flag, so the ethnicity a
+    user asked for actually narrows the feed (§ founder 2026-11-03: "a
+    demographic/ethnicity query must FILTER + rank by the ethnicity attribute
+    … non-matching ethnicity is excluded"). The coarse, photo-derived value is
+    used only to filter, never shown on the Explore card. ``None`` (the
+    default) applies no restriction — every direct unit test of this function
+    short of :func:`explore` itself calls it this way."""
     want_g = str(filters.get("gender") or "").strip().lower()
     if want_g:
         norm = _GENDER_ALIASES.get(want_g, want_g)
@@ -279,7 +442,10 @@ def _passes_filters(
     attrs = profile.get("photo_attrs") or {}
     phys = profile.get("physical_attrs") or {}
     if public_fields is not None:
-        phys = {f: v for f, v in phys.items() if f in public_fields}
+        phys = {
+            f: v for f, v in phys.items()
+            if f in public_fields or f in _DEMOGRAPHIC_SEARCH_FIELDS
+        }
     for field in _PHOTO_FIELDS:
         want = filters.get(field)
         if not want:
@@ -302,11 +468,20 @@ def _passes_filters(
         if have and have != "unknown" and have != want:
             return False
 
-    # race_ethnicity: coarse free text, substring match, unknown never excludes.
-    want_re = str(filters.get("race_ethnicity") or "").strip().lower()
+    # race_ethnicity: coarse grouping match, unknown/missing never excludes. A
+    # demonym the user typed ("indian") is normalized to the stored coarse
+    # grouping ("south asian") on both sides so it matches the attribute;
+    # either-direction substring keeps richer stored strings
+    # ("Latino/Hispanic") matching a plain grouping filter ("latino").
+    want_re = _normalize_ethnicity(filters.get("race_ethnicity"))
     if want_re:
-        have_re = str(phys.get("race_ethnicity") or "").strip().lower()
-        if have_re and have_re != "unknown" and want_re not in have_re:
+        have_raw = str(phys.get("race_ethnicity") or "").strip().lower()
+        have_re = _normalize_ethnicity(have_raw)
+        if have_raw and have_raw != "unknown" and (
+            want_re != have_re
+            and want_re not in have_re
+            and have_re not in want_re
+        ):
             return False
 
     # Rough height / weight ranges from the physical-attributes mirror. A
@@ -326,7 +501,12 @@ def _passes_filters(
 
     keywords = filters.get("keywords")
     if not keywords and filters.get("q"):
-        keywords = _extract_fallback_keywords(filters["q"])
+        # Raw-query fallback (no explicit keywords). Strip terms already
+        # consumed by a demographic filter so "indian women" doesn't re-enter
+        # as loose keyword text matching after the ethnicity/gender filters.
+        keywords = _strip_consumed_terms(
+            _extract_fallback_keywords(filters["q"]), filters
+        )
     elif isinstance(keywords, str):
         keywords = [keywords]
 

@@ -103,13 +103,13 @@ def test_passes_filters_public_fields_none_means_unrestricted():
 
 
 def test_passes_filters_private_field_treated_exactly_like_an_unset_one():
-    """A private field is dropped from the mirror before any filter reads
-    it — i.e. treated EXACTLY as if the value had never been set, no
-    special-casing beyond that. What that means for the search outcome
-    then follows whatever this function already does for a genuinely
-    unset/unknown value on that same field (which differs by field: see
-    the two halves of this test) — never something new invented for
-    privacy specifically."""
+    """A private Story-appearance field is dropped from the mirror before any
+    filter reads it — i.e. treated EXACTLY as if the value had never been set,
+    no special-casing beyond that. What that means for the search outcome then
+    follows whatever this function already does for a genuinely unset/unknown
+    value on that same field. The one exception is race_ethnicity, a
+    DEMOGRAPHIC search field (§ founder 2026-11-03) that is filtered on
+    regardless of the Story visibility flag — see the last two asserts."""
     p = {
         "physical_attrs": {
             "eye_color": "blue",
@@ -119,13 +119,18 @@ def test_passes_filters_private_field_treated_exactly_like_an_unset_one():
             "height_estimate_cm": 182,
         },
     }
-    # `build`/`race_ethnicity`/height-range: an unset value never excludes
-    # here (see test_passes_filters_physical_attributes) — so neither does
-    # a real value that's merely private, in EITHER direction.
+    # `build`/height-range: an unset value never excludes here (see
+    # test_passes_filters_physical_attributes) — so neither does a real value
+    # that's merely private, in EITHER direction.
     assert ex._passes_filters(p, {"build": "slim"}, public_fields=set())  # real mismatch, ignored
     assert ex._passes_filters(p, {"build": "athletic"}, public_fields=set())  # real match, not relied on
-    assert ex._passes_filters(p, {"race_ethnicity": "east asian"}, public_fields=set())
     assert ex._passes_filters(p, {"height_min_cm": 190}, public_fields=set())
+    # race_ethnicity is the exception: a DEMOGRAPHIC search field (§ founder
+    # 2026-11-03), filtered on regardless of the Story visibility flag, so a
+    # private mismatch still excludes — "Indian women" must not return a
+    # White profile just because she kept her coarse ethnicity off her Story.
+    assert not ex._passes_filters(p, {"race_ethnicity": "east asian"}, public_fields=set())
+    assert ex._passes_filters(p, {"race_ethnicity": "latino"}, public_fields=set())
     # made public -> a real mismatch excludes again, normally.
     assert not ex._passes_filters(p, {"build": "slim"}, public_fields={"build"})
     assert ex._passes_filters(p, {"build": "athletic"}, public_fields={"build"})
@@ -867,6 +872,163 @@ def test_explore_route_with_search_query():
         resp_empty = client.get("/explore", params={"q": "asdfghjk"})
         assert resp_empty.status_code == 200
         assert len(resp_empty.json()["cards"]) == 0
+    finally:
+        main.app.dependency_overrides.pop(main.require_adult_uid, None)
+        main.get_db = main_get_db
+
+
+# --- ethnicity / demographic search (founder bug 2026-11-03: "indian women"
+# returned a White profile at 65% and missed a South Asian member) ---
+
+def test_normalize_ethnicity_demonym_to_coarse_grouping():
+    assert ex._normalize_ethnicity("indian") == "south asian"
+    assert ex._normalize_ethnicity("Pakistani") == "south asian"
+    assert ex._normalize_ethnicity("south asian") == "south asian"
+    assert ex._normalize_ethnicity("chinese") == "east asian"
+    assert ex._normalize_ethnicity("mexican") == "latino"
+    # an unknown / richer stored string passes through unchanged (so a plain
+    # grouping filter still substring-matches it).
+    assert ex._normalize_ethnicity("Latino/Hispanic") == "latino/hispanic"
+    assert ex._normalize_ethnicity("") == ""
+
+
+def test_parse_nl_query_maps_demonym_and_keeps_it_out_of_keywords(monkeypatch):
+    # The model returns only gender (it missed the ethnicity) — the
+    # deterministic backstop fills race_ethnicity from the demonym, normalizes
+    # it to the stored coarse grouping, and the demographic words ("indian",
+    # "women") never leak into keyword text matching.
+    async def _fake(text, system_prompt, response_schema=None, **kw):
+        return {"gender": "woman"}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    out = asyncio.run(ex.parse_nl_query("indian women", uid="u1"))
+    assert out["gender"] == "woman"
+    assert out["race_ethnicity"] == "south asian"
+    assert "keywords" not in out  # "indian"/"women" consumed, not loose keywords
+
+
+def test_parse_nl_query_normalizes_model_supplied_demonym(monkeypatch):
+    async def _fake(text, system_prompt, response_schema=None, **kw):
+        return {"gender": "woman", "race_ethnicity": "indian", "keywords": ["indian"]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    out = asyncio.run(ex.parse_nl_query("indian women", uid="u1"))
+    assert out["race_ethnicity"] == "south asian"
+    assert "keywords" not in out
+
+
+def test_parse_nl_query_backstop_survives_llm_failure(monkeypatch):
+    # An LLM failure must not silently drop the demographic intent: the
+    # backstop still resolves gender + ethnicity so the feed stays filtered.
+    async def _boom(*a, **k):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(gemini, "generate_json", _boom)
+    out = asyncio.run(ex.parse_nl_query("indian women", uid="u1"))
+    assert out == {"race_ethnicity": "south asian", "gender": "woman"}
+    # a non-demographic query on failure still yields {} (endpoint `q` fallback
+    # handles its keywords, unchanged).
+    assert asyncio.run(ex.parse_nl_query("anything", uid="u1")) == {}
+
+
+def test_parse_nl_query_colour_word_demonym_not_auto_set(monkeypatch):
+    # "black"/"white" are ambiguous (also hair colours): the deterministic
+    # backstop never sets them — only the LLM's explicit race_ethnicity does.
+    async def _fake(text, system_prompt, response_schema=None, **kw):
+        return {}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    out = asyncio.run(ex.parse_nl_query("black hair", uid="u1"))
+    assert "race_ethnicity" not in out
+
+
+def test_passes_filters_ethnicity_demonym_matches_coarse_attribute():
+    priya = {"gender": "Woman", "physical_attrs": {"race_ethnicity": "South Asian"}}
+    sofia = {"gender": "Woman", "physical_attrs": {"race_ethnicity": "White"}}
+    # the demonym the user typed resolves to the stored coarse grouping.
+    assert ex._passes_filters(priya, {"gender": "woman", "race_ethnicity": "indian"})
+    assert not ex._passes_filters(sofia, {"gender": "woman", "race_ethnicity": "indian"})
+    # a member with no stored ethnicity is never excluded (missing is lenient).
+    sparse = {"gender": "Woman", "physical_attrs": {}}
+    assert ex._passes_filters(sparse, {"gender": "woman", "race_ethnicity": "indian"})
+
+
+def test_passes_filters_ethnicity_filters_even_when_private():
+    # race_ethnicity is a DEMOGRAPHIC search field: it filters regardless of
+    # the Story visibility flag (unlike hair/build), so a White profile who
+    # never made her ethnicity public is still excluded from "Indian women".
+    sofia = {"gender": "Woman", "physical_attrs": {"race_ethnicity": "White"}}
+    assert not ex._passes_filters(
+        sofia, {"gender": "woman", "race_ethnicity": "south asian"},
+        public_fields=set(),
+    )
+    priya = {"gender": "Woman", "physical_attrs": {"race_ethnicity": "South Asian"}}
+    assert ex._passes_filters(
+        priya, {"gender": "woman", "race_ethnicity": "south asian"},
+        public_fields=set(),
+    )
+
+
+def test_explore_ethnicity_search_surfaces_members_excludes_nonmatch():
+    # Reproduces the founder's exact path: searching "indian women" must return
+    # the South Asian women (including a sparse-profile member whose ethnicity
+    # lives only on the attribute) and must NOT return a White woman — even
+    # though the White woman's free text contains the substring "indie" that
+    # the old loose keyword match false-positived on.
+    db = FakeDb()
+    _u(db, "viewer", name="Viewer", gender="Man")
+    _u(db, "sofia", name="Sofia Marino", gender="Woman",
+       headline="Ceramic artist; evenings feature indie folk",
+       physical_attrs={"race_ethnicity": "White"})
+    _u(db, "priya", name="Priya Nair", gender="Woman",
+       headline="Investment analyst and jazz-club regular",
+       physical_attrs={"race_ethnicity": "South Asian"})
+    # Dillu: sparse profile, ethnicity only on the attribute, no "indian" text.
+    _u(db, "dillu", name="Dillu", gender="Woman",
+       physical_attrs={"race_ethnicity": "South Asian"})
+
+    # Filters as the endpoint builds them for "indian women" (demonym mapped
+    # to the coarse grouping; raw q retained for the keyword fallback).
+    filters = {"gender": "woman", "race_ethnicity": "south asian",
+               "q": "indian women"}
+    ids = {c["uid"] for c in ex.explore(db, "viewer", filters)}
+    assert "priya" in ids
+    assert "dillu" in ids   # was missing before the fix
+    assert "sofia" not in ids  # White; was wrongly returned before the fix
+
+
+def test_explore_route_ethnicity_search_excludes_nonmatch(monkeypatch):
+    import main
+    from fastapi.testclient import TestClient
+
+    # Force the deterministic backstop (no live LLM in tests).
+    async def _boom(*a, **k):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(gemini, "generate_json", _boom)
+
+    db = FakeDb()
+    _u(db, "viewer", name="Viewer", gender="Man")
+    _u(db, "sofia", name="Sofia Marino", gender="Woman",
+       headline="Ceramic artist; evenings feature indie folk",
+       physical_attrs={"race_ethnicity": "White"})
+    _u(db, "priya", name="Priya Nair", gender="Woman",
+       physical_attrs={"race_ethnicity": "South Asian"})
+    _u(db, "dillu", name="Dillu", gender="Woman",
+       physical_attrs={"race_ethnicity": "South Asian"})
+
+    main_get_db = main.get_db
+    main.get_db = lambda: db
+    main.app.dependency_overrides[main.require_adult_uid] = lambda: "viewer"
+    client = TestClient(main.app)
+    try:
+        resp = client.get("/explore", params={"q": "indian women"})
+        assert resp.status_code == 200
+        body = resp.json()
+        uids = {c["uid"] for c in body["cards"]}
+        assert body["filters_applied"].get("race_ethnicity") == "south asian"
+        assert "priya" in uids and "dillu" in uids
+        assert "sofia" not in uids
     finally:
         main.app.dependency_overrides.pop(main.require_adult_uid, None)
         main.get_db = main_get_db
