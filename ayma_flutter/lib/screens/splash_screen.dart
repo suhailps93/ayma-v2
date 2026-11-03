@@ -25,13 +25,20 @@ import 'underage_screen.dart';
 /// server-derived `session_mode`, and routes to marketing / interview / active
 /// (Step 34). Without one — widget tests — it shows the placeholder dev buttons.
 ///
-/// Startup is made resilient to a flaky network (the founder-reported "splash
-/// hangs forever" bug): `/bootstrap` has explicit timeouts in [ApiClient], a
-/// single transient failure is retried automatically with backoff, a restored
-/// connection retries immediately, and once the quick retries are spent a
-/// branded "Couldn't connect — Retry" state replaces the bare spinner. Only a
-/// genuine auth failure (401/403) routes to sign-in; a network failure never
-/// bounces a signed-in user out of their session.
+/// Startup PREFERS LOADING OVER FAILING (founder-reported "almost every cold
+/// open hard-fails with Couldn't connect"): `ayma-api` scales to zero, so the
+/// first request after idle pays a Cloud Run cold start (~18s+). On mount the
+/// splash fires a lightweight unauthenticated `GET /health` wake-ping to start
+/// that warm-up immediately, then runs `/bootstrap` under [ApiClient]'s own
+/// cold-start-tolerant budget (ID-token refresh + POST, up to ~27s) — it is
+/// NOT capped to a short client timeout any more, which is exactly what used
+/// to turn a slow cold start into an instant hard failure. A transient failure
+/// is retried automatically with exponential backoff (1s, 2s, 4s, 8s) inside a
+/// generous overall budget ([startupDeadline]) that comfortably covers a cold
+/// start plus a retry; a restored connection retries immediately. Only once
+/// that whole budget is spent does a branded "Couldn't connect — Retry" state
+/// replace the orb. Only a genuine auth failure (401/403) routes to sign-in; a
+/// network failure never bounces a signed-in user out of their session.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, this.apiClient, this.auth});
 
@@ -47,7 +54,12 @@ class SplashScreen extends StatefulWidget {
   /// completes, a plugin that never reports), the splash MUST show the Retry
   /// affordance by now rather than an endless orb (§11.2). Public so the test
   /// can assert the exact watchdog behaviour.
-  static const startupDeadline = Duration(seconds: 20);
+  ///
+  /// Sized to comfortably cover a Cloud Run cold start (~18s+) plus an
+  /// automatic retry, so a genuinely slow-but-reachable backend recovers into
+  /// the app rather than tripping this ceiling. It is a last-resort guard, not
+  /// the primary failure path: a reachable backend lands long before it fires.
+  static const startupDeadline = Duration(seconds: 45);
 
   final ApiClient? apiClient;
   final FirebaseAuth? auth;
@@ -57,12 +69,14 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  /// Increasing gaps between auto-retries (index = retry number − 1). Kept
-  /// short so recovery is quick but a stuck device never hammers the network.
+  /// Exponential gaps between auto-retries (index = retry number − 1): 1s, 2s,
+  /// 4s, 8s (capped). Quick enough that a transient blip recovers fast, backed
+  /// off enough that a stuck device never hammers the network.
   static const _backoff = [
     Duration(seconds: 1),
-    Duration(seconds: 3),
-    Duration(seconds: 6),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
   ];
 
   String? _error;
@@ -82,6 +96,11 @@ class _SplashScreenState extends State<SplashScreen> {
     // the app's `AppContext` bookkeeping.
     AppContext.instance.set(screen: 'splash');
     if (widget.apiClient != null) {
+      // Wake a scaled-to-zero backend ASAP so the real `/bootstrap` below is
+      // more likely to hit an already-warm Cloud Run instance. Fire-and-forget
+      // and unauthenticated (`GET /health`); failures are swallowed inside
+      // [ApiClient.wakeUp] and never affect the bootstrap sequence.
+      unawaited(widget.apiClient!.wakeUp());
       _watchConnectivity();
       _startWatchdog();
       WidgetsBinding.instance.addPostFrameCallback((_) => _resolve());
@@ -179,9 +198,13 @@ class _SplashScreenState extends State<SplashScreen> {
 
     _attempt++;
     try {
-      final result = await widget.apiClient!
-          .bootstrap(sessionId: '')
-          .timeout(const Duration(milliseconds: 2500));
+      // No short client-side cap here: [ApiClient.bootstrap] already bounds
+      // itself (ID-token refresh + POST) with cold-start-tolerant timeouts, so
+      // the first call rides through a ~18s+ Cloud Run cold start instead of
+      // being force-failed after a couple of seconds (the old 2500ms cap was
+      // the "almost every cold open hard-fails" bug). The exponential-backoff
+      // retries and the overall [startupDeadline] watchdog still bound startup.
+      final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
       final route = await _resolveRoute(result);
       if (!mounted) return;

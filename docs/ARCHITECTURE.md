@@ -1597,8 +1597,11 @@ Splash → Firebase Auth state check → sign-in if none exists (§3.3) → `ses
 
 The **feature tour** (§11.2a) is **not** gated at the splash. It runs one step later, at the **pre-boarding → first-chat** transition: the main app shell is the first-chat surface, so the shell itself decides (from a per-user seen-state) whether to auto-show the tour. This keeps it strictly post-sign-in and post-pre-boarding, and lets the same mechanism later spotlight only newly-shipped features.
 
+**Boot prefers LOADING over FAILING (founder bug, 2026-11-02 — "almost every cold open hard-fails with Couldn't connect").** `ayma-api` is scale-to-zero, so the first request after idle pays a Cloud Run cold start (~18s+). `SplashScreen` is built to ride through that rather than hard-fail on it: (a) on mount it fires a lightweight unauthenticated **wake-ping** `GET /health` (`ApiClient.wakeUp`) to start the warm-up in parallel with (and usually ahead of) the real `/bootstrap`; (b) the blocking first `/bootstrap` has **no short client-side cap** — it runs under `ApiClient`'s own cold-start-tolerant budget (ID-token refresh ≤12s + POST ≤15s), so a slow cold start completes instead of being force-failed after a couple of seconds (the old 2500ms cap was the bug); (c) a transient failure auto-retries with **exponential backoff (1s, 2s, 4s, 8s)**, a restored connection retries immediately, and only once the generous overall **`startupDeadline` watchdog (45s)** — sized to cover a cold start plus a retry — is spent does the branded "Couldn't connect — Retry" state replace the loading orb; (d) a genuine auth rejection (401/403) or an unreadable restored session still routes to sign-in, never the retry loop. A signed-in user with a cached entry route is painted optimistically and the bootstrap is corrected in the background (`_backgroundBootstrap`), so cold start is invisible on warm/returning opens. Covered by `splash_timeout_test.dart` (incl. the slow/cold-backend auto-recovery case) and the parallel startup DAG's N14 background refresher (`startup_nodes.dart`) which is independently network-tolerant.
+
 ```
-Splash → bootstrap → session_mode redirect
+Splash (wake-ping GET /health; bootstrap under cold-start budget,
+        exp-backoff retry 1/2/4/8s, 45s watchdog → Retry) → session_mode redirect
                          │
       ┌──────────────────┼───────────────────────┐
       ▼                  ▼                        ▼

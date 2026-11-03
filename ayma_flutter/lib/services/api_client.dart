@@ -348,6 +348,29 @@ class ApiClient {
 
   Uri _uri(String path) => Uri.parse('${Env.apiBaseUrl}$path');
 
+  /// Fire-and-forget liveness ping that wakes a scaled-to-zero backend ASAP.
+  ///
+  /// `ayma-api` runs on Cloud Run where min-instances can be 0, so the first
+  /// request after an idle period pays a cold-start penalty (~18s+). Firing
+  /// `GET /health` the moment the splash mounts starts that warm-up in parallel
+  /// with — and usually ahead of — the real `/bootstrap`, so the bootstrap is
+  /// far more likely to reach an already-warm instance. `/health` is
+  /// unauthenticated server-side (`_CONSENT_EXEMPT_PATHS` + the ID-token
+  /// middleware exemption), so this needs no token and runs before the token
+  /// refresh. Any error is swallowed: a failed wake-ping changes nothing — the
+  /// real bootstrap still runs with its own retry/backoff — so it must never
+  /// surface or rethrow.
+  Future<void> wakeUp() async {
+    try {
+      await _http.get(
+        _uri('/health'),
+        headers: {'X-Request-Timeout': '${_bootstrapPostTimeout.inMilliseconds}'},
+      );
+    } catch (_) {
+      // Intentionally ignored — the ping only ever *helps* the real bootstrap.
+    }
+  }
+
   Future<Map<String, String>> _headers() async {
     final token = await _auth.currentUser?.getIdToken();
     if (token == null) {

@@ -91,6 +91,11 @@ void main() {
     await tester.pumpWidget(
       MaterialApp.router(
         routerConfig: _router((req) async {
+          // The boot wake-ping (`GET /health`) is not a bootstrap attempt — it
+          // must not consume the counter that drives this scenario.
+          if (req.url.path == '/health') {
+            return http.Response('{"status":"ok"}', 200);
+          }
           calls++;
           // Fail every automatic attempt; succeed once the user taps Retry.
           if (calls <= SplashScreen.maxStartupAttempts) {
@@ -187,7 +192,41 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
     expect(find.text('screen:signin'), findsNothing);
   });
+
+  testWidgets(
+      'slow/cold backend: first calls time out then succeed — stays on LOADING '
+      'and auto-recovers into the app, NEVER a hard-fail on the first timeout',
+      (tester) async {
+    final api = _BootstrapColdStart(failures: 2);
+    await tester.pumpWidget(_appWith(api, MockFirebaseAuth(signedIn: true)));
+
+    // After the first attempt times out, the splash schedules an auto-retry:
+    // it must show the LOADING orb (reconnecting), never the Retry hard-fail.
+    await tester.pump(); // mount + post-frame _resolve → 1st attempt fails
+    expect(find.byType(SplashLoading), findsOneWidget);
+    expect(find.byType(SplashErrorView), findsNothing);
+
+    // Ride out the exponential backoff (1s then 2s) across the two cold-start
+    // failures into the third, successful attempt — all well inside the budget.
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.pumpAndSettle();
+
+    // Recovered into the app with no hard-fail screen ever shown.
+    expect(find.text('screen:shell'), findsOneWidget);
+    expect(find.byType(SplashErrorView), findsNothing);
+    expect(api.calls, 3);
+  });
 }
+
+/// A [MockClient] that answers the unauthenticated boot wake-ping (`GET
+/// /health`) with 200, so the `_appWith` subclasses exercise the real
+/// [ApiClient.wakeUp] path without a live network call leaking a pending timer
+/// into the widget-test harness.
+MockClient _okHealthClient() => MockClient(
+      (req) async => http.Response('{"status":"ok","service":"ayma-api"}', 200),
+    );
 
 /// A router (as [_router]) but wired to an explicit [api] and [auth] so a test
 /// can inject a custom [ApiClient.bootstrap] behaviour and hold the auth to
@@ -216,7 +255,11 @@ Widget _appWith(ApiClient api, FirebaseAuth auth) {
 /// An [ApiClient] whose `bootstrap` always throws [error] — to drive the
 /// splash's failure classification directly (network vs broken session).
 class _BootstrapThrows extends ApiClient {
-  _BootstrapThrows(this.error) : super(auth: MockFirebaseAuth(signedIn: true));
+  _BootstrapThrows(this.error)
+      : super(
+          auth: MockFirebaseAuth(signedIn: true),
+          httpClient: _okHealthClient(),
+        );
 
   final Object error;
 
@@ -231,7 +274,11 @@ class _BootstrapThrows extends ApiClient {
 /// An [ApiClient] whose `bootstrap` never completes — to prove the splash's
 /// overall watchdog ends the spinner even when nothing else does.
 class _BootstrapHangs extends ApiClient {
-  _BootstrapHangs() : super(auth: MockFirebaseAuth(signedIn: true));
+  _BootstrapHangs()
+      : super(
+          auth: MockFirebaseAuth(signedIn: true),
+          httpClient: _okHealthClient(),
+        );
 
   @override
   Future<BootstrapResult> bootstrap({
@@ -239,4 +286,35 @@ class _BootstrapHangs extends ApiClient {
     List<Map<String, String>> recentTurns = const [],
   }) =>
       Completer<BootstrapResult>().future;
+}
+
+/// An [ApiClient] whose `bootstrap` throws a cold-start-class network timeout
+/// for its first [failures] attempts, then succeeds — models a scaled-to-zero
+/// backend that is slow/unreachable on the first call(s) and then warms up.
+class _BootstrapColdStart extends ApiClient {
+  _BootstrapColdStart({required this.failures})
+      : super(
+          auth: MockFirebaseAuth(signedIn: true),
+          httpClient: _okHealthClient(),
+        );
+
+  final int failures;
+  int calls = 0;
+
+  @override
+  Future<BootstrapResult> bootstrap({
+    required String sessionId,
+    List<Map<String, String>> recentTurns = const [],
+  }) async {
+    calls++;
+    if (calls <= failures) {
+      throw ApiException('Network timed out reaching Ayma.');
+    }
+    return const BootstrapResult(
+      sessionMode: 'active',
+      livekitUrl: 'wss://x',
+      livekitToken: 't',
+      room: 'r',
+    );
+  }
 }
