@@ -684,6 +684,20 @@ class ScreenCapture {
     }
     final target = _resolve(snap, control, label, op);
     if (target == null) {
+      // A scroll with nothing scrollable on the page isn't a failure: the page
+      // already fits on screen (a short Explore grid, a short list). Say so
+      // honestly rather than refusing — a refusal tells the model to "read the
+      // screen again", so it retries and its follow-up produces no reply at all
+      // (GW-SCROLL: the short Explore grid surfaced the generic "I couldn't
+      // finish that"). A named control that is genuinely gone still refuses.
+      final nothingScrollable = !snap.controls.any((c) => c.type == 'list');
+      if (op.startsWith('scroll') && nothingScrollable) {
+        final where = op == 'scroll_to_top' ? 'the top' : 'the bottom';
+        final head = _scrollEndOps.contains(op)
+            ? 'Reached $where — the whole page already fits on screen.'
+            : 'Nothing to scroll — the whole page already fits on screen.';
+        return UiActionResult.done('$head\n${snap.visible}');
+      }
       return const UiActionResult.refused(
           "that control isn't on screen any more; read the screen again");
     }

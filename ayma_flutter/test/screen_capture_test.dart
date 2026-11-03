@@ -452,6 +452,53 @@ void main() {
     handle.dispose();
   });
 
+  testWidgets(
+      'scroll_to_bottom on a short Explore grid that fits on screen returns a '
+      'graceful result, never an error (GW-SCROLL: Daniel on Explore)',
+      (tester) async {
+    // Scout's specimen: a ~7-card Explore grid that fits on screen, so the
+    // CustomScrollView is NOT scrollable (no scrollUp/Down semantics action)
+    // and is therefore not captured as a [list] control. A page-level "scroll
+    // to the bottom" must then report an honest "already fits" result — NOT
+    // refuse ("read the screen again"), which pushed the model to retry and its
+    // follow-up produced no reply at all → the generic "I couldn't finish that".
+    final handle = tester.ensureSemantics();
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CustomScrollView(
+          slivers: [
+            SliverGrid(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 240, childAspectRatio: 0.66),
+              delegate: SliverChildBuilderDelegate(
+                (c, i) => Card(
+                    child: Center(child: Text(const [
+                  'Daniel', 'Sofia', 'Priya', 'Alexander', 'Mia', 'Noah', 'Ava'
+                ][i]))),
+                childCount: 7,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final cap = ScreenCapture(
+      routeOf: () => '/explore',
+      settle: () => tester.pumpAndSettle(),
+    );
+    // The grid fits, so it is not a scrollable control at all.
+    expect(cap.capture().controls.any((c) => c.type == 'list'), isFalse);
+    final r = await cap.perform(control: '', label: '', op: 'scroll_to_bottom');
+    expect(r.ok, isTrue, reason: r.reason);
+    expect(r.result, contains('fits on screen'));
+    expect(r.result, isNot(contains("isn't on screen")));
+    handle.dispose();
+  });
+
   testWidgets('scroll_down with a repeat count moves further than one step',
       (tester) async {
     final handle = tester.ensureSemantics();
