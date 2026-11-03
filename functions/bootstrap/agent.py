@@ -485,6 +485,101 @@ def _cascade_tts_voice_for_gender(gender: str | None) -> str:
     return CONFIG.meta_cascade_tts_voice
 
 
+# --- Open-weights (small-context) cascade: context cap (§13.9) ---------------
+# The open-weights brain (Modal-hosted Llama-3.1-8B) has a HARD context window
+# (vLLM ``--max-model-len`` in scripts/modal_open_weights.py). The AgentSession
+# sends the full, growing chat context every turn, so once system + history + new
+# turn exceed that window the server returns ``400 maximum context length``
+# (retryable=False) → the turn fails → the voice sticks on "Listening" (founder
+# bug, 2026-11-02). Large-context brains (Meta Muse Spark, Gemini Live) never
+# hit this, so the cap is applied ONLY to the open-weights leg, keyed off its
+# configured window, leaving every other brain untrimmed.
+#
+# Conservative token estimate: ~3 chars/token (English runs ~4, so this
+# over-counts → the cap trims a little early and NEVER under-counts into a 400),
+# plus a fixed per-message overhead for the role/format tokens the server adds
+# around each message.
+_OW_CHARS_PER_TOKEN = 3
+_OW_PER_MESSAGE_OVERHEAD_TOKENS = 8
+
+
+def _est_item_tokens(item) -> int:
+    text = getattr(item, "text_content", None) or ""
+    return len(text) // _OW_CHARS_PER_TOKEN + _OW_PER_MESSAGE_OVERHEAD_TOKENS
+
+
+def cap_chat_ctx(chat_ctx: "llm.ChatContext | None", token_budget: int):
+    """Trim ``chat_ctx`` to fit ``token_budget`` estimated tokens for a
+    small-context cascade brain (sliding window).
+
+    Keeps ALL leading system messages (the persona prompt + rolling summary ride
+    there, not in the turn history) and the MOST-RECENT turns, dropping the
+    OLDEST non-system turns first. Returns the original object unchanged when it
+    already fits — so a large-context brain, given a large/zero budget, is never
+    over-trimmed. Never leaves a dangling ``function_call_output`` whose matching
+    call was trimmed away."""
+    if chat_ctx is None or token_budget <= 0:
+        return chat_ctx
+    items = list(chat_ctx.items)
+    # Leading system messages are always kept (persona + summary ride here).
+    head = []
+    idx = 0
+    while idx < len(items) and getattr(items[idx], "role", None) == "system":
+        head.append(items[idx])
+        idx += 1
+    rest = items[idx:]
+    head_tokens = sum(_est_item_tokens(it) for it in head)
+    budget_rest = token_budget - head_tokens
+    if budget_rest <= 0:
+        # System prompt alone already fills the budget: send system-only (still a
+        # valid, non-400 request) — the system prompt is never dropped.
+        return llm.ChatContext(head) if head and len(head) != len(items) else chat_ctx
+    # Walk newest → oldest, keeping a contiguous recent suffix that fits.
+    kept_rev: list = []
+    used = 0
+    for it in reversed(rest):
+        tok = _est_item_tokens(it)
+        if used + tok > budget_rest:
+            break
+        kept_rev.append(it)
+        used += tok
+    kept = list(reversed(kept_rev))
+    # Don't begin the kept tail on an orphan tool output (its call was trimmed).
+    while kept and getattr(kept[0], "type", None) == "function_call_output":
+        kept.pop(0)
+    if len(head) + len(kept) == len(items):
+        return chat_ctx  # nothing dropped — fits already
+    return llm.ChatContext(head + kept)
+
+
+def _build_context_capped_open_weights_llm(
+    *, model: str, base_url: str, api_key: str, token_budget: int
+):
+    """An ``lk_openai.LLM`` whose ``chat()`` trims the ChatContext to
+    ``token_budget`` before every call, so the small-context open-weights server
+    never receives more than its window (:func:`cap_chat_ctx`). lk_openai is
+    imported lazily, and a missing plugin raises the same ``RuntimeError`` the
+    caller catches to fall back to Gemini Live."""
+    try:
+        from livekit.plugins import openai as lk_openai
+    except ModuleNotFoundError as exc:  # pragma: no cover - dep in requirements
+        raise RuntimeError(
+            "livekit-plugins-openai is required for the open-weights cascade brain"
+        ) from exc
+
+    class _ContextCappedLLM(lk_openai.LLM):
+        _ctx_token_budget = token_budget
+
+        def chat(self, *, chat_ctx, **kwargs):
+            return super().chat(
+                chat_ctx=cap_chat_ctx(chat_ctx, self._ctx_token_budget), **kwargs
+            )
+
+    return _ContextCappedLLM(
+        model=model, base_url=base_url, api_key=api_key, temperature=0.9
+    )
+
+
 def _build_cascade_brain(brain_id: str):
     """Build the cascade LLM leg for ``brain_id`` (§13.9). Two routes:
 
@@ -542,22 +637,23 @@ def _build_cascade_brain(brain_id: str):
                 "OPEN_WEIGHTS_MODEL is not set — cannot run the open-weights "
                 "cascade brain (config.py must provide it; no hardcoded default)"
             )
-        try:
-            from livekit.plugins import openai as lk_openai
-        except ModuleNotFoundError as exc:  # pragma: no cover - dep in requirements
-            raise RuntimeError(
-                "livekit-plugins-openai is required for the open-weights cascade brain"
-            ) from exc
         # The self-hosted server may be keyless; the OpenAI client still needs a
         # non-empty api_key, so fall back to a sentinel (NOT a credential) when
         # OPEN_WEIGHTS_API_KEY is unset. A real key, when the server needs one,
         # comes only from the environment / Secret Manager.
         api_key = os.getenv("OPEN_WEIGHTS_API_KEY", "") or "not-needed"
-        return lk_openai.LLM(
+        # Cap the sent context to the model's window minus a reply margin so the
+        # small-context server never 400s on overflow (founder bug, 2026-11-02).
+        token_budget = max(
+            0,
+            CONFIG.open_weights_max_context_tokens
+            - CONFIG.open_weights_response_token_margin,
+        )
+        return _build_context_capped_open_weights_llm(
             model=model,
             base_url=base_url,
             api_key=api_key,
-            temperature=0.9,
+            token_budget=token_budget,
         )
     from livekit.agents import inference
 

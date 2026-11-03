@@ -95,9 +95,14 @@ def serve():
         str(VLLM_PORT),
         "--api-key",
         api_key,
-        # Keep KV-cache memory within the L4's 24GB alongside bf16 weights.
+        # Context window. 16384 gives the voice cascade headroom before the
+        # agent-side context cap (functions/bootstrap/agent.py cap_chat_ctx,
+        # keyed off OPEN_WEIGHTS_MAX_CONTEXT_TOKENS) trims history. bf16 8B
+        # weights (~16GiB) + the 16384 KV cache (~2GiB/seq) fit the L4's 24GB at
+        # --gpu-memory-utilization 0.90 (~21.6GiB). Keep this matched to the
+        # agent's OPEN_WEIGHTS_MAX_CONTEXT_TOKENS (both default 16384).
         "--max-model-len",
-        "8192",
+        "16384",
         "--gpu-memory-utilization",
         "0.90",
         # Tool / function calling: Ayma's voice agent sends tools with

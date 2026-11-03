@@ -794,6 +794,30 @@ class Config:
     the cold start (§13.9). Env ``OPEN_WEIGHTS_COLD_START_TIMEOUT_S``, default
     ``120``. Does not affect the Meta/Inference legs, which keep the default."""
 
+    open_weights_max_context_tokens: int
+    """Hard context window (tokens) the VOICE cascade's open-weights model
+    serves — vLLM's ``--max-model-len`` in ``scripts/modal_open_weights.py``.
+    The LiveKit AgentSession sends the full, growing chat context every turn, so
+    once system prompt + history + the new turn exceed this window the
+    self-hosted server returns ``400 This model's maximum context length is …``
+    (retryable=False) → the turn fails → the voice sticks on "Listening"
+    (founder bug, 2026-11-02). The agent caps the open-weights leg's context to
+    stay under this minus ``open_weights_response_token_margin`` (§13.9).
+    Large-context brains (Meta Muse Spark, Gemini Live) never hit this and are
+    never trimmed. Env ``OPEN_WEIGHTS_MAX_CONTEXT_TOKENS``, default ``16384`` —
+    keep it matched to the Modal ``--max-model-len`` (both default 16384; a
+    smaller value is always safe, a larger one must not exceed what the server
+    serves or the cap stops protecting against the 400)."""
+
+    open_weights_response_token_margin: int
+    """Tokens reserved out of ``open_weights_max_context_tokens`` for the
+    model's own reply (prompt + completion must both fit the window). The
+    cascade trims the sent context to ``max_context - this`` so a full reply can
+    always be generated without overflowing. Env
+    ``OPEN_WEIGHTS_RESPONSE_TOKEN_MARGIN``, default ``1200`` (≈ a long voice
+    turn, leaving ~15000 prompt tokens on a 16384 model, ~7000 on an 8192
+    one)."""
+
     meta_transcribe_model: str
     """Meta Muse Voice Transcribe (STT) id. Listed in the Meta Model API's
     ``GET /v1/models``, but Meta serves no working OpenAI-compatible REST STT
@@ -1259,6 +1283,12 @@ def _load() -> Config:
         open_weights_model=os.getenv("OPEN_WEIGHTS_MODEL", ""),
         open_weights_cold_start_timeout_s=float(
             os.getenv("OPEN_WEIGHTS_COLD_START_TIMEOUT_S", "120")
+        ),
+        open_weights_max_context_tokens=int(
+            os.getenv("OPEN_WEIGHTS_MAX_CONTEXT_TOKENS", "16384")
+        ),
+        open_weights_response_token_margin=int(
+            os.getenv("OPEN_WEIGHTS_RESPONSE_TOKEN_MARGIN", "1200")
         ),
         qloo_api_base_url=os.getenv(
             "QLOO_API_BASE_URL", "https://hackathon.api.qloo.com"
