@@ -2604,6 +2604,8 @@ async def explore(
     # range was injected unconditionally, so "Everyone" returned empty for any
     # candidate missing a birthdate.)
     filters = explore_mod.merge_filters(dropdown, nl)
+    if q.strip() and "q" not in filters:
+        filters["q"] = q.strip()
     try:
         cards, next_cursor = await asyncio.to_thread(
             explore_mod.explore_page,
