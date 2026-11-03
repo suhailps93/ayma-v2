@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import '../services/ids.dart';
 import '../services/pending_chat_queue.dart';
 import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
+import '../services/thumbs_down_store.dart';
 import '../services/voice_session_controller.dart';
 import '../services/voice_transport.dart';
 import '../theme.dart';
@@ -70,6 +72,7 @@ class ChatScreen extends StatefulWidget {
     this.voiceTransportFactory,
     this.pendingQueue,
     this.composerAnchorKey,
+    this.auth,
   });
 
   static const path = '/chat';
@@ -85,6 +88,7 @@ class ChatScreen extends StatefulWidget {
   final TranscriptStore? transcriptStore;
   final ChatService? chatService;
   final ImagePicker? imagePicker;
+  final FirebaseAuth? auth;
 
   /// The screen the user was on when this chat was opened (the global
   /// floating Ayma launcher's page-context threading) — a snapshot of
@@ -364,6 +368,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// [_send]'s `askAyma?.matchReportId ?? _matchReportId`.
   String _matchReportId = '';
 
+  String _currentUid() {
+    try {
+      return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -390,6 +402,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // has no shell above it. Skipped for a scoped Ask-Ayma correction turn
       // — see [ChatScreen.askAymaContext]'s doc for why.
       AppContext.instance.set(screen: 'ayma');
+      final uid = _currentUid();
+      unawaited(ThumbsDownStore.instance.load(uid).then((_) {
+        if (mounted) setState(() {});
+      }));
       _loadHistory();
       ChatInbox.instance.pending.addListener(_consumeKickoff);
       ChatInbox.instance.resultsLanded.addListener(_onResultsLanded);
@@ -1185,6 +1201,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         windowed = turns.sublist(start, start + cap);
       }
 
+      final uid = _currentUid();
+      await ThumbsDownStore.instance.load(uid);
       _store.seed(windowed);
       // Counts any live voice turns `seed` kept after the history too: the
       // voice agent persists those itself when the call ends, so this
@@ -2524,15 +2542,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 turn: t,
                                 latest: idx == turns.length - 1,
                                 api: _api,
+                                initiallyFlagged: ThumbsDownStore.instance.isFlagged(t.text),
                                 onThumbsDown:
                                     (t.role == TurnRole.ayma &&
                                         t.isFinal &&
                                         t.text.isNotEmpty)
-                                    ? () => _api.submitFeedback(
-                                        category: 'thumbs_down',
-                                        quote: t.text,
-                                        sessionId: _sessionId,
-                                      )
+                                    ? () async {
+                                        final uid = _currentUid();
+                                        await _api.submitFeedback(
+                                          category: 'thumbs_down',
+                                          quote: t.text,
+                                          sessionId: _sessionId,
+                                        );
+                                        await ThumbsDownStore.instance.recordThumbsDown(uid, t.text);
+                                      }
                                     : null,
                               );
                               // A one-time landing spot from a "Why Ayma believes
@@ -2951,6 +2974,7 @@ class _TranscriptLine extends StatefulWidget {
     required this.turn,
     required this.latest,
     this.api,
+    this.initiallyFlagged = false,
     this.onThumbsDown,
   });
 
@@ -2961,6 +2985,9 @@ class _TranscriptLine extends StatefulWidget {
   /// marker. Null in tests that don't exercise that path.
   final ApiClient? api;
 
+  /// Whether this turn was already flagged with thumbs-down feedback (persisted across relaunch).
+  final bool initiallyFlagged;
+
   /// Non-null only for a finished Ayma line — fire-and-forget feedback.
   final Future<void> Function()? onThumbsDown;
 
@@ -2969,7 +2996,15 @@ class _TranscriptLine extends StatefulWidget {
 }
 
 class _TranscriptLineState extends State<_TranscriptLine> {
-  bool _flagged = false;
+  late bool _flagged = widget.initiallyFlagged;
+
+  @override
+  void didUpdateWidget(covariant _TranscriptLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initiallyFlagged && !_flagged) {
+      _flagged = true;
+    }
+  }
 
   /// Unique per line so two turns carrying the same image never collide as
   /// duplicate Hero tags in one route.
