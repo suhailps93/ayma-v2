@@ -1728,6 +1728,11 @@ def _finalize_chat(
                 image_path=ctx.image_path or None,
                 client_msg_id=client_msg_id or None,
             )
+        reply_client_id = (
+            None
+            if reply_text == _USAGE_CAPPED_REPLY
+            else (client_msg_id or None)
+        )
         chat_history.append(
             get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
             image_path=ctx.photo_edit_result.get("image_path") or None,
@@ -1737,8 +1742,10 @@ def _finalize_chat(
             # transcript on reload (founder bug 2026-09-27).
             image_url=ctx.photo_edit_result.get("image_url") or None,
             # On the reply too, so a client reconciling a dropped connection
-            # can find this send's finished reply by exact id.
-            client_msg_id=client_msg_id or None,
+            # can find this send's finished reply by exact id. A capped reply
+            # leaves this unset so a queued re-send once credits are back is
+            # not deduped against the limit message.
+            client_msg_id=reply_client_id,
         )
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", ctx.uid)
@@ -1815,22 +1822,26 @@ async def chat(
     async def _turn() -> dict[str, object]:
         # Persist the user message up front so a slow/failed turn never loses it.
         _persist_user_turn(ctx, req)
+        is_usage_capped = False
         try:
             reply = await _generate_chat_reply(ctx, req)
             reply_text, tools_used = reply.text, reply.tools_used
         except token_ledger.TokenCapExceeded:
-            return {
-                "reply": _USAGE_CAPPED_REPLY,
-                "capped": False,
-                "fallback_form": False,
-                "usage_capped": True,
-            }
+            reply_text, tools_used = _USAGE_CAPPED_REPLY, []
+            is_usage_capped = True
         except Exception:  # noqa: BLE001 - complete honestly, never evaporate
             logger.exception("chat turn failed for %s", ctx.uid)
             reply_text, tools_used = _CHAT_INCOMPLETE_REPLY, []
         finalize_bg = BackgroundTasks()
         _finalize_chat(finalize_bg, ctx, req, reply_text, tools_used)
         _spawn_turn(finalize_bg())
+        if is_usage_capped:
+            return {
+                "reply": reply_text,
+                "capped": False,
+                "fallback_form": False,
+                "usage_capped": True,
+            }
         return {
             "reply": reply_text,
             "tools_used": tools_used,
@@ -2094,11 +2105,13 @@ async def chat_stream(
                             }
                         queue.put_nowait(ev)
             except token_ledger.TokenCapExceeded:
+                reply_text = _USAGE_CAPPED_REPLY
+                tools_used = []
                 queue.put_nowait({
                     "type": "reply", "text": _USAGE_CAPPED_REPLY,
                     "tools_used": [], "usage_capped": True,
                 })
-                return {
+                result = {
                     "reply": _USAGE_CAPPED_REPLY, "tools_used": [],
                     "image_url": "", "usage_capped": True,
                 }
@@ -2116,9 +2129,8 @@ async def chat_stream(
             # bound → the model produced nothing) never evaporates from history
             # (GW-SCROLL variant B). The error event above already told a live
             # client; the honest fallback is what lands in the transcript. A
-            # TokenCapExceeded above returned early and is intentionally not
-            # persisted. This does not weaken dropped-connection recovery: that
-            # relies on the SUCCESS path persisting the real reply, unchanged.
+            # capped turn finalizes with the standard usage-capped reply so
+            # the turn closes honestly and leaves no orphaned user message.
             if not reply_text:
                 reply_text = _CHAT_INCOMPLETE_REPLY
                 result = {
