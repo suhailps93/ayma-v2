@@ -589,6 +589,23 @@ def test_date_sim_prompt_forbids_fabricating_unknown_facts():
     assert date_sim._CONTEXT_DEPTH_TOKEN in date_sim._read(date_sim._SIM_PROMPT_PATH)
 
 
+# --- concise, human-texting style (founder: sim turns read like essays) ---- #
+def test_date_sim_prompt_enforces_short_casual_turns():
+    """The shared prompt must push SHORT, human dating texts — not polished
+    multi-paragraph essays (founder feedback): it demands brevity, allows
+    fragments / one-word reactions, forbids cramming a reaction + fact +
+    compliment + question into one message, and the old "a sentence or three"
+    licence for longer turns is gone."""
+    prompt = date_sim._read(date_sim._SIM_PROMPT_PATH).lower()
+    assert "keep it short" in prompt
+    assert "one idea per message" in prompt
+    assert "fragment" in prompt
+    assert "essay" in prompt
+    assert "don't cram" in prompt
+    # The old phrasing that licensed up to three sentences must not return.
+    assert "a sentence or three" not in prompt
+
+
 def _thin_ctx() -> practice_core.PersonaContext:
     # Only a name → very low profile completeness → low-context.
     return practice_core.PersonaContext(
