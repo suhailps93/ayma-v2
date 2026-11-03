@@ -130,7 +130,7 @@ def test_tokencap_chat_turn_finalizes_and_does_not_silence_opener(monkeypatch):
             assert fired is True
             assert len(opener_session.replies) == 1
 
-            # Contrast check: verify that an orphaned user turn would indeed have been suppressed
+            # Contrast check (founder-ruled Nov 2, voice-opener option c): an orphaned user turn no longer stays silent — the opener fires and answers the dangling message
             orphan_turns = [Turn(role=ROLE_USER, text=user_message)]
             orphan_session = _OpenerSession()
             orphan_seed = agent.RoomSeed(
@@ -139,14 +139,14 @@ def test_tokencap_chat_turn_finalizes_and_does_not_silence_opener(monkeypatch):
                 seed_turns=orphan_turns,
                 system_prompt="sp",
             )
-            suppressed = await agent.maybe_open_conversation(
+            fired_orphan = await agent.maybe_open_conversation(
                 orphan_session,
                 orphan_seed,
                 window=list(orphan_turns),
                 grace_seconds=0.05,
             )
-            assert suppressed is False
-            assert len(orphan_session.replies) == 0
+            assert fired_orphan is True
+            assert len(orphan_session.replies) == 1
 
     asyncio.run(run())
 
