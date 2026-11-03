@@ -58,6 +58,14 @@ import 'notification_bell.dart';
 /// navigating to the tab — see `MainShellScreen._onTabTap`,
 /// `NavBarShell._goTab`, and `PublicProfileScreen._goToTab`.
 ///
+/// A plain orb TAP runs a host-defined progression (founder ask): on another
+/// page it opens the half "Ask Ayma" sheet with that page's context; tapped
+/// again it grows that sheet to the full-screen main chat (dropping the
+/// context chip); and on the full-screen main chat it activates voice. This
+/// widget itself makes no such distinction — it just always dispatches the
+/// orb's `onSelected(0)` (even when the orb reads as selected) and each host
+/// decides, off the live sheet/route state, which rung the tap lands on.
+///
 /// Holding the orb for [holdDuration] (1s) instead fires [onOrbLongPress] —
 /// every host wires it to start a voice call — with a medium haptic and a thin
 /// ring filling around the orb as the cue. A hold that completes never also
@@ -89,8 +97,10 @@ class AymaTabBar extends StatelessWidget {
 
   /// True when the screen hosting this bar IS the Notifications screen, so
   /// re-tapping the Notifications tab is a no-op instead of pushing a second
-  /// copy of it. Same for the four real tabs: tapping the one already
-  /// selected ([index]) does nothing rather than replaying a transition.
+  /// copy of it. Same for the Explore/Messages/Profile tabs: tapping the one
+  /// already selected ([index]) does nothing rather than replaying a
+  /// transition. The center orb is the exception — it always dispatches so its
+  /// host can run the tap progression (see the class doc / `onSelected`).
   final bool notificationsActive;
 
   /// The shared voice session, or null when no call is active/relevant to
@@ -238,7 +248,12 @@ class AymaTabBar extends StatelessWidget {
       label: _labels[i],
       semanticsLabel: i == 0 && quiet ? quietSemanticsLabel : null,
       onTap: () {
-        if (i == index) return;
+        // The center orb (index 0) always dispatches, even when it reads as
+        // selected: its host runs the tap progression (half sheet -> full
+        // main chat -> voice) off the real sheet/route state, so a tap on the
+        // already-"selected" orb must still reach `onSelected`. The other
+        // three tabs keep the plain already-selected no-op.
+        if (i == index && i != 0) return;
         onSelected(i);
       },
       onHold: i == 0 ? onOrbLongPress : null,

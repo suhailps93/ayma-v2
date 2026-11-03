@@ -67,7 +67,8 @@ class NavBarShell extends StatelessWidget {
   /// navigation back to the main tab) instead of [_goTab]. A second orb tap
   /// while that popup is already open (its own on-top copy of this same bar,
   /// wired to this same method — see [_navBar]) grows the popup to full
-  /// screen in place instead of stacking a second one.
+  /// screen in place instead of stacking a second one; a third tap, once it's
+  /// full screen, activates voice (the same `toggleVoiceCall` the hold uses).
   ///
   /// Any other tab while the popup is open closes it first: `_goTab`'s
   /// `context.go` replaces this route but would leave the imperatively-pushed
@@ -76,8 +77,18 @@ class NavBarShell extends StatelessWidget {
   /// mid-flight.
   Future<void> _onTabTap(BuildContext context, int i) async {
     if (i == 0) {
+      // Orb tap progression (founder ask): no popup -> open the half sheet
+      // scoped to this page; docked half sheet -> grow it to the full-screen
+      // main chat (the context chip drops itself at full size); already full
+      // screen -> activate voice (the same `toggleVoiceCall` the 1s hold
+      // uses). From out here the user is never on the Ayma tab itself, so the
+      // expanded popup is the only "full-screen main chat" rung.
       if (isPageContextAymaPopupOpen) {
-        pageContextAymaPopupSheet.expand();
+        if (pageContextAymaPopupSheet.isExpanded) {
+          toggleVoiceCall(context, AymaSession.instance.voice);
+        } else {
+          pageContextAymaPopupSheet.expand();
+        }
       } else {
         showPageContextAymaPopup(context, navBarBuilder: _navBar);
       }
