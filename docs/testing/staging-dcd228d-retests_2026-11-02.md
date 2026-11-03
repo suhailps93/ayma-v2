@@ -149,3 +149,50 @@ Evidence: staging-dcd228d-retests_2026-11-02/2269-b12-unknown-flip.png.
 - The password row's eye toggle sits at x≈880–1006 in the keyboard-up layout: a far-right tap (950,1470) hit the eye icon instead of the field, unmasking the password and swallowing the following backspaces/typing. Recovered by tapping the field's text area (x≈500) and verifying the end cursor before clearing. Rule: never tap x>880 in a password row; tap the text area.
 - One tool call was interrupted mid-run during the control leg; Scout re-checked state by screenshot before continuing (no state damage: email intact, password still WrongPass123 visible).
 - After the 2269 reinstall the app cold-started and an early tap sequence landed in the Google app search UI; recovered by Back-ing to the launcher and relaunching via monkey. Lesson: after an install, re-establish the foreground app before tapping nav coordinates.
+
+---
+
+## Addendum 8 — 2026-11-03 — build 2270 (staging 6de8ac97) pre-promotion retest batch
+
+Build verified before judging: built from 6de8ac97 (`fix(tour,voice): voice-mode-aware tour + tool guard so voice can't hang on Working…`) via `scripts/build-apk.sh --debug --staging`; aapt `versionCode=2270`; on-device dumpsys `versionCode=2270, lastUpdateTime=2026-11-03 01:29:21`. Daniel signed in on launch, history intact, badge 12. Fix mechanics (from `git show 6de8ac97`): the composer tour step (`home_composer`) is `skip_in_voice: true` in `functions/bootstrap/app_registry.json` and dropped in voice sessions (registry dump on this build: 9 steps — [0] home_composer skip_in_voice, [1] explore_tab, [2] messages_tab, [3] profile_tab, [4] profile_story_row, [5] profile_appearance_row, [6] profile_ayma_settings_row, [7] notifications_bell, [8] home_orb); a bounded `_toolGuard` (180s) clears a stuck tool label, keeps the call live ("Listening…") and re-arms the idle backstop; a new user turn also clears a stuck label.
+
+| Item | Verdict |
+|---|---|
+| P5 (walk #15) | **PASS** |
+| SIMTASTE (walk #16) | **PASS** |
+| Voice-opener (founder ruling) | **PASS** |
+| Voice guided tour (NEW) | **PASS on the brief's bar + NEW DEFECT (tour cannot advance in voice)** |
+| B12-split (founder #25) | **PASS (all three legs)** |
+| TokenCap (walk hold #1) | **PASS** |
+
+### P5 — PASS
+Settings footer reads exactly **"Version 1.30.0+2270 · staging"**. Evidence: `2270-p5-footer.png`.
+
+### SIMTASTE — PASS
+Daniel×Sofia completed sim opened from Sofia's profile (sparkles button): verdict card **92/100 "Effortless flow"**; the taste card rendered in full within ~6s: **"Taste match — powered by Qloo — 72/100 Strong taste overlap"** with category bars (Music 64, Film 64, Food & places 70, Tv 73, Books 73, Podcasts 70, Games 91, Travel ~73). No "Comparing your tastes…" anywhere. Layout note: this build renders the Qloo score + bars layout (2267 rendered chips/lists); both complete. Standing caveat: the fetch succeeded, so the timeout → absent-card degrade path was not black-box triggered (bound code-verified on 2267: `loadTasteMatch` timeout = `api.longTimeout` 55s + 5s). Evidence: `2270-simtaste-card.png`.
+
+### Voice-opener — PASS
+Method: leave a text probe unanswered, then start a voice call. Attempts 1–2 ("quince" 09:35:10Z, "durian" 09:36:07Z): the mic tap used the keyboard-down coordinate (105,2026) while the keyboard was up, so no voice session started and the fast text path answered instead — operator error, disclosed. Attempt 3 ("lychee"): mic tapped at the keyboard-up position (105,1205); the voice session started; the pre-first-response status read **"Waking Ayma…"** (2267 said "Connecting…"; never a fake "Listening…"); the call **answered the dangling message** — "lychee." rendered under the live call bar (status "Listening…") and persisted server-side (user 2026-11-03T09:37:01Z → ayma 09:37:03Z). Call ended cleanly via the stop button; composer returned to "Message Ayma". Evidence: `2270-voice-waking.png`, `2270-voice-dangling-answer.png`.
+Recurring observation (not a verdict item): every voice session's persisted history replays a greeting ("Hey Daniel, want to pick up where we left off with your web search…"), a Kore/British voice-switch notice ("I've switched to my Kore voice with a British accent, so what's next on your mind?"), a stray user fragment "Quick check, what is", and a stale assistant "mango" turn — all with near-identical timestamps; production order vs persistence-timestamp order disagree. Needs session-log review.
+
+### Voice guided tour (NEW) — PASS on the brief's bar + NEW DEFECT
+Method: sent the text "Walk me through the app" (09:39:18Z) as a dangling message, immediately opened voice (mic at 105,1205). The tour **did start in voice and was voice-aware**: the first step presented was **"1 of 9 — Explore — Now tap Explore…"** — the composer step was correctly skipped — with Skip tour / Next buttons and the call bar showing "Working…" underneath. Evidence: `2270-tour-voice-working.png`.
+**No permanent hang — the 2270 fix works:** by the 09:42:23Z screenshot (~180s guard window) "Working…" had cleared to **"Listening…" with the call still live** (tool guard fired). Evidence: `2270-tour-guard-cleared.png`.
+**DEFECT — the tour cannot advance in voice:** tapping the highlighted Explore tab (97,2230) did not advance the tour (still "1 of 9 · Explore" ~45s later), and the agent persisted an error turn at 2026-11-03T09:39:37Z: **"Sorry — I couldn't finish that just now. Please try again."** The voice tour driver failed to process the step, so the tour never completes via voice. The session was recovered by orb tap (returned to main chat) and the call ended cleanly via the stop button.
+**Related observation:** a tour-narration turn — "This is where you and I talk. Tap the message box — you can type to me here anytime." — was persisted into Daniel's main chat history at 1:43 AM. Attribution unresolved (the ended voice session's narration vs a late text-path answer to the tour-ask; the narration belongs to the composer step, which the voice tour skipped). Tour drivers should not write narration into persisted chat history.
+
+### B12-split (founder #25) — PASS, all three legs
+- **Leg 1 (known account, wrong password):** test1@gmail.com + WrongPass123 → the form **stayed on sign-in** and the error banner was caught ~3s after submit: **"ERROR — That password is wrong — try again."** The banner is transient (gone by ~12s); the form remained correctly on sign-in with fields retained. Evidence: `2270-b12-wrongpw-error.png`.
+- **Leg 2 (unknown email):** nosuchuser-xyz123@example.com + WrongPass123 → within 10s the form **flipped to sign-up**: Confirm password (focused) + hint **"New here? Confirm your password to create your account."**; keyboard-down view confirmed Referral code (optional) + "Create account" + "Already have an account? Sign in". Sign-up NOT completed; no account created. Evidence: `2270-b12-unknown-flip.png`.
+- **Leg 3 (control):** test1@gmail.com / Test123 → signed in ~12s; main chat restored with full history (this batch's voice turns visible); badge 12. Evidence: `2270-b12-control-signedin.png`.
+Operator notes: a Gboard "Using Google Translate" dialog intercepted taps mid-fill and had to be Cancelled; password typing was lost twice when taps landed on the Gboard toolbar zone — the working method is: tap the field's text area, screenshot-verify the keyboard is visibly UP with cursor, type in ONE type2 call, screenshot-verify field content before submitting.
+
+### TokenCap (walk hold #1) — PASS
+Method: Daniel's staging balance was drained via scripted `POST /chat` turns (probe: Firebase-REST sign-in as test1, API `https://ayma-api-staging-4qy2nxz2aa-uc.a.run.app`). Balance timeline: 39 remaining at batch start (~01:15) → 20 after the voice/tour items → drain turns at ~1–3 credits/turn (used 83 → remaining 17 after turn 2; remaining 7 after turn 10; remaining 0 after turn 16).
+- **Cap fires:** turn 17 (the first turn starting at balance 0) returned HTTP 200 with **`usage_capped: true`** and the exact reply **"I'm out of credits, so I can't keep chatting right now — reload on your profile to keep going."**
+- **Finalizes (no orphan):** server history shows user "Drain check 17…" @2026-11-03T09:52:27.053Z → ayma capped reply @09:52:27.145Z — persisted 92ms later, directly after the user turn.
+- **UI leg:** a composer send at cap ("Drain check UI: are you there?") rendered the same capped reply in the chat **and** opened a well-formed **"You're out of credits"** bottom sheet (what stays free — browse/messages/matches/explore — vs what needs credits — Ayma voice/chat/reports/scoring; **Upgrade** / **Keep exploring**). Dismissed via Keep exploring; no purchase flow entered. Pair persisted in order (@09:53:18.211Z → @09:53:18.331Z). Evidence: `2270-tokencap-ui.png`.
+- **Fixture disclosure:** Daniel's staging start grant is now fully spent (0 remaining); per the free-plan model he moves to the daily allowance regime (refreshes daily). Staging only — main/prod demo data untouched.
+
+### State changes this round (staging Daniel)
+Voice probes quince/durian/lychee + replies; repeated voice-session replay artifacts (greeting, Kore notice, "Quick check, what is", stale "mango"); tour-ask turn (09:39:18Z) + agent error turn (09:39:37Z) + tour-narration turn (1:43 AM) in history; B12 sign-out ×1 (wrong-pw ×1, unknown-email ×1 not completed, correct ×1); 17 drain turns + 1 UI turn + capped replies; credits 39 → 0. Seeded accounts otherwise intact; badge 12.
