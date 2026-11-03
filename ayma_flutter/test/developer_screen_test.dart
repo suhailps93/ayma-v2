@@ -411,4 +411,31 @@ void main() {
     expect(find.text('screen:shell'), findsOneWidget);
     expect(TourRequest.instance.pending.value, isTrue);
   });
+
+  testWidgets('locked: the developer password field has a show/hide toggle',
+      (tester) async {
+    await _pump(
+      tester,
+      DeveloperScreen(
+        auth: MockFirebaseAuth(signedIn: true),
+        api: _usageApi(_usage()),
+      ),
+    );
+
+    final field = find.byKey(const ValueKey('dev-password'));
+    Finder toggle() =>
+        find.descendant(of: field, matching: find.byType(IconButton));
+
+    expect(tester.widget<TextField>(field).obscureText, isTrue);
+    expect(tester.widget<IconButton>(toggle()).tooltip, 'Show password');
+
+    await tester.tap(toggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(field).obscureText, isFalse);
+    expect(tester.widget<IconButton>(toggle()).tooltip, 'Hide password');
+
+    await tester.tap(toggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(field).obscureText, isTrue);
+  });
 }

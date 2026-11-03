@@ -485,4 +485,61 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('the password field has a show/hide toggle that flips obscuring',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+
+    final field = find.widgetWithText(TextField, 'Password');
+    Finder toggle() =>
+        find.descendant(of: field, matching: find.byType(IconButton));
+
+    expect(tester.widget<TextField>(field).obscureText, isTrue);
+    expect(tester.widget<IconButton>(toggle()).tooltip, 'Show password');
+
+    await tester.tap(toggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(field).obscureText, isFalse);
+    expect(tester.widget<IconButton>(toggle()).tooltip, 'Hide password');
+
+    await tester.tap(toggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(field).obscureText, isTrue);
+  });
+
+  testWidgets(
+      'confirm-password has its own independent toggle (does not mirror '
+      'the password field)', (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+    await tester.tap(find.text('Don’t have an account? Sign up'));
+    await tester.pump();
+
+    final password = find.widgetWithText(TextField, 'Password');
+    final confirm = find.widgetWithText(TextField, 'Confirm password');
+    Finder passwordToggle() =>
+        find.descendant(of: password, matching: find.byType(IconButton));
+    Finder confirmToggle() =>
+        find.descendant(of: confirm, matching: find.byType(IconButton));
+
+    expect(tester.widget<TextField>(password).obscureText, isTrue);
+    expect(tester.widget<TextField>(confirm).obscureText, isTrue);
+
+    await tester.tap(passwordToggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(password).obscureText, isFalse);
+    expect(tester.widget<TextField>(confirm).obscureText, isTrue,
+        reason: 'toggling password must not affect confirm');
+
+    await tester.tap(confirmToggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(confirm).obscureText, isFalse);
+    expect(tester.widget<TextField>(password).obscureText, isFalse);
+
+    await tester.tap(confirmToggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(confirm).obscureText, isTrue);
+    expect(tester.widget<TextField>(password).obscureText, isFalse);
+  });
 }
