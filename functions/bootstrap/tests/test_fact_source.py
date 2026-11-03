@@ -315,3 +315,124 @@ def test_results_are_capped_and_ranked_by_overlap():
     db = FakeDb(docs)
     out = json.loads(_tool(db)("bouldering"))
     assert len(out["matches"]) == fact_source._MAX_MATCHES
+
+
+# --- #28: provenance paraphrases resolve to the stored source ---------------
+# Follow-up to the Nov 2 founder retest: natural phrasings ("where did you get
+# this information from") must behave like the keyword "source" ask. Two
+# halves: (a) content-bearing paraphrases match as usual; (b) a BARE
+# provenance question in a sheet (no content tokens — "where's this from")
+# resolves deictically to the FOCUSED item's stored source instead of coming
+# back empty.
+
+_JUSTABOT_URL = "https://apps.apple.com/se/app/justabot/id6453466936?l=en-GB"
+_JUSTABOT_SUMMARY = (
+    "In addition to his robotics engineering background, he is the developer "
+    "of the iOS application justaBOT."
+)
+_JUSTABOT_FACTS = [
+    {"id": "aaa111", "claim": "Works as a robotics engineer at Acme",
+     "category": "work", "source_url": "https://acme.example.com/team/dana"},
+    {"id": "bbb222", "claim": "Developer of the iOS app justaBOT",
+     "category": "projects", "source_url": _JUSTABOT_URL},
+]
+
+
+def _dive_db(facts=None):
+    return FakeDb({
+        ("users", "u1", "deep_dives", "uid_target1"): {
+            "digest": {
+                "name": "Dana Reis",
+                "summary": _JUSTABOT_SUMMARY,
+                "facts": list(_JUSTABOT_FACTS) if facts is None else facts,
+            },
+            "created_at": "2026-07-01T00:00:00+00:00",
+        }
+    })
+
+
+def _focused_tool(db, target="summary"):
+    return skills.make_session_tool_fns(
+        db, "u1", deep_dive_ctx={"report_id": "uid_target1", "target": target}
+    )["find_fact_source"]
+
+
+def test_provenance_paraphrase_naming_the_fact_returns_its_url():
+    # Main-chat path: the model passes the fact (possibly wrapped in the
+    # question's own words) — paraphrase boilerplate must not break matching.
+    db = _dive_db()
+    for query in (
+        "where's this justaBOT app from?",
+        "who says I built justaBOT",
+        "what's this justaBOT claim based on",
+    ):
+        out = json.loads(_tool(db)(query))
+        assert out["matches"], query
+        assert out["matches"][0]["url"] == _JUSTABOT_URL, query
+
+
+def test_bare_provenance_question_with_sheet_focus_returns_the_focused_source():
+    # Sheet path via the tool: "where did you get this information from" has
+    # no content tokens ({information} matches nothing) and "where's this
+    # from" has NO tokens at all — both resolve to the focused summary's
+    # backing-fact URL instead of coming back empty.
+    db = _dive_db()
+    tool = _focused_tool(db)
+    for query in (
+        "where did you get this information from",
+        "where did you get this information from?",
+        "where's this from",
+    ):
+        out = json.loads(tool(query))
+        assert out["matches"], query
+        first = out["matches"][0]
+        assert first["url"] == _JUSTABOT_URL, query
+        assert first["exact"] is True, query
+
+
+def test_repeated_focused_provenance_ask_is_stable():
+    db = _dive_db()
+    tool = _focused_tool(db)
+    first = tool("where did you get this information from?")
+    assert json.loads(first)["matches"][0]["url"] == _JUSTABOT_URL
+    assert tool("where did you get this information from?") == first
+
+
+def test_focused_item_without_source_stays_honest():
+    # Focused summary, but nothing stored behind it: no invented URL.
+    db = _dive_db(facts=[
+        {"id": "aaa111", "claim": "Lives in Austin", "category": "other"}
+    ])
+    out = json.loads(_focused_tool(db)("where did you get this information from"))
+    assert out == {"matches": []}
+
+
+def test_content_query_with_focus_keeps_normal_ranking():
+    # A content query that merely MENTIONS "source link" is not a provenance
+    # question — normal keyword ranking applies, no focused-item prepend.
+    docs = _dive_db().docs
+    docs[("users", "u1", "deep_dives", "uid_target1")]["digest"]["links"] = [
+        {"url": "https://danareis.example.com", "title": "Personal Website"}
+    ]
+    db = FakeDb(docs)
+    out = json.loads(_focused_tool(db)("personal website source link"))
+    assert out["matches"][0]["url"] == "https://danareis.example.com"
+
+
+def test_provenance_query_naming_other_content_keeps_both_matches():
+    # In a sheet, deictic "this" binds to the focused item — it leads — but a
+    # content-named match stays in the list for the model to disambiguate.
+    db = _dive_db()
+    out = json.loads(
+        _focused_tool(db)("where did you get the Acme job from")
+    )
+    urls = [m["url"] for m in out["matches"]]
+    assert urls[0] == _JUSTABOT_URL
+    assert "https://acme.example.com/team/dana" in urls
+
+
+def test_tool_description_names_provenance_paraphrases():
+    # The declaration description is the function-calling routing signal: it
+    # must name natural phrasings, not just "where did you get that".
+    assert "where's this from" in fact_source.DESCRIPTION
+    assert "find_fact_source" in fact_source.DECLARATION["name"]

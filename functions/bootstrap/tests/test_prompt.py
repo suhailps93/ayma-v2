@@ -663,3 +663,19 @@ def test_load_prompt_file_caches_per_path(tmp_path):
     g = tmp_path / "other.md"
     g.write_text("v2", encoding="utf-8")
     assert prompt_mod.load_prompt_file(g) == "v2"
+
+
+def test_persona_source_rule_names_natural_provenance_phrasings():
+    """#28 (founder retest Nov 2, 2026): the "where did you get this" rule
+    only fired for that exact shape — natural paraphrases fell through to a
+    generic answer. The trigger must name the paraphrases explicitly."""
+    persona = load_persona()
+    for phrase in (
+        "where's this from",
+        "what's this based on",
+        "who says that",
+        "prove it",
+        "what's the source",
+    ):
+        assert phrase in persona, phrase
+    assert "find_fact_source" in persona

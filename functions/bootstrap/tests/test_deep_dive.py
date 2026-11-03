@@ -2582,3 +2582,269 @@ def test_transient_server_error_is_retried(monkeypatch):
 
     prose, _sources = _run(deep_dive._grounded_research("research Dana", uid="u1"))
     assert attempts["n"] == 2 and prose == "ok"
+
+
+# --- #28: natural-language provenance questions return the stored source -----
+# Founder retest Nov 2, 2026 (build 2258): in the Ask Ayma sheet over a Web
+# research report, "where did you get this information from?" about a summary
+# item answered "I don't have a single specific link saved for this summary
+# item" — while the backing fact's URL existed and the keyword "source" ask
+# had just returned it. Root cause: `correct_finding` always sent
+# `Source: (none)` for target="summary" and left provenance answers to prompt
+# compliance. ANY provenance phrasing on an item WITH a stored source must now
+# answer with the URL, deterministically (no Gemini round-trip).
+
+_JUSTABOT_URL = "https://apps.apple.com/se/app/justabot/id6453466936?l=en-GB"
+_JUSTABOT_SUMMARY = (
+    "In addition to his robotics engineering background, he is the developer "
+    "of the iOS application justaBOT."
+)
+_JUSTABOT_FACTS = [
+    # Deliberately first: overlaps the summary ("robotics engineer") but must
+    # LOSE to the justaBOT fact's more distinctive overlap.
+    {"id": "aaa111", "claim": "Works as a robotics engineer at Acme",
+     "category": "work", "source_url": "https://acme.example.com/team/dana"},
+    {"id": "bbb222", "claim": "Developer of the iOS app justaBOT",
+     "category": "projects", "source_url": _JUSTABOT_URL},
+]
+# The dodge, verbatim-shaped from the founder's retest: what the Gemini
+# correction pass says when it sees `Source: (none)`.
+_SUMMARY_DODGE = (
+    "I pulled this together from public web sources like your professional "
+    "profiles and project pages, though I don't have a single specific link "
+    "saved for this summary item."
+)
+
+
+def _seed_summary_report(db, facts=None):
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {
+            "digest": {
+                "name": "Dana Reis",
+                "summary": _JUSTABOT_SUMMARY,
+                "facts": list(_JUSTABOT_FACTS) if facts is None else facts,
+            },
+            "target_uid": "",
+            "name": "Dana Reis",
+        },
+    )
+    return key
+
+
+def _dodge_json(calls):
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        calls.append(contents)
+        return {"action": "keep", "reply": _SUMMARY_DODGE}
+
+    return _json
+
+
+@pytest.mark.parametrize("feedback", [
+    "where did you get this information from",
+    "where did you get this information from?",
+    "where's this from",
+    "what's the source",
+    "what's the source?",
+    "source?",
+    "what's this based on",
+    "who says that",
+    "prove it",
+    "how do you know this",
+    "where did you find this",
+])
+def test_provenance_paraphrase_on_summary_returns_the_backing_fact_url(
+    monkeypatch, feedback
+):
+    db = _FakeDb()
+    key = _seed_summary_report(db)
+    calls = []
+    monkeypatch.setattr(gemini, "generate_json", _dodge_json(calls))
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="summary", feedback=feedback
+        )
+    )
+    assert _JUSTABOT_URL in result["reply"]
+    assert result["action"] == "keep"
+    assert calls == []  # deterministic — Gemini is never consulted
+    assert result["digest"]["summary"] == _JUSTABOT_SUMMARY  # nothing revised
+
+
+def test_repeated_provenance_ask_on_summary_is_stable(monkeypatch):
+    # The founder's exact failure: the re-ask dodged. Both turns answer alike.
+    db = _FakeDb()
+    key = _seed_summary_report(db)
+    calls = []
+    monkeypatch.setattr(gemini, "generate_json", _dodge_json(calls))
+    first = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="summary",
+            feedback="where did you get this information from?",
+        )
+    )
+    second = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="summary",
+            feedback="where did you get this information from?",
+        )
+    )
+    assert _JUSTABOT_URL in first["reply"]
+    assert first["reply"] == second["reply"]
+    assert calls == []
+
+
+def test_provenance_question_on_fact_returns_its_source_url(monkeypatch):
+    db = _FakeDb()
+    key = _seed_summary_report(db)
+    calls = []
+    monkeypatch.setattr(gemini, "generate_json", _dodge_json(calls))
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="fact:bbb222",
+            feedback="where did you get this information from",
+        )
+    )
+    assert _JUSTABOT_URL in result["reply"]
+    assert result["action"] == "keep"
+    assert calls == []
+
+
+def test_provenance_question_on_link_returns_the_url(monkeypatch):
+    db = _FakeDb()
+    links = [{"url": "https://example.com/me", "title": "Personal Website"}]
+    key = _seed_self_report_links(db, "u1", "Dana Reis", links)
+    calls = []
+    monkeypatch.setattr(gemini, "generate_json", _dodge_json(calls))
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="link:https://example.com/me",
+            feedback="where's this from",
+        )
+    )
+    assert "https://example.com/me" in result["reply"]
+    assert calls == []
+
+
+def test_mixed_correction_and_provenance_falls_through_to_gemini(monkeypatch):
+    # "that's wrong, where did you get it?" is a CORRECTION first — the source
+    # answer must not swallow the fix. Gemini sees the populated Source line
+    # and can do both.
+    db = _FakeDb()
+    key = _seed_summary_report(db)
+    calls = []
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        calls.append(contents)
+        return _correction_result("remove")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="fact:bbb222",
+            feedback="that's wrong, where did you get it?",
+        )
+    )
+    assert len(calls) == 1
+    assert _JUSTABOT_URL in calls[0]  # the populated Source line
+    assert result["action"] == "remove"
+
+
+def test_provenance_question_with_no_stored_source_stays_honest(monkeypatch):
+    # Genuinely sourceless item: no interception, no invented URL — Gemini
+    # answers honestly from `Source: (none)` exactly as before.
+    db = _FakeDb()
+    key = _seed_summary_report(
+        db, facts=[{"id": "aaa111", "claim": "Lives in Austin", "category": "other"}]
+    )
+    calls = []
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        calls.append(contents)
+        return {"action": "keep", "reply": "I don't have a link saved for that one."}
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="summary",
+            feedback="where did you get this information from",
+        )
+    )
+    assert len(calls) == 1
+    assert "Source: (none)" in calls[0]
+    assert result["reply"] == "I don't have a link saved for that one."
+    assert "http" not in result["reply"]
+
+
+def test_summary_turn_sends_the_backing_fact_source_to_gemini(monkeypatch):
+    # Root-cause pin, pre-#28 behaviour: EVERY summary turn sent
+    # `Source: (none)` even when backing facts carried URLs. A non-provenance
+    # turn still goes to Gemini — but now with the resolved Source line, so
+    # the J7 "quote that URL" prompt rule can actually fire.
+    db = _FakeDb()
+    key = _seed_summary_report(db)
+    calls = []
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        calls.append(contents)
+        return _correction_result("keep")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="summary", feedback="thanks, looks good!"
+        )
+    )
+    assert len(calls) == 1
+    assert f"Source: {_JUSTABOT_URL}" in calls[0]
+
+
+@pytest.mark.parametrize("text", [
+    "where did you get this information from",
+    "where did you get this information from?",
+    "where's this from",
+    "wheres this from",
+    "what's the source",
+    "what is the source?",
+    "source?",
+    "show me the source",
+    "give me the source link",
+    "what's this based on",
+    "who says that",
+    "prove it",
+    "how do you know this",
+    "how do you know?",
+    "where did you find this",
+    "which site did this come from",
+])
+def test_is_provenance_question_catches_natural_phrasings(text):
+    assert deep_dive.is_provenance_question(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "",
+    "nice!",
+    "thanks, looks good!",
+    "that's wrong",
+    "not actually me",
+    "it was actually Caltech",
+    "I moved to Boulder",
+    "I don't work there anymore",
+    "that's wrong, where did you get it?",
+    "my income source is Acme",
+    "here's the right link: https://acme.example.com/me",
+    "source: https://acme.example.com/me",
+    "what is this?",
+])
+def test_is_provenance_question_ignores_corrections_and_chatter(text):
+    assert deep_dive.is_provenance_question(text) is False
+
+
+def test_correction_prompts_name_natural_source_phrasings():
+    # #28: the J7 quote-the-Source rule's examples ("what's the link")
+    # missed natural phrasings — name them so a turn that reaches Gemini
+    # (e.g. mixed correction + source question) still quotes the URL.
+    for prompt in (deep_dive._CORRECTION_SYSTEM, deep_dive._CORRECTION_SYSTEM_URL):
+        assert "where did you get this" in prompt
+        assert "where's this from" in prompt
