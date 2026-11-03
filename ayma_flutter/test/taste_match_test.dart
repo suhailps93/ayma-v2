@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
@@ -5,6 +6,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/date_sim_service.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/taste_models.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -260,4 +262,76 @@ void main() {
     expect(find.byKey(const Key('dateSimMessageForRealButton')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('a hung taste fetch degrades to absent, never a stuck spinner',
+      (tester) async {
+    // § SIMTASTE: the sim-screen card waits on a live taste future while the
+    // match report renders resolved data instantly — a hung fetch left
+    // "Comparing your tastes…" up forever. The wait is bounded; a hang
+    // degrades to the honest empty (absent, § BUG A), never a spinner.
+    final auth = MockFirebaseAuth(signedIn: true);
+    final fs = FakeFirebaseFirestore();
+    final sim = fs
+        .collection('users')
+        .doc(auth.currentUser!.uid)
+        .collection('date_sims')
+        .doc('sim1');
+    await sim.set({
+      'status': 'done',
+      'persona': {'name': 'Maya'},
+      'banner': 'Simulated — not sent to Maya.',
+      'verdict': {
+        'score': 70,
+        'score_label': 'Worth a shot',
+        'summary': 'A promising start.',
+      },
+    });
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: DateSimScreen(
+        uid: 'her',
+        name: 'Maya',
+        api: _HangingTasteApi(),
+        simId: 'sim1',
+        service: DateSimService(auth: auth, firestore: fs),
+        profiles: ProfileService(auth: auth, firestore: fs),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // The card is up with its comparing line while the fetch is pending.
+    expect(find.text('Comparing your tastes…'), findsOneWidget);
+    // Past the bounded wait (longTimeout + margin) the hang degrades to
+    // absent — never stuck.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pump();
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text('Comparing your tastes…'), findsNothing);
+    expect(find.text('Taste match unavailable right now.'), findsNothing);
+    // The date-sim result itself is intact and usable.
+    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+    expect(find.byKey(const Key('dateSimMessageForRealButton')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+/// An [ApiClient] whose taste fetch never resolves (a hung token refresh or
+/// backend), with a short [ApiClient.longTimeout] so the card's bounded wait
+/// fires fast in tests. The estimate answers normally; only taste hangs.
+class _HangingTasteApi extends ApiClient {
+  _HangingTasteApi()
+      : super(
+          auth: MockFirebaseAuth(signedIn: true),
+          httpClient: MockClient((req) async {
+            if (req.url.path == '/date-sim/estimate') {
+              return _json({'credits_by_messages': {'6': 60}});
+            }
+            return http.Response('no', 404);
+          }),
+          longTimeout: const Duration(milliseconds: 400),
+        );
+
+  @override
+  Future<TasteMatch> tastePair(String otherUid) =>
+      Completer<TasteMatch>().future;
 }
