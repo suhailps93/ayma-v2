@@ -1674,13 +1674,14 @@ to the full-screen main chat (the page-context chip drops itself at full size, `
 a tap on the full-screen main chat **activates voice** (reusing `toggleVoiceCall`, the exact path the hold uses).
 When the user is already on the Ayma tab (which *is* the full-screen main chat), the first tap goes straight to
 voice. Each host (`MainShellScreen._onOrbTap`, `NavBarShell`/`PublicProfileScreen._onTabTap`) reads the live state —
-`isPageContextAymaPopupOpen`, `pageContextAymaPopupSheet.isExpanded`, and, for the shell, whether the Ayma tab is
-current — to pick the rung; `AymaTabBar` itself just always dispatches the orb's `onSelected(0)`, even when the orb
+`isAymaSheetOpen`, `aymaSheet.isExpanded`, `isAymaSheetScoped`, and, for the shell, whether the Ayma tab is
+current — to pick the rung, via the one shared `orbTapOnOpenSheet` helper; `AymaTabBar` itself just always dispatches the orb's `onSelected(0)`, even when the orb
 reads as selected (the plain already-selected no-op is kept for the other three tabs only). **The 1-second HOLD is
 unchanged** — `onOrbLongPress` -> `toggleVoiceCall` activates voice directly from every page, independent of the tap
-rung the orb is currently on.
+rung the orb is currently on. A scoped Ask-Ayma correction sheet takes the expand rung at any size but never the voice
+rung (ONE chat, § D13 — the voice agent doesn't bind its correction tools, so scoped voice stays push-to-talk).
 
-`AymaChatSheetController` (one shared `pageContextAymaPopupSheet` instance) drives it: `expand()`/`collapse()` animate
+`AymaChatSheetController` (one shared `aymaSheet` instance) drives it: `expand()`/`collapse()` animate
 the sheet, and `isExpanded` (flipped mid-gesture as the extent crosses the docked/full midpoint) is read via
 `AymaChatSheetController.maybeOf(context)` by the header icon (expand vs collapse), the `AymaTabBar` copy (highlights
 the orb while full) and `ChatScreen` (which sets the pinned page-context chip aside while full, restoring it on

@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/screen_capture.dart';
 import '../services/ayma_session.dart';
+import '../services/transcript_store.dart';
 import '../services/voice_transport.dart';
 import 'ask_ayma_context.dart';
 import 'ayma_chat_modal.dart';
@@ -17,8 +18,18 @@ export 'ask_ayma_context.dart';
 /// scoped via its `askAymaContext` field — see that field's doc for exactly
 /// what changes in this mode), carrying [ctx] into the real `/chat` (or
 /// `/chat/stream`) pipeline — the same one ordinary passage edits already
-/// use, and the same conversational agent + tools every other Ayma surface
-/// in the app uses.
+/// use — or, for [AskAymaOrigin.report], into `POST
+/// /report/{type}/{id}/correct`, the same conversational agent + tools every
+/// other Ayma surface in the app uses.
+///
+/// ONE chat (§ D13): this is the main chat conversation, not a silo — the
+/// sheet shows the main history ([AymaSession]'s store, unless a test passes
+/// its own [transcriptStore]) and the exchange lands in it (and, for the
+/// report path, in server chat history too), so it reads the same from the
+/// Ayma tab afterwards. The sheet opens docked (a partial page of the main
+/// chat) with the host's bottom nav bar visible (resolved from the nearest
+/// [AymaNavBarScope]; unwrapped routes simply get no bar, as before), and a
+/// second orb tap grows it to the full chat in place ([orbTapOnOpenSheet]).
 ///
 /// [onExchange] fires after every reply Ayma gives while the modal is open
 /// (not just once at the end) so the caller can quietly re-fetch the section
@@ -30,19 +41,37 @@ Future<void> showAskAymaOverlay(
   required ApiClient api,
   required AskAymaContext ctx,
   VoidCallback? onExchange,
+  TranscriptStore? transcriptStore,
   @visibleForTesting ApiClient? voiceApiClient,
   @visibleForTesting VoiceTransport Function()? voiceTransportFactory,
-}) {
-  return showAymaChatModal(
+}) async {
+  final navBar = AymaNavBarScope.builderOf(context);
+  isAymaSheetOpen = true;
+  isAymaSheetScoped = true;
+  final future = showAymaChatModal(
     context,
+    persistentBottomBar: navBar,
+    persistentBottomBarHeight: navBar == null ? null : AymaTabBar.heightFor,
+    controller: aymaSheet,
     builder: (_) => ChatScreen(
       apiClient: api,
+      transcriptStore: transcriptStore ?? AymaSession.instance.store,
       askAymaContext: ctx,
       onExchange: onExchange,
       voiceApiClient: voiceApiClient,
       voiceTransportFactory: voiceTransportFactory,
     ),
   );
+  pendingAymaSheet = future;
+  try {
+    await future;
+  } finally {
+    // Same must-not-stick reasoning as [showPageContextAymaPopup]'s own
+    // `finally` below.
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
+    pendingAymaSheet = null;
+  }
 }
 
 /// Opens the same dockable chat modal as [showAskAymaOverlay], scoped to
@@ -52,15 +81,15 @@ Future<void> showAskAymaOverlay(
 /// pushed screen should pop up a scoped chat "like the story edit", not jump
 /// to the main tab — see `AymaTabBar`'s own doc for the three call sites).
 ///
-/// Unlike [showAskAymaOverlay] (an ephemeral, `askAymaContext`-scoped
-/// correction turn — see [ChatScreen.askAymaContext]'s doc), this embeds
-/// [ChatScreen] via its plain [ChatScreen.pageContext] field instead, against
-/// the app-wide [AymaSession] store/voice controller [MainShellScreen]'s own
-/// Ayma tab already uses — so the popup shows the SAME real conversation
-/// history (and any live call) as the main tab, with that tab's own plain
-/// "Ayma" header and message styling, not the separate sparkle-icon "Ask
-/// Ayma" branded chrome [showAskAymaOverlay]'s scoped turns use. The "you
-/// were looking at…" chip above the composer (`ChatScreen`'s existing
+/// Unlike [showAskAymaOverlay] (an `askAymaContext`-scoped correction turn —
+/// see [ChatScreen.askAymaContext]'s doc), this embeds [ChatScreen] via its
+/// plain [ChatScreen.pageContext] field instead, against the app-wide
+/// [AymaSession] store/voice controller [MainShellScreen]'s own Ayma tab
+/// already uses — so the popup shows the SAME real conversation history (and
+/// any live call) as the main tab, with that tab's own plain "Ayma" header
+/// and message styling, not the separate sparkle-icon "Ask Ayma" branded
+/// chrome [showAskAymaOverlay]'s scoped turns use. The "you were looking
+/// at…" chip above the composer (`ChatScreen`'s existing
 /// `pageContext`/`_pageContext` chip) carries the context instead of a
 /// quoted-passage card, since there's no single passage here — just "whatever
 /// page the user was on".
@@ -81,11 +110,11 @@ Future<void> showAskAymaOverlay(
 /// so the real one underneath peeks through". Passing the caller's exact
 /// `onSelected` here also means a second orb tap, from that copy, runs
 /// through the exact same tap-handling as the real bar — including its
-/// "already open" branch (see [isPageContextAymaPopupOpen]).
+/// "already open" branch (see [isAymaSheetOpen]).
 ///
 /// The header's expand button and a second orb tap both grow this same
-/// sheet to full screen in place ([pageContextAymaPopupSheet]); see
-/// [showAymaChatModal] for the transition and why nothing is re-mounted.
+/// sheet to full screen in place ([aymaSheet]); see [showAymaChatModal]
+/// for the transition and why nothing is re-mounted.
 Future<void> showPageContextAymaPopup(
   BuildContext context, {
   required WidgetBuilder navBarBuilder,
@@ -101,19 +130,20 @@ Future<void> showPageContextAymaPopup(
   // (`ScreenContext.label`'s fallback for an unmapped screen name).
   final prior =
       rawPrior.screen == 'ayma' ? const ScreenContext() : rawPrior;
-  isPageContextAymaPopupOpen = true;
+  isAymaSheetOpen = true;
+  isAymaSheetScoped = false;
   final future = showAymaChatModal(
     context,
     persistentBottomBar: navBarBuilder,
     persistentBottomBarHeight: AymaTabBar.heightFor,
-    controller: pageContextAymaPopupSheet,
+    controller: aymaSheet,
     builder: (_) => ChatScreen(
       transcriptStore: AymaSession.instance.store,
       voiceController: AymaSession.instance.voice,
       pageContext: prior,
     ),
   );
-  pendingPageContextAymaPopup = future;
+  pendingAymaSheet = future;
   try {
     await future;
   } finally {
@@ -122,8 +152,9 @@ Future<void> showPageContextAymaPopup(
     // dismiss paths), these must not get stuck forever, which would
     // silently break every later orb tap (see each `AymaTabBar` call site's
     // `_onTabTap`).
-    isPageContextAymaPopupOpen = false;
-    pendingPageContextAymaPopup = null;
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
+    pendingAymaSheet = null;
   }
   // Restores the screen the user was ACTUALLY on before this popup opened —
   // `rawPrior`, not the display-filtered `prior` above, so a real 'ayma'
@@ -136,23 +167,70 @@ Future<void> showPageContextAymaPopup(
   );
 }
 
-/// Whether the popup [showPageContextAymaPopup] opens is currently showing —
-/// a plain top-level flag (not `ChangeNotifier`/`ValueNotifier`) since every
+/// Whether ANY Ayma chat sheet is currently showing — the orb's
+/// page-context popup ([showPageContextAymaPopup]) or a scoped Ask-Ayma
+/// correction turn ([showAskAymaOverlay]); at most one is ever open, since a
+/// second orb tap expands the open one instead of stacking another (see
+/// [orbTapOnOpenSheet]).
+/// A plain top-level flag (not `ChangeNotifier`/`ValueNotifier`) since every
 /// reader here is a synchronous tap handler (`AymaTabBar`'s `onSelected` in
 /// `NavBarShell`, `MainShellScreen`, `PublicProfileScreen`), never a widget
-/// that needs to rebuild when it flips. A second orb tap while this is true
-/// expands the open popup to full screen ([pageContextAymaPopupSheet])
-/// instead of stacking a second popup on top — see each of those call
-/// sites' own `_onTabTap`.
-bool isPageContextAymaPopupOpen = false;
+/// that needs to rebuild when it flips.
+bool isAymaSheetOpen = false;
 
-/// Expands/collapses the popup [showPageContextAymaPopup] opens. One shared
-/// instance, since at most one such popup is ever open; with none open its
-/// calls are no-ops.
-final pageContextAymaPopupSheet = AymaChatSheetController();
+/// Whether the currently-open sheet ([isAymaSheetOpen]) is a scoped Ask-Ayma
+/// correction turn rather than the plain page-context popup — decides the
+/// orb tap's third rung (see [orbTapOnOpenSheet]). Meaningless while no
+/// sheet is open.
+bool isAymaSheetScoped = false;
+
+/// Expands/collapses the open Ayma chat sheet. One shared instance, since at
+/// most one such sheet is ever open; with none open its calls are no-ops.
+final aymaSheet = AymaChatSheetController();
 
 /// The still-pending [showAymaChatModal] Future from the currently-open
-/// popup, if any — whoever pops the popup to act on the page behind it
-/// (`main.dart`'s `ScreenCapture.beforeAct`, a non-orb tab tap in
+/// sheet, if any — whoever pops the sheet to act on the page behind it
+/// (`ScreenCapture.beforeAct`, a non-orb tab tap in
 /// `NavBarShell`/`PublicProfileScreen`) `await`s this before going on.
-Future<void>? pendingPageContextAymaPopup;
+Future<void>? pendingAymaSheet;
+
+/// An orb tap while [isAymaSheetOpen]: an expanded PLAIN sheet (the
+/// full-screen main chat) runs [onVoice] — the tap progression's third rung
+/// — while anything else grows the sheet to full screen in place instead. A
+/// scoped correction turn ([isAymaSheetScoped]) never takes the voice rung,
+/// at any size: the voice agent doesn't bind its correction tools, so a
+/// full-duplex call from one could only ever answer "I can't do that" — its
+/// voice stays push-to-talk via the composer's own mic button, which sends
+/// through the same scoped turn pipeline as typed text.
+void orbTapOnOpenSheet({required VoidCallback onVoice}) {
+  if (aymaSheet.isExpanded && !isAymaSheetScoped) {
+    onVoice();
+  } else {
+    aymaSheet.expand();
+  }
+}
+
+/// Exposes the host screen's own bottom-bar builder to Ask-Ayma sheets
+/// opened from anywhere in its subtree, so [showAskAymaOverlay]'s scoped
+/// turns can keep the bar visible (as a [showAymaChatModal]
+/// `persistentBottomBar` copy) without every opener threading a builder down
+/// by hand — its callers (`LivingReportView`, the Story editor) sit deep in
+/// screens they know nothing about. Provided by the three bar hosts
+/// ([MainShellScreen], [NavBarShell], `PublicProfileScreen`); absent (null)
+/// on unwrapped routes and in tests, where the sheet opens bar-less, as
+/// before.
+class AymaNavBarScope extends InheritedWidget {
+  const AymaNavBarScope({
+    super.key,
+    required this.navBarBuilder,
+    required super.child,
+  });
+
+  final WidgetBuilder navBarBuilder;
+
+  static WidgetBuilder? builderOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<AymaNavBarScope>()?.navBarBuilder;
+
+  @override
+  bool updateShouldNotify(AymaNavBarScope oldWidget) => false;
+}

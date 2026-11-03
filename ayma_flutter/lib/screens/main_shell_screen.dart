@@ -127,14 +127,14 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   /// [AymaTabBar]'s `onSelected` here — the orb tap runs a progression
   /// ([_onOrbTap]); the other three tabs go straight through to [_selectTab]
-  /// (closing the page-context popup first if it's open, so the switch is
-  /// actually visible — an expanded popup covers the whole page).
+  /// (closing the Ayma sheet first if one is open, so the switch is
+  /// actually visible — an expanded sheet covers the whole page).
   void _onTabTap(int i) {
     if (i == 0) {
       _onOrbTap();
       return;
     }
-    if (isPageContextAymaPopupOpen) Navigator.of(context).pop();
+    if (isAymaSheetOpen) Navigator.of(context).pop();
     _selectTab(i);
   }
 
@@ -143,23 +143,21 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// activates voice directly from anywhere, unchanged and independent of
   /// this.
   ///
-  /// - Popup open and expanded to full screen (the plain main chat) -> voice.
-  /// - Popup open but still docked (half, with the page-context chip) -> grow
+  /// - Sheet open and expanded to full screen (the plain main chat) -> voice.
+  /// - Sheet open but still docked (half, with the page-context chip) -> grow
   ///   it to full screen; the chip drops itself at full size
   ///   (`ChatScreen._activePageContext`).
-  /// - No popup, already on the Ayma tab (the full-screen main chat) -> voice.
-  /// - No popup, on another tab -> open the half popup scoped to that page.
+  /// - A scoped Ask-Ayma correction sheet takes the expand rung at any size
+  ///   but never the voice rung (see [orbTapOnOpenSheet]).
+  /// - No sheet, already on the Ayma tab (the full-screen main chat) -> voice.
+  /// - No sheet, on another tab -> open the half popup scoped to that page.
   ///
   /// Reuses the same `toggleVoiceCall` the hold does, and the same
-  /// `pageContextAymaPopupSheet.expand()` / `showPageContextAymaPopup` the UI
-  /// already uses — nothing here reimplements voice start or the expand.
+  /// [orbTapOnOpenSheet] / `showPageContextAymaPopup` the UI already uses —
+  /// nothing here reimplements voice start or the expand.
   void _onOrbTap() {
-    if (isPageContextAymaPopupOpen) {
-      if (pageContextAymaPopupSheet.isExpanded) {
-        toggleVoiceCall(context, _voice);
-      } else {
-        pageContextAymaPopupSheet.expand();
-      }
+    if (isAymaSheetOpen) {
+      orbTapOnOpenSheet(onVoice: () => toggleVoiceCall(context, _voice));
       return;
     }
     if (_index == 0) {
@@ -433,14 +431,20 @@ class _MainShellScreenState extends State<MainShellScreen>
       // tab's own orb below already reflects live call state (glow/pulse) and is
       // the one tap back to it, from this shell or, via `NavBarShell`'s
       // identical-looking bar, from anywhere else in the app.
-      child: Scaffold(
-        body: IndexedStack(
-          index: _index,
-          children: [
-            for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
-          ],
+      // Exposes this shell's own bar to Ask-Ayma sheets opened from any tab
+      // (§ D13: a scoped correction sheet keeps the bar visible) — the popup
+      // copy it builds never carries the tour anchors (see [_navBar]).
+      child: AymaNavBarScope(
+        navBarBuilder: _navBar,
+        child: Scaffold(
+          body: IndexedStack(
+            index: _index,
+            children: [
+              for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
+            ],
+          ),
+          bottomNavigationBar: _navBar(context, anchored: true),
         ),
-        bottomNavigationBar: _navBar(context, anchored: true),
       ),
     );
   }

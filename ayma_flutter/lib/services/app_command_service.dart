@@ -73,7 +73,7 @@ class AppCommandService {
     bool Function()? chatPopupOpen,
     Future<void> Function()? closeChatPopup,
     String Function()? currentPath,
-  })  : _chatPopupOpen = chatPopupOpen ?? (() => isPageContextAymaPopupOpen),
+  })  : _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
         _closeChatPopup =
             closeChatPopup ?? ScreenCapture.instance.closeAymaPopup,
         _currentPath = currentPath ?? _routerPath,

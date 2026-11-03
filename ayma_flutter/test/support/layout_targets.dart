@@ -580,7 +580,8 @@ void defineLayoutMatrix({required int shard, required int shards}) {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     TabRequest.instance.consume();
-    isPageContextAymaPopupOpen = false;
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
     AppContext.instance.set(screen: '');
   });
 

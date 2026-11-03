@@ -129,21 +129,27 @@ class ChatScreen extends StatefulWidget {
   /// Non-null turns this into a scoped "Ask Ayma" correction turn — the one
   /// mechanism `showAskAymaOverlay` (`ask_ayma_overlay.dart`) now opens, and
   /// what a future Living Report caller should use too (see
-  /// `AskAymaContext`'s own doc for the forward-compat fields). Changes this
-  /// screen in several ways, all gated on this being non-null: no server
-  /// history is loaded (a fresh, ephemeral conversation every time, exactly
-  /// like the old dedicated sheet); the header becomes the compact "Edit with
-  /// Ayma" title + quoted-passage card instead of the full tab header; an
-  /// empty transcript shows [quickSuggestionsFor]'s chips instead of "Say
-  /// hello…"; [askAymaContext]'s fields ride along on every `/chat` turn
-  /// alongside the message (see [_send]); voice is push-to-talk (tap the mic,
-  /// speak, the finalized transcript is sent through the exact same [_send]
-  /// text path, then the session tears down before any spoken reply —
-  /// [_pttVoice]) rather than the full-duplex live call [_voice] otherwise
-  /// gives you, because the LiveKit voice agent doesn't bind these
-  /// correction tools; and this screen never touches [AppContext] or
-  /// [ChatInbox] (a scoped correction turn has no business changing what the
-  /// rest of the app thinks the current screen or kickoff is).
+  /// `AskAymaContext`'s own doc for the forward-compat fields). ONE chat
+  /// (§ D13): this is the main chat conversation, not a silo — the sheet is
+  /// built against the shared [AymaSession] store (so it opens onto the real
+  /// history) and the exchange lands in it (and, for the report path, in
+  /// server history too). No server history is (re)loaded here — the shared
+  /// store already carries it, and scroll-up older paging stands down (no
+  /// cursor of its own). Changes this screen in several ways, all gated on
+  /// this being non-null: the header becomes the compact "Ask Ayma" title +
+  /// quoted-passage card instead of the full tab header; [askAymaContext]'s
+  /// fields ride along on every turn alongside the message (see [_send]);
+  /// [quickSuggestionsFor]'s chips show as the empty-transcript body, and —
+  /// since the transcript is rarely empty now — pinned above the composer
+  /// otherwise, so the scoped affordance never vanishes mid-conversation;
+  /// voice is push-to-talk (tap the mic, speak, the finalized transcript is
+  /// sent through the exact same [_send] text path, then the session tears
+  /// down before any spoken reply — [_pttVoice]) rather than the
+  /// full-duplex live call [_voice] otherwise gives you, because the LiveKit
+  /// voice agent doesn't bind these correction tools; and this screen never
+  /// touches [AppContext] or [ChatInbox] (a scoped correction turn has no
+  /// business changing what the rest of the app thinks the current screen
+  /// or kickoff is).
   final AskAymaContext? askAymaContext;
 
   /// Only meaningful alongside [askAymaContext]: fires after every reply
@@ -2356,11 +2362,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           : const <QueuedChatMessage>[];
                       if (turns.isEmpty && waiting.isEmpty) {
                         if (askAyma != null) {
-                          // Ask-Ayma mode never loads history (see that field's
-                          // doc) — an empty transcript always means "hasn't sent
-                          // anything yet", so the quick-suggestion chips (the
-                          // same affordance the old dedicated sheet had) show
-                          // immediately instead of "Say hello…".
+                          // No history at all yet (a brand-new conversation) —
+                          // the quick-suggestion chips show here, as the body,
+                          // instead of "Say hello…"; once turns exist they pin
+                          // above the composer instead (see below), so the
+                          // scoped affordance is always exactly one place.
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 20),
                             child: Align(
@@ -2548,7 +2554,40 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 // Live status ("Searching the web…") rides on the pending Ayma
                 // turn now, so there's no separate "thinking" line here.
                 if (askAyma != null)
-                  _capped(h * 0.5, _buildAskAymaComposer(context), reverse: true)
+                  _capped(
+                    h * 0.5,
+                    reverse: true,
+                    // The scoped quick-suggestion chips pin above the composer
+                    // once turns exist (§ D13: the sheet opens onto real main
+                    // history now, so the empty-body placement above would
+                    // almost never show) — inside this same cap, so they can
+                    // never push the column past its bounds.
+                    ListenableBuilder(
+                      listenable: _store,
+                      builder: (context, _) {
+                        final suggestions = quickSuggestionsFor(askAyma);
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (_store.turns.isNotEmpty &&
+                                suggestions.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                                child: _QuickChips(
+                                  suggestions: suggestions,
+                                  onPick: (s) {
+                                    _composerController.text = s;
+                                    _send();
+                                  },
+                                ),
+                              ),
+                            _buildAskAymaComposer(context),
+                          ],
+                        );
+                      },
+                    ),
+                  )
                 else
                   ListenableBuilder(
                     listenable: _voice,
@@ -2705,6 +2744,10 @@ class _AskAymaHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final quoteText = ctx.quoteText;
+    // Same expand/collapse affordance (and keys) as the main header's own —
+    // only one header ever renders at a time, so the keys never collide. A
+    // second orb tap does the same thing (§ D13).
+    final sheet = AymaChatSheetController.maybeOf(context);
     return Column(
       children: [
         const SizedBox(height: 6),
@@ -2720,6 +2763,28 @@ class _AskAymaHeader extends StatelessWidget {
                   style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg),
                 ),
               ),
+              if (sheet != null)
+                sheet.isExpanded
+                    ? IconButton(
+                        key: const Key('chatCollapseFullscreenButton'),
+                        icon: Icon(
+                          Icons.close_fullscreen_rounded,
+                          size: 20,
+                          color: ac.fgDim,
+                        ),
+                        tooltip: 'Collapse',
+                        onPressed: sheet.collapse,
+                      )
+                    : IconButton(
+                        key: const Key('chatExpandFullscreenButton'),
+                        icon: Icon(
+                          Icons.open_in_full_rounded,
+                          size: 20,
+                          color: ac.fgDim,
+                        ),
+                        tooltip: 'Expand to full screen',
+                        onPressed: sheet.expand,
+                      ),
               Semantics(
                 button: true,
                 label: 'Close',

@@ -264,7 +264,8 @@ void main() {
     // own teardown discards the widget tree out from under it, so this
     // top-level flag never gets the chance to flip back — reset it
     // explicitly so it can't leak a false "already open" into a later test.
-    isPageContextAymaPopupOpen = false;
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
   });
   tearDown(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
@@ -625,7 +626,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
-    expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+    expect(aymaSheet.isExpanded, isTrue);
     expect(
       tester.getRect(find.byKey(const ValueKey('aymaChatModalSheetBox'))).top,
       0,

@@ -5871,6 +5871,7 @@ async def report_correct(
     report_type: str,
     report_id: str,
     req: ReportCorrectRequest,
+    background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Generic tap-to-correct: one block, a whole section (every block that
@@ -5880,11 +5881,15 @@ async def report_correct(
     ``deep_dive.correct_finding``/``.dispute_*``, or a small composition of
     Story's own passage-privacy/edit/remove primitives). Only the report's
     OWNER may mutate it: a non-owner's attempt is rejected with 403 here,
-    before any producer call. See ``report_hub.correct``."""
+    before any producer call. See ``report_hub.correct``.
+
+    ONE chat (§ D13): a tap-to-correct turn is a main-chat exchange, so it
+    is persisted to chat history like any ``/chat`` turn — otherwise the
+    next history load would wipe it from the shared transcript."""
     if report_type not in report_hub.REPORT_TYPES:
         raise HTTPException(status_code=404, detail="No such report type.")
     try:
-        return await report_hub.correct(
+        out = await report_hub.correct(
             get_db(), report_type, report_id, uid,
             block_ids=req.block_ids, scope=req.scope, message=req.message,
         )
@@ -5894,6 +5899,33 @@ async def report_correct(
         raise HTTPException(status_code=404, detail="No such report.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # The reply mirrors the client's `combinedReply` (`ReportCorrectResult`
+    # in `models/living_report.dart`): distinct non-empty per-block replies
+    # joined, with the same never-empty fallback — so history shows exactly
+    # what the sheet showed. Best-effort, like `_finalize_chat`.
+    replies: list[str] = []
+    ok = False
+    if isinstance(out, dict):
+        ok = bool(out.get("ok"))
+        for r in out.get("results") or []:
+            if not isinstance(r, dict):
+                continue
+            text = str(r.get("reply") or "").strip()
+            if text and text not in replies:
+                replies.append(text)
+    reply_text = (
+        "\n\n".join(replies) if replies else ("Done." if ok else "Couldn't do that.")
+    )
+    try:
+        db = get_db()
+        chat_history.append(db, uid, "user", req.message)
+        chat_history.append(db, uid, "ayma", reply_text)
+    except Exception:  # noqa: BLE001 - best-effort; never fail the correction
+        logger.exception("report_correct history append failed for %s", uid)
+    background.add_task(
+        notifications_triggers.notify_ayma_reply, get_db(), uid, reply_text
+    )
+    return out
 
 
 @app.get("/skill-runs")

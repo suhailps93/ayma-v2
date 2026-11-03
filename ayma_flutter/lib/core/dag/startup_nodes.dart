@@ -358,9 +358,9 @@ class StartupNodes {
         AppCommandHost(AppCommandService.shared).attach();
         final effectiveRouter = router ?? appRouter;
         ScreenCapture.instance.attach(effectiveRouter, beforeAct: () async {
-          if (!isPageContextAymaPopupOpen) return;
+          if (!isAymaSheetOpen) return;
           screenPopupTracker.navigator?.pop();
-          await pendingPageContextAymaPopup;
+          await pendingAymaSheet;
           await Future<void>.delayed(const Duration(milliseconds: 400));
         });
       },

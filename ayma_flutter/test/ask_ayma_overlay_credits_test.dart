@@ -4,6 +4,7 @@
 // time the user looks (see `ask_ayma_overlay.dart`'s `_send`). Same treatment
 // `chat_screen.dart`'s `_TranscriptLine` gives `turn.capped`.
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -86,6 +87,7 @@ Future<void> _pumpSheet(WidgetTester tester, ApiClient api) async {
             builder: (context) => ElevatedButton(
               onPressed: () => showAskAymaOverlay(
                 context,
+                transcriptStore: TranscriptStore(),
                 api: api,
                 ctx: const AskAymaContext(
                   pageId: 'career',

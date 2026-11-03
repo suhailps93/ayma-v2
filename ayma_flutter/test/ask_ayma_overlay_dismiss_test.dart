@@ -5,6 +5,7 @@
 // shared modal in `global_ayma_launcher_test.dart` (`_closeSheet`); this file
 // is the tap-outside counterpart for the Ask-Ayma presentation.
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +24,7 @@ void main() {
           builder: (context) => ElevatedButton(
             onPressed: () => showAskAymaOverlay(
               context,
+              transcriptStore: TranscriptStore(),
               api: _FakeApi(),
               ctx: const AskAymaContext(
                 pageId: 'career',
