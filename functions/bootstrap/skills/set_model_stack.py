@@ -447,6 +447,48 @@ _TO_BRAIN = re.compile(
 )
 _ANY_BRAIN = re.compile(r"\b(gemini|google|muse spark|muse|meta)\b", re.I)
 _TO_MODE = re.compile(r"\bto\s+(?:the\s+)?(cascade|realtime|real time|native audio)\b", re.I)
+# Explicit STT / TTS phrases. Checked BEFORE the mode branch because the word
+# "model" contains the substring "mode" — "change the speech-to-text MODEL to X"
+# must route to set_stt, never set_voice_mode (founder/Scout bug, 2026-11-03: the
+# model picked set_voice_mode because its description also mentions
+# "speech-to-text", so a deterministic intercept settles it regardless of brain).
+_STT_PHRASE = re.compile(
+    r"\b(speech[- ]to[- ]text|speech recognition|stt|transcription|transcriber)\b",
+    re.I,
+)
+_TTS_PHRASE = re.compile(
+    r"\b(text[- ]to[- ]speech|tts|voice synthesis|speech synthesis)\b", re.I
+)
+
+
+def _engine_keyword_map(models: tuple[str, ...]) -> dict[str, str]:
+    """``{normalised provider segment: full model id}`` for the deterministic
+    STT/TTS detector — config-only (no catalog/network), so the pre-model path
+    stays fast. Keyed on the PROVIDER segment only (``deepgram``, ``fishaudio``,
+    …) — distinctive, so a generic model-fragment word (e.g. ``default`` from
+    ``gradium/default``) can never false-match an engine. The binder re-validates
+    availability + resolves finer phrasings and gives the honest refusal when
+    run_stack_command calls it, so this map only needs to NAME the candidate."""
+    out: dict[str, str] = {}
+    for mid in models:
+        prov = _norm(mid.partition("/")[0])
+        if prov:
+            out.setdefault(prov, mid)
+    return out
+
+
+_STT_KEYWORDS = _engine_keyword_map(voice_catalog.CONFIG.voice_cascade_stt_models)
+_TTS_KEYWORDS = _engine_keyword_map(voice_catalog.CONFIG.voice_cascade_tts_models)
+
+
+def _scan_engine(m: str, keywords: dict[str, str]) -> str | None:
+    """The catalog model id for the first engine keyword (provider or model
+    fragment) named anywhere in ``m``, else ``None``."""
+    norm = _norm(m)
+    for kw, mid in keywords.items():
+        if kw in norm:
+            return mid
+    return None
 
 
 def _scan_brain(m: str) -> str | None:
@@ -472,14 +514,28 @@ def detect_stack_command(message: str) -> tuple[str, str] | None:
         "openai" in m and "realtime" in m
     ):
         return ("set_realtime_model", voice_catalog.REALTIME_OPENAI)
+    # STT / TTS engine — gated by an explicit speech-to-text / text-to-speech
+    # phrase AND a named engine, BEFORE the mode branch (so "model" never routes
+    # to mode) and before brain (so "use fishaudio for TTS" isn't read as a brain).
+    # The engine id is resolved from the config lists; the binder re-validates
+    # availability and gives the honest refusal for an uncredited one.
+    if _STT_PHRASE.search(m):
+        engine = _scan_engine(m, _STT_KEYWORDS)
+        if engine:
+            return ("set_stt", engine)
+    if _TTS_PHRASE.search(m):
+        engine = _scan_engine(m, _TTS_KEYWORDS)
+        if engine:
+            return ("set_tts", engine)
     # Brain (either direction) — gated by the word "brain" or an explicit
     # "to <brain>" so a stray brand mention ("I use Gemini at work") can't trip it.
     if "brain" in m or _TO_BRAIN.search(m):
         brain = _scan_brain(m)
         if brain:
             return ("set_brain", brain)
-    # Voice mode — gated by "mode" or an explicit "to <mode>".
-    if "mode" in m or _TO_MODE.search(m) or "text mode" in m:
+    # Voice mode — gated by the WORD "mode" (``\bmode\b``, never the "model"
+    # substring) or an explicit "to <mode>".
+    if re.search(r"\bmode\b", m) or _TO_MODE.search(m) or "text mode" in m:
         if re.search(r"\bcascade\b", m) or "text mode" in m:
             return ("set_voice_mode", voice_catalog.MODE_CASCADE)
         if re.search(r"\b(realtime|real time|native audio)\b", m):
@@ -496,6 +552,10 @@ async def run_stack_command(db, uid: str, name: str, value: str) -> str:
         return await _bind_set_voice_mode(db, uid)(mode=value)
     if name == "set_realtime_model":
         return await _bind_set_realtime_model(db, uid)(model=value)
+    if name == "set_stt":
+        return await _bind_set_stt(db, uid)(engine=value)
+    if name == "set_tts":
+        return await _bind_set_tts(db, uid)(engine=value)
     raise ValueError(f"unknown model-stack command {name!r}")
 
 

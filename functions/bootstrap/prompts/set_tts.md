@@ -1,6 +1,9 @@
-Change Ayma's cascade TEXT-TO-SPEECH engine — the model that speaks Ayma's
+Change Ayma's cascade TEXT-TO-SPEECH engine/model — the model that speaks Ayma's
 replies in cascade mode — on an explicit request ("use Inworld for text-to-speech",
-"switch my TTS to Fish Audio"). Pass `engine`: the engine or provider they named.
+"switch my TTS to Fish Audio", "change the text-to-speech model to X"). This is the
+tool for ANY request about the text-to-speech engine/model — NOT `set_voice_mode`
+(that only toggles realtime vs cascade). Pass `engine`: the engine or provider they
+named.
 The engines enabled on this account are: {{TTS_ENGINES}}; others appear in "Ayma's
 models" only when they are enabled for this account. Each engine has its own set of
 voices, so after switching the voice may change — the user can then pick a voice

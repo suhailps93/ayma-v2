@@ -228,9 +228,32 @@ def test_failed_reconnect_does_not_mark_so_a_later_reconnect_still_works(monkeyp
     ("switch to text mode", ("set_voice_mode", "cascade")),
     # realtime model
     ("switch to gemini live", ("set_realtime_model", "gemini-live")),
+    # STT / TTS engine (Scout misroute bug 2026-11-03): must route to set_stt /
+    # set_tts, NEVER set_voice_mode — including when the word is "model" (which
+    # contains the substring "mode").
+    ("change the speech-to-text to deepgram", ("set_stt", "deepgram/nova-3")),
+    ("change the speech-to-text model to deepgram", ("set_stt", "deepgram/nova-3")),
+    ("switch my stt to assemblyai",
+     ("set_stt", "assemblyai/universal-streaming")),
+    ("use deepgram for speech to text", ("set_stt", "deepgram/nova-3")),
+    ("change the text-to-speech to inworld", ("set_tts", "inworld/inworld-tts-1")),
+    ("switch my tts to fish audio", ("set_tts", "fishaudio/s2.1-pro")),
+    ("change the text to speech model to rime", ("set_tts", "rime/coda")),
 ])
 def test_detect_stack_command_matches_clear_commands(msg, expected):
     assert set_model_stack.detect_stack_command(msg) == expected
+
+
+def test_stt_command_never_misroutes_to_voice_mode():
+    # The exact Scout bug: an STT change fired a MODE save. The deterministic
+    # intercept must claim it as set_stt, so it can never reach set_voice_mode.
+    for msg in (
+        "change the speech-to-text to deepgram",
+        "change the speech-to-text model to deepgram",
+        "switch my STT to AssemblyAI",
+    ):
+        name, _ = set_model_stack.detect_stack_command(msg)
+        assert name == "set_stt", f"{msg!r} misrouted to {name}"
 
 
 @pytest.mark.parametrize("msg", [
@@ -262,6 +285,32 @@ def test_run_stack_command_voice_mode_and_realtime_model():
     assert db.store[_PROFILE][schema.PF_AYMA_VOICE_MODE] == "cascade"
     _run(set_model_stack.run_stack_command(db, "u1", "set_realtime_model", "gemini-live"))
     assert db.store[_PROFILE][schema.PF_AYMA_REALTIME_MODEL] == "gemini-live"
+
+
+def test_detected_stt_command_persists_the_stt_field_end_to_end():
+    # Scout bug end-to-end: "change the speech-to-text to deepgram" → detected as
+    # set_stt → run_stack_command WRITES PF_AYMA_CASCADE_STT (the field the
+    # "Ayma's models" STT picker watches + re-fetches), NOT the voice mode as if
+    # set_voice_mode ran. The page live-updates off this field (voice_engine_
+    # control.dart watches ayma_cascade_stt), so persisting it is what the page reflects.
+    db = _Db()
+    cmd = set_model_stack.detect_stack_command("change the speech-to-text to deepgram")
+    assert cmd[0] == "set_stt"
+    msg = _run(set_model_stack.run_stack_command(db, "u1", *cmd))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_STT] == "deepgram/nova-3"
+    assert db.store[_PROFILE][schema.PF_AYMA_VOICE_MODE] == "cascade"
+    assert "speech-to-text" in msg
+    # The STT write must NOT have been shadowed by a realtime-model/brain write.
+    assert schema.PF_AYMA_REALTIME_MODEL not in db.store[_PROFILE]
+
+
+def test_detected_tts_command_persists_the_tts_field_end_to_end():
+    db = _Db()
+    cmd = set_model_stack.detect_stack_command("switch my text-to-speech to inworld")
+    assert cmd[0] == "set_tts"
+    _run(set_model_stack.run_stack_command(db, "u1", *cmd))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_TTS] == "inworld/inworld-tts-1"
+    assert db.store[_PROFILE][schema.PF_AYMA_VOICE_MODE] == "cascade"
 
 
 # --- set_stt / set_tts (cascade engines) --------------------------------------
