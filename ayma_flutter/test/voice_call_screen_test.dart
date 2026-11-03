@@ -61,6 +61,19 @@ class _FakeVoice extends VoiceSessionController {
   @override
   bool get isListening => _fakePhase == VoiceSessionPhase.live;
 
+  bool _fakeResponded = false;
+
+  /// Mirrors the real getter: live with no first reply yet is still waiting.
+  @override
+  bool get awaitingFirstResponse =>
+      _fakePhase == VoiceSessionPhase.live && !_fakeResponded;
+
+  /// The opener/first reply landed — the status flips to "Listening…".
+  void setResponded() {
+    _fakeResponded = true;
+    notifyListeners();
+  }
+
   void setPhase(VoiceSessionPhase phase) {
     _fakePhase = phase;
     notifyListeners();
@@ -121,7 +134,9 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
-      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+      final voice = _FakeVoice()
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
 
       await tester.pumpWidget(MaterialApp(
         home: VoiceCallScreen(voice: voice),
@@ -154,6 +169,26 @@ void main() {
 
       // Status label reflects the live, unmuted, not-speaking state.
       expect(find.text('Listening…'), findsOneWidget);
+    });
+
+    testWidgets(
+        'a live call with no first reply yet reads "Connecting…", flipping '
+        'to "Listening…" once Ayma responds', (tester) async {
+      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+
+      // Live, but the opener is still in flight: honest wait state, never a
+      // fake "Listening…".
+      expect(find.text('Connecting…'), findsOneWidget);
+      expect(find.text('Listening…'), findsNothing);
+
+      voice.setResponded();
+      await tester.pump();
+
+      expect(find.text('Listening…'), findsOneWidget);
+      expect(find.text('Connecting…'), findsNothing);
     });
 
     testWidgets('shows the "Ayma is quiet" chip only while she is muted',
@@ -305,7 +340,9 @@ void main() {
     testWidgets(
         'tapping toggles the controller mic state both ways without ending '
         'the call', (tester) async {
-      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+      final voice = _FakeVoice()
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
       await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
       await tester.pump();
 
@@ -507,6 +544,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump();
       expect(voice.phase, VoiceSessionPhase.live);
+      // The opener landed, so the inline bar reads "Listening…" (a live call
+      // with no first reply yet honestly reads "Connecting…" instead).
+      voice.setResponded();
+      await tester.pump();
 
       await tester.tap(find.byKey(const Key('chatVoiceFullscreenButton')));
       await tester.pump();

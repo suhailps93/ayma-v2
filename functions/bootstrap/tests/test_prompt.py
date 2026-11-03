@@ -631,6 +631,18 @@ def test_voice_opener_never_leaks_block_markers():
         assert "OPENER:FRESH" not in text
 
 
+def test_voice_dangling_reply_answers_the_unanswered_message():
+    """Founder behaviour (2026-11-02): when the caller's last message never got
+    a reply, the voice opener answers THAT message — static instructions, no
+    placeholders, honest about garbled input instead of inventing an answer."""
+    text = prompt_mod.load_voice_dangling_reply()
+    assert text.strip()
+    low = text.lower()
+    assert "never got a reply" in low
+    assert "answering" in low or "answer" in low
+    assert "{" not in text and "}" not in text
+
+
 def test_misheard_fragment_detection():
     import voices
 

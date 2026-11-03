@@ -2010,6 +2010,49 @@ class _OpenerSession(_FakeMuteSession):
         self.reply_user_inputs.append(user_input)
 
 
+class _SpeechHandleStub:
+    """Mimics livekit-agents' SpeechHandle: awaiting it never raises, even on
+    failure — a generation error only surfaces via exception()."""
+
+    def __init__(self, error=None):
+        self._error = error
+
+    def __await__(self):
+        async def _done():
+            return None
+
+        return _done().__await__()
+
+    def exception(self):
+        return self._error
+
+
+class _ScriptedOpenerSession(_FakeMuteSession):
+    """Opener fake with a scripted per-call outcome (extra calls succeed): an
+    Exception instance raises out of generate_reply; ("handle_error", exc)
+    resolves the await cleanly but carries exc on the handle (the swallowed
+    livekit failure mode); anything else succeeds."""
+
+    def __init__(self, outcomes):
+        super().__init__()
+        self._outcomes = list(outcomes)
+        self.replies = []
+        self.reply_chat_ctxs = []
+        self.reply_user_inputs = []
+
+    def generate_reply(self, instructions=None, chat_ctx=_UNSET,
+                       user_input=_UNSET):
+        self.replies.append(instructions)
+        self.reply_chat_ctxs.append(chat_ctx)
+        self.reply_user_inputs.append(user_input)
+        outcome = self._outcomes.pop(0) if self._outcomes else "ok"
+        if isinstance(outcome, Exception):
+            raise outcome
+        if isinstance(outcome, tuple) and outcome[0] == "handle_error":
+            return _SpeechHandleStub(outcome[1])
+        return _SpeechHandleStub(None)
+
+
 class _StateEv:
     def __init__(self, new_state):
         self.new_state = new_state
@@ -2071,14 +2114,59 @@ def test_opener_skipped_for_welcome_greeting():
     assert s.replies == []
 
 
-def test_opener_skipped_when_resuming_mid_turn():
+def test_opener_answers_dangling_user_turn():
+    """Founder behaviour (2026-11-02, supersedes the old mid-turn skip): a
+    history ending on an UNANSWERED caller turn opens by ANSWERING that
+    dangling message — a user-initiated call never opens in silence."""
     import asyncio
 
+    from prompt import load_voice_dangling_reply
+
     s = _OpenerSession()
-    turns = [agent.Turn(role=agent.ROLE_USER, text="so about")]
+    turns = [agent.Turn(role=agent.ROLE_USER, text="so about friday")]
     seed = _opener_seed(seed_turns=turns)
-    assert asyncio.run(_run_opener(s, seed, list(turns))) is False
-    assert s.replies == []
+    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
+    assert s.replies == [load_voice_dangling_reply()]
+    # Realtime shape: the tail turn is already the agent context's last item,
+    # so the answer carries no scoped chat_ctx and no duplicate user_input.
+    assert s.reply_chat_ctxs == [_UNSET]
+    assert s.reply_user_inputs == [_UNSET]
+
+
+def test_opener_greets_when_dangling_tail_is_blank():
+    """A blank trailing caller turn has nothing sensible to answer, so it
+    takes the plain greeting path directly — one greeting reply, never the
+    dangling-answer instruction and never silence."""
+    import asyncio
+
+    from prompt import load_voice_dangling_reply, load_voice_opener
+
+    s = _OpenerSession()
+    turns = [agent.Turn(role=agent.ROLE_USER, text="   ")]
+    seed = _opener_seed(seed_turns=turns)
+    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
+    assert len(s.replies) == 1
+    assert s.replies[0] != load_voice_dangling_reply()
+    assert s.replies[0] == load_voice_opener(False, "")
+
+
+def test_opener_agent_tail_greeting_unchanged():
+    """Proof the agent-tail path is byte-identical: one greeting reply with
+    the exact standard opener instruction, no dangling-answer attempt."""
+    import asyncio
+
+    from prompt import load_voice_dangling_reply, load_voice_opener
+
+    s = _OpenerSession()
+    turns = [
+        agent.Turn(role=agent.ROLE_USER, text="should I text her back"),
+        agent.Turn(role=agent.ROLE_AYMA, text="sleep on it first"),
+    ]
+    seed = _opener_seed(seed_turns=turns)
+    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
+    assert len(s.replies) == 1
+    assert s.replies[0] != load_voice_dangling_reply()
+    assert s.replies[0] == load_voice_opener(True, "sleep on it first")
 
 
 def test_opener_skipped_when_someone_already_spoke():
@@ -2295,6 +2383,84 @@ def test_opener_swallows_generate_failure():
 
     s.generate_reply = boom
     assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
+
+
+def test_opener_falls_back_to_greeting_when_dangling_reply_fails_on_handle():
+    """Option (b) backup: the dangling answer's await resolves cleanly but its
+    SpeechHandle carries an error (livekit's swallowed failure mode) — the
+    opener falls back to the standard greeting and still opens the call."""
+    import asyncio
+
+    from prompt import load_voice_dangling_reply, load_voice_opener
+
+    s = _ScriptedOpenerSession([("handle_error", RuntimeError("timed out"))])
+    turns = [agent.Turn(role=agent.ROLE_USER, text="are you there")]
+    seed = _opener_seed(seed_turns=turns)
+    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
+    assert s.replies == [
+        load_voice_dangling_reply(),
+        load_voice_opener(True, "are you there"),
+    ]
+
+
+def test_opener_falls_back_to_greeting_when_dangling_reply_raises():
+    """Same fallback when the answer attempt raises outright instead of
+    failing on the handle."""
+    import asyncio
+
+    from prompt import load_voice_dangling_reply, load_voice_opener
+
+    s = _ScriptedOpenerSession([RuntimeError("session closing")])
+    turns = [agent.Turn(role=agent.ROLE_USER, text="are you there")]
+    seed = _opener_seed(seed_turns=turns)
+    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
+    assert s.replies == [
+        load_voice_dangling_reply(),
+        load_voice_opener(True, "are you there"),
+    ]
+
+
+def test_opener_greeting_reports_handle_error():
+    """A swallowed handle failure on the (agent-tail) greeting is reported as
+    a miss (False, exactly one attempt) instead of being misreported as a
+    successful open — the client's honest-error guard is the backstop."""
+    import asyncio
+
+    s = _ScriptedOpenerSession([("handle_error", RuntimeError("timed out"))])
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
+    assert len(s.replies) == 1
+
+
+def test_cascade_dangling_answer_carries_real_user_turn():
+    """Cascade stack: the dangling answer passes the REAL message as its
+    user_input (the agent context had the tail stripped) with NO scoped
+    chat_ctx, so the chat LLM answers with full history — and the composed
+    request still carries a user message (no system-only 400)."""
+    import asyncio
+    from livekit.agents import llm
+
+    from prompt import load_voice_dangling_reply
+
+    s = _OpenerSession()
+    fresh = llm.ChatContext.empty()
+    turns = [agent.Turn(role=agent.ROLE_USER, text="which dress then")]
+
+    async def go():
+        return await agent.maybe_open_conversation(
+            s, _opener_seed(seed_turns=turns), window=list(turns),
+            grace_seconds=0.05, opener_chat_ctx=fresh, seed_user_turn=True,
+        )
+
+    assert asyncio.run(go()) is True
+    assert s.replies == [load_voice_dangling_reply()]
+    assert s.reply_user_inputs == ["which dress then"]
+    assert s.reply_chat_ctxs == [_UNSET]
+
+    composed = llm.ChatContext.empty()
+    composed.add_message(role="user", content=[s.reply_user_inputs[0]])
+    composed.add_message(role="system", content=[s.replies[0]])
+    messages, _ = composed.to_provider_format("openai")
+    assert any(m.get("role") in ("user", "tool") for m in messages), messages
 
 
 # --- idle-timeout wiring -----------------------------------------------------
