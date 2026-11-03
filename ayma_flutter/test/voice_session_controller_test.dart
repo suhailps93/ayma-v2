@@ -1478,4 +1478,99 @@ void main() {
       await c.stop();
     });
   });
+
+  // Founder report 2026-11-02: tapping the orb rapidly opened MULTIPLE
+  // concurrent LiveKit sessions that spoke over each other. `start()` must be
+  // single-flight — at most ONE session ever starts no matter how many
+  // near-simultaneous calls arrive. `bootstrapCalls` (one `/bootstrap` per
+  // admitted start) and the number of transports built are the hard counters.
+  group('single-flight start() (rapid orb taps -> exactly one session)', () {
+    test('three near-simultaneous start() calls open exactly ONE session',
+        () async {
+      var transportsBuilt = 0;
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () {
+          transportsBuilt++;
+          return FakeVoiceTransport();
+        },
+      );
+
+      // Fire three in the same synchronous burst (one frame of rapid taps) —
+      // do NOT await between them, so a 2nd/3rd tap lands during the 1st's
+      // async connect, exactly as the rapid taps did.
+      final f1 = c.start();
+      final f2 = c.start();
+      final f3 = c.start();
+      await Future.wait([f1, f2, f3]);
+
+      expect(bootstrapCalls, 1, reason: 'only one /bootstrap may fire');
+      expect(transportsBuilt, 1, reason: 'only one LiveKit room may connect');
+      expect(c.phase, VoiceSessionPhase.waking);
+
+      await c.stop();
+    });
+
+    test(
+        'the gap case: a start() that must first tear down ANOTHER active '
+        'session still admits only one of a concurrent burst', () async {
+      // An existing, already-live session on a different controller forces the
+      // new start() through its `await existing.stop()` — the exact async gap
+      // where, before the `_starting` latch, a 2nd near-simultaneous tap slid
+      // past the `isActive` check and opened a second room.
+      final otherTransport = FakeVoiceTransport();
+      final other = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => otherTransport,
+      );
+      await _startLive(other, otherTransport);
+      expect(other.isListening, isTrue);
+      bootstrapCalls = 0; // count only the new controller's starts
+
+      var transportsBuilt = 0;
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () {
+          transportsBuilt++;
+          return FakeVoiceTransport();
+        },
+      );
+
+      final f1 = c.start();
+      final f2 = c.start();
+      final f3 = c.start();
+      await Future.wait([f1, f2, f3]);
+
+      expect(bootstrapCalls, 1, reason: 'one /bootstrap despite the stop() gap');
+      expect(transportsBuilt, 1, reason: 'exactly one room, never two');
+      expect(other.phase, VoiceSessionPhase.idle,
+          reason: 'the previous session was torn down');
+      expect(VoiceSessionController.active, same(c));
+
+      await c.stop();
+    });
+
+    test('a 2nd start() while already live is a no-op (no 2nd session)',
+        () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+      );
+
+      await _startLive(c, transport);
+      expect(c.isListening, isTrue);
+      expect(bootstrapCalls, 1);
+
+      await c.start(); // tapping the orb again while the call is live
+      expect(bootstrapCalls, 1, reason: 'no second /bootstrap while live');
+      expect(c.phase, VoiceSessionPhase.live);
+
+      await c.stop();
+    });
+  });
 }

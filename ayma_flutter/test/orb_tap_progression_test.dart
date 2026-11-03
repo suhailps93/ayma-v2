@@ -176,6 +176,30 @@ void main() {
   );
 
   testWidgets(
+    '(v) REGRESSION (founder 2026-11-02): rapid multi-tap on the orb activates '
+    'voice exactly ONCE — a burst never opens multiple sessions',
+    (tester) async {
+      phone(tester);
+      final voice = _FakeVoice();
+      await tester.pumpWidget(host(voice));
+      await tester.pump();
+
+      // The shell opens on the Ayma tab = the full-screen main chat, so every
+      // orb tap here takes the voice-start rung. Fire THREE taps inside the
+      // ~500ms debounce window — the founder's exact "tapped it rapidly several
+      // times" path.
+      for (var i = 0; i < 3; i++) {
+        await tester.tap(find.byTooltip('Ayma'));
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      // Exactly one voice start, not three — the debounce swallows the burst
+      // (and the controller's own single-flight latch is the hard backstop).
+      expect(voice.startCalls, 1);
+    },
+  );
+
+  testWidgets(
     '(iv) a 1s HOLD on the orb from another page activates voice, unchanged — '
     'no chat sheet opens',
     (tester) async {
