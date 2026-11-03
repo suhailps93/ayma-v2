@@ -311,7 +311,17 @@ flowchart LR
   2026-10-28). Those added photos ride the run as `image_paths`
   only (never grid `media_id`s), so they are **never** added to `profile/main.photos` or any public collection; the
   backend folds `image_paths` into the vision pass as bytes and never writes them anywhere public (see
-  [PRIVACY.md](PRIVACY.md), "Appearance analysis photos"). The run (`POST /appearance/report`) accepts
+  [PRIVACY.md](PRIVACY.md), "Appearance analysis photos"). A photo attached here feeds the **Face and Body**
+  passes it was added to, not only the whole-set **Attributes** read: `run_appearance` passes `image_paths` as
+  `extra_images`, and `_pick_all` now includes them in the explicit-selection Face/Body picks (they have no grid
+  `media_id` and no shot-type, so — like an untagged selected grid photo — they are eligible for either axis). Before
+  this (founder bug 2026-11-02) an explicit grid selection silently dropped every attached photo from the Face/Body
+  passes, so the images the user attached showed only in Attributes, never in Face/Body. `_owned_extra_images`
+  (§ R2-C8a) still filters `extra_images` to the user's own self-photos first, so this never pulls in other people's
+  chat photos. (Per-axis precision — routing a Face-group attachment to Face only and a Body-group one to Body only —
+  would need the client to send the attachments split by axis; today the flat `image_paths` means each attached photo
+  feeds both running axes, which is harmless since they are all the user's own photos read as one person.) The run
+  (`POST /appearance/report`) accepts
   `want_face`/`want_body`, optional `face_media_ids`/`body_media_ids` (the still-selected grid photos), and
   `image_paths` (the privately-added photos). **"Run analysis" runs the analysis in the BACKGROUND (§ founder
   2026-10-28 fix)**: tapping it dismisses the sheet, shows a non-blocking toast ("Running your analysis — I'll update

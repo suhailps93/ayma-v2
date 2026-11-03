@@ -359,9 +359,18 @@ def test_explicit_selection_of_an_ineligible_photo_yields_no_eligible(monkeypatc
     assert _mocks["body"] == 0
 
 
-def test_explicit_selection_never_falls_back_to_a_chat_attachment(monkeypatch, _mocks):
-    # With a named body selection that matches nothing eligible, the extra
-    # (chat) image must NOT be substituted in — explicit selection is grid-only.
+def test_explicit_selection_feeds_photos_the_user_attached_for_the_report(
+    monkeypatch, _mocks
+):
+    # § founder 2026-11-02: photos the user ATTACHES in the pre-run sheet's
+    # "Add photo" control ride the run as extra_images. They are deliberate
+    # inputs for THIS report (added to the Face/Body group), so they must feed
+    # the Face/Body passes — not only the whole-set Attributes read. On the
+    # explicit-selection path extra_images are ALWAYS these report attachments
+    # (only POST /appearance/report passes extra_images, alongside the user's
+    # own picks), so they are INCLUDED, not substituted. Here the named body
+    # grid id matched nothing eligible, but the attached photo carries the body
+    # read (before the fix body was dropped to needs_body_photo).
     monkeypatch.setattr(
         appearance, "_grid_photos",
         lambda db, uid: [
@@ -370,14 +379,46 @@ def test_explicit_selection_never_falls_back_to_a_chat_attachment(monkeypatch, _
              "attrs": {"usable_for_face": True, "usable_for_body": False}},
         ],
     )
+    # R2-C8a filtering is exercised separately; keep the attached photo here.
+    monkeypatch.setattr(appearance, "_owned_extra_images", lambda db, uid, extra: extra)
     db = FakeDb()
     rep = _run(appearance.run_appearance(
         db, "u1",
         body_media_ids=["mface"],
-        extra_images=[(b"chat", "image/png", "uploads/u1/chat.jpg")],
+        extra_images=[(b"att", "image/heif", "uploads/u1/appearance_1.heif")],
     ))
-    assert rep["body"] == {"status": "needs_body_photo"}
-    assert _mocks["body"] == 0
+    assert _mocks["body"] == 1
+    assert rep["body"]["source_photos"] == ["uploads/u1/appearance_1.heif"]
+
+
+def test_attached_report_photos_feed_face_and_body_not_just_attributes(
+    monkeypatch, _mocks
+):
+    # Founder's exact path: an explicit grid selection PLUS a photo attached in
+    # the pre-run sheet. The attachment must show in BOTH Face and Body
+    # source_photos (untagged -> eligible for either axis, like an untagged
+    # selected grid photo), alongside the selected grid photo — not only in the
+    # Attributes whole-set read. Fails without the fix (extra dropped from the
+    # explicit-selection Face/Body passes).
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g", "mime": "image/jpeg", "path": "uploads/u1/g.jpg",
+             "media_id": "m1",
+             "attrs": {"usable_for_face": True, "usable_for_body": True}},
+        ],
+    )
+    monkeypatch.setattr(appearance, "_owned_extra_images", lambda db, uid, extra: extra)
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1",
+        face_media_ids=["m1"], body_media_ids=["m1"],
+        extra_images=[(b"att", "image/heif", "uploads/u1/appearance_1.heif")],
+    ))
+    assert "uploads/u1/appearance_1.heif" in rep["face"]["source_photos"]
+    assert "uploads/u1/appearance_1.heif" in rep["body"]["source_photos"]
+    assert "uploads/u1/g.jpg" in rep["face"]["source_photos"]
+    assert "uploads/u1/g.jpg" in rep["body"]["source_photos"]
 
 
 def test_not_self_chat_image_is_excluded_from_analysis_and_count(monkeypatch, _mocks):

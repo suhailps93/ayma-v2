@@ -138,14 +138,30 @@ def _pick_all(
 
     When ``only_media_ids`` is given (an explicit, grid-based selection from the
     pre-run sheet) ALL *selected* grid photos that are bucket-eligible for the
-    axis (:func:`_bucket_eligible`) are returned, in grid order, capped at
-    :data:`_MAX_PHOTOS` — honouring the user's own pick, including an
-    untagged/freshly-added photo, while still refusing a photo clearly meant for
-    the other axis (§ founder 2026-10-28: all photos selectable, the user's
-    choice drives the read). The ``extra`` fallback is deliberately NOT taken for
-    an explicit selection: a chat attachment is never silently substituted for a
-    named grid photo — so a selection that matches nothing eligible resolves to
-    "not available", never a bogus read.
+    axis (:func:`_bucket_eligible`) are returned, in grid order, PLUS every
+    ``extra`` image the user ATTACHED for this run (the pre-run sheet's "Add
+    photo" control), capped at :data:`_MAX_PHOTOS` — honouring the user's own
+    pick, including an untagged/freshly-added photo, while still refusing a grid
+    photo clearly meant for the other axis (§ founder 2026-10-28: all photos
+    selectable, the user's choice drives the read).
+
+    The attached ``extra`` photos are deliberate inputs for THIS run: the user
+    added them to the Face/Body group in the sheet, so they must feed the Face
+    and Body passes, not only the whole-set Attributes read
+    (:func:`physical_attributes.refresh` already folds ``extra`` in). They have
+    no grid ``media_id`` (one-run chat-channel uploads, never gridded) and no
+    stored shot-type, so they can't be named in ``only_media_ids`` and are
+    untagged — like an untagged *selected* grid photo they're eligible for
+    either axis (:func:`_bucket_eligible` on empty attrs is ``True`` for both).
+    Dropping them here was the founder's "the photos I attached don't show in
+    Face/Body" bug (2026-11-02): an explicit grid selection silently excluded
+    every attached photo from both passes (they reached only the whole-set
+    Attributes read). On this path ``extra`` is ALWAYS such a report attachment
+    — only ``POST /appearance/report`` passes ``extra_images``, and only
+    alongside the user's own picks — so they are INCLUDED, never a silent
+    substitution of some unrelated chat photo. ``extra`` is already filtered to
+    the user's OWN self-photos upstream (:func:`_owned_extra_images`, § R2-C8a),
+    so this never pulls in other people's chat photos.
 
     With no explicit selection (``only_media_ids is None`` — the chat/auto path)
     the legacy behaviour stands: the single best photo — the first grid photo
@@ -161,6 +177,10 @@ def _pick_all(
             attrs = p.get("attrs") or {}
             if p.get("media_id") in only_media_ids and bucket_fn(attrs, flag):
                 out.append((p["bytes"], p["mime"], p.get("path", "")))
+        for e in extra:
+            # An attached report photo is untagged -> eligible for either axis.
+            if bucket_fn({}, flag):
+                out.append(e)
         return out[:_MAX_PHOTOS]
     for p in photos:
         if (p.get("attrs") or {}).get(flag):
