@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../build_info.dart';
 import '../dev_mode.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
@@ -35,6 +36,8 @@ class SettingsScreen extends StatefulWidget {
     this.profileService,
     this.api,
     this.imagePicker,
+    this.packageInfoOverride,
+    this.environmentOverride,
   });
 
   static const path = '/settings';
@@ -43,6 +46,8 @@ class SettingsScreen extends StatefulWidget {
   final ProfileService? profileService;
   final ApiClient? api;
   final ImagePicker? imagePicker;
+  final PackageInfo? packageInfoOverride;
+  final String? environmentOverride;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -61,7 +66,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// True while the pause-matching write waits for its server ack.
   bool _pausedSaving = false;
 
-  /// Clean release version (e.g. "1.30.0") from package info, shown to users.
+  /// Release version string (e.g. "1.30.0+2264" or "1.30.0+2264 · staging")
+  /// from package and build info, shown to users.
   String _version = '';
 
   /// Taps on the version row, each within [_tapWindow] of the previous one.
@@ -100,8 +106,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadVersion() async {
     try {
-      final info = await PackageInfo.fromPlatform();
-      if (mounted) setState(() => _version = info.version);
+      final info =
+          widget.packageInfoOverride ?? await PackageInfo.fromPlatform();
+      final formatted = formatVersionString(
+        version: info.version,
+        buildNumber: info.buildNumber,
+        environment: widget.environmentOverride,
+      );
+      if (mounted) setState(() => _version = formatted);
     } catch (_) {
       // Platform package info unavailable (e.g. under widget tests) — leave
       // the row minimal rather than surfacing an error.

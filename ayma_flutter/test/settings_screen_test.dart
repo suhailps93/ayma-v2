@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:ayma_flutter/build_info.dart';
 import 'package:ayma_flutter/dev_mode.dart';
 import 'package:ayma_flutter/screens/settings_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
@@ -13,6 +14,7 @@ import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeProfiles extends ProfileService {
@@ -51,9 +53,10 @@ ApiClient _api(void Function(String path) onCall) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
-  // Every test leaves the compile-time dev-mode flag at its default (off);
-  // the two unlock tests opt in explicitly.
-  tearDown(() => debugDevModeOverride = null);
+  tearDown(() {
+    debugDevModeOverride = null;
+    debugAppEnvironmentOverride = null;
+  });
 
   Widget host(ThemeController c, ProfileService p, ApiClient a) =>
       AnimatedBuilder(
@@ -126,7 +129,11 @@ void main() {
     expect(profiles.pausedWrites, [true]);
   });
 
-  Future<void> pumpRouted(WidgetTester tester) async {
+  Future<void> pumpRouted(
+    WidgetTester tester, {
+    PackageInfo? packageInfo,
+    String? environment,
+  }) async {
     final c = ThemeController(initial: ThemeMode.dark);
     final router = GoRouter(
       initialLocation: SettingsScreen.path,
@@ -134,7 +141,12 @@ void main() {
         GoRoute(
           path: SettingsScreen.path,
           builder: (_, __) => SettingsScreen(
-              controller: c, profileService: _FakeProfiles(), api: _api((_) {})),
+            controller: c,
+            profileService: _FakeProfiles(),
+            api: _api((_) {}),
+            packageInfoOverride: packageInfo,
+            environmentOverride: environment,
+          ),
         ),
         for (final path in const [
           '/settings/developer',
@@ -171,6 +183,59 @@ void main() {
     expect(find.textContaining('dev build'), findsNothing);
     expect(find.textContaining('debug'), findsNothing);
     expect(find.text("What's new"), findsNothing);
+  });
+
+  testWidgets(
+      'Settings footer displays version, build number, and staging tag on staging builds',
+      (tester) async {
+    final info = PackageInfo(
+      appName: 'Ayma',
+      packageName: 'com.ayma.ayma_flutter',
+      version: '1.30.0',
+      buildNumber: '2264',
+      buildSignature: '',
+    );
+    await pumpRouted(tester, packageInfo: info, environment: 'staging');
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    await tester.scrollUntilVisible(stamp, 200);
+    await tester.pumpAndSettle();
+    expect(find.text('Version 1.30.0+2264 · staging'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Settings footer displays version and build number without staging tag on production builds',
+      (tester) async {
+    final info = PackageInfo(
+      appName: 'Ayma',
+      packageName: 'com.ayma.ayma_flutter',
+      version: '1.30.0',
+      buildNumber: '2264',
+      buildSignature: '',
+    );
+    await pumpRouted(tester, packageInfo: info, environment: 'production');
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    await tester.scrollUntilVisible(stamp, 200);
+    await tester.pumpAndSettle();
+    expect(find.text('Version 1.30.0+2264'), findsOneWidget);
+    expect(find.textContaining('staging'), findsNothing);
+  });
+
+  testWidgets(
+      'Settings footer displays build number and staging tag when loaded from PackageInfo and ambient environment',
+      (tester) async {
+    debugAppEnvironmentOverride = 'staging';
+    PackageInfo.setMockInitialValues(
+      appName: 'Ayma',
+      packageName: 'com.ayma.ayma_flutter',
+      version: '1.30.0',
+      buildNumber: '2242',
+      buildSignature: '',
+    );
+    await pumpRouted(tester);
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    await tester.scrollUntilVisible(stamp, 200);
+    await tester.pumpAndSettle();
+    expect(find.text('Version 1.30.0+2242 · staging'), findsOneWidget);
   });
 
   testWidgets('seven taps on the version row open the Developer panel; '
