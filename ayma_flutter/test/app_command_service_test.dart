@@ -185,6 +185,26 @@ void main() {
     expect(reconnected, isFalse);
   });
 
+  test('reconnect_voice is one-shot: a re-fire within the cooldown is refused '
+      '(no infinite loop)', () async {
+    // Founder 2026-11-03: the reconnected session is re-seeded with the
+    // "reconnect" transcript, so the agent re-fires reconnect_voice. The device
+    // circuit breaker must reconnect exactly once per explicit ask.
+    var count = 0;
+    final svc = AppCommandService(
+      hasActiveVoice: () => true,
+      reconnectVoice: () async => count++,
+    );
+    // First reconnect (explicit user ask) runs.
+    expect(svc.handleCommand({'action': 'reconnect_voice'}), isTrue);
+    await svc.runAfterAck();
+    expect(count, 1);
+    // The reconnected session fires reconnect_voice again — refused, no reconnect.
+    expect(svc.handleCommand({'action': 'reconnect_voice'}), isFalse);
+    await svc.runAfterAck();
+    expect(count, 1); // fired exactly once — loop broken
+  });
+
   test('delete_account and withdraw_consent are never executable commands',
       () async {
     final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));

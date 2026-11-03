@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Callable
 
 from firebase_admin import firestore
@@ -247,15 +248,60 @@ def _bind_set_realtime_model(db, uid: str) -> Callable[..., object]:
 # --- reconnect the live call --------------------------------------------------
 
 
+# One-shot guard against the infinite reconnect loop (founder 2026-11-03): a
+# reconnect tears down the call and starts a fresh session seeded (via
+# ``/bootstrap``'s ``recent_turns``) with the transcript that STILL contains the
+# user's "reconnect" ask — so the new session's agent re-invoked reconnect_voice,
+# reconnecting forever and burning LiveKit minutes. The marker records when a
+# reconnect was last requested; within the cooldown reconnect_voice refuses to
+# queue another reconnect, so the session it just created can never re-trigger
+# it. A deliberate later reconnect (after the window) still works.
+_RECONNECT_COOLDOWN_SECONDS = 45.0
+# Epoch-seconds marker on users/{uid}/profile/main, kept local to this module —
+# it is internal reconnect bookkeeping, not a user-facing model-settings field.
+_PF_RECONNECT_AT = "ayma_reconnect_requested_at"
+
+
+def _recently_reconnected(db, uid: str) -> bool:
+    """True when a reconnect was requested within the cooldown — read tolerantly
+    so a Firestore hiccup never *blocks* a genuine first reconnect (the client
+    circuit-breaker is the backstop against a storm if this read ever fails)."""
+    try:
+        snap = schema.profile_doc(db, uid).get()
+        at = float((snap.to_dict() or {}).get(_PF_RECONNECT_AT) or 0.0)
+    except Exception:  # noqa: BLE001
+        return False
+    return (time.time() - at) < _RECONNECT_COOLDOWN_SECONDS
+
+
+def _mark_reconnected(db, uid: str) -> None:
+    try:
+        schema.profile_doc(db, uid).set(
+            {_PF_RECONNECT_AT: time.time()}, merge=True
+        )
+    except Exception:  # noqa: BLE001 - best-effort; the client breaker backs it up
+        logger.exception("could not mark reconnect for %s", uid)
+
+
 def _bind_reconnect_voice(db, uid: str) -> Callable[..., object]:
     async def reconnect_voice() -> str:
         """Ask the client to reconnect the live voice session so the saved stack
-        applies now. The client acks ``ok=true`` only when a call is actually
-        live, then tears down + re-establishes it (bootstrap re-reads the stack);
-        ``ok=false`` means there was nothing live to reconnect."""
+        applies now. STRICTLY ONE-SHOT per explicit request: if a reconnect
+        happened within the cooldown, refuse — the fresh session it created is
+        seeded with the "reconnect" transcript and must never reconnect again
+        (the infinite-loop fix). The client acks ``ok=true`` only when a call is
+        actually live; ``ok=false`` means there was nothing live to reconnect."""
+        if await asyncio.to_thread(_recently_reconnected, db, uid):
+            return (
+                "You're already reconnecting onto your updated setup — give it a "
+                "moment. No need to reconnect again."
+            )
         cmd_id = _queue_command(db, uid, {"action": "reconnect_voice"})
         ack = await _await_ack(db, uid, cmd_id)
         if ack and ack.get("ok"):
+            # Mark BEFORE the client actually tears down + re-bootstraps (that
+            # runs after this ack), so the new session sees the cooldown.
+            await asyncio.to_thread(_mark_reconnected, db, uid)
             return (
                 "Reconnecting now — I'll drop for a second and come back on your "
                 "updated setup."

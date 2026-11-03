@@ -145,6 +145,12 @@ class AppCommandService {
   final bool Function() _hasActiveVoice;
   final Future<void> Function() _reconnectVoice;
 
+  /// When the last reconnect was scheduled — a circuit breaker so a session that
+  /// was just reconnected (and is re-seeded with the "reconnect" transcript)
+  /// can't immediately reconnect again in a loop (founder 2026-11-03).
+  DateTime? _lastReconnectAt;
+  static const _reconnectCooldown = Duration(seconds: 45);
+
   /// Reconnect the live voice session so a just-saved model stack applies now:
   /// stop the current LiveKit room and start a fresh one, which re-runs
   /// `/bootstrap` → re-reads the saved stack (`VoiceSessionController.start` →
@@ -528,6 +534,18 @@ class AppCommandService {
         // No live call → `false`, and the backend tool tells the user it will
         // apply on their next call (`skills/set_model_stack.reconnect_voice`).
         if (!_hasActiveVoice()) return false;
+        // Circuit breaker against an infinite reconnect loop (founder
+        // 2026-11-03): the reconnected session is re-seeded with the "reconnect"
+        // transcript, so the agent can re-fire reconnect_voice. Refuse a second
+        // reconnect within the cooldown — this bounds LiveKit-minute burn on the
+        // device even if the backend one-shot guard ever misses. Instance state
+        // on the shared singleton, which survives the stop+start.
+        final last = _lastReconnectAt;
+        if (last != null &&
+            DateTime.now().difference(last) < _reconnectCooldown) {
+          return false;
+        }
+        _lastReconnectAt = DateTime.now();
         _afterAck = _reconnectVoice;
         return true;
       case 'tour_end':

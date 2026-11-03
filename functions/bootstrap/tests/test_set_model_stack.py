@@ -183,6 +183,34 @@ def test_reconnect_voice_is_honest_when_no_call_is_live(monkeypatch):
     assert "next voice call" in msg
 
 
+def test_reconnect_voice_is_one_shot_and_does_not_loop():
+    # Founder 2026-11-03: the reconnected session is re-seeded with the
+    # "reconnect" transcript and fired reconnect_voice AGAIN → infinite loop.
+    # The one-shot cooldown guard must make the SECOND call (the fresh session's
+    # re-fire) a no-op: no new reconnect command is queued.
+    db = _Db(ok=True)
+    msg1 = _run(set_model_stack._bind_reconnect_voice(db, "u1")())
+    assert db.store[_PENDING]["action"] == "reconnect_voice"
+    assert "Reconnecting now" in msg1
+    first_id = db.store[_PENDING]["id"]
+
+    # The fresh session calls it again immediately — must NOT queue a reconnect.
+    msg2 = _run(set_model_stack._bind_reconnect_voice(db, "u1")())
+    assert db.store[_PENDING]["id"] == first_id  # no new command queued
+    assert "already reconnecting" in msg2.lower()
+    assert "reconnecting now" not in msg2.lower()
+
+
+def test_failed_reconnect_does_not_mark_so_a_later_reconnect_still_works(monkeypatch):
+    # A genuinely-failed reconnect (no live call) must not arm the cooldown, so
+    # it can't block — nor retry-storm — a real reconnect afterwards.
+    monkeypatch.setattr(app_control, "_ACK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(app_control, "_ACK_POLL_SECONDS", 0.01)
+    db = _Db(ok=False)
+    _run(set_model_stack._bind_reconnect_voice(db, "u1")())
+    assert (db.store.get(_PROFILE) or {}).get("ayma_reconnect_requested_at") is None
+
+
 # --- registration -------------------------------------------------------------
 
 
