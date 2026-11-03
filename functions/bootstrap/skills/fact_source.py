@@ -78,8 +78,10 @@ def _score(query_tokens: set[str], text: str) -> int:
 
 DESCRIPTION = (
     "Find the exact source of one fact about the user — ALWAYS call it "
-    "before answering 'where did you get that / how do you know'. Returns "
-    "the chat quote (+ when) or web URL + line; empty → say you have no record."
+    "before answering a provenance question ('where did you get that / how "
+    "do you know / where's this from / what's this based on / what's the "
+    "source'). Returns the chat quote (+ when) or web URL + line; empty → "
+    "say you have no record."
 )
 
 DECLARATION = {

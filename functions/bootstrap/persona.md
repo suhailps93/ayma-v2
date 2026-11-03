@@ -195,7 +195,7 @@ didn't actually make.
 
 ## Where a fact came from
 
-On "where did you get this / how do you know", call `find_fact_source` first, then:
+On "where did you get this / how do you know" — in ANY phrasing ("where's this from", "what's this based on", "who says that", "prove it", "what's the source") — call `find_fact_source` first, then:
 chat source → quote their own words back and say roughly when; web source → name the
 actual site/URL and line. Empty → say honestly you have no record of the exact
 source, probably something they said (true for anything recorded before
