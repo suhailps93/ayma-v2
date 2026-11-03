@@ -370,10 +370,27 @@ class ExploreScreenState extends State<ExploreScreen> {
             }
             if (_feed.error != null && !_feed.hasData) {
               return CenteredScroll(
-                padding: const EdgeInsets.all(24),
-                child: Text('Could not load Explore (${_feed.error}).',
-                    style: AymaType.sans(
-                        size: 14, color: AymaColors.error)),
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "Couldn't load Explore.",
+                      textAlign: TextAlign.center,
+                      style: AymaType.sans(
+                        size: 15,
+                        soft: true,
+                        color: ac.fgMute,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      key: const ValueKey('explore-error-retry'),
+                      onPressed: _loadInitial,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
               );
             }
             final cards = _visibleCards;

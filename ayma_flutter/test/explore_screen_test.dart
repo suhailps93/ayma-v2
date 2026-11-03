@@ -653,7 +653,51 @@ void main() {
     expect(find.text('Marcus'), findsOneWidget);
   });
 
+  testWidgets(
+      'page-1 offline failure renders graceful error and Retry without leaking host (A7)',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
 
+    var fail = true;
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/explore') {
+          if (fail) {
+            throw const SocketException(
+                "Failed host lookup: 'ayma-api-staging-4qy2nxz2aa-uc.a.run.app'");
+          }
+          return http.Response(
+            jsonEncode({'cards': _cardMaps('Ash', 1), 'has_more': false}),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      }),
+    );
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    // Must show graceful error
+    expect(find.text("Couldn't load Explore."), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+
+    // Hostname and raw exception text must NEVER leak
+    expect(find.textContaining('ayma-api'), findsNothing);
+    expect(find.textContaining('ApiException'), findsNothing);
+    expect(find.textContaining('SocketException'), findsNothing);
+
+    // Tapping Retry recovers once network succeeds
+    fail = false;
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't load Explore."), findsNothing);
+    expect(find.text('Ash-0'), findsOneWidget);
+  });
 }
 
 ApiClient _pagedApi({
