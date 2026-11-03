@@ -497,6 +497,7 @@ _CONSENT_EXEMPT_PATHS = frozenset({
     "/welcome/token",
     "/instagram/signin-auth-url",
     "/instagram/signin",
+    "/auth/email-exists",
     "/notifications/token",
     "/notifications/token/remove",
 })
@@ -4166,6 +4167,39 @@ async def instagram_signin(req: InstagramSigninRequest) -> dict[str, object]:
         return await asyncio.to_thread(instagram.signin, get_db(), req.code)
     except instagram.InstagramError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class EmailExistsRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+@app.post("/auth/email-exists")
+async def auth_email_exists(req: EmailExistsRequest) -> dict[str, bool]:
+    """Whether a Firebase account holds this email — the sign-in screen's
+    oracle for telling "wrong password" (stay, say so) from "unknown email"
+    (offer sign-up). Unauthenticated by design: the caller isn't signed in
+    yet. No ``uid`` dependency — there is none yet.
+
+    The client cannot ask Firebase directly: under email-enumeration
+    protection both cases arrive as ``invalid-credential`` and
+    ``fetchSignInMethodsForEmail`` is blanked, so only the Admin SDK
+    (privileged, bypasses that protection) can answer truthfully. The
+    response carries nothing but the boolean — no uid, no profile data.
+    Tightened rate limit (``ratelimit.py``) slows bulk harvesting."""
+    email = req.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(
+            status_code=400, detail="Enter a valid email address."
+        )
+    try:
+        await asyncio.to_thread(_firebase_auth.get_user_by_email, email)
+    except _firebase_auth.UserNotFoundError:
+        return {"exists": False}
+    except Exception as exc:  # noqa: BLE001 - transient Admin SDK failure
+        raise HTTPException(
+            status_code=503, detail="Couldn't check that email."
+        ) from exc
+    return {"exists": True}
 
 
 @app.get("/google/auth-url")

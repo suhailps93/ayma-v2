@@ -1586,4 +1586,44 @@ void main() {
       }
     });
   });
+
+  test('emailExists() posts the email unauthenticated and returns the flag',
+      () async {
+    late http.Request captured;
+    final client = ApiClient(
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response(jsonEncode({'exists': true}), 200);
+      }),
+      // Signed OUT: the caller isn't authenticated yet — this must still work.
+      auth: MockFirebaseAuth(),
+    );
+
+    expect(await client.emailExists('Test1@Gmail.com '), isTrue);
+    expect(captured.url.path, '/auth/email-exists');
+    expect(captured.headers['Authorization'], isNull);
+    expect(jsonDecode(captured.body), {'email': 'Test1@Gmail.com '});
+  });
+
+  test('emailExists() returns false when the account is unknown', () async {
+    final client = ApiClient(
+      httpClient: MockClient((request) async {
+        return http.Response(jsonEncode({'exists': false}), 200);
+      }),
+      auth: MockFirebaseAuth(),
+    );
+
+    expect(await client.emailExists('nobody@example.com'), isFalse);
+  });
+
+  test('emailExists() throws ApiException on non-200', () async {
+    final client = ApiClient(
+      httpClient: MockClient((request) async {
+        return http.Response('boom', 503);
+      }),
+      auth: MockFirebaseAuth(),
+    );
+
+    expect(() => client.emailExists('a@b.com'), throwsA(isA<ApiException>()));
+  });
 }

@@ -144,7 +144,8 @@ flowchart LR
 **Gates every request passes.**
 - *Biometric consent* (`biometric_consent.py`): an app-wide FastAPI dependency answers 403
   `biometric_consent_required` for every authenticated route except `/health`, `/bootstrap`, `/age-gate/declare`,
-  `/biometric-consent*`, `/account/delete|recover`, `/welcome/token`, the Instagram sign-in pair and FCM push-token
+  `/biometric-consent*`, `/account/delete|recover`, `/welcome/token`, the Instagram sign-in pair, the email-exists
+  oracle (`/auth/email-exists`) and FCM push-token
   (de)registration (`/notifications/token`, `/notifications/token/remove` — a fresh sign-up registers its device
   token at startup, before the consent screen is done, and must get match/message pushes immediately; a token carries
   no biometric data and is scoped to the caller's own uid). `/bootstrap`

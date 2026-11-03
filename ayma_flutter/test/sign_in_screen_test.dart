@@ -76,12 +76,13 @@ Future<void> _acceptConsents(WidgetTester tester) async {
 }
 
 Future<void> _pump(WidgetTester tester, _FakeAuth auth,
-    {bool accept = true}) async {
+    {bool accept = true, ApiClient? apiClient}) async {
   tester.view.physicalSize = const Size(1100, 2400);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(MaterialApp(
-    home: SignInScreen(auth: auth, voiceController: _FakeVoice()),
+    home: SignInScreen(
+        auth: auth, voiceController: _FakeVoice(), apiClient: apiClient),
   ));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
@@ -89,10 +90,26 @@ Future<void> _pump(WidgetTester tester, _FakeAuth auth,
 }
 
 /// Opens the email stage (sign-in mode).
-Future<void> _openEmail(WidgetTester tester, _FakeAuth auth) async {
-  await _pump(tester, auth);
+Future<void> _openEmail(WidgetTester tester, _FakeAuth auth,
+    {ApiClient? apiClient}) async {
+  await _pump(tester, auth, apiClient: apiClient);
   await tester.tap(find.text('Email'));
   await tester.pump();
+}
+
+/// An ApiClient whose POST /auth/email-exists answers [exists] (or [status]),
+/// recording every email it was asked about in [asked].
+ApiClient _oracle({bool? exists, int status = 200, List<String>? asked}) {
+  return ApiClient(
+    httpClient: MockClient((req) async {
+      expect(req.url.path, '/auth/email-exists');
+      asked?.add((jsonDecode(req.body) as Map)['email'] as String? ?? '');
+      if (status != 200) return http.Response('boom', status);
+      return http.Response(jsonEncode({'exists': exists}), 200,
+          headers: {'content-type': 'application/json'});
+    }),
+    auth: MockFirebaseAuth(),
+  );
 }
 
 void main() {
@@ -378,17 +395,21 @@ void main() {
           .text;
 
   testWidgets(
-      'a failed email sign-in auto-switches into create mode: confirm field, '
-      'a nudge, a back-to-login toggle, typed values kept — no raw code leak',
+      'unknown email: invalid-credential + oracle says not-exists '
+      'auto-switches into create mode: confirm field, a nudge, '
+      'a back-to-login toggle, typed values kept — no raw code leak',
       (tester) async {
     final auth = _FakeAuth();
-    await _openEmail(tester, auth);
+    final asked = <String>[];
+    await _openEmail(tester, auth,
+        apiClient: _oracle(exists: false, asked: asked));
 
     // Starts in sign-in mode.
     expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Confirm password'), findsNothing);
 
-    // Newer Firebase lumps unknown-email AND wrong-password into this code.
+    // Newer Firebase lumps unknown-email AND wrong-password into this code —
+    // the oracle breaks the tie; here the email is unknown.
     auth.nextError = FirebaseAuthException(code: 'invalid-credential');
     await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
     await tester.enterText(
@@ -396,8 +417,9 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
     await tester.pump();
 
-    // The sign-in was attempted, then the UI flipped to create mode.
+    // The sign-in was attempted, the oracle was asked, then the UI flipped.
     expect(auth.calls, contains('signIn:a@b.com'));
+    expect(asked, ['a@b.com']);
     expect(find.widgetWithText(FilledButton, 'Create account'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Confirm password'), findsOneWidget);
     expect(
@@ -414,10 +436,39 @@ void main() {
   });
 
   testWidgets(
-      'user-not-found on sign-in also auto-switches into create mode',
+      'existing email + wrong password: invalid-credential + oracle says '
+      'exists STAYS on sign-in with a wrong-password error — never flips',
       (tester) async {
     final auth = _FakeAuth();
-    await _openEmail(tester, auth);
+    final asked = <String>[];
+    await _openEmail(tester, auth,
+        apiClient: _oracle(exists: true, asked: asked));
+
+    auth.nextError = FirebaseAuthException(code: 'invalid-credential');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Email'), 'test1@gmail.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'wrongpw1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    expect(auth.calls, contains('signIn:test1@gmail.com'));
+    expect(asked, ['test1@gmail.com']);
+    // Still the sign-in form: no confirm field, no Create-account button.
+    expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsNothing);
+    expect(find.text('That password is wrong — try again.'), findsOneWidget);
+    expect(find.textContaining('invalid-credential'), findsNothing);
+  });
+
+  testWidgets(
+      'user-not-found on sign-in auto-switches into create mode without '
+      'asking the oracle (the code itself means unknown email)',
+      (tester) async {
+    final auth = _FakeAuth();
+    final asked = <String>[];
+    await _openEmail(tester, auth,
+        apiClient: _oracle(exists: true, asked: asked));
 
     auth.nextError = FirebaseAuthException(code: 'user-not-found');
     await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
@@ -429,15 +480,59 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Create account'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Confirm password'), findsOneWidget);
     expect(find.textContaining('user-not-found'), findsNothing);
+    expect(asked, isEmpty);
   });
 
   testWidgets(
-      'email-already-in-use on the auto-switched create returns to sign-in '
+      'an explicit wrong-password error stays on sign-in with the '
+      'wrong-password message (no oracle needed)', (tester) async {
+    final auth = _FakeAuth();
+    final asked = <String>[];
+    await _openEmail(tester, auth,
+        apiClient: _oracle(exists: false, asked: asked));
+
+    auth.nextError = FirebaseAuthException(code: 'wrong-password');
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsNothing);
+    expect(find.text('That password is wrong — try again.'), findsOneWidget);
+    expect(asked, isEmpty);
+  });
+
+  testWidgets(
+      'oracle failure on a failed sign-in stays on sign-in with the generic '
+      'error — never flips on a guess', (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth, apiClient: _oracle(status: 503));
+
+    auth.nextError = FirebaseAuthException(code: 'invalid-credential');
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Confirm password'), findsNothing);
+    expect(
+      find.text('That email and password don’t match. New here? '
+          'Tap “Sign up” below.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'email-already-in-use on create returns to sign-in '
       'with a check-your-password nudge', (tester) async {
     final auth = _FakeAuth();
-    await _openEmail(tester, auth);
+    await _openEmail(tester, auth, apiClient: _oracle(exists: false));
 
-    // Wrong password on an existing account → arrives as invalid-credential →
+    // Unknown email → arrives as invalid-credential, oracle says not-exists →
     // auto-switch to create.
     auth.nextError = FirebaseAuthException(code: 'invalid-credential');
     await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
@@ -484,5 +579,62 @@ void main() {
       find.text('Too many attempts. Wait a minute and try again.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('the password field has a show/hide toggle that flips obscuring',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+
+    final field = find.widgetWithText(TextField, 'Password');
+    Finder toggle() =>
+        find.descendant(of: field, matching: find.byType(IconButton));
+
+    expect(tester.widget<TextField>(field).obscureText, isTrue);
+    expect(tester.widget<IconButton>(toggle()).tooltip, 'Show password');
+
+    await tester.tap(toggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(field).obscureText, isFalse);
+    expect(tester.widget<IconButton>(toggle()).tooltip, 'Hide password');
+
+    await tester.tap(toggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(field).obscureText, isTrue);
+  });
+
+  testWidgets(
+      'confirm-password has its own independent toggle (does not mirror '
+      'the password field)', (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+    await tester.tap(find.text('Don’t have an account? Sign up'));
+    await tester.pump();
+
+    final password = find.widgetWithText(TextField, 'Password');
+    final confirm = find.widgetWithText(TextField, 'Confirm password');
+    Finder passwordToggle() =>
+        find.descendant(of: password, matching: find.byType(IconButton));
+    Finder confirmToggle() =>
+        find.descendant(of: confirm, matching: find.byType(IconButton));
+
+    expect(tester.widget<TextField>(password).obscureText, isTrue);
+    expect(tester.widget<TextField>(confirm).obscureText, isTrue);
+
+    await tester.tap(passwordToggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(password).obscureText, isFalse);
+    expect(tester.widget<TextField>(confirm).obscureText, isTrue,
+        reason: 'toggling password must not affect confirm');
+
+    await tester.tap(confirmToggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(confirm).obscureText, isFalse);
+    expect(tester.widget<TextField>(password).obscureText, isFalse);
+
+    await tester.tap(confirmToggle());
+    await tester.pump();
+    expect(tester.widget<TextField>(confirm).obscureText, isTrue);
+    expect(tester.widget<TextField>(password).obscureText, isFalse);
   });
 }
