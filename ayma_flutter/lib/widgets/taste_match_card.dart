@@ -8,9 +8,20 @@ const _unavailable = 'Taste match unavailable right now.';
 
 /// Fetches the taste match for [otherUid]. Never throws: every failure
 /// becomes a [TasteMatchLoad.note], so the date-sim screen can't break.
+///
+/// The wait is bounded (§ SIMTASTE): the sim-screen card shows "Comparing…"
+/// until this resolves, while the match report renders resolved data with no
+/// wait — a hung fetch left the sim card spinning forever. The HTTP layer
+/// times out the POST itself, but the auth-token fetch ahead of it has no
+/// deadline, so this timeout (past the HTTP budget, so a slow-but-working
+/// Qloo resolve still renders) degrades only a true hang to the honest empty
+/// below — absent, never an error card (§ BUG A).
 Future<TasteMatchLoad> loadTasteMatch(ApiClient api, String otherUid) async {
   try {
-    return TasteMatchLoad.match(await api.tastePair(otherUid));
+    final match = await api
+        .tastePair(otherUid)
+        .timeout(api.longTimeout + const Duration(seconds: 5));
+    return TasteMatchLoad.match(match);
   } on NoTasteException catch (e) {
     return TasteMatchLoad.note(e.message);
   } catch (_) {
