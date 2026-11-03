@@ -400,6 +400,12 @@ void main() {
 
       await tester.tap(find.text('ask ayma'));
       await tester.pumpAndSettle();
+
+      // The partial sheet hides history turns until expanded (founder rule
+      // Nov 2026); expand to full screen to reveal the conversation and photo.
+      await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
+      await tester.pumpAndSettle();
+
       expect(find.text('Here is your image'), findsOneWidget);
 
       // Tap the transcript thumbnail (fire its handler directly — the
