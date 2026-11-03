@@ -84,6 +84,7 @@ class _FakeChatApi extends ApiClient {
     String screenDetail = '',
     String screenVisible = '',
     String clientMsgId = '',
+    bool tourContinuation = false,
   }) async {
     chatCalls.add({
       'message': message,
