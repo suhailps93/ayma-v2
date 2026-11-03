@@ -4,33 +4,26 @@ import 'package:ayma_flutter/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Flattens every RichText on screen to its plain string.
-String _plain(WidgetTester tester) => tester
-    .widgetList<RichText>(find.byType(RichText))
-    .map((rt) => rt.text.toPlainText())
-    .join('\n');
-
 void main() {
-  testWidgets('renders the Terms text', (tester) async {
+  testWidgets('opens the hosted Terms and does not render the bundled body',
+      (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
       home: const TermsScreen(),
     ));
     await tester.pumpAndSettle();
 
-    final text = _plain(tester);
-    expect(text, contains('Ayma Terms of Service'));
-    expect(text, contains('automatically analyses'));
-    expect(text, contains('facial analysis and physique'));
-    expect(text, contains('publicly available online'));
-    expect(text, contains('cannot turn this analysis off'));
-    // the stubbed sections have been filled in
-    expect(text, contains('Meet in public'));
-    expect(text, contains('Some AI features cost credits'));
-    // bold markup renders as bold, never as literal asterisks
-    expect(text, isNot(contains('**')));
-    expect(find.byKey(const Key('terms_key_points')), findsOneWidget);
-    expect(text, contains('Key points'));
+    // The screen is a launcher to the single hosted source, not a renderer.
+    expect(find.byKey(const Key('legal_link_open')), findsOneWidget);
+    expect(find.text('Open Terms of Service'), findsOneWidget);
+    expect(find.text(TermsScreen.url), findsOneWidget);
+    // The full Terms body (and its key-points box) is no longer bundled.
+    expect(find.byKey(const Key('terms_key_points')), findsNothing);
+    expect(find.textContaining('facial analysis and physique'), findsNothing);
+  });
+
+  test('points at the canonical hosted Terms URL', () {
+    expect(TermsScreen.url, 'https://ayma-ai.web.app/terms');
   });
 
   test('key points state the risky clauses plainly and in bold', () {
@@ -80,30 +73,17 @@ void main() {
     expect(kTermsText, isNot(contains('[PLACEHOLDER — legal review needed]')));
   });
 
-  // Regression (N6): the user-facing Terms must not leak the internal
+  // Regression (N6): the Terms source must not leak the internal
   // drafting / attorney-review reminders that lived in the source as
-  // `> **Note:** …` blockquotes. Each of these phrases was once rendered to
-  // users; none may ever render again.
+  // `> **Note:** …` blockquotes. Each of these phrases was once shipped; none
+  // may ever return to the canonical copy (the hosted page is generated from
+  // the same `docs/TERMS.md` → `kTermsText`).
   test('kTermsText contains no internal drafting notes', () {
     expect(kTermsText, isNot(contains('**Note:**')));
     expect(kTermsText, isNot(contains('A lawyer must still insert')));
     expect(kTermsText, isNot(contains('A lawyer should confirm')));
     expect(kTermsText, isNot(contains('registered address and governing')));
     expect(kTermsText, isNot(contains('postal address for formal')));
-  });
-
-  testWidgets('the rendered Terms screen shows no drafting notes',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: AymaTheme.light,
-      home: const TermsScreen(),
-    ));
-    await tester.pumpAndSettle();
-
-    final text = _plain(tester);
-    expect(text, isNot(contains('Note:')));
-    expect(text, isNot(contains('A lawyer')));
-    expect(text, isNot(contains('registered address')));
   });
 
   test('kTermsText covers the previously stubbed sections', () {
