@@ -23,8 +23,16 @@ Fields:
   ("tall" -> height_min_cm: 178; "petite" / "short" -> height_max_cm: 163;
   convert feet/inches, e.g. 6' -> 183)
 - weight_min_kg / weight_max_kg: integers in kilograms, if a weight is implied
+- keywords: array of lower-case strings representing search terms, interests,
+  hobbies, professions, lifestyle traits, or topics requested in the query that
+  are not captured by the fields above (e.g. "someone who loves pottery and quiet mornings"
+  -> ["pottery", "ceramic", "quiet mornings", "slow mornings"]). If the query
+  contains terms that cannot be mapped to any structured field (including arbitrary
+  or gibberish text like "asdfghjk"), return them in keywords.
 
 Return JSON with only the fields you're confident about. "blondes in their 30s"
 -> {"hair_color": "blonde", "age_min": 30, "age_max": 39}. "tall athletic guy"
 -> {"build": "athletic", "height_min_cm": 178}. "dark hair curly" ->
-{"hair_color": "black", "hair_type": "curly"}. If nothing maps, return {}.
+{"hair_color": "black", "hair_type": "curly"}. "someone who loves pottery and quiet mornings"
+-> {"keywords": ["pottery", "ceramic", "quiet mornings", "slow mornings"]}. "asdfghjk"
+-> {"keywords": ["asdfghjk"]}. If nothing maps, return {}.

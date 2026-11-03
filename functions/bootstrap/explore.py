@@ -34,6 +34,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from prompt import load_prompt_file
@@ -75,6 +77,10 @@ _NL_SCHEMA = {
         "height_max_cm": {"type": "integer"},
         "weight_min_kg": {"type": "integer"},
         "weight_max_kg": {"type": "integer"},
+        "keywords": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
     },
 }
 
@@ -115,6 +121,29 @@ _PHYSICAL_MIRROR_FILTER_KEYS = frozenset(
 )
 
 
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "and", "or", "in", "at", "of", "to", "for", "with",
+    "on", "by", "is", "are", "was", "were", "who", "whom", "whose", "which",
+    "what", "that", "this", "these", "those", "someone", "somebody", "anyone",
+    "anybody", "person", "people", "looking", "look", "loves", "love", "likes",
+    "like", "want", "wants", "seeking", "find", "show", "me",
+})
+
+
+def _extract_fallback_keywords(text: str) -> list[str]:
+    raw = text.strip().lower()
+    if not raw:
+        return []
+    words = [w for w in re.findall(r"[\w'-]+", raw) if w not in _STOP_WORDS]
+    out = []
+    if raw not in out:
+        out.append(raw)
+    for w in words:
+        if len(w) > 2 and w not in out:
+            out.append(w)
+    return out
+
+
 async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
     """One LLM call → the filter shape. ``{}`` on anything unclear or on error.
     Billed to ``uid`` in the token ledger (``explore`` feature)."""
@@ -132,7 +161,32 @@ async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
     except Exception:  # noqa: BLE001
         logger.exception("NL filter parse failed")
         return {}
-    return result if isinstance(result, dict) else {}
+
+    out = dict(result) if isinstance(result, dict) else {}
+    raw_kw = out.get("keywords")
+    keywords = (
+        [str(k).strip().lower() for k in raw_kw if str(k).strip()]
+        if isinstance(raw_kw, list)
+        else []
+    )
+    # When no keywords were returned by the model, extract fallback keywords
+    # if unmapped search terms remain in text.
+    if not keywords and text:
+        structured_vals = {
+            str(v).lower() for k, v in out.items() if k != "keywords" and v
+        }
+        candidate_kws = [
+            w for w in _extract_fallback_keywords(text)
+            if w not in structured_vals and not any(w in sv for sv in structured_vals)
+        ]
+        if candidate_kws:
+            keywords = candidate_kws
+
+    if keywords:
+        out["keywords"] = keywords
+    elif "keywords" in out:
+        out.pop("keywords")
+    return out
 
 
 _GENDER_ALIASES = {
@@ -155,8 +209,33 @@ def _is_test_fixture(uid: str, user_doc: dict) -> bool:
     return str(uid or "").startswith("demo-edge-")
 
 
+def _matches_keyword(corpus: str, kw: str) -> bool:
+    kw = kw.strip().lower()
+    if not kw or not corpus:
+        return False
+    if kw in corpus:
+        return True
+    parts = [w for w in re.findall(r"[\w'-]+", kw) if w not in _STOP_WORDS]
+    if not parts:
+        return False
+    if len(parts) == 1:
+        p = parts[0]
+        if p in corpus:
+            return True
+        if len(p) > 4 and p[:-1] in corpus:
+            return True
+        if len(p) > 5 and p[:-2] in corpus:
+            return True
+        return False
+    return all(p in corpus or (len(p) > 4 and p[:-1] in corpus) for p in parts)
+
+
 def _passes_filters(
-    profile: dict, filters: dict, *, public_fields: set[str] | None = None
+    profile: dict,
+    filters: dict,
+    *,
+    public_fields: set[str] | None = None,
+    extra_text: list[str] | None = None,
 ) -> bool:
     """``True`` when ``profile`` (a candidate being considered for someone
     else's Explore search) satisfies every set ``filters`` key.
@@ -244,6 +323,28 @@ def _passes_filters(
         filters.get("weight_max_kg"),
     ):
         return False
+
+    keywords = filters.get("keywords")
+    if not keywords and filters.get("q"):
+        keywords = _extract_fallback_keywords(filters["q"])
+    elif isinstance(keywords, str):
+        keywords = [keywords]
+
+    if keywords:
+        corpus_parts = [
+            str(profile.get("name") or ""),
+            str(profile.get("headline") or ""),
+            str(profile.get("location") or ""),
+        ]
+        if extra_text:
+            corpus_parts.extend(extra_text)
+        for k, v in profile.items():
+            if k.startswith("qz_") and isinstance(v, str):
+                corpus_parts.append(v)
+        corpus = " ".join(corpus_parts).lower()
+        if not any(_matches_keyword(corpus, k) for k in keywords if k):
+            return False
+
     return True
 
 
@@ -600,6 +701,46 @@ def _build_card(
     }
 
 
+def _fetch_candidates_wiki_text(db, uids: list[str]) -> dict[str, list[str]]:
+    """Public wiki page text for each candidate to evaluate search keywords."""
+    if not uids:
+        return {}
+
+    def _one(other_uid: str) -> tuple[str, list[str]]:
+        try:
+            pages = (
+                db.collection("users")
+                .document(other_uid)
+                .collection("wiki_pages")
+                .stream()
+            )
+            texts = []
+            for p in pages:
+                data = p.to_dict() or {}
+                if data.get("visibility") == "public" and not data.get("user_hidden"):
+                    title = str(data.get("title") or "")
+                    body = str(
+                        data.get("ai_body")
+                        or data.get("content")
+                        or data.get("body")
+                        or ""
+                    )
+                    if title or body:
+                        texts.append(f"{title} {body}")
+            return (other_uid, texts)
+        except Exception:
+            return (other_uid, [])
+
+    workers = min(len(uids), 8)
+    if workers > 1:
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                return dict(executor.map(_one, uids))
+        except Exception:
+            return {u: _one(u)[1] for u in uids}
+    return {uids[0]: _one(uids[0])[1]}
+
+
 def explore_page(
     db, uid: str, filters: dict, limit: int = _PAGE_DEFAULT,
     cursor: str | None = None,
@@ -642,6 +783,7 @@ def explore_page(
     cards: list[dict] = []
     seen: set[str] = set()
     exhausted = False
+    has_search = bool(filters.get("keywords") or filters.get("q"))
     for _ in range(_PAGE_MAX_ROUNDS):
         if len(cards) >= page_size:
             break
@@ -656,6 +798,7 @@ def explore_page(
         others = [s.id for s in batch if s.id not in seen]
         seen.update(others)
         docs = _hydrate_candidates(db, uid, others)
+        wiki_texts = _fetch_candidates_wiki_text(db, others) if has_search else {}
         passers: list[tuple[str, dict]] = []
         for other in others:
             # Explore lists everyone with a profile, the caller included — no
@@ -706,7 +849,12 @@ def explore_page(
                 if mirror_active
                 else None
             )
-            if not _passes_filters(prof, filters, public_fields=public_fields):
+            if not _passes_filters(
+                prof,
+                filters,
+                public_fields=public_fields,
+                extra_text=wiki_texts.get(other),
+            ):
                 continue
             passers.append((other, prof))
         media_jobs = [
@@ -737,7 +885,8 @@ def explore_page(
         # active search filters, exactly as before). Page 1 may then hold
         # one card over the page size; trimming would lose a scanned row.
         try:
-            if _passes_filters(me, filters):
+            me_wiki = _fetch_candidates_wiki_text(db, [uid]).get(uid) if has_search else None
+            if _passes_filters(me, filters, extra_text=me_wiki):
                 self_media_id = _first_media_id(me.get("photos"))
                 self_media = (
                     _media_paths(db, [(uid, self_media_id)]).get(uid)
@@ -789,8 +938,8 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
 
 def merge_filters(query_params: dict, nl_filters: dict) -> dict:
     """Explicit dropdown filters win over the NL parse."""
-    merged = {k: v for k, v in (nl_filters or {}).items() if v not in (None, "")}
-    merged.update({k: v for k, v in query_params.items() if v not in (None, "")})
+    merged = {k: v for k, v in (nl_filters or {}).items() if v not in (None, "", [])}
+    merged.update({k: v for k, v in query_params.items() if v not in (None, "", [])})
     return merged
 
 

@@ -222,10 +222,11 @@ class _SignInScreenState extends State<SignInScreen> {
   /// [onAuthError], when given, gets first look at a [FirebaseAuthException]:
   /// if it returns true it has handled the error (e.g. steered the user into
   /// another mode) and the default error toast is suppressed. Only the email
-  /// flows pass it; Google/Apple/phone keep the plain toast.
+  /// flows pass it; Google/Apple/phone keep the plain toast. It is async
+  /// because the sign-in handler may consult the server existence oracle.
   Future<void> _run(
     Future<UserCredential> Function() action, {
-    bool Function(FirebaseAuthException e)? onAuthError,
+    Future<bool> Function(FirebaseAuthException e)? onAuthError,
   }) async {
     if (_busy || !_consentsGiven) return;
     setState(() => _busy = true);
@@ -235,7 +236,7 @@ class _SignInScreenState extends State<SignInScreen> {
       if (!mounted) return;
       context.go(SplashScreen.path);
     } on FirebaseAuthException catch (e) {
-      if (onAuthError == null || !onAuthError(e)) {
+      if (onAuthError == null || !await onAuthError(e)) {
         _snack(_friendly(e), kind: AymaToastKind.error);
       }
     } on GoogleSignInException catch (e) {
@@ -299,18 +300,51 @@ class _SignInScreenState extends State<SignInScreen> {
     );
   }
 
-  /// A failed *sign-in*. Under email-enumeration protection newer Firebase
-  /// reports both an unknown email and a wrong password as `invalid-credential`
-  /// (and older ones as `user-not-found`), so instead of dead-ending on a
-  /// toast we guide the user straight into sign-up: switch to create mode,
-  /// keep the typed email + password, reveal and focus the confirm field, and
-  /// show a friendly nudge. If it was actually a wrong password on an existing
-  /// account, the create attempt comes back `email-already-in-use` and
-  /// [_onCreateError] sends them back to sign-in — so both cases stay correct.
-  bool _onSignInError(FirebaseAuthException e) {
-    if (e.code != 'user-not-found' && e.code != 'invalid-credential') {
-      return false;
+  /// A failed *sign-in*. The explicit codes decide directly: `user-not-found`
+  /// means an unknown email (offer sign-up), `wrong-password` means an
+  /// existing account with a mistyped password (stay, say so). But under
+  /// email-enumeration protection newer Firebase reports BOTH as
+  /// `invalid-credential` — and the client cannot break that tie itself
+  /// (`fetchSignInMethodsForEmail` is blanked) — so for that code we ask the
+  /// server existence oracle (`POST /auth/email-exists`, Admin SDK) and only
+  /// flip to sign-up when the email genuinely has no account. A wrong
+  /// password on an existing account therefore never flips modes (founder
+  /// bug: the flip read as "this login doesn't exist"). If the oracle itself
+  /// fails we stay put with the generic error — never flip on a guess.
+  Future<bool> _onSignInError(FirebaseAuthException e) async {
+    if (e.code == 'user-not-found') {
+      _flipToCreate();
+      return true;
     }
+    if (e.code == 'wrong-password') {
+      _snack('That password is wrong — try again.',
+          kind: AymaToastKind.error);
+      return true;
+    }
+    if (e.code != 'invalid-credential') return false;
+    final email = _email.text.trim();
+    bool exists;
+    try {
+      exists =
+          await (widget.apiClient ?? ApiClient()).emailExists(email);
+    } catch (_) {
+      if (!mounted) return true;
+      _snack(_friendly(e), kind: AymaToastKind.error);
+      return true;
+    }
+    if (!mounted) return true;
+    if (exists) {
+      _snack('That password is wrong — try again.',
+          kind: AymaToastKind.error);
+      return true;
+    }
+    _flipToCreate();
+    return true;
+  }
+
+  /// Switch to create mode, keeping the typed email + password, revealing and
+  /// focusing the confirm field, and showing the friendly nudge.
+  void _flipToCreate() {
     setState(() {
       _createMode = true;
       _resetSentTo = null;
@@ -319,14 +353,12 @@ class _SignInScreenState extends State<SignInScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _confirmFocus.requestFocus();
     });
-    return true;
   }
 
   /// A failed *create*: an `email-already-in-use` means the account exists, so
-  /// the earlier sign-in failure was a mistyped password, not a new user —
-  /// switch back to sign-in so they can correct it rather than stay stuck on
-  /// the sign-up form.
-  bool _onCreateError(FirebaseAuthException e) {
+  /// switch back to sign-in so they can correct the password rather than stay
+  /// stuck on the sign-up form.
+  Future<bool> _onCreateError(FirebaseAuthException e) async {
     if (e.code != 'email-already-in-use') return false;
     setState(() {
       _createMode = false;

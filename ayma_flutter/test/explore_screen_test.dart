@@ -577,6 +577,83 @@ void main() {
     expect(find.text('A'), findsOneWidget); // the placeholder initial
   });
 
+  testWidgets(
+      'submitting search updates the grid and reaches empty state on no match',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final queries = <String?>[];
+    final api = _api((uri) {
+      final q = uri.queryParameters['q'];
+      queries.add(q);
+      if (q == 'pottery') {
+        return [
+          {
+            'uid': 'daniel',
+            'name': 'Daniel',
+            'age': 32,
+            'location': 'Seattle',
+          },
+        ];
+      }
+      if (q == 'asdfghjk') {
+        return [];
+      }
+      return [
+        {
+          'uid': 'daniel',
+          'name': 'Daniel',
+          'age': 32,
+          'location': 'Seattle',
+        },
+        {
+          'uid': 'marcus',
+          'name': 'Marcus',
+          'age': 35,
+          'location': 'Austin',
+        },
+      ];
+    });
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    // Initially shows both profiles
+    expect(find.text('Daniel'), findsOneWidget);
+    expect(find.text('Marcus'), findsOneWidget);
+
+    // 1. Submit search query "pottery" via keyboard search action
+    await tester.enterText(find.byType(TextField), 'pottery');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+
+    expect(queries, contains('pottery'));
+    expect(find.text('Daniel'), findsOneWidget);
+    expect(find.text('Marcus'), findsNothing);
+
+    // 2. Submit gibberish query "asdfghjk" via prefix search icon
+    await tester.enterText(find.byType(TextField), 'asdfghjk');
+    await tester.tap(find.byTooltip('Search'));
+    await tester.pumpAndSettle();
+
+    expect(queries, contains('asdfghjk'));
+    // Issue 4 (F9): clean empty state reached
+    expect(find.text('No one matches that yet.'), findsOneWidget);
+    expect(find.text('Daniel'), findsNothing);
+    expect(find.text('Marcus'), findsNothing);
+
+    // 3. Tap clear suffix icon
+    await tester.tap(find.byTooltip('Clear'));
+    await tester.pumpAndSettle();
+
+    // Search cleared, feed returns
+    expect(find.text('Daniel'), findsOneWidget);
+    expect(find.text('Marcus'), findsOneWidget);
+  });
+
+
 }
 
 ApiClient _pagedApi({
