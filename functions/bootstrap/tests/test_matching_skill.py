@@ -509,6 +509,40 @@ def test_stated_answers_block_carries_dealbreakers_but_not_sensitive_text():
     assert matching_skill._stated_answers_block("B", {}).endswith("none yet")
 
 
+def test_llm_contents_labels_each_side_with_their_first_name():
+    # G8: the report must say "Sofia"/"Jordan", never "A"/"B" — so the model
+    # is told which side is which by name.
+    structured = {"dimensions": {}, "gate_failures": []}
+    out = matching_skill._llm_contents(
+        "wa", "wb", [], [], "long-term", structured, [],
+        name_a="Sofia", name_b="Jordan",
+    )
+    assert "WIKI A (Sofia):" in out
+    assert "WIKI B (Jordan):" in out
+
+
+def test_score_pair_hands_the_model_both_first_names(monkeypatch):
+    _patch_wiki(monkeypatch)
+    cap = {}
+    monkeypatch.setattr(gemini, "generate_json", _fake_llm(capture=cap))
+    db = _Db({
+        "a": _user(profile={"name": "Sofia Ruiz"}),
+        "b": _user(profile={"name": "Jordan Lee"}),
+    })
+    out = _run(matching_skill.score_pair(db, "a", "b"))
+    assert "WIKI A (Sofia):" in cap["contents"]
+    assert "WIKI B (Jordan):" in cap["contents"]
+    # The result carries the first-names marker `main` persists, so pre-names
+    # docs are recognised as legacy and silently recomputed on next open.
+    assert out["names_in_narrative"] is True
+
+
+def test_matching_prompt_directs_first_names_never_letters():
+    prompt = matching_skill._load_prompt()
+    assert "first name" in prompt
+    assert "Never call them" in prompt
+
+
 def test_llm_contents_includes_both_stated_answer_blocks():
     structured = {"dimensions": {}, "gate_failures": []}
     out = matching_skill._llm_contents(

@@ -6082,16 +6082,24 @@ def _match_doc_is_complete(d: dict | None) -> bool:
     """A stored ``matches/{id}`` doc counts as a COMPLETE, cacheable report
     only when the full scorer (`matching_skill.score_pair` via `_match_job`)
     wrote it — a score *plus* the structured breakdown (`structured_score`,
-    `method`). The demo seed once wrote score-only "lite" docs (no dimension
-    breakdown, no `structured_score`/`method`); those must be treated as a
-    cache MISS so the report is recomputed via the full pipeline rather than
-    served half-empty (bugs F/H). A complete doc is served instantly and only
-    recomputed when the caller forces it (the "Recalculate" button) OR its
-    inputs changed since it was scored (``_match_doc_is_stale`` — a silent
-    background recompute, bug F staleness invalidation)."""
+    `method`) *plus* the first-names narrative marker (`names_in_narrative`).
+    The demo seed once wrote score-only "lite" docs (no dimension breakdown,
+    no `structured_score`/`method`); those must be treated as a cache MISS so
+    the report is recomputed via the full pipeline rather than served
+    half-empty (bugs F/H). Likewise a pre-names doc (scored before § G8, so
+    its narrative says "A"/"B") is a cache MISS — served as-is this once and
+    silently recomputed in the background, so the next open shows names. A
+    complete doc is served instantly and only recomputed when the caller
+    forces it (the "Recalculate" button) OR its inputs changed since it was
+    scored (``_match_doc_is_stale`` — a silent background recompute, bug F
+    staleness invalidation)."""
     if not d or d.get("score") is None:
         return False
-    return d.get("structured_score") is not None and bool(d.get("method"))
+    return (
+        d.get("structured_score") is not None
+        and bool(d.get("method"))
+        and d.get("names_in_narrative") is True
+    )
 
 
 def _latest_ts(*values):
@@ -6199,6 +6207,7 @@ async def _match_job(uid: str, other: str, *, notify: bool = True) -> None:
         "confidence_note": result.get("confidence_note") or "",
         "method": result.get("method") or "",
         "trust_flags": result["trust_flags"],
+        "names_in_narrative": bool(result.get("names_in_narrative")),
         "updated_at": _server_ts(),
     }
     if not ref.get().exists:
@@ -6317,8 +6326,9 @@ async def match_report(
     the pair has never been scored.
 
     A complete, still-fresh stored report is served as-is (no recompute — bug
-    F). A stale "lite" doc (score only, no dimension breakdown), OR a complete
-    doc whose scored inputs changed since it was computed
+    F). A stale "lite" doc (score only, no dimension breakdown), a pre-names
+    doc (scored before § G8 — narrative says "A"/"B"), OR a complete doc
+    whose scored inputs changed since it was computed
     (``_match_doc_is_stale`` — e.g. a party narrowed their age range), is
     served as-is this once but silently recomputed in the background via the
     full scorer, so the next open is correct (bugs F/H)."""
