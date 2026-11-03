@@ -242,7 +242,7 @@ class AymaTabBar extends StatelessWidget {
       return key == null ? child : KeyedSubtree(key: key, child: child);
     }
 
-    Widget tab(int i) => anchored(
+    Widget tab(int i, double hPad) => anchored(
       i,
       _AymaTab(
       label: _labels[i],
@@ -259,11 +259,11 @@ class AymaTabBar extends StatelessWidget {
       onHold: i == 0 ? onOrbLongPress : null,
       boxSize: i == 0 ? orbBox : _iconBoxSize,
       padding: i == 0
-          ? const EdgeInsets.symmetric(
-              horizontal: 12,
+          ? EdgeInsets.symmetric(
+              horizontal: hPad,
               vertical: _orbVerticalPadding,
             )
-          : EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 8 : 12),
+          : EdgeInsets.symmetric(horizontal: hPad, vertical: compact ? 8 : 12),
       icon: i == 0
           ? _QuietBadge(
               // The badge shows only while quiet; otherwise this is just
@@ -306,32 +306,46 @@ class AymaTabBar extends StatelessWidget {
         top: false,
         child: Padding(
           padding: EdgeInsets.symmetric(vertical: compact ? 4 : 6),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              for (final i in _visualOrder.take(_visualOrder.length - 1))
-                tab(i),
-              anchored(
-                kBellAnchor,
-                _AymaTab(
-                  label: 'Notifications',
-                  onTap: () {
-                    if (notificationsActive) return;
-                    context.push(NotificationCenterScreen.path);
-                  },
-                  boxSize: _iconBoxSize,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: compact ? 8 : 12,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Narrow-window taper (Scout P1: `wm size 720x1280` @ 420dpi is
+              // 274px logical, but the fixed row is 280px wide). Each of the 5
+              // tabs carries this padding on both sides, so shrinking it from
+              // 12 toward 4 buys up to 80px; at 280px and above it stays
+              // exactly 12, so every normal width renders pixel-identical.
+              final hPad = constraints.hasBoundedWidth
+                  ? ((constraints.maxWidth - (orbBox + 4 * _iconBoxSize)) / 10)
+                        .clamp(4.0, 12.0)
+                        .toDouble()
+                  : 12.0;
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  for (final i in _visualOrder.take(_visualOrder.length - 1))
+                    tab(i, hPad),
+                  anchored(
+                    kBellAnchor,
+                    _AymaTab(
+                      label: 'Notifications',
+                      onTap: () {
+                        if (notificationsActive) return;
+                        context.push(NotificationCenterScreen.path);
+                      },
+                      boxSize: _iconBoxSize,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: hPad,
+                        vertical: compact ? 8 : 12,
+                      ),
+                      icon: NotificationBellButton(
+                        compact: true,
+                        iconColor: ac.fgMute,
+                      ),
+                    ),
                   ),
-                  icon: NotificationBellButton(
-                    compact: true,
-                    iconColor: ac.fgMute,
-                  ),
-                ),
-              ),
-              tab(_visualOrder.last),
-            ],
+                  tab(_visualOrder.last, hPad),
+                ],
+              );
+            },
           ),
         ),
       ),
