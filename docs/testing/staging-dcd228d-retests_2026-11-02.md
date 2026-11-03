@@ -40,3 +40,6 @@ Seeded demo pairs share the full questionnaire, so their reports are 7/7 measure
 ## Notes
 - At 19:57 PT a token-helper script briefly re-launched the privacy pack runner; it was stopped within the minute. Four extra probe pairs (19:57) sit in Daniel's staging chat history alongside run 3's; all four visible replies were correct refusals. No verdict impact.
 - One new notification arrived during the G8 opens (badge 10 → 11).
+
+## Addendum — R2-C8a (fix 696ac04): PASS
+Run 20:13–20:16 PT on the same build. Baseline GET /appearance/eligibility for Daniel: face = seed_face.png + seed_body.png; body = seed_body.png + seed_candid.png (4 entries). Shared a clear face portrait in the Ayma chat (stored as uploads/demo-test1/chat_1793679228463.jpg; Ayma received and described it). Eligibility re-probed afterwards: pool identical, same media ids — the chat-shared photo is NOT in the appearance pool. Note: one stray truncated user record ("Quick check, what is", 04:13:49Z) sits next to the share in chat history — possibly a late pair from the 19:57 accidental privacy-runner start; no such process is running now. No verdict impact.
