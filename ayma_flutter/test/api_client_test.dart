@@ -51,6 +51,7 @@ void main() {
       'screen_route': '',
       'screen_detail': '',
       'screen_visible': '',
+      'tour_continuation': false,
     });
   });
 
@@ -179,6 +180,7 @@ void main() {
       'screen_route': '',
       'screen_detail': '',
       'screen_visible': '',
+      'tour_continuation': false,
     });
   });
 
