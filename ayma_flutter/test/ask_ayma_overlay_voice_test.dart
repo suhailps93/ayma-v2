@@ -307,6 +307,14 @@ void main() {
     final composer = tester.widget<ChatComposer>(find.byType(ChatComposer));
     expect(composer.mode, ComposerMode.text);
 
+    // The partial sheet lists no history (founder rule, Nov 2026) — expand
+    // before asserting on the rendered transcript. Bounded pumps (the
+    // 320ms expand animation), not `pumpAndSettle`, for the same
+    // repeating-ticker reason as the loop above.
+    await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
     // The transcribed line and the reply both landed in the transcript.
     // (Scoped to the transcript list: the same "Make this more concise"
     // quick chip also pins above the composer once turns exist — § D13.)

@@ -146,8 +146,8 @@ void main() {
 
   testWidgets(
     'partial -> full -> partial is one continuous surface: same ChatScreen '
-    'State, transcript and composer text throughout; chip dropped only '
-    'while full',
+    'State, transcript and composer text throughout; history listed only '
+    'while full, chip dropped only while full',
     (tester) async {
       _phoneViewport(tester);
       final api = await _historyOnlyApi();
@@ -195,7 +195,9 @@ void main() {
       final message = _inSheet(
         find.textContaining('Zzqq hello from the call', findRichText: true),
       );
-      expect(message, findsOneWidget);
+      // Docked: the turn is in the store (same state throughout) but not
+      // listed — founder rule, Nov 2026.
+      expect(message, findsNothing);
       await tester.enterText(_inSheet(find.byType(TextField)), 'draft msg');
       String composerText() => tester
           .widget<TextField>(_inSheet(find.byType(TextField)))
@@ -218,6 +220,7 @@ void main() {
       expect(find.byKey(_modalHandle), findsOneWidget);
       expect(sheet.isExpanded, isTrue);
       expect(tester.state(_inSheet(find.byType(ChatScreen))), same(chatState));
+      // Full: the whole conversation lists, same state, nothing re-mounted.
       expect(message, findsOneWidget);
       expect(composerText(), 'draft msg');
       expect(find.text(_chip), findsNothing);
@@ -230,7 +233,8 @@ void main() {
       expect(_sheetRect(tester).top, closeTo(dockedTop, 1));
       expect(sheet.isExpanded, isFalse);
       expect(tester.state(_inSheet(find.byType(ChatScreen))), same(chatState));
-      expect(message, findsOneWidget);
+      // Collapsed again: history stands down once more.
+      expect(message, findsNothing);
       expect(composerText(), 'draft msg');
       expect(find.text(_chip), findsOneWidget);
       expect(find.byKey(_expandButton), findsOneWidget);
