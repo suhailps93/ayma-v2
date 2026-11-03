@@ -142,14 +142,37 @@ async def register_media(
         ) from exc
 
     if req.context == "profile":
-        # A profile-grid photo isn't "added" yet at this point — it only
-        # becomes visible via POST /media/photos or /media/photos/batch,
-        # which run the batched Appearance pipeline
-        # (appearance.run_batch_photos) themselves. Triggering analysis here
-        # too used to double-analyse every profile upload (register + grid
-        # add) — one of the causes of the old "7+ history entries from 4
-        # photos" bug (§ appearance report v2).
-        pass
+        # Put the approved photo on the grid HERE, server-side, so it reliably
+        # reaches PF_PHOTOS (what schema.analysis_photo_entries — and therefore
+        # the Appearance pre-run sheet and every re-run — reads). Gridding used
+        # to depend on a SEPARATE client call (POST /media/photos[/batch]) after
+        # this register returns; a slow iPhone HEIC/HEIF whose register request
+        # times out client-side (or whose fire-and-forget grid-add is dropped)
+        # left the photo uploaded + approved but NEVER gridded — the founder's
+        # "re-run isn't taking my latest images, it's still the old one" bug: an
+        # un-gridded photo can't appear in /appearance/eligibility, so the user
+        # can't select it and the re-run analyses the old set (the Oct-24
+        # orphan HEIF reproduced this exactly). Doing it here makes gridding
+        # immune to a dropped/timed-out client round-trip, for every format the
+        # pipeline can decode. Idempotent (add_photo no-ops when already on the
+        # grid, so a client that still calls /media/photos[/batch] just finds it
+        # present) and best-effort (an at-cap / not-approved add is swallowed,
+        # never failing the upload). Analysis stays DEFERRED to the explicit
+        # /media/photos[/batch] call — so a normal add still analyses exactly
+        # once (no double-analyse, § appearance report v2), while a dropped call
+        # just means the next Appearance re-run picks the now-gridded photo up.
+        if result.get("published") and result.get("media_id"):
+            try:
+                await asyncio.to_thread(
+                    photo_ops.add_photo, get_db(), uid, str(result["media_id"])
+                )
+            except ValueError:
+                # at the photo cap / already present / not approved for display
+                pass
+            except Exception:  # noqa: BLE001 - never let auto-grid fail the upload
+                logger.exception(
+                    "media: auto-grid on profile register failed for %s", uid
+                )
     else:
         # A chat/DM attachment never goes through the grid — this is its
         # only analysis trigger, so keep it here. Auto-analysis (§ auto

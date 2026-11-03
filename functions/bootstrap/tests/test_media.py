@@ -364,3 +364,146 @@ def test_media_502_when_pipeline_fails(monkeypatch):
         json={"storage_path": "uploads/u-7/x.jpg"},
     )
     assert resp.status_code == 502
+
+
+# --- newly-added photo reliably reaches the grid (founder bug: "re-run isn't
+# taking my latest images") -------------------------------------------------
+
+
+class _MediaSnap:
+    def __init__(self, data):
+        self._data = data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data is not None else None
+
+
+class _MediaDocRef:
+    def __init__(self, store, key):
+        self._store, self._key = store, key
+
+    def get(self):
+        return _MediaSnap(self._store.get(self._key))
+
+    def set(self, payload, merge=False):
+        cur = dict(self._store.get(self._key) or {}) if merge else {}
+        cur.update(payload)
+        self._store[self._key] = cur
+
+    def collection(self, name):
+        return _MediaCollRef(self._store, self._key + (name,))
+
+
+class _MediaCollRef:
+    def __init__(self, store, key):
+        self._store, self._key = store, key
+
+    def document(self, name):
+        return _MediaDocRef(self._store, self._key + (name,))
+
+
+class _MediaFakeDb:
+    def __init__(self):
+        self.docs = {}
+
+    def collection(self, name):
+        return _MediaCollRef(self.docs, (name,))
+
+
+def test_profile_register_auto_grids_an_approved_heif_so_rerun_sees_it(monkeypatch):
+    # § appearance re-run staleness (founder, 2026-11-02, live): "Whenever I
+    # rerun the appearance report it's not taking the latest images, it's still
+    # the old one." Root cause reproduced from his staging specimen: a HEIF
+    # (photo_1792823550768_0.heif) uploaded + approved but NEVER entered
+    # PF_PHOTOS, because gridding depended on a SEPARATE client call after
+    # register — dropped for a slow HEIF. An un-gridded photo is invisible to
+    # schema.analysis_photo_entries, so the Appearance re-run can't analyse it.
+    # POST /media (context=profile, approved) must now put the photo on the grid
+    # itself, so the newest image reliably enters the analysis set.
+    import schema
+    import photo_ops
+
+    db = _MediaFakeDb()
+    heif_path = "uploads/u-7/photo_1792823550768_0.heif"
+
+    async def _fake_process(_db, uid, storage_path, context, **kw):
+        # The pipeline creates the approved user_media doc (as it did for the
+        # real orphan) — so the auto-grid step has an approved photo to add.
+        _MediaDocRef(db.docs, ("users", uid, schema.USER_MEDIA, "m-heif")).set(
+            {
+                "storage_path": storage_path,
+                "source": "profile",
+                schema.MEDIA_MODERATION_STATUS: schema.MEDIA_STATUS_APPROVED,
+                "attributes": {"shot_type": "full_body"},
+            }
+        )
+        return {
+            "media_id": "m-heif",
+            "moderation_status": schema.MEDIA_STATUS_APPROVED,
+            "published": True,
+            "reason": "",
+            "attributes": {"shot_type": "full_body"},
+            "caption": "",
+            "embedding": [0.1, 0.2],
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _fake_process)
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={"storage_path": heif_path, "context": "profile"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["media_id"] == "m-heif"
+
+    # The HEIF is now on the grid — WITHOUT a separate POST /media/photos call.
+    grid = photo_ops.list_photos(db, "u-7")
+    assert [p["media_id"] for p in grid] == ["m-heif"], (
+        "an approved profile upload must auto-grid so a dropped client grid-add "
+        "can't orphan it (this assertion fails without the fix)"
+    )
+    # ...and therefore it is in the set the Appearance analysis / pre-run sheet
+    # reads, so a re-run takes the latest image.
+    prof = (
+        db.collection("users").document("u-7")
+        .collection("profile").document("main").get().to_dict()
+    )
+    entries = schema.analysis_photo_entries(prof)
+    assert "m-heif" in [e.get("media_id") for e in entries]
+
+
+def test_profile_register_does_not_grid_a_flagged_photo(monkeypatch):
+    # The auto-grid is gated on approval: a moderation-flagged profile upload
+    # must never land on the public grid.
+    import schema
+    import photo_ops
+
+    db = _MediaFakeDb()
+
+    async def _fake_process(_db, uid, storage_path, context, **kw):
+        return {
+            "media_id": "m-bad",
+            "moderation_status": "flagged",
+            "published": False,
+            "reason": "nope",
+            "attributes": None,
+            "caption": "",
+            "embedding": None,
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _fake_process)
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={"storage_path": "uploads/u-7/bad.heic", "context": "profile"},
+    )
+    assert resp.status_code == 200
+    assert photo_ops.list_photos(db, "u-7") == []
