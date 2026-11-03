@@ -27,6 +27,7 @@ from . import (
     face_report,
     fact_source,
     followup,
+    guided_tour,
     physical_attributes,
     questionnaire,
     read_dm_thread,
@@ -63,6 +64,9 @@ _REGISTRY: list[Skill] = [
     # Ayma changes her OWN model stack (brain / voice mode / realtime model) and
     # reconnects the live call to apply it — in both text and voice (§13.9/§13.10).
     *set_model_stack.SKILLS,
+    # Ayma-driven interactive tour (§11.2b): start / advance / stop the guided,
+    # step-by-step walkthrough — in both text and voice.
+    *guided_tour.SKILLS,
     record_feedback.SKILL,
     report_bug.SKILL,
     user_steering.SKILL,

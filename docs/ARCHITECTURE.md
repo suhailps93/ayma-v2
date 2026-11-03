@@ -1655,6 +1655,40 @@ The tour is an **interactive coach-mark / spotlight walkthrough** that steps the
 - **Reduced motion.** Honours `MediaQuery.disableAnimationsOf`: the pulsing spotlight ring is dropped and the overlay renders static.
 - **Layout + tests.** The coach-mark overlay has a `test/support/layout_targets.dart` overlay entry (long copy + scale 2.0 stress the callout's wrap/scroll safety; the always-pulsing ring means the matrix never `pumpAndSettle`s it). Tests: `test/coach_mark_overlay_test.dart` (spotlights a target by key + shows its copy, Next advances, a missing-target step is skipped without crashing, Skip/last-step mark every shown id seen and finish, spotlight framing, reduced-motion, **tapping the cutout presses through to the real widget AND advances**, **tapping the dimmed scrim is absorbed — no press-through, no advance**, **the `home_orb` anchor resolves to the orb not the Messages/envelope tab icon** [Bug A], **the callout persists across a route push** [Bug B — the root-overlay guarantee], **the callout renders without overflow at text scale 2.0** [Bug C]), `test/feature_tour_gate_test.dart` (`decideTour`: first-run full vs new-feature spotlight vs nothing; stale ids ignored; content ids unique + a `tab` always has an anchor), `test/feature_tour_seen_state_test.dart` (the Firestore round-trip: `arrayUnion` accumulates, reset clears, other fields untouched), `test/developer_screen_test.dart` (the reset action returns to the shell with a pending full-tour `TourRequest`), and `test/splash_routing_test.dart` (no tour detour at the splash).
 
+### 11.2b Ayma-driven interactive tour (she walks you through, as built 2026-11-02)
+
+The §11.2a tour is **passive** — it auto-shows and the user reads/taps on their own. The **Ayma-driven tour** is the same spotlight engine, but **Ayma drives it conversationally**: when the user asks to be shown around ("walk me through the app", "give me a tour"), Ayma — in **text chat or on a voice call** — opens each page in a **predefined order**, says what to tap, **spotlights that control**, **waits for the user to actually tap it**, then continues to the next step. It is additive: the passive tour is untouched, and all voice stays on LiveKit (the tour issues no inference; it reuses the app-command loop).
+
+- **The script is data, reusing the anchor registry.** The ordered steps live in `functions/bootstrap/app_registry.json` under **`guided_tour`** (the single source of truth, read by `app_registry.guided_tour_steps()`), each `{anchor, tab?, headline, say}` — `anchor` a `TourAnchors` id (§11.2a), `tab` the shell `IndexedStack` index (or absent for a nav-bar anchor). The `guided_tour` key also registers the two new client actions (`tour_step`, `tour_end`). No new route, no new anchor keys — it reuses the nine existing anchors (composer, Explore/Messages/You tabs, the Profile Story/Appearance/Ayma-settings rows, the bell, the orb).
+- **Three tools, one step per call (so Ayma narrates in her own voice between steps).** `skills/guided_tour.py` exposes `start_guided_tour`, `advance_guided_tour(skip=False)` and `stop_guided_tour`, registered in `skills/__init__._REGISTRY` so they reach **both** text (`session_tool_declarations`) and voice (`make_livekit_tools`); descriptions load from `prompts/{start,advance,stop}_guided_tour.md`; persona guidance is in `persona.md`. A single blocking call could never narrate per step, so the loop is: **start** spotlights step 0 and returns its line → Ayma speaks it → **advance** waits for the tap on the current step, then spotlights the next and returns its line → Ayma speaks it → … → advance past the last step ends the tour. `skip=true` moves on without a tap ("skip"/"next"); `stop_guided_tour` ends it.
+- **Reuses the app-command loop + the press-through tap signal.** Each step is a `tour_step` command queued at `users/{uid}/app_commands/pending` (`_queue_command`); the client acks `ok:true` once the spotlight is up or `ok:false` (`reason:"anchor_absent"`) so the backend **skips a missing anchor honestly, never hanging**. The user's tap comes back on a dedicated **`tour_event`** doc (`{index, event:"tapped"|"stop"}`) that `advance_guided_tour` polls (`_await_tour_event`, bounded by `_TAP_TIMEOUT_SECONDS` = 110s, under the 120s text tool cap; a lapse returns an honest "still waiting", and the persisted event is picked up by the next advance so progress is never lost). The current step index is held on a **`tour_state`** doc so each tool call knows where the tour is. The tap itself is the **existing** `CoachMarkOverlay` press-through (`_HoleGate` + `Listener`, §11.2a) — tapping the highlighted control performs its real action AND fires the signal — so no tap detection was reinvented.
+- **Client: one driven step at a time.** `tour_step` routes (like `ui_action`) to `AppCommandService._runTourStep`, which builds a one-step `GuidedTourStep` and shows it via `GuidedTourController` (a `ChangeNotifier` singleton). `TourHost` renders it through the **same** `CoachMarkOverlay` in driven mode (`onAnchorShown`/`onAnchorAbsent`/`onAnchorTapped`/`onStopPressed`, `hideNextButton:true` — the only way forward is tapping the real control; "Skip tour" ends the whole tour), reusing `_prepareStep` (pop to shell + `TabRequest`). Driven mode writes no seen-state (the passive tour's `FeatureTourStore` is untouched). `tour_end` dismisses the overlay. The driven overlay is pumped in the layout matrix (`test/support/layout_targets.dart`).
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Ayma (agent)
+    participant S as skills/guided_tour.py
+    participant F as Firestore app_commands
+    participant C as Client (overlay)
+    U->>A: "walk me through the app"
+    A->>S: start_guided_tour()
+    S->>F: tour_step{index:0, anchor, tab, say}
+    F->>C: spotlight step 0
+    C->>F: ack ok:true (or ok:false → skip)
+    S-->>A: "say: <line 0>"
+    A-->>U: speaks line 0 (spotlight up)
+    U->>C: taps the highlighted control
+    C->>F: tour_event{index:0, event:"tapped"}
+    A->>S: advance_guided_tour()
+    S->>F: (reads tapped) tour_step{index:1, …}
+    S-->>A: "say: <line 1>"
+    A-->>U: speaks line 1 …
+    Note over S,F: last step → tour_end, "tour complete"
+```
+
+- **Tests.** Backend `functions/bootstrap/tests/test_guided_tour.py` (start spotlights step 0; advance moves on **only after** the tap event, else reports honestly without moving; skip; a client-reported absent anchor is skipped; completing issues `tour_end`; stop ends it; registered in both surfaces). Client `ayma_flutter/test/guided_tour_test.dart` (driven engine: spotlight + Next hidden + real-tap press-through reports tapped, missing anchor reports absent, Skip reports stop; `GuidedTourController`; and the **full loop** through `AppCommandService` on `fake_cloud_firestore` — `tour_step` acks ok:true then a tap writes a tapped `tour_event`, an absent anchor acks ok:false, Skip writes a stop event, `tour_end` dismisses).
+
 **Startup resilience (as built, 2026-10-26).** `/bootstrap` is the first network the app does, so a transient DNS/connectivity blip must never leave the splash spinning forever (founder-reported hang). `ApiClient.bootstrap` puts explicit deadlines on both halves — the Firebase ID-token refresh (12s) and the POST itself (15s) — and maps a timeout, a `ClientException`, or a Firebase `network-request-failed` to a connection-class `ApiException` (no `statusCode`). `SplashScreen._resolve` then:
 
 - **Distinguishes network from auth.** Only a real `401`/`403` routes to sign-in; a connection-class failure (no status, or a 5xx) is retried, so a flaky network never discards a signed-in user's session.

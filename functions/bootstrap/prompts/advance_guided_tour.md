@@ -1,0 +1,3 @@
+Continue the Ayma-driven tour to the next step. Call this right after you've said the current step's line, during an active guided tour (started with start_guided_tour).
+
+By default it WAITS until the user taps the control you highlighted, then opens and highlights the next step and returns its line for you to say — so keep calling it after each line until the tour ends. It tells you honestly when the user hasn't tapped yet (don't pretend they moved on), when they ended it, and when the last step is done. Pass skip=true to move on without a tap because the user said "skip" or "next". If the user says "stop" or "quit", call stop_guided_tour instead.

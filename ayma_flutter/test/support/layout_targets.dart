@@ -553,6 +553,52 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
             ),
           ),
         ),
+    // The Ayma-DRIVEN tour's single spotlighted step (§11.2b): the same
+    // coach-mark engine in driven mode — one step, the Next button hidden (the
+    // user advances by tapping the real control). Long copy + scale 2.0 stress
+    // the callout the same way; its pulse ring means no `pumpAndSettle`.
+    'guided tour step (driven spotlight, no Next)': (context) =>
+        Navigator.of(context).push(
+          PageRouteBuilder<void>(
+            opaque: false,
+            pageBuilder: (_, __, ___) => Stack(
+              children: [
+                Positioned(
+                  left: 24,
+                  bottom: 24,
+                  child: SizedBox(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    width: 64,
+                    height: 64,
+                  ),
+                ),
+                Positioned.fill(
+                  child: CoachMarkOverlay(
+                    onFinish: () {},
+                    spotlight: true,
+                    hideNextButton: true,
+                    onAnchorShown: () {},
+                    onAnchorAbsent: () {},
+                    onAnchorTapped: () {},
+                    onStopPressed: () {},
+                    features: const [
+                      TourFeature(
+                        featureId: 'guided_tour_matrix',
+                        headline: 'A guided-tour step with a deliberately long '
+                            'headline that must wrap at text scale 2.0',
+                        subtitle: 'Now tap the highlighted control — a long '
+                            'driven-tour line to stress wrapping on a narrow '
+                            'screen while the Next button is hidden.',
+                        icon: Icons.tour_outlined,
+                        anchorId: TourAnchors.homeOrb,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

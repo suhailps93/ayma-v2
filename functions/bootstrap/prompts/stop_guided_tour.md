@@ -1,0 +1,1 @@
+End the Ayma-driven tour. Call this when the user asks to stop, quit, end or exit the guided walkthrough while it's running. It dismisses the highlight and closes out the tour. Takes no arguments. Acknowledge warmly and let them know they can ask for the tour again anytime.

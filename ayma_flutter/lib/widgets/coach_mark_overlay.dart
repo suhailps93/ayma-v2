@@ -53,6 +53,11 @@ class CoachMarkOverlay extends StatefulWidget {
     this.onPrepareStep,
     this.resolveRect = TourAnchors.rectFor,
     this.maxMeasureAttempts = 40,
+    this.onAnchorShown,
+    this.onAnchorAbsent,
+    this.onAnchorTapped,
+    this.onStopPressed,
+    this.hideNextButton = false,
   });
 
   /// The ordered steps to walk through.
@@ -84,6 +89,36 @@ class CoachMarkOverlay extends StatefulWidget {
   /// step can ride out a route-pop transition + scroll-into-view; tests inject
   /// a small value so a genuinely-missing anchor skips within a few pumps.
   final int maxMeasureAttempts;
+
+  // --- Ayma-driven tour hooks (§11.2b) — all null/false in the passive tour,
+  // so its behaviour is unchanged. When set, one [CoachMarkOverlay] renders a
+  // single backend-pushed step and reports back to the driver instead of
+  // walking a local list.
+
+  /// Fired once when this step's spotlight is up (its anchor resolved, or a
+  /// centered step with no anchor) — the driver acks the step as shown.
+  final VoidCallback? onAnchorShown;
+
+  /// Fired when this step's anchor can't be resolved after
+  /// [maxMeasureAttempts] frames. When set, this REPLACES the passive "skip to
+  /// the next local step" so the driver can ack an honest absence and move on;
+  /// when null, the overlay advances its own list as before.
+  final VoidCallback? onAnchorAbsent;
+
+  /// Fired when the user taps the spotlighted control (the press-through
+  /// hole-tap). When set, this REPLACES the passive local advance — the real
+  /// widget still acted (it was never blocked); the driver records the tap and
+  /// the backend sends the next step. When null, a hole-tap advances the list.
+  final VoidCallback? onAnchorTapped;
+
+  /// What "Skip tour" does in driven mode — end the whole guided tour (the
+  /// driver signals the backend). When null, Skip finishes the local tour as
+  /// before (writing seen-state).
+  final VoidCallback? onStopPressed;
+
+  /// Hide the "Next" CTA so the only way forward is tapping the real control
+  /// (driven mode). Skip stays, so the user can always leave.
+  final bool hideNextButton;
 
   @override
   State<CoachMarkOverlay> createState() => _CoachMarkOverlayState();
@@ -156,6 +191,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
           _rect = null;
           _ready = true;
         });
+        widget.onAnchorShown?.call();
         return;
       }
       // Scroll the target into view when it lives in a scrollable (a Profile
@@ -183,6 +219,13 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
           _measureAfterFrame(feature, attempt: attempt + 1);
           return;
         }
+        // Driven mode: hand the absence to the driver (it acks honestly and the
+        // backend skips the step) instead of advancing a local list.
+        final onAbsent = widget.onAnchorAbsent;
+        if (onAbsent != null) {
+          onAbsent();
+          return;
+        }
         _advance();
         return;
       }
@@ -201,6 +244,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
         _rect = rect;
         _ready = true;
       });
+      widget.onAnchorShown?.call();
     });
   }
 
@@ -244,7 +288,16 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     _downInHole = null;
     if (down == null || _finishing) return;
     final hole = _holeRect;
-    if (hole != null && hole.contains(event.position)) _advance();
+    if (hole == null || !hole.contains(event.position)) return;
+    // Driven mode: the real control just acted; tell the driver so the backend
+    // sends the next step — don't advance a local list.
+    final onTapped = widget.onAnchorTapped;
+    if (onTapped != null) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      onTapped();
+      return;
+    }
+    _advance();
   }
 
   Future<void> _finish() async {
@@ -310,7 +363,10 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
       isLast: isLast,
       finishing: _finishing,
       onNext: _advance,
-      onSkip: _finish,
+      // Driven mode: "Skip tour" ends the whole guided tour via the driver;
+      // otherwise it finishes the local tour (writing seen-state) as before.
+      onSkip: widget.onStopPressed ?? _finish,
+      hideNext: widget.hideNextButton,
     );
     final size = MediaQuery.sizeOf(context);
     // The card is always centered HORIZONTALLY (a centred Align + a capped
@@ -398,6 +454,7 @@ class _CalloutCard extends StatelessWidget {
     required this.finishing,
     required this.onNext,
     required this.onSkip,
+    this.hideNext = false,
   });
 
   final TourFeature feature;
@@ -408,6 +465,10 @@ class _CalloutCard extends StatelessWidget {
   final bool finishing;
   final VoidCallback onNext;
   final VoidCallback onSkip;
+
+  /// Hide the Next CTA (driven mode — the user advances by tapping the real
+  /// highlighted control, not a button).
+  final bool hideNext;
 
   @override
   Widget build(BuildContext context) {
@@ -485,27 +546,29 @@ class _CalloutCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    key: const ValueKey('coach-next'),
-                    onPressed: finishing ? null : onNext,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: ac.accent,
-                      foregroundColor: ac.onAccent,
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-                      shape: const StadiumBorder(),
-                      textStyle: AymaType.sans(size: 15, weight: FontWeight.w600),
-                    ),
-                    child: Text(
-                      isLast ? (spotlight ? 'Got it' : 'Done') : 'Next',
+              if (!hideNext) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      key: const ValueKey('coach-next'),
+                      onPressed: finishing ? null : onNext,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: ac.accent,
+                        foregroundColor: ac.onAccent,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 22, vertical: 12),
+                        shape: const StadiumBorder(),
+                        textStyle: AymaType.sans(size: 15, weight: FontWeight.w600),
+                      ),
+                      child: Text(
+                        isLast ? (spotlight ? 'Got it' : 'Done') : 'Next',
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ],
