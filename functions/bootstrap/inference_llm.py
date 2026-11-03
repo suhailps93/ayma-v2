@@ -60,6 +60,10 @@ class InferenceResponse:
     # next request (carries Gemini thought signatures in ``extra_content``).
     assistant_message: dict = field(default_factory=dict)
     usage_metadata: SimpleNamespace = field(default_factory=SimpleNamespace)
+    # OpenAI ``finish_reason`` for the choice ("stop", "length", "tool_calls",
+    # …). A ``length`` here with empty ``text`` means the completion budget was
+    # spent before any visible content (thinking model burned it on reasoning).
+    finish_reason: str | None = None
 
 
 def _mint_token() -> str:
@@ -196,6 +200,7 @@ def _parse(raw) -> InferenceResponse:
         function_calls=calls,
         assistant_message=assistant,
         usage_metadata=_usage(raw.usage),
+        finish_reason=getattr(choice, "finish_reason", None),
     )
 
 

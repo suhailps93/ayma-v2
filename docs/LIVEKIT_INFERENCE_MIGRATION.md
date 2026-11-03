@@ -274,6 +274,7 @@ Nothing was flipped, deployed or purchased.
 | `LLM_PERCENT_JSON`, `_VISION`, `_CHAT`, `_VOICE` | `100` | rollout share when routed to Inference |
 | `LLM_INFERENCE_FALLBACK` | `true` (`false` on `all-features-on`) | Inference failure/timeout -> one retry on Google |
 | `INFERENCE_JSON_MODEL`, `INFERENCE_CHAT_MODEL` | `google/gemini-3.7-flash` | model ids (same locked model) |
+| `INFERENCE_CHAT_MAX_TOKENS` | `8192` | completion budget for an Inference chat call; the chat model is a *thinking* model whose `completion_tokens` also counts reasoning, so this must leave room for visible content after it reasons — too small (1024) burned the whole budget on reasoning against Ask-Ayma's ~17-18k-token prompt and returned empty content (`gemini.py` `RuntimeError: Gemini returned an empty response.` → user-facing `_CHAT_INCOMPLETE_REPLY`). On an empty response whose `finish_reason == "length"`, chat retries once at 2× this budget before failing honestly — still 100% on LiveKit, no provider reroute. |
 | `INFERENCE_LIVE_MODEL` | `google/gemini-3.8-live` | |
 | `LIVEKIT_INFERENCE_URL` | `https://agent-gateway.livekit.cloud/v1` | non-secret |
 | `INFERENCE_TIMEOUT_SECONDS` | `75` | |

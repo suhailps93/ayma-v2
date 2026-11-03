@@ -114,3 +114,18 @@ def test_meta_cascade_tts_vendor_is_env_overridable(monkeypatch):
     cfg = config._load()
     assert cfg.meta_cascade_tts_model == "rime/mistv2"
     assert cfg.meta_cascade_tts_voice == "cove"
+
+
+def test_inference_chat_max_tokens_defaults_to_8192(monkeypatch):
+    # The chat model is a thinking model whose completion budget also pays for
+    # reasoning tokens; the default must leave room for visible content after
+    # the model reasons (1024 burned the whole budget on reasoning -> empty).
+    monkeypatch.delenv("INFERENCE_CHAT_MAX_TOKENS", raising=False)
+    cfg = config._load()
+    assert cfg.inference_chat_max_tokens == 8192
+
+
+def test_inference_chat_max_tokens_env_override(monkeypatch):
+    monkeypatch.setenv("INFERENCE_CHAT_MAX_TOKENS", "12000")
+    cfg = config._load()
+    assert cfg.inference_chat_max_tokens == 12000

@@ -20,7 +20,7 @@ import token_ledger
 from config import CONFIG
 
 
-def _resp(text="", calls=None, usage=(10, 5, 15, 0)):
+def _resp(text="", calls=None, usage=(10, 5, 15, 0), finish_reason=None):
     p, c, t, cached = usage
     return inference_llm.InferenceResponse(
         text=text,
@@ -30,6 +30,7 @@ def _resp(text="", calls=None, usage=(10, 5, 15, 0)):
             prompt_token_count=p, candidates_token_count=c,
             total_token_count=t, cached_content_token_count=cached,
         ),
+        finish_reason=finish_reason,
     )
 
 
@@ -218,6 +219,121 @@ def test_chat_web_search_is_a_function_tool_backed_by_grounded_research(
     assert [t["function"]["name"] for t in tools_seen["tools"]] == ["web_search"]
     assert out.text == "The Chiefs."
     assert out.tools_used == ["Searched the web"]
+
+
+def test_chat_passes_configured_completion_budget(monkeypatch):
+    # The budget is a single source in config.py, never a literal in gemini.py.
+    _cfg(monkeypatch, llm_route_chat="inference", gemini_web_search=False,
+         inference_chat_max_tokens=8192)
+    seen = {}
+
+    async def fake_complete(**kw):
+        seen.update(kw)
+        return _resp("hello")
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    out = asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert out.text == "hello"
+    assert seen["max_tokens"] == 8192
+
+
+def test_chat_throws_when_completion_budget_not_configured(monkeypatch):
+    _cfg(monkeypatch, llm_route_chat="inference", gemini_web_search=False,
+         inference_chat_max_tokens=0)
+
+    async def fake_complete(**kw):  # pragma: no cover - must not be reached
+        raise AssertionError("gateway must not be called without a budget")
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    with pytest.raises(RuntimeError):
+        asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+
+
+def test_parse_captures_finish_reason():
+    raw = SimpleNamespace(
+        choices=[SimpleNamespace(
+            finish_reason="length",
+            message=SimpleNamespace(content="", tool_calls=None),
+        )],
+        usage=None,
+    )
+    assert inference_llm._parse(raw).finish_reason == "length"
+
+
+def test_chat_empty_length_retries_once_with_a_larger_budget(monkeypatch):
+    _cfg(monkeypatch, llm_route_chat="inference", gemini_web_search=False,
+         inference_chat_max_tokens=8192)
+    budgets = []
+    replies = [
+        _resp("", finish_reason="length"),  # all budget spent on reasoning
+        _resp("Here you go."),              # room to answer at 2x
+    ]
+
+    async def fake_complete(**kw):
+        budgets.append(kw["max_tokens"])
+        return replies.pop(0)
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    out = asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert out.text == "Here you go."
+    assert budgets == [8192, 16384]  # one retry at 2x, no loop
+
+
+def test_chat_empty_length_retry_still_empty_raises(monkeypatch):
+    _cfg(monkeypatch, llm_route_chat="inference", gemini_web_search=False,
+         inference_chat_max_tokens=8192)
+    calls = []
+
+    async def fake_complete(**kw):
+        calls.append(kw["max_tokens"])
+        return _resp("", finish_reason="length")
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    with pytest.raises(RuntimeError):
+        asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert calls == [8192, 16384]  # tried once more, then gave up honestly
+
+
+def test_chat_empty_non_length_does_not_retry_and_raises(monkeypatch):
+    _cfg(monkeypatch, llm_route_chat="inference", gemini_web_search=False,
+         inference_chat_max_tokens=8192)
+    calls = []
+
+    async def fake_complete(**kw):
+        calls.append(kw["max_tokens"])
+        return _resp("", finish_reason="stop")  # genuinely empty, not truncated
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    with pytest.raises(RuntimeError):
+        asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert calls == [8192]  # no retry for a non-length empty
+
+
+def test_chat_non_empty_response_passes_straight_through(monkeypatch):
+    _cfg(monkeypatch, llm_route_chat="inference", gemini_web_search=False,
+         inference_chat_max_tokens=8192)
+    calls = []
+
+    async def fake_complete(**kw):
+        calls.append(kw["max_tokens"])
+        return _resp("All good.", finish_reason="stop")
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    out = asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert out.text == "All good."
+    assert calls == [8192]  # no retry when content is present
 
 
 def test_chat_first_call_failure_falls_back_to_vertex(monkeypatch):

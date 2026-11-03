@@ -141,6 +141,18 @@ flowchart LR
 `llm_percent_*` and `llm_allowlist_*` narrow each route; `llm_fallback_to_google` is OFF on this branch
 (an Inference failure is logged at ERROR and raised). Details: `docs/LIVEKIT_INFERENCE_MIGRATION.md`.
 
+**Inference chat completion budget.** The chat model on the gateway is a *thinking* model, and its
+`completion_tokens` includes reasoning tokens (`inference_llm._usage`). The completion budget is a single
+config knob, `inference_chat_max_tokens` (`INFERENCE_CHAT_MAX_TOKENS`, default **8192**) — never a literal
+in `gemini.py`. It must leave room for visible content *after* the model reasons: a budget too small (the
+old `1024`) against Ask-Ayma's ~17-18k-token prompt let the model spend the whole budget on reasoning and
+return empty `content`, which raised `RuntimeError: Gemini returned an empty response.` and surfaced the
+`_CHAT_INCOMPLETE_REPLY` ("Sorry — I couldn't finish that just now.") — a real bug, not a transport error,
+so it correctly stayed on LiveKit. `inference_llm._parse` now captures the OpenAI `finish_reason`; when a
+chat response comes back empty with `finish_reason == "length"` (budget truncation), `gemini.generate_reply`
+retries **once** at 2× the budget before raising honestly. Everything stays on LiveKit — never a provider
+reroute to work around an empty response.
+
 **Gates every request passes.**
 - *Biometric consent* (`biometric_consent.py`): an app-wide FastAPI dependency answers 403
   `biometric_consent_required` for every authenticated route except `/health`, `/bootstrap`, `/age-gate/declare`,

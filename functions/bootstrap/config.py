@@ -377,6 +377,14 @@ class Config:
     inference_chat_model: str
     """LiveKit Inference model id for chat when routed to Inference."""
 
+    inference_chat_max_tokens: int
+    """Completion-token budget for a LiveKit Inference chat call. The chat model
+    is a *thinking* model and ``completion_tokens`` counts reasoning tokens, so
+    this budget must leave room for visible content *after* the model reasons —
+    a value too small (e.g. 1024 against Ask-Ayma's ~17-18k-token prompt) burns
+    the whole budget on reasoning and returns empty content.
+    ``INFERENCE_CHAT_MAX_TOKENS`` (default 8192)."""
+
     llm_inference_fallback: bool
     """When a LiveKit Inference text call fails (rate limit, credits
     exhausted, outage), retry it once on Vertex instead of failing the user.
@@ -1189,6 +1197,9 @@ def _load() -> Config:
         ),
         inference_chat_model=os.getenv(
             "INFERENCE_CHAT_MODEL", "google/gemini-3.7-flash"
+        ),
+        inference_chat_max_tokens=int(
+            os.getenv("INFERENCE_CHAT_MAX_TOKENS", "8192")
         ),
         llm_inference_fallback=os.getenv(
             "LLM_INFERENCE_FALLBACK", "false"

@@ -250,10 +250,17 @@ async def _reply_events_inference(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_content})
 
-    async def _call():
+    chat_max_tokens = CONFIG.inference_chat_max_tokens
+    if not chat_max_tokens:
+        raise RuntimeError(
+            "INFERENCE_CHAT_MAX_TOKENS is not configured — config.py must "
+            "provide inference_chat_max_tokens (no inline default here)."
+        )
+
+    async def _call(max_tokens: int = chat_max_tokens):
         return await inference_llm.complete(
             model=model, messages=messages, tools=tools,
-            temperature=0.9, max_tokens=1024, reasoning_effort=effort,
+            temperature=0.9, max_tokens=max_tokens, reasoning_effort=effort,
         )
 
     token_ledger.check(uid)
@@ -324,7 +331,33 @@ async def _reply_events_inference(
 
     text = strip_inline_refs(response.text.strip())
     if not text:
-        raise RuntimeError("Gemini returned an empty response.")
+        usage = response.usage_metadata
+        logger.warning(
+            "chat: empty inference content — finish_reason=%s prompt=%s "
+            "completion=%s max_tokens=%s",
+            response.finish_reason,
+            getattr(usage, "prompt_token_count", None),
+            getattr(usage, "candidates_token_count", None),
+            chat_max_tokens,
+        )
+        # A thinking model can spend the whole completion budget on reasoning
+        # and emit no visible content; the gateway reports that as a "length"
+        # truncation. Retry ONCE with a larger budget (no loop) before giving
+        # up — stays entirely on LiveKit Inference, no provider reroute.
+        if (response.finish_reason or "").lower() == "length":
+            retry_max_tokens = chat_max_tokens * 2
+            logger.warning(
+                "chat: retrying once on LiveKit Inference with max_tokens=%s "
+                "after length truncation", retry_max_tokens,
+            )
+            response = await _call(retry_max_tokens)
+            token_ledger.record(
+                uid, feature, response, model=model,
+                session_id=session_id or None,
+            )
+            text = strip_inline_refs(response.text.strip())
+        if not text:
+            raise RuntimeError("Gemini returned an empty response.")
     yield {"type": "reply", "text": text, "tools_used": used}
 
 
