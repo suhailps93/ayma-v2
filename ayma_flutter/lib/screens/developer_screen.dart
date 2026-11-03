@@ -52,6 +52,9 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   DevPanelSession get _session => widget.session ?? DevPanelSession.instance;
   final _password = TextEditingController();
+
+  /// Show/hide toggle for the developer password field; starts obscured.
+  bool _obscurePassword = true;
   late Future<UsageSummary> _usage = _api.usage();
   bool _unlocking = false;
   bool _reloading = false;
@@ -315,12 +318,19 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       TextField(
         key: const ValueKey('dev-password'),
         controller: _password,
-        obscureText: true,
+        obscureText: _obscurePassword,
         enableSuggestions: false,
         autocorrect: false,
         onSubmitted: (_) => _unlock(),
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: 'Developer password',
+          suffixIcon: IconButton(
+            tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+            icon: Icon(
+                _obscurePassword ? Icons.visibility_off : Icons.visibility),
+            onPressed: () =>
+                setState(() => _obscurePassword = !_obscurePassword),
+          ),
         ),
       ),
       const SizedBox(height: 16),
