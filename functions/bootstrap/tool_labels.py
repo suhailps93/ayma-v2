@@ -85,6 +85,15 @@ TOOL_LABELS = {
     "app_action": "Did that for you",
     "account_action": "Handled your account request",
     "ui_action": "Did that on your screen",
+    # Model stack (skills/set_model_stack.py)
+    "set_brain": "Switched Ayma's brain",
+    "set_voice_mode": "Changed the voice mode",
+    "set_realtime_model": "Changed the voice model",
+    "reconnect_voice": "Reconnected the call",
+    # Guided tour (skills/guided_tour.py)
+    "start_guided_tour": "Started the tour",
+    "advance_guided_tour": "Moved to the next step",
+    "stop_guided_tour": "Ended the tour",
 }
 
 
@@ -183,6 +192,15 @@ WORKING_LABELS = {
     "open_profile": "Opening their profile…",
     "open_message_thread": "Opening that conversation…",
     "app_action": "Doing that…",
+    # Model stack (skills/set_model_stack.py)
+    "set_brain": "Switching Ayma's brain…",
+    "set_voice_mode": "Changing the voice mode…",
+    "set_realtime_model": "Changing the voice model…",
+    "reconnect_voice": "Reconnecting the call…",
+    # Guided tour (skills/guided_tour.py)
+    "start_guided_tour": "Starting the tour…",
+    "advance_guided_tour": "Moving to the next step…",
+    "stop_guided_tour": "Ending the tour…",
 }
 
 
