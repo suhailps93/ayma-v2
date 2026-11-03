@@ -818,7 +818,8 @@ _PROVENANCE_PATTERNS = (
     # Acme" (a correction) must not fire.
     r"\b(what|which|where|show|give|gave|share|see|saw|post|send|sent|quote"
     r"|have|has|had|got|gotten|please|links?)\b.{0,25}\bsources?\b",
-    r"\bsources?\b.{0,6}([?]|$)",  # trailing "source?" / bare "source"
+    r"\bsources?\b\s*,?\s*please\b",  # "source please"
+    r"\bsources?\b\s*\??\s*$",  # trailing "source?" / bare "source"
 )
 _PROVENANCE_RES = tuple(re.compile(p, re.IGNORECASE) for p in _PROVENANCE_PATTERNS)
 

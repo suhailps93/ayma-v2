@@ -40,6 +40,11 @@ see each module's own docstring for the write side):
 Every candidate is scored by simple keyword overlap against ``query`` and the
 top few are returned; ``matches: []`` when nothing overlaps — Ayma is
 instructed (persona.md) to say so honestly rather than invent a source.
+
+In a sheet scoped to one report item (bound with ``report_id``/``target``),
+a bare provenance question — "where's this from", which carries no content
+tokens at all — additionally resolves deictically to the focused item's
+stored source, leading the list (#28).
 """
 
 from __future__ import annotations
@@ -401,12 +406,46 @@ def _appearance_matches(db, uid: str, qtok: set[str]) -> list[dict]:
     return out
 
 
-def _bind(db, uid: str) -> Callable[..., str]:
+def _focused_match(db, uid: str, report_id: str, target: str) -> dict | None:
+    """The sheet's focused report item as a ``web_search`` match — ``None``
+    when no item is in focus or it has no stored source (#28)."""
+    if not report_id or not target:
+        return None
+    import deep_dive  # lazy: mirrors `import question_tree` below
+
+    try:
+        found = deep_dive.focused_item_source(db, uid, report_id, target)
+    except Exception:  # noqa: BLE001 - a lookup failure is "no focused source"
+        return None
+    if not found or not found.get("url"):
+        return None
+    return {
+        "type": "web_search",
+        "exact": True,
+        "field": "",
+        "quote": str(found.get("quote") or found["url"]),
+        "url": found["url"],
+        "when": str(found.get("when") or ""),
+    }
+
+
+def _bind(
+    db, uid: str, *, report_id: str = "", target: str = ""
+) -> Callable[..., str]:
     def find_fact_source(query: str) -> str:
         import json
 
         qtok = _tokens(query)
-        if not qtok:
+        focused = None
+        if report_id and target:
+            import deep_dive  # lazy: mirrors `import question_tree` below
+
+            if deep_dive.is_provenance_question(query):
+                # In a sheet, deictic "this" binds to the focused item — it
+                # leads even when the question names other content too (that
+                # match stays in the list for the model to disambiguate).
+                focused = _focused_match(db, uid, report_id, target)
+        if not qtok and focused is None:
             return "give me a short description of the fact to trace"
         matches = (
             _profile_matches(db, uid, qtok)
@@ -418,6 +457,9 @@ def _bind(db, uid: str) -> Callable[..., str]:
         matches.sort(key=lambda m: m["_score"], reverse=True)
         for m in matches:
             m.pop("_score", None)
+        if focused is not None:
+            matches = [m for m in matches if m.get("url") != focused["url"]]
+            matches.insert(0, focused)
         top = matches[:_MAX_MATCHES]
         return json.dumps({"matches": top}, ensure_ascii=False)
 

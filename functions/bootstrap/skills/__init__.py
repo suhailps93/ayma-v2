@@ -203,8 +203,9 @@ def make_session_tool_fns(
     ``report_bug`` (so a bug report gets the screenshot attached to the same
     turn, if any, with no separate upload step); ``deep_dive_ctx``
     (``report_id`` / ``target``) adds and binds the deep-dive report
-    correct/remove tools; ``appearance_ctx`` (``finding_id``) adds and binds
-    the Appearance report correct/clear tools; ``image_result`` (the same
+    correct/remove tools, and binds ``find_fact_source``'s focused-item
+    fallback to the same item (#28); ``appearance_ctx`` (``finding_id``)
+    adds and binds the Appearance report correct/clear tools; ``image_result`` (the same
     mutable ``main._ChatCtx.photo_edit_result`` sink ``photo_ctx["result"]``
     carries) binds the text-only ``generate_image`` tool's delivery — the
     generated image's ``image_path``/``image_url`` land there for the caller
@@ -218,6 +219,8 @@ def make_session_tool_fns(
     for s in (_REGISTRY + _recall_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
+        elif s.name == "find_fact_source" and deep_dive_ctx:
+            out[s.name] = s.bind(db, uid, **deep_dive_ctx)
         elif s.name in (
             "analyze_physical_attributes", "run_appearance_report", "report_bug"
         ):
