@@ -1,9 +1,11 @@
 """``deep_dive`` — a consented web lookup on a named person (§ deep dive).
 
-Either the user on themselves ("search me so I don't have to repeat it") or on
-someone they're about to meet. Returns a digest for Ayma to walk through with
-the user; confirmations flow into the wiki through normal ingest. Never runs
-unprompted, never on a third party the user isn't meeting.
+The user on themselves ("search me so I don't have to repeat it"), on someone
+they're about to meet, or on any Ayma member whose profile they've opened (a
+match, an Explore profile, anyone in the current chat/screen context). Returns
+a digest for Ayma to walk through with the user; confirmations flow into the
+wiki through normal ingest. Never runs unprompted, and never on a non-member /
+third party who isn't on Ayma.
 
 Async — ``gemini.generate_reply`` awaits it in the text tool loop, and
 livekit ``function_tool`` awaits it in voice.
@@ -22,8 +24,9 @@ from ._base import Skill
 
 DESCRIPTION = (
     "Web-research a person (digest + links). ONLY on an explicit ask to look "
-    "up the user themselves or someone they're meeting — never unprompted, "
-    "never a third party."
+    "up the user themselves, someone they're meeting, or an Ayma member whose "
+    "profile the user has opened (anyone in the current screen/profile "
+    "context) — never unprompted, never a non-member / third party."
 )
 
 DECLARATION = {

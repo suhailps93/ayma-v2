@@ -9,13 +9,17 @@ Gemini pass:
    the specific claims (each with a source and a confidence), and the links
    (each flagged likely / maybe / unclear as being the same person).
 
-Two callers:
+Two caller shapes:
 
 * the user on **themselves** — "look me up so I don't have to repeat it".
   Ayma then walks the digest with them; their confirmations land in the wiki
   through the normal ingest path (nothing is written to the wiki here).
-* the user on **someone they're meeting** — a private research note shown only
-  to them. Never written to anyone's wiki.
+* the user on **another Ayma member** — someone they're meeting, or any member
+  whose profile they've opened (a match, an Explore profile, anyone in the
+  current chat context). A private research note shown only to the searcher,
+  reusing that member's own persisted report when one exists. Never written to
+  anyone's wiki. Only Ayma members are in scope — non-members / third parties
+  who aren't on the app are declined (persona/tool-declaration gate).
 """
 
 from __future__ import annotations
