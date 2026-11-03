@@ -7,7 +7,6 @@ import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/meta_integrations.dart';
 import 'package:ayma_flutter/services/report_cache.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
-import 'package:ayma_flutter/widgets/app_loading_indicator.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

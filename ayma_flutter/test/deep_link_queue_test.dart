@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:ayma_flutter/core/dag/launch_intent_resolver.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
@@ -65,17 +63,13 @@ void main() {
       final auth = MockFirebaseAuth();
       final authService = AuthService(auth: auth);
 
-      var routedLocation = '';
       final router = GoRouter(
         initialLocation: '/',
         routes: [
           GoRoute(path: '/', builder: (_, __) => const _Dummy()),
           GoRoute(
             path: SignInScreen.path,
-            builder: (_, __) {
-              routedLocation = SignInScreen.path;
-              return const _Dummy();
-            },
+            builder: (_, __) => const _Dummy(),
           ),
         ],
       );
