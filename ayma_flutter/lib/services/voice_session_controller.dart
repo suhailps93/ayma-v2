@@ -258,6 +258,17 @@ class VoiceSessionController extends ChangeNotifier {
   VoiceSessionPhase _phase = VoiceSessionPhase.idle;
   VoiceSessionPhase get phase => _phase;
 
+  /// Synchronous single-flight latch for [start]: set the instant a start is
+  /// admitted and cleared only when that start fully settles. [isActive] alone
+  /// can't guard re-entrancy because it doesn't become true until
+  /// [VoiceSessionPhase.connecting] is set — and there's an `await
+  /// existing.stop()` *before* that (tearing down another surface's session).
+  /// A second near-simultaneous [start] (the founder's rapid orb taps,
+  /// 2026-11-02) would slip through the `isActive` check during that await and
+  /// open a SECOND LiveKit room — two agents talking over each other. This flag
+  /// is written before any await, so only the first caller in a burst proceeds.
+  bool _starting = false;
+
   bool _agentSpeaking = false;
   bool get agentSpeaking => _agentSpeaking;
 
@@ -344,48 +355,66 @@ class VoiceSessionController extends ChangeNotifier {
   /// surfaces there as a thrown error and lands the session in
   /// [VoiceSessionPhase.error].
   Future<void> start() async {
-    if (isActive) return;
-    // Single-active-voice-session invariant (ARCHITECTURE.md §1.3): only ONE
-    // voice session may ever be live at a time, across every surface — the main
-    // Ayma call, a Practice Date call, the Ask-Ayma push-to-talk capture. Each
-    // is a separate controller with its OWN LiveKit room, so without this they
-    // can talk over each other (founder report 2026-10-26: a live main Ayma
-    // call + a Practice Date voice call both running, two personas speaking at
-    // once). This is the one mutual-exclusion point: before connecting, fully
-    // tear down whatever OTHER session is active — its own `stop()` disconnects
-    // its room, releases its mic, and flips it to idle, which clears its orb and
-    // (for the main call) its foreground call notification through the listeners
-    // already watching it. Awaited, so the old room is gone before this one
-    // publishes audio — never a window where both are live. `active` is the
-    // shared registry every voice surface writes on start.
-    final existing = active;
-    if (existing != null && !identical(existing, this) && existing.isActive) {
-      await existing.stop();
+    // Single-flight: reject a re-entrant start the moment one is already
+    // active OR in flight. `_starting` is set SYNCHRONOUSLY (before the first
+    // await below), which closes the gap `isActive` leaves open — `isActive`
+    // only turns true once `connecting` is set, and that comes *after* the
+    // `await existing.stop()` below, so without `_starting` a burst of rapid
+    // orb taps each slips past the `isActive` check during that await and opens
+    // its own room (two agents talking over each other — founder report
+    // 2026-11-02). One tap/one start in a burst is admitted; the rest no-op.
+    if (isActive || _starting) return;
+    _starting = true;
+    try {
+      // Single-active-voice-session invariant (ARCHITECTURE.md §1.3): only ONE
+      // voice session may ever be live at a time, across every surface — the
+      // main Ayma call, a Practice Date call, the Ask-Ayma push-to-talk
+      // capture. Each is a separate controller with its OWN LiveKit room, so
+      // without this they can talk over each other (founder report 2026-10-26:
+      // a live main Ayma call + a Practice Date voice call both running, two
+      // personas speaking at once). This is the one mutual-exclusion point:
+      // before connecting, fully tear down whatever OTHER session is active —
+      // its own `stop()` disconnects its room, releases its mic, and flips it
+      // to idle, which clears its orb and (for the main call) its foreground
+      // call notification through the listeners already watching it. Awaited,
+      // so the old room is gone before this one publishes audio — never a
+      // window where both are live. `active` is the shared registry every
+      // voice surface writes on start.
+      final existing = active;
+      if (existing != null && !identical(existing, this) && existing.isActive) {
+        await existing.stop();
+      }
+      _errorMessage = null;
+      _endNotice = null;
+      _cappedError = false;
+      _backgroundPermissionDenied = false;
+      _relayRetrying = false;
+      _agentSpeaking = false;
+      _agentReadySeen = false;
+      _agentRespondedOnce = false;
+      _openWeightsWarming = false;
+      _muted = false;
+      _pendingToolLabels.clear();
+      _activeToolLabel = null;
+      _noJoinRetried = false;
+      _provider = '';
+      _coachHint = '';
+      active = this;
+      _setPhase(VoiceSessionPhase.connecting);
+      // Best-effort and fire-before-connect: ask for whatever the call will
+      // need in the background while the user still has full context for the
+      // OS prompt, so it's (hopefully) already settled by the time
+      // backgrounding actually needs it. Never blocks or fails the call — a
+      // foreground call never needed this permission in the first place.
+      unawaited(_permissions.ensureCallStartPermissions());
+      await _attempt();
+    } finally {
+      // Held for the whole connect (where `isActive` is already true, so the
+      // guard still holds via that), and cleared once this start has fully
+      // settled — reached `live`, ended in `error`, or returned early. A later
+      // start (e.g. a retry after an error) is then free to proceed.
+      _starting = false;
     }
-    _errorMessage = null;
-    _endNotice = null;
-    _cappedError = false;
-    _backgroundPermissionDenied = false;
-    _relayRetrying = false;
-    _agentSpeaking = false;
-    _agentReadySeen = false;
-    _agentRespondedOnce = false;
-    _openWeightsWarming = false;
-    _muted = false;
-    _pendingToolLabels.clear();
-    _activeToolLabel = null;
-    _noJoinRetried = false;
-    _provider = '';
-    _coachHint = '';
-    active = this;
-    _setPhase(VoiceSessionPhase.connecting);
-    // Best-effort and fire-before-connect: ask for whatever the call will
-    // need in the background while the user still has full context for the
-    // OS prompt, so it's (hopefully) already settled by the time backgrounding
-    // actually needs it. Never blocks or fails the call — a foreground call
-    // never needed this permission in the first place.
-    unawaited(_permissions.ensureCallStartPermissions());
-    await _attempt();
   }
 
   /// One full connect attempt: credentials, room connect, mic publish, then

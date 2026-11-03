@@ -152,20 +152,44 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// - No sheet, already on the Ayma tab (the full-screen main chat) -> voice.
   /// - No sheet, on another tab -> open the half popup scoped to that page.
   ///
-  /// Reuses the same `toggleVoiceCall` the hold does, and the same
-  /// [orbTapOnOpenSheet] / `showPageContextAymaPopup` the UI already uses —
-  /// nothing here reimplements voice start or the expand.
+  /// Reuses the debounced [_startVoiceFromOrb] (a `toggleVoiceCall` wrapper;
+  /// the hold uses `toggleVoiceCall` bare), and the same [orbTapOnOpenSheet]
+  /// / `showPageContextAymaPopup` the UI already uses — nothing here
+  /// reimplements voice start or the expand.
   void _onOrbTap() {
     if (isAymaSheetOpen) {
-      orbTapOnOpenSheet(onVoice: () => toggleVoiceCall(context, _voice));
+      orbTapOnOpenSheet(onVoice: _startVoiceFromOrb);
       return;
     }
     if (_index == 0) {
-      toggleVoiceCall(context, _voice);
+      _startVoiceFromOrb();
     } else {
       showPageContextAymaPopup(context, navBarBuilder: _navBar);
     }
   }
+
+  /// Leading-edge debounce for the orb tap's VOICE rung only (the founder's
+  /// rapid-multi-tap report, 2026-11-02): the first tap in a burst fires
+  /// `toggleVoiceCall` immediately; any further taps within
+  /// [_orbVoiceTapWindow] are swallowed, so a mechanical rapid-fire burst can't
+  /// thrash start/stop (or, with the controller's own single-flight guard,
+  /// open a second room). The half->full->voice progression rungs above are
+  /// NOT debounced — only the rung that actually starts/toggles voice — so the
+  /// deliberate tap progression from commit 5e6943e is untouched. The
+  /// controller's `start()` single-flight latch is the hard guarantee; this is
+  /// the UX-level belt-and-braces that also stops toggle thrash. A wall-clock
+  /// timestamp (not a Timer) is used deliberately so nothing lingers to tear
+  /// down and no pending-timer ever outlives the screen.
+  void _startVoiceFromOrb() {
+    final now = DateTime.now();
+    final last = _lastOrbVoiceTapAt;
+    if (last != null && now.difference(last) < _orbVoiceTapWindow) return;
+    _lastOrbVoiceTapAt = now;
+    toggleVoiceCall(context, _voice);
+  }
+
+  DateTime? _lastOrbVoiceTapAt;
+  static const _orbVoiceTapWindow = Duration(milliseconds: 500);
 
   /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
   /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
