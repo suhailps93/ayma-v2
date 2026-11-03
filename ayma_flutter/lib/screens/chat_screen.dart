@@ -1575,12 +1575,40 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // a drag may have started since this was scheduled
       if (_userScrolling) return;
       final target = _scrollController.position.maxScrollExtent;
-      _bottomBaseline = target;
-      _scrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
+      // A live voice reply streams in as many segments a few tens of ms apart
+      // (§1.7 step 12 — [TranscriptStore.applyVoiceSegment] grows the tail
+      // turn in place and notifies on each one, firing this on every one),
+      // which is faster than the 200ms animate-to-bottom below can land: each
+      // segment restarts the animation a frame in, so it never completes and
+      // the view crawls, falling further and further behind the growing
+      // transcript (founder: voice-mode streamed text doesn't follow to the
+      // bottom). While the tail is still a streaming (non-final voice) turn,
+      // jump straight to the bottom so the view keeps up; a finalized turn or
+      // a typed reply (one store write, seconds after the last) still animates
+      // smoothly — the text path is untouched.
+      final tail = _store.turns.isNotEmpty ? _store.turns.last : null;
+      final streaming =
+          tail != null && tail.source == TurnSource.voice && !tail.isFinal;
+      if (streaming) {
+        // Follow only while the view is already sitting at the bottom it last
+        // chased ([_bottomBaseline], same test [_handleListMetrics] uses) — a
+        // user who scrolled up to read history mid-call is never yanked down.
+        // `infinity` is the pre-first-scroll bootstrap (chat just opened, view
+        // at 0 with nothing above): treat that as "at the bottom" so the very
+        // first segment of a reply still follows.
+        final atBottom = _bottomBaseline == double.infinity ||
+            _scrollController.position.pixels >= _bottomBaseline - 24;
+        if (!atBottom) return;
+        _bottomBaseline = target;
+        _scrollController.jumpTo(target);
+      } else {
+        _bottomBaseline = target;
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 
