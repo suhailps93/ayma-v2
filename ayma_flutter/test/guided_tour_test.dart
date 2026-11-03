@@ -62,8 +62,7 @@ void main() {
             Positioned.fill(
               child: CoachMarkOverlay(
                 onFinish: () {},
-                spotlight: true,
-                hideNextButton: true,
+                chromeless: true,
                 maxMeasureAttempts: maxMeasureAttempts,
                 onAnchorShown: onShown,
                 onAnchorAbsent: onAbsent,
@@ -86,8 +85,8 @@ void main() {
   }
 
   group('driven coach-mark engine', () {
-    testWidgets('spotlights the step, hides Next, reports shown, and a real tap '
-        'presses through AND reports tapped (not a local advance)',
+    testWidgets('chromeless: ONLY the spotlight (no card), reports shown, and a '
+        'real tap presses through AND reports tapped (not a local advance)',
         (tester) async {
       tester.view.physicalSize = const Size(800, 600);
       tester.view.devicePixelRatio = 1.0;
@@ -103,12 +102,15 @@ void main() {
       ));
       await settle(tester);
 
-      // Step is up with its copy; the step counter and Skip show; Next is gone
-      // (the user advances by tapping the real control).
-      expect(find.text('Explore'), findsOneWidget);
-      expect(find.text('Now tap Explore to meet people.'), findsOneWidget);
-      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
+      // The spotlight is up, but NO feature card: no "NEW" framing, no headline,
+      // no description, no step counter, no "Next" (founder 2026-11-03 — the
+      // instruction is Ayma's line, not a dialog). Only a tiny "Skip tour".
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+      expect(find.text('Explore'), findsNothing); // headline not rendered
+      expect(find.text('Now tap Explore to meet people.'), findsNothing);
+      expect(find.text('NEW'), findsNothing);
       expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget); // tiny stop
       expect(shown, 1);
       expect(absent, 0);
 
@@ -158,10 +160,12 @@ void main() {
   });
 
   group('GuidedTourController', () {
-    testWidgets('show makes a step active; dismiss clears it', (tester) async {
+    testWidgets('show starts a session; clearStep keeps the session; endSession '
+        'ends it', (tester) async {
       final c = GuidedTourController.instance;
-      c.dismiss();
+      c.endSession();
       expect(c.active, isFalse);
+      expect(c.sessionActive, isFalse);
       c.show(GuidedTourStep(
         token: 't1',
         feature: const TourFeature(
@@ -174,9 +178,16 @@ void main() {
         onStop: () {},
       ));
       expect(c.active, isTrue);
+      expect(c.sessionActive, isTrue);
       expect(c.step!.token, 't1');
-      c.dismiss();
+      // A tap clears the step's spotlight but the SESSION stays active (so the
+      // passive tour can't slip in before the backend sends the next step).
+      c.clearStep();
       expect(c.active, isFalse);
+      expect(c.sessionActive, isTrue);
+      // Only endSession ends the session.
+      c.endSession();
+      expect(c.sessionActive, isFalse);
     });
   });
 
@@ -208,10 +219,9 @@ void main() {
                       child: CoachMarkOverlay(
                         key: ValueKey('guided-tour-${step.token}'),
                         features: [step.feature],
-                        spotlight: true,
-                        hideNextButton: true,
+                        chromeless: true,
                         maxMeasureAttempts: 3,
-                        onFinish: GuidedTourController.instance.dismiss,
+                        onFinish: GuidedTourController.instance.endSession,
                         onAnchorShown: step.onShown,
                         onAnchorAbsent: step.onAbsent,
                         onAnchorTapped: step.onTapped,
@@ -231,7 +241,7 @@ void main() {
     late DocumentReference<Map<String, dynamic>> pending;
 
     setUp(() async {
-      GuidedTourController.instance.dismiss();
+      GuidedTourController.instance.endSession();
       fake = FakeFirebaseFirestore();
       svc = AppCommandService(
         firestore: fake,
@@ -260,15 +270,19 @@ void main() {
       svc.runTourStep(pending, cmd, id: 'c1');
       await settle(tester);
 
-      // The spotlight is up and the step was acked as shown.
-      expect(find.text('Explore'), findsOneWidget);
+      // The spotlight is up (chromeless — no card text) and the step was acked
+      // as shown. The session is active.
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+      expect(find.text('Explore'), findsNothing);
+      expect(GuidedTourController.instance.sessionActive, isTrue);
       final ack = (await fake.doc('users/u1/app_commands/ack').get()).data();
       expect(ack, isNotNull);
       expect(ack!['id'], 'c1');
       expect(ack['ok'], isTrue);
 
-      // The user taps the highlighted control → a 'tapped' event for step 0,
-      // and the overlay dismisses.
+      // The user taps the highlighted control → a 'tapped' event for step 0.
+      // The spotlight clears but the SESSION stays active (backend will send
+      // the next step).
       await tester.tapAt(const Offset(56, 544));
       await settle(tester);
       final ev = (await fake.doc('users/u1/app_commands/tour_event').get()).data();
@@ -276,6 +290,7 @@ void main() {
       expect(ev!['index'], 0);
       expect(ev['event'], 'tapped');
       expect(GuidedTourController.instance.active, isFalse);
+      expect(GuidedTourController.instance.sessionActive, isTrue);
     });
 
     testWidgets('a tour_step whose anchor is absent acks ok:false and dismisses',

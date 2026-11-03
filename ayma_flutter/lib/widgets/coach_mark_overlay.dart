@@ -58,6 +58,7 @@ class CoachMarkOverlay extends StatefulWidget {
     this.onAnchorTapped,
     this.onStopPressed,
     this.hideNextButton = false,
+    this.chromeless = false,
   });
 
   /// The ordered steps to walk through.
@@ -119,6 +120,13 @@ class CoachMarkOverlay extends StatefulWidget {
   /// Hide the "Next" CTA so the only way forward is tapping the real control
   /// (driven mode). Skip stays, so the user can always leave.
   final bool hideNextButton;
+
+  /// Ayma-DRIVEN tour (§11.2b): show ONLY the spotlight highlight — no callout
+  /// card (no "NEW"/headline/description, no step counter, no prominent CTAs).
+  /// The step's instruction is Ayma's own chat/voice line, not a card (founder,
+  /// 2026-11-03: "I don't want the feature dialogues"). A single tiny,
+  /// unobtrusive "Skip tour" affordance remains when [onStopPressed] is set.
+  final bool chromeless;
 
   @override
   State<CoachMarkOverlay> createState() => _CoachMarkOverlayState();
@@ -347,8 +355,43 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
                 ),
               ),
             ),
-            if (_ready) SafeArea(child: _buildCallout(ac, feature, isLast)),
+            // Driven tour: no callout card at all — just the spotlight and a
+            // tiny, low-emphasis "Skip tour" so the instruction is purely
+            // Ayma's spoken/typed line. Passive tour: the full callout card.
+            if (_ready && widget.chromeless)
+              _buildChromelessSkip(ac)
+            else if (_ready)
+              SafeArea(child: _buildCallout(ac, feature, isLast)),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// The only chrome in driven mode: a small, unobtrusive "Skip tour" pinned to
+  /// the bottom. Nothing else is drawn over the app but the spotlight. Omitted
+  /// when there's no stop handler.
+  Widget _buildChromelessSkip(AymaTokens ac) {
+    if (widget.onStopPressed == null) return const SizedBox.shrink();
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: TextButton(
+              key: const ValueKey('coach-skip'),
+              onPressed: _finishing ? null : widget.onStopPressed,
+              style: TextButton.styleFrom(
+                foregroundColor: ac.fgMute,
+                textStyle: AymaType.sans(size: 12, weight: FontWeight.w500),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              ),
+              child: const Text('Skip tour'),
+            ),
+          ),
         ),
       ),
     );

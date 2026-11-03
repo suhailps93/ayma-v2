@@ -554,10 +554,10 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
           ),
         ),
     // The Ayma-DRIVEN tour's single spotlighted step (§11.2b): the same
-    // coach-mark engine in driven mode — one step, the Next button hidden (the
-    // user advances by tapping the real control). Long copy + scale 2.0 stress
-    // the callout the same way; its pulse ring means no `pumpAndSettle`.
-    'guided tour step (driven spotlight, no Next)': (context) =>
+    // coach-mark engine in CHROMELESS mode — ONLY the spotlight highlight and a
+    // tiny "Skip tour", no callout card (the instruction is Ayma's own line).
+    // Its pulse ring means no `pumpAndSettle`.
+    'guided tour step (driven, chromeless spotlight)': (context) =>
         Navigator.of(context).push(
           PageRouteBuilder<void>(
             opaque: false,
@@ -575,8 +575,7 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
                 Positioned.fill(
                   child: CoachMarkOverlay(
                     onFinish: () {},
-                    spotlight: true,
-                    hideNextButton: true,
+                    chromeless: true,
                     onAnchorShown: () {},
                     onAnchorAbsent: () {},
                     onAnchorTapped: () {},
@@ -584,11 +583,9 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
                     features: const [
                       TourFeature(
                         featureId: 'guided_tour_matrix',
-                        headline: 'A guided-tour step with a deliberately long '
-                            'headline that must wrap at text scale 2.0',
-                        subtitle: 'Now tap the highlighted control — a long '
-                            'driven-tour line to stress wrapping on a narrow '
-                            'screen while the Next button is hidden.',
+                        headline: 'Guided tour step',
+                        subtitle: 'The driven tour shows no card — only the '
+                            'spotlight and a tiny Skip.',
                         icon: Icons.tour_outlined,
                         anchorId: TourAnchors.homeOrb,
                       ),

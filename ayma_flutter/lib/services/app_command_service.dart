@@ -20,6 +20,7 @@ import 'push_service.dart';
 import 'screen_capture.dart';
 import 'theme_controller.dart';
 import 'tour_content.dart';
+import 'tour_controller.dart';
 import 'voice_session_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
@@ -375,7 +376,12 @@ class AppCommandService {
       }).catchError((_) {});
     }
 
-    GuidedTourController.instance.show(GuidedTourStep(
+    // Starting a driven tour takes over the screen — close any passive
+    // coach-mark tour that happens to be up (e.g. a first-run walkthrough) so
+    // the two never fight over the overlay.
+    TourController.instance.finish();
+    final guided = GuidedTourController.instance;
+    guided.show(GuidedTourStep(
       token: id,
       feature: TourFeature(
         featureId: 'guided_tour_step_$index',
@@ -387,17 +393,25 @@ class AppCommandService {
       index: index,
       total: total,
       onShown: () => unawaited(ack(true)),
+      // Anchor not present: ack so the backend skips the step, and clear the
+      // spotlight — but keep the SESSION active (the backend sends the next
+      // step), so the passive tour can't slip in during the gap.
       onAbsent: () {
-        GuidedTourController.instance.dismiss();
+        guided.clearStep();
         unawaited(ack(false));
       },
+      // The ONLY thing that advances a step: the user's real tap on the
+      // spotlighted control (the press-through). It writes the tap event the
+      // backend's advance_guided_tour is waiting for, and clears this step's
+      // spotlight (session stays active until tour_end).
       onTapped: () {
         event('tapped');
-        GuidedTourController.instance.dismiss();
+        guided.clearStep();
       },
+      // The tiny "Skip tour" affordance ends the whole session.
       onStop: () {
         event('stop');
-        GuidedTourController.instance.dismiss();
+        guided.endSession();
       },
     ));
   }
@@ -510,9 +524,10 @@ class AppCommandService {
         _afterAck = _reconnectVoice;
         return true;
       case 'tour_end':
-        // The Ayma-driven tour finished or was stopped — dismiss the spotlight.
-        // Always acks ok (there's nothing that can fail).
-        GuidedTourController.instance.dismiss();
+        // The Ayma-driven tour finished or was stopped — end the session
+        // (clears the spotlight and lets the passive tour resume its normal
+        // gating). Always acks ok (there's nothing that can fail).
+        GuidedTourController.instance.endSession();
         return true;
     }
     return false;

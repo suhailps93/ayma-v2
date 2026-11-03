@@ -58,12 +58,20 @@ class TourHost extends StatelessWidget {
       ),
       child: child,
       builder: (context, child) {
-        final driven = GuidedTourController.instance.step;
+        final guided = GuidedTourController.instance;
+        final driven = guided.step;
         if (driven != null) {
           return Stack(
             children: [child!, Positioned.fill(child: _drivenOverlay(driven))],
           );
         }
+        // While an Ayma-driven tour session is running (even BETWEEN steps —
+        // the moment after a tap dismisses one step and before the backend
+        // sends the next), never show the passive coach-mark tour: it would
+        // flash its own card over a different anchor and read as a "wrong
+        // highlight"/stray dialog (founder, 2026-11-03). The driven tour owns
+        // the screen until it ends.
+        if (guided.sessionActive) return child!;
         final controller = TourController.instance;
         final features = controller.features;
         if (features == null) return child!;
@@ -92,23 +100,23 @@ class TourHost extends StatelessWidget {
   }
 
   /// The Ayma-driven tour's single spotlighted step (§11.2b): the same
-  /// [CoachMarkOverlay] engine, but a single backend-pushed step with no local
-  /// advancing — the user taps the real control to move on (so the Next button
-  /// is hidden), and the overlay reports shown / absent / tapped / stop back to
+  /// [CoachMarkOverlay] engine in CHROMELESS mode — ONLY the spotlight
+  /// highlight, no callout card (the instruction is Ayma's own chat/voice
+  /// line), and no local advancing: the user taps the real control to move on.
+  /// The overlay reports shown / absent / tapped / stop back to
   /// [GuidedTourController] (wired by `AppCommandService`). Keyed by the step's
   /// token so each pushed step gets a fresh measure.
   Widget _drivenOverlay(GuidedTourStep step) {
     return CoachMarkOverlay(
       key: ValueKey('guided-tour-${step.token}'),
       features: [step.feature],
-      spotlight: true,
+      chromeless: true,
       onPrepareStep: _prepareStep,
-      onFinish: GuidedTourController.instance.dismiss,
+      onFinish: GuidedTourController.instance.endSession,
       onAnchorShown: step.onShown,
       onAnchorAbsent: step.onAbsent,
       onAnchorTapped: step.onTapped,
       onStopPressed: step.onStop,
-      hideNextButton: true,
     );
   }
 }

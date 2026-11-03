@@ -56,25 +56,45 @@ class GuidedTourController extends ChangeNotifier {
   static final GuidedTourController instance = GuidedTourController._();
 
   GuidedTourStep? _step;
+  bool _sessionActive = false;
 
   /// The step currently being spotlighted, or null when no driven tour step is
-  /// up.
+  /// up (including the brief gap between a tap and the next step).
   GuidedTourStep? get step => _step;
 
   /// Whether a driven tour step is currently showing.
   bool get active => _step != null;
 
-  /// Show (or replace) the current driven step.
+  /// Whether a driven tour SESSION is running — true from the first step until
+  /// the tour ends (`endSession`), even in the gap between steps. `TourHost`
+  /// uses this to suppress the passive coach-mark tour for the whole session,
+  /// so it can never flash over a different anchor between driven steps
+  /// (founder, 2026-11-03: "it is not highlighting the right one").
+  bool get sessionActive => _sessionActive;
+
+  /// Show (or replace) the current driven step and mark the session active.
   void show(GuidedTourStep step) {
     _step = step;
+    _sessionActive = true;
     notifyListeners();
   }
 
-  /// Clear the current step (the backend ended the tour, or the step's anchor
-  /// was absent). A no-op when nothing is showing.
-  void dismiss() {
+  /// Clear the current step's spotlight (the user tapped it / the anchor was
+  /// absent) WITHOUT ending the session — the backend will send the next step.
+  /// A no-op when nothing is showing.
+  void clearStep() {
     if (_step == null) return;
     _step = null;
+    notifyListeners();
+  }
+
+  /// End the whole driven tour session: clear the step and let the passive tour
+  /// resume its normal gating. The `tour_end` command and the "Skip tour"
+  /// affordance both call this.
+  void endSession() {
+    if (_step == null && !_sessionActive) return;
+    _step = null;
+    _sessionActive = false;
     notifyListeners();
   }
 }

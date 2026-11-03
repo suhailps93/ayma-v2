@@ -152,21 +152,28 @@ def test_advance_waits_for_the_tap_then_issues_the_next_step():
 
 
 def test_advance_without_a_tap_reports_honestly_and_does_not_move():
+    # Founder 2026-11-03: a verbal "what's next" (the model calling advance with
+    # no tap) must NOT move the tour. Without a tap event the wait lapses and the
+    # step stays put.
     db = _Db()
     _run(guided_tour._bind_start_guided_tour(db, "u1")())
     # No tap event written → the bounded wait lapses.
     msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
-    assert "hasn't tapped" in msg
+    assert "not tapped" in msg.lower()
     assert db.store[_STATE]["index"] == 0  # still on step 0
     assert db.store[_STATE]["active"] is True
+    # The next step was never queued — the tour did not advance.
+    assert db.store[_PENDING]["index"] == 0
 
 
-def test_advance_skip_moves_on_without_a_tap():
+def test_advance_has_no_skip_parameter():
+    # There is deliberately no way to skip ahead without a tap: the tool exposes
+    # no parameters, and the bound callable rejects a skip kwarg.
+    assert guided_tour.ADVANCE_GUIDED_TOUR.declaration["parameters"]["properties"] == {}
     db = _Db()
     _run(guided_tour._bind_start_guided_tour(db, "u1")())
-    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")(skip=True))
-    assert db.store[_STATE]["index"] == 1
-    assert _steps()[1]["say"] in msg
+    with pytest.raises(TypeError):
+        _run(guided_tour._bind_advance_guided_tour(db, "u1")(skip=True))
 
 
 def test_advance_skips_a_step_whose_anchor_is_absent():

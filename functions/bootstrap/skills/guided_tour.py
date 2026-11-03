@@ -20,7 +20,8 @@ call that drove the whole tour could never narrate per step. Instead:
 * ``advance_guided_tour`` WAITS (bounded) for the user to tap the control that is
   currently spotlighted, then spotlights the next step and returns its line —
   Ayma speaks it, then calls advance again; it ends gracefully after the last
-  step, and ``skip=true`` moves on without a tap (the user said "skip"/"next");
+  step. It advances ONLY on the real tap — there is no "skip", and a spoken
+  "next" / "what's next" never moves the tour (founder, 2026-11-03);
 * ``stop_guided_tour`` ends the tour on request.
 
 Reuses the shared app-command loop (``_queue_command`` / ``_await_ack`` over
@@ -184,11 +185,13 @@ def _say_directive(index: int, total: int, step: dict) -> str:
     — the copy itself comes from the registry (``step['say']``)."""
     return (
         f"Guided tour — step {index + 1} of {total} is now spotlighted. "
-        f"Say this to the user, warmly and in your own voice: \"{step['say']}\" "
-        "Then call advance_guided_tour — it waits until they tap the highlighted "
-        "control, then moves to the next step. If they say skip or next, call "
-        "advance_guided_tour with skip=true; if they say stop or quit, call "
-        "stop_guided_tour."
+        f"Say ONLY this to the user, warmly and in your own voice, about THIS "
+        f"highlighted control (don't mention any other feature yet): "
+        f"\"{step['say']}\" Then call advance_guided_tour — it waits until they "
+        "actually TAP the highlighted control and moves on ONLY then. Do NOT "
+        "advance on a spoken 'next' / 'what's next' / 'okay' — those do not move "
+        "the tour; if they say that, gently tell them to tap the highlighted "
+        "control. Only call stop_guided_tour if they ask to stop or quit."
     )
 
 
@@ -227,30 +230,38 @@ def _bind_start_guided_tour(db, uid: str) -> Callable[..., object]:
 
 
 def _bind_advance_guided_tour(db, uid: str) -> Callable[..., object]:
-    async def advance_guided_tour(skip: bool = False) -> str:
+    async def advance_guided_tour() -> str:
+        # Advancement is gated STRICTLY on the user's real tap of the currently
+        # spotlighted control — never on a spoken/typed "next" and never on the
+        # model's own choice to call this tool (founder, 2026-11-03: "it is
+        # moving to the next step even without the user acknowledging that he
+        # did that"). There is deliberately no skip parameter: this tool returns
+        # the next step ONLY after the client reports the tap event for the
+        # current step; otherwise it returns an honest "still waiting" and the
+        # tour stays put.
         steps = _steps()
         total = len(steps)
         state = await asyncio.to_thread(_read_state, db, uid)
         if not state.get("active"):
             return _NO_TOUR
         current = int(state.get("index", -1))
-        if not skip:
-            event = await _await_tour_event(db, uid, current, _TAP_TIMEOUT_SECONDS)
-            if event is None:
-                step = steps[current] if 0 <= current < total else {}
-                control = str(step.get("headline") or "the highlighted control")
-                return (
-                    f"Still on step {current + 1} — the user hasn't tapped "
-                    f"{control!r} yet. Gently remind them to tap it to continue, "
-                    "or that they can say skip to move on or stop to end the tour. "
-                    "Do not claim they moved on."
-                )
-            if str(event.get("event")) == "stop":
-                await _end(db, uid)
-                return (
-                    "The user ended the guided tour. Acknowledge warmly and let "
-                    "them know they can ask for it again anytime."
-                )
+        event = await _await_tour_event(db, uid, current, _TAP_TIMEOUT_SECONDS)
+        if event is None:
+            step = steps[current] if 0 <= current < total else {}
+            control = str(step.get("headline") or "the highlighted control")
+            return (
+                f"Still on step {current + 1} — the user has NOT tapped "
+                f"{control!r} yet, so the tour has NOT moved. Gently tell them to "
+                "tap the highlighted control to continue (a spoken 'next' does not "
+                "advance it), or that they can say stop to end the tour. Do not "
+                "claim they moved on."
+            )
+        if str(event.get("event")) == "stop":
+            await _end(db, uid)
+            return (
+                "The user ended the guided tour. Acknowledge warmly and let "
+                "them know they can ask for it again anytime."
+            )
         index, step = await _present_from(db, uid, current + 1)
         if step is None:
             await _end(db, uid)
@@ -295,16 +306,9 @@ ADVANCE_GUIDED_TOUR = Skill(
     declaration={
         "name": "advance_guided_tour",
         "description": _prompt("advance_guided_tour"),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "skip": {
-                    "type": "boolean",
-                    "description": "Move on without waiting for a tap (the user "
-                    "said skip/next).",
-                }
-            },
-        },
+        # No parameters by design: there is no "skip" — the tour advances ONLY
+        # when the user taps the spotlighted control.
+        "parameters": {"type": "object", "properties": {}},
     },
     bind=_bind_advance_guided_tour,
 )
