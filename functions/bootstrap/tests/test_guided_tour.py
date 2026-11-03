@@ -97,8 +97,11 @@ def _fast(monkeypatch):
     monkeypatch.setattr(guided_tour, "_TAP_TIMEOUT_SECONDS", 0.05)
 
 
-def _tap(db, index, event="tapped"):
-    db.store[_EVENT] = {"index": index, "event": event}
+def _tap(db, index, event="tapped", ts=None):
+    payload = {"index": index, "event": event}
+    if ts is not None:
+        payload["ts"] = ts
+    db.store[_EVENT] = payload
 
 
 def _steps():
@@ -372,3 +375,133 @@ def test_advance_accepts_an_explicit_tap_timeout(monkeypatch):
     msg = _run(guided_tour._bind_advance_guided_tour(db, "u1", tap_timeout=0.05)())
     assert time.monotonic() - start < 5.0
     assert "not tapped" in msg.lower()
+
+
+# --- tour_event timestamp freshness (Scout live auto-advance regression guard) -
+#
+# If an unconsumed tour_event persists across tours/sessions (e.g. if _clear_event
+# failed or a client write raced), an event at step k from a previous tour must
+# NOT be consumed by a later tour at step k. _await_tour_event validates that
+# event['ts'] is fresh relative to tour_state's updated_at.
+
+
+def test_is_event_fresh_unit():
+    now = datetime.now(timezone.utc)
+    t_past = now - timedelta(seconds=10)
+    t_future = now + timedelta(seconds=10)
+
+    # Stale: event occurred before state was updated
+    assert not guided_tour._is_event_fresh({"ts": t_past}, now)
+    assert not guided_tour._is_event_fresh({"ts": t_past.timestamp()}, now.timestamp())
+    assert not guided_tour._is_event_fresh({"ts": t_past.isoformat()}, now.isoformat())
+
+    # Fresh: event occurred at or after state was updated
+    assert guided_tour._is_event_fresh({"ts": now}, now)
+    assert guided_tour._is_event_fresh({"ts": t_future}, now)
+    assert guided_tour._is_event_fresh({"ts": t_future.timestamp()}, now.timestamp())
+    assert guided_tour._is_event_fresh({"ts": t_future.isoformat()}, now.isoformat())
+
+    # State has timestamp, but event has no timestamp -> stale
+    assert not guided_tour._is_event_fresh({}, now)
+    assert not guided_tour._is_event_fresh({"ts": None}, now)
+    assert not guided_tour._is_event_fresh({"ts": "not-a-date"}, now)
+
+    # Undated state (None or unresolved sentinel) -> accepted (backwards compatible)
+    assert guided_tour._is_event_fresh({"ts": t_past}, None)
+    assert guided_tour._is_event_fresh({}, None)
+
+
+def test_advance_ignores_stale_tap_event_and_stays_put():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    now = datetime.now(timezone.utc)
+    db.store[_STATE]["updated_at"] = now
+    # Event ts is 15 seconds older than current step presentation
+    _tap(db, 0, ts=now - timedelta(seconds=15))
+
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "not tapped" in msg.lower()
+    assert db.store[_STATE]["index"] == 0  # didn't advance
+    assert db.store[_PENDING]["index"] == 0
+
+
+def test_advance_consumes_fresh_tap_event_and_advances():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    now = datetime.now(timezone.utc)
+    db.store[_STATE]["updated_at"] = now
+    # Event ts is 1 second after step presentation
+    _tap(db, 0, ts=now + timedelta(seconds=1))
+
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    assert db.store[_PENDING]["index"] == 1
+    assert _steps()[1]["say"] in msg
+
+
+def test_unconsumed_event_from_prior_session_not_consumed_by_later_tour():
+    # Scout live scenario: an unconsumed tap at step 1 (Explore) persisted across
+    # sessions. A new voice tour started (which skips step 0 composer and starts
+    # at step 1 Explore). Previously, advance consumed the old tap and auto-advanced
+    # past Explore without the user tapping.
+    db = _Db()
+    prior_session_ts = datetime.now(timezone.utc) - timedelta(minutes=10)
+    # Stale unconsumed event at index 1 left behind in Firestore
+    _tap(db, 1, ts=prior_session_ts)
+
+    # Tour 2 starts now in voice mode
+    msg_start = _run(guided_tour._bind_start_guided_tour(db, "u1", voice=True)())
+    assert "explore" in msg_start.lower() or _steps()[1]["say"] in msg_start
+    assert db.store[_STATE]["index"] == 1
+    now = datetime.now(timezone.utc)
+    db.store[_STATE]["updated_at"] = now
+
+    # Advance runs: the stale tap at index 1 is IGNORED, not consumed
+    msg_advance = _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
+    assert "not tapped" in msg_advance.lower()
+    assert db.store[_STATE]["index"] == 1  # STILL on step 1 Explore!
+    assert db.store[_PENDING]["index"] == 1
+
+    # User now actually taps Explore:
+    _tap(db, 1, ts=now + timedelta(seconds=2))
+    msg_advance2 = _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
+    # Now it advances to step 2!
+    assert db.store[_STATE]["index"] == 2
+    assert db.store[_PENDING]["index"] == 2
+    assert _steps()[2]["say"] in msg_advance2
+
+
+def test_stale_stop_event_does_not_abort_later_tour():
+    db = _Db()
+    prior_session_ts = datetime.now(timezone.utc) - timedelta(minutes=5)
+    # Stale stop event left behind
+    _tap(db, 0, event="stop", ts=prior_session_ts)
+
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    now = datetime.now(timezone.utc)
+    db.store[_STATE]["updated_at"] = now
+
+    # Advance ignores the stale stop event and remains active
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "not tapped" in msg.lower()
+    assert db.store[_STATE]["active"] is True
+    assert db.store[_STATE]["index"] == 0
+
+
+def test_await_tour_event_reads_state_doc_when_not_passed():
+    db = _Db()
+    now = datetime.now(timezone.utc)
+    db.store[_STATE] = {"index": 0, "active": True, "updated_at": now}
+    _tap(db, 0, ts=now - timedelta(seconds=5))
+
+    # Calling _await_tour_event without state_updated_at reads the state doc
+    # and ignores the stale event.
+    ev = _run(guided_tour._await_tour_event(db, "u1", 0, timeout=0.01))
+    assert ev is None
+
+    # Fresh event is returned
+    _tap(db, 0, ts=now + timedelta(seconds=1))
+    ev_fresh = _run(guided_tour._await_tour_event(db, "u1", 0, timeout=0.01))
+    assert ev_fresh is not None
+    assert ev_fresh["event"] == "tapped"
+

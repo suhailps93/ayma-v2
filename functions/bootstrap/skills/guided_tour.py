@@ -126,6 +126,13 @@ def _updated_epoch(value: object) -> float | None:
         return aware.timestamp()
     if isinstance(value, (int, float)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+            aware = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return aware.timestamp()
+        except Exception:  # noqa: BLE001
+            return None
     to_dt = getattr(value, "to_datetime", None)
     if callable(to_dt):
         try:
@@ -133,6 +140,26 @@ def _updated_epoch(value: object) -> float | None:
         except Exception:  # noqa: BLE001
             return None
     return None
+
+
+def _is_event_fresh(event: dict, state_updated_at: object) -> bool:
+    """Whether a ``tour_event`` is fresh relative to the tour state's
+    ``updated_at`` (the step presentation timestamp).
+
+    An unconsumed tap or stop event left behind by an earlier tour (or an
+    earlier run of this step before a presentation race) has ``ts < updated_at``
+    and must be ignored rather than auto-advancing the new tour. If the state
+    timestamp cannot be resolved (e.g. an undated legacy state doc or an
+    unresolved server-timestamp sentinel in a test), the event is treated as
+    fresh to preserve backwards compatibility. If the state timestamp is
+    resolved but the event has no timestamp, it is considered stale."""
+    state_epoch = _updated_epoch(state_updated_at)
+    if state_epoch is None:
+        return True
+    event_epoch = _updated_epoch(event.get("ts"))
+    if event_epoch is None:
+        return False
+    return event_epoch >= state_epoch
 
 
 def _state_expired(state: dict) -> bool:
@@ -160,12 +187,25 @@ def _clear_event(db, uid: str) -> None:
         pass
 
 
-async def _await_tour_event(db, uid: str, index: int, timeout: float) -> dict | None:
+_UNSET = object()
+
+
+async def _await_tour_event(
+    db, uid: str, index: int, timeout: float, state_updated_at: object = _UNSET
+) -> dict | None:
     """Poll the ``tour_event`` doc until the client reports the user tapped the
     spotlighted control (``event='tapped'``) or ended it (``event='stop'``) for
     THIS ``index``, or the bounded wait runs out. Returns the event dict or
     ``None`` on timeout. Reads run off the event loop so live audio is never
-    blocked."""
+    blocked.
+
+    The event's timestamp must be fresh relative to ``state_updated_at`` (the
+    step presentation timestamp) — an unconsumed tap or stop event left behind
+    by a prior tour at the same index is ignored rather than advancing the new
+    tour prematurely."""
+    if state_updated_at is _UNSET:
+        state = await asyncio.to_thread(_read_state, db, uid)
+        state_updated_at = state.get("updated_at")
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -173,7 +213,12 @@ async def _await_tour_event(db, uid: str, index: int, timeout: float) -> dict | 
             data = snap.to_dict() if getattr(snap, "exists", False) else None
         except Exception:  # noqa: BLE001
             data = None
-        if data and _index_of(data) == index and data.get("event"):
+        if (
+            data
+            and _index_of(data) == index
+            and data.get("event")
+            and _is_event_fresh(data, state_updated_at)
+        ):
             return data
         if time.monotonic() >= deadline:
             return None
@@ -331,7 +376,9 @@ def _bind_advance_guided_tour(
             await _end(db, uid)
             return _NO_TOUR
         wait = _TAP_TIMEOUT_SECONDS if tap_timeout is None else tap_timeout
-        event = await _await_tour_event(db, uid, current, wait)
+        event = await _await_tour_event(
+            db, uid, current, wait, state_updated_at=state.get("updated_at")
+        )
         if event is None:
             step = steps[current] if 0 <= current < total else {}
             control = str(step.get("headline") or "the highlighted control")
