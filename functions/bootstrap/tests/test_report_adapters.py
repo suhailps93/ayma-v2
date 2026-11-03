@@ -306,6 +306,47 @@ def test_deep_dive_adapter_omits_the_confidence_stat_when_not_found(monkeypatch)
     monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: doc)
     report, *_ = ra.deep_dive_blocks(object(), "u1", "name_nobody")
     assert "confidence" not in _blocks(report)
+    assert "summary:status" not in _blocks(report)
+    assert _blocks(report)["summary:sent:0"]["text"] == "Some text we still show."
+
+
+def test_deep_dive_adapter_does_not_render_not_found_status_when_report_has_content(monkeypatch):
+    # J1 [S3]: self web-research report with confidence="not_found" but populated with
+    # summary/caveats and links must NOT render "Nothing found yet." status line.
+    doc = dict(_DIVE_DOC)
+    doc["digest"] = {
+        "name": "Daniel Reyes",
+        "confidence": "not_found",
+        "summary": "Software engineer based in California.",
+        "caveats": "Common name, some ambiguity across platforms.",
+        "facts": [],
+        "links": [{"url": "https://example.com/danielreyes", "title": "Daniel Reyes - Article"}],
+    }
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: doc)
+    report, *_ = ra.deep_dive_blocks(object(), "u1", "name_daniel")
+    blocks = _blocks(report)
+    assert "summary:status" not in blocks
+    assert blocks["summary:sent:0"]["text"] == "Software engineer based in California."
+    assert blocks["caveats"]["text"] == "Common name, some ambiguity across platforms."
+    assert "link:https://example.com/danielreyes" in blocks
+
+
+def test_deep_dive_adapter_empty_summary_with_caveats_and_links_no_not_found_status(monkeypatch):
+    doc = dict(_DIVE_DOC)
+    doc["digest"] = {
+        "name": "Daniel Reyes",
+        "confidence": "not_found",
+        "summary": "",
+        "caveats": "The name Daniel Reyes is extremely common.",
+        "facts": [],
+        "links": [{"url": "https://example.com/daniel", "title": "Daniel"}],
+    }
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: doc)
+    report, *_ = ra.deep_dive_blocks(object(), "u1", "name_daniel")
+    blocks = _blocks(report)
+    assert "summary:status" not in blocks
+    assert blocks["caveats"]["text"] == "The name Daniel Reyes is extremely common."
+    assert "link:https://example.com/daniel" in blocks
 
 
 def test_deep_dive_adapter_confidence_unknown_value_is_not_raw_enum(monkeypatch):

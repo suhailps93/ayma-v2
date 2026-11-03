@@ -406,6 +406,16 @@ def digest_is_empty(digest: dict | None) -> bool:
     re-derived a version of this condition."""
     if not isinstance(digest, dict):
         return True
-    if digest.get("confidence") == "not_found":
-        return True
-    return not digest.get("facts") and not str(digest.get("summary") or "").strip()
+    if str(digest.get("summary") or "").strip():
+        return False
+    if str(digest.get("caveats") or "").strip():
+        return False
+    if digest.get("facts"):
+        return False
+    if digest.get("links"):
+        return False
+    if digest.get("social_handles"):
+        return False
+    if digest.get("web_images") or digest.get("confirmed_photos"):
+        return False
+    return True

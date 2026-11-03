@@ -328,11 +328,11 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
         summary_blocks.append(
             rb.section_head_block("summary:status", "Nothing found yet.")
         )
-    else:
+    elif summary_text:
         summary_blocks = [
             rb.text_block(f"summary:sent:{i}", sent)
             for i, sent in enumerate(rb.split_sentences(summary_text))
-        ] or [rb.section_head_block("summary:status", "Nothing found yet.")]
+        ]
     conf = _confidence_label(str(digest.get("confidence") or ""))
     if conf:
         summary_blocks.append(
@@ -411,7 +411,7 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
         if confirmed else []
     )
 
-    sections = [rb.make_section("Summary", summary_blocks)]
+    sections = [rb.make_section("Summary", summary_blocks)] if summary_blocks else []
     if fact_blocks:
         sections.append(rb.make_section("Facts", fact_blocks))
     if social_blocks:

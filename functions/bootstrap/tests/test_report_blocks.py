@@ -267,8 +267,14 @@ def test_scored_result_blocks_score_is_not_editable_but_rest_of_axis_is():
 # --- digest_is_empty (§ face/body/deep-dive teaser convergence) -----------
 
 
-def test_digest_is_empty_true_for_not_found_confidence():
-    assert rb.digest_is_empty({"confidence": "not_found", "summary": "something", "facts": [{"x": 1}]}) is True
+def test_digest_is_empty_true_for_not_found_confidence_without_content():
+    assert rb.digest_is_empty({"confidence": "not_found", "summary": "", "facts": [], "links": []}) is True
+
+
+def test_digest_is_empty_false_for_not_found_confidence_with_content():
+    assert rb.digest_is_empty({"confidence": "not_found", "summary": "something", "facts": [{"x": 1}]}) is False
+    assert rb.digest_is_empty({"confidence": "not_found", "summary": "", "facts": [], "links": [{"url": "https://a.com"}]}) is False
+    assert rb.digest_is_empty({"confidence": "not_found", "summary": "", "caveats": "Ambiguous."}) is False
 
 
 def test_digest_is_empty_true_when_no_facts_and_no_summary():
