@@ -40,7 +40,8 @@ void main() {
     // own teardown discards the widget tree out from under it, so this
     // top-level flag never gets the chance to flip back — reset it
     // explicitly so it can't leak a false "already open" into a later test.
-    isPageContextAymaPopupOpen = false;
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
   });
 
   Widget host() =>
@@ -204,7 +205,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
-      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+      expect(aymaSheet.isExpanded, isTrue);
       // Still over Explore — expanding is not a tab switch.
       expect(
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
@@ -216,7 +217,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
-      expect(isPageContextAymaPopupOpen, isFalse);
+      expect(isAymaSheetOpen, isFalse);
     },
   );
 

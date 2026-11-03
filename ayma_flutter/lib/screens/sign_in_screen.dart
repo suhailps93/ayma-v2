@@ -106,6 +106,11 @@ class _SignInScreenState extends State<SignInScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirmPassword = TextEditingController();
+
+  /// Per-field show/hide toggles — independent of each other, both start
+  /// obscured.
+  bool _obscurePassword = true;
+  bool _obscureConfirm = true;
   final _confirmFocus = FocusNode();
   final _referral = TextEditingController();
   final _phone = TextEditingController();
@@ -643,18 +648,36 @@ class _SignInScreenState extends State<SignInScreen> {
     const SizedBox(height: 10),
     TextField(
       controller: _password,
-      obscureText: true,
+      obscureText: _obscurePassword,
       onSubmitted: (_) => _submitEmail(),
-      decoration: const InputDecoration(labelText: 'Password'),
+      decoration: InputDecoration(
+        labelText: 'Password',
+        suffixIcon: IconButton(
+          tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+          icon: Icon(
+              _obscurePassword ? Icons.visibility_off : Icons.visibility),
+          onPressed: () =>
+              setState(() => _obscurePassword = !_obscurePassword),
+        ),
+      ),
     ),
     if (_createMode) ...[
       const SizedBox(height: 10),
       TextField(
         controller: _confirmPassword,
         focusNode: _confirmFocus,
-        obscureText: true,
+        obscureText: _obscureConfirm,
         onSubmitted: (_) => _submitEmail(),
-        decoration: const InputDecoration(labelText: 'Confirm password'),
+        decoration: InputDecoration(
+          labelText: 'Confirm password',
+          suffixIcon: IconButton(
+            tooltip: _obscureConfirm ? 'Show password' : 'Hide password',
+            icon: Icon(
+                _obscureConfirm ? Icons.visibility_off : Icons.visibility),
+            onPressed: () =>
+                setState(() => _obscureConfirm = !_obscureConfirm),
+          ),
+        ),
       ),
       if (_createHint != null) ...[
         const SizedBox(height: 8),

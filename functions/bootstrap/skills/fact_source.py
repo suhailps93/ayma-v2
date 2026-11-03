@@ -23,10 +23,12 @@ see each module's own docstring for the write side):
   Ayma the real excerpt lets *her* judge and quote the right part, which is
   what actually fixes the bug report (a generic answer) without fabricating
   precision the system doesn't have.
-* ``deep_dives/{key}.digest.facts`` — ``deep_dive.py``: already carries a
-  ``source_url`` per fact (this predates this change — deep dive was already
-  doing this right), so those come back as ``"web_search"`` matches with the
-  exact claim + URL.
+* ``deep_dives/{key}.digest`` — ``deep_dive.py``: facts already carry a
+  ``source_url`` each (this predates this change — deep dive was already
+  doing this right), and links / social profiles / found photos carry
+  their URL by construction, so every kind of web find comes back as a
+  ``"web_search"`` match with the exact claim-or-title + URL (a photo
+  traces to the page it was found on, not the image file).
 * ``appearance_reports/current`` — ``appearance.py`` (``correct_finding``,
   reached via the ``correct_appearance_item`` tool): also predates this
   change and already did the right thing independently — a face/body
@@ -229,6 +231,7 @@ def _deep_dive_matches(db, uid: str, qtok: set[str]) -> list[dict]:
         if not isinstance(digest, dict):
             continue
         subject = str(digest.get("name") or "")
+        when = iso_or_str(data.get("created_at"), none="")
         for fact in digest.get("facts") or []:
             if not isinstance(fact, dict):
                 continue
@@ -244,7 +247,81 @@ def _deep_dive_matches(db, uid: str, qtok: set[str]) -> list[dict]:
                     "field": subject,
                     "quote": claim,
                     "url": url,
-                    "when": iso_or_str(data.get("created_at"), none=""),
+                    "when": when,
+                    "_score": score,
+                }
+            )
+        # A find need not be a fact claim (§ J7: the PERSONAL WEBSITE find is
+        # a plain web link) — the report's links, social profiles, and found
+        # photos are just as traceable, and their URL is always present.
+        for link in digest.get("links") or []:
+            if not isinstance(link, dict):
+                continue
+            url = str(link.get("url") or "").strip()
+            if not url:
+                continue
+            title = str(link.get("title") or "").strip() or url
+            score = _score(qtok, f"{subject} {title} {url}")
+            if score <= 0:
+                continue
+            out.append(
+                {
+                    "type": "web_search",
+                    "exact": True,
+                    "field": subject,
+                    "quote": title,
+                    "url": url,
+                    "when": when,
+                    "_score": score,
+                }
+            )
+        for handle in digest.get("social_handles") or []:
+            if not isinstance(handle, dict):
+                continue
+            url = str(handle.get("url") or "").strip()
+            if not url:
+                continue
+            platform = str(handle.get("platform") or "").strip()
+            name = str(handle.get("handle") or "").strip()
+            label = (
+                f"@{name} ({platform})".strip()
+                if name
+                else str(handle.get("display_name") or platform).strip()
+            )
+            score = _score(qtok, f"{subject} {platform} {name} {label} {url}")
+            if score <= 0:
+                continue
+            out.append(
+                {
+                    "type": "web_search",
+                    "exact": True,
+                    "field": subject,
+                    "quote": label or url,
+                    "url": url,
+                    "when": when,
+                    "_score": score,
+                }
+            )
+        for image in digest.get("web_images") or []:
+            if not isinstance(image, dict):
+                continue
+            page = str(image.get("source_page") or "").strip()
+            img_url = str(image.get("url") or "").strip()
+            url = page or img_url
+            if not url:
+                continue
+            caption = page or str(image.get("caption") or "").strip()
+            score = _score(qtok, f"{subject} {caption} {img_url}")
+            if score <= 0:
+                continue
+            out.append(
+                {
+                    "type": "web_search",
+                    "exact": True,
+                    "field": subject,
+                    "quote": caption or "Photo found online",
+                    "url": url,
+                    "when": when,
                     "_score": score,
                 }
             )

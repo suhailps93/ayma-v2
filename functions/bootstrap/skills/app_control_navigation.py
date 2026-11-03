@@ -19,7 +19,9 @@ import app_registry
 import public_profile
 from pair_key import sorted_pair_key
 
-from .app_control_mirror import _best_thread, _dm_threads, _LAST_INTENT
+from notifications_schema import NOTIF_DM, NOTIFICATIONS_COLLECTION
+
+from .app_control_mirror import _best_thread, _dm_threads, _epoch, _LAST_INTENT
 from .app_control_queue import (
     _await_ack,
     _await_result,
@@ -428,6 +430,96 @@ def _bind_open_message_thread(db, uid: str) -> Callable[..., str]:
     return open_message_thread
 
 
+def _unread_notifications(db, uid: str, limit: int = 50) -> list[dict]:
+    """The user's unread notifications, most-recent first — the same list the
+    notification centre's badge counts (``NotificationService.watchUnreadCount``):
+    ``read == False``, not dismissed, DMs excluded (those surface as the
+    Messages tab's badge, never the centre). Each entry is ``{id, deep_link,
+    body, type}``. A notification with no ``deep_link`` still opens (the
+    client lands it on the Ayma tab), so those are kept."""
+    try:
+        snaps = list(
+            db.collection("users")
+            .document(uid)
+            .collection(NOTIFICATIONS_COLLECTION)
+            .where("read", "==", False)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("listing notifications failed for %s", uid)
+        return []
+    out: list[dict] = []
+    for snap in snaps:
+        d = snap.to_dict() or {}
+        if d.get("dismissed"):
+            continue
+        if d.get("type") == NOTIF_DM:
+            continue
+        out.append(
+            {
+                "id": snap.id,
+                "deep_link": str(d.get("deep_link") or "").strip(),
+                "body": str(d.get("body") or "").strip(),
+                "type": str(d.get("type") or ""),
+                "_at": _epoch(d.get("created_at")),
+            }
+        )
+    out.sort(key=lambda n: n["_at"], reverse=True)
+    return out[:limit]
+
+
+def _bind_open_notification(db, uid: str) -> Callable[..., str]:
+    async def open_notification() -> str:
+        # One ask opens the latest unread notification's DESTINATION directly
+        # (founder bug 2026-11-02: "open the Android notification" went to
+        # notification *preferences*, then just the list, and only a third
+        # screen-reading ask reached the report). The client resolves the
+        # deep link to its route (the same `deepLinkToRoute` a centre tap
+        # uses); the notification is marked read only once the client acks
+        # the open — no ack, no mark, honest failure instead.
+        notifs = await asyncio.to_thread(_unread_notifications, db, uid)
+        if not notifs:
+            return (
+                "You have no unread notifications — nothing to open. "
+                "The notification list is still there under the bell if "
+                "they want to browse it."
+            )
+        head = notifs[0]
+        cmd_id = _queue_command(
+            db,
+            uid,
+            {
+                "action": "open_notification",
+                "notification_id": head["id"],
+                "deep_link": head["deep_link"],
+            },
+        )
+        ack = await _await_ack(db, uid, cmd_id)
+        if not (ack and ack.get("ok")):
+            return _NOT_NAVIGATED
+        try:
+            await asyncio.to_thread(
+                db.collection("users")
+                .document(uid)
+                .collection(NOTIFICATIONS_COLLECTION)
+                .document(head["id"])
+                .set,
+                {"read": True},
+                merge=True,
+            )
+        except Exception:  # noqa: BLE001 - badge heals on next open anyway
+            logger.exception(
+                "marking notification %s read failed for %s", head["id"], uid
+            )
+        preview = head["body"][:120] or "notification"
+        return (
+            f"navigated: screen=notification — opened their latest "
+            f"notification ({preview})."
+        )
+
+    return open_notification
+
+
 # No schema enum on purpose: livekit's `function_tool(fn, name=...,
 # description=...)` serializes the *signature*, never `parameters`, so the
 # valid keys must live in the description text (the model's only view).
@@ -500,6 +592,15 @@ _OPEN_MESSAGE_THREAD = {
             }
         },
         "required": ["name"],
+    },
+}
+
+_OPEN_NOTIFICATION = {
+    "name": "open_notification",
+    "description": _prompt("app_control_open_notification"),
+    "parameters": {
+        "type": "object",
+        "properties": {},
     },
 }
 

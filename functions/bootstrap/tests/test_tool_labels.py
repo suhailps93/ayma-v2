@@ -29,7 +29,7 @@ def test_nav_tool_suppresses_chip_when_app_did_not_navigate():
 def test_every_nav_tool_is_gated():
     for name in (
         "open_message_thread", "open_screen", "open_profile",
-        "open_match_report", "search_explore",
+        "open_match_report", "search_explore", "open_notification",
     ):
         assert outcome_label(name, "whatever, not navigated") == NO_CHIP
         assert outcome_label(name, "navigated: screen=x.") is None

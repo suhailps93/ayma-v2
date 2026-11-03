@@ -449,20 +449,28 @@ def _llm_contents(
     assess_b: str = "",
     q_a: dict | None = None,
     q_b: dict | None = None,
+    name_a: str = "",
+    name_b: str = "",
 ) -> str:
     covered = {
         k: {"score": v["score"], "evidence": v["evidence"]}
         for k, v in structured["dimensions"].items()
         if v is not None
     }
+    # Each side tagged "A (Sofia)" / "B (Jordan)" (§ G8: the model used to see
+    # bare letters and wrote "A:"/"B:" into the report narrative). The letters
+    # stay as the stable side ids the JSON schema keys off; the names tell it
+    # who to actually write about. Missing name → bare letter, as before.
+    tag_a = f"A ({name_a})" if name_a.strip() else "A"
+    tag_b = f"B ({name_b})" if name_b.strip() else "B"
     return (
-        f"WIKI A:\n{wiki_a}\n\nWIKI B:\n{wiki_b}\n\n"
-        f"{_assessment_block('A', assess_a)}\n\n"
-        f"{_assessment_block('B', assess_b)}\n\n"
-        f"{_stated_answers_block('A', q_a or {})}\n\n"
-        f"{_stated_answers_block('B', q_b or {})}\n\n"
-        f"TRUST FLAGS A: {flags_a or 'none'}\n"
-        f"TRUST FLAGS B: {flags_b or 'none'}\n\n"
+        f"WIKI {tag_a}:\n{wiki_a}\n\nWIKI {tag_b}:\n{wiki_b}\n\n"
+        f"{_assessment_block(tag_a, assess_a)}\n\n"
+        f"{_assessment_block(tag_b, assess_b)}\n\n"
+        f"{_stated_answers_block(tag_a, q_a or {})}\n\n"
+        f"{_stated_answers_block(tag_b, q_b or {})}\n\n"
+        f"TRUST FLAGS {tag_a}: {flags_a or 'none'}\n"
+        f"TRUST FLAGS {tag_b}: {flags_b or 'none'}\n\n"
         f"PAIR INTENT: {intent}\n\n"
         "STRUCTURED SCORING — computed deterministically from both "
         "questionnaires. Treat these dimension numbers as fixed and keep your "
@@ -484,8 +492,13 @@ async def score_pair(
 ) -> dict:
     """Return ``{score, raw_score, structured_score, dimensions,
     user_explanation, ai_explanation, shared, tensions, missing, trust_flags,
-    score_confidence, confidence_note, gate_failures, method}``. Raises if a
-    user has no wiki to judge."""
+    score_confidence, confidence_note, gate_failures, method,
+    names_in_narrative}``. Raises if a user has no wiki to judge.
+
+    ``names_in_narrative`` is always True: the narrative was written with
+    both people's first names (never "A"/"B" — § G8). ``main`` persists it
+    on the match doc so pre-names docs are recognised as legacy and silently
+    recomputed on next open."""
     # The `assessment` page (ai_assessment.py) is Ayma's judgment layer — it
     # is handed to the model separately below as an explicitly labeled block
     # (via its compact digest), so it is kept OUT of the generic wiki dump
@@ -513,6 +526,7 @@ async def score_pair(
     contents = _llm_contents(
         wiki_a, wiki_b, flags_a, flags_b, intent, structured, llm_keys,
         assess_a, assess_b, q_a, q_b,
+        _first_name(profile_a), _first_name(profile_b),
     )
     result = await _run_llm(contents, llm_keys, uid=charge_uid or uid_a)
 
@@ -586,6 +600,7 @@ async def score_pair(
         "method": _METHOD_NOTE.format(
             n=covered_n, shown=len(dims), omitted=omitted_note
         ),
+        "names_in_narrative": True,
     }
 
 

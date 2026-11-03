@@ -119,7 +119,8 @@ void main() {
     // `nav_bar_shell_test.dart`: a test that opens the popup and never
     // dismisses it can leave these leaking into a later test.
     TabRequest.instance.consume();
-    isPageContextAymaPopupOpen = false;
+    isAymaSheetOpen = false;
+    isAymaSheetScoped = false;
     AppContext.instance.set(screen: '');
   });
 
@@ -286,7 +287,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(find.byKey(_modalHandle), findsNothing);
-      expect(isPageContextAymaPopupOpen, isFalse);
+      expect(isAymaSheetOpen, isFalse);
       expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index, 1);
     },
   );
@@ -301,12 +302,12 @@ void main() {
       await tester.drag(find.byKey(_modalHandle), const Offset(0, -600));
       await tester.pumpAndSettle();
       expect(_sheetRect(tester).top, 0);
-      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+      expect(aymaSheet.isExpanded, isTrue);
 
       await tester.drag(find.byKey(_modalHandle), const Offset(0, 600));
       await tester.pumpAndSettle();
       expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
-      expect(pageContextAymaPopupSheet.isExpanded, isFalse);
+      expect(aymaSheet.isExpanded, isFalse);
     },
   );
 

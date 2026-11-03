@@ -500,8 +500,9 @@ def test_open_profile_fuzzy_matches_a_near_identical_name():
 
 _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "list_conversations",
-    "open_message_thread", "open_match_report", "open_date_sim",
-    "open_practice_date", "app_action", "account_action", "ui_action",
+    "open_message_thread", "open_notification", "open_match_report",
+    "open_date_sim", "open_practice_date", "app_action", "account_action",
+    "ui_action",
 }
 
 
@@ -725,6 +726,79 @@ def test_open_message_thread_opens_the_most_recent_on_last():
     out = _run(app_control._bind_open_message_thread(db, "me")("last"))
     assert "the conversation with New Friend is open" in out
     assert db.store[_PENDING]["uid"] == "u-new"
+
+
+def test_open_notification_opens_the_latest_unread_and_marks_it_read():
+    db = _acking_db()
+    db.store[("users", "me", "notifications", "n-old")] = {
+        "type": "ayma_checkin", "body": "Old hello", "deep_link": "chat",
+        "created_at": _AgeTs(9_000), "read": False,
+    }
+    db.store[("users", "me", "notifications", "n-new")] = {
+        "type": "mutual_match", "body": "New compatibility report",
+        "deep_link": "match/me__u-jordan",
+        "created_at": _AgeTs(1_000), "read": False,
+    }
+    out = _run(app_control._bind_open_notification(db, "me")())
+    assert out.startswith("navigated: screen=notification")
+    assert "compatibility report" in out
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "open_notification"
+    assert cmd["deep_link"] == "match/me__u-jordan"
+    assert cmd["notification_id"] == "n-new"
+    assert db.store[("users", "me", "notifications", "n-new")]["read"] is True
+    assert db.store[("users", "me", "notifications", "n-old")]["read"] is False
+
+
+def test_open_notification_skips_dismissed_and_dm_entries():
+    db = _acking_db()
+    db.store[("users", "me", "notifications", "n-dm")] = {
+        "type": "dm_message", "body": "Hey", "deep_link": "dm_thread/me__u-x",
+        "created_at": _AgeTs(100), "read": False,
+    }
+    db.store[("users", "me", "notifications", "n-gone")] = {
+        "type": "ayma_checkin", "body": "Gone", "deep_link": "chat",
+        "created_at": _AgeTs(200), "read": False, "dismissed": True,
+    }
+    db.store[("users", "me", "notifications", "n-keep")] = {
+        "type": "ayma_checkin", "body": "Keep me", "deep_link": "chat",
+        "created_at": _AgeTs(9_000), "read": False,
+    }
+    out = _run(app_control._bind_open_notification(db, "me")())
+    assert db.store[_PENDING]["notification_id"] == "n-keep"
+    assert "Keep me" in out
+
+
+def test_open_notification_reports_when_nothing_is_unread():
+    db = _Db()
+    db.store[("users", "me", "notifications", "n-read")] = {
+        "type": "ayma_checkin", "body": "Old", "deep_link": "chat",
+        "created_at": _AgeTs(9_000), "read": True,
+    }
+    out = _run(app_control._bind_open_notification(db, "me")())
+    assert "no unread notifications" in out
+    assert _PENDING not in db.store
+
+
+def test_open_notification_description_owns_the_latest_notification_words():
+    # Tool *selection* is the model's job: the description must carry the
+    # vocabulary of the ask ("open my latest / the Android notification") so
+    # it routes here instead of open_screen's list/preferences pages.
+    desc = _tool_desc("open_notification")
+    for word in ("notification", "latest", "unread", "android"):
+        assert word in desc, word
+
+
+def test_open_notification_does_not_mark_read_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()
+    db.store[("users", "me", "notifications", "n1")] = {
+        "type": "ayma_checkin", "body": "Hello", "deep_link": "chat",
+        "created_at": _AgeTs(1_000), "read": False,
+    }
+    out = _run(app_control._bind_open_notification(db, "me")())
+    assert out == app_control._NOT_NAVIGATED
+    assert db.store[("users", "me", "notifications", "n1")]["read"] is False
 
 
 def test_open_message_thread_fuzzy_name_resolves():
