@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
+import 'push_permission.dart';
+
 /// The platform calls behind a permission check/request, isolated behind an
 /// interface so [CallPermissions] is testable without a real platform
 /// channel (no plugin registered in a plain `flutter test` run).
@@ -67,19 +69,38 @@ class _PermissionHandlerGateway implements PermissionGateway {
 /// asked up front, when a call starts — not discovered mid-call by silently
 /// failing once the app is backgrounded.
 class CallPermissions {
-  CallPermissions({PermissionGateway? gateway})
-      : _gateway = gateway ?? const _PermissionHandlerGateway();
+  CallPermissions({
+    PermissionGateway? gateway,
+    Future<String?> Function()? getStoredChoice,
+    Future<void> Function(bool granted)? setStoredChoice,
+  })  : _gateway = gateway ?? const _PermissionHandlerGateway(),
+        _getStoredChoice = getStoredChoice ?? NotificationPermissionStore.getChoice,
+        _setStoredChoice = setStoredChoice ?? NotificationPermissionStore.setChoice;
 
   final PermissionGateway _gateway;
+  final Future<String?> Function() _getStoredChoice;
+  final Future<void> Function(bool granted) _setStoredChoice;
 
   /// Call once, right as a voice session starts. Requests whatever the call
   /// will need later (Android's POST_NOTIFICATIONS) while the call is already
   /// underway in the foreground, so the OS prompt lands at a moment the user
   /// has context for, and the permission is (hopefully) already settled by
   /// the time the app is backgrounded and actually needs it.
+  ///
+  /// Honors the user's stored choice across relaunch (A2): never re-prompts
+  /// if the user previously allowed or denied.
   Future<void> ensureCallStartPermissions() async {
-    if (await _gateway.isNotificationGranted()) return;
-    await _gateway.requestNotification();
+    if (await _gateway.isNotificationGranted()) {
+      await _setStoredChoice(true);
+      return;
+    }
+    final choice = await _getStoredChoice();
+    if (choice != null) {
+      // Choice was already made; do not re-prompt on relaunch.
+      return;
+    }
+    final granted = await _gateway.requestNotification();
+    await _setStoredChoice(granted);
   }
 
   /// Checked right before the background call UI goes up. Never re-prompts —

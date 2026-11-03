@@ -10,6 +10,7 @@ import 'api_client.dart';
 import 'auth_service.dart';
 import 'deep_link_queue.dart';
 import 'notification_service.dart';
+import 'push_permission.dart';
 
 /// The slice of Firebase Cloud Messaging [PushService] needs — pulled behind an
 /// interface so the service is unit-testable without the plugin.
@@ -35,15 +36,43 @@ abstract class FcmTokens {
 }
 
 class FirebaseFcmTokens implements FcmTokens {
-  FirebaseFcmTokens([FirebaseMessaging? messaging])
-      : _m = messaging ?? FirebaseMessaging.instance;
+  FirebaseFcmTokens([
+    FirebaseMessaging? messaging,
+    Future<String?> Function()? getStoredChoice,
+    Future<void> Function(bool granted)? setStoredChoice,
+  ])  : _messaging = messaging,
+        _getStoredChoice = getStoredChoice ?? NotificationPermissionStore.getChoice,
+        _setStoredChoice = setStoredChoice ?? NotificationPermissionStore.setChoice;
 
-  final FirebaseMessaging _m;
+  FirebaseMessaging? _messaging;
+  FirebaseMessaging get _m => _messaging ??= FirebaseMessaging.instance;
+
+  final Future<String?> Function() _getStoredChoice;
+  final Future<void> Function(bool granted) _setStoredChoice;
 
   @override
   Future<bool> ensurePermission() async {
+    final choice = await _getStoredChoice();
+    if (choice == 'denied') {
+      return false;
+    }
+    if (choice == 'granted') {
+      return true;
+    }
+
+    try {
+      final currentSettings = await _m.getNotificationSettings();
+      if (currentSettings.authorizationStatus == AuthorizationStatus.authorized ||
+          currentSettings.authorizationStatus == AuthorizationStatus.provisional) {
+        await _setStoredChoice(true);
+        return true;
+      }
+    } catch (_) {}
+
     final settings = await _m.requestPermission();
-    return settings.authorizationStatus != AuthorizationStatus.denied;
+    final granted = settings.authorizationStatus != AuthorizationStatus.denied;
+    await _setStoredChoice(granted);
+    return granted;
   }
 
   @override

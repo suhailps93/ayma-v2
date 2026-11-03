@@ -89,6 +89,27 @@ void main() {
     expect(calls, isEmpty);
   });
 
+  test('FirebaseFcmTokens honors stored denied choice without re-prompting (A2)',
+      () async {
+    final tokens = FirebaseFcmTokens(
+      null,
+      () async => 'denied',
+      (_) async {},
+    );
+
+    expect(await tokens.ensurePermission(), isFalse);
+  });
+
+  test('FirebaseFcmTokens honors stored granted choice', () async {
+    final tokens = FirebaseFcmTokens(
+      null,
+      () async => 'granted',
+      (_) async {},
+    );
+
+    expect(await tokens.ensurePermission(), isTrue);
+  });
+
   test('a refreshed token is re-registered', () async {
     final calls = <String>[];
     final fcm = _FakeFcm(token: 'first');

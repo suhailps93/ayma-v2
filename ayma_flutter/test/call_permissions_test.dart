@@ -1,4 +1,5 @@
 import 'package:ayma_flutter/services/call_permissions.dart';
+import 'package:ayma_flutter/services/push_permission.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Drives every branch of [CallPermissions] without a real platform channel
@@ -29,6 +30,8 @@ class _FakeGateway implements PermissionGateway {
 }
 
 void main() {
+  setUp(() => NotificationPermissionStore.clear());
+
   test('ensureCallStartPermissions requests when not yet granted', () async {
     final gateway = _FakeGateway(granted: false);
     final permissions = CallPermissions(gateway: gateway);
@@ -58,6 +61,21 @@ void main() {
     await permissions.ensureCallStartPermissions();
 
     expect(gateway.requestCalls, 0);
+  });
+
+  test('ensureCallStartPermissions honors stored choice and does not re-prompt (A2)',
+      () async {
+    final gateway = _FakeGateway(granted: false, requestGrants: false);
+    final permissions = CallPermissions(gateway: gateway);
+
+    // First prompt declines:
+    await permissions.ensureCallStartPermissions();
+    expect(gateway.requestCalls, 1);
+    expect(await NotificationPermissionStore.getChoice(), 'denied');
+
+    // Second call on relaunch:
+    await permissions.ensureCallStartPermissions();
+    expect(gateway.requestCalls, 1); // no second prompt
   });
 
   test('ensureBackgroundCallPermission reflects current status without '
