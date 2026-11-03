@@ -2124,6 +2124,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // text at 200% they used to overflow it (founder, Pixel Fold:
     // "BOTTOM OVERFLOWED BY 42 PIXELS"). At normal sizes every cap is
     // larger than its content, so nothing scrolls and nothing changes.
+    // The Ask-Ayma header below gets the largest safe share (half the
+    // sheet): its context card shows the highlighted item's FULL text with
+    // no truncation ever (§ D12 — a Projects quote cut mid-sentence), so at
+    // normal sizes the whole card fits and nothing scrolls; only a
+    // pathological quote in a tiny window scrolls the header region rather
+    // than overflowing the column (header 0.5 + composer 0.5 can never
+    // exceed the sheet, which the layout matrix proves). The card itself
+    // never truncates and holds no scroll of its own.
     return LayoutBuilder(
       builder: (context, constraints) {
         // The column's own height: the Scaffold's, minus the top inset its
@@ -2143,7 +2151,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             child: Column(
               children: [
                 if (askAyma != null)
-                  _capped(h * 0.25, _AskAymaHeader(ctx: askAyma))
+                  _capped(h * 0.5, _AskAymaHeader(ctx: askAyma))
                 else if (!photo)
                   // Rebuilt off [_voice] so the full-screen entry point appears
                   // the moment a call starts and vanishes the moment it ends —
@@ -2776,10 +2784,12 @@ class _SelectedQuote extends StatelessWidget {
             ).copyWith(letterSpacing: 1.4),
           ),
           const SizedBox(height: 6),
+          // The FULL item text, always — no line cap, no ellipsis (§ D12:
+          // a Projects quote cut mid-sentence). This card sizes to the item
+          // and holds no scroll of its own; the header region's generous cap
+          // above only ever binds for a pathological quote in a tiny window.
           Text(
             '"$text"',
-            maxLines: 4,
-            overflow: TextOverflow.ellipsis,
             style: AymaType.message(color: ac.fg).copyWith(fontStyle: FontStyle.italic),
           ),
         ],
