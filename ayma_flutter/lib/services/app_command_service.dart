@@ -18,6 +18,7 @@ import 'profile_service.dart';
 import 'push_service.dart';
 import 'screen_capture.dart';
 import 'theme_controller.dart';
+import 'voice_session_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
 /// can queue one UI command at `users/{uid}/app_commands/pending` (backend
@@ -58,6 +59,10 @@ import 'theme_controller.dart';
 ///   backend only sends after the user explicitly confirmed and which runs
 ///   after the ack is written. Deleting the account and withdrawing consent
 ///   are never commands: Ayma only opens those pages (founder rule);
+/// * `reconnect_voice` — tear down and re-establish the live voice session so a
+///   just-saved model stack (brain/voice/mode/realtime model) applies now; it
+///   runs after the ack is written (like sign out) and acks `false` when no
+///   call is live (`skills/set_model_stack`);
 /// * `ui_action` — operate one on-screen control through [ScreenCapture]
 ///   (which refuses the registry's denylist), acked with the outcome and
 ///   what the screen shows afterwards.
@@ -76,7 +81,12 @@ class AppCommandService {
     bool Function()? chatPopupOpen,
     Future<void> Function()? closeChatPopup,
     String Function()? currentPath,
+    bool Function()? hasActiveVoice,
+    Future<void> Function()? reconnectVoice,
   })  : _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
+        _hasActiveVoice = hasActiveVoice ??
+            (() => VoiceSessionController.active?.isActive ?? false),
+        _reconnectVoice = reconnectVoice ?? _reconnectActiveVoice,
         _closeChatPopup =
             closeChatPopup ?? ScreenCapture.instance.closeAymaPopup,
         _currentPath = currentPath ?? _routerPath,
@@ -126,9 +136,30 @@ class AppCommandService {
         value: cmd['value'] as String? ?? '',
       );
 
-  /// A confirmed sign out waiting to run once the ack and the pending-doc
-  /// cleanup are written — both live under `users/{uid}`, which signing out
-  /// would break.
+  /// Whether a voice call is live right now (so `reconnect_voice` can ack
+  /// honestly) and how to reconnect it. Injectable for tests; the defaults use
+  /// the process-wide [VoiceSessionController.active].
+  final bool Function() _hasActiveVoice;
+  final Future<void> Function() _reconnectVoice;
+
+  /// Reconnect the live voice session so a just-saved model stack applies now:
+  /// stop the current LiveKit room and start a fresh one, which re-runs
+  /// `/bootstrap` → re-reads the saved stack (`VoiceSessionController.start` →
+  /// `_attempt` → `_api.bootstrap`). A short grace delay first lets Ayma's
+  /// spoken "reconnecting" confirmation play before the room drops. All voice
+  /// stays on LiveKit — this only re-establishes the same room path.
+  static Future<void> _reconnectActiveVoice() async {
+    final session = VoiceSessionController.active;
+    if (session == null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    await session.stop();
+    await session.start();
+  }
+
+  /// A confirmed sign out — or a `reconnect_voice` — waiting to run once the ack
+  /// and the pending-doc cleanup are written. Sign-out and reconnect both tear
+  /// down state the ack write itself depends on (the `users/{uid}` path, or the
+  /// live room), so they must run strictly after the ack is persisted.
   Future<void> Function()? _afterAck;
   final AccentColorController? _accentOverride;
   AccentColorController get _accent =>
@@ -390,6 +421,16 @@ class AppCommandService {
           (cmd['name'] as String? ?? '').trim(),
           (cmd['value'] as String? ?? '').trim(),
         );
+      case 'reconnect_voice':
+        // Apply a just-saved model stack (brain/voice/mode/model) to the live
+        // call. Ack `true` only when a call is actually live, then do the
+        // stop+start AFTER the ack (via `_afterAck`) so the backend tool can
+        // confirm and Ayma's spoken "reconnecting" plays before the room drops.
+        // No live call → `false`, and the backend tool tells the user it will
+        // apply on their next call (`skills/set_model_stack.reconnect_voice`).
+        if (!_hasActiveVoice()) return false;
+        _afterAck = _reconnectVoice;
+        return true;
     }
     return false;
   }

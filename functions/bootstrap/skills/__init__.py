@@ -35,6 +35,7 @@ from . import (
     remember,
     report_bug,
     run_appearance_report,
+    set_model_stack,
     set_profile_field,
     set_voice_preference,
     submit_feedback,
@@ -59,6 +60,9 @@ _REGISTRY: list[Skill] = [
     followup.SKILL,
     set_profile_field.SKILL,
     set_voice_preference.SKILL,
+    # Ayma changes her OWN model stack (brain / voice mode / realtime model) and
+    # reconnects the live call to apply it — in both text and voice (§13.9/§13.10).
+    *set_model_stack.SKILLS,
     record_feedback.SKILL,
     report_bug.SKILL,
     user_steering.SKILL,

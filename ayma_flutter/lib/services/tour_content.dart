@@ -124,6 +124,16 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     tab: 3,
   ),
   TourFeature(
+    featureId: 'ask_ayma_change_models',
+    headline: 'Just ask her to switch',
+    subtitle: 'Tell Ayma "switch your brain to Muse", "use cascade mode" or '
+        '"use the Kore voice" — in chat or on a call. She saves it; say '
+        '"reconnect" to apply it to the call right now.',
+    icon: Icons.sync_alt_rounded,
+    anchorId: TourAnchors.profileAymaSettingsRow,
+    tab: 3,
+  ),
+  TourFeature(
     featureId: 'qloo_taste',
     headline: 'Matched on taste',
     subtitle: 'Tap Explore — Qloo pairs you by real taste, not just looks.',

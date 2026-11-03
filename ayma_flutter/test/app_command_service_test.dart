@@ -160,6 +160,31 @@ void main() {
     expect(went, ['/signin']);
   });
 
+  test('reconnect_voice reconnects only after the ack, and only with a live call',
+      () async {
+    var reconnected = false;
+    final svc = AppCommandService(
+      hasActiveVoice: () => true,
+      reconnectVoice: () async => reconnected = true,
+    );
+    expect(svc.handleCommand({'action': 'reconnect_voice'}), isTrue);
+    expect(reconnected, isFalse); // deferred until the ack is written
+    await svc.runAfterAck();
+    expect(reconnected, isTrue);
+  });
+
+  test('reconnect_voice acks false and never reconnects when no call is live',
+      () async {
+    var reconnected = false;
+    final svc = AppCommandService(
+      hasActiveVoice: () => false,
+      reconnectVoice: () async => reconnected = true,
+    );
+    expect(svc.handleCommand({'action': 'reconnect_voice'}), isFalse);
+    await svc.runAfterAck();
+    expect(reconnected, isFalse);
+  });
+
   test('delete_account and withdraw_consent are never executable commands',
       () async {
     final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
