@@ -3168,10 +3168,14 @@ def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
     agent.build_meta_cascade_session()
     assert captured["tts"]["voice"] == "9a9cf47702da476aa4629e2506d4a857"
 
-    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Ashley")
+    # A configured non-default voice is passed through — but it must be VALID for
+    # the active TTS provider (the default model here is fishaudio/s2.1-pro), so
+    # use a real Fish Audio voice id ("Adrian"); a cross-provider id is dropped to
+    # the vendor default (see test_cascade_drops_cross_provider_voice_to_vendor_default).
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "bf322df2096a46f18c579d0baa36f41d")
     monkeypatch.setattr(agent, "CONFIG", config._load())
     agent.build_meta_cascade_session()
-    assert captured["tts"]["voice"] == "Ashley"
+    assert captured["tts"]["voice"] == "bf322df2096a46f18c579d0baa36f41d"
 
 
 def test_meta_cascade_picks_the_gender_matched_tts_voice(monkeypatch):
@@ -3181,7 +3185,10 @@ def test_meta_cascade_picks_the_gender_matched_tts_voice(monkeypatch):
     import config
 
     monkeypatch.setenv("META_API_KEY", "test-key")
-    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Default")
+    # Gender voices must be VALID for the active TTS provider, so this test runs
+    # the cascade on Inworld (staging's TTS) with real Inworld voice names.
+    monkeypatch.setenv("META_CASCADE_TTS_MODEL", "inworld/inworld-tts-1")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Ashley")
     monkeypatch.setenv("META_CASCADE_TTS_VOICE_FEMALE", "Olivia")
     monkeypatch.setenv("META_CASCADE_TTS_VOICE_MALE", "Mark")
     monkeypatch.setattr(agent, "CONFIG", config._load())
@@ -3200,9 +3207,9 @@ def test_meta_cascade_picks_the_gender_matched_tts_voice(monkeypatch):
     assert captured["tts"]["voice"] == "Mark"
     # Non-binary / unknown and the MAIN path (no gender) → the default voice.
     _session_for_gender("non-binary")
-    assert captured["tts"]["voice"] == "Default"
+    assert captured["tts"]["voice"] == "Ashley"
     agent.build_meta_cascade_session()
-    assert captured["tts"]["voice"] == "Default"
+    assert captured["tts"]["voice"] == "Ashley"
 
 
 def test_meta_cascade_gender_voice_falls_back_when_unconfigured(monkeypatch):
@@ -3213,7 +3220,8 @@ def test_meta_cascade_gender_voice_falls_back_when_unconfigured(monkeypatch):
     import config
 
     monkeypatch.setenv("META_API_KEY", "test-key")
-    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Default")
+    monkeypatch.setenv("META_CASCADE_TTS_MODEL", "inworld/inworld-tts-1")
+    monkeypatch.setenv("META_CASCADE_TTS_VOICE", "Ashley")
     monkeypatch.setenv("META_CASCADE_TTS_VOICE_FEMALE", "")
     monkeypatch.setenv("META_CASCADE_TTS_VOICE_MALE", "")
     monkeypatch.setattr(agent, "CONFIG", config._load())
@@ -3222,7 +3230,7 @@ def test_meta_cascade_gender_voice_falls_back_when_unconfigured(monkeypatch):
     agent.build_meta_cascade_session(
         tts_voice=agent._cascade_tts_voice_for_gender("woman")
     )
-    assert captured["tts"]["voice"] == "Default"
+    assert captured["tts"]["voice"] == "Ashley"
 
 
 def test_practice_gemini_session_uses_a_gender_matched_voice(monkeypatch):
@@ -4110,3 +4118,164 @@ def test_env_guard_runs_before_the_cloud_guards_fail_open(monkeypatch):
         room_name="ayma-staging-abc", metadata="{not json",
     )
     assert req.rejected and not req.accepted
+
+
+# --- cascade TTS voice validity (staging bug, 2026-11-03) -------------------
+#
+# The configured cascade default voice is a Fish Audio id. A deploy that
+# overrides only the TTS MODEL to another provider (e.g. inworld on staging)
+# carried that Fish Audio id onto the Inworld TTS, which raised
+# ``APIError: ... Unknown voice ... not found`` → no audio → silent call. The
+# builder must drop a voice that isn't valid for the active TTS provider to the
+# vendor default rather than hand the gateway an id it will reject.
+
+
+def test_cascade_drops_cross_provider_voice_to_vendor_default(monkeypatch):
+    # The EXACT staging specimen: Inworld TTS + the Fish Audio "Hannah" id.
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    import voice_catalog
+    fish_hannah = "9a9cf47702da476aa4629e2506d4a857"
+    assert fish_hannah not in voice_catalog.tts_voice_ids("inworld/inworld-tts-1")
+
+    agent.build_cascade_session(
+        voice_catalog.BRAIN_META,
+        "deepgram/nova-3",
+        "inworld/inworld-tts-1",
+        fish_hannah,
+    )
+    # The invalid cross-provider id must NOT reach the gateway — no voice kwarg
+    # means the provider speaks in its own default (audible), not an error.
+    assert captured["tts"]["model"] == "inworld/inworld-tts-1"
+    assert "voice" not in captured["tts"]
+
+
+def test_cascade_config_default_voice_dropped_on_model_override(monkeypatch):
+    # seed.tts_voice empty → the builder falls back to CONFIG.meta_cascade_tts_voice
+    # (a Fish Audio id). On an Inworld TTS that id is invalid, so it must be
+    # dropped — reproduces the staging failure where the voice was never passed
+    # explicitly, only inherited from config.
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    cfg = dataclasses.replace(
+        CONFIG, meta_cascade_tts_voice="9a9cf47702da476aa4629e2506d4a857"
+    )
+    monkeypatch.setattr(agent, "CONFIG", cfg)
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    import voice_catalog
+    agent.build_cascade_session(
+        voice_catalog.BRAIN_META, "deepgram/nova-3", "inworld/inworld-tts-1", None
+    )
+    assert "voice" not in captured["tts"]
+
+
+def test_cascade_keeps_valid_voice_for_its_provider(monkeypatch):
+    # A voice that IS valid for the active TTS provider is passed through intact.
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    import voice_catalog
+    fish_hannah = "9a9cf47702da476aa4629e2506d4a857"
+    assert fish_hannah in voice_catalog.tts_voice_ids("fishaudio/s2.1-pro")
+
+    agent.build_cascade_session(
+        voice_catalog.BRAIN_META, "deepgram/nova-3", "fishaudio/s2.1-pro", fish_hannah
+    )
+    assert captured["tts"]["voice"] == fish_hannah
+
+
+def test_cascade_inworld_named_voice_kept(monkeypatch):
+    # An Inworld named voice on the Inworld TTS is valid and kept.
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+
+    import voice_catalog
+    agent.build_cascade_session(
+        voice_catalog.BRAIN_META, "deepgram/nova-3", "inworld/inworld-tts-1", "Ashley"
+    )
+    assert captured["tts"]["voice"] == "Ashley"
+
+
+# --- no silent dead air on a cascade TTS error ------------------------------
+
+
+def _tts_error_harness():
+    handlers: dict = {}
+    published: list = []
+
+    class _FakeSession:
+        def on(self, name):
+            def _register(fn):
+                handlers[name] = fn
+                return fn
+            return _register
+
+    class _FakeLocalParticipant:
+        async def publish_data(self, payload, *, reliable, topic):
+            published.append((topic, json.loads(payload), reliable))
+
+    class _FakeRoom:
+        local_participant = _FakeLocalParticipant()
+
+    class _FakeCtx:
+        room = _FakeRoom()
+
+    return handlers, published, _FakeSession, _FakeCtx
+
+
+class _FakeSeed:
+    uid = "u1"
+    session_id = "s1"
+
+
+def _err_ev(kind: str):
+    class _Err:
+        type = kind
+        error = f"{kind} detail"
+
+    class _Ev:
+        error = _Err()
+
+    return _Ev()
+
+
+def test_cascade_tts_error_publishes_honest_status():
+    handlers, published, _FakeSession, _FakeCtx = _tts_error_harness()
+
+    async def _run():
+        agent._arm_cascade_tts_error_status(_FakeCtx(), _FakeSeed(), _FakeSession())
+        handlers["error"](_err_ev("tts_error"))
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+    assert published, "a TTS error must surface an honest status, never silence"
+    topic, payload, reliable = published[0]
+    assert topic == agent.TOPIC_VOICE_STATUS
+    assert payload == {"state": agent.VOICE_STATUS_TTS_ERROR}
+
+
+def test_cascade_non_tts_error_does_not_signal_tts_status():
+    handlers, published, _FakeSession, _FakeCtx = _tts_error_harness()
+
+    async def _run():
+        agent._arm_cascade_tts_error_status(_FakeCtx(), _FakeSeed(), _FakeSession())
+        handlers["error"](_err_ev("llm_error"))
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+    assert published == []
+
+
+def test_cascade_tts_error_signals_at_most_once():
+    handlers, published, _FakeSession, _FakeCtx = _tts_error_harness()
+
+    async def _run():
+        agent._arm_cascade_tts_error_status(_FakeCtx(), _FakeSeed(), _FakeSession())
+        handlers["error"](_err_ev("tts_error"))
+        handlers["error"](_err_ev("tts_error"))
+        handlers["error"](_err_ev("tts_error"))
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+    assert len(published) == 1

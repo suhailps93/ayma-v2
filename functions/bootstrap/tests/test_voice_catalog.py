@@ -320,3 +320,22 @@ def test_accent_supported_resolves_saved_stack(monkeypatch):
         schema.PF_AYMA_REALTIME_MODEL: vc.REALTIME_GEMINI,
     }
     assert vc.accent_supported(realtime_prof) is True
+
+
+# --- safe_tts_voice: never hand the gateway a cross-provider voice id --------
+def test_safe_tts_voice_drops_cross_provider_id():
+    # The configured Fish Audio default voice on an Inworld TTS → vendor default.
+    fish_hannah = "9a9cf47702da476aa4629e2506d4a857"
+    assert vc.safe_tts_voice("inworld/inworld-tts-1", fish_hannah) == ""
+
+
+def test_safe_tts_voice_keeps_valid_id():
+    fish_hannah = "9a9cf47702da476aa4629e2506d4a857"
+    assert vc.safe_tts_voice("fishaudio/s2.1-pro", fish_hannah) == fish_hannah
+    assert vc.safe_tts_voice("inworld/inworld-tts-1", "Ashley") == "Ashley"
+
+
+def test_safe_tts_voice_empty_stays_vendor_default():
+    assert vc.safe_tts_voice("inworld/inworld-tts-1", "") == ""
+    assert vc.safe_tts_voice("inworld/inworld-tts-1", None) == ""
+    assert vc.safe_tts_voice("inworld/inworld-tts-1", "  ") == ""

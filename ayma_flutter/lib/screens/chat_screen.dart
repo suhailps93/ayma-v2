@@ -1537,7 +1537,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ? 'Muted'
               : (_pttVoice.agentSpeaking
                     ? 'Ayma is speaking…'
-                    : (_pttVoice.activeToolLabel ?? 'Listening…')),
+                    // A cascade TTS error is recovering the voice — say so
+                    // honestly instead of a silent "Listening…".
+                    : (_pttVoice.voiceTrouble
+                          ? 'Reconnecting the voice…'
+                          : (_pttVoice.activeToolLabel ?? 'Listening…'))),
       };
     }
     return SafeArea(

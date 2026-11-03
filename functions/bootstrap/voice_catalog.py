@@ -689,6 +689,28 @@ def tts_voice_ids(tts_id: str) -> set[str]:
     return {v.id for v in _tts_voices(tts_id)}
 
 
+def safe_tts_voice(tts_id: str, voice: str | None) -> str:
+    """The voice id to actually hand ``inference.TTS`` for ``tts_id`` — guaranteed
+    valid for that TTS provider: ``voice`` when it is one of the provider's known
+    voice ids (:func:`tts_voice_ids`), else ``""`` (the vendor default, which is
+    always safe).
+
+    This is the single guard against a CROSS-PROVIDER voice id reaching the
+    gateway. The configured cascade default voice (``CONFIG.meta_cascade_tts_voice``
+    = a Fish Audio id) is carried onto whatever TTS model is active; when a
+    deploy overrides only the TTS *model* to another provider (e.g. ``inworld/
+    inworld-tts-1`` on staging) the Fish Audio id is unknown there and the gateway
+    raises ``APIError: ... Unknown voice ... not found`` → no audio → the call goes
+    silent (founder bug, staging 2026-11-03). Dropping an unknown id to the
+    vendor default makes the provider speak in its own default voice instead of
+    erroring into dead air. An empty/whitespace ``voice`` already means the vendor
+    default, so it is returned unchanged."""
+    v = (voice or "").strip()
+    if not v:
+        return ""
+    return v if v in tts_voice_ids(tts_id) else ""
+
+
 def is_valid_language(code: str) -> bool:
     if not code:
         return True

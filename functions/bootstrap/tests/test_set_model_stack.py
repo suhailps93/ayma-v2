@@ -264,16 +264,79 @@ def test_run_stack_command_voice_mode_and_realtime_model():
     assert db.store[_PROFILE][schema.PF_AYMA_REALTIME_MODEL] == "gemini-live"
 
 
-def test_all_four_tools_are_registered_for_text_and_voice():
+# --- set_stt / set_tts (cascade engines) --------------------------------------
+
+
+def test_set_stt_deepgram_persists_and_sets_cascade_mode():
+    db = _Db()
+    msg = _run(set_model_stack._bind_set_stt(db, "u1")("deepgram"))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_STT] == "deepgram/nova-3"
+    # STT only applies in cascade mode, so the mode is set too (it would have no
+    # effect otherwise).
+    assert db.store[_PROFILE][schema.PF_AYMA_VOICE_MODE] == "cascade"
+    assert "speech-to-text" in msg and "saved" in msg
+
+
+def test_set_stt_resolves_by_model_fragment():
+    db = _Db()
+    _run(set_model_stack._bind_set_stt(db, "u1")("nova-3"))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_STT] == "deepgram/nova-3"
+
+
+def test_set_stt_assemblyai_persists():
+    db = _Db()
+    _run(set_model_stack._bind_set_stt(db, "u1")("AssemblyAI"))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_STT] == "assemblyai/universal-streaming"
+
+
+def test_set_tts_inworld_persists_and_sets_cascade_mode():
+    db = _Db()
+    msg = _run(set_model_stack._bind_set_tts(db, "u1")("inworld"))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_TTS] == "inworld/inworld-tts-1"
+    assert db.store[_PROFILE][schema.PF_AYMA_VOICE_MODE] == "cascade"
+    assert "text-to-speech" in msg
+
+
+def test_set_tts_fish_audio_with_a_space_resolves():
+    db = _Db()
+    _run(set_model_stack._bind_set_tts(db, "u1")("Fish Audio"))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_TTS] == "fishaudio/s2.1-pro"
+
+
+def test_set_tts_uncredited_provider_is_honest_and_writes_nothing():
+    # Cartesia is a real LiveKit TTS but NOT credited on this account, so it must
+    # be refused with an honest reason — never silently picked (it would fail).
+    db = _Db()
+    msg = _run(set_model_stack._bind_set_tts(db, "u1")("cartesia"))
+    assert _PROFILE not in db.store
+    assert "cartesia" in msg.lower()
+    assert "inworld" in msg.lower()  # names the ones that DO work
+
+
+def test_set_stt_unknown_is_honest_and_writes_nothing():
+    db = _Db()
+    msg = _run(set_model_stack._bind_set_stt(db, "u1")("telepathy"))
+    assert _PROFILE not in db.store
+    assert "isn't an available engine" in msg
+
+
+def test_set_tts_empty_asks_which_engine():
+    db = _Db()
+    msg = _run(set_model_stack._bind_set_tts(db, "u1")(""))
+    assert _PROFILE not in db.store
+    assert "which engine" in msg.lower()
+
+
+def test_all_model_stack_tools_are_registered_for_text_and_voice():
     names = {d["name"] for d in session_tool_declarations()}
-    assert {
-        "set_brain", "set_voice_mode", "set_realtime_model", "reconnect_voice"
-    } <= names
+    expected = {
+        "set_brain", "set_voice_mode", "set_realtime_model",
+        "set_stt", "set_tts", "reconnect_voice",
+    }
+    assert expected <= names
     # _REGISTRY feeds BOTH session_tool_declarations (text) and make_livekit_tools
     # (voice), so membership here is membership in the voice tool set too.
     import skills
 
     reg = {s.name for s in skills._REGISTRY}
-    assert {
-        "set_brain", "set_voice_mode", "set_realtime_model", "reconnect_voice"
-    } <= reg
+    assert expected <= reg

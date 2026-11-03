@@ -184,11 +184,24 @@ class VoiceSessionController extends ChangeNotifier {
   /// is cold-starting (mirrors `VOICE_STATUS_OPEN_WEIGHTS_WARMING` in agent.py).
   static const _kOpenWeightsWarming = 'open_weights_warming';
 
+  /// The `voice_status` state the agent sends when a cascade TTS leg errored
+  /// (mirrors `VOICE_STATUS_TTS_ERROR` in agent.py). The TTS produced no audio,
+  /// so the agent is recovering the call to Gemini Live — surface an honest
+  /// "reconnecting" status instead of a silent "Listening…".
+  static const _kTtsError = 'tts_error';
+
   /// Set when the agent signals the open-weights brain is warming from a cold
   /// start (data topic `voice_status`, state `open_weights_warming`). Drives
   /// the honest, open-weights-specific status line and failure copy, instead of
   /// a silent "Listening…" / the generic "Couldn't reach the voice service".
   bool _openWeightsWarming = false;
+
+  /// Set when the agent signals a cascade TTS error (`voice_status: tts_error`):
+  /// the TTS produced no audio and the agent is recovering the call. Surfaces an
+  /// honest "reconnecting the voice" status so the user is never left in silent
+  /// dead air; cleared the moment the recovered voice speaks again.
+  bool _voiceTrouble = false;
+  bool get voiceTrouble => _voiceTrouble;
 
   /// Set once the agent has produced any genuine response this session (speech,
   /// transcript, or a tool call). Latches the brain as "alive" so the
@@ -423,6 +436,7 @@ class VoiceSessionController extends ChangeNotifier {
       _agentReadySeen = false;
       _agentRespondedOnce = false;
       _openWeightsWarming = false;
+      _voiceTrouble = false;
       _muted = false;
       _pendingToolLabels.clear();
       _activeToolLabel = null;
@@ -597,7 +611,15 @@ class VoiceSessionController extends ChangeNotifier {
     // the UI stops indicating playback immediately (§1.7 step 10).
     _speakingSub = transport.agentSpeaking.listen((speaking) {
       _noteActivity();
-      if (speaking) _noteAgentResponse();
+      if (speaking) {
+        _noteAgentResponse();
+        // The voice is audible again — clear any "reconnecting the voice"
+        // status the recovered (Gemini Live) leg has now resolved.
+        if (_voiceTrouble) {
+          _voiceTrouble = false;
+          notifyListeners();
+        }
+      }
       if (_agentSpeaking == speaking) return;
       _agentSpeaking = speaking;
       notifyListeners();
@@ -694,6 +716,13 @@ class VoiceSessionController extends ChangeNotifier {
   /// status line says so (not a silent "Listening…") and extend the
   /// no-first-response guard past the cold start so it doesn't fire early.
   void _onVoiceStatus(String state) {
+    if (state == _kTtsError) {
+      if (_voiceTrouble) return;
+      _voiceTrouble = true;
+      debugPrint('[voice] cascade TTS error — reconnecting the voice');
+      notifyListeners();
+      return;
+    }
     if (state != _kOpenWeightsWarming || _openWeightsWarming) return;
     _openWeightsWarming = true;
     // Re-arm an already-armed first-response guard with the longer budget
@@ -1152,6 +1181,7 @@ class VoiceSessionController extends ChangeNotifier {
     _coachSub = null;
     _voiceStatusSub = null;
     _openWeightsWarming = false;
+    _voiceTrouble = false;
     _aymaQuiet = false;
     _closedSub = null;
     _micLevelSub = null;

@@ -134,8 +134,9 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'ask_ayma_change_models',
     headline: 'Just ask her to switch',
-    subtitle: 'Tell Ayma "switch your brain to Muse", "use cascade mode" or '
-        '"use the Kore voice" — in chat or on a call. She saves it; say '
+    subtitle: 'Tell Ayma "switch your brain to Muse", "use cascade mode", '
+        '"use Deepgram for speech-to-text", "use Inworld for text-to-speech" '
+        'or "use the Kore voice" — in chat or on a call. She saves it; say '
         '"reconnect" to apply it to the call right now.',
     icon: Icons.sync_alt_rounded,
     anchorId: TourAnchors.profileAymaSettingsRow,

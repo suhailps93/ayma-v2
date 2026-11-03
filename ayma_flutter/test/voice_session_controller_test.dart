@@ -1408,6 +1408,40 @@ void main() {
     });
 
     test(
+        'a cascade TTS error surfaces an honest "reconnecting" status (never a '
+        'silent "Listening"), cleared when the recovered voice speaks', () async {
+      // Founder bug (staging 2026-11-03): switching to the Meta cascade failed
+      // SILENTLY — the TTS leg errored on an unknown voice, so no audio played
+      // and the UI sat on "Listening…". The agent now signals `tts_error` and
+      // the controller must surface it honestly.
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _api(),
+        transportFactory: () => transport,
+        // Keep the no-first-response guard well clear — this tests the TTS-error
+        // status, not the guard.
+        responseGuardTimeout: const Duration(seconds: 30),
+      );
+
+      await _startLive(c, transport);
+      expect(c.voiceTrouble, isFalse);
+
+      transport.emitVoiceStatus('tts_error');
+      await Future<void>.delayed(Duration.zero);
+      expect(c.voiceTrouble, isTrue,
+          reason: 'a TTS error must show honest status, never silent dead air');
+
+      // The ERROR-close fallback recovers to Gemini Live; its audio clears the
+      // "reconnecting" status.
+      transport.agentSpeakingController.add(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(c.voiceTrouble, isFalse);
+
+      await c.stop();
+    });
+
+    test(
         'a genuine first response (speech) cancels the guard — a working call '
         'stays live and never errors', () async {
       final transport = FakeVoiceTransport();

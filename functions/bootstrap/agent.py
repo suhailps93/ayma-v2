@@ -150,6 +150,13 @@ TOPIC_PRACTICE_COACH = "practice_coach"
 # Payload: {"state": "open_weights_warming"}.
 TOPIC_VOICE_STATUS = "voice_status"
 VOICE_STATUS_OPEN_WEIGHTS_WARMING = "open_weights_warming"
+# A cascade TTS leg errored (e.g. an unknown-voice APIError): it produces no
+# audio, and livekit only closes the session after several consecutive strikes,
+# so the user would otherwise sit in silent "Listening…" until the ERROR-close
+# fallback to Gemini Live fires. Signalled on the FIRST such error so the client
+# shows an honest "the voice hit a snag, reconnecting…" instead of dead air
+# (founder bug, staging 2026-11-03). Payload: {"state": "tts_error"}.
+VOICE_STATUS_TTS_ERROR = "tts_error"
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -701,7 +708,20 @@ def build_cascade_session(
             stt_kwargs["language"] = lang.split("-")[0]
     stt = inference.STT(**stt_kwargs)
     tts_kwargs: dict[str, object] = {"model": tts_id}
-    chosen_tts_voice = (tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    requested_tts_voice = (tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    # The voice must be VALID for the active TTS provider. A cross-provider id
+    # (e.g. the configured Fish Audio default carried onto an Inworld TTS by a
+    # model-only deploy override) makes the gateway raise an unknown-voice
+    # APIError and the call goes silent — so drop an unknown id to the vendor
+    # default here (``voice_catalog.safe_tts_voice``) instead of handing it over.
+    chosen_tts_voice = voice_catalog.safe_tts_voice(tts_id, requested_tts_voice)
+    if requested_tts_voice and chosen_tts_voice != requested_tts_voice:
+        logger.warning(
+            "cascade TTS voice %r is not a valid voice for %s — using the vendor "
+            "default instead (an invalid id would raise an unknown-voice error "
+            "and leave the call silent)",
+            requested_tts_voice, tts_id,
+        )
     if chosen_tts_voice:
         tts_kwargs["voice"] = chosen_tts_voice
     tts = inference.TTS(**tts_kwargs)
@@ -2790,6 +2810,7 @@ async def _start_main_cascade_session(
     tour_gate = TourNarrationGate()
     relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
     session.on("close", _flush_on_non_error_close(flush))
+    _arm_cascade_tts_error_status(ctx, seed, session)
     relay_agent_state(ctx, session)
     mute = MuteState()
     relay_mute_control(session, mute, ctx)
@@ -2811,7 +2832,13 @@ async def _start_main_cascade_session(
     import voice_catalog
 
     tts_id = seed.tts_id or CONFIG.meta_cascade_tts_model
-    current_voice_id = (seed.tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    # The voice the session was ACTUALLY built with: an id invalid for this TTS
+    # provider was dropped to the vendor default in ``build_cascade_session``, so
+    # resolve it the same way here — otherwise "which voice are you on" would name
+    # a voice that is not the one speaking.
+    current_voice_id = voice_catalog.safe_tts_voice(
+        tts_id, (seed.tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
+    )
     rv, vocab = _voice_vocab(
         mode=voice_catalog.MODE_CASCADE,
         tts_id=tts_id,
@@ -2896,6 +2923,39 @@ def _flush_on_non_error_close(flush: SessionFlush) -> Callable[[object], None]:
         flush.start()
 
     return _on_close
+
+
+def _arm_cascade_tts_error_status(
+    ctx: JobContext, seed: RoomSeed, session: AgentSession
+) -> None:
+    """Publish an honest ``voice_status`` the FIRST time a cascade TTS leg errors,
+    so the call never sits in silent dead air (§13.9).
+
+    A cascade TTS error (e.g. an unknown-voice ``APIError``) yields no audio, and
+    livekit only closes the session after several consecutive unrecoverable
+    strikes (``max_unrecoverable_errors``). Until then — or forever, for an error
+    the plugin flags recoverable — the user hears nothing while the UI shows
+    "Listening…" (founder bug, staging 2026-11-03). On the first TTS-source error
+    we tell the client ``VOICE_STATUS_TTS_ERROR`` so it shows an honest
+    "reconnecting the voice" status; the runtime ERROR-close fallback
+    (:func:`_arm_main_cascade_fallback`) still recovers the call to Gemini Live.
+    Fires at most once (a stream of per-utterance errors must not spam the
+    client)."""
+    fired = False
+
+    @session.on("error")
+    def _on_error(ev) -> None:  # noqa: ANN001 - ErrorEvent
+        nonlocal fired
+        err = getattr(ev, "error", None)
+        if fired or getattr(err, "type", "") != "tts_error":
+            return
+        fired = True
+        logger.warning(
+            "main-voice cascade TTS error uid=%s session=%s (%s) — signalling "
+            "honest status; the ERROR-close fallback recovers the call",
+            seed.uid, seed.session_id or "?", getattr(err, "error", err),
+        )
+        asyncio.create_task(_publish_voice_status(ctx, VOICE_STATUS_TTS_ERROR))
 
 
 def _arm_main_cascade_fallback(

@@ -245,6 +245,116 @@ def _bind_set_realtime_model(db, uid: str) -> Callable[..., object]:
     return set_realtime_model
 
 
+# --- cascade STT / TTS engines ------------------------------------------------
+#
+# The cascade stack's speech-to-text and text-to-speech ENGINES are selectable
+# exactly like the brain, from the SAME catalog the "Ayma's models" screen and
+# the ``POST /voice/preference`` endpoint use (``voice_catalog.catalog()``).
+# Before this Ayma had no tool for them, so she told the founder she had "no
+# options" for STT/TTS even though the screen shows pickers (founder bug,
+# 2026-11-03). Only AVAILABLE engines are offered (an uncredited provider is
+# returned with an honest reason, never silently picked). Choosing either engine
+# also puts Ayma in cascade mode (they only apply there — the screen couples them
+# the same way ``set_realtime_model`` couples realtime mode).
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[\s_/-]+", "", (s or "").strip().lower())
+
+
+def _component_labels(options: list[dict]) -> str:
+    """The provider names of the AVAILABLE engines, for an honest "pick one of"."""
+    seen: list[str] = []
+    for o in options:
+        if o.get("available"):
+            name = str(o.get("provider") or o.get("id"))
+            if name and name not in seen:
+                seen.append(name)
+    return ", ".join(seen)
+
+
+def _resolve_cascade_component(text: str, options: list[dict]) -> tuple[str | None, str]:
+    """``(engine_id, "")`` for a recognised, AVAILABLE engine in ``options``
+    (catalog entries with ``id``/``provider``/``available``/``requires_secret``),
+    else ``(None, reason)`` with an honest, user-facing reason. Matches by exact
+    id, by provider name, or by a space/hyphen-insensitive substring so "fish
+    audio", "fishaudio" and "fishaudio/s2.1-pro" all resolve."""
+    raw = _norm(text)
+    labels = _component_labels(options)
+    if not raw:
+        return None, f"ask which engine they want — {labels}"
+    available = [o for o in options if o.get("available")]
+    for o in available:
+        oid, prov = _norm(str(o["id"])), _norm(str(o.get("provider") or ""))
+        if raw in (oid, prov) or (prov and prov in raw) or raw in oid:
+            return str(o["id"]), ""
+    # Named but not available on this account → honest reason, not a silent pick.
+    for o in options:
+        if o.get("available"):
+            continue
+        oid, prov = _norm(str(o["id"])), _norm(str(o.get("provider") or ""))
+        if raw in (oid, prov) or (prov and prov in raw) or raw in oid:
+            note = str(o.get("requires_secret") or "more setup")
+            return None, (
+                f"'{text.strip()}' needs {note} on this account — "
+                f"pick one of: {labels}"
+            )
+    return None, f"'{text.strip()}' isn't an available engine — pick one of: {labels}"
+
+
+def _persist_cascade_component(
+    db, uid: str, *, kind: str, field: str, text: str
+) -> str:
+    """Validate (catalog) and save a cascade STT/TTS engine + cascade mode.
+    Returns the user-facing result. Runs in a worker thread (``catalog()`` may
+    touch the LiveKit Inference gateway); never raises. ``kind`` is ``"stt"`` or
+    ``"tts"`` (the catalog key and the human label)."""
+    try:
+        options = voice_catalog.catalog()[kind]  # type: ignore[index]
+        engine_id, reason = _resolve_cascade_component(text, options)
+        if engine_id is None:
+            return reason
+        _write_many(
+            db, uid,
+            {
+                field: engine_id,
+                # STT/TTS only apply in cascade mode, so set it too — otherwise
+                # the change would silently have no effect (mirrors how
+                # set_realtime_model couples realtime mode).
+                schema.PF_AYMA_VOICE_MODE: voice_catalog.MODE_CASCADE,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("set_%s failed for %s", kind, uid)
+        return f"The app did NOT save that {kind.upper()} engine — tell the user it didn't work."
+    human = "speech-to-text" if kind == "stt" else "text-to-speech"
+    return (
+        f"{human} → {engine_id} — saved as your default (in cascade mode); it "
+        "takes effect on your next voice call, or say 'reconnect' to apply it to "
+        "this call."
+    )
+
+
+def _bind_set_stt(db, uid: str) -> Callable[..., object]:
+    async def set_stt(engine: str = "") -> str:
+        return await asyncio.to_thread(
+            _persist_cascade_component,
+            db, uid, kind="stt", field=schema.PF_AYMA_CASCADE_STT, text=engine,
+        )
+
+    return set_stt
+
+
+def _bind_set_tts(db, uid: str) -> Callable[..., object]:
+    async def set_tts(engine: str = "") -> str:
+        return await asyncio.to_thread(
+            _persist_cascade_component,
+            db, uid, kind="tts", field=schema.PF_AYMA_CASCADE_TTS, text=engine,
+        )
+
+    return set_tts
+
+
 # --- reconnect the live call --------------------------------------------------
 
 
@@ -397,6 +507,22 @@ _MODES_FILL = ", ".join(voice_catalog.MODES)
 # import): the always-present Gemini Live entry is the realtime default.
 _REALTIME_DEFAULT_FILL = str(voice_catalog._realtime_models({})[0]["label"])
 
+
+def _credited_providers(models: tuple[str, ...]) -> str:
+    """The provider names of ``models`` that carry LiveKit credits (so are
+    offered), for a prompt hint. Config-only — no LiveKit network at import; the
+    tool's resolver re-validates against the live catalog at call time."""
+    out: list[str] = []
+    for m in models:
+        prov = m.split("/", 1)[0] if "/" in m else m
+        if prov in voice_catalog.CONFIG.voice_credited_providers and prov not in out:
+            out.append(prov)
+    return ", ".join(out)
+
+
+_STT_ENGINES_FILL = _credited_providers(voice_catalog.CONFIG.voice_cascade_stt_models)
+_TTS_ENGINES_FILL = _credited_providers(voice_catalog.CONFIG.voice_cascade_tts_models)
+
 SET_BRAIN = Skill(
     declaration={
         "name": "set_brain",
@@ -438,6 +564,32 @@ SET_REALTIME_MODEL = Skill(
     bind=_bind_set_realtime_model,
 )
 
+SET_STT = Skill(
+    declaration={
+        "name": "set_stt",
+        "description": _prompt("set_stt", STT_ENGINES=_STT_ENGINES_FILL),
+        "parameters": {
+            "type": "object",
+            "properties": {"engine": {"type": "string"}},
+            "required": ["engine"],
+        },
+    },
+    bind=_bind_set_stt,
+)
+
+SET_TTS = Skill(
+    declaration={
+        "name": "set_tts",
+        "description": _prompt("set_tts", TTS_ENGINES=_TTS_ENGINES_FILL),
+        "parameters": {
+            "type": "object",
+            "properties": {"engine": {"type": "string"}},
+            "required": ["engine"],
+        },
+    },
+    bind=_bind_set_tts,
+)
+
 RECONNECT_VOICE = Skill(
     declaration={
         "name": "reconnect_voice",
@@ -447,4 +599,6 @@ RECONNECT_VOICE = Skill(
     bind=_bind_reconnect_voice,
 )
 
-SKILLS: list[Skill] = [SET_BRAIN, SET_VOICE_MODE, SET_REALTIME_MODEL, RECONNECT_VOICE]
+SKILLS: list[Skill] = [
+    SET_BRAIN, SET_VOICE_MODE, SET_REALTIME_MODEL, SET_STT, SET_TTS, RECONNECT_VOICE,
+]

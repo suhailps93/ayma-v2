@@ -90,6 +90,8 @@ TOOL_LABELS = {
     "set_brain": "Switched Ayma's brain",
     "set_voice_mode": "Changed the voice mode",
     "set_realtime_model": "Changed the voice model",
+    "set_stt": "Changed the speech-to-text",
+    "set_tts": "Changed the text-to-speech",
     "reconnect_voice": "Reconnected the call",
     # Guided tour (skills/guided_tour.py)
     "start_guided_tour": "Started the tour",
@@ -219,6 +221,8 @@ WORKING_LABELS = {
     "set_brain": "Switching Ayma's brain…",
     "set_voice_mode": "Changing the voice mode…",
     "set_realtime_model": "Changing the voice model…",
+    "set_stt": "Changing the speech-to-text…",
+    "set_tts": "Changing the text-to-speech…",
     "reconnect_voice": "Reconnecting the call…",
     # Guided tour (skills/guided_tour.py)
     "start_guided_tour": "Starting the tour…",
