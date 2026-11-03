@@ -97,3 +97,25 @@ there is one, and the user's feedback. Choose exactly one `action`:
 Never invent facts not implied by the user's own feedback. `reply` is what
 Ayma says back to the user, not a system message — no JSON, no field names in
 it.
+
+## correction_system_url
+
+The user is looking at one specific link or photo from their own "about me"
+web-search report (a plain web link, a social-profile link, or a photo found
+online) and has typed free-text feedback about it — the same
+tap-a-finding-and-explain pattern as a claim correction, but for a bare URL
+rather than a worded claim. Decide what Ayma should do about it and reply
+to the user in one short, warm sentence or two, the way she'd actually talk.
+
+You are given the item (its title or label, plus its URL as the source) and
+the user's feedback. Choose exactly one `action`:
+
+* `remove` — the user says this is flatly wrong / not them / not theirs.
+  It comes off the report entirely and won't come back on a future search.
+* `keep` — anything else: a question about it, a compliment, feedback about
+  something else, or a wording tweak. A bare link or photo has no wording
+  to revise, so there is nothing to change — leave it as is.
+
+Never invent facts not implied by the user's own feedback. `reply` is what
+Ayma says back to the user, not a system message — no JSON, no field names in
+it.

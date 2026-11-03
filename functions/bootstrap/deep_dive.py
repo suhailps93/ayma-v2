@@ -118,11 +118,14 @@ def store_dive(
     report).
 
     A fresh research pass fully replaces ``digest`` (it's a new sweep of the
-    live web), but three things a user has told Ayma directly must survive
-    that replacement rather than silently vanish on the next re-run:
-    ``disputed_facts`` (§ Part 2, fact disputes), ``corrections`` (free-text
-    corrections, § deep-dive corrections) and any user-confirmed reverse-image
-    photo (``digest.confirmed_photos`` — § web photo search) that the fresh
+    live web), but what a user has told Ayma directly must survive that
+    replacement rather than silently vanish on the next re-run:
+    ``disputed_facts`` (§ Part 2, fact disputes), ``disputed_links`` /
+    ``disputed_social`` / ``disputed_photos`` (link/photo removals — the
+    fresh sweep is also filtered against those URLs below, so a removed
+    item doesn't resurface), ``corrections`` (free-text corrections,
+    § deep-dive corrections) and any user-confirmed reverse-image photo
+    (``digest.confirmed_photos`` — § web photo search) that the fresh
     digest wouldn't independently know about. Everything else in the new
     digest wins outright — the whole point of re-running is to trust what the
     live web says now.
@@ -147,6 +150,30 @@ def store_dive(
         if prior_confirmed and not digest.get("confirmed_photos"):
             digest["confirmed_photos"] = prior_confirmed
 
+        # A user-removed link/social/photo must not resurface on a re-run:
+        # the fresh sweep is filtered against the prior run's dispute audits
+        # (facts get the same treatment via `disputed_facts_context` in the
+        # research prompt instead — claims need fuzzy matching, URLs don't).
+        for digest_key, audit_key in (
+            ("links", "disputed_links"),
+            ("social_handles", "disputed_social"),
+            ("web_images", "disputed_photos"),
+        ):
+            bad = {
+                str(a.get("url") or "").strip()
+                for a in (prior.get(audit_key) or [])
+                if isinstance(a, dict) and str(a.get("url") or "").strip()
+            }
+            if bad and isinstance(digest.get(digest_key), list):
+                digest[digest_key] = [
+                    e
+                    for e in digest[digest_key]
+                    if not (
+                        isinstance(e, dict)
+                        and str(e.get("url") or "").strip() in bad
+                    )
+                ]
+
         payload = {
             "digest": digest,
             "name": digest.get("name") or name,
@@ -154,8 +181,14 @@ def store_dive(
             "created_at": prior.get("created_at") or firestore.SERVER_TIMESTAMP,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
-        if prior.get("disputed_facts"):
-            payload["disputed_facts"] = prior["disputed_facts"]
+        for key in (
+            "disputed_facts",
+            "disputed_links",
+            "disputed_social",
+            "disputed_photos",
+        ):
+            if prior.get(key):
+                payload[key] = prior[key]
         if prior.get("corrections"):
             payload["corrections"] = prior["corrections"]
         ref.set(payload)
@@ -740,6 +773,15 @@ def dispute_web_image(db, uid: str, report_id: str, url: str) -> dict | None:
 
 _MAX_CORRECTIONS = 30
 
+# Digest list + audit-trail key for each URL-keyed correction target — the
+# same lists :func:`dispute_link` / :func:`dispute_social_link` /
+# :func:`dispute_web_image` remove from (see :func:`correct_finding`).
+_URL_TARGET_LISTS = {
+    "link": ("links", "disputed_links"),
+    "social": ("social_handles", "disputed_social"),
+    "photo": ("web_images", "disputed_photos"),
+}
+
 
 async def correct_finding(
     db, uid: str, report_id: str, *, target: str, feedback: str
@@ -749,12 +791,16 @@ async def correct_finding(
     the Story editor's passage chat (``story.edit_section``), applied to a
     deep-dive report instead of a wiki section.
 
-    ``target`` is ``"summary"`` or ``"fact:<fact_id>"``. Gemini reads the
-    targeted claim (or the summary) plus the user's feedback and decides
-    ``remove`` / ``revise`` / ``caveat`` / ``keep``; the change is applied to
-    the persisted digest immediately, so it survives a reload and isn't lost
-    to the next research re-run (:func:`store_dive` carries ``corrections``
-    and any resulting ``disputed_facts`` entry forward). Every turn — whatever
+    ``target`` is ``"summary"``, ``"fact:<fact_id>"``, or one of
+    ``"link:<url>"`` / ``"social:<url>"`` / ``"photo:<url>"``. Gemini reads
+    the targeted claim (or the summary, or the link/photo's label + URL) plus
+    the user's feedback and decides ``remove`` / ``revise`` / ``caveat`` /
+    ``keep`` — a bare link or photo has no wording to revise, so only
+    ``remove`` mutates there (anything else is audit-only, normalised to
+    ``keep``); the change is applied to the persisted digest immediately, so
+    it survives a reload and isn't lost to the next research re-run
+    (:func:`store_dive` carries ``corrections`` and any resulting
+    ``disputed_*`` entry forward). Every turn — whatever
     Gemini decides — is appended to ``corrections`` as a short audit trail,
     capped at :data:`_MAX_CORRECTIONS` (oldest dropped first).
 
@@ -786,6 +832,9 @@ async def correct_finding(
     fid = ""
     claim_text = ""
     source_url = ""
+    url_kind = ""
+    url = ""
+    url_entry: dict | None = None
     if target == "summary":
         claim_text = str(digest.get("summary", "")).strip()
     elif target.startswith("fact:"):
@@ -797,6 +846,31 @@ async def correct_finding(
                 break
         else:
             return None
+    elif target.startswith(("link:", "social:", "photo:")):
+        url_kind, _, url = target.partition(":")
+        url = url.strip()
+        digest_key = _URL_TARGET_LISTS[url_kind][0]
+        for entry in digest.get(digest_key) or []:
+            if isinstance(entry, dict) and str(entry.get("url") or "").strip() == url:
+                url_entry = entry
+                break
+        else:
+            return None
+        if url_kind == "link":
+            claim_text = str(url_entry.get("title") or "").strip()
+        elif url_kind == "social":
+            handle = str(url_entry.get("handle") or "").strip()
+            platform = str(url_entry.get("platform") or "").strip()
+            claim_text = (
+                f"{platform} @{handle}".strip()
+                if handle
+                else str(url_entry.get("display_name") or platform).strip()
+            )
+        else:
+            claim_text = str(
+                url_entry.get("source_page") or url_entry.get("caption") or ""
+            ).strip()
+        source_url = url
     else:
         return None
 
@@ -804,7 +878,9 @@ async def correct_finding(
         f"Targeted item: {claim_text or '(empty)'}\n"
         f"Source: {source_url or '(none)'}\n"
         f"User's feedback: {feedback}",
-        system_prompt=_CORRECTION_SYSTEM,
+        system_prompt=(
+            _CORRECTION_SYSTEM_URL if url_entry is not None else _CORRECTION_SYSTEM
+        ),
         response_schema=_CORRECTION_SCHEMA,
         uid=uid,
         feature=FEATURE_DEEPDIVE,
@@ -812,6 +888,9 @@ async def correct_finding(
     result = result if isinstance(result, dict) else {}
     action = str(result.get("action") or "keep").strip().lower()
     if action not in ("remove", "revise", "caveat", "keep"):
+        action = "keep"
+    if url_entry is not None and action in ("revise", "caveat"):
+        # A bare link or photo has no wording to revise — audit-only.
         action = "keep"
     reply = (
         str(result.get("reply") or "").strip()
@@ -822,6 +901,7 @@ async def correct_finding(
 
     digest = dict(digest)
     disputed = list(data.get("disputed_facts") or [])
+    extra_audits: dict[str, list] = {}
     if target == "summary":
         if action == "revise" and revised_claim:
             digest["summary"] = revised_claim
@@ -829,6 +909,29 @@ async def correct_finding(
             digest["caveats"] = f"{digest.get('caveats', '')} {note}".strip()
         # "remove" has no sensible meaning for the whole summary — nothing to
         # drop, so it falls through and only the audit trail records it.
+    elif url_entry is not None:
+        # Only `remove` mutates a bare link/photo (anything else was
+        # normalised to `keep` above) — same removal + audit shape as the
+        # `dispute_*` wrappers, applied to this already-loaded digest.
+        if action == "remove":
+            digest_key, audit_key = _URL_TARGET_LISTS[url_kind]
+            kept: list = []
+            for e in digest.get(digest_key) or []:
+                if isinstance(e, dict) and str(e.get("url") or "").strip() == url:
+                    continue
+                kept.append(e)
+            digest[digest_key] = kept
+            audit: dict = {"url": url}
+            if url_kind == "link":
+                audit["title"] = str(url_entry.get("title", "")).strip()
+            elif url_kind == "social":
+                audit["platform"] = str(url_entry.get("platform", "")).strip()
+            else:
+                audit["source_page"] = str(url_entry.get("source_page", "")).strip()
+            audit["disputed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            entries = list(data.get(audit_key) or [])
+            entries.append(audit)
+            extra_audits[audit_key] = entries
     else:
         kept: list[dict] = []
         for f in digest.get("facts") or []:
@@ -872,6 +975,7 @@ async def correct_finding(
     payload: dict = {"digest": digest, "corrections": corrections}
     if disputed:
         payload["disputed_facts"] = disputed
+    payload.update(extra_audits)
     ref.set(payload, merge=True)
     return {"report_id": report_id, "digest": digest, "reply": reply, "action": action}
 
@@ -882,6 +986,8 @@ _RESEARCH_SYSTEM = load_prompt_sections(_PROMPTS_PATH)["research_system"]
 _DIGEST_SYSTEM = load_prompt_sections(_PROMPTS_PATH)["digest_system"]
 
 _CORRECTION_SYSTEM = load_prompt_sections(_PROMPTS_PATH)["correction_system"]
+
+_CORRECTION_SYSTEM_URL = load_prompt_sections(_PROMPTS_PATH)["correction_system_url"]
 
 _CORRECTION_SCHEMA = {
     "type": "object",

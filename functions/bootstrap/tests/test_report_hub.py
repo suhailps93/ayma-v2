@@ -298,6 +298,55 @@ def test_correct_quick_delete_on_social_routes_to_dispute_social_link(monkeypatc
     assert out["ok"] is False
 
 
+def test_correct_quick_delete_on_link_routes_to_dispute_link(monkeypatch):
+    monkeypatch.setattr(deep_dive, "report_owner", lambda rid, uid: "u1")
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: {
+        "digest": {
+            "name": "X", "summary": "s", "facts": [],
+            "links": [{"url": "https://example.com/me", "title": "Personal Website"}],
+        },
+    })
+    calls = {}
+
+    def _dispute(db, uid, rid, url):
+        calls.update(url=url)
+        return {"report_id": rid}
+
+    monkeypatch.setattr(deep_dive, "dispute_link", _dispute)
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["link:https://example.com/me"], scope="block", message="Delete",
+    ))
+    assert calls == {"url": "https://example.com/me"}
+    assert out["ok"] is True
+
+
+def test_correct_routes_link_block_to_deep_dive_correct_finding(monkeypatch):
+    monkeypatch.setattr(deep_dive, "report_owner", lambda rid, uid: "u1")
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: {
+        "digest": {
+            "name": "X", "summary": "s", "facts": [],
+            "links": [{"url": "https://example.com/me", "title": "Personal Website"}],
+        },
+    })
+    calls = {}
+
+    async def _correct(db, uid, rid, *, target, feedback):
+        calls.update(target=target, feedback=feedback)
+        return {"reply": "updated"}
+
+    monkeypatch.setattr(deep_dive, "correct_finding", _correct)
+    _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["link:https://example.com/me"], scope="block",
+        message="that's not my site",
+    ))
+    assert calls == {
+        "target": "link:https://example.com/me",
+        "feedback": "that's not my site",
+    }
+
+
 def test_correct_quick_delete_summary_is_refused(monkeypatch):
     monkeypatch.setattr(deep_dive, "report_owner", lambda rid, uid: "u1")
     monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: {

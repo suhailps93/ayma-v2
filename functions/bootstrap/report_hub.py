@@ -282,12 +282,13 @@ def _deep_dive_target(block_id: str) -> str | None:
         return "summary"
     if (
         block_id.startswith("fact:")
+        or block_id.startswith("link:")
         or block_id.startswith("social:")
         or block_id.startswith("photo:")
         or block_id.startswith("candidate:")
     ):
         return block_id
-    return None  # confidence / caveats / link:* / confirmed_photos: read-only
+    return None  # confidence / caveats / confirmed_photos: read-only
 
 
 def _story_locator(block_id: str) -> tuple[str | None, int | None]:
@@ -385,9 +386,10 @@ async def _correct_appearance(db, owner: str, target: str, message: str,
 async def _correct_deep_dive(db, owner: str, report_id: str, target: str,
                               message: str, is_quick: bool, quick: str) -> dict:
     """``target`` is already a resolved deep-dive correction target
-    (``"summary"``, ``"fact:<id>"``, ``"social:<url>"``, ``"photo:<url>"``,
-    ``"candidate:<id>"``) — the caller, :func:`correct`, resolves and
-    dedupes those via :func:`_deep_dive_target` before ever calling this."""
+    (``"summary"``, ``"fact:<id>"``, ``"link:<url>"``, ``"social:<url>"``,
+    ``"photo:<url>"``, ``"candidate:<id>"``) — the caller, :func:`correct`,
+    resolves and dedupes those via :func:`_deep_dive_target` before ever
+    calling this."""
     if target.startswith("candidate:"):
         # A pending reverse-image-search candidate gets its OWN fixed pair
         # instead of the make-public/make-private/delete set (§ module
@@ -421,6 +423,8 @@ async def _correct_deep_dive(db, owner: str, report_id: str, target: str,
         try:
             if kind == "fact":
                 result = deep_dive.dispute_fact(db, owner, report_id, ident)
+            elif kind == "link":
+                result = deep_dive.dispute_link(db, owner, report_id, ident)
             elif kind == "social":
                 result = deep_dive.dispute_social_link(db, owner, report_id, ident)
             elif kind == "photo":
