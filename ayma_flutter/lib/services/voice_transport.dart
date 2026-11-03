@@ -44,6 +44,7 @@ const _callEndingTopic = 'call_ending';
 const _agentMuteTopic = 'agent_mute';
 const _agentMuteControlTopic = 'agent_mute_control';
 const _voiceAccentControlTopic = 'voice_accent_control';
+const _tourTappedControlTopic = 'tour_tapped';
 const _practiceCoachTopic = 'practice_coach';
 const _voiceStatusTopic = 'voice_status';
 
@@ -117,6 +118,13 @@ abstract class VoiceTransport {
     required String accent,
     required String language,
   });
+
+  /// Tells the live agent the user tapped the guided tour's spotlighted control
+  /// (topic `tour_tapped`, payload `{"index": int}`), §11.2b. The agent turns
+  /// this into a `generate_reply` so Ayma calls `advance_guided_tour` — which
+  /// consumes the already-written `tour_event` doc and narrates the next step —
+  /// instead of only advancing if a blocking tool call happened to be mid-wait.
+  Future<void> sendTourTapped({required int index});
 
   /// Emits once if the transport drops unexpectedly (network / server close).
   Stream<Object> get closed;
@@ -378,6 +386,19 @@ class LiveKitVoiceTransport implements VoiceTransport {
       utf8.encode(jsonEncode({'accent': accent, 'language': language})),
       reliable: true,
       topic: _voiceAccentControlTopic,
+    );
+  }
+
+  @override
+  Future<void> sendTourTapped({required int index}) async {
+    final participant = _room?.localParticipant;
+    if (participant == null) {
+      throw StateError('not connected to a voice room');
+    }
+    await participant.publishData(
+      utf8.encode(jsonEncode({'index': index})),
+      reliable: true,
+      topic: _tourTappedControlTopic,
     );
   }
 

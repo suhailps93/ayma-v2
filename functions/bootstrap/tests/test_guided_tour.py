@@ -505,3 +505,37 @@ def test_await_tour_event_reads_state_doc_when_not_passed():
     assert ev_fresh is not None
     assert ev_fresh["event"] == "tapped"
 
+
+def test_written_tour_event_doc_shape_is_exactly_what_the_poller_consumes():
+    # The EXACT doc the client writes on a tap (app_command_service `event()`:
+    # {index:int, event:'tapped', ts:serverTimestamp → Admin SDK datetime}) must
+    # satisfy every field the poller checks: _index_of, the 'event' truthiness,
+    # and _is_event_fresh against the step's updated_at. Field-by-field, so a
+    # future rename on either side breaks this test (founder/Scout, 2026-11-03).
+    state_updated_at = datetime(2026, 11, 3, 17, 57, 13, tzinfo=timezone.utc)
+    written = {
+        "index": 0,
+        "event": "tapped",
+        "ts": datetime(2026, 11, 3, 17, 58, 4, tzinfo=timezone.utc),
+    }
+    assert guided_tour._index_of(written) == 0
+    assert bool(written.get("event")) is True
+    assert guided_tour._is_event_fresh(written, state_updated_at) is True
+    # And the full poller returns exactly this doc.
+    db = _Db()
+    db.store[_STATE] = {"index": 0, "active": True, "updated_at": state_updated_at}
+    db.store[_EVENT] = dict(written)
+    ev = _run(guided_tour._await_tour_event(db, "u1", 0, timeout=0.01))
+    assert ev is not None and ev["event"] == "tapped" and int(ev["index"]) == 0
+
+
+def test_fast_tap_at_the_presentation_instant_is_fresh_not_rejected():
+    # After _write_state is recorded BEFORE the spotlight, a fast tapper's
+    # event.ts is >= state.updated_at, so _is_event_fresh accepts it — the latent
+    # race that could reject a real immediate tap. A genuinely older event (a
+    # prior tour at the same index) is still rejected.
+    t = datetime(2026, 11, 3, 17, 57, 13, tzinfo=timezone.utc)
+    assert guided_tour._is_event_fresh({"event": "tapped", "ts": t}, t) is True
+    older = t - timedelta(seconds=3)
+    assert guided_tour._is_event_fresh({"event": "tapped", "ts": older}, t) is False
+

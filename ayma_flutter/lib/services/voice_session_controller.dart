@@ -1114,6 +1114,25 @@ class VoiceSessionController extends ChangeNotifier {
     }
   }
 
+  /// The guided tour's spotlighted control was tapped (§11.2b): tell the live
+  /// agent so it drives Ayma to advance (a `generate_reply` → `advance_guided_tour`
+  /// consuming the already-written `tour_event`), instead of relying on a
+  /// blocking tool call to be mid-wait at tap time. Returns false (no-op) when
+  /// no call is live.
+  Future<bool> notifyTourTapped({required int index}) async {
+    final transport = _transport;
+    if (_phase != VoiceSessionPhase.live || transport == null) {
+      return false;
+    }
+    try {
+      await transport.sendTourTapped(index: index);
+      return true;
+    } catch (e) {
+      debugPrint('[voice] tour-tapped send failed: $e');
+      return false;
+    }
+  }
+
   void _setPhase(VoiceSessionPhase phase) {
     _phase = phase;
     if (phase == VoiceSessionPhase.live) _startScreenAwareness();

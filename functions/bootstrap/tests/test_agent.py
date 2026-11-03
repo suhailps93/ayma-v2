@@ -1561,6 +1561,40 @@ def test_session_tools_latch_tour_gate_only_on_guided_tour_tools(monkeypatch):
     assert gate.pending is True
 
 
+def test_tour_tapped_handler_drives_advance_on_the_topic_only():
+    """The voice tap bridge (§11.2b): a `tour_tapped` data packet fires one
+    generate_reply (which makes the model call advance_guided_tour); any other
+    topic is ignored."""
+    import asyncio
+
+    calls = []
+
+    class _FakeSession:
+        def generate_reply(self, *, instructions):
+            calls.append(instructions)
+
+            async def _noop():
+                return None
+
+            return _noop()
+
+    class _Packet:
+        def __init__(self, topic):
+            self.topic = topic
+            self.data = b'{"index": 1}'
+
+    async def _run():
+        handler = agent.tour_tapped_handler(_FakeSession())
+        handler(_Packet("some_other_topic"))  # ignored
+        assert calls == []
+        handler(_Packet(agent.TOPIC_TOUR_TAPPED))  # drives the advance
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+    assert len(calls) == 1
+    assert "advance_guided_tour" in calls[0]
+
+
 # --- §F3 mid-call credit cap (founder cost bug, 2026-09-21) ----------------
 #
 # Root cause: credits were checked only once, at /bootstrap (session token
@@ -3875,9 +3909,10 @@ def test_boot_wires_accent_into_hot_swapper_and_listens_for_settings_changes(
     assert created["voice_accent"] == "indian", created
     assert "indian" not in created["system_prompt"]
     assert "southern" in created["accent_block"]("a southern accent")
-    # The settings screen's mid-call save has a listener on this call.
+    # The settings screen's mid-call save has a listener on this call, and so
+    # does the guided-tour tap bridge (§11.2b) — two data_received handlers now.
     assert "data_received" in ctx.room.handlers
-    assert len(ctx.room.handlers["data_received"]) == 1
+    assert len(ctx.room.handlers["data_received"]) == 2
 
 
 # --- cascade must not act on a stale seeded user turn (founder bug 2026-10-27)-

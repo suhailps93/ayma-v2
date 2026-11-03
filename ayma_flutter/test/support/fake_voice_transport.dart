@@ -133,6 +133,16 @@ class FakeVoiceTransport implements VoiceTransport {
     accentControlCalls.add((accent: accent, language: language));
   }
 
+  /// Every [sendTourTapped] request, in order (the step index).
+  final List<int> tourTappedCalls = [];
+  bool failTourTapped = false;
+
+  @override
+  Future<void> sendTourTapped({required int index}) async {
+    if (failTourTapped) throw StateError('data channel closed');
+    tourTappedCalls.add(index);
+  }
+
   @override
   Stream<Object> get closed => closedController.stream;
 

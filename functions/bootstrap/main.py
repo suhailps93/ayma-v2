@@ -1085,6 +1085,12 @@ class ChatRequest(BaseModel):
     screen_route: str = Field(default="", max_length=200)
     screen_detail: str = Field(default="", max_length=1500)
     screen_visible: str = Field(default="", max_length=3200)
+    # A guided-tour continuation ping (§11.2b): the client fires a minimal /chat
+    # turn when the user taps the spotlighted control, so the model calls
+    # advance_guided_tour (which consumes the already-written tour_event and
+    # narrates the next step). It is a tour-control signal, not a user utterance,
+    # so NEITHER the ping message NOR the tour narration is persisted to history.
+    tour_continuation: bool = Field(default=False)
 
 
 _USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
@@ -1714,6 +1720,10 @@ def _persist_user_turn(ctx: _ChatCtx, req: ChatRequest) -> None:
     ``client_msg_id`` — ``_finalize_chat`` later appends the user turn only if
     this didn't. Only runs for a tagged send (the untagged case has no retry to
     dedup against and is left to ``_finalize_chat`` as before)."""
+    # A guided-tour continuation ping is a synthetic tour-control signal, not a
+    # user message — never persist it (§11.2b).
+    if req.tour_continuation:
+        return
     client_msg_id = (req.client_msg_id or "").strip()
     if not client_msg_id:
         return
@@ -1743,6 +1753,10 @@ def _finalize_chat(
     # ran a guided-tour tool (founder, 2026-11-03). The user's own message still
     # persists below; only Ayma's tour narration is dropped.
     tour_narration = tool_labels.is_guided_tour_turn(tools_used)
+    # A guided-tour continuation ping (the tap bridge, §11.2b) is a synthetic
+    # tour-control signal: neither its message nor the narration it triggers is
+    # persisted. _persist_user_turn already skipped the start-write for it.
+    tour_continuation = bool(getattr(req, "tour_continuation", False))
     client_msg_id = (req.client_msg_id or "").strip()
     if client_msg_id:
         # A twin of this send (a cross-instance retry racing the shielded
@@ -1758,7 +1772,8 @@ def _finalize_chat(
         # The user turn is normally persisted at turn START (_persist_user_turn,
         # so a slow/failed turn never loses it); append it here only if that
         # didn't run (no client_msg_id, or the start write failed) — never twice.
-        if not (client_msg_id and chat_history.user_turn_exists(
+        # A tour-continuation ping is never persisted (it's not a user message).
+        if not tour_continuation and not (client_msg_id and chat_history.user_turn_exists(
             get_db(), ctx.uid, client_msg_id
         )):
             chat_history.append(
@@ -1797,7 +1812,7 @@ def _finalize_chat(
                 get_db(), ctx.uid, reply_text,
             )
 
-    if req.session_id:
+    if req.session_id and not tour_continuation:
         user_text = req.message
         if ctx.image is not None:
             user_text = f"{req.message}\n[shared a photo]".strip()

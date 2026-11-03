@@ -281,8 +281,13 @@ async def _present_from(
             i += 1
             continue
         await asyncio.to_thread(_clear_event, db, uid)
+        # Record the step's presentation timestamp BEFORE the spotlight is shown,
+        # so it is earlier than any tap the user can make: otherwise a fast
+        # tapper's tour_event.ts lands before state.updated_at and _is_event_fresh
+        # wrongly rejects a real tap (founder/Scout, 2026-11-03). On an absent
+        # anchor the next iteration overwrites this with the step actually shown.
+        await asyncio.to_thread(_write_state, db, uid, i, True)
         if await _spotlight(db, uid, i, total, steps[i]):
-            await asyncio.to_thread(_write_state, db, uid, i, True)
             return i, steps[i]
         logger.info("guided tour: step %d anchor absent — skipping", i)
         i += 1

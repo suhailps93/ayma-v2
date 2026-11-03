@@ -283,6 +283,33 @@ def test_chat_stream_guided_tour_narration_is_not_persisted(monkeypatch):
     assert ("user", "give me a tour") in appended
 
 
+def test_chat_tour_continuation_ping_persists_nothing(monkeypatch):
+    """The guided-tour tap bridge (§11.2b) fires a /chat ping with
+    tour_continuation=true so the model calls advance_guided_tour. That ping is a
+    tour-control signal, not a user utterance — NEITHER its message NOR the
+    narration it triggers is written to history (founder/Scout, 2026-11-03)."""
+    async def _events(_message, *_a, **_kw):
+        yield {
+            "type": "reply",
+            "text": "Tap Messages — your conversations live here.",
+            "tools_used": ["Moved to the next step"],  # advance_guided_tour ran
+        }
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    appended = _recording_history(monkeypatch)
+    resp = client.post(
+        "/chat/stream",
+        json={
+            "message": "The user tapped the highlighted control — continue the tour.",
+            "tour_continuation": True,
+        },
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    # Nothing persists: not the ping message (user), not the narration (ayma).
+    assert appended == [], appended
+
+
 def test_chat_feeds_recent_turns_into_the_system_prompt(monkeypatch):
     seen = {}
 

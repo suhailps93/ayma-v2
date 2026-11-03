@@ -2478,6 +2478,7 @@ class ApiClient {
     String screenDetail = '',
     String screenVisible = '',
     String clientMsgId = '',
+    bool tourContinuation = false,
   }) async {
     final http.Response response;
     try {
@@ -2488,6 +2489,7 @@ class ApiClient {
           'message': message,
           'session_id': sessionId,
           'client_msg_id': clientMsgId,
+          'tour_continuation': tourContinuation,
           'viewing_profile_uid': viewingProfileUid,
           'recent_turns': recentTurns,
           'image_path': imagePath,

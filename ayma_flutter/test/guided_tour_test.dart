@@ -2,6 +2,7 @@ import 'package:ayma_flutter/services/app_command_service.dart';
 import 'package:ayma_flutter/services/guided_tour_controller.dart';
 import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
+import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -286,13 +287,19 @@ void main() {
     late FakeFirebaseFirestore fake;
     late AppCommandService svc;
     late DocumentReference<Map<String, dynamic>> pending;
+    late List<int> tourPings;
 
     setUp(() async {
       GuidedTourController.instance.endSession();
+      VoiceSessionController.active = null; // no live call → text bridge path
       fake = FakeFirebaseFirestore();
+      tourPings = <int>[];
       svc = AppCommandService(
         firestore: fake,
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+        // The TEXT tap bridge: on a tap with no live voice call, the service
+        // fires a /chat continuation that makes the model advance the tour.
+        sendTourContinuation: (index) async => tourPings.add(index),
       );
       pending = fake.doc('users/u1/app_commands/pending');
     });
@@ -337,6 +344,10 @@ void main() {
       expect(ev!['index'], 0);
       expect(ev['event'], 'tapped');
       expect(GuidedTourController.instance.active, isFalse);
+      // The tap ALSO kicks the TEXT continuation (no live voice) so the tour
+      // advances end-to-end even though no blocking advance was mid-wait —
+      // the exact live failure (founder/Scout, 2026-11-03).
+      expect(tourPings, [0]);
       expect(GuidedTourController.instance.sessionActive, isTrue);
     });
 

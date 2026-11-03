@@ -10,6 +10,7 @@ import '../screens/explore_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
+import 'api_client.dart';
 import 'app_context.dart';
 import 'guided_tour_controller.dart';
 import 'notification_service.dart';
@@ -86,7 +87,9 @@ class AppCommandService {
     String Function()? currentPath,
     bool Function()? hasActiveVoice,
     Future<void> Function()? reconnectVoice,
-  })  : _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
+    Future<void> Function(int index)? sendTourContinuation,
+  })  : _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
+        _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
         _hasActiveVoice = hasActiveVoice ??
             (() => VoiceSessionController.active?.isActive ?? false),
         _reconnectVoice = reconnectVoice ?? _reconnectActiveVoice,
@@ -144,6 +147,44 @@ class AppCommandService {
   /// the process-wide [VoiceSessionController.active].
   final bool Function() _hasActiveVoice;
   final Future<void> Function() _reconnectVoice;
+
+  /// Fires a guided-tour continuation (§11.2b) for the TEXT surface: a minimal
+  /// `/chat` ping that makes the model call `advance_guided_tour`. Injectable
+  /// for tests; the default POSTs a non-persisted tour-continuation turn.
+  final Future<void> Function(int index) _sendTourContinuation;
+
+  /// The one-line tour-tap signal the model reads as "a real tap happened —
+  /// advance." A fixed control signal, not a persona/prompt template (it is
+  /// never persisted; the backend drops it via `tour_continuation`).
+  static const _tourTapSignal =
+      'The user just tapped the highlighted control in the guided tour. '
+      'Continue the tour: call advance_guided_tour now to move to the next step.';
+
+  /// Default TEXT continuation: a fire-and-forget `/chat` turn flagged
+  /// `tour_continuation` so neither the ping nor the narration persists. The
+  /// reply is ignored — the spotlight advance arrives via the next `tour_step`
+  /// command the backend queues from `advance_guided_tour`.
+  static Future<void> _postTourContinuation(int index) async {
+    try {
+      await ApiClient().chat(_tourTapSignal, tourContinuation: true);
+    } catch (e) {
+      debugPrint('Ayma tour continuation ping failed: $e');
+    }
+  }
+
+  /// Bridge an async tour tap to a model-narrated advance (§11.2b): on voice,
+  /// tell the live agent (data channel → `generate_reply`); otherwise fire the
+  /// TEXT `/chat` continuation. Either way the model calls `advance_guided_tour`,
+  /// which consumes the already-written `tour_event` and narrates/spotlights the
+  /// next step — no dependence on a blocking advance being alive at tap time.
+  void _kickTourAdvance(int index) {
+    final voice = VoiceSessionController.active;
+    if (voice != null && voice.isActive) {
+      unawaited(voice.notifyTourTapped(index: index));
+      return;
+    }
+    unawaited(_sendTourContinuation(index));
+  }
 
   /// When the last reconnect was scheduled — a circuit breaker so a session that
   /// was just reconnected (and is re-seeded with the "reconnect" transcript)
@@ -415,11 +456,14 @@ class AppCommandService {
       },
       // The ONLY thing that advances a step: the user's real tap on the
       // spotlighted control (the press-through). It writes the tap event the
-      // backend's advance_guided_tour is waiting for, and clears this step's
-      // spotlight (session stays active until tour_end).
+      // backend's advance_guided_tour consumes, clears this step's spotlight
+      // (session stays active until tour_end), and KICKS a model turn so the
+      // tour advances even if no blocking advance_guided_tour happened to be
+      // mid-wait at tap time (founder/Scout live failure, 2026-11-03).
       onTapped: () {
         event('tapped');
         guided.clearStep();
+        _kickTourAdvance(index);
       },
       // The tiny "Skip tour" affordance ends the whole session.
       onStop: () {

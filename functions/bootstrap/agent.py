@@ -84,6 +84,7 @@ from post_turn import persist_and_ingest  # noqa: E402
 from prompt import (  # noqa: E402
     compose_system_prompt,
     load_practice_greeting,
+    load_tour_tapped_kick,
     load_voice_dangling_reply,
     load_voice_opener,
     load_voice_session_seed,
@@ -138,6 +139,12 @@ TOPIC_AGENT_MUTE_CONTROL = "agent_mute_control"
 # "" clears the accent back to the provider default. The agent hot-swaps the
 # live session to it (``VoiceSwapper``) instead of waiting for the next call.
 TOPIC_VOICE_ACCENT_CONTROL = "voice_accent_control"
+# Client -> agent: the user tapped the guided tour's spotlighted control
+# (§11.2b). Payload: {"index": int}. The agent turns it into a generate_reply
+# so Ayma calls advance_guided_tour (consuming the already-written tour_event)
+# and narrates the next step — the tap bridge that advances the tour without
+# depending on a blocking advance_guided_tour being mid-wait at tap time.
+TOPIC_TOUR_TAPPED = "tour_tapped"
 # Practice Date voice (hackathon B): an out-of-character live coaching nudge to
 # the USER as they talk to the simulated persona — shown as a side hint, never
 # spoken by the persona (immersion is preserved). Payload: {"text", "is_final"}.
@@ -2339,6 +2346,30 @@ def voice_accent_control_handler(
     return _on_data
 
 
+def tour_tapped_handler(session: AgentSession) -> Callable[[object], None]:
+    """The ``tour_tapped`` data listener (§11.2b): the user tapped the guided
+    tour's spotlighted control, so drive Ayma to advance. Fires one
+    ``generate_reply`` with the tour-tap instruction, which makes the model call
+    ``advance_guided_tour`` — already in the session's tool set — that consumes
+    the client's already-written ``tour_event`` doc and narrates the next step.
+    This is the bridge that advances the tour on a tap regardless of whether a
+    blocking ``advance_guided_tour`` happened to be mid-wait (founder/Scout,
+    2026-11-03). Malformed payloads are dropped; the sync handler schedules the
+    coroutine so it never blocks the data-channel callback."""
+
+    def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
+        if getattr(packet, "topic", None) != TOPIC_TOUR_TAPPED:
+            return
+        try:
+            asyncio.create_task(
+                session.generate_reply(instructions=load_tour_tapped_kick())
+            )
+        except Exception:  # noqa: BLE001 - never crash the data callback
+            logger.exception("tour_tapped generate_reply failed to schedule")
+
+    return _on_data
+
+
 def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
     """True once ``window`` (the session's running turn collector, seeded from
     `/bootstrap`'s ``recent_turns`` and appended to live by
@@ -2773,6 +2804,8 @@ async def _start_main_gemini_session(
         swapper.tools = tools
         # A settings save mid-call arrives on the data channel (§13.9).
         ctx.room.on("data_received", voice_accent_control_handler(swapper))
+    # A guided-tour tap arrives on the data channel (§11.2b) — drive the advance.
+    ctx.room.on("data_received", tour_tapped_handler(session))
     agent_kwargs: dict = {"instructions": _instructions, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
@@ -2871,6 +2904,8 @@ async def _start_main_cascade_session(
         ),
         "tools": tools,
     }
+    # A guided-tour tap arrives on the data channel (§11.2b) — drive the advance.
+    ctx.room.on("data_received", tour_tapped_handler(session))
     # A trailing stale user turn in the seeded history is dropped here so the
     # cascade greets/waits (like Gemini Live) instead of immediately answering a
     # message from the previous conversation (founder bug, 2026-10-27).

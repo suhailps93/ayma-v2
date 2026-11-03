@@ -1,0 +1,1 @@
+The user just tapped the control you highlighted in the guided tour. Continue the tour now: call advance_guided_tour to move to the next step, then say its line in your own warm voice. Do not say anything before calling the tool. If there are no more steps, wrap the tour up warmly.

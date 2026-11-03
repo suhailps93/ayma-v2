@@ -50,6 +50,7 @@ _VOICE_TOOL_USE_PATH = _DIR / "prompts" / "voice_tool_use.md"
 _PRACTICE_GREETING_PATH = _DIR / "prompts" / "practice_greeting.md"
 _VOICE_SESSION_SEED_PATH = _DIR / "prompts" / "voice_session_seed.md"
 _VOICE_DANGLING_REPLY_PATH = _DIR / "prompts" / "voice_dangling_reply.md"
+_TOUR_TAPPED_KICK_PATH = _DIR / "prompts" / "tour_tapped_kick.md"
 _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
@@ -290,6 +291,16 @@ def load_voice_session_seed() -> str:
     generates normally. Realtime models (Gemini Live / Inference RealtimeModel)
     do not go through that path and are never seeded."""
     return _VOICE_SESSION_SEED_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def load_tour_tapped_kick() -> str:
+    """The generate_reply instruction when the client reports the guided tour's
+    spotlighted control was tapped (``prompts/tour_tapped_kick.md``, §11.2b): it
+    tells Ayma to call ``advance_guided_tour`` (which consumes the already-written
+    ``tour_event``) and narrate the next step — the voice bridge that advances the
+    tour on a tap without depending on a blocking advance being mid-wait."""
+    return _TOUR_TAPPED_KICK_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)

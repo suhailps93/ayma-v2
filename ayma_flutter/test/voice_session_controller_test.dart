@@ -897,6 +897,30 @@ void main() {
     await c.stop();
   });
 
+  test('notifyTourTapped publishes the tap to the live call only (§11.2b)',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+
+    // No live call: nothing sent (a text tour uses the /chat ping instead).
+    expect(await c.notifyTourTapped(index: 1), isFalse);
+    expect(transport.tourTappedCalls, isEmpty);
+
+    await _startLive(c, transport);
+    expect(await c.notifyTourTapped(index: 2), isTrue);
+    expect(transport.tourTappedCalls, [2]);
+
+    // A failed send is best effort: false, never throws, the call stays live.
+    transport.failTourTapped = true;
+    expect(await c.notifyTourTapped(index: 3), isFalse);
+    expect(c.phase, VoiceSessionPhase.live);
+    await c.stop();
+  });
+
   test('toggleMute flips mic state only when live', () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(
