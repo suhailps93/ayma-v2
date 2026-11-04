@@ -6,6 +6,21 @@ Ayma is a voice-first dating app. No swiping, no checkbox filters. You talk to A
 
 Every user has a personal avatar: an AI agent built from everything its person shares with Ayma. It carries their whole context and talks like them. Your story builds up as you share, and the more context Ayma and your avatar have, the better they represent you.
 
+## Built during the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026)
+
+- The avatar system itself: every user gets a personal avatar, an AI agent built from what its person shares, carrying their whole context and talking like them
+- Meta provider layer: Muse Spark (Meta Model API) as a selectable brain for avatar conversations, simulations, Practice Date, and reports, about 390 calls and 3.56M tokens during the window
+- Agent-to-agent: two users' agents talk directly to each other, each carrying its person's whole context and talking like them. Agent Dates runs on it: a simulated first date between two agents that returns a compatibility score and a match report, built on the Meta path during the window
+- Practice Date end to end: live coaching during the conversation and a Spark debrief after
+- Cascade voice pipeline with Muse Spark reasoning live in voice, alongside the Realtime pipeline
+- Full voice control of the app: the agent navigates, launches dates, and changes settings on spoken command, and claims success out loud only when the app confirms it
+- Self-hosted open-weights tier: Llama-3.1-8B on Modal with vLLM, behind the same provider flag
+- Privacy guardrail pack for avatars, plus a live adversarial extraction test pass
+
+## What already existed
+
+Ayma's app and backend: the Flutter app, the FastAPI and LiveKit backend, matching, messaging, and billing, built by Justabot LLC before the window. In Play review, launching December 1, 2026.
+
 ## Two avatar modes
 
 - **Agent Dates.** Your avatar takes a simulated first date with a match's avatar and returns a compatibility score and a summary. It informs you, never decides for you. A first step towards Hang the DJ from Black Mirror.
