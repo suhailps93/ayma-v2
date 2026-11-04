@@ -366,6 +366,101 @@ async def run_app_command(db, uid: str, dest_key: str) -> str:
     )
 
 
+# --- deterministic pre-model named-profile intent ---------------------------
+#
+# "open Sofia's profile" brushes the registry's own-profile destination, so
+# detect_app_command claims it for the You tab and the name is dropped (Scout
+# retest 2026-11-03, staging text lane — the voice lane resolves the same ask
+# correctly through the skill's open_profile). A profile ask that NAMES a
+# member is a different intent: detect it here and run it through the SAME
+# bound open_profile (and its _resolve_person) the model / voice path uses —
+# no second resolver. This detector runs BEFORE detect_app_command in the
+# text lane's pre-model net (main._prepare_chat). A profile ask with no name
+# returns None and keeps the existing route to the user's own profile; a name
+# that resolves to nobody surfaces open_profile's own couldn't-find line — a
+# clarification, never a silent landing on the You tab.
+#
+# The name is only ever read from AFTER the navigation verb, so the verb
+# itself ("open Sofia's profile") can never leak into the captured name.
+_PROFILE_TOKEN = r"[A-Za-z][A-Za-z.-]*"
+_PROFILE_POSSESSIVE = re.compile(
+    rf"\b(?P<name>{_PROFILE_TOKEN}(?:\s+{_PROFILE_TOKEN}){{0,2}})['’]s\s+profile\b",
+    re.IGNORECASE,
+)
+_PROFILE_OF = re.compile(
+    rf"\bprofile\s+of\s+(?P<name>{_PROFILE_TOKEN}(?:\s+{_PROFILE_TOKEN}){{0,2}})",
+    re.IGNORECASE,
+)
+# Heads that name nobody in particular ("profile of my match") — those keep
+# the existing own-profile / model routes.
+_PROFILE_GENERIC_HEADS = frozenset(
+    "my your his her their our the a an this that mine yours hers theirs".split()
+)
+# Trailing filler that rides along in the "profile of <name> …" tail.
+_PROFILE_TAIL_FILLER = frozenset("please thanks now today".split())
+
+
+def _clean_profile_name(raw: str) -> str | None:
+    """The captured name tail, tidied — or ``None`` when it names nobody in
+    particular (a generic/pronoun head) or nothing at all."""
+    words = [w.strip(".,!?;:\"'’") for w in raw.split()]
+    words = [w for w in words if w]
+    while words and words[-1].lower() in _PROFILE_TAIL_FILLER:
+        words.pop()
+    if not words or words[0].lower() in _PROFILE_GENERIC_HEADS:
+        return None
+    if any(w.lower() in ("profile", "page") for w in words):
+        return None
+    return " ".join(words)
+
+
+def detect_profile_command(message: str) -> str | None:
+    """A clear "open / go to <member>'s profile" (or "the profile of
+    <member>") ask → the member name as said, else ``None``.
+
+    Strict like the rest of this layer: a navigation verb AND a named member
+    in possessive or "profile of" form. A nameless profile ask ("open my
+    profile") returns ``None`` — :func:`detect_app_command` keeps routing
+    it to the user's own profile — and so do story-edit / report phrasings.
+    :func:`run_profile_command` executes the match through the bound
+    ``open_profile``."""
+    m = (message or "").strip()
+    if not m or len(m) > 200:
+        return None
+    verb = _APP_NAV_VERB.search(m)
+    if verb is None:
+        return None
+    if app_registry.find_story_edit_action(m) or app_registry.find_report_action(m):
+        return None
+    rest = m[verb.end():]
+    hit = _PROFILE_POSSESSIVE.search(rest) or _PROFILE_OF.search(rest)
+    if hit is None:
+        return None
+    return _clean_profile_name(hit.group("name"))
+
+
+async def run_profile_command(db, uid: str, name: str) -> str:
+    """Execute a detected named-profile command through the SAME bound
+    ``open_profile`` the model would call — its ``_resolve_person`` is the
+    one resolver — then translate its model-facing return into a short line
+    for the user (the deterministic path has no model turn to relay it). A
+    confirmed open reads as a plain "opening X's profile"; an unresolvable
+    name surfaces the tool's own couldn't-find line verbatim (the skill's
+    clarification style) instead of a silent You-tab landing; no ack is the
+    honest "didn't switch" line, never a false success."""
+    result = await _bind_open_profile(db, uid)(name=name)
+    if isinstance(result, str) and result.startswith("navigated:"):
+        opened = result.split("—", 1)[-1].strip()
+        full = opened.split("'s profile", 1)[0].strip() or name
+        return f"Opening {full}'s profile for you."
+    if isinstance(result, str) and result.startswith("I couldn't find"):
+        return result
+    return (
+        "I tried to open that profile, but the app didn't switch screens "
+        "just now — you can also reach it from Explore."
+    )
+
+
 # --- deterministic pre-model launch intent (voice backstop) ------------------
 #
 # Mirrors detect_app_command above: a clear "start a practice date / run a

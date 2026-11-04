@@ -1782,6 +1782,90 @@ def test_run_app_command_is_honest_when_the_app_never_navigates(monkeypatch):
     assert not out.startswith("Opening ") and "navigated:" not in out
 
 
+
+# --- deterministic pre-model named-profile navigation (Scout retest 2026-11-03)
+#
+# "open Sofia's profile" resolved through detect_app_command to the registry's
+# own-profile destination — the You tab — with the name dropped. A profile ask
+# that names a member is open_profile: detected BEFORE detect_app_command and
+# executed through the same bound open_profile (and _resolve_person) the model
+# / voice path uses. No name keeps the You-tab route; an unknown name gets the
+# tool's couldn't-find clarification, never a silent You-tab landing.
+
+
+@pytest.mark.parametrize("phrase,name", [
+    ("open Sofia's profile", "Sofia"),  # Scout's exact retest case
+    ("show me Sofia's profile", "Sofia"),
+    ("take me to Sofia's profile", "Sofia"),
+    ("open Sofia Marino's profile", "Sofia Marino"),
+    ("open the profile of Sofia", "Sofia"),
+    ("go to the profile of Sofia Marino", "Sofia Marino"),
+    ("open the profile of Sofia please", "Sofia"),
+    ("open Sophia's profile", "Sophia"),  # resolver fuzzy-matches to Sofia
+])
+def test_detect_profile_command_names_the_member(phrase, name):
+    assert app_control.detect_profile_command(phrase) == name
+
+
+@pytest.mark.parametrize("phrase", [
+    "open my profile",               # no name → the You tab route stands
+    "open profile",
+    "open the profile",
+    "go to my profile",
+    "open my public profile",        # a different registered destination
+    "open the profile of my match",  # a generic head names nobody
+    "Sofia's profile is great",      # no nav verb → stays with the model
+    "tell me about Sofia",           # no profile ask at all
+    "open the models page",          # navigation keeps what is hers
+    "start a practice date with Sofia",  # a launch, not a profile open
+    "",
+    "x" * 201,                       # over the length guard
+])
+def test_detect_profile_command_leaves_unnamed_asks_alone(phrase):
+    assert app_control.detect_profile_command(phrase) is None
+
+
+def test_unnamed_profile_ask_still_routes_to_the_you_tab():
+    # The pair that pins the split: unnamed → detect_app_command / You tab,
+    # named → detect_profile_command / the member.
+    assert app_control.detect_profile_command("open my profile") is None
+    assert app_control.detect_app_command("open my profile") == "profile"
+
+
+def test_run_profile_command_opens_the_named_members_profile():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    db.seed_user("u-sam", "Sam Fox")
+    name = app_control.detect_profile_command("open Sofia's profile")
+    out = _run(app_control.run_profile_command(db, "me", name))
+    assert out == "Opening Sofia Ruiz's profile for you."
+    # The queued command is open_profile for Sofia — never a You-tab navigate.
+    cmd = db.store[_PENDING]
+    assert cmd == {**cmd, "action": "open_profile", "uid": "u-sofia"}
+
+
+def test_run_profile_command_unknown_name_clarifies_never_you_tab():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sam", "Sam Fox")
+    name = app_control.detect_profile_command("open Taylor's profile")
+    out = _run(app_control.run_profile_command(db, "me", name))
+    # The skill's own couldn't-find line — a clarification, and NO command
+    # was queued at all (a You-tab landing would queue a navigate).
+    assert out == "I couldn't find someone called Taylor in the app."
+    assert _PENDING not in db.store
+
+
+def test_run_profile_command_is_honest_when_the_app_never_navigates(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()  # no client ever acks
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    out = _run(app_control.run_profile_command(db, "me", "Sofia"))
+    assert "didn't switch screens" in out
+    assert not out.startswith("Opening ")
+
 # --- deterministic pre-model launch commands (voice backstop, prod 2284) ----
 #
 # Practice Date / Agent Date launches refused from the call get the same

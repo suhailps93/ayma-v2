@@ -1302,6 +1302,20 @@ async def _prepare_chat(
             )
             return ({"reply": reply}, None)
 
+        # Deterministic named-profile (§13.9): a profile ask that NAMES a
+        # member ("open Sofia's profile") is open_profile, not the You tab —
+        # detect_app_command below maps the bare word "profile" to the
+        # user's own profile and drops the name (Scout retest 2026-11-03).
+        # Runs through the same bound open_profile the model calls; an
+        # unresolvable name answers with its couldn't-find clarification
+        # instead of silently landing on the user's own profile.
+        profile_name = app_control_mod.detect_profile_command(req.message)
+        if profile_name is not None:
+            reply = await app_control_mod.run_profile_command(
+                get_db(), uid, profile_name
+            )
+            return ({"reply": reply}, None)
+
         # Deterministic navigation (§13.9): a clear "open / go to <known page>"
         # is executed BEFORE the model, so it works regardless of which brain is
         # active. The open-weights brain (Llama-3.1-8B) is weak at tool-calling
