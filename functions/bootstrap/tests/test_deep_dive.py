@@ -2955,3 +2955,194 @@ def test_store_dive_still_writes_a_first_empty_report_when_nothing_prior():
     deep_dive.store_dive(db, "u1", empty, target_uid="", name="Ghost Nobody")
     key = deep_dive._cache_key("", "Ghost Nobody")
     assert db.store[key]["digest"]["confidence"] == "not_found"
+
+
+# --- web-research link accumulation on re-run (founder decision 2026-11-03) ---
+
+
+def _links_mock(monkeypatch, links, summary="Found results"):
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
+
+    async def _research(prompt, system_prompt=None, **kw):
+        return ("notes", [{"url": ln["url"], "title": ln.get("title", "")} for ln in links])
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {
+            "summary": summary,
+            "confidence": "high" if links else "not_found",
+            "facts": [{"claim": "Active", "category": "career", "confidence": "high", "source_url": links[0]["url"] if links else ""}],
+            "links": links,
+        }
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+
+
+def test_rerun_returning_new_links_accumulates_and_preserves_existing_order(monkeypatch):
+    """(1) A re-run returning new links keeps all existing links and adds the
+    new ones, preserving existing order."""
+    db = _CacheDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+
+    # Initial baseline run returns two links.
+    initial_links = [
+        {"url": "https://example.com/first", "title": "First Link"},
+        {"url": "https://example.com/second", "title": "Second Link"},
+    ]
+    _links_mock(monkeypatch, initial_links)
+    d1 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+    assert [ln["url"] for ln in d1["links"]] == [
+        "https://example.com/first",
+        "https://example.com/second",
+    ]
+    assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == [
+        "https://example.com/first",
+        "https://example.com/second",
+    ]
+
+    # Re-run returns two newly discovered links.
+    fresh_links = [
+        {"url": "https://example.com/third", "title": "Third Link"},
+        {"url": "https://example.com/fourth", "title": "Fourth Link"},
+    ]
+    _links_mock(monkeypatch, fresh_links)
+    d2 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+
+    expected = [
+        "https://example.com/first",
+        "https://example.com/second",
+        "https://example.com/third",
+        "https://example.com/fourth",
+    ]
+    # Returned report has accumulated links preserving order:
+    assert [ln["url"] for ln in d2["links"]] == expected
+    # Stored report has accumulated links preserving order:
+    assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == expected
+
+
+def test_rerun_returning_duplicate_links_does_not_duplicate_or_churn(monkeypatch):
+    """(2) A link returned again is not duplicated, even with normalization
+    variants (trailing slash, query params), and only genuinely new links are added."""
+    db = _CacheDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+
+    initial_links = [
+        {"url": "https://example.com/profile", "title": "Profile"},
+        {"url": "https://example.com/portfolio", "title": "Portfolio"},
+    ]
+    _links_mock(monkeypatch, initial_links)
+    d1 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+    assert len(d1["links"]) == 2
+
+    # Re-run returns duplicates (exact recurrence, trailing slash, tracking query) + 1 new link.
+    repeat_and_new_links = [
+        {"url": "https://example.com/profile", "title": "Profile re-seen"},
+        {"url": "https://example.com/portfolio/", "title": "Portfolio with slash"},
+        {"url": "https://example.com/portfolio?utm_source=twitter", "title": "Portfolio with tracking"},
+        {"url": "https://example.com/new-article", "title": "New Article"},
+    ]
+    _links_mock(monkeypatch, repeat_and_new_links)
+    d2 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+
+    expected = [
+        "https://example.com/profile",
+        "https://example.com/portfolio",
+        "https://example.com/new-article",
+    ]
+    assert [ln["url"] for ln in d2["links"]] == expected
+    assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == expected
+    # Original title for the existing links was preserved:
+    assert d2["links"][0]["title"] == "Profile"
+    assert d2["links"][1]["title"] == "Portfolio"
+    assert d2["links"][2]["title"] == "New Article"
+
+
+def test_rerun_empty_sweep_leaves_stored_link_set_unchanged(monkeypatch):
+    """(3) An empty new sweep leaves the stored set unchanged (ed2d2569 guard
+    composing correctly with link accumulation)."""
+    db = _CacheDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+
+    initial_links = [
+        {"url": "https://example.com/link-a", "title": "Link A"},
+        {"url": "https://example.com/link-b", "title": "Link B"},
+    ]
+    _links_mock(monkeypatch, initial_links)
+    d1 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+    assert len(d1["links"]) == 2
+
+    # Re-run live web sweep returns completely empty.
+    _empty_mocks(monkeypatch)
+    d2 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+
+    expected = ["https://example.com/link-a", "https://example.com/link-b"]
+    # Returned report re-surfaces the rich links:
+    assert [ln["url"] for ln in d2["links"]] == expected
+    # Stored report is completely untouched:
+    assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == expected
+
+    # Also test store_dive direct call with empty sweep:
+    empty_digest = {
+        "name": "Dana Reis", "is_self": True, "summary": "",
+        "confidence": "not_found", "facts": [], "links": [],
+        "web_images": [], "social_handles": [],
+    }
+    deep_dive.store_dive(db, "u1", empty_digest, target_uid="", name="Dana Reis")
+    assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == expected
+
+
+def test_both_rerun_entry_paths_produce_merged_link_set(monkeypatch):
+    """(4) Both re-run entry paths (chat tool rerun_web_research and report-page
+    refresh) share the single assembly/persistence point and produce the merged set."""
+    import deep_dive_delivery
+    db = _CacheDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda _db, _uid: "Dana Reis")
+    monkeypatch.setattr(deep_dive, "profile_dive_context", lambda _db, _uid, name="": "Context")
+    monkeypatch.setattr(token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(deep_dive_delivery.chat_history, "append", lambda *a, **k: None)
+    monkeypatch.setattr(deep_dive_delivery.notifications_triggers, "notify_skill_done", lambda *a, **k: None)
+    monkeypatch.setattr(deep_dive_delivery.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(deep_dive_delivery.skill_memory, "promote", lambda *a, **k: None)
+
+    async def _drive():
+        # 1. Initial baseline run
+        baseline_links = [{"url": "https://example.com/baseline", "title": "Baseline"}]
+        _links_mock(monkeypatch, baseline_links)
+        await deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True)
+        assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == ["https://example.com/baseline"]
+
+        # 2. Path A: Chat tool re-run via rerun_web_research skill
+        path_a_links = [{"url": "https://example.com/chat-found", "title": "Chat Found"}]
+        _links_mock(monkeypatch, path_a_links)
+
+        # rerun_web_research invokes schedule_self_refresh -> run_job -> deep_dive.run -> store_dive
+        from skills import rerun_web_research
+        fn = rerun_web_research.SKILL.bind(db, "u1")
+        await fn()
+        # Await any pending background refresh tasks spawned on this loop
+        while deep_dive_delivery._PENDING:
+            await asyncio.gather(*list(deep_dive_delivery._PENDING))
+
+        assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == [
+            "https://example.com/baseline",
+            "https://example.com/chat-found",
+        ]
+
+        # 3. Path B: Report-page refresh via deep_dive_delivery.run_job (the job run by POST /deep-dive {force: true})
+        path_b_links = [{"url": "https://example.com/refresh-found", "title": "Refresh Found"}]
+        _links_mock(monkeypatch, path_b_links)
+
+        await deep_dive_delivery.run_job(
+            db, "u1", name="Dana Reis", context="", is_self=True, target="", force=True, subject_image="",
+        )
+
+        assert [ln["url"] for ln in db.store[key]["digest"]["links"]] == [
+            "https://example.com/baseline",
+            "https://example.com/chat-found",
+            "https://example.com/refresh-found",
+        ]
+
+    _run(_drive())

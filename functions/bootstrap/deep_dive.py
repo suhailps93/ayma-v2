@@ -130,6 +130,77 @@ def _digest_has_content(digest: dict | None) -> bool:
     )
 
 
+def _link_key(url: str) -> str:
+    """Canonical URL deduplication key: scheme/www/mobile-agnostic, lower-cased
+    host, tracking parameters removed, trailing slash stripped. Falls back to
+    the stripped URL string if parsing fails."""
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        k = deep_dive_links.url_key(raw)
+        if k:
+            return k
+    except Exception:  # noqa: BLE001
+        pass
+    return raw
+
+
+def _merge_links(
+    prior_links: list | None,
+    fresh_links: list | None,
+    *,
+    bad_urls: set[str] | None = None,
+) -> list[dict]:
+    """Merge existing stored links and fresh sweep links (founder decision
+    Nov 3 2026: web-research report links must ACCUMULATE on re-run, keeping the
+    set stable rather than churning or rotating out):
+    existing stored links (existing order preserved) + newly found links
+    not already present, deduped by URL (conservative normalization via
+    ``deep_dive_links.url_key``). Disputed links are excluded."""
+    bad_exact = {
+        str(u or "").strip()
+        for u in (bad_urls or set())
+        if str(u or "").strip()
+    }
+    bad_keys = {_link_key(u) for u in bad_exact if u}
+
+    def _is_disputed(url: str) -> bool:
+        raw = str(url or "").strip()
+        if not raw:
+            return True
+        return raw in bad_exact or _link_key(raw) in bad_keys
+
+    seen: set[str] = set()
+    merged: list[dict] = []
+
+    for ln in prior_links or []:
+        if not isinstance(ln, dict):
+            continue
+        url = str(ln.get("url") or "").strip()
+        if not url or _is_disputed(url):
+            continue
+        k = _link_key(url)
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        merged.append(ln)
+
+    for ln in fresh_links or []:
+        if not isinstance(ln, dict):
+            continue
+        url = str(ln.get("url") or "").strip()
+        if not url or _is_disputed(url):
+            continue
+        k = _link_key(url)
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        merged.append(ln)
+
+    return merged
+
+
 def store_dive(
     db, uid: str, digest: dict, *, target_uid: str = "", name: str = ""
 ) -> None:
@@ -138,18 +209,19 @@ def store_dive(
     place run after run, never a new doc per run (§ persistent web-search
     report).
 
-    A fresh research pass fully replaces ``digest`` (it's a new sweep of the
-    live web), but what a user has told Ayma directly must survive that
-    replacement rather than silently vanish on the next re-run:
+    A fresh research pass updates ``digest`` with a new sweep of the live web,
+    but user corrections and audits survive:
     ``disputed_facts`` (§ Part 2, fact disputes), ``disputed_links`` /
     ``disputed_social`` / ``disputed_photos`` (link/photo removals — the
     fresh sweep is also filtered against those URLs below, so a removed
     item doesn't resurface), ``corrections`` (free-text corrections,
     § deep-dive corrections) and any user-confirmed reverse-image photo
     (``digest.confirmed_photos`` — § web photo search) that the fresh
-    digest wouldn't independently know about. Everything else in the new
-    digest wins outright — the whole point of re-running is to trust what the
-    live web says now.
+    digest wouldn't independently know about.
+    Web-research report links ACCUMULATE on re-run: existing stored links
+    (existing order preserved) are kept, newly found links not already present
+    are appended, and duplicates are removed by URL (founder decision Nov 3
+    2026). Disputed links are excluded.
     """
     key = _cache_key(target_uid, name)
     if not db or not uid or not key or not isinstance(digest, dict):
@@ -182,6 +254,7 @@ def store_dive(
             )
             return
 
+        raw_digest = digest
         digest = dict(digest)
         prior_confirmed = (prior.get("digest") or {}).get("confirmed_photos") or []
         if prior_confirmed and not digest.get("confirmed_photos"):
@@ -191,8 +264,25 @@ def store_dive(
         # the fresh sweep is filtered against the prior run's dispute audits
         # (facts get the same treatment via `disputed_facts_context` in the
         # research prompt instead — claims need fuzzy matching, URLs don't).
+        bad_links = {
+            str(a.get("url") or "").strip()
+            for a in (prior.get("disputed_links") or [])
+            if isinstance(a, dict) and str(a.get("url") or "").strip()
+        }
+
+        # Merged link set: existing stored links (existing order preserved)
+        # + newly found links not already present, deduped by URL
+        # (founder decision Nov 3 2026: web-research report links must
+        # ACCUMULATE on re-run, keeping the set stable rather than churning
+        # or replacing). Disputed links are excluded.
+        prior_links = (prior.get("digest") or {}).get("links") or []
+        fresh_links = digest.get("links") or []
+        merged_links = _merge_links(prior_links, fresh_links, bad_urls=bad_links)
+        digest["links"] = merged_links
+        if isinstance(raw_digest, dict):
+            raw_digest["links"] = merged_links
+
         for digest_key, audit_key in (
-            ("links", "disputed_links"),
             ("social_handles", "disputed_social"),
             ("web_images", "disputed_photos"),
         ):

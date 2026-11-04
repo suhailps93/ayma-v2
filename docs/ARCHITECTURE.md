@@ -510,6 +510,14 @@ reroute to work around an empty response.
     report back, never an empty one). A genuine *first* dive that finds nothing is still stored (so the report screen
     can show an honest "no footprint" rather than 404). This protects every re-run path — the `rerun_web_research`
     tool, the report screen's "Search again" button (`POST /deep-dive force`), and the auto self-dive.
+  - **Web-research report links accumulate on re-run (`store_dive`).** When a member web-research report is
+    re-run (via the `rerun_web_research` chat/voice tool, or the report screen's "Search again" button / `POST /deep-dive`
+    `force`), the link list accumulates rather than replacing or churning: existing stored links (existing order
+    preserved) + newly found links not already present, deduped by URL (conservative normalization via
+    `deep_dive_links.url_key` stripping scheme, `www`/`m`, tracking parameters, and trailing slashes). Disputed
+    links (`disputed_links`) are excluded. This composes with the empty-sweep guard: an empty new sweep still
+    leaves the stored set completely untouched. Applied at `store_dive` and reflected in `deep_dive.run`'s return
+    value so all re-run entry paths (chat tool re-run and report-page refresh) inherit the merged set.
   - **Research retry + timeout (reliability).** Because the dive is this polled *background* job (not bound by the
     client's 55s long-request budget), the grounded discovery call (`deep_dive._grounded_research` → `gemini.research`)
     runs with a longer per-attempt timeout — `gemini.RESEARCH_TIMEOUT_SECONDS` (120s) rather than the 75s synchronous
