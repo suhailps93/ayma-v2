@@ -4072,9 +4072,10 @@ def test_main_voice_instructions_carry_the_tool_use_directive():
 
 
 class _CmdSnap:
-    def __init__(self, data):
+    def __init__(self, data, doc_id=""):
         self._data = data
         self.exists = data is not None
+        self.id = doc_id
 
     def to_dict(self):
         return dict(self._data) if self._data is not None else None
@@ -4125,6 +4126,15 @@ class _CmdCol:
     def document(self, doc_id):
         return _CmdDoc(self.store, (*self.key, doc_id))
 
+    def stream(self):
+        # Enough for _resolve_person's roster scan (users collection only).
+        seen = []
+        d = len(self.key)
+        for k in list(self.store):
+            if len(k) == d + 1 and k[:d] == self.key:
+                seen.append(_CmdSnap(self.store[k], k[-1]))
+        return iter(seen)
+
 
 class _CmdDb:
     def __init__(self, uid="u1"):
@@ -4132,6 +4142,10 @@ class _CmdDb:
 
     def collection(self, name):
         return _CmdCol(self.store, (name,))
+
+    def seed_user(self, uid, name):
+        self.store[("users", uid)] = {"x": 1}
+        self.store[("users", uid, "profile", "main")] = {"name": name}
 
 
 class _CmdSession:
@@ -4360,6 +4374,172 @@ def test_voice_non_command_turn_runs_no_tool(monkeypatch, phrase):
         await asyncio.sleep(0.05)  # a command would have fired by now
         assert db.store.profile_writes == []
         assert db.store.queued == []
+        assert ctx.room.local_participant.published == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+# --- deterministic pre-model launch commands (prod 2284 follow-on) ---------
+#
+# Practice Date / Agent Date launches are the asks the founder was refused on
+# prod 2284. A named-partner ask executes open_practice_date / open_date_sim
+# deterministically through the same relay/dedupe path as the other families;
+# a partner-less ask settles the "who with?" clarification instead.
+
+
+@pytest.mark.parametrize("phrase,tool,name", [
+    ("start a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("let me practice with Daniel", "open_practice_date", "Daniel"),
+    ("practice date with Sofia", "open_practice_date", "Sofia"),
+    ("start an agent date with Sofia", "open_date_sim", "Sofia"),
+    ("run a date sim with Daniel", "open_date_sim", "Daniel"),
+    ("simulate a date with Sofia", "open_date_sim", "Sofia"),
+    ("date sim with Sofia", "open_date_sim", "Sofia"),
+])
+def test_detect_voice_command_routes_a_named_launch(phrase, tool, name):
+    assert agent.detect_voice_command(phrase) == (tool, {"name": name})
+
+
+@pytest.mark.parametrize("phrase,tool", [
+    ("start a practice date", "open_practice_date"),
+    ("run a date sim for me", "open_date_sim"),
+    ("start a practice date with my girlfriend", "open_practice_date"),
+])
+def test_detect_voice_command_marks_a_partnerless_launch(phrase, tool):
+    assert agent.detect_voice_command(phrase) == (tool, {"name": ""})
+
+
+def test_detect_voice_command_launch_precedence():
+    # "open Sofia's profile" stays navigation; a launch phrase is never it.
+    assert agent.detect_voice_command("open Sofia's profile") == (
+        "open_screen", {"screen": "profile"},
+    )
+    assert agent.detect_voice_command("practice date with Sofia") == (
+        "open_practice_date", {"name": "Sofia"},
+    )
+
+
+@pytest.mark.parametrize("phrase", [
+    "my practice date yesterday went well",
+    "what is a practice date?",
+    "do you think the simulation is accurate?",
+    "tell me about my date sim results",
+    "my practice date with Sofia went well",
+    "open my date sim results",
+    "open Sofia's profile",
+])
+def test_detect_voice_command_leaves_launch_discussion_alone(phrase):
+    match = agent.detect_voice_command(phrase)
+    if phrase == "open Sofia's profile":
+        assert match == ("open_screen", {"screen": "profile"})
+    else:
+        assert match is None
+
+
+def _seed_roster(db):
+    db.seed_user("u1", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    db.seed_user("u-daniel", "Daniel Fox")
+
+
+def test_voice_practice_launch_executes_deterministically(monkeypatch):
+    """A named practice ask runs open_practice_date through the session's own
+    tool (navigation queued for the resolved partner) with zero model
+    involvement; the model's same-turn duplicate replays instead of
+    queueing a second navigate."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn("start a practice date with Sofia")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["path"] == "/practice/u-sofia"
+        deterministic = dedupe.lookup("open_practice_date").future.result()
+        assert deterministic.startswith("navigated:")
+        assert "Sofia Ruiz" in deterministic
+        dup = await by_name["open_practice_date"](name="Sofia")
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_date_sim_launch_executes_deterministically(monkeypatch):
+    """Same exactly-once path for an Agent Date ask."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn("run a date sim with Daniel")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["path"] == "/date-sim/u-daniel"
+        deterministic = dedupe.lookup("open_date_sim").future.result()
+        assert deterministic.startswith("navigated:")
+        assert "Daniel Fox" in deterministic
+        dup = await by_name["open_date_sim"](name="Daniel")
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+@pytest.mark.parametrize("phrase,tool", [
+    ("start a practice date", "open_practice_date"),
+    ("run a date sim for me", "open_date_sim"),
+])
+def test_voice_partnerless_launch_asks_who_with(monkeypatch, phrase, tool):
+    """A partner-less launch launches nothing and relays no "couldn't find
+    someone" error: the claimed result is the "who with?" clarification,
+    which the model's same-turn call replays."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn(phrase)
+        await _drain_until(lambda: dedupe.lookup(tool) is not None)
+        await asyncio.sleep(0.05)  # a launch would have queued by now
+        assert db.store.queued == []
+        clarification = dedupe.lookup(tool).future.result()
+        low = clarification.lower()
+        assert "who" in low and "with" in low
+        assert "couldn't find" not in low
+        assert "navigated:" not in clarification
+        dup = await by_name[tool](name="")
+        assert dup == clarification
+        assert db.store.queued == []
+        assert ctx.room.local_participant.published == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+@pytest.mark.parametrize("phrase", [
+    "my practice date yesterday went well",
+    "what is a practice date?",
+    "do you think the simulation is accurate?",
+    "tell me about my date sim results",
+    "my practice date with Sofia went well",
+    "open my date sim results",
+])
+def test_voice_launch_near_miss_runs_no_tool(monkeypatch, phrase):
+    """Launch discussion at the relay level: no queued command, no claimed
+    tool, no tool chip, nothing asked of the model."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn(phrase)
+        await asyncio.sleep(0.05)  # a command would have fired by now
+        assert db.store.queued == []
+        assert dedupe.lookup("open_practice_date") is None
+        assert dedupe.lookup("open_date_sim") is None
         assert ctx.room.local_participant.published == []
         assert session.generate_replies == []
 

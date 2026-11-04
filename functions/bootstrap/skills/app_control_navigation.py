@@ -366,6 +366,158 @@ async def run_app_command(db, uid: str, dest_key: str) -> str:
     )
 
 
+# --- deterministic pre-model launch intent (voice backstop) ------------------
+#
+# Mirrors detect_app_command above: a clear "start a practice date / run a
+# date sim with <name>" is executed BEFORE the model, so it fires even when
+# the realtime model would otherwise refuse the launch from the call
+# (founder, prod 2284). The voice lane runs this matcher on each finalized
+# user turn (agent.py); the text lane is untouched — its model already emits
+# these tools reliably.
+#
+# Kept strict: a launch verb AND the feature surface (singular — the plural
+# talks about the category, never launches one), so ordinary chat is never
+# intercepted. A result/report/debrief request is excluded — those stay with
+# the model. The partner name is the raw tail after "with"/"for" (the tool's
+# own resolver fuzzy-matches it); a tail naming nobody in particular, or no
+# tail at all, yields a None partner — the relay answers those with the "who
+# with?" clarification instead of launching.
+_LAUNCH_VERB = re.compile(
+    r"\b(?:"
+    r"start|begin|launch|restart|open(?:\s+up)?|run|simulate|"
+    r"set\s+up|kick\s+off|give\s+me"
+    r")\b",
+    re.IGNORECASE,
+)
+_PRACTICE_SURFACE = re.compile(r"\bpractice\s+date\b", re.IGNORECASE)
+_SIM_SURFACE = re.compile(
+    r"\bdat(?:e|ing)\s+sim(?:ulation)?\b|"
+    r"\bagent\s+date\b|"
+    r"\bagent[\s\-]+to[\s\-]+agent\b|"
+    r"\bai\s+date\b",
+    re.IGNORECASE,
+)
+_SIM_WORD = re.compile(r"\bsimulat\w*\b|\bsims?\b", re.IGNORECASE)
+_DATE_WORD = re.compile(r"\bdate\b", re.IGNORECASE)
+# "let me practice with Daniel" carries no launch verb of its own, so a
+# request framing plus the practice verb plus "with" launches too.
+_PRACTICE_FRAMING = re.compile(
+    r"\blet\s+me\b|\blet'?s\b|\blet\s+us\b|\bcan\s+i\b|\bcould\s+i\b|"
+    r"\bi\s+want\s+to\b|\bwanna\b|\bhelp\s+me\b|"
+    r"\bi'?d\s+like\s+to\b|\bi\s+need\s+to\b",
+    re.IGNORECASE,
+)
+_PRACTICE_VERB = re.compile(r"\bpractice\b", re.IGNORECASE)
+_WITH_FOR = re.compile(r"\bwith\b|\bfor\b", re.IGNORECASE)
+_LAUNCH_RESULT_WORD = re.compile(
+    r"\bresults?\b|\breports?\b|\bdebrief\b", re.IGNORECASE
+)
+# A verb-less "practice date with Sofia" still launches — but only with a
+# named partner and no past-talk / existential marker, so "my practice date
+# with Sofia went well" stays a story for the model.
+_VERBLESS_EXCLUDE = re.compile(
+    r"\byesterday\b|\bwent\b|\bwas\b|\bwere\b|\bago\b|"
+    r"\blast\s+night\b|\benjoyed\b|"
+    r"\bis\s+there\b|\bare\s+there\b",
+    re.IGNORECASE,
+)
+# First words that name nobody in particular ("with my girlfriend" is a
+# partner-less ask, not a launch for someone called "girlfriend").
+_GENERIC_PARTNER_HEAD = frozenset(
+    "my a an some any the this that these those someone somebody "
+    "anyone anybody everyone everybody nobody people friends guys".split()
+)
+_GENERIC_PARTNER = frozenset(
+    "me myself you yourself yourselves him her them themselves "
+    "us ourselves it".split()
+)
+
+
+def _launch_partner(message: str) -> str | None:
+    """The raw partner tail after the first "with"/"for", or ``None`` when
+    there is no tail or it names nobody in particular (the tool's resolver
+    fuzzy-matches a real tail, so only the generic heads are filtered)."""
+    hit = _WITH_FOR.search(message)
+    if hit is None:
+        return None
+    tail = message[hit.end():].strip().strip(".,!?;:\"'").strip()
+    if not tail:
+        return None
+    words = tail.lower().split()
+    if words[0] in _GENERIC_PARTNER_HEAD or tail.lower() in _GENERIC_PARTNER:
+        return None
+    return tail
+
+
+def detect_launch_command(message: str) -> tuple[str, str | None] | None:
+    """A clear, unambiguous Practice Date / Agent Date launch ask →
+    ``(tool_name, partner)``, else ``None``.
+
+    Strict by design (so ordinary chat is never hijacked): requires a launch
+    verb AND the feature surface, or a request framing plus "practice with",
+    or the verb-less surface with a named partner. ``partner`` is the raw
+    name tail for the tool's resolver, or ``None`` for a partner-less ask —
+    the voice relay answers those with :func:`launch_clarification` instead
+    of launching. One command per turn: practice wins a both-surfaces tie."""
+    m = (message or "").strip()
+    if not m or len(m) > 200:
+        return None
+    if _LAUNCH_RESULT_WORD.search(m):
+        return None
+    practice = _PRACTICE_SURFACE.search(m) is not None
+    sim = _SIM_SURFACE.search(m) is not None or (
+        _SIM_WORD.search(m) is not None and _DATE_WORD.search(m) is not None
+    )
+    practice_verb = _PRACTICE_VERB.search(m) is not None
+    if not (practice or sim or practice_verb):
+        return None
+    if _LAUNCH_VERB.search(m):
+        if practice:
+            return "open_practice_date", _launch_partner(m)
+        if sim:
+            return "open_date_sim", _launch_partner(m)
+        return None  # a verb plus a bare "practice" stays with the model
+    if (
+        practice_verb
+        and _PRACTICE_FRAMING.search(m) is not None
+        and _WITH_FOR.search(m) is not None
+    ):
+        return "open_practice_date", _launch_partner(m)
+    if _VERBLESS_EXCLUDE.search(m):
+        return None
+    partner = _launch_partner(m)
+    if partner is None:
+        return None
+    # Verb-less arm: the full feature phrase must be present (a bare
+    # "practice" / "simulate … date" with a name stays with the model).
+    if practice:
+        return "open_practice_date", partner
+    if _SIM_SURFACE.search(m) is not None:
+        return "open_date_sim", partner
+    return None
+
+
+_LAUNCH_WHO_WITH = {
+    "open_practice_date": (
+        "No name was given — ask the user who they want the practice date "
+        "with, and call open_practice_date again only once they name someone."
+    ),
+    "open_date_sim": (
+        "No name was given — ask the user who they want the AI date "
+        "simulation with, and call open_date_sim again only once they name "
+        "someone."
+    ),
+}
+
+
+def launch_clarification(tool_name: str) -> str:
+    """The claimed result for a partner-less launch turn: a directive that
+    drives the model to ask who the partner is (the voice counterpart to the
+    text lane's tool result driving the reply) — never a launch, never a
+    "couldn't find someone" error."""
+    return _LAUNCH_WHO_WITH[tool_name]
+
+
 def _bind_open_match_report(db, uid: str) -> Callable[..., str]:
     async def open_match_report(name: str = "") -> str:
         other, full = await asyncio.to_thread(_resolve_person, db, uid, name)

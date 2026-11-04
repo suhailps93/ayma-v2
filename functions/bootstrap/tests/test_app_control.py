@@ -1780,3 +1780,108 @@ def test_run_app_command_is_honest_when_the_app_never_navigates(monkeypatch):
     assert "didn't switch screens" in out
     # Never a false success and never the raw directive string.
     assert not out.startswith("Opening ") and "navigated:" not in out
+
+
+# --- deterministic pre-model launch commands (voice backstop, prod 2284) ----
+#
+# Practice Date / Agent Date launches refused from the call get the same
+# deterministic treatment as navigation: a clear launch ask fires
+# open_practice_date / open_date_sim BEFORE the model. Partner-less asks
+# (no name, or a tail naming nobody in particular) return a None partner —
+# the voice relay answers those with the "who with?" clarification instead
+# of launching.
+
+
+@pytest.mark.parametrize("phrase,tool,name", [
+    # Named-partner practice launches.
+    ("start a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("let me practice with Daniel", "open_practice_date", "Daniel"),
+    ("open a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("set up a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("I want to practice with Daniel", "open_practice_date", "Daniel"),
+    ("let us practice with Daniel", "open_practice_date", "Daniel"),
+    ("wanna practice with Daniel", "open_practice_date", "Daniel"),
+    ("practice date with Sofia", "open_practice_date", "Sofia"),
+    # Named-partner sim launches.
+    ("start an agent date with Sofia", "open_date_sim", "Sofia"),
+    ("run a date sim with Daniel", "open_date_sim", "Daniel"),
+    ("simulate a date with Sofia", "open_date_sim", "Sofia"),
+    ("launch an agent-to-agent sim with Sofia", "open_date_sim", "Sofia"),
+    ("give me a date simulation with Sofia", "open_date_sim", "Sofia"),
+    ("start a dating sim with Sofia", "open_date_sim", "Sofia"),
+    ("start an AI date with Sofia", "open_date_sim", "Sofia"),
+    ("date sim with Sofia", "open_date_sim", "Sofia"),
+    ("run a date sim for Sofia", "open_date_sim", "Sofia"),
+    # The founder's verbatim sim ask (build 2246 suite above) fires too.
+    ("Can you open an agent to agent simulation with Sophia?",
+     "open_date_sim", "Sophia"),
+])
+def test_detect_launch_command_fires_a_named_launch(phrase, tool, name):
+    assert app_control.detect_launch_command(phrase) == (tool, name)
+
+
+@pytest.mark.parametrize("phrase,tool", [
+    ("start a practice date", "open_practice_date"),
+    ("run a date sim for me", "open_date_sim"),
+    ("open a practice date for me", "open_practice_date"),
+    ("start a practice date with my girlfriend", "open_practice_date"),
+    ("run a date sim with someone", "open_date_sim"),
+])
+def test_detect_launch_command_marks_a_partnerless_ask(phrase, tool):
+    assert app_control.detect_launch_command(phrase) == (tool, None)
+
+
+@pytest.mark.parametrize("phrase", [
+    # The four required discussion/question near-misses.
+    "my practice date yesterday went well",
+    "what is a practice date?",
+    "do you think the simulation is accurate?",
+    "tell me about my date sim results",
+    # Past-tense talk stays with the model even when a name is present.
+    "my practice date with Sofia went well",
+    # Report/result requests stay with the model.
+    "open my date sim results",
+    "show me my practice date results",
+    "tell me about my practice date debrief",
+    # Navigation keeps what is hers.
+    "open Sofia's profile",
+    # A verb-less tail naming nobody in particular is not a launch.
+    "practice date with my girlfriend",
+    # Bare feature names, questions, plurals: not launches.
+    "practice date",
+    "date sim",
+    "do you practice with real people",
+    "what do practice dates do",
+    "I love dating sims",
+    "",
+    "x" * 201,  # over the length guard
+])
+def test_detect_launch_command_leaves_discussion_alone(phrase):
+    assert app_control.detect_launch_command(phrase) is None
+
+
+@pytest.mark.parametrize("phrase", [
+    "start a practice date with Sofia",
+    "let me practice with Daniel",
+    "open a practice date with Sofia",
+    "practice date with Sofia",
+    "start a practice date",
+    "start an agent date with Sofia",
+    "run a date sim for me",
+    "run a date sim with Daniel",
+    "simulate a date with Sofia",
+    "date sim with Sofia",
+    "Can you open an agent to agent simulation with Sophia?",
+])
+def test_detect_app_command_does_not_swallow_a_launch(phrase):
+    # /practice and /date-sim are parameterized (not destinations), so no
+    # launch phrasing may resolve as navigation — verified, not assumed.
+    assert app_control.detect_app_command(phrase) is None
+
+
+@pytest.mark.parametrize("tool", ["open_practice_date", "open_date_sim"])
+def test_launch_clarification_asks_who_with(tool):
+    out = app_control.launch_clarification(tool)
+    low = out.lower()
+    assert "who" in low and "with" in low
+    assert "couldn't find" not in low

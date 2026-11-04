@@ -1584,9 +1584,11 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     """``(tool_name, kwargs)`` for a deterministic voice command, else ``None``.
 
     Same detection the text lane runs before the model, in the same order
-    (stack switch, then navigation, then guided-tour start) and with the same
-    strictness, so ordinary in-call chat is never intercepted. The kwargs are
-    the ones the model itself would pass for the match."""
+    (stack switch, then navigation, then launch, then guided-tour start) and
+    with the same strictness, so ordinary in-call chat is never intercepted.
+    The kwargs are the ones the model itself would pass for the match — a
+    partner-less launch carries ``{"name": ""}`` and the relay answers it
+    with the "who with?" clarification instead of launching."""
     text = (transcript or "").strip()
     if not text:
         return None
@@ -1600,6 +1602,10 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     app_dest = skills.app_control.detect_app_command(text)
     if app_dest is not None:
         return "open_screen", {"screen": app_dest}
+    launch_cmd = skills.app_control.detect_launch_command(text)
+    if launch_cmd is not None:
+        name, partner = launch_cmd
+        return name, {"name": partner or ""}
     tour_tool = skills.guided_tour.detect_tour_command(text)
     if tour_tool is not None:
         return tour_tool, {}
@@ -1623,17 +1629,26 @@ def relay_voice_commands(
     dedupe: skills.VoiceTurnDedupe,
 ) -> None:
     """Run the deterministic voice-command backstop on ``session``: on each
-    finalized user turn, execute a stack / navigation / tour-start match
-    through the session's own tool (so its guard, timeout and ``tool_used``
-    events apply exactly as for a model call). Non-command turns pass through
-    untouched. The execution is claimed in ``dedupe`` first, so the model's
-    own same-turn call to that tool replays the result instead of running the
-    action twice."""
+    finalized user turn, execute a stack / navigation / launch / tour-start
+    match through the session's own tool (so its guard, timeout and
+    ``tool_used`` events apply exactly as for a model call). Non-command
+    turns pass through untouched. The execution is claimed in ``dedupe``
+    first, so the model's own same-turn call to that tool replays the result
+    instead of running the action twice. A partner-less launch (``name``
+    empty) claims the launch tool the same way but settles the "who with?"
+    clarification instead of executing it — nothing launches, and the model's
+    same-turn call replays the clarification rather than a "couldn't find
+    someone" error."""
     tools_by_name = _tools_by_name(tools)
 
     async def _run(name: str, kwargs: dict, tool, transcript: str) -> None:
         fut = dedupe.claim(name)
         if fut is None:
+            return
+        partnerless = not (kwargs.get("name") or "").strip()
+        if name in ("open_practice_date", "open_date_sim") and partnerless:
+            if not fut.done():
+                fut.set_result(skills.app_control.launch_clarification(name))
             return
         try:
             result = await tool(**kwargs)
@@ -2923,7 +2938,7 @@ async def _start_main_gemini_session(
         tour_gate=tour_gate,
         dedupe=dedupe,
     )
-    # Deterministic pre-model backstop (stack / navigation / tour-start): a
+    # Deterministic pre-model backstop (stack / nav / launch / tour): a
     # clear command in a finalized user turn executes through the session's
     # own tools, exactly as in the text lane.
     relay_voice_commands(session, tools, dedupe)
@@ -3023,7 +3038,7 @@ async def _start_main_cascade_session(
         tour_gate=tour_gate,
         dedupe=dedupe,
     )
-    # Deterministic pre-model backstop (stack / navigation / tour-start): a
+    # Deterministic pre-model backstop (stack / nav / launch / tour): a
     # clear command in a finalized user turn executes through the session's
     # own tools, exactly as in the text lane.
     relay_voice_commands(session, tools, dedupe)

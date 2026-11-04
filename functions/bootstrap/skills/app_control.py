@@ -97,6 +97,8 @@ from .app_control_navigation import (
     _bind_open_screen,
     _bind_search_explore,
     detect_app_command,
+    detect_launch_command,
+    launch_clarification,
     run_app_command,
     _FUZZY_NAME_THRESHOLD,
     _navigate,
