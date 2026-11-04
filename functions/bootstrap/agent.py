@@ -114,15 +114,18 @@ TOPIC_AGENT_STATE = "agent_state"  # §1.3 — drives the client's speaking/barg
 # {"name": tool name, "label": user-facing label, "phase": "start" | "end"}.
 TOPIC_TOOL_USED = "tool_used"
 # The agent is about to end the call itself, right before it disconnects —
-# distinguishes a deliberate, graceful stop (currently only "out_of_credits",
-# §F3 mid-call credit cap) from an ordinary dropped connection so the client
-# can show the actionable "reload credits" affordance (`cappedError` in
-# `voice_session_controller.dart`) instead of a generic "connection dropped"
-# error. Payload: {"reason": "out_of_credits"}.
+# distinguishes a deliberate, graceful stop ("out_of_credits" §F3 mid-call
+# credit cap, "idle_timeout", "user_goodbye") from an ordinary dropped
+# connection so the client can show the right affordance (`cappedError` in
+# `voice_session_controller.dart` for the credit cap) instead of a generic
+# "connection dropped" error. Payload: {"reason": <reason>}.
 TOPIC_CALL_ENDING = "call_ending"
 # `call_ending` reason sent when there was no activity for the idle window
 # (`CONFIG.voice_idle_timeout_seconds`).
 REASON_IDLE_TIMEOUT = "idle_timeout"
+# `call_ending` reason sent when the caller signed off ("goodbye Ayma") — a
+# deliberate user hang-up, claimed deterministically before the model.
+REASON_USER_GOODBYE = "user_goodbye"
 # Ayma was told to "shut up" (or called back by name) — published on every
 # muted<->unmuted transition so the client can show an "Ayma is quiet" chip
 # instead of a call that looks broken. Payload: {"muted": bool}. Also
@@ -1150,6 +1153,29 @@ async def end_call_idle(
     ctx.shutdown(reason=REASON_IDLE_TIMEOUT)
 
 
+async def end_call_goodbye(
+    ctx: JobContext, uid: str, flush: Callable[[], Awaitable[None]]
+) -> None:
+    """User-hang-up stop: the caller signed off ("goodbye Ayma", claimed
+    deterministically before the model — see :func:`detect_voice_command`), so
+    end the call exactly the honest way :func:`end_call_idle` does: flush the
+    memory write, tell the client why, delete the room (disconnects the user
+    participant) and shut the job down (shutdown callbacks log the
+    token-ledger totals). No spoken sign-off — the model's own "bye!" may or
+    may not beat the disconnect; either way the call ends cleanly."""
+    logger.info("voice user-goodbye stop for %s", uid)
+    try:
+        await flush()
+    except Exception:  # noqa: BLE001 - the call must still end
+        logger.exception("user-goodbye memory flush failed for %s", uid)
+    await _publish_call_ending(ctx, REASON_USER_GOODBYE)
+    try:
+        await ctx.delete_room()
+    except Exception:  # noqa: BLE001 - shutdown below still drops the agent
+        logger.exception("user-goodbye room delete failed for %s", uid)
+    ctx.shutdown(reason=REASON_USER_GOODBYE)
+
+
 def watch_for_idle(
     ctx: JobContext,
     session: AgentSession,
@@ -1585,13 +1611,19 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
 
     Same detection the text lane runs before the model, in the same order
     (stack switch, then navigation, then launch, then guided-tour start) and
-    with the same strictness, so ordinary in-call chat is never intercepted.
+    with the same strictness, so ordinary in-call chat is never intercepted —
+    except a live "goodbye Ayma" sign-off, which is voice-only (there is no
+    call to end in text) and runs FIRST so it wins over every other family.
     The kwargs are the ones the model itself would pass for the match — a
     partner-less launch carries ``{"name": ""}`` and the relay answers it
-    with the "who with?" clarification instead of launching."""
+    with the "who with?" clarification instead of launching. ``"end_call"``
+    is not a session tool: the relay handles it through its teardown
+    callback instead of executing a tool."""
     text = (transcript or "").strip()
     if not text:
         return None
+    if skills.voice_goodbye.is_goodbye_command(text):
+        return "end_call", {}
     stack_cmd = skills.set_model_stack.detect_stack_command(text)
     if stack_cmd is not None:
         name, value = stack_cmd
@@ -1623,10 +1655,18 @@ def _tools_by_name(tools: list) -> dict:
     return by_name
 
 
+# The settled result of a deterministically claimed goodbye turn. No model
+# tool awaits it (there is no "end_call" tool); it exists so the claim has a
+# value like every other command family's.
+_GOODBYE_RESULT = "call ended: the user said goodbye."
+
+
 def relay_voice_commands(
     session: AgentSession,
     tools: list,
     dedupe: skills.VoiceTurnDedupe,
+    *,
+    end_call: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     """Run the deterministic voice-command backstop on ``session``: on each
     finalized user turn, execute a stack / navigation / launch / tour-start
@@ -1638,8 +1678,15 @@ def relay_voice_commands(
     empty) claims the launch tool the same way but settles the "who with?"
     clarification instead of executing it — nothing launches, and the model's
     same-turn call replays the clarification rather than a "couldn't find
-    someone" error."""
+    someone" error. A "goodbye Ayma" sign-off (``"end_call"``, not a session
+    tool) runs ``end_call`` — the call's own teardown — claimed the same way,
+    exactly once per call: a duplicated finalized transcript must not tear
+    the call down twice."""
     tools_by_name = _tools_by_name(tools)
+    # The teardown latch: ``note_turn`` retires the "end_call" claim on every
+    # finalized turn, so a duplicated sign-off transcript would claim (and
+    # run teardown) again — this keeps it to once per call, full stop.
+    goodbye_done = {"fired": False}
 
     async def _run(name: str, kwargs: dict, tool, transcript: str) -> None:
         fut = dedupe.claim(name)
@@ -1662,6 +1709,37 @@ def relay_voice_commands(
         if not fut.done():
             fut.set_result(result)
 
+    async def _run_goodbye(transcript: str) -> None:
+        fut = dedupe.claim("end_call")
+        if fut is None:
+            return
+        if goodbye_done["fired"]:
+            if not fut.done():
+                fut.set_result(_GOODBYE_RESULT)
+            return
+        goodbye_done["fired"] = True
+        if end_call is None:
+            logger.warning(
+                "voice goodbye %r has no teardown callback; "
+                "turn left to the model",
+                transcript,
+            )
+            dedupe.drop("end_call")
+            if not fut.done():
+                fut.set_result(_GOODBYE_RESULT)
+            return
+        try:
+            await end_call()
+        except Exception as exc:  # noqa: BLE001 - teardown already logs its own steps
+            dedupe.drop("end_call")
+            if not fut.done():
+                fut.set_exception(exc)
+                fut.exception()  # mark retrieved: no model tool awaits this
+            logger.exception("deterministic voice goodbye failed: %r", transcript)
+            return
+        if not fut.done():
+            fut.set_result(_GOODBYE_RESULT)
+
     @session.on("user_input_transcribed")
     def _on_user_final(ev: UserInputTranscribedEvent) -> None:
         if not ev.is_final:
@@ -1674,6 +1752,9 @@ def relay_voice_commands(
         if match is None:
             return
         name, kwargs = match
+        if name == "end_call":
+            asyncio.create_task(_run_goodbye(transcript))
+            return
         tool = tools_by_name.get(name)
         if tool is None:
             logger.warning(
@@ -2938,10 +3019,16 @@ async def _start_main_gemini_session(
         tour_gate=tour_gate,
         dedupe=dedupe,
     )
-    # Deterministic pre-model backstop (stack / nav / launch / tour): a
-    # clear command in a finalized user turn executes through the session's
-    # own tools, exactly as in the text lane.
-    relay_voice_commands(session, tools, dedupe)
+    # Deterministic pre-model backstop (goodbye / stack / nav / launch /
+    # tour): a clear command in a finalized user turn executes through the
+    # session's own tools, exactly as in the text lane — a goodbye runs the
+    # call's own teardown instead.
+    relay_voice_commands(
+        session,
+        tools,
+        dedupe,
+        end_call=lambda: end_call_goodbye(ctx, seed.uid, flush.run),
+    )
     if swapper:
         swapper.tools = tools
         # A settings save mid-call arrives on the data channel (§13.9).
@@ -3038,10 +3125,16 @@ async def _start_main_cascade_session(
         tour_gate=tour_gate,
         dedupe=dedupe,
     )
-    # Deterministic pre-model backstop (stack / nav / launch / tour): a
-    # clear command in a finalized user turn executes through the session's
-    # own tools, exactly as in the text lane.
-    relay_voice_commands(session, tools, dedupe)
+    # Deterministic pre-model backstop (goodbye / stack / nav / launch /
+    # tour): a clear command in a finalized user turn executes through the
+    # session's own tools, exactly as in the text lane — a goodbye runs the
+    # call's own teardown instead.
+    relay_voice_commands(
+        session,
+        tools,
+        dedupe,
+        end_call=lambda: end_call_goodbye(ctx, seed.uid, flush.run),
+    )
     agent_kwargs: dict = {
         # The voice tool-use directive rides in the instructions (via
         # _compose_instructions) on both main voice paths: Meta Muse Spark's
