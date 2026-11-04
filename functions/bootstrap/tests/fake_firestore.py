@@ -104,28 +104,31 @@ class DocRef:
 
 class Query:
     def __init__(self, coll, filters=None, limit_n=None, order_field=None,
-                 start_after_id=None):
+                 start_after_id=None, order_desc=False):
         self._coll = coll
         self._filters = filters or []
         self._limit = limit_n
         self._order = order_field
         self._start_after_id = start_after_id
+        self._order_desc = order_desc
 
     def where(self, field, op, value):
         return Query(self._coll, self._filters + [(field, op, value)],
-                     self._limit, self._order, self._start_after_id)
+                     self._limit, self._order, self._start_after_id,
+                     self._order_desc)
 
     def limit(self, n):
         return Query(self._coll, self._filters, n, self._order,
-                     self._start_after_id)
+                     self._start_after_id, self._order_desc)
 
-    def order_by(self, field):
+    def order_by(self, field, direction=None):
+        desc = str(direction).upper().startswith("DESC")
         return Query(self._coll, self._filters, self._limit, field,
-                     self._start_after_id)
+                     self._start_after_id, desc)
 
     def start_after(self, snap):
         return Query(self._coll, self._filters, self._limit, self._order,
-                     snap.id)
+                     snap.id, self._order_desc)
 
     def stream(self):
         depth = len(self._coll.key)
@@ -137,8 +140,16 @@ class Query:
                 out.append(StreamSnap(self._coll._store, key, data))
         if self._order == "__name__":
             out.sort(key=lambda s: s.id)
-        elif self._order is not None:  # pragma: no cover - only __name__ used
-            raise NotImplementedError(self._order)
+        elif self._order is not None:
+            # Field ordering (e.g. chat_history's created_at): datetimes sort
+            # by value; anything else (notably the SERVER_TIMESTAMP sentinel
+            # append() writes) sorts as "no timestamp" so equal-keyed rows
+            # keep insertion order instead of raising on a comparison.
+            def _key(snap):
+                v = (snap.to_dict() or {}).get(self._order)
+                return (1, v.isoformat()) if hasattr(v, "isoformat") else (0, "")
+
+            out.sort(key=_key, reverse=self._order_desc)
         if self._start_after_id is not None:
             out = [s for s in out if s.id > self._start_after_id]
         if self._limit is not None:
@@ -183,8 +194,8 @@ class CollRef:
     def limit(self, n):
         return Query(self).limit(n)
 
-    def order_by(self, field):
-        return Query(self).order_by(field)
+    def order_by(self, field, **kw):
+        return Query(self).order_by(field, **kw)
 
 
 class FakeDb:

@@ -1292,9 +1292,11 @@ async def _prepare_chat(
     # Meta (Muse Spark), the switch turn itself runs on Muse Spark, whose weaker
     # tool-calling often fails to emit set_brain — making "change back to Gemini"
     # silently do nothing (founder 2026-11-02). Mirrors the #28 determinism fix.
+    # Uses the module-level ``set_model_stack`` import: a local import here
+    # would shadow it for the WHOLE function, leaving the name unbound on
+    # image/photo turns (which skip this block) and crashing the
+    # ``compose_system_prompt`` call below (regression from 7f9e0374).
     if not req.image_path.strip() and not req.photo_url.strip():
-        from skills import set_model_stack
-
         stack_cmd = set_model_stack.detect_stack_command(req.message)
         if stack_cmd is not None:
             reply = await set_model_stack.run_stack_command(
@@ -1869,6 +1871,38 @@ def _finalize_chat(
             )
 
 
+def _persist_early_turn(req: ChatRequest, caller: Caller, early: dict) -> None:
+    """Persist the user+assistant pair for a turn ``_prepare_chat`` answered
+    WITHOUT the model — turn cap, deterministic stack switch, deterministic
+    nav, named-profile. Those ``early`` returns used to bypass
+    :func:`_persist_user_turn` / :func:`_finalize_chat` entirely, so the pair
+    never landed in chat history and vanished on relaunch (Scout observation,
+    2026-11-03). Reuses ``_finalize_chat`` with a minimal ctx so the persisted
+    shape — user-turn de-dup, ``client_msg_id`` stamping, the ``raw_turns``
+    window — is exactly the model path's. Best-effort: ``_finalize_chat``
+    never raises.
+
+    The deterministic paths never run on an image turn (the pre-model net is
+    image-guarded in ``_prepare_chat``), and the one early path that can carry
+    an image — a capped turn — never downloaded it, so ``image`` stays None:
+    no photo followups, no double-write of an image turn. The request's
+    ``image_path`` is still recorded on the user turn, as the model path
+    records it. A tour-continuation ping is a synthetic control signal, never
+    a user message — skipped, as everywhere else."""
+    if req.tour_continuation:
+        return
+    ctx = _ChatCtx(
+        uid=caller.uid,
+        image=None,
+        image_path=req.image_path.strip(),
+        window=_to_turns(req.recent_turns),
+        system_prompt="",
+    )
+    finalize_bg = BackgroundTasks()
+    _finalize_chat(finalize_bg, ctx, req, str(early.get("reply") or ""), [])
+    _spawn_turn(finalize_bg())
+
+
 @app.post("/chat", dependencies=[Depends(require_not_underage_uid)])
 async def chat(
     req: ChatRequest,
@@ -1899,6 +1933,7 @@ async def chat(
 
     early, ctx = await _prepare_chat(req, caller)
     if early is not None:
+        _persist_early_turn(req, caller, early)
         return early
     assert ctx is not None
 
@@ -2094,6 +2129,7 @@ async def chat_stream(
 
     early, ctx = await _prepare_chat(req, caller)
     if early is not None:
+        _persist_early_turn(req, caller, early)
         return _sse_response(_sse_once({"type": "reply", **early}))
     assert ctx is not None
 
