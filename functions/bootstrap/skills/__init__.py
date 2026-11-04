@@ -19,6 +19,7 @@ import asyncio
 import functools
 import inspect
 import logging
+from dataclasses import dataclass
 from typing import Callable
 
 logger = logging.getLogger(__name__)
@@ -413,6 +414,91 @@ def _guarded(
     return _wrapper
 
 
+@dataclass
+class _VoiceClaim:
+    """One deterministic voice execution: the future its result settles, and
+    the task running it (whose own call bypasses the replay below)."""
+
+    future: asyncio.Future
+    task: object
+
+
+class VoiceTurnDedupe:
+    """Exactly-once record for the voice lane's deterministic commands.
+
+    One per voice call, shared by the session's tools (via
+    :func:`make_livekit_tools`) and the deterministic dispatcher (agent.py):
+    when a finalized user turn matches a stack / navigation / tour-start
+    command, the dispatcher claims the tool BEFORE running it through the
+    session's own wrapped callable; a same-turn model call to that tool then
+    replays the claimed result instead of running the side effect a second
+    time — the voice counterpart to the text lane's "a handled turn never
+    reaches the model" (``main._prepare_chat``). A claim that is still
+    in-flight is awaited, so even a slow deterministic execution (a navigate
+    awaiting its client ack) can't double-fire against the model's own call.
+    Claims are per user turn: ``note_turn`` retires the previous turn's, so an
+    identical command spoken again later runs again, exactly like text."""
+
+    def __init__(self) -> None:
+        self._turn = 0
+        self._claims: dict[tuple[int, str], _VoiceClaim] = {}
+
+    def note_turn(self) -> None:
+        """A new finalized user turn started: retire every older claim."""
+        self._turn += 1
+        stale = [k for k in self._claims if k[0] != self._turn]
+        for k in stale:
+            del self._claims[k]
+
+    def claim(self, name: str) -> asyncio.Future | None:
+        """Claim tool ``name`` for this turn; the deterministic execution's
+        future, or ``None`` when this turn already claimed it (defensive —
+        one user turn dispatches at most one command). Must run in the task
+        that will execute the tool, whose own call bypasses the replay."""
+        key = (self._turn, name)
+        if key in self._claims:
+            return None
+        fut = asyncio.get_running_loop().create_future()
+        self._claims[key] = _VoiceClaim(
+            future=fut, task=asyncio.current_task()
+        )
+        return fut
+
+    def lookup(self, name: str) -> _VoiceClaim | None:
+        """This turn's claim for ``name``, else ``None``."""
+        return self._claims.get((self._turn, name))
+
+    def drop(self, name: str) -> None:
+        """Forget this turn's claim for ``name`` (a failed deterministic run —
+        a later model call then executes fresh instead of replaying the
+        failure). The caller still settles the claimed future itself, so a
+        model call already awaiting it is released."""
+        self._claims.pop((self._turn, name), None)
+
+
+def _deduped(
+    fn: Callable[..., object], name: str, dedupe: VoiceTurnDedupe
+) -> Callable[..., object]:
+    """Wrap a voice tool so a same-turn deterministic execution replays instead
+    of running twice: when this turn already claimed ``name``, return the
+    claimed result (awaiting it while still in-flight) rather than calling
+    ``fn`` again. The claiming task's own call runs ``fn`` — it IS the
+    deterministic execution. Always async, for the same reason as
+    :func:`_instrumented`."""
+
+    @functools.wraps(fn)
+    async def _wrapper(*args, **kwargs):
+        claim = dedupe.lookup(name)
+        if claim is not None and claim.task is not asyncio.current_task():
+            return await claim.future
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    return _wrapper
+
+
 def _bounded(
     fn: Callable[..., object], name: str, timeout: float = _VOICE_TOOL_TIMEOUT_SECONDS
 ) -> Callable[..., object]:
@@ -449,6 +535,7 @@ def make_livekit_tools(
     guard: Callable[[], str | None] | None = None,
     session_id: str = "",
     turns: Callable[[], list] | None = None,
+    dedupe: VoiceTurnDedupe | None = None,
 ) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
     the always-on story edit/soft-remove tools (``_STORY_MANAGE_REGISTRY`` —
@@ -479,6 +566,9 @@ def make_livekit_tools(
     ``session_id`` and ``turns`` (a callable returning the call's live turn
     window) bind ``send_dm_message``, which keeps its pending send per session
     and reads the caller's own latest line before sending.
+
+    ``dedupe``, when given, wraps every tool so a same-turn deterministic
+    execution replays instead of running twice (:class:`VoiceTurnDedupe`).
 
     ``function_tool`` is imported lazily so this package stays importable in the
     Main API venv, which has no ``livekit-agents``.
@@ -515,6 +605,10 @@ def make_livekit_tools(
         fn = _bounded(fn, s.name)
         if on_call is not None:
             fn = _instrumented(fn, s.name, on_call)
+        if dedupe is not None:
+            # Outside _instrumented, so an absorbed duplicate fires no second
+            # chip; inside _guarded, so the guard still sees every call.
+            fn = _deduped(fn, s.name, dedupe)
         if guard is not None:
             # Outermost, so a refused call never shows a tool chip.
             fn = _guarded(fn, guard)

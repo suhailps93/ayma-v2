@@ -539,3 +539,42 @@ def test_fast_tap_at_the_presentation_instant_is_fresh_not_rejected():
     older = t - timedelta(seconds=3)
     assert guided_tour._is_event_fresh({"event": "tapped", "ts": older}, t) is False
 
+
+# --- deterministic tour-start detection (voice pre-model backstop) --------------
+
+
+@pytest.mark.parametrize("phrase", [
+    "start the guided tour",
+    "Start the guided tour!",
+    "can you start the tour for me",
+    "please begin the guided tour",
+    "launch the app tour",
+    "restart the guided tour",
+    "give me a tour",
+    "show me around",
+    "walk me through the app",
+    "open the guided tour",
+    "show me the tour",
+])
+def test_detect_tour_command_matches_a_clear_start(phrase):
+    assert guided_tour.detect_tour_command(phrase) == "start_guided_tour"
+
+
+@pytest.mark.parametrize("phrase", [
+    "stop the tour",                 # must reach stop_guided_tour, not start
+    "quit the guided tour",
+    "end the tour please",
+    "cancel this tour",
+    "what's next on the tour",       # spoken "next" never drives the tour
+    "continue the tour",
+    "tell me about the guided tour",  # a question, not a command
+    "is there a tour of the app",
+    "the tour was great",
+    "open the models page",          # navigation, not the tour
+    "switch my brain to gemini",     # stack switch, not the tour
+    "",                              # empty
+    "x" * 201,                       # over the length guard
+])
+def test_detect_tour_command_leaves_everything_else_alone(phrase):
+    assert guided_tour.detect_tour_command(phrase) is None
+

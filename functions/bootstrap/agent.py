@@ -1556,6 +1556,119 @@ def relay_mute_control(
             ev.speech_handle.interrupt(force=True)
 
 
+# --- deterministic pre-model voice commands (text-lane backstop) -----------------
+#
+# The text lane executes a clear stack-switch / navigation command BEFORE the
+# model (main._prepare_chat → detect_stack_command / detect_app_command), so it
+# works regardless of which brain is active. Voice had no such backstop — every
+# in-call action depended on the realtime model emitting the tool call, which it
+# sometimes refuses to do (founder, prod 2284: no Practice Date / Agent Date
+# launch, no guided-tour start, no brain or voice switch from the call). The
+# matcher below runs the same detection on each finalized user turn in the
+# LiveKit agent and executes matches through the session's own tools, so these
+# actions fire deterministically in-call exactly as they do in text. A handled
+# turn is claimed in the call's VoiceTurnDedupe first, so the model's own
+# same-turn call to that tool replays the result instead of executing the side
+# effect a second time (the voice counterpart to "a handled text turn never
+# reaches the model").
+_STACK_TOOL_KWARGS = {
+    "set_brain": "brain",
+    "set_voice_mode": "mode",
+    "set_realtime_model": "model",
+    "set_stt": "engine",
+    "set_tts": "engine",
+}
+
+
+def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
+    """``(tool_name, kwargs)`` for a deterministic voice command, else ``None``.
+
+    Same detection the text lane runs before the model, in the same order
+    (stack switch, then navigation, then guided-tour start) and with the same
+    strictness, so ordinary in-call chat is never intercepted. The kwargs are
+    the ones the model itself would pass for the match."""
+    text = (transcript or "").strip()
+    if not text:
+        return None
+    stack_cmd = skills.set_model_stack.detect_stack_command(text)
+    if stack_cmd is not None:
+        name, value = stack_cmd
+        kwarg = _STACK_TOOL_KWARGS.get(name)
+        if kwarg is not None:
+            return name, {kwarg: value}
+        logger.warning("voice command: unknown stack tool %r", name)
+    app_dest = skills.app_control.detect_app_command(text)
+    if app_dest is not None:
+        return "open_screen", {"screen": app_dest}
+    tour_tool = skills.guided_tour.detect_tour_command(text)
+    if tour_tool is not None:
+        return tour_tool, {}
+    return None
+
+
+def _tools_by_name(tools: list) -> dict:
+    """``{tool name: tool}`` for the deterministic dispatcher, keyed by each
+    tool's livekit info name (the Skill name it was built from)."""
+    by_name = {}
+    for tool in tools:
+        name = getattr(getattr(tool, "info", None), "name", None)
+        if name:
+            by_name[name] = tool
+    return by_name
+
+
+def relay_voice_commands(
+    session: AgentSession,
+    tools: list,
+    dedupe: skills.VoiceTurnDedupe,
+) -> None:
+    """Run the deterministic voice-command backstop on ``session``: on each
+    finalized user turn, execute a stack / navigation / tour-start match
+    through the session's own tool (so its guard, timeout and ``tool_used``
+    events apply exactly as for a model call). Non-command turns pass through
+    untouched. The execution is claimed in ``dedupe`` first, so the model's
+    own same-turn call to that tool replays the result instead of running the
+    action twice."""
+    tools_by_name = _tools_by_name(tools)
+
+    async def _run(name: str, kwargs: dict, tool, transcript: str) -> None:
+        fut = dedupe.claim(name)
+        if fut is None:
+            return
+        try:
+            result = await tool(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - a failed command must not kill the call
+            dedupe.drop(name)
+            if not fut.done():
+                fut.set_exception(exc)
+                fut.exception()  # mark retrieved: no warning when the model never calls
+            logger.exception("deterministic voice command failed: %r", transcript)
+            return
+        if not fut.done():
+            fut.set_result(result)
+
+    @session.on("user_input_transcribed")
+    def _on_user_final(ev: UserInputTranscribedEvent) -> None:
+        if not ev.is_final:
+            return
+        transcript = (ev.transcript or "").strip()
+        if not transcript:
+            return
+        dedupe.note_turn()
+        match = detect_voice_command(transcript)
+        if match is None:
+            return
+        name, kwargs = match
+        tool = tools_by_name.get(name)
+        if tool is None:
+            logger.warning(
+                "voice command %r has no session tool; turn left to the model",
+                transcript,
+            )
+            return
+        asyncio.create_task(_run(name, kwargs, tool, transcript))
+
+
 @dataclass
 class RoomSeed:
     system_prompt: str
@@ -1850,6 +1963,7 @@ def _session_tools(
     session_id: str = "",
     window: list[Turn] | None = None,
     tour_gate: "TourNarrationGate | None" = None,
+    dedupe: skills.VoiceTurnDedupe | None = None,
 ) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
@@ -1860,7 +1974,9 @@ def _session_tools(
     ``send_dm_message`` keep its pending send and check the caller's own yes.
     ``voice_pref`` (a ``voice_catalog.RuntimeVoices``) makes
     ``set_voice_preference`` stack-aware on a cascade / non-Gemini realtime call
-    (the Gemini path uses ``on_voice_change`` instead)."""
+    (the Gemini path uses ``on_voice_change`` instead). ``dedupe`` (the call's
+    :class:`skills.VoiceTurnDedupe`) replays a same-turn deterministic command
+    instead of running it twice — see :func:`relay_voice_commands`."""
     if not uid:
         return []
 
@@ -1878,6 +1994,7 @@ def _session_tools(
         get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change,
         voice_pref=voice_pref, guard=guard, session_id=session_id,
         turns=(lambda: list(window)) if window is not None else None,
+        dedupe=dedupe,
     )
 
 
@@ -2641,17 +2758,21 @@ def _accent_block(rv, accent: str) -> str:
 
 
 def _compose_instructions(
-    system_prompt: str, accent_block: str, vocab: str, tool_use: str = ""
+    system_prompt: str, accent_block: str, vocab: str
 ) -> str:
     """The session instructions: the composed system prompt, then the boot-time
     accent block (when the provider supports accent), then the stack-aware voice
     vocabulary, then the voice tool-use directive — skipping any empty part.
 
-    ``tool_use`` (``prompts/voice_tool_use.md`` via :func:`load_voice_tool_use`)
-    is appended on the Meta cascade path to force call-before-confirm tool use;
-    left ``""`` on Gemini Live, whose instructions stay byte-identical."""
+    The tool-use directive (``prompts/voice_tool_use.md`` via
+    :func:`load_voice_tool_use`) rides on BOTH main voice paths: it forces
+    call-before-confirm tool use on the Meta cascade, whose chat LLM is
+    probabilistic and would otherwise narrate an app action as done without
+    ever firing the tool (founder voice bug, 2026-10-28), and Gemini Live
+    gets the same discipline (founder, prod 2284)."""
     return "\n\n".join(
-        p for p in (system_prompt, accent_block, vocab, tool_use) if p
+        p for p in (system_prompt, accent_block, vocab, load_voice_tool_use())
+        if p
     )
 
 
@@ -2718,6 +2839,7 @@ async def _start_main_gemini_session(
         allow_interruptions=True,
     )
     tour_gate = TourNarrationGate()
+    dedupe = skills.VoiceTurnDedupe()
     relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
     # Session closed = the conversation is over (no more turns can arrive):
     # start the memory write now rather than at job shutdown (see
@@ -2799,7 +2921,12 @@ async def _start_main_gemini_session(
         session_id=seed.session_id,
         window=window,
         tour_gate=tour_gate,
+        dedupe=dedupe,
     )
+    # Deterministic pre-model backstop (stack / navigation / tour-start): a
+    # clear command in a finalized user turn executes through the session's
+    # own tools, exactly as in the text lane.
+    relay_voice_commands(session, tools, dedupe)
     if swapper:
         swapper.tools = tools
         # A settings save mid-call arrives on the data channel (§13.9).
@@ -2841,6 +2968,7 @@ async def _start_main_cascade_session(
     the call on a fresh Gemini Live session on the same window, which flushes at
     its own close."""
     tour_gate = TourNarrationGate()
+    dedupe = skills.VoiceTurnDedupe()
     relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
     session.on("close", _flush_on_non_error_close(flush))
     _arm_cascade_tts_error_status(ctx, seed, session)
@@ -2893,14 +3021,21 @@ async def _start_main_cascade_session(
         session_id=seed.session_id,
         window=window,
         tour_gate=tour_gate,
+        dedupe=dedupe,
     )
+    # Deterministic pre-model backstop (stack / navigation / tour-start): a
+    # clear command in a finalized user turn executes through the session's
+    # own tools, exactly as in the text lane.
+    relay_voice_commands(session, tools, dedupe)
     agent_kwargs: dict = {
-        # The voice tool-use directive is appended HERE (cascade only): Meta Muse
-        # Spark's tool-calling is probabilistic in voice and would otherwise
-        # narrate an app action as done without ever firing the tool (founder
-        # voice bug, 2026-10-28). Gemini Live's instructions stay unchanged.
+        # The voice tool-use directive rides in the instructions (via
+        # _compose_instructions) on both main voice paths: Meta Muse Spark's
+        # tool-calling is probabilistic in voice and would otherwise narrate
+        # an app action as done without ever firing the tool (founder voice
+        # bug, 2026-10-28); Gemini Live gets the same call-before-confirm
+        # discipline (founder, prod 2284).
         "instructions": _compose_instructions(
-            seed.system_prompt, accent_block, vocab, load_voice_tool_use()
+            seed.system_prompt, accent_block, vocab
         ),
         "tools": tools,
     }
