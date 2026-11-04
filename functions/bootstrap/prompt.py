@@ -58,6 +58,7 @@ _VOICE_ACCENT_PATH = _DIR / "prompts" / "voice_accent.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 _VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
 _RECONNECT_BACK_PATH = _DIR / "prompts" / "reconnect_back.md"
+_VOICE_VERBATIM_LINE_PATH = _DIR / "prompts" / "voice_verbatim_line.md"
 _VOICE_VOCAB_PATH = _DIR / "prompts" / "voice_vocab.md"
 _VOICE_VOCAB_LIVE_PATH = _DIR / "prompts" / "voice_vocab_live.md"
 _VOICE_VOCAB_NEXT_CALL_PATH = _DIR / "prompts" / "voice_vocab_next_call.md"
@@ -399,6 +400,22 @@ def reconnect_back(setup: str) -> str:
     """
     return _RECONNECT_BACK_PATH.read_text(encoding="utf-8").strip().replace(
         "{setup}", setup
+    )
+
+
+def load_voice_verbatim_line(line: str) -> str:
+    """A ``generate_reply`` instruction that speaks one literal line and
+    nothing else (``prompts/voice_verbatim_line.md``).
+
+    The fallback for surfaces where ``session.say`` cannot run: a realtime
+    session with no TTS whose model does not support say() (Gemini Live -
+    the google plugin leaves ``capabilities.supports_say`` False, so
+    livekit-agents raises RuntimeError from say()). ``generate_reply`` IS
+    supported there - it is how the welcome greeting and the reconnect
+    "I'm back" line already speak on realtime - so the literal line rides
+    it under a say-exactly-this instruction."""
+    return _VOICE_VERBATIM_LINE_PATH.read_text(encoding="utf-8").strip().replace(
+        "{line}", line
     )
 
 

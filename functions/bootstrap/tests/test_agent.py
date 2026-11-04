@@ -2357,6 +2357,96 @@ def test_opener_greeting_survives_a_profile_read_error(monkeypatch):
     assert s.said == ["Hey there."]
 
 
+_SAY_UNSUPPORTED = (
+    "trying to generate speech from text without a TTS model or a "
+    "RealtimeSession that supports say(); add a TTS model to "
+    "AgentSession to enable say()"
+)
+
+
+class _RealtimeOpenerSession(_OpenerSession):
+    """A Gemini Live-shaped session (founder bug, 2026-11-03): no TTS and
+    a realtime model whose capabilities.supports_say is False, so
+    session.say() raises the livekit-agents RuntimeError synchronously -
+    exactly what a fresh Gemini Live start hits in the opener."""
+
+    def say(self, text):
+        raise RuntimeError(_SAY_UNSUPPORTED)
+
+
+class _HandleErrorOpenerSession(_OpenerSession):
+    """say() returns a handle whose failure only surfaces via
+    exception() - the swallowed-failure shape."""
+
+    def say(self, text):
+        return _SpeechHandleStub(RuntimeError(_SAY_UNSUPPORTED))
+
+
+def test_opener_falls_back_to_generate_reply_when_say_raises(monkeypatch):
+    """Fresh realtime start path: say() is unsupported, so the name
+    greeting rides generate_reply under the say-exactly-this instruction.
+    Without this the call produces no first response at all - and the app
+    holds the caller's mic until one lands, so the call never connects
+    (it sits on "Connecting..." until the first-response guard fires)."""
+    import asyncio
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _RealtimeOpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert len(s.replies) == 1
+    assert '"Hey Daniel."' in s.replies[0]
+    assert "word for word" in s.replies[0]
+
+
+def test_opener_falls_back_when_say_handle_carries_the_error(monkeypatch):
+    """The say() failure can also arrive only via the handle's
+    exception() - same fallback."""
+    import asyncio
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _HandleErrorOpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert len(s.replies) == 1
+    assert '"Hey Daniel."' in s.replies[0]
+
+
+def test_opener_fails_only_when_say_and_generate_reply_both_fail(monkeypatch):
+    """Both speech paths dead: the opener reports failure (and the call's
+    own guards take it from there) instead of pretending it spoke."""
+    import asyncio
+
+    class _DeadSession(_RealtimeOpenerSession):
+        async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
+                                 user_input=_UNSET):
+            raise RuntimeError("realtime session not established")
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _DeadSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is False
+
+
+def test_command_claim_gate_speaks_via_generate_reply_when_say_raises():
+    """Same root cause mid-call: on a say()-less realtime session the
+    claim gate's honest line falls back to generate_reply under the
+    say-exactly-this instruction instead of being silently dropped."""
+
+    class _Sess:
+        def __init__(self):
+            self.replies = []
+
+        def say(self, _text):
+            raise RuntimeError(_SAY_UNSUPPORTED)
+
+        def generate_reply(self, instructions=None, **_k):
+            self.replies.append(instructions)
+
+    s = _Sess()
+    gate = agent._CommandClaimGate(s)
+    gate.note_failure()
+    assert len(s.replies) == 1
+    assert agent._COMMAND_NOT_CONFIRMED_LINE in s.replies[0]
+
+
 def test_opener_skipped_when_someone_already_spoke():
     import asyncio
 
@@ -2529,9 +2619,10 @@ def test_opener_prior_context_helper():
     assert len(hint) <= agent._OPENER_HINT_MAX_CHARS + 1  # +1 for the ellipsis
 
 
-def test_opener_say_failure_returns_false():
-    """A say that raises outright fails the opener (False) — the call
-    itself continues; the caller simply speaks first."""
+def test_opener_say_failure_falls_back_to_generate_reply():
+    """A say that raises outright no longer fails the opener: the
+    greeting falls back to generate_reply (the realtime-shaped failure -
+    a fresh call produces no first response without it)."""
     import asyncio
 
     s = _OpenerSession()
@@ -2540,13 +2631,15 @@ def test_opener_say_failure_returns_false():
         raise RuntimeError("x")
 
     s.say = boom
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    assert len(s.replies) == 1
+    assert '"Hey there."' in s.replies[0]
 
 
-def test_opener_say_handle_error_returns_false():
-    """A swallowed handle failure on the greeting say is reported as a
-    miss (False, exactly one attempt) instead of being misreported as a
-    successful open."""
+def test_opener_say_handle_error_falls_back_to_generate_reply():
+    """A swallowed handle failure on the greeting say is not a successful
+    open either - it falls back to generate_reply (exactly one say
+    attempt, then the fallback speaks)."""
     import asyncio
 
     s = _OpenerSession()
@@ -2557,8 +2650,10 @@ def test_opener_say_handle_error_returns_false():
         return _SpeechHandleStub(RuntimeError("timed out"))
 
     s.say = say
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
     assert calls == ["Hey there."]
+    assert len(s.replies) == 1
+    assert '"Hey there."' in s.replies[0]
 
 
 # --- idle-timeout wiring -----------------------------------------------------

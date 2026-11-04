@@ -87,6 +87,7 @@ from prompt import (  # noqa: E402
     load_tour_tapped_kick,
     load_voice_session_seed,
     load_voice_tool_use,
+    load_voice_verbatim_line,
     reconnect_back,
     voice_accent_directive,
     voice_swap_confirm,
@@ -1753,7 +1754,21 @@ class _CommandClaimGate:
         try:
             self._session.say(_COMMAND_NOT_CONFIRMED_LINE)
         except Exception:  # noqa: BLE001 - the gate must never break the call
-            logger.exception("command claim gate could not speak its line")
+            # say() cannot run on a realtime session with no TTS whose
+            # model does not support it (Gemini Live, supports_say False) -
+            # the honest line then rides generate_reply under a
+            # say-exactly-this instruction, fire-and-forget exactly like
+            # the say() above (its handle is likewise unchecked here).
+            try:
+                self._session.generate_reply(
+                    instructions=load_voice_verbatim_line(
+                        _COMMAND_NOT_CONFIRMED_LINE
+                    )
+                )
+            except Exception:  # noqa: BLE001 - never break the call
+                logger.exception(
+                    "command claim gate could not speak its line"
+                )
 
     def note_silence(self) -> None:
         """A reconnect was queued this turn: latch the suppression WITHOUT
@@ -3893,6 +3908,32 @@ async def _attempt_voice_say(
         return exc
 
 
+async def _attempt_voice_reply(
+    session: AgentSession, **kwargs: object
+) -> BaseException | None:
+    """Fire one ``generate_reply``; None on success, the error on failure.
+
+    A try/except around the await alone can NEVER see a generation failure:
+    awaiting a LiveKit ``SpeechHandle`` never raises - the error is swallowed
+    and only exposed via ``handle.exception()`` (livekit-agents 1.8.9
+    ``speech_handle.py``; staging voice-silence audit, 2026-11-02). So check
+    both: a synchronous raise (session not running / closing, or a raising
+    test fake) AND the returned handle's ``exception()``."""
+    try:
+        handle = session.generate_reply(**kwargs)  # type: ignore[arg-type]
+        await handle
+    except Exception as exc:  # noqa: BLE001 - any failure fails this attempt only
+        return exc
+    get_error = getattr(handle, "exception", None)
+    if not callable(get_error):
+        return None
+    try:
+        error = get_error()
+    except Exception as exc:  # noqa: BLE001 - an unreadable handle fails it too
+        return exc
+    return error
+
+
 async def maybe_open_conversation(
     session: AgentSession,
     seed: RoomSeed,
@@ -3924,7 +3965,11 @@ async def maybe_open_conversation(
     ``session.say`` (the literal words, the same mechanism as the
     ack-gate's not-confirmed line) so no model can embellish it into a
     recap, and it is a status greeting, not an action claim, so the
-    ack-gating contract is untouched. A mid-call RECONNECT continuation
+    ack-gating contract is untouched. On a realtime session whose model
+    cannot say() (Gemini Live), say() raises instead — the line then
+    rides ``generate_reply`` under a say-exactly-this instruction (see
+    the fallback in the body), because the app produces no first
+    response — and holds the caller's mic — until the agent speaks. A mid-call RECONNECT continuation
     never reaches here — it returns from :func:`_open_main_call` on the
     claim branch — so its "I'm back" line and in-call continuity are
     unaffected.
@@ -3988,16 +4033,38 @@ async def maybe_open_conversation(
     )
     say_error = await _attempt_voice_say(session, greeting)
     if say_error is not None:
-        # logger.error, not logger.exception: the error usually arrives via
-        # handle.exception(), outside any except block, so there is no active
-        # traceback to attach — the carried error string is the signal.
-        logger.error(
+        # A realtime session with no TTS whose model cannot say() (Gemini
+        # Live: the google plugin leaves capabilities.supports_say False)
+        # raises RuntimeError from say() - the literal line then rides
+        # generate_reply under a say-exactly-this instruction instead, the
+        # same mechanism the welcome greeting and the reconnect line
+        # already use on realtime. This fallback is load-bearing, not
+        # cosmetic: the app holds the caller's mic until the agent's
+        # first genuine response lands, so an opener that produces
+        # nothing leaves a fresh realtime call stuck on "Connecting..."
+        # until the app's first-response guard tears it down (founder
+        # bug, 2026-11-03 - fresh Gemini Live starts never connected).
+        logger.warning(
             "voice opener say ERRORED kind=name_greeting brain=%s "
-            "session=%s err=%s", brain, seed.session_id or "?", say_error,
+            "session=%s err=%s - falling back to generate_reply",
+            brain, seed.session_id or "?", say_error,
         )
-        return False
+        reply_error = await _attempt_voice_reply(
+            session, instructions=load_voice_verbatim_line(greeting)
+        )
+        if reply_error is not None:
+            # logger.error, not logger.exception: the error usually
+            # arrives via handle.exception(), outside any except block,
+            # so there is no active traceback to attach - the carried
+            # error string is the signal.
+            logger.error(
+                "voice opener generate_reply ERRORED kind=name_greeting "
+                "brain=%s session=%s err=%s",
+                brain, seed.session_id or "?", reply_error,
+            )
+            return False
     logger.info(
-        "voice opener say COMPLETED kind=name_greeting brain=%s session=%s",
+        "voice opener COMPLETED kind=name_greeting brain=%s session=%s",
         brain, seed.session_id or "?",
     )
     return True
