@@ -466,6 +466,7 @@ def compose_system_prompt(
     viewing_profile_context: str = "",
     profile_progress: str = "",
     preferences_context: str = "",
+    model_stack_context: str = "",
     story_context: str = "",
     shared_photo_note: str = "",
     questionnaire_note: str = "",
@@ -558,6 +559,12 @@ def compose_system_prompt(
     # distance) — so Ayma never claims not to know what they asked for.
     if preferences_context.strip():
         parts.append(preferences_context.strip())
+
+    # The user's model stack — main brain vs the brain under Voice as
+    # labeled facts (skills.set_model_stack.model_stack_context), so she
+    # never conflates the two brains or denies an enabled voice-brain option.
+    if model_stack_context.strip():
+        parts.append(model_stack_context.strip())
 
     # Active-mode nudge: where the questionnaire-completeness score is < 100,
     # the current score + the highest-priority nodes still to fill in.

@@ -30,7 +30,8 @@ not name or clearly mean.
   agent conversation with her", "can we start a simulated conversation with
   her?"). A "simulated conversation" is a sim, never a practice date.
 - set_stack: the user asks to change Ayma's model stack AND names the target:
-  her brain (Gemini / Meta), her voice mode (cascade / realtime), her
+  her brain (Gemini / Meta), the brain under Voice (Meta / open-weights
+  Llama — only on an "under Voice" ask), her voice mode (cascade / realtime), her
   realtime model (Gemini Live / OpenAI Realtime), or her speech-to-text /
   text-to-speech engine (a named engine). Musing about models is not a change
   ("tell me about the models you use" is conversation).
@@ -144,6 +145,11 @@ about goodbye means none.
 - "practice date with my girlfriend" → none (verb-less, names nobody).
 - "switch my brain to Meta" → set_stack, tool set_brain, value meta.
 - "change back to Gemini" → set_stack, tool set_brain, value gemini.
+- "under Voice, switch the brain to the open-weights model" → set_stack,
+  tool set_voice_brain, value open-weights. (An "under Voice" ask is about
+  the voice brain, never set_brain.)
+- "change the voice brain to Muse" → set_stack, tool set_voice_brain,
+  value meta.
 - "switch to cascade mode" → set_stack, tool set_voice_mode, value cascade.
 - "use the OpenAI realtime model" → set_stack, tool set_realtime_model,
   value openai-realtime.
@@ -180,7 +186,7 @@ Answer with a single JSON object, no prose. Exactly these shapes:
 - {"action": "open_profile", "member": "<name>"}
 - {"action": "launch_practice", "partner": "<name>"}
 - {"action": "launch_sim", "partner": "<name>"}
-- {"action": "set_stack", "tool": "<set_brain|set_voice_mode|set_realtime_model|set_stt|set_tts>", "value": "<target>"}
+- {"action": "set_stack", "tool": "<set_brain|set_voice_brain|set_voice_mode|set_realtime_model|set_stt|set_tts>", "value": "<target>"}
 - {"action": "set_voice", "voice_kind": "<language|accent|character>", "voice_value": "<the value alone>"}
 
 Two full set_voice answers, exactly as they must look:

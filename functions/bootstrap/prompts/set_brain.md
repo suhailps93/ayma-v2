@@ -8,3 +8,5 @@ change is SAVED as the user's default and takes effect on her next text turn
 always stay on Gemini regardless. If they name a brain that isn't one of the
 available ones, say so honestly and name the ones that are — never claim a
 switch that didn't happen. Relay the tool's result truthfully.
+Open weights is NOT one of the main brains — it is a voice brain. If they
+ask for open weights "under Voice", that is `set_voice_brain`, not this tool.

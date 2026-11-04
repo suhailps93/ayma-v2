@@ -130,6 +130,7 @@ from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 import prompt as prompt_module  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
+from skills import set_model_stack  # noqa: E402
 import session_mode  # noqa: E402
 from skills import (  # noqa: E402
     make_session_tool_fns,
@@ -831,6 +832,7 @@ async def bootstrap(
             profile_progress=_interview_progress(uid, mode),
             preferences_context=_preferences_context(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
+            model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
             db=get_db(),
             summary_context=summary_text,
             # Voice persona variant (prompt.py `_persona_variant`): the Live
@@ -1435,6 +1437,7 @@ async def _prepare_chat(
         profile_progress=_interview_progress(uid, mode),
         preferences_context=_preferences_context(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
+        model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
         viewing_profile_context=public_profile_mod._viewing_profile_context(
             get_db(), uid, viewing_profile_uid
         ),

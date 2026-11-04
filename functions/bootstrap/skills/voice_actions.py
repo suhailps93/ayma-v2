@@ -71,6 +71,7 @@ _LAUNCH_TOOLS = {
 # kwarg each stack setter takes.
 _STACK_TOOL_KWARGS = {
     "set_brain": "brain",
+    "set_voice_brain": "brain",
     "set_voice_mode": "mode",
     "set_realtime_model": "model",
     "set_stt": "engine",
@@ -114,7 +115,7 @@ RESPONSE_SCHEMA: dict = {
             "type": "string",
             "description": (
                 "set_stack only: one of set_brain, set_voice_mode, "
-                "set_realtime_model, set_stt, set_tts."
+                "set_realtime_model, set_stt, set_tts, set_voice_brain."
             ),
         },
         "value": {
@@ -339,6 +340,12 @@ def _canonical_stack_value(tool: str, value: str) -> str | None:
             return PROVIDER_GEMINI
         if "meta" in low or "muse" in low:
             return PROVIDER_META
+        return None
+    if tool == "set_voice_brain":
+        if "llama" in low or ("open" in low and "weight" in low):
+            return voice_catalog.BRAIN_OPEN_WEIGHTS
+        if "meta" in low or "muse" in low:
+            return voice_catalog.BRAIN_META
         return None
     if tool == "set_voice_mode":
         if "cascade" in low or low == "text mode":

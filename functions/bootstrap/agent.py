@@ -1600,6 +1600,7 @@ def relay_mute_control(
 # reaches the model").
 _STACK_TOOL_KWARGS = {
     "set_brain": "brain",
+    "set_voice_brain": "brain",
     "set_voice_mode": "mode",
     "set_realtime_model": "model",
     "set_stt": "engine",
