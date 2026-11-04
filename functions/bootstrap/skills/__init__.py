@@ -69,6 +69,7 @@ from . import (
     set_voice_preference,
     submit_feedback,
     user_steering,
+    voice_actions,
 )
 from tool_labels import outcome_label
 

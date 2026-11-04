@@ -1,0 +1,797 @@
+{
+ "cases": [
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "explore"
+   },
+   "id": "founder-1-explore",
+   "member": "",
+   "page": "",
+   "transcript": "Can you open up Explore?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "voice_preference"
+   },
+   "id": "founder-2-models",
+   "member": "",
+   "page": "",
+   "transcript": "open up the AMA models page",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_sim",
+    "partner": "Dillu"
+   },
+   "id": "founder-3-sim-her",
+   "member": "Dillu",
+   "page": "",
+   "transcript": "Can we start a simulated conversation with her?",
+   "turns": [
+    [
+     "user",
+     "I matched with Dillu last week"
+    ],
+    [
+     "assistant",
+     "Nice, how is it going with her?"
+    ]
+   ]
+  },
+  {
+   "expected": {
+    "action": "launch_sim",
+    "partner": "Dillu"
+   },
+   "id": "founder-4-agent-her",
+   "member": "Dillu",
+   "page": "",
+   "transcript": "Start an agent to agent conversation with her.",
+   "turns": [
+    [
+     "user",
+     "I matched with Dillu last week"
+    ],
+    [
+     "assistant",
+     "Nice, how is it going with her?"
+    ]
+   ]
+  },
+  {
+   "expected": {
+    "action": "launch_practice",
+    "partner": "Dillu"
+   },
+   "id": "founder-5-practice-her",
+   "member": "Dillu",
+   "page": "",
+   "transcript": "Can I talk to her in practice?",
+   "turns": [
+    [
+     "user",
+     "I matched with Dillu last week"
+    ],
+    [
+     "assistant",
+     "Nice, how is it going with her?"
+    ]
+   ]
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "founder-6-goodbye",
+   "member": "",
+   "page": "",
+   "transcript": "goodbye Ayma",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-ayma",
+   "member": "",
+   "page": "",
+   "transcript": "bye Ayma",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-thanks",
+   "member": "",
+   "page": "",
+   "transcript": "Goodbye, Ayma, thanks",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-thank-you",
+   "member": "",
+   "page": "",
+   "transcript": "bye Ayma, thank you",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-upper",
+   "member": "",
+   "page": "",
+   "transcript": "BYE AYMA",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-ayma-first",
+   "member": "",
+   "page": "",
+   "transcript": "Ayma, goodbye",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-okay",
+   "member": "",
+   "page": "",
+   "transcript": "okay, goodbye Ayma",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-bare-goodbye",
+   "member": "",
+   "page": "",
+   "transcript": "goodbye",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "end_call"
+   },
+   "id": "bye-goodbye-thanks",
+   "member": "",
+   "page": "",
+   "transcript": "Goodbye! Thanks.",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "bye-talk-never",
+   "member": "",
+   "page": "",
+   "transcript": "I never got to say goodbye",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "bye-talk-meaning",
+   "member": "",
+   "page": "",
+   "transcript": "what does goodbye mean",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "bye-recount-her",
+   "member": "",
+   "page": "",
+   "transcript": "I said goodbye to her yesterday",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "bye-recount-ayma",
+   "member": "",
+   "page": "",
+   "transcript": "then I told Ayma goodbye last time we talked",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "bye-third-sofia",
+   "member": "",
+   "page": "",
+   "transcript": "say goodbye to Sofia for me",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "bye-third-daniel",
+   "member": "",
+   "page": "",
+   "transcript": "tell Daniel bye",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "bye-bare-bye",
+   "member": "",
+   "page": "",
+   "transcript": "bye",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "messages"
+   },
+   "id": "bye-tail-request",
+   "member": "",
+   "page": "",
+   "transcript": "open my messages, goodbye Ayma",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_sim",
+    "partner": "Sophia"
+   },
+   "id": "launch-founder-sim-sophia",
+   "member": "",
+   "page": "",
+   "transcript": "Can you open an agent to agent simulation with Sophia?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_practice",
+    "partner": "Sofia"
+   },
+   "id": "launch-practice-sofia",
+   "member": "",
+   "page": "",
+   "transcript": "start a practice date with Sofia",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_practice",
+    "partner": "Daniel"
+   },
+   "id": "launch-practice-daniel",
+   "member": "",
+   "page": "",
+   "transcript": "let me practice with Daniel",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_sim",
+    "partner": "Daniel"
+   },
+   "id": "launch-sim-daniel",
+   "member": "",
+   "page": "",
+   "transcript": "run a date sim with Daniel",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_practice",
+    "partner": "Sofia"
+   },
+   "id": "launch-practice-verbless",
+   "member": "",
+   "page": "",
+   "transcript": "practice date with Sofia",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_sim",
+    "partner": "Sofia"
+   },
+   "id": "launch-sim-verbless",
+   "member": "",
+   "page": "",
+   "transcript": "date sim with Sofia",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_sim",
+    "partner": "Sofia"
+   },
+   "id": "launch-simulate",
+   "member": "",
+   "page": "",
+   "transcript": "simulate a date with Sofia",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_practice",
+    "partner": "Dillu"
+   },
+   "id": "launch-pronoun-screen",
+   "member": "Dillu",
+   "page": "profile",
+   "transcript": "start a practice date with her",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "launch_practice",
+    "partner": "Sofia"
+   },
+   "id": "launch-name-beats-context",
+   "member": "Dillu",
+   "page": "",
+   "transcript": "start a practice date with Sofia",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "clarify",
+    "for": "launch_practice"
+   },
+   "id": "clarify-practice-bare",
+   "member": "",
+   "page": "",
+   "transcript": "start a practice date",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "clarify",
+    "for": "launch_sim"
+   },
+   "id": "clarify-sim-forme",
+   "member": "",
+   "page": "",
+   "transcript": "run a date sim for me",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "clarify",
+    "for": "launch_practice"
+   },
+   "id": "clarify-practice-girlfriend",
+   "member": "",
+   "page": "",
+   "transcript": "start a practice date with my girlfriend",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "clarify",
+    "for": "launch_sim"
+   },
+   "id": "clarify-sim-someone",
+   "member": "",
+   "page": "",
+   "transcript": "run a date sim with someone",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-recount-yesterday",
+   "member": "",
+   "page": "",
+   "transcript": "my practice date yesterday went well",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-feature-question",
+   "member": "",
+   "page": "",
+   "transcript": "what is a practice date?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-hypothetical",
+   "member": "",
+   "page": "",
+   "transcript": "do you think the simulation is accurate?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-results",
+   "member": "",
+   "page": "",
+   "transcript": "tell me about my date sim results",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-recount-named",
+   "member": "",
+   "page": "",
+   "transcript": "my practice date with Sofia went well",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-results-open",
+   "member": "",
+   "page": "",
+   "transcript": "open my date sim results",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-results-show",
+   "member": "",
+   "page": "",
+   "transcript": "show me my practice date results",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-debrief",
+   "member": "",
+   "page": "",
+   "transcript": "tell me about my practice date debrief",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-verbless-generic",
+   "member": "",
+   "page": "",
+   "transcript": "practice date with my girlfriend",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-bare-practice",
+   "member": "",
+   "page": "",
+   "transcript": "practice date",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-bare-sim",
+   "member": "",
+   "page": "",
+   "transcript": "date sim",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "miss-plural",
+   "member": "",
+   "page": "",
+   "transcript": "I love dating sims",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "open_profile",
+    "member": "Sofia"
+   },
+   "id": "nav-profile-sofia",
+   "member": "",
+   "page": "",
+   "transcript": "open Sofia's profile",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "open_profile",
+    "member": "Dillu"
+   },
+   "id": "nav-profile-her",
+   "member": "Dillu",
+   "page": "profile",
+   "transcript": "open her profile",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "voice_preference"
+   },
+   "id": "nav-models",
+   "member": "",
+   "page": "",
+   "transcript": "open the models page",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "voice_preference"
+   },
+   "id": "nav-models-space",
+   "member": "",
+   "page": "",
+   "transcript": "Can you open up the models space?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "explore"
+   },
+   "id": "nav-take-explore",
+   "member": "",
+   "page": "",
+   "transcript": "take me to explore",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "messages"
+   },
+   "id": "nav-messages",
+   "member": "",
+   "page": "",
+   "transcript": "go to my messages",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "explore"
+   },
+   "id": "nav-switch-explore",
+   "member": "",
+   "page": "",
+   "transcript": "switch to explore",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "notifications"
+   },
+   "id": "nav-notifications",
+   "member": "",
+   "page": "",
+   "transcript": "open notifications",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "navigate",
+    "page": "ayma"
+   },
+   "id": "nav-main-chat",
+   "member": "",
+   "page": "",
+   "transcript": "go back to the main chat",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "nav-talk-favorite",
+   "member": "",
+   "page": "",
+   "transcript": "the models page is my favorite screen",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "nav-talk-about",
+   "member": "",
+   "page": "",
+   "transcript": "tell me about the models you use",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "chat-hiking",
+   "member": "",
+   "page": "",
+   "transcript": "I love hiking and long walks on the beach",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "chat-capabilities",
+   "member": "",
+   "page": "",
+   "transcript": "what can you do for me?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "set_stack",
+    "tool": "set_brain",
+    "value": "meta"
+   },
+   "id": "stack-brain-meta",
+   "member": "",
+   "page": "",
+   "transcript": "switch my brain to Meta",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "set_stack",
+    "tool": "set_brain",
+    "value": "gemini"
+   },
+   "id": "stack-brain-gemini",
+   "member": "",
+   "page": "",
+   "transcript": "change back to Gemini",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "set_stack",
+    "tool": "set_voice_mode",
+    "value": "cascade"
+   },
+   "id": "stack-mode-cascade",
+   "member": "",
+   "page": "",
+   "transcript": "switch to cascade mode",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "set_stack",
+    "tool": "set_realtime_model",
+    "value": "openai-realtime"
+   },
+   "id": "stack-realtime-openai",
+   "member": "",
+   "page": "",
+   "transcript": "use the OpenAI realtime model",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "set_stack",
+    "tool": "set_stt",
+    "value_contains": "deepgram"
+   },
+   "id": "stack-stt-deepgram",
+   "member": "",
+   "page": "",
+   "transcript": "change the speech-to-text to deepgram",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "set_stack",
+    "tool": "set_tts",
+    "value_contains": "inworld"
+   },
+   "id": "stack-tts-inworld",
+   "member": "",
+   "page": "",
+   "transcript": "switch my text-to-speech to inworld",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "stack-talk-brand",
+   "member": "",
+   "page": "",
+   "transcript": "I use Gemini at work",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "start_tour"
+   },
+   "id": "tour-start",
+   "member": "",
+   "page": "",
+   "transcript": "start the guided tour",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "start_tour"
+   },
+   "id": "tour-walk",
+   "member": "",
+   "page": "",
+   "transcript": "walk me through the app",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "tour-stop",
+   "member": "",
+   "page": "",
+   "transcript": "stop the tour",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "set_voice"
+   },
+   "id": "voice-spanish",
+   "member": "",
+   "page": "",
+   "transcript": "speak Spanish from now on",
+   "turns": [],
+   "voice": {
+    "accent_language": "Spanish"
+   }
+  },
+  {
+   "expected": {
+    "action": "set_voice"
+   },
+   "id": "voice-accent",
+   "member": "",
+   "page": "",
+   "transcript": "give yourself a southern American accent",
+   "turns": [],
+   "voice": {
+    "accent": "southern american accent"
+   }
+  }
+ ]
+}
