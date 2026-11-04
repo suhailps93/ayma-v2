@@ -2097,6 +2097,37 @@ def relay_token_usage(
         ctx.add_shutdown_callback(_log_session_total)
 
 
+def relay_world_state(
+    session: AgentSession, uid: str
+) -> "skills.world_state.WorldStateRefresher | None":
+    """Per-turn live-context refresh (founder, 2026-11-03): keep the model's
+    picture of the world — the screen the user is on right now, and the
+    outcomes of async work launched during the call (agent dates, match
+    reports) — current on EVERY turn, instead of only when the model
+    happens to call ``current_screen``. Without it she answers from
+    whatever the screen was when the call started and keeps saying "let's
+    see when the report comes through" about reports that already
+    finished. Silent context maintenance (see ``skills.world_state``):
+    the refresher only replaces one tagged item in the chat context; it
+    never speaks. Wired on both main voice paths next to
+    ``relay_voice_commands``, hanging off the same final-transcript event
+    the mute gate and the command relay use."""
+    if not uid:
+        return None
+    refresher = skills.world_state.WorldStateRefresher(
+        db_factory=get_db,
+        uid=uid,
+        get_agent=lambda: session.current_agent,
+    )
+
+    @session.on("user_input_transcribed")
+    def _on_user_final(ev: UserInputTranscribedEvent) -> None:
+        if ev.is_final:
+            refresher.poke()
+
+    return refresher
+
+
 def _read_room_seed(ctx: JobContext) -> RoomSeed:
     """Pull the system prompt, recent-turns window and persistence ids that
     ``POST /bootstrap`` left on the room metadata (§1.4, §1.5, §1.7 step 8).
@@ -3267,6 +3298,7 @@ async def _start_main_gemini_session(
         uid=seed.uid,
         session_id=seed.session_id,
     )
+    relay_world_state(session, seed.uid)
     if swapper:
         swapper.tools = tools
         # A settings save mid-call arrives on the data channel (§13.9).
@@ -3379,6 +3411,7 @@ async def _start_main_cascade_session(
         uid=seed.uid,
         session_id=seed.session_id,
     )
+    relay_world_state(session, seed.uid)
     agent_kwargs: dict = {
         # The voice tool-use directive rides in the instructions (via
         # _compose_instructions) on both main voice paths: Meta Muse Spark's
