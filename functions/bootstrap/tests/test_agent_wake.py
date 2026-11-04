@@ -1,5 +1,6 @@
 """agent_wake.wake_agent — the scale-to-zero ayma-agent "wake" ping fired by
-/bootstrap and /welcome/token (docs/deploy.md §12.2)."""
+/bootstrap and Practice Date voice for cloudrun-routed rooms, and by the
+failure-only hosted-dispatch fallback (docs/deploy.md §12.2)."""
 
 import dataclasses
 import urllib.error

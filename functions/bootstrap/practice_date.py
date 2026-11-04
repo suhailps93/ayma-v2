@@ -43,8 +43,10 @@ from livekit_token import (
     LiveKitConfigError,
     build_room_seed,
     mint_access_token,
+    resolve_voice_agent_cloud,
     room_name_for,
     seed_room_context,
+    watch_hosted_dispatch,
 )
 
 # Domain core (fastapi-free; also imported by the voice agent worker). Re-export
@@ -283,14 +285,20 @@ async def practice_voice_start(
     except LiveKitConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    # Wake the scale-to-zero agent in parallel with room creation (same as
-    # /bootstrap), then seed the persona prompt onto the room metadata. The
+    # Route exactly like /bootstrap (§1.1 dual-cloud): resolve the caller's
+    # target cloud (default the hosted LiveKit worker), wake the scale-to-zero
+    # Cloud Run worker only when the room actually routes there, then seed the
+    # persona prompt onto the room metadata. (This path originally skipped the
+    # resolution entirely — no explicit dispatch, a default "cloudrun" marker
+    # and an unconditional wake — so every practice call landed on GCP.) The
     # persona answers a live phone CALL from the caller, so the prompt is built
     # with the voice framing and the caller's first name (so the match never
     # asks who's calling), and the persona's gender rides along so the worker
     # picks a gender-matched TTS voice.
     user_name = _caller_first_name(db, caller.uid)
-    background.add_task(agent_wake.wake_agent)
+    agent_cloud = resolve_voice_agent_cloud(db, caller.uid)
+    if agent_cloud == "cloudrun":
+        background.add_task(agent_wake.wake_agent)
     try:
         await seed_room_context(
             room,
@@ -303,10 +311,17 @@ async def practice_voice_start(
                 persona_name=ctx.name,
                 persona_gender=ctx.gender,
                 target_uid=target_uid,
+                voice_agent_cloud=agent_cloud,
+            ),
+            agent_name=(
+                CONFIG.agent_name_livekit if agent_cloud == "livekit" else None
             ),
         )
     except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
         logger.exception("failed to seed practice voice room %s", room)
+    if agent_cloud == "livekit":
+        # Failure-only GCP fallback (§1.1), same as /bootstrap.
+        background.add_task(watch_hosted_dispatch, room)
 
     return {
         "session_id": session_id,

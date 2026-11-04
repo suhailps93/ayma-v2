@@ -70,8 +70,10 @@ from livekit_token import (  # noqa: E402
     LiveKitConfigError,
     build_room_seed,
     mint_access_token,
+    resolve_voice_agent_cloud,
     room_name_for,
     seed_room_context,
+    watch_hosted_dispatch,
 )
 import account_ops  # noqa: E402
 import age_gate  # noqa: E402
@@ -290,14 +292,10 @@ def _voice_agent_cloud(uid: str) -> str:
     (opt-out via the Developer screen, ``PF_AYMA_VOICE_CLOUD``). Any
     unknown/absent value falls back to ``schema.VOICE_AGENT_CLOUD_DEFAULT`` (the
     one authoritative default); a user who explicitly set ``cloudrun`` still
-    routes to Cloud Run."""
-    try:
-        snap = schema.profile_doc(get_db(), uid).get()
-        val = str((snap.to_dict() or {}).get(schema.PF_AYMA_VOICE_CLOUD, "")).strip()
-    except Exception:  # noqa: BLE001 - never block a voice start on this read
-        logger.exception("could not read voice_agent_cloud for %s", uid)
-        return schema.VOICE_AGENT_CLOUD_DEFAULT
-    return val if val in schema.VOICE_AGENT_CLOUDS else schema.VOICE_AGENT_CLOUD_DEFAULT
+    routes to Cloud Run. Thin wrapper over
+    :func:`livekit_token.resolve_voice_agent_cloud`, which Practice Date voice
+    shares so every voice room resolves its target the same way."""
+    return resolve_voice_agent_cloud(get_db(), uid)
 
 
 def _server_ts():
@@ -892,6 +890,13 @@ async def bootstrap(
         except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
             logger.exception("failed to seed room context for %s", room)
 
+        if agent_cloud == "livekit":
+            # Failure-only GCP fallback (§1.1): if the hosted worker never
+            # joins this room, re-route it to the Cloud Run worker in the
+            # background (livekit_token.watch_hosted_dispatch). GCP serves
+            # voice only when LiveKit Cloud itself is failing.
+            background.add_task(watch_hosted_dispatch, room)
+
         if turns:
             _persist_session(uid, session_id, turns)
 
@@ -985,15 +990,14 @@ async def welcome_token(
     if not CONFIG.livekit_url:
         raise HTTPException(status_code=503, detail="Voice is unavailable.")
 
-    # The pre-sign-in welcome room has no uid and no voice_agent_cloud pref, so
-    # it is created with NO explicit agent dispatch — LiveKit auto-dispatches it
-    # to the Cloud Run worker (the LiveKit-hosted worker is explicit-dispatch
-    # only, agent_name "ayma-lk"). So welcome always needs the Cloud Run wake,
-    # unlike authenticated /bootstrap, which wakes Cloud Run only for the
-    # "cloudrun"-routed users. This is the one remaining always-on Cloud Run
-    # consumer (see docs/LIVEKIT_AGENT_MIGRATION.md — full retirement of Cloud
-    # Run requires migrating the welcome flow to explicit ayma-lk dispatch).
-    background.add_task(agent_wake.wake_agent)
+    # The pre-sign-in welcome room has no uid and no voice_agent_cloud pref;
+    # it routes to the hosted worker like everything else (founder directive
+    # 2026-11-03: everything on LiveKit Cloud, GCP only if LiveKit crashes) —
+    # explicit dispatch to "ayma-lk" plus a "livekit" seed marker, which is
+    # what the hosted worker's request_fnc guard requires to accept the room.
+    # No Cloud Run wake: the failure-only fallback watcher below wakes Cloud
+    # Run itself if the hosted agent never joins. This retired the last
+    # always-on Cloud Run consumer (see docs/LIVEKIT_AGENT_MIGRATION.md).
     room = f"welcome-{secrets.token_urlsafe(9)}"
     try:
         token = mint_access_token(f"guest-{room}", room)
@@ -1009,10 +1013,14 @@ async def welcome_token(
                 "",
                 "",
                 greeting_instructions=_WELCOME_GREETING,
+                voice_agent_cloud="livekit",
             ),
+            agent_name=CONFIG.agent_name_livekit,
         )
     except Exception:  # noqa: BLE001 - best-effort; the agent still has a base persona
         logger.exception("failed to seed welcome room %s", room)
+    # Failure-only GCP fallback (§1.1), same as /bootstrap.
+    background.add_task(watch_hosted_dispatch, room)
 
     return {"livekit": {"token": token, "url": CONFIG.livekit_url, "room": room}}
 

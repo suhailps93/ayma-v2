@@ -9,15 +9,21 @@ stored in the repo (AGENTS.md §"Data & credentials").
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import secrets
+import time
 from datetime import timedelta
 
 from livekit import api
 
+import schema
 from config import CONFIG
 from transcript import Turn
+
+logger = logging.getLogger("ayma.livekit_token")
 
 
 class LiveKitConfigError(RuntimeError):
@@ -191,9 +197,10 @@ async def seed_room_context(
     ``agent_name`` picks the dispatch model for this room (§1.1, dual-cloud
     agent):
 
-    * ``None`` (the default, all of production) — the room is created with NO
-      explicit agent dispatch, so LiveKit's AUTOMATIC dispatch hands it to the
-      Cloud Run worker exactly as today.
+    * ``None`` — the room is created with NO explicit agent dispatch, so
+      LiveKit's AUTOMATIC dispatch hands it to the Cloud Run worker. Used for
+      ``cloudrun``-routed rooms (an explicit user opt-out, or the failure-only
+      fallback in :func:`watch_hosted_dispatch`).
     * a name (e.g. ``"ayma-lk"``) — the room is created with EXPLICIT dispatch
       to that agent, so the LiveKit-Cloud-hosted worker (registered under that
       ``agent_name``) serves it. The Cloud Run worker is still offered the room
@@ -223,5 +230,138 @@ async def seed_room_context(
         await lk.room.update_room_metadata(
             api.UpdateRoomMetadataRequest(room=room, metadata=seed_json)
         )
+    finally:
+        await lk.aclose()
+
+
+def resolve_voice_agent_cloud(db, uid: str) -> str:
+    """Which cloud serves this user's next voice call (§1.1, dual-cloud
+    agent): ``"livekit"`` (the default — the hosted ``ayma-lk`` worker) or
+    ``"cloudrun"`` (the user's explicit opt-out pref, ``PF_AYMA_VOICE_CLOUD``).
+    Any unknown/absent value falls back to ``schema.VOICE_AGENT_CLOUD_DEFAULT``
+    (the one authoritative default). Shared by ``POST /bootstrap`` and
+    Practice Date voice so every voice room resolves its target cloud the
+    same way (Practice Date originally skipped the resolution entirely and
+    always landed on Cloud Run)."""
+    try:
+        snap = schema.profile_doc(db, uid).get()
+        val = str(
+            (snap.to_dict() or {}).get(schema.PF_AYMA_VOICE_CLOUD, "")
+        ).strip()
+    except Exception:  # noqa: BLE001 - never block a voice start on this read
+        logger.exception("could not read voice_agent_cloud for %s", uid)
+        return schema.VOICE_AGENT_CLOUD_DEFAULT
+    return val if val in schema.VOICE_AGENT_CLOUDS else schema.VOICE_AGENT_CLOUD_DEFAULT
+
+
+# --- failure-only Cloud Run fallback for hosted dispatch (§1.1) ------------
+#
+# Founder policy (2026-11-03): GCP serves voice essentially never — only when
+# LiveKit Cloud itself is failing. A room routed to the hosted ``ayma-lk``
+# worker has exactly one failure signal worth acting on: the agent never
+# joins. :func:`watch_hosted_dispatch` polls the room briefly after creation;
+# if no agent participant appears within the window it flips the room's
+# ``voice_agent_cloud`` marker to ``cloudrun``, wakes the Cloud Run worker
+# and creates an automatic dispatch so that worker picks the room up. The
+# Cloud Run worker's ``request_fnc`` guard accepts once the marker matches
+# its runtime, and the same flip makes the hosted worker decline the room if
+# it resurfaces later, so the two never both join. Every other outcome —
+# agent joined, room closed because the caller hung up, LiveKit API
+# unreachable (the fallback rides the same API, so it could not be delivered
+# either) — leaves the room exactly as routed.
+
+_HOSTED_DISPATCH_TIMEOUT_SECONDS = 15.0
+_HOSTED_DISPATCH_POLL_SECONDS = 2.0
+_AGENT_PARTICIPANT_KIND = 4  # ParticipantInfo.Kind.AGENT
+
+
+async def _agent_joined(lk, room: str) -> bool | None:
+    """True: an agent participant is in ``room``. False: the room exists but
+    no agent has joined yet. None: the room no longer exists. A ``not_found``
+    from the room service is the room-gone signal; any other error propagates
+    so the caller can treat it as transient."""
+    try:
+        resp = await lk.room.list_participants(
+            api.ListParticipantsRequest(room=room)
+        )
+    except api.TwirpError as exc:
+        if exc.code == "not_found" or "not found" in str(exc).lower():
+            return None
+        raise
+    return any(p.kind == _AGENT_PARTICIPANT_KIND for p in resp.participants)
+
+
+async def _flip_room_to_cloudrun(lk, room: str) -> bool:
+    """Re-route ``room`` to the Cloud Run worker (see the section comment
+    above). Returns True iff the fallback dispatch was created."""
+    rooms = await lk.room.list_rooms(api.ListRoomsRequest(names=[room]))
+    if not rooms.rooms:
+        return False
+    raw = (rooms.rooms[0].metadata or "").strip()
+    try:
+        seed = json.loads(raw) if raw else {}
+    except ValueError:
+        seed = {}
+    if seed.get("voice_agent_cloud") != "livekit":
+        return False  # not a hosted-routed room (or already flipped)
+    # Final re-check: a merely-slow hosted agent that joined during the flip
+    # window must not be doubled by a Cloud Run join.
+    if await _agent_joined(lk, room):
+        return False
+    seed["voice_agent_cloud"] = "cloudrun"
+    seed["cloud_fallback_reason"] = "hosted_agent_missing"
+    payload = json.dumps(seed)
+    await lk.room.update_room_metadata(
+        api.UpdateRoomMetadataRequest(room=room, metadata=payload)
+    )
+    from agent_wake import wake_agent
+
+    await asyncio.to_thread(wake_agent)
+    await lk.agent_dispatch.create_dispatch(
+        api.CreateAgentDispatchRequest(agent_name="", room=room)
+    )
+    return True
+
+
+async def watch_hosted_dispatch(
+    room: str,
+    *,
+    timeout_seconds: float = _HOSTED_DISPATCH_TIMEOUT_SECONDS,
+    poll_seconds: float = _HOSTED_DISPATCH_POLL_SECONDS,
+) -> bool:
+    """Failure-only fallback for one livekit-routed room (see the section
+    comment above): returns True iff the room was re-routed to the Cloud Run
+    worker. Designed to run as a ``BackgroundTasks`` task — never raises."""
+    try:
+        lk = api.LiveKitAPI()
+    except Exception:  # noqa: BLE001 - unconfigured LiveKit: nothing to watch
+        logger.exception("hosted-dispatch watch could not start for room %s", room)
+        return False
+    try:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                joined = await _agent_joined(lk, room)
+            except Exception:  # noqa: BLE001 - transient API error: keep waiting
+                joined = False
+            if joined is None:
+                return False  # room already closed — caller gone, nothing to save
+            if joined:
+                return False
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(poll_seconds)
+        fired = await _flip_room_to_cloudrun(lk, room)
+        if fired:
+            logger.warning(
+                "hosted agent did not join room %s within %.0fs; "
+                "fell back to the Cloud Run worker",
+                room,
+                timeout_seconds,
+            )
+        return fired
+    except Exception:  # noqa: BLE001 - a watcher must never take voice down
+        logger.exception("hosted-dispatch watch failed for room %s", room)
+        return False
     finally:
         await lk.aclose()

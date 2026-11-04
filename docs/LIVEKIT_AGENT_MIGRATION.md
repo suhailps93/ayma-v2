@@ -61,11 +61,38 @@ call can reach it. With the default now `livekit`, firing that wake on **every**
 `/bootstrap` would cold-start a 2 GB Cloud Run instance on every voice call just
 for it to decline the room (request_fnc guard) — pure wasted spend. So
 `/bootstrap` now wakes Cloud Run **only when `_voice_agent_cloud(uid) ==
-"cloudrun"`**. The pre-sign-in `/welcome/token` room is the one remaining
-always-on Cloud Run consumer: it has no uid/pref, is created with no explicit
-dispatch, and so is auto-dispatched to the Cloud Run worker — fully retiring
-Cloud Run would require migrating the welcome flow to explicit `ayma-lk`
-dispatch.
+"cloudrun"`**.
+
+### 2026-11-03: welcome + Practice Date moved; failure-only fallback added
+
+Founder directive: everything voice runs on LiveKit Cloud; GCP serves only
+when LiveKit Cloud itself is failing. Three changes closed the remaining
+non-failure routes to Cloud Run:
+
+- `/welcome/token` (the last always-on Cloud Run consumer) now creates its
+  room with explicit `ayma-lk` dispatch and a `livekit` seed marker — the
+  hosted worker's `request_fnc` guard accepts it, and the greeting is
+  seed-driven, so the same `agent.py` serves it unchanged. No wake ping.
+- Practice Date voice (`/practice/voice/start`) originally bypassed the
+  resolution entirely (no dispatch, default `cloudrun` marker, unconditional
+  wake), so every practice call landed on GCP. It now resolves the caller's
+  cloud via the shared `livekit_token.resolve_voice_agent_cloud` — the same
+  helper `/bootstrap` uses — and routes/wakes exactly like `/bootstrap`.
+- **Failure-only fallback:** there was previously NO automatic failover — if
+  the hosted worker never joined, a livekit-routed call got no agent at all.
+  `livekit_token.watch_hosted_dispatch` now watches each livekit-routed room
+  for ~15 s after creation; if no agent participant joins, it flips the
+  room's marker to `cloudrun`, wakes Cloud Run and creates an automatic
+  dispatch for that room (the marker flip also makes the hosted worker
+  decline the room if it resurfaces, so the two never both join). A flipped
+  seed gains `cloud_fallback_reason: hosted_agent_missing`, and the flip is
+  logged at WARNING in ayma-api.
+
+Net: Cloud Run now serves voice only for (a) an explicit per-user `cloudrun`
+opt-out (the dev rollback toggle — as of 2026-11-03, zero prod users carry
+any `voice_agent_cloud` pref), or (b) a room whose hosted dispatch
+demonstrably failed. The Cloud Run service stays deployed, scale-to-zero,
+as that fallback.
 
 ## Firestore credential for the LiveKit-hosted agent
 
