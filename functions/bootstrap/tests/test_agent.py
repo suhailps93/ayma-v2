@@ -770,11 +770,12 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
 
     def _fake_make_livekit_tools(
         db, uid, *, on_call=None, on_voice_change=None, voice_pref=None,
-        guard=None, session_id="", turns=None,
+        guard=None, session_id="", turns=None, dedupe=None,
     ):
         captured["on_call"] = on_call
         captured["session_id"] = session_id
         captured["turns"] = turns
+        captured["dedupe"] = dedupe
         return ["tool-stub"]
 
     monkeypatch.setattr(skills, "make_livekit_tools", _fake_make_livekit_tools)
@@ -3585,7 +3586,7 @@ def test_start_main_cascade_session_meters_and_opens(monkeypatch):
     monkeypatch.setattr(agent, "relay_cascade_usage", _fake_cascade_usage)
     for name in (
         "relay_transcripts", "relay_agent_state", "relay_mute_control",
-        "watch_for_idle", "_session_tools",
+        "watch_for_idle", "_session_tools", "relay_voice_commands",
     ):
         monkeypatch.setattr(agent, name, lambda *a, **k: None)
 
@@ -3741,7 +3742,7 @@ def test_gemini_session_instructions_carry_accent_cascade_does_not(monkeypatch):
     monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
     for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
                  "relay_token_usage", "relay_cascade_usage", "watch_for_idle",
-                 "_session_tools"):
+                 "relay_voice_commands", "_session_tools"):
         monkeypatch.setattr(agent, name, lambda *a, **k: None)
 
     async def _fake_open(*_a, **_k):
@@ -3798,7 +3799,7 @@ def test_realtime_accent_reaches_build_realtime_model_as_bcp47(monkeypatch):
     monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
     for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
                  "relay_token_usage", "relay_cascade_usage", "watch_for_idle",
-                 "_session_tools"):
+                 "relay_voice_commands", "_session_tools"):
         monkeypatch.setattr(agent, name, lambda *a, **k: None)
 
     async def _fake_open(*_a, **_k):
@@ -3870,7 +3871,7 @@ def test_boot_wires_accent_into_hot_swapper_and_listens_for_settings_changes(
     monkeypatch.setattr(agent, "Agent", lambda **k: object())
     for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
                  "relay_token_usage", "relay_cascade_usage", "watch_for_idle",
-                 "_session_tools"):
+                 "relay_voice_commands", "_session_tools"):
         monkeypatch.setattr(agent, name, lambda *a, **k: None)
 
     async def _fake_open(*_a, **_k):
@@ -3940,7 +3941,8 @@ def test_cascade_start_does_not_seed_a_trailing_stale_user_turn(monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
     for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
-                 "relay_cascade_usage", "watch_for_idle", "_session_tools"):
+                 "relay_cascade_usage", "watch_for_idle", "relay_voice_commands",
+                 "_session_tools"):
         monkeypatch.setattr(agent, name, lambda *a, **k: None)
     opened: dict = {}
 
@@ -3988,7 +3990,8 @@ def test_cascade_cold_start_opener_runs_against_history_free_context(monkeypatch
     captured: dict = {}
     monkeypatch.setattr(agent, "Agent", lambda **k: captured.update(k) or object())
     for name in ("relay_transcripts", "relay_agent_state", "relay_mute_control",
-                 "relay_cascade_usage", "watch_for_idle", "_session_tools"):
+                 "relay_cascade_usage", "watch_for_idle", "relay_voice_commands",
+                 "_session_tools"):
         monkeypatch.setattr(agent, name, lambda *a, **k: None)
     opener_calls: dict = {}
 
@@ -4048,17 +4051,319 @@ def test_voice_tool_use_prompt_has_call_before_confirm_directive():
     assert "returned" in low or "result" in low
 
 
-def test_cascade_instructions_append_the_tool_use_directive():
-    """The cascade session's instructions carry the tool-use directive; the
-    Gemini Live path (empty tool_use) stays byte-identical to the composed base.
+def test_main_voice_instructions_carry_the_tool_use_directive():
+    """Both main voice paths (Gemini Live and the Meta cascade) compose their
+    instructions through one composer, which always appends the tool-use
+    directive — Gemini Live no longer goes without it (founder, prod 2284).
     """
     directive = agent.load_voice_tool_use()
-    cascade = agent._compose_instructions("SYS", "ACCENT", "VOCAB", directive)
-    assert directive in cascade
-    # Default (Gemini Live) omits it entirely — unchanged behaviour.
-    gemini = agent._compose_instructions("SYS", "ACCENT", "VOCAB")
-    assert directive not in gemini
-    assert gemini == "SYS\n\nACCENT\n\nVOCAB"
+    composed = agent._compose_instructions("SYS", "ACCENT", "VOCAB")
+    assert directive in composed
+    assert composed == "SYS\n\nACCENT\n\nVOCAB\n\n" + directive
+
+
+# --- deterministic pre-model voice commands (prod 2284 fix) -------------------
+#
+# A finalized in-call user turn matching a stack / navigation / tour-start
+# command executes through the session's own tools WITHOUT the model emitting
+# anything; the model's own same-turn call to that tool then replays the
+# result instead of running the side effect a second time. These tests drive
+# the real relay plus the real session tools against a fake Firestore.
+
+
+class _CmdSnap:
+    def __init__(self, data):
+        self._data = data
+        self.exists = data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data is not None else None
+
+
+class _CmdStore(dict):
+    """Tuple-keyed fake Firestore that acks every queued app command at once
+    (a healthy client), recording profile writes and queued commands."""
+
+    def __init__(self, uid):
+        super().__init__()
+        self._pending = ("users", uid, "app_commands", "pending")
+        self._ack = ("users", uid, "app_commands", "ack")
+        self.profile_writes = []
+        self.queued = []
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if key == self._pending and isinstance(value, dict) and value.get("id"):
+            self.queued.append(dict(value))
+            super().__setitem__(self._ack, {"id": value["id"], "ok": True})
+        if len(key) == 4 and key[2:] == ("profile", "main"):
+            self.profile_writes.append(dict(value))
+
+
+class _CmdDoc:
+    def __init__(self, store, key):
+        self.store, self.key = store, key
+
+    def collection(self, name):
+        return _CmdCol(self.store, (*self.key, name))
+
+    def get(self):
+        return _CmdSnap(self.store.get(self.key))
+
+    def set(self, patch, merge=False):
+        cur = self.store.get(self.key) if merge else None
+        self.store[self.key] = {**(cur or {}), **patch}
+
+    def delete(self):
+        self.store.pop(self.key, None)
+
+
+class _CmdCol:
+    def __init__(self, store, key):
+        self.store, self.key = store, key
+
+    def document(self, doc_id):
+        return _CmdDoc(self.store, (*self.key, doc_id))
+
+
+class _CmdDb:
+    def __init__(self, uid="u1"):
+        self.store = _CmdStore(uid)
+
+    def collection(self, name):
+        return _CmdCol(self.store, (name,))
+
+
+class _CmdSession:
+    """Fake AgentSession: captures @session.on handlers and records any
+    generate_reply — a deterministic turn must never ask the model anything."""
+
+    def __init__(self):
+        self._handlers = {}
+        self.generate_replies = []
+
+    def on(self, name):
+        def _register(fn):
+            self._handlers[name] = fn
+            return fn
+
+        return _register
+
+    def user_turn(self, transcript, is_final=True):
+        self._handlers["user_input_transcribed"](
+            _UserFinalEv(transcript, is_final)
+        )
+
+    def generate_reply(self, **kwargs):
+        self.generate_replies.append(kwargs)
+
+
+class _CmdParticipant:
+    def __init__(self):
+        self.published = []
+
+    async def publish_data(self, payload, *, reliable, topic):
+        self.published.append((topic, json.loads(payload), reliable))
+
+
+class _CmdRoom:
+    def __init__(self):
+        self.local_participant = _CmdParticipant()
+
+
+class _CmdCtx:
+    def __init__(self):
+        self.room = _CmdRoom()
+
+
+async def _drain_until(predicate, timeout=5.0):
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, (
+            "timed out waiting for the deterministic voice turn"
+        )
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)  # let fire-and-forget publishes land
+
+
+def _voice_command_harness(monkeypatch, uid="u1"):
+    """The real session tools plus the real relay on fakes: returns
+    ``(db, session, ctx, by_name, dedupe)``."""
+    import skills
+
+    db = _CmdDb(uid)
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+    dedupe = skills.VoiceTurnDedupe()
+    ctx = _CmdCtx()
+    session = _CmdSession()
+    tools = agent._session_tools(ctx, uid, dedupe=dedupe)
+    by_name = agent._tools_by_name(tools)
+    agent.relay_voice_commands(session, tools, dedupe)
+    return db, session, ctx, by_name, dedupe
+
+
+@pytest.mark.parametrize("phrase,tool,keys", [
+    ("switch my brain to Gemini", "set_brain", ["brain"]),
+    ("switch to Gemini Live", "set_realtime_model", ["model"]),
+    ("change the speech-to-text to deepgram", "set_stt", ["engine"]),
+    ("switch my text-to-speech to inworld", "set_tts", ["engine"]),
+    ("switch my voice mode to cascade", "set_voice_mode", ["mode"]),
+    ("open the models page", "open_screen", ["screen"]),
+    ("switch to explore", "open_screen", ["screen"]),
+    # Text-lane order: a stack match wins over navigation on one turn.
+    ("switch my brain to gemini and open the models page", "set_brain", ["brain"]),
+    ("start the guided tour", "start_guided_tour", []),
+    ("open the guided tour", "start_guided_tour", []),
+])
+def test_detect_voice_command_routes_each_family(phrase, tool, keys):
+    match = agent.detect_voice_command(phrase)
+    assert match is not None
+    name, kwargs = match
+    assert name == tool
+    assert sorted(kwargs) == keys
+    assert all(isinstance(v, str) and v for v in kwargs.values())
+
+
+def test_detect_voice_command_passes_text_lane_values_through():
+    assert agent.detect_voice_command("switch my brain to Gemini") == (
+        "set_brain", {"brain": "gemini"},
+    )
+    assert agent.detect_voice_command("open the models page") == (
+        "open_screen", {"screen": "voice_preference"},
+    )
+    assert agent.detect_voice_command("start the guided tour") == (
+        "start_guided_tour", {},
+    )
+
+
+@pytest.mark.parametrize("phrase", [
+    # Ordinary chat.
+    "how are you today",
+    "what can you do for me?",
+    "tell me about the models you use",
+    "the models page is my favorite screen",
+    # Stack near-misses: no change verb + resolvable target, no switch.
+    "my brain is fried today",
+    "I use Gemini at work",
+    "what brain are you thinking with",
+    # Navigation near-misses: a nav verb but no resolvable destination.
+    "open up about yourself",
+    "show me what you got",
+    "switch topics for a second",
+    # Tour near-misses: stop / next / questions never start anything.
+    "stop the tour",
+    "what's next on the tour",
+    "tell me about the guided tour",
+    "is there a tour of the app",
+    "",
+])
+def test_detect_voice_command_leaves_non_commands_alone(phrase):
+    assert agent.detect_voice_command(phrase) is None
+
+
+def test_voice_stack_command_executes_deterministically(monkeypatch):
+    """A stack-switch turn writes the profile through the session's own
+    set_brain tool with no model involvement, and the model's same-turn
+    duplicate replays instead of writing twice."""
+    import schema
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+
+    async def _main():
+        session.user_turn("switch my brain to Gemini")
+        await _drain_until(lambda: len(db.store.profile_writes) == 1)
+        main = db.store[("users", "u1", "profile", "main")]
+        assert main[schema.PF_AYMA_BRAIN_MODEL] == "gemini"
+        # It ran through the session's own tool: the client saw start/end.
+        chips = [
+            p[1] for p in ctx.room.local_participant.published
+            if p[0] == "tool_used"
+        ]
+        assert [c["phase"] for c in chips] == ["start", "end"]
+        assert chips[0]["name"] == "set_brain"
+        # The model was never asked anything on this turn.
+        assert session.generate_replies == []
+        # The model's own same-turn call replays: no second write.
+        deterministic = dedupe.lookup("set_brain").future.result()
+        dup = await by_name["set_brain"](brain="gemini")
+        assert dup == deterministic
+        assert len(db.store.profile_writes) == 1
+
+    asyncio.run(_main())
+
+
+def test_voice_navigation_command_opens_the_models_page(monkeypatch):
+    """A navigation turn queues the navigate through the session's own
+    open_screen tool with no model involvement; the model's same-turn
+    duplicate — even with its own user-words arg — replays instead of
+    queueing a second navigate."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+
+    async def _main():
+        session.user_turn("open the models page")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["screen"] == "voice_preference"
+        deterministic = dedupe.lookup("open_screen").future.result()
+        assert deterministic.startswith("navigated:")
+        dup = await by_name["open_screen"](screen="Models page")
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_tour_start_command_spotlights_deterministically(monkeypatch):
+    """A tour-start turn spotlights through the session's own
+    start_guided_tour tool (voice-bound, like the model's calls) with no
+    model involvement; the model's same-turn duplicate replays instead of
+    presenting twice."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+
+    async def _main():
+        session.user_turn("start the guided tour")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "tour_step"
+        # Voice-bound, as the session binds it: the composer-only step 0 is
+        # skipped and the first spotlight is step 1.
+        assert cmd["index"] == 1
+        state = db.store[("users", "u1", "app_commands", "tour_state")]
+        assert state["active"] is True and state["index"] == 1
+        deterministic = dedupe.lookup("start_guided_tour").future.result()
+        assert "step 2 of" in deterministic
+        dup = await by_name["start_guided_tour"]()
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+@pytest.mark.parametrize("phrase", [
+    "my brain is fried today",
+    "open up about yourself",
+    "stop the tour",
+    "what's next on the tour",
+    "tell me about the guided tour",
+    "the models page is my favorite screen",
+])
+def test_voice_non_command_turn_runs_no_tool(monkeypatch, phrase):
+    """A near-miss turn passes through the relay untouched: no write, no
+    queued command, no tool chip, nothing asked of the model."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+
+    async def _main():
+        session.user_turn(phrase)
+        await asyncio.sleep(0.05)  # a command would have fired by now
+        assert db.store.profile_writes == []
+        assert db.store.queued == []
+        assert ctx.room.local_participant.published == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
 
 
 # --- staging/prod environment dispatch guard at the seam (ARCHITECTURE §1.1a) -

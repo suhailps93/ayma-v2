@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -427,6 +428,53 @@ def _bind_stop_guided_tour(db, uid: str) -> Callable[..., object]:
         )
 
     return stop_guided_tour
+
+
+# --- deterministic pre-model tour-start intent (voice backstop) ------------------
+#
+# Mirrors set_model_stack.detect_stack_command and
+# app_control_navigation.detect_app_command: a clear "start the guided tour" is
+# executed BEFORE the model, so it fires even when the realtime model would
+# otherwise refuse it from the call (founder, prod 2284). The voice lane runs
+# this matcher on each finalized user turn (agent.py); the text lane is
+# untouched — its model already emits start_guided_tour reliably.
+#
+# Kept strict: a start/open verb AND a tour reference that resolves in the
+# registry (app_registry.find_guided_tour — the single source of truth), so
+# ordinary chat is never intercepted. A stop/quit/end is deliberately excluded
+# here so it still reaches stop_guided_tour, and a spoken "next"/"continue" is
+# excluded so it can never drive the tour (advance is tap-gated by design).
+_TOUR_START_VERB = re.compile(
+    r"\b(?:"
+    r"start|begin|launch|restart|redo|kick\s+off|give\s+me|"
+    r"open(?:\s+up)?|show(?:\s+me)?|go\s+to|take\s+me\s+to|"
+    r"bring\s+(?:me\s+)?(?:up|to)|walk\s+me\s+through"
+    r")\b",
+    re.IGNORECASE,
+)
+_TOUR_STOP_VERB = re.compile(
+    r"\b(?:stop|quit|end|exit|cancel|pause)\b", re.IGNORECASE
+)
+
+
+def detect_tour_command(message: str) -> str | None:
+    """A clear, unambiguous "start the guided tour" command → the
+    ``"start_guided_tour"`` tool name to run, else ``None``.
+
+    Strict by design (so ordinary chat is never hijacked): requires a
+    start/open verb AND a tour reference that resolves in ``app_registry``.
+    "Open / show me the tour" starts it too — the tour is overlay-only, so an
+    open is a start (the same redirect ``open_screen`` hands the model)."""
+    m = (message or "").strip()
+    if not m or len(m) > 200:
+        return None
+    if not _TOUR_START_VERB.search(m):
+        return None
+    if _TOUR_STOP_VERB.search(m):
+        return None
+    if app_registry.find_guided_tour(m) is None:
+        return None
+    return "start_guided_tour"
 
 
 # --- declarations -------------------------------------------------------------
