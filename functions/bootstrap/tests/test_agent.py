@@ -2161,12 +2161,17 @@ class _OpenerSession(_FakeMuteSession):
         self.replies = []
         self.reply_chat_ctxs = []
         self.reply_user_inputs = []
+        self.said = []
 
     async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
                              user_input=_UNSET):
         self.replies.append(instructions)
         self.reply_chat_ctxs.append(chat_ctx)
         self.reply_user_inputs.append(user_input)
+
+    def say(self, text):
+        self.said.append(text)
+        return _SpeechHandleStub(None)
 
 
 class _SpeechHandleStub:
@@ -2184,32 +2189,6 @@ class _SpeechHandleStub:
 
     def exception(self):
         return self._error
-
-
-class _ScriptedOpenerSession(_FakeMuteSession):
-    """Opener fake with a scripted per-call outcome (extra calls succeed): an
-    Exception instance raises out of generate_reply; ("handle_error", exc)
-    resolves the await cleanly but carries exc on the handle (the swallowed
-    livekit failure mode); anything else succeeds."""
-
-    def __init__(self, outcomes):
-        super().__init__()
-        self._outcomes = list(outcomes)
-        self.replies = []
-        self.reply_chat_ctxs = []
-        self.reply_user_inputs = []
-
-    def generate_reply(self, instructions=None, chat_ctx=_UNSET,
-                       user_input=_UNSET):
-        self.replies.append(instructions)
-        self.reply_chat_ctxs.append(chat_ctx)
-        self.reply_user_inputs.append(user_input)
-        outcome = self._outcomes.pop(0) if self._outcomes else "ok"
-        if isinstance(outcome, Exception):
-            raise outcome
-        if isinstance(outcome, tuple) and outcome[0] == "handle_error":
-            return _SpeechHandleStub(outcome[1])
-        return _SpeechHandleStub(None)
 
 
 class _StateEv:
@@ -2235,12 +2214,43 @@ async def _run_opener(session, seed, window, user_event=None):
     return await task
 
 
-def test_opener_fires_when_user_is_silent():
+class _ProfileDb:
+    """Minimal Firestore fake: every collection/document hop returns self,
+    and the terminal get() yields a snapshot over the canned profile."""
+
+    def __init__(self, data):
+        self._data = data
+
+    def collection(self, _name):
+        return self
+
+    def document(self, _id):
+        return self
+
+    def get(self):
+        data = self._data
+
+        class _Snap:
+            def to_dict(self):
+                return data
+
+        return _Snap()
+
+
+def _arm_profile(monkeypatch, data):
+    monkeypatch.setattr(agent, "get_db", lambda: _ProfileDb(data))
+
+
+def test_opener_fires_when_user_is_silent(monkeypatch):
+    """Fresh session, silent caller: the opener fires exactly once — the
+    spoken name greeting — and generates NO reply at all."""
     import asyncio
 
+    _arm_profile(monkeypatch, {"name": "Suhail Pallath Sulaiman"})
     s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    assert len(s.replies) == 1 and s.replies[0]
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert s.said == ["Hey Suhail."]
+    assert s.replies == []
 
 
 def test_opener_suppressed_when_user_speaks_first_by_vad():
@@ -2273,59 +2283,78 @@ def test_opener_skipped_for_welcome_greeting():
     assert s.replies == []
 
 
-def test_opener_answers_dangling_user_turn():
-    """Founder behaviour (2026-11-02, supersedes the old mid-turn skip): a
-    history ending on an UNANSWERED caller turn opens by ANSWERING that
-    dangling message — a user-initiated call never opens in silence."""
+def test_opener_prior_context_never_recapped(monkeypatch):
+    """Founder ruling (2026-11-03 23:06): even WITH a prior conversation,
+    a fresh session opens with just the name greeting — no "pick up where
+    we left off", no topic reference, no generated text of any kind."""
     import asyncio
 
-    from prompt import load_voice_dangling_reply
+    _arm_profile(monkeypatch, {"name": "Suhail Pallath Sulaiman"})
+    s = _OpenerSession()
+    seed = _opener_seed(
+        uid="u1",
+        seed_turns=[
+            agent.Turn(role=agent.ROLE_USER, text="should I text Priya back"),
+            agent.Turn(role=agent.ROLE_AYMA, text="whether to text Priya back"),
+        ],
+    )
+    assert asyncio.run(_run_opener(s, seed, [])) is True
+    assert s.said == ["Hey Suhail."]
+    assert s.replies == []
 
+
+def test_opener_dangling_tail_still_opens_with_name_greeting(monkeypatch):
+    """A history ending on an UNANSWERED caller turn used to open by
+    answering it (founder behaviour 2026-11-02); the 2026-11-03 ruling
+    supersedes that for the opening line — the dangling message stays in
+    context for the caller's first real turn, unanswered by the opener."""
+    import asyncio
+
+    _arm_profile(monkeypatch, {"name": "Suhail Pallath Sulaiman"})
     s = _OpenerSession()
     turns = [agent.Turn(role=agent.ROLE_USER, text="so about friday")]
-    seed = _opener_seed(seed_turns=turns)
+    seed = _opener_seed(uid="u1", seed_turns=turns)
     assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert s.replies == [load_voice_dangling_reply()]
-    # Realtime shape: the tail turn is already the agent context's last item,
-    # so the answer carries no scoped chat_ctx and no duplicate user_input.
-    assert s.reply_chat_ctxs == [_UNSET]
-    assert s.reply_user_inputs == [_UNSET]
+    assert s.said == ["Hey Suhail."]
+    assert s.replies == []
 
 
 def test_opener_greets_when_dangling_tail_is_blank():
-    """A blank trailing caller turn has nothing sensible to answer, so it
-    takes the plain greeting path directly — one greeting reply, never the
-    dangling-answer instruction and never silence."""
+    """A blank trailing caller turn takes the same greeting path — one
+    spoken greeting, no generated reply, never silence."""
     import asyncio
-
-    from prompt import load_voice_dangling_reply, load_voice_opener
 
     s = _OpenerSession()
     turns = [agent.Turn(role=agent.ROLE_USER, text="   ")]
     seed = _opener_seed(seed_turns=turns)
     assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert len(s.replies) == 1
-    assert s.replies[0] != load_voice_dangling_reply()
-    assert s.replies[0] == load_voice_opener(False, "")
+    assert s.said == ["Hey there."]
+    assert s.replies == []
 
 
-def test_opener_agent_tail_greeting_unchanged():
-    """Proof the agent-tail path is byte-identical: one greeting reply with
-    the exact standard opener instruction, no dangling-answer attempt."""
+def test_opener_greeting_falls_back_without_a_profile_name(monkeypatch):
+    """No name on the profile: the greeting degrades to a plain
+    "Hey there." — never a fabricated name, never silence."""
     import asyncio
 
-    from prompt import load_voice_dangling_reply, load_voice_opener
-
+    _arm_profile(monkeypatch, {})
     s = _OpenerSession()
-    turns = [
-        agent.Turn(role=agent.ROLE_USER, text="should I text her back"),
-        agent.Turn(role=agent.ROLE_AYMA, text="sleep on it first"),
-    ]
-    seed = _opener_seed(seed_turns=turns)
-    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert len(s.replies) == 1
-    assert s.replies[0] != load_voice_dangling_reply()
-    assert s.replies[0] == load_voice_opener(True, "sleep on it first")
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert s.said == ["Hey there."]
+
+
+def test_opener_greeting_survives_a_profile_read_error(monkeypatch):
+    """A failing profile read cannot cost the greeting (or the call)."""
+    import asyncio
+
+    class _BoomDb:
+        def collection(self, _name):
+            raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(agent, "get_db", lambda: _BoomDb())
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert s.said == ["Hey there."]
 
 
 def test_opener_skipped_when_someone_already_spoke():
@@ -2361,94 +2390,6 @@ def test_opener_disabled_by_zero_grace():
         )
 
     assert asyncio.run(go()) is False
-
-
-def test_opener_uses_agent_context_by_default():
-    """Gemini Live / default path: no opener_chat_ctx is passed, so the opener's
-    generate_reply is NOT given a chat_ctx and generates against the agent's own
-    full seeded history exactly as before (path unchanged)."""
-    import asyncio
-
-    s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    assert len(s.replies) == 1 and s.replies[0]
-    # chat_ctx kwarg was never forwarded -> generate_reply falls back to the
-    # agent's full context, the pre-fix behaviour for Gemini Live.
-    assert s.reply_chat_ctxs == [_UNSET]
-
-
-def test_cascade_opener_generates_against_history_free_context():
-    """Cascade cold-start fix (founder bug 2026-10-28): when a history-free
-    opener_chat_ctx is supplied, the opener's generate_reply generates against
-    THAT context (no previous-conversation turns), so the chat LLM has no old
-    message to answer/continue when it opens the call."""
-    import asyncio
-    from livekit.agents import llm
-
-    s = _OpenerSession()
-    fresh = llm.ChatContext.empty()
-
-    async def go():
-        return await agent.maybe_open_conversation(
-            s, _opener_seed(), window=[], grace_seconds=0.05,
-            opener_chat_ctx=fresh,
-        )
-
-    assert asyncio.run(go()) is True
-    assert len(s.reply_chat_ctxs) == 1
-    passed = s.reply_chat_ctxs[0]
-    assert passed is fresh
-    # The opener generates with ZERO prior turns in context, so it cannot reply
-    # to the previous conversation's last message.
-    assert list(passed.items) == []
-
-
-def test_cascade_opener_seeds_user_turn_so_inference_never_gets_system_only():
-    """Regression (Sentry ayma-agent inference HTTP 400, first seen Oct 26 2026:
-    ``messages must contain at least one message with role user or tool``).
-
-    On the cascade (text chat LLM, incl. the LiveKit-Inference brain) an
-    agent-initiated opener with no prior user turn produced a SYSTEM-ONLY message
-    list — LiveKit's OpenAI provider format does not inject a dummy user message —
-    and the gateway rejected it with 400. ``seed_user_turn`` now carries one
-    benign synthetic user turn. Asserts the opener seeds a non-empty user_input
-    AND that replaying the framework's generate_reply composition (user turn, then
-    the opener instruction as a system message) over the OpenAI provider format
-    yields a message list with >= 1 user/tool message."""
-    import asyncio
-    from livekit.agents import llm
-    from prompt import load_voice_session_seed
-
-    s = _OpenerSession()
-    fresh = llm.ChatContext.empty()
-
-    async def go():
-        return await agent.maybe_open_conversation(
-            s, _opener_seed(), window=[], grace_seconds=0.05,
-            opener_chat_ctx=fresh, seed_user_turn=True,
-        )
-
-    assert asyncio.run(go()) is True
-    seed_text = load_voice_session_seed()
-    assert seed_text.strip()
-    assert s.reply_user_inputs == [seed_text]
-
-    composed = llm.ChatContext.empty()
-    composed.add_message(role="user", content=[s.reply_user_inputs[0]])
-    composed.add_message(role="system", content=[s.replies[0]])
-    messages, _ = composed.to_provider_format("openai")
-    assert any(m.get("role") in ("user", "tool") for m in messages), messages
-
-
-def test_realtime_opener_is_not_seeded():
-    """Realtime paths (Gemini Live / Inference RealtimeModel) do not reach the
-    chat-completions request shape, so the opener is left unseeded — byte-for-byte
-    the pre-fix behaviour."""
-    import asyncio
-
-    s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    assert s.reply_user_inputs == [_UNSET]
 
 
 def test_welcome_greeting_seeds_user_turn_on_cascade():
@@ -2588,125 +2529,36 @@ def test_opener_prior_context_helper():
     assert len(hint) <= agent._OPENER_HINT_MAX_CHARS + 1  # +1 for the ellipsis
 
 
-def test_opener_offers_choice_when_prior_context_exists():
-    """New call WITH prior context: the opener instruction greets + offers the
-    continue-or-switch choice and references the last topic, rather than
-    continuing it (founder behaviour, 2026-10-28)."""
-    import asyncio
-
-    s = _OpenerSession()
-    seed = _opener_seed(
-        seed_turns=[
-            agent.Turn(role=agent.ROLE_USER, text="should I text Priya back"),
-            agent.Turn(role=agent.ROLE_AYMA, text="whether to text Priya back"),
-        ]
-    )
-    assert asyncio.run(_run_opener(s, seed, [])) is True
-    instr = s.replies[0].lower()
-    assert "whether to text priya back" in instr
-    assert "do not" in instr and ("continue" in instr or "resume" in instr)
-    assert "no particular prior conversation" not in instr
-
-
-def test_opener_is_fresh_when_no_prior_context():
-    """New call with NO prior context: a plain fresh warm opener, no choice."""
-    import asyncio
-
-    s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    instr = s.replies[0].lower()
-    assert "no particular prior conversation" in instr
-    assert "pick up where we left off" not in instr
-
-
-def test_opener_swallows_generate_failure():
+def test_opener_say_failure_returns_false():
+    """A say that raises outright fails the opener (False) — the call
+    itself continues; the caller simply speaks first."""
     import asyncio
 
     s = _OpenerSession()
 
-    async def boom(instructions=None):
+    def boom(text):
         raise RuntimeError("x")
 
-    s.generate_reply = boom
+    s.say = boom
     assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
 
 
-def test_opener_falls_back_to_greeting_when_dangling_reply_fails_on_handle():
-    """Option (b) backup: the dangling answer's await resolves cleanly but its
-    SpeechHandle carries an error (livekit's swallowed failure mode) — the
-    opener falls back to the standard greeting and still opens the call."""
+def test_opener_say_handle_error_returns_false():
+    """A swallowed handle failure on the greeting say is reported as a
+    miss (False, exactly one attempt) instead of being misreported as a
+    successful open."""
     import asyncio
-
-    from prompt import load_voice_dangling_reply, load_voice_opener
-
-    s = _ScriptedOpenerSession([("handle_error", RuntimeError("timed out"))])
-    turns = [agent.Turn(role=agent.ROLE_USER, text="are you there")]
-    seed = _opener_seed(seed_turns=turns)
-    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert s.replies == [
-        load_voice_dangling_reply(),
-        load_voice_opener(True, "are you there"),
-    ]
-
-
-def test_opener_falls_back_to_greeting_when_dangling_reply_raises():
-    """Same fallback when the answer attempt raises outright instead of
-    failing on the handle."""
-    import asyncio
-
-    from prompt import load_voice_dangling_reply, load_voice_opener
-
-    s = _ScriptedOpenerSession([RuntimeError("session closing")])
-    turns = [agent.Turn(role=agent.ROLE_USER, text="are you there")]
-    seed = _opener_seed(seed_turns=turns)
-    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert s.replies == [
-        load_voice_dangling_reply(),
-        load_voice_opener(True, "are you there"),
-    ]
-
-
-def test_opener_greeting_reports_handle_error():
-    """A swallowed handle failure on the (agent-tail) greeting is reported as
-    a miss (False, exactly one attempt) instead of being misreported as a
-    successful open — the client's honest-error guard is the backstop."""
-    import asyncio
-
-    s = _ScriptedOpenerSession([("handle_error", RuntimeError("timed out"))])
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
-    assert len(s.replies) == 1
-
-
-def test_cascade_dangling_answer_carries_real_user_turn():
-    """Cascade stack: the dangling answer passes the REAL message as its
-    user_input (the agent context had the tail stripped) with NO scoped
-    chat_ctx, so the chat LLM answers with full history — and the composed
-    request still carries a user message (no system-only 400)."""
-    import asyncio
-    from livekit.agents import llm
-
-    from prompt import load_voice_dangling_reply
 
     s = _OpenerSession()
-    fresh = llm.ChatContext.empty()
-    turns = [agent.Turn(role=agent.ROLE_USER, text="which dress then")]
+    calls = []
 
-    async def go():
-        return await agent.maybe_open_conversation(
-            s, _opener_seed(seed_turns=turns), window=list(turns),
-            grace_seconds=0.05, opener_chat_ctx=fresh, seed_user_turn=True,
-        )
+    def say(text):
+        calls.append(text)
+        return _SpeechHandleStub(RuntimeError("timed out"))
 
-    assert asyncio.run(go()) is True
-    assert s.replies == [load_voice_dangling_reply()]
-    assert s.reply_user_inputs == ["which dress then"]
-    assert s.reply_chat_ctxs == [_UNSET]
-
-    composed = llm.ChatContext.empty()
-    composed.add_message(role="user", content=[s.reply_user_inputs[0]])
-    composed.add_message(role="system", content=[s.replies[0]])
-    messages, _ = composed.to_provider_format("openai")
-    assert any(m.get("role") in ("user", "tool") for m in messages), messages
+    s.say = say
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
+    assert calls == ["Hey there."]
 
 
 # --- idle-timeout wiring -----------------------------------------------------
