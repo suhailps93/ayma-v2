@@ -52,6 +52,7 @@ class _FakeRc extends RevenueCatService {
   final PurchaseOutcome restoreOutcome;
   int restores = 0;
   final List<String> bought = [];
+  final List<String?> boughtReplacing = [];
 
   @override
   bool get enabled => on;
@@ -102,6 +103,7 @@ class _FakeRc extends RevenueCatService {
     bool isUpgrade = true,
   }) async {
     bought.add(plan.productId);
+    boughtReplacing.add(replacing);
     return PurchaseOutcome.success;
   }
 
@@ -481,6 +483,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(rc.bought, ['ayma_pro_monthly']);
     expect(find.text('Pro is active.'), findsOneWidget);
+  });
+
+  testWidgets('live store subscription: switching plans sends a plan change', (
+    tester,
+  ) async {
+    final rc = _FakeRc(
+      sub: const ActiveSubscription(productId: 'ayma_plus_monthly'),
+    );
+    await _pump(tester, PlanScreen(service: rc, api: _api()));
+    // The current plan is Plus, so Pro must be picked explicitly.
+    await tester.tap(
+      find.byKey(const ValueKey('plan-segment-ayma_pro_monthly')),
+    );
+    await tester.pumpAndSettle();
+    expect(_actionLabel(tester), 'Upgrade to Pro');
+    await tester.tap(find.byKey(const ValueKey('plan-primary-action')));
+    await tester.pumpAndSettle();
+    expect(rc.bought, ['ayma_pro_monthly']);
+    expect(rc.boughtReplacing, ['ayma_plus_monthly']);
+  });
+
+  testWidgets('backend-fallback plan: switching plans buys fresh, no change', (
+    tester,
+  ) async {
+    // No live store subscription: the Plus plan comes from the backend only,
+    // so Play has nothing to replace and the purchase must go through plain.
+    final rc = _FakeRc();
+    await _pump(tester, PlanScreen(service: rc, api: _api(plan: 'plus')));
+    await tester.tap(
+      find.byKey(const ValueKey('plan-segment-ayma_pro_monthly')),
+    );
+    await tester.pumpAndSettle();
+    expect(_actionLabel(tester), 'Upgrade to Pro');
+    await tester.tap(find.byKey(const ValueKey('plan-primary-action')));
+    await tester.pumpAndSettle();
+    expect(rc.bought, ['ayma_pro_monthly']);
+    expect(rc.boughtReplacing, [null]);
   });
 
   testWidgets('a successful purchase syncs the backend credits', (

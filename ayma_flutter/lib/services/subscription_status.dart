@@ -12,6 +12,7 @@ class SubscriptionStatus {
     this.willRenew = true,
     this.managementUrl,
     this.isTrial = false,
+    this.fromStore = false,
   });
 
   /// In the store free-trial period; [expiresAt] is then the trial end.
@@ -24,6 +25,15 @@ class SubscriptionStatus {
 
   /// Store product id of the active plan; null when unknown or Free.
   final String? productId;
+
+  /// True when the plan was resolved from a live store entitlement
+  /// (RevenueCat CustomerInfo). False when it fell back to the backend
+  /// `plan` field — in that case there may be no live store subscription
+  /// at all, so a plan *change* must not be sent to the store: Google Play
+  /// rejects a change with no existing subscription to replace
+  /// (DEVELOPER_ERROR, "arguments invalid"). A backend-fallback plan buys
+  /// fresh instead.
+  final bool fromStore;
 
   /// Renewal date, or the end of access when [willRenew] is false.
   final DateTime? expiresAt;
@@ -49,6 +59,7 @@ class SubscriptionStatus {
           willRenew: sub.willRenew,
           managementUrl: sub.managementUrl,
           isTrial: sub.isTrial,
+          fromStore: true,
         );
       }
     }
