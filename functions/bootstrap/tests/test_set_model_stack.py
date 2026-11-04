@@ -6,6 +6,7 @@ the "Ayma's models" screen writes, and reconnect_voice drives the client command
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -209,6 +210,57 @@ def test_failed_reconnect_does_not_mark_so_a_later_reconnect_still_works(monkeyp
     db = _Db(ok=False)
     _run(set_model_stack._bind_reconnect_voice(db, "u1")())
     assert (db.store.get(_PROFILE) or {}).get("ayma_reconnect_requested_at") is None
+
+
+# --- the post-reconnect announcement claim ------------------------------------
+#
+# A queued reconnect arms a one-shot announcement: the OLD session stays
+# silent (agent.py's claim gate), and the continuation session claims this
+# to speak the one "I'm back" line at open. The claim must fire exactly
+# once, only while the reconnect is fresh, and never for a plain fresh call.
+
+
+def test_a_queued_reconnect_arms_the_announcement_and_it_claims_once():
+    db = _Db(ok=True)
+    msg = _run(set_model_stack._bind_reconnect_voice(db, "u1")())
+    assert msg == set_model_stack._RECONNECT_QUEUED_RESULT
+    profile = db.store[_PROFILE]
+    assert profile["ayma_reconnect_announce_pending"] is True
+    assert profile["ayma_reconnect_requested_at"] > 0
+
+    # The continuation session claims it — exactly once.
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is True
+    assert db.store[_PROFILE]["ayma_reconnect_announce_pending"] is False
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+
+
+def test_no_announcement_is_claimed_on_a_fresh_call():
+    # Nothing was ever marked: a plain session open must not claim.
+    db = _Db(ok=True)
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+    assert set_model_stack.claim_reconnect_announcement(db, "") is False
+
+
+def test_a_failed_reconnect_arms_no_announcement(monkeypatch):
+    monkeypatch.setattr(app_control, "_ACK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(app_control, "_ACK_POLL_SECONDS", 0.01)
+    db = _Db(ok=False)  # no live call — nothing was reconnected
+    _run(set_model_stack._bind_reconnect_voice(db, "u1")())
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+
+
+def test_a_stale_announcement_is_cleared_not_claimed():
+    # The reconnect was queued long ago but its continuation never opened
+    # (or this is a much later call): the flag must not fire the line now.
+    db = _Db(ok=True)
+    db.store[_PROFILE] = {
+        "ayma_reconnect_requested_at": (
+            time.time() - set_model_stack._RECONNECT_ANNOUNCE_WINDOW_SECONDS - 60
+        ),
+        "ayma_reconnect_announce_pending": True,
+    }
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+    assert db.store[_PROFILE]["ayma_reconnect_announce_pending"] is False
 
 
 # --- registration -------------------------------------------------------------

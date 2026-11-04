@@ -89,6 +89,7 @@ from prompt import (  # noqa: E402
     load_voice_opener,
     load_voice_session_seed,
     load_voice_tool_use,
+    reconnect_back,
     voice_accent_directive,
     voice_swap_confirm,
     voice_swap_failed,
@@ -1670,6 +1671,14 @@ _GOODBYE_RESULT = "call ended: the user said goodbye."
 # the speech counterpart, scoped to exactly the ack-gated navigation tools
 # (tool_labels.NAV_CHIP_TOOLS) and to the one outcome that must never be
 # narrated as success: a queued command the app never confirmed.
+#
+# The same gate carries a second, quieter latch for ``reconnect_voice``
+# (founder, 2026-11-03, later that night): once a reconnect is queued the
+# client tears the session down, and the model's "reconnecting now…"
+# narration was cut off mid-sentence. While the silence latch is set the
+# model's speech is interrupted exactly as above, but the gate speaks NO
+# line of its own — the confirmation is the continuation session's one
+# "I'm back" line (``_open_main_call``), spoken once it is actually live.
 
 #: The one line the agent itself speaks when an ack-gated command goes
 #: unconfirmed — short, truthful, and free of any success claim. Spoken via
@@ -1696,6 +1705,19 @@ def _command_unconfirmed(name: str, result: object) -> bool:
     )
 
 
+def _reconnect_queued(name: str, result: object) -> bool:
+    """True when ``result`` is ``reconnect_voice``'s queued outcome: the
+    client acked a live call and is about to tear this session down and
+    re-establish it on the saved stack. Every other outcome — the cooldown
+    refusal, the no-live-call line — is spoken in a session that stays up,
+    so the gate leaves them to the model."""
+    return (
+        name == "reconnect_voice"
+        and isinstance(result, str)
+        and result == skills.set_model_stack._RECONNECT_QUEUED_RESULT
+    )
+
+
 class _CommandClaimGate:
     """Per-session latch behind the ack-gated spoken claims (see the block
     comment above). Fed every session-tool result through
@@ -1705,16 +1727,20 @@ class _CommandClaimGate:
     failure paths. While latched, the model's auto-generated speech for the
     rest of the user turn is interrupted at ``speech_created`` (the
     primitive :func:`relay_mute_control` uses) so the unconfirmed action is
-    never narrated as done; the next finalized user turn re-arms it."""
+    never narrated as done; the next finalized user turn re-arms it. The
+    ``silenced`` latch is the same suppression for a queued reconnect (see
+    :meth:`note_silence`), except the gate speaks no line at all."""
 
     def __init__(self, session: AgentSession) -> None:
         self._session = session
         self.failed = False
+        self.silenced = False
         self._announced = False
 
     def note_turn(self) -> None:
         """A new finalized user turn started: re-arm."""
         self.failed = False
+        self.silenced = False
         self._announced = False
 
     def note_failure(self) -> None:
@@ -1729,11 +1755,22 @@ class _CommandClaimGate:
         except Exception:  # noqa: BLE001 - the gate must never break the call
             logger.exception("command claim gate could not speak its line")
 
+    def note_silence(self) -> None:
+        """A reconnect was queued this turn: latch the suppression WITHOUT
+        speaking a line of the gate's own. The client is tearing this
+        session down, so anything said now is cut off mid-sentence
+        (founder, 2026-11-03); the confirmation belongs to the
+        continuation session (see ``_open_main_call``)."""
+        self.silenced = True
+
     def observe(self, name: str, result: object) -> None:
         """``VoiceTurnDedupe.outcome_observer``: latch on an unconfirmed
-        ack-gated result, ignore everything else."""
+        ack-gated result, latch the silence on a queued reconnect, ignore
+        everything else."""
         if _command_unconfirmed(name, result):
             self.note_failure()
+        elif _reconnect_queued(name, result):
+            self.note_silence()
 
 
 def relay_voice_commands(
@@ -1896,8 +1933,10 @@ def relay_voice_commands(
         # While the claim gate is latched, the model does not get to narrate
         # this turn at all — its version could claim an unconfirmed action
         # succeeded. The gate's own line (spoken at latch time) is the
-        # turn's only narration.
-        if gate.failed:
+        # turn's only narration; on the silence latch there is no line at
+        # all — the turn ends quietly and the continuation session speaks
+        # once the reconnect lands.
+        if gate.failed or gate.silenced:
             ev.speech_handle.interrupt(force=True)
 
 
@@ -2889,6 +2928,29 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     )
 
 
+def _reconnect_setup_label(seed: RoomSeed, *, cascade: bool) -> str:
+    """The user-facing name of the stack a session is running, for the
+    post-reconnect "I'm back" line: the brain on the cascade path, the
+    realtime model on the realtime path. Static labels for the canonical
+    options (the same labels the models screen shows); any other id names
+    itself, exactly as the catalog lists it."""
+    import voice_catalog
+
+    if cascade:
+        brain_id = seed.brain_id or voice_catalog.BRAIN_META
+        if brain_id == voice_catalog.BRAIN_META:
+            return "Meta Muse Spark"
+        if brain_id == voice_catalog.BRAIN_OPEN_WEIGHTS:
+            return "Llama 3.1 8B (open weights)"
+        return brain_id
+    model_id = seed.realtime_model_id
+    if model_id == voice_catalog.REALTIME_OPENAI:
+        return "OpenAI Realtime"
+    if model_id and model_id != voice_catalog.REALTIME_GEMINI:
+        return model_id
+    return "Gemini Live"
+
+
 async def _open_main_call(
     session: AgentSession,
     seed: RoomSeed,
@@ -2917,6 +2979,41 @@ async def _open_main_call(
     Realtime models (Gemini Live / Inference RealtimeModel) never hit that path,
     so they leave it False."""
     brain = seed.brain_id or seed.realtime_model_id or "gemini-live"
+    if seed.uid and await asyncio.to_thread(
+        skills.set_model_stack.claim_reconnect_announcement, get_db(), seed.uid
+    ):
+        # Post-reconnect confirmation (founder, 2026-11-03): this session is
+        # the continuation of a user-requested reconnect. The OLD session
+        # stayed silent (the claim gate's silence latch), so this "I'm back"
+        # line — one sentence, naming the stack now running — is the only
+        # word spoken about the switch, and it is spoken only now that the
+        # new session is actually live on it. The claim is one-shot, so a
+        # fresh call (or a fallback re-open on this room) never repeats it;
+        # it replaces the generic opener below rather than stacking on it.
+        setup = _reconnect_setup_label(seed, cascade=seed_user_turn)
+        reply_kwargs: dict = {"instructions": reconnect_back(setup)}
+        if seed_user_turn:
+            reply_kwargs["user_input"] = load_voice_session_seed()
+        logger.info(
+            "voice opener FIRED kind=reconnect setup=%s brain=%s session=%s "
+            "— awaiting generate_reply",
+            setup, brain, seed.session_id or "?",
+        )
+        try:
+            await session.generate_reply(**reply_kwargs)
+        except Exception:  # noqa: BLE001 - a missed line shouldn't kill the call
+            logger.exception(
+                "reconnect announcement generate_reply ERRORED brain=%s "
+                "session=%s",
+                brain, seed.session_id or "?",
+            )
+        else:
+            logger.info(
+                "voice opener generate_reply COMPLETED kind=reconnect "
+                "brain=%s session=%s",
+                brain, seed.session_id or "?",
+            )
+        return
     if seed.greeting_instructions:
         reply_kwargs: dict = {"instructions": seed.greeting_instructions}
         if seed_user_turn:

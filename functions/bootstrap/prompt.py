@@ -57,6 +57,7 @@ _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
 _VOICE_ACCENT_PATH = _DIR / "prompts" / "voice_accent.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 _VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
+_RECONNECT_BACK_PATH = _DIR / "prompts" / "reconnect_back.md"
 _VOICE_VOCAB_PATH = _DIR / "prompts" / "voice_vocab.md"
 _VOICE_VOCAB_LIVE_PATH = _DIR / "prompts" / "voice_vocab_live.md"
 _VOICE_VOCAB_NEXT_CALL_PATH = _DIR / "prompts" / "voice_vocab_next_call.md"
@@ -386,6 +387,18 @@ def voice_swap_confirm(change: str) -> str:
     (``prompts/voice_swap_confirm.md``)."""
     return _VOICE_SWAP_CONFIRM_PATH.read_text(encoding="utf-8").strip().replace(
         "{change}", change
+    )
+
+
+def reconnect_back(setup: str) -> str:
+    """The one-shot reply instruction for the continuation session's first
+    line after a user-requested reconnect (``prompts/reconnect_back.md``):
+    the single "I'm back" confirmation, spoken only once the new session is
+    actually live on the new setup (founder 2026-11-03 — the old session
+    stays silent, its "reconnecting" narration was cut off by the teardown).
+    """
+    return _RECONNECT_BACK_PATH.read_text(encoding="utf-8").strip().replace(
+        "{setup}", setup
     )
 
 

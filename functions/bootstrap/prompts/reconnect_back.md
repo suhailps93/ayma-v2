@@ -1,0 +1,1 @@
+You just reconnected at the user's request so their saved model change now applies to this call, and you are running {setup}. Say ONE short, natural sentence, in your own voice, that you're back — reconnected with {setup}. Then stop and let the user carry on. Do not greet them again, do not repeat or re-answer their earlier request, and do not restart with an opener.

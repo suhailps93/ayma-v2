@@ -2479,6 +2479,93 @@ def test_welcome_greeting_not_seeded_on_realtime():
     assert s.reply_user_inputs == [_UNSET]
 
 
+def _arm_reconnect_claim(monkeypatch, claimed):
+    """Point the opener's reconnect claim at a canned answer."""
+    import skills
+
+    monkeypatch.setattr(agent, "get_db", lambda: object())
+    monkeypatch.setattr(
+        skills.set_model_stack, "claim_reconnect_announcement",
+        lambda db, uid: claimed,
+    )
+
+
+def _recording_opener(monkeypatch):
+    calls = []
+
+    async def _fake_open(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    return calls
+
+
+def test_reconnect_continuation_opens_with_the_back_line(monkeypatch):
+    """A session that claims the reconnect announcement opens with the one
+    "I'm back" line naming the stack it is running — and the generic
+    opener never runs, so the line is spoken exactly once."""
+    import asyncio
+
+    _arm_reconnect_claim(monkeypatch, True)
+    opener_calls = _recording_opener(monkeypatch)
+    s = _OpenerSession()
+    seed = _opener_seed(uid="u1")  # realtime, Gemini Live by default
+    asyncio.run(agent._open_main_call(s, seed, window=[]))
+    assert len(s.replies) == 1
+    assert "reconnected" in s.replies[0]
+    assert "Gemini Live" in s.replies[0]
+    assert opener_calls == []
+
+
+def test_reconnect_continuation_on_cascade_names_the_brain(monkeypatch):
+    """Cascade continuation: the line names the brain and — like every
+    cascade opener — carries the synthetic user turn so the chat LLM
+    never gets a system-only request."""
+    import asyncio
+    from prompt import load_voice_session_seed
+
+    _arm_reconnect_claim(monkeypatch, True)
+    _recording_opener(monkeypatch)
+    s = _OpenerSession()
+    seed = _opener_seed(uid="u1", brain_id="meta-muse-spark")
+    asyncio.run(
+        agent._open_main_call(s, seed, window=[], seed_user_turn=True)
+    )
+    assert len(s.replies) == 1
+    assert "Meta Muse Spark" in s.replies[0]
+    assert s.reply_user_inputs == [load_voice_session_seed()]
+
+
+def test_fresh_call_never_opens_with_the_back_line(monkeypatch):
+    """No pending announcement (an ordinary fresh call): the claim declines
+    and the normal opener path runs untouched — no "I'm back" line."""
+    import asyncio
+
+    _arm_reconnect_claim(monkeypatch, False)
+    opener_calls = _recording_opener(monkeypatch)
+    s = _OpenerSession()
+    seed = _opener_seed(uid="u1")
+    asyncio.run(agent._open_main_call(s, seed, window=[]))
+    assert s.replies == []
+    assert len(opener_calls) == 1
+
+
+def test_reconnect_setup_label_names_the_running_stack():
+    import voice_catalog
+
+    seed = _opener_seed()
+    assert agent._reconnect_setup_label(seed, cascade=False) == "Gemini Live"
+    seed = _opener_seed(realtime_model_id=voice_catalog.REALTIME_OPENAI)
+    assert agent._reconnect_setup_label(seed, cascade=False) == "OpenAI Realtime"
+    seed = _opener_seed(brain_id=voice_catalog.BRAIN_META)
+    assert agent._reconnect_setup_label(seed, cascade=True) == "Meta Muse Spark"
+    seed = _opener_seed(brain_id=voice_catalog.BRAIN_OPEN_WEIGHTS)
+    assert (
+        agent._reconnect_setup_label(seed, cascade=True)
+        == "Llama 3.1 8B (open weights)"
+    )
+
+
 def test_opener_prior_context_helper():
     """has-prior / last-topic-hint derivation for the opener signal."""
     assert agent._opener_prior_context([]) == (False, "")
@@ -5348,6 +5435,74 @@ def test_command_claim_gate_latches_when_the_execution_itself_fails():
         assert session.speech_created().interrupted is True
         # The dead claim is dropped, so nothing replays an exception.
         assert dedupe.lookup("open_screen") is None
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Reconnect silence: once ``reconnect_voice`` has queued the reconnect, the
+# old session must say NOTHING about it (founder, 2026-11-03 — its
+# "reconnecting now…" narration was cut off mid-sentence by the teardown).
+# The claim gate's silence latch suppresses the model's narration for the
+# rest of the turn and speaks no line of its own; the continuation session
+# confirms the switch after the reconnect (see the _open_main_call tests).
+# ---------------------------------------------------------------------------
+
+
+def test_reconnect_queued_scopes_the_silence_latch():
+    import skills
+
+    queued = skills.set_model_stack._RECONNECT_QUEUED_RESULT
+    assert agent._reconnect_queued("reconnect_voice", queued)
+    # The staying-up outcomes are the model's to narrate.
+    assert not agent._reconnect_queued(
+        "reconnect_voice",
+        "You're already reconnecting onto your updated setup — give it a "
+        "moment. No need to reconnect again.",
+    )
+    assert not agent._reconnect_queued(
+        "reconnect_voice",
+        "There's no live voice call to reconnect right now — your saved "
+        "changes will apply on your next voice call.",
+    )
+    # Other tools are out of scope entirely.
+    assert not agent._reconnect_queued("open_screen", queued)
+    assert not agent._reconnect_queued("reconnect_voice", None)
+
+
+def test_claim_gate_silences_the_turn_a_reconnect_is_queued():
+    import skills
+
+    async def _run():
+        session, dedupe = _gate_relay([])
+        # Exactly what the dedupe wrapper does with a model-initiated call's
+        # settled result.
+        dedupe.outcome_observer(
+            "reconnect_voice", skills.set_model_stack._RECONNECT_QUEUED_RESULT
+        )
+        # No line from the gate, and the model's narration is suppressed.
+        assert session.said == []
+        assert session.speech_created().interrupted is True
+
+        # The next finalized turn re-arms: ordinary chat is never suppressed.
+        session.user_turn("thanks, that worked")
+        await asyncio.sleep(0.05)
+        assert session.speech_created().interrupted is False
+
+    asyncio.run(_run())
+
+
+def test_claim_gate_ignores_other_reconnect_outcomes():
+    async def _run():
+        session, dedupe = _gate_relay([])
+        dedupe.outcome_observer(
+            "reconnect_voice",
+            "There's no live voice call to reconnect right now — your saved "
+            "changes will apply on your next voice call.",
+        )
+        await asyncio.sleep(0.05)
+        assert session.said == []
+        assert session.speech_created().interrupted is False
 
     asyncio.run(_run())
 

@@ -370,6 +370,25 @@ _RECONNECT_COOLDOWN_SECONDS = 45.0
 # Epoch-seconds marker on users/{uid}/profile/main, kept local to this module —
 # it is internal reconnect bookkeeping, not a user-facing model-settings field.
 _PF_RECONNECT_AT = "ayma_reconnect_requested_at"
+# One-shot "announce the reconnect" flag, set in the same write as the marker:
+# the OLD session stays silent once a reconnect is queued (agent.py's claim
+# gate suppresses its narration — its speech is cut off by the teardown
+# anyway, founder 2026-11-03), and the NEW session claims this flag at open
+# (:func:`claim_reconnect_announcement`) to speak the one "I'm back" line
+# exactly once. A separate flag (not the timestamp) so claiming the
+# announcement can never disarm the loop-guard cooldown above.
+_PF_RECONNECT_PENDING = "ayma_reconnect_announce_pending"
+# How long a pending announcement stays claimable: the continuation session
+# opens seconds after the teardown; far past this the flag is stale (the
+# reconnect never landed) and a claim just clears it, silently.
+_RECONNECT_ANNOUNCE_WINDOW_SECONDS = 120.0
+
+#: ``reconnect_voice``'s queued-and-acked result — the exact string agent.py's
+#: claim gate matches to silence the old session's narration for the turn.
+_RECONNECT_QUEUED_RESULT = (
+    "Reconnecting now — I'll drop for a second and come back on your "
+    "updated setup."
+)
 
 
 def _recently_reconnected(db, uid: str) -> bool:
@@ -387,10 +406,39 @@ def _recently_reconnected(db, uid: str) -> bool:
 def _mark_reconnected(db, uid: str) -> None:
     try:
         schema.profile_doc(db, uid).set(
-            {_PF_RECONNECT_AT: time.time()}, merge=True
+            {_PF_RECONNECT_AT: time.time(), _PF_RECONNECT_PENDING: True},
+            merge=True,
         )
     except Exception:  # noqa: BLE001 - best-effort; the client breaker backs it up
         logger.exception("could not mark reconnect for %s", uid)
+
+
+def claim_reconnect_announcement(db, uid: str) -> bool:
+    """Claim the one-shot post-reconnect announcement for ``uid``.
+
+    True exactly once: for the first session that opens while a reconnect
+    announcement is pending and still fresh — the reconnect's continuation
+    session, which speaks the one "I'm back" line (agent.py
+    ``_open_main_call``). The claim clears the flag, so a fresh call started
+    later — or a fallback session re-opening on the same room — never
+    repeats the line. A stale flag (the continuation never opened) is
+    cleared and reports False. Never raises: a Firestore hiccup just means
+    no announcement, never a broken call.
+    """
+    if not uid:
+        return False
+    try:
+        ref = schema.profile_doc(db, uid)
+        data = ref.get().to_dict() or {}
+        if not data.get(_PF_RECONNECT_PENDING):
+            return False
+        at = float(data.get(_PF_RECONNECT_AT) or 0.0)
+        fresh = (time.time() - at) < _RECONNECT_ANNOUNCE_WINDOW_SECONDS
+        ref.set({_PF_RECONNECT_PENDING: False}, merge=True)
+        return fresh
+    except Exception:  # noqa: BLE001 - best-effort; no announcement beats a crash
+        logger.exception("could not claim reconnect announcement for %s", uid)
+        return False
 
 
 def _bind_reconnect_voice(db, uid: str) -> Callable[..., object]:
@@ -412,10 +460,7 @@ def _bind_reconnect_voice(db, uid: str) -> Callable[..., object]:
             # Mark BEFORE the client actually tears down + re-bootstraps (that
             # runs after this ack), so the new session sees the cooldown.
             await asyncio.to_thread(_mark_reconnected, db, uid)
-            return (
-                "Reconnecting now — I'll drop for a second and come back on your "
-                "updated setup."
-            )
+            return _RECONNECT_QUEUED_RESULT
         return (
             "There's no live voice call to reconnect right now — your saved "
             "changes will apply on your next voice call."
