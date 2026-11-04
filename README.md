@@ -6,6 +6,11 @@ Ayma is a voice-first dating app. No swiping, no checkbox filters. You talk to A
 
 Every user has a personal avatar: an AI agent built from everything its person shares with Ayma. It carries their whole context and talks like them. Your story builds up as you share, and the more context Ayma and your avatar have, the better they represent you.
 
+## Try Ayma
+
+- Android (APK): https://github.com/suhailps93/ayma-taste-qloo/releases/latest/download/ayma-android.apk
+- iOS (TestFlight): https://testflight.apple.com/join/uceuSRkh
+
 ## Built during the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026)
 
 - The avatar system itself: every user gets a personal avatar, an AI agent built from what its person shares, carrying their whole context and talking like them
