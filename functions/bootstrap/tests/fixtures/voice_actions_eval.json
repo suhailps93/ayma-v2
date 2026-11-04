@@ -777,7 +777,8 @@
    "transcript": "speak Spanish from now on",
    "turns": [],
    "voice": {
-    "accent_language": "Spanish"
+    "voice_kind": "language",
+    "voice_value": "Spanish"
    }
   },
   {
@@ -790,7 +791,22 @@
    "transcript": "give yourself a southern American accent",
    "turns": [],
    "voice": {
-    "accent": "southern american accent"
+    "voice_kind": "accent",
+    "voice_value": "southern american accent"
+   }
+  },
+  {
+   "id": "voice-character",
+   "transcript": "sound like a man",
+   "member": "",
+   "page": "",
+   "turns": [],
+   "expected": {
+    "action": "set_voice"
+   },
+   "voice": {
+    "voice_kind": "character",
+    "voice_value": "sound like a man"
    }
   }
  ]

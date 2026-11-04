@@ -34,9 +34,18 @@ not name or clearly mean.
   realtime model (Gemini Live / OpenAI Realtime), or her speech-to-text /
   text-to-speech engine (a named engine). Musing about models is not a change
   ("tell me about the models you use" is conversation).
-- set_voice: the user asks to change how Ayma sounds — her voice character,
-  her language, or her accent ("sound more southern", "speak Spanish"). Only
-  on an explicit ask.
+- set_voice: the user asks to change how Ayma sounds. Only on an explicit
+  ask. Say FIRST which ONE of the three it is (voice_kind), then the
+  value alone (voice_value):
+  1. a LANGUAGE ("speak Spanish", "talk to me in Malayalam") → kind
+     language, value the language name alone ("Spanish");
+  2. an ACCENT — the ask says "accent" or describes a way of speaking
+     ("a southern American accent", "sound more southern") → kind
+     accent, value the accent description alone ("southern American
+     accent");
+  3. a voice CHARACTER — who she sounds like, essentially gender or a
+     named preset ("sound like a man", "use the Ember preset") → kind
+     character, value the ask in their words ("sound like a man").
 - start_tour: the user asks to start, open, or be walked through the guided
   tour of the app. Stopping, quitting, or advancing the tour is NOT this
   (those stay conversation).
@@ -142,9 +151,12 @@ about goodbye means none.
   deepgram.
 - "switch my text-to-speech to inworld" → set_stack, tool set_tts, value
   inworld.
-- "speak Spanish from now on" → set_voice, accent_language Spanish.
-- "give yourself a southern American accent" → set_voice, accent southern
-  American accent.
+- "speak Spanish from now on" → set_voice, kind language, value
+  Spanish.
+- "give yourself a southern American accent" → set_voice, kind accent,
+  value "southern American accent".
+- "sound like a man" → set_voice, kind character, value "sound like a
+  man".
 - "start the guided tour" → start_tour.
 - "walk me through the app" → start_tour.
 - "stop the tour" → none (a stop is not a start).
@@ -169,7 +181,16 @@ Answer with a single JSON object, no prose. Exactly these shapes:
 - {"action": "launch_practice", "partner": "<name>"}
 - {"action": "launch_sim", "partner": "<name>"}
 - {"action": "set_stack", "tool": "<set_brain|set_voice_mode|set_realtime_model|set_stt|set_tts>", "value": "<target>"}
-- {"action": "set_voice", "voice_request": "<character ask or empty>", "voice_name": "<exact preset or empty>", "accent_language": "<language or empty>", "accent": "<accent or empty>"}
+- {"action": "set_voice", "voice_kind": "<language|accent|character>", "voice_value": "<the value alone>"}
+
+Two full set_voice answers, exactly as they must look:
+
+- "speak Spanish from now on" →
+  {"action": "set_voice", "voice_kind": "language",
+   "voice_value": "Spanish"}
+- "give yourself a southern American accent" →
+  {"action": "set_voice", "voice_kind": "accent",
+   "voice_value": "southern American accent"}
 - {"action": "start_tour"}
 - {"action": "end_call"}
 - {"action": "clarify", "for": "<launch_practice|launch_sim>"}

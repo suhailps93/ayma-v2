@@ -80,18 +80,81 @@ _STACK_TOOL_KWARGS = {
 RESPONSE_SCHEMA: dict = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": list(ACTIONS)},
-        "page": {"type": "string"},
-        "member": {"type": "string"},
-        "partner": {"type": "string"},
-        "tool": {"type": "string"},
-        "value": {"type": "string"},
-        "voice_request": {"type": "string"},
-        "voice_name": {"type": "string"},
-        "accent_language": {"type": "string"},
-        "accent": {"type": "string"},
-        "for": {"type": "string"},
-        "reason": {"type": "string"},
+        "action": {
+            "type": "string",
+            "enum": list(ACTIONS),
+            "description": (
+                "Exactly one intent: navigate, open_profile, "
+                "launch_practice, launch_sim, set_stack, set_voice, "
+                "start_tour, end_call, clarify (a launch with no partner), "
+                "or none (pure conversation)."
+            ),
+        },
+        "page": {
+            "type": "string",
+            "description": (
+                "navigate only: the destination key from the given page "
+                "list (e.g. explore, messages, voice_preference for the "
+                "Models page itself)."
+            ),
+        },
+        "member": {
+            "type": "string",
+            "description": "open_profile only: the member's name.",
+        },
+        "partner": {
+            "type": "string",
+            "description": (
+                "launch_practice / launch_sim only: the partner's name — "
+                "a spoken name, or the member under discussion for a "
+                "pronoun ('her')."
+            ),
+        },
+        "tool": {
+            "type": "string",
+            "description": (
+                "set_stack only: one of set_brain, set_voice_mode, "
+                "set_realtime_model, set_stt, set_tts."
+            ),
+        },
+        "value": {
+            "type": "string",
+            "description": (
+                "set_stack only: the named target (the brain, mode, "
+                "realtime model, or engine)."
+            ),
+        },
+        "voice_kind": {
+            "type": "string",
+            "enum": ["language", "accent", "character", ""],
+            "description": (
+                "set_voice only: which ONE the ask changes — language "
+                "(which tongue she speaks), accent (her way of "
+                "speaking), or character (who she sounds like). "
+                "Empty for every other action."
+            ),
+        },
+        "voice_value": {
+            "type": "string",
+            "description": (
+                "set_voice only: the extracted value alone — the "
+                "language name ('Spanish'), the accent description "
+                "('southern American accent'), or the character ask in "
+                "their words ('sound like a man'). Never a sentence "
+                "restating the request."
+            ),
+        },
+        "for": {
+            "type": "string",
+            "description": (
+                "clarify only: launch_practice or launch_sim — which "
+                "launch needs its partner."
+            ),
+        },
+        "reason": {
+            "type": "string",
+            "description": "clarify only: short note, e.g. 'who with?'.",
+        },
     },
     "required": ["action"],
     "additionalProperties": False,
@@ -129,10 +192,8 @@ class Verdict:
     partner: str = ""
     tool: str = ""
     value: str = ""
-    voice_request: str = ""
-    voice_name: str = ""
-    accent_language: str = ""
-    accent: str = ""
+    voice_kind: str = ""
+    voice_value: str = ""
     clarify_for: str = ""
     reason: str = ""
 
@@ -187,10 +248,8 @@ def parse_verdict(raw: object) -> Verdict:
         partner=_text("partner"),
         tool=_text("tool"),
         value=_text("value"),
-        voice_request=_text("voice_request"),
-        voice_name=_text("voice_name"),
-        accent_language=_text("accent_language"),
-        accent=_text("accent"),
+        voice_kind=_text("voice_kind"),
+        voice_value=_text("voice_value"),
         clarify_for=_text("for"),
         reason=_text("reason"),
     )
@@ -341,15 +400,20 @@ def verdict_to_command(verdict: Verdict) -> tuple[str, dict] | None:
             return None
         return tool, {kwarg: value}
     if action == "set_voice":
-        kwargs = {
-            "request": verdict.voice_request.strip(),
-            "voice_name": verdict.voice_name.strip(),
-            "accent_language": verdict.accent_language.strip(),
-            "accent": verdict.accent.strip(),
-        }
-        if not any(kwargs.values()):
+        kind = verdict.voice_kind.strip().lower()
+        value = verdict.voice_value.strip()
+        if not value:
             return None
-        return "set_voice_preference", kwargs
+        # The kind routes the single extracted value to the existing
+        # tool's arg. An unknown kind stays conversation — a misrouted
+        # value could otherwise write the WRONG voice setting.
+        if kind == "language":
+            return "set_voice_preference", {"accent_language": value}
+        if kind == "accent":
+            return "set_voice_preference", {"accent": value}
+        if kind == "character":
+            return "set_voice_preference", {"request": value}
+        return None
     if action == "start_tour":
         return "start_guided_tour", {}
     if action == "end_call":

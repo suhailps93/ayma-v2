@@ -67,8 +67,11 @@ def test_parse_verdict_accepts_every_action_shape():
         {"action": "set_stack", "tool": "set_brain", "value": "meta"}
     ) == Verdict(action="set_stack", tool="set_brain", value="meta")
     assert voice_actions.parse_verdict(
-        {"action": "set_voice", "accent_language": "Spanish"}
-    ) == Verdict(action="set_voice", accent_language="Spanish")
+        {"action": "set_voice", "voice_kind": "language",
+         "voice_value": "Spanish"}
+    ) == Verdict(
+        action="set_voice", voice_kind="language", voice_value="Spanish"
+    )
     assert voice_actions.parse_verdict({"action": "start_tour"}).action == (
         "start_tour"
     )
@@ -185,16 +188,35 @@ def test_verdict_to_command_rejects_unresolvable_stack(tool, value):
 
 def test_verdict_to_command_maps_set_voice_and_start_tour():
     assert voice_actions.verdict_to_command(
-        Verdict(action="set_voice", accent_language="Spanish")
+        Verdict(
+            action="set_voice", voice_kind="language",
+            voice_value="Spanish",
+        )
+    ) == ("set_voice_preference", {"accent_language": "Spanish"})
+    assert voice_actions.verdict_to_command(
+        Verdict(
+            action="set_voice", voice_kind="accent",
+            voice_value="southern American accent",
+        )
     ) == (
-        "set_voice_preference",
-        {
-            "request": "",
-            "voice_name": "",
-            "accent_language": "Spanish",
-            "accent": "",
-        },
+        "set_voice_preference", {"accent": "southern American accent"}
     )
+    assert voice_actions.verdict_to_command(
+        Verdict(
+            action="set_voice", voice_kind="character",
+            voice_value="sound like a man",
+        )
+    ) == ("set_voice_preference", {"request": "sound like a man"})
+    # An unknown kind or an empty value stays conversation — a misrouted
+    # value could otherwise write the WRONG voice setting.
+    assert voice_actions.verdict_to_command(
+        Verdict(
+            action="set_voice", voice_kind="bogus", voice_value="Spanish"
+        )
+    ) is None
+    assert voice_actions.verdict_to_command(
+        Verdict(action="set_voice", voice_kind="language", voice_value="")
+    ) is None
     assert voice_actions.verdict_to_command(Verdict(action="set_voice")) is None
     assert voice_actions.verdict_to_command(
         Verdict(action="start_tour")
