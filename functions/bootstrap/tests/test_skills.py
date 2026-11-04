@@ -380,3 +380,140 @@ def test_bounded_preserves_the_wrapped_signature_for_schema_introspection():
         "full_name", "subject", "context",
     ]
     assert getattr(wrapped, "__wrapped__", None) is deep_dive
+
+
+# --- _deduped + VoiceTurnDedupe (deterministic voice exactly-once) -----------
+
+
+def test_deduped_runs_the_tool_when_nothing_was_claimed():
+    import asyncio
+
+    ran = []
+
+    async def fn(screen=""):
+        ran.append(screen)
+        return f"opened {screen}"
+
+    dedupe = skills.VoiceTurnDedupe()
+    dedupe.note_turn()
+    wrapped = skills._deduped(fn, "open_screen", dedupe)
+    assert asyncio.iscoroutinefunction(wrapped)
+    assert asyncio.run(wrapped(screen="explore")) == "opened explore"
+    assert ran == ["explore"]
+
+
+def test_deduped_replays_the_claim_without_rerunning_the_tool():
+    import asyncio
+
+    ran = []
+
+    async def fn(screen=""):
+        ran.append(screen)
+        return f"opened {screen}"
+
+    async def _main():
+        dedupe = skills.VoiceTurnDedupe()
+        dedupe.note_turn()
+        wrapped = skills._deduped(fn, "open_screen", dedupe)
+        # The deterministic run: claimed in this task, so its own call runs.
+        fut = dedupe.claim("open_screen")
+        assert fut is not None
+        result = await wrapped(screen="voice_preference")
+        fut.set_result(result)
+        # The model's same-turn duplicate (another task) replays it instead.
+        dup = await asyncio.create_task(wrapped(screen="models page"))
+        return result, dup
+
+    result, dup = asyncio.run(_main())
+    assert result == "opened voice_preference"
+    assert dup == result
+    assert ran == ["voice_preference"]  # executed exactly once
+
+
+def test_deduped_second_caller_awaits_the_inflight_claim():
+    import asyncio
+
+    async def _main():
+        begun = asyncio.Event()
+        release = asyncio.Event()
+        ran = []
+
+        async def fn():
+            ran.append(1)
+            begun.set()
+            await release.wait()
+            return "slow-result"
+
+        dedupe = skills.VoiceTurnDedupe()
+        dedupe.note_turn()
+        wrapped = skills._deduped(fn, "open_screen", dedupe)
+
+        async def _deterministic():
+            # Claimed in the executing task, so its own call runs (this is
+            # exactly agent.py's deterministic-run shape).
+            fut = dedupe.claim("open_screen")
+            result = await wrapped()
+            fut.set_result(result)
+            return result
+
+        det = asyncio.create_task(_deterministic())
+        await begun.wait()  # deterministic run is now in-flight...
+        # ...so a same-turn model call waits for it instead of running again.
+        dup = asyncio.create_task(wrapped())
+        await asyncio.sleep(0.01)
+        assert not dup.done()
+        release.set()
+        assert await dup == "slow-result"
+        assert await det == "slow-result"
+        assert ran == [1]
+
+    asyncio.run(_main())
+
+
+def test_dedupe_claims_retire_on_the_next_turn():
+    import asyncio
+
+    ran = []
+
+    async def fn():
+        ran.append(1)
+        return "ran"
+
+    async def _main():
+        dedupe = skills.VoiceTurnDedupe()
+        dedupe.note_turn()
+        wrapped = skills._deduped(fn, "set_brain", dedupe)
+        fut = dedupe.claim("set_brain")
+        fut.set_result(await wrapped())
+        assert ran == [1]
+        # A second claim on the SAME turn is refused (defensive).
+        assert dedupe.claim("set_brain") is None
+        # A new user turn retires the claim: the same command runs again.
+        dedupe.note_turn()
+        assert dedupe.lookup("set_brain") is None
+        fut2 = dedupe.claim("set_brain")
+        assert fut2 is not None
+        fut2.set_result(await wrapped())
+        assert ran == [1, 1]
+
+    asyncio.run(_main())
+
+
+def test_dedupe_drop_lets_a_later_call_execute_fresh():
+    import asyncio
+
+    async def _main():
+        dedupe = skills.VoiceTurnDedupe()
+        dedupe.note_turn()
+        fut = dedupe.claim("open_screen")
+        # A failed deterministic run: forget the claim but still settle the
+        # future, releasing any model call already awaiting it.
+        dedupe.drop("open_screen")
+        assert dedupe.lookup("open_screen") is None
+        boom = RuntimeError("Firestore blip")
+        fut.set_exception(boom)
+        assert fut.exception() is boom
+        # ...and the next claim for this turn succeeds again.
+        assert dedupe.claim("open_screen") is not None
+
+    asyncio.run(_main())
