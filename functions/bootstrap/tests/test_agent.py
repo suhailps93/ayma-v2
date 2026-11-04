@@ -4188,6 +4188,14 @@ class _CmdRoom:
 class _CmdCtx:
     def __init__(self):
         self.room = _CmdRoom()
+        self.deleted_rooms = 0
+        self.shutdown_reasons = []
+
+    async def delete_room(self):
+        self.deleted_rooms += 1
+
+    def shutdown(self, reason):
+        self.shutdown_reasons.append(reason)
 
 
 async def _drain_until(predicate, timeout=5.0):
@@ -4200,9 +4208,10 @@ async def _drain_until(predicate, timeout=5.0):
     await asyncio.sleep(0.05)  # let fire-and-forget publishes land
 
 
-def _voice_command_harness(monkeypatch, uid="u1"):
+def _voice_command_harness(monkeypatch, uid="u1", *, end_call=None):
     """The real session tools plus the real relay on fakes: returns
-    ``(db, session, ctx, by_name, dedupe)``."""
+    ``(db, session, ctx, by_name, dedupe)``. ``end_call`` wires the relay's
+    goodbye teardown (None leaves sign-off turns to the model)."""
     import skills
 
     db = _CmdDb(uid)
@@ -4212,7 +4221,7 @@ def _voice_command_harness(monkeypatch, uid="u1"):
     session = _CmdSession()
     tools = agent._session_tools(ctx, uid, dedupe=dedupe)
     by_name = agent._tools_by_name(tools)
-    agent.relay_voice_commands(session, tools, dedupe)
+    agent.relay_voice_commands(session, tools, dedupe, end_call=end_call)
     return db, session, ctx, by_name, dedupe
 
 
@@ -4544,6 +4553,210 @@ def test_voice_launch_near_miss_runs_no_tool(monkeypatch, phrase):
         assert session.generate_replies == []
 
     asyncio.run(_main())
+
+
+# --- deterministic "goodbye Ayma" hang-up (voice-only) -----------------------
+#
+# A live sign-off to Ayma ends the call through the call's own teardown (the
+# end_call_idle sequence with a "user_goodbye" reason) — claimed first in the
+# call's VoiceTurnDedupe and latched to once per call, with zero model
+# involvement. Talking ABOUT goodbye, recounting one, a goodbye to someone
+# else, or a goodbye buried in a longer request never hangs up.
+
+
+@pytest.mark.parametrize("phrase", [
+    "Goodbye Ayma",
+    "bye Ayma",
+    "Goodbye, Ayma, thanks",
+    "bye Ayma, thank you",
+    "BYE AYMA",
+    "Ayma, goodbye",
+    "okay, goodbye Ayma",
+    "goodbye",
+    "Goodbye! Thanks.",
+])
+def test_detect_voice_command_routes_a_live_signoff(phrase):
+    assert agent.detect_voice_command(phrase) == ("end_call", {})
+
+
+@pytest.mark.parametrize("phrase", [
+    # Talking ABOUT goodbye.
+    "I never got to say goodbye",
+    "what does goodbye mean",
+    # Past-tense recounting.
+    "I said goodbye to her yesterday",
+    "then I told Ayma goodbye last time we talked",
+    # Goodbyes to other people.
+    "say goodbye to Sofia for me",
+    "tell Daniel bye",
+    # Bare "bye" alone never hangs up (one STT-confusable syllable).
+    "bye",
+])
+def test_detect_voice_command_leaves_goodbye_talk_alone(phrase):
+    assert agent.detect_voice_command(phrase) is None
+
+
+def test_detect_voice_command_goodbye_tail_on_a_request_is_not_a_hangup():
+    # The sign-off is not the utterance itself, so no hang-up — the request
+    # part still routes to its own family, exactly as without the tail.
+    assert agent.detect_voice_command(
+        "after this, say goodbye and open my messages"
+    ) == ("open_screen", {"screen": "messages"})
+    assert agent.detect_voice_command(
+        "open my messages, goodbye Ayma"
+    ) == ("open_screen", {"screen": "messages"})
+
+
+def test_detect_voice_command_goodbye_wins_over_other_families(monkeypatch):
+    # If a turn somehow matched goodbye AND another family, the sign-off wins
+    # (it is checked first). Forced with a stub — the strict detector leaves
+    # no real phrase matching both.
+    import skills
+
+    monkeypatch.setattr(
+        skills.voice_goodbye, "is_goodbye_command", lambda _m: True
+    )
+    assert agent.detect_voice_command("open the models page") == (
+        "end_call", {},
+    )
+
+
+def test_voice_goodbye_ends_the_call_deterministically(monkeypatch):
+    """'Goodbye Ayma' mid-call ends the session through the real teardown
+    (memory flush, tell the client why, delete the room, shut down) with
+    zero model involvement, and the deterministic path claims the turn."""
+    flushed = []
+
+    async def _flush():
+        flushed.append(True)
+
+    box = {}
+
+    async def _end_call():
+        await agent.end_call_goodbye(box["ctx"], "u1", _flush)
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, end_call=_end_call
+    )
+    box["ctx"] = ctx
+
+    async def _main():
+        session.user_turn("Goodbye Ayma")
+        await _drain_until(lambda: dedupe.lookup("end_call") is not None)
+        result = await dedupe.lookup("end_call").future
+        assert result == agent._GOODBYE_RESULT
+        assert flushed == [True]
+        assert ctx.deleted_rooms == 1
+        assert ctx.shutdown_reasons == ["user_goodbye"]
+        endings = [
+            p for p in ctx.room.local_participant.published
+            if p[0] == "call_ending"
+        ]
+        assert endings == [("call_ending", {"reason": "user_goodbye"}, True)]
+        assert db.store.queued == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_goodbye_duplicate_transcript_tears_down_once(monkeypatch):
+    """A duplicated finalized sign-off transcript (a new turn per note_turn,
+    so a fresh claim) still runs teardown exactly once."""
+    runs = []
+
+    async def _end_call():
+        runs.append(True)
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, end_call=_end_call
+    )
+
+    async def _main():
+        session.user_turn("Goodbye Ayma")
+        session.user_turn("Goodbye Ayma")  # duplicate delivery of one final
+        await _drain_until(lambda: dedupe.lookup("end_call") is not None)
+        await dedupe.lookup("end_call").future
+        await asyncio.sleep(0.05)  # a second teardown would have run by now
+        assert runs == [True]
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+@pytest.mark.parametrize("phrase", [
+    "I never got to say goodbye",
+    "what does goodbye mean",
+    "I said goodbye to her yesterday",
+    "then I told Ayma goodbye last time we talked",
+    "say goodbye to Sofia for me",
+    "tell Daniel bye",
+    "bye",
+])
+def test_voice_goodbye_talk_runs_no_teardown(monkeypatch, phrase):
+    """Goodbye talk at the relay level: no teardown, no claimed turn, no
+    published event, nothing asked of the model."""
+    runs = []
+
+    async def _end_call():
+        runs.append(True)
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, end_call=_end_call
+    )
+
+    async def _main():
+        session.user_turn(phrase)
+        await asyncio.sleep(0.05)  # a hang-up would have fired by now
+        assert runs == []
+        assert dedupe.lookup("end_call") is None
+        assert ctx.room.local_participant.published == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_end_call_goodbye_flushes_signals_deletes_then_shuts_down():
+    """The user-hang-up sequence: memory write -> tell the client why
+    (user_goodbye) -> delete the room -> shut down. The idle stop's shape,
+    never an abrupt cutoff."""
+    import asyncio
+
+    order = []
+
+    async def _flush():
+        order.append("flush")
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            order.append("call_ending_published")
+            published.append((topic, json.loads(payload), reliable))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _FakeCtx:
+        room = _Room()
+
+        @staticmethod
+        async def delete_room():
+            order.append("room_deleted")
+
+        @staticmethod
+        def shutdown(reason):
+            order.append(("shutdown", reason))
+
+    asyncio.run(agent.end_call_goodbye(_FakeCtx(), "u1", _flush))
+
+    assert order == [
+        "flush",
+        "call_ending_published",
+        "room_deleted",
+        ("shutdown", "user_goodbye"),
+    ]
+    assert published == [("call_ending", {"reason": "user_goodbye"}, True)]
 
 
 # --- staging/prod environment dispatch guard at the seam (ARCHITECTURE §1.1a) -
