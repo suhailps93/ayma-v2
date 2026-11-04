@@ -44,9 +44,19 @@ import 'voice_session_controller.dart';
 /// * commands are deduped by `id`, so a cache re-delivery around a
 ///   resubscribe never runs the same navigation twice;
 /// * a command whose server `ts` is older than [_staleAfter] is discarded
-///   unexecuted — by then the backend tool has long since told the user it
-///   didn't work, and surprise-navigating a minute later (or on the *next*
-///   call, off a doc a dead listener left behind) is worse than skipping;
+///   unexecuted — surprise-navigating minutes later (or on the *next* call,
+///   off a doc a dead listener left behind) is worse than skipping. Inside
+///   the window a late command still executes and acks: a command queued in
+///   the last second of a voice segment used to die right there — the
+///   session tore down, the listener went with it, and on the next attach
+///   the orphan was already "stale", deleted unexecuted and unacked while
+///   Ayma claimed the page had opened (founder bug, 2026-11-03).
+///   [_staleAfter] is sized to that boundary gap (a segment reconnect, a
+///   stack-switch session restart, a quick app relaunch), NOT to the
+///   backend's 6s ack wait: the wait will usually have timed out by the
+///   time a boundary command lands, so Ayma has already honestly said it
+///   didn't go through — executing on attach still puts the user where
+///   they asked to be, and the ack keeps the record truthful;
 /// * the post-handle delete is transactional on the command `id`, so it can
 ///   never swallow a newer command that landed between our read and our
 ///   delete.
@@ -233,10 +243,15 @@ class AppCommandService {
   String _awaitingExploreQuery = '';
   bool _reportListening = false;
 
-  /// A command older than this on arrival is dropped unexecuted — the
-  /// backend's own ack wait (`_ACK_TIMEOUT_SECONDS`, 3s) gave up on it long
-  /// ago and the user was already told it didn't work.
-  static const _staleAfter = Duration(seconds: 25);
+  /// A command older than this on arrival is dropped unexecuted. The
+  /// window is a session-boundary survival window, not an ack window: the
+  /// backend's ack wait (`_ACK_TIMEOUT_SECONDS`, 6s) is far shorter, so a
+  /// command that only lands on the next attach executes after Ayma has
+  /// already honestly said it didn't go through — but it executes, and
+  /// acks, instead of dying silently at the boundary (founder bug,
+  /// 2026-11-03). Anything older than this is a leftover from a dead
+  /// session, and running it would surprise-navigate long after the ask.
+  static const _staleAfter = Duration(seconds: 90);
 
   /// Backoff before re-attaching a listener that errored/closed mid-call.
   static const _resubscribeDelay = Duration(seconds: 2);
