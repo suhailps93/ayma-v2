@@ -41,8 +41,13 @@ IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/ayma-agent:
 # override. LLM_PROVIDER_VOICE (the per-surface practice/secondary voice) is
 # pinned to gemini to match the live agent and keep a --full redeploy from
 # snapping back to meta.
-ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LLM_PROVIDER_VOICE=gemini"
-SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SENTRY_DSN=SENTRY_DSN_AGENT:latest,META_API_KEY=META_API_KEY:latest"
+#
+# OPEN_WEIGHTS_BASE_URL + OPEN_WEIGHTS_MODEL wire the opt-in open-weights voice
+# brain (self-hosted Modal endpoint, ARCHITECTURE §13.9 — the brain is offered
+# only when the base URL is set). Values mirror the live revision: --set-env-vars
+# is a full replace, so a --full without them would silently drop the wiring.
+ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LLM_PROVIDER_VOICE=gemini,OPEN_WEIGHTS_BASE_URL=https://suhailps93--ayma-open-weights-serve.us-east.modal.run/v1,OPEN_WEIGHTS_MODEL=meta-models/muse-spark-open-1026"
+SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SENTRY_DSN=SENTRY_DSN_AGENT:latest,META_API_KEY=META_API_KEY:latest,OPEN_WEIGHTS_API_KEY=OPEN_WEIGHTS_API_KEY:latest"
 
 # min-instances=0 is the PERMANENT intended config (founder decision,
 # 2026-09-19, docs/deploy.md §12.2) — ayma-agent scales to zero when idle
