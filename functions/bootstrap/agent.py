@@ -1679,10 +1679,12 @@ def relay_voice_commands(
 
     The interpreter is the voice-actions skill (``interpret`` +
     ``get_context``, wired by both main-session starters): its verdict maps
-    to a command via ``skills.voice_actions.verdict_to_command``. A ``none``
-    verdict — or a skill failure — falls back to the deterministic
-    :func:`detect_voice_command` net, which stays in place untouched as the
-    interim backstop. A "goodbye Ayma" sign-off (``"end_call"``, not a
+    to a command via ``skills.voice_actions.verdict_to_command``. Only a
+    skill failure (outage / gateway / timeout) falls back to the
+    deterministic :func:`detect_voice_command` net, which stays in place
+    untouched as the interim backstop; an authoritative ``none`` verdict
+    stays conversational with no net call. A "goodbye Ayma" sign-off
+    (``"end_call"``, not a
     session tool) runs ``end_call`` — the call's own teardown — claimed the
     same way, exactly once per call: a duplicated finalized transcript must
     not tear the call down twice. Without ``interpret`` the relay runs the
@@ -1773,9 +1775,10 @@ def relay_voice_commands(
                 "voice-actions skill failed; falling back to the net: %r",
                 transcript,
             )
-            match = None
-        if match is None:
             match = detect_voice_command(transcript)
+        # An authoritative skill verdict — including ``none`` — never
+        # consults the net: the turn stays conversational with no
+        # ``detect_voice_command`` call.
         _dispatch(match, transcript)
 
     @session.on("user_input_transcribed")

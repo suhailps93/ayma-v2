@@ -808,6 +808,86 @@
     "voice_kind": "character",
     "voice_value": "sound like a man"
    }
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-1",
+   "member": "",
+   "page": "",
+   "transcript": "did you run the date sim with Marcus yesterday?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-2",
+   "member": "",
+   "page": "",
+   "transcript": "We set up a practice date with Sofia yesterday",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-3",
+   "member": "",
+   "page": "",
+   "transcript": "did you start a practice date with Sofia?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-4",
+   "member": "",
+   "page": "",
+   "transcript": "did we run a date sim with Marcus?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-5",
+   "member": "",
+   "page": "",
+   "transcript": "why did you start a practice date with Sofia?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-6",
+   "member": "",
+   "page": "",
+   "transcript": "when did you run a date sim with Marcus?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-7",
+   "member": "",
+   "page": "",
+   "transcript": "have you run a date sim with Marcus?",
+   "turns": []
+  },
+  {
+   "expected": {
+    "action": "none"
+   },
+   "id": "past-launch-8",
+   "member": "",
+   "page": "",
+   "transcript": "I already set up a practice date with Sofia",
+   "turns": []
   }
  ]
 }

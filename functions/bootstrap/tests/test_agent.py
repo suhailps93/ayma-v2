@@ -4885,20 +4885,39 @@ def test_voice_skill_first_wins_over_the_net(monkeypatch):
     asyncio.run(_main())
 
 
-def test_voice_skill_none_falls_back_to_the_net(monkeypatch):
-    """A ``none`` verdict leaves the turn to the interim net: a clear
-    command still executes deterministically."""
+def test_voice_skill_none_is_authoritative_never_consults_the_net(monkeypatch):
+    """An authoritative ``none`` verdict stays conversational: the relay
+    never consults the deterministic net — no ``detect_voice_command``
+    call — even on a transcript the net would have matched. Nothing is
+    claimed, nothing is queued, and the model is asked nothing."""
     from skills.voice_actions import Verdict
 
+    asked = []
+    net_calls = []
+
+    async def _interpret(transcript, context, *, uid="", session_id=""):
+        asked.append(transcript)
+        return Verdict(action="none")
+
     db, session, ctx, by_name, dedupe = _voice_command_harness(
-        monkeypatch, interpret=_skill_stub(Verdict(action="none"))
+        monkeypatch, interpret=_interpret
     )
+    real_net = agent.detect_voice_command
+    assert real_net("switch to explore") is not None  # the net WOULD match
+
+    def _spy(transcript):
+        net_calls.append(transcript)
+        return real_net(transcript)
+
+    monkeypatch.setattr(agent, "detect_voice_command", _spy)
 
     async def _main():
         session.user_turn("switch to explore")
-        await _drain_until(lambda: len(db.store.queued) == 1)
-        cmd = db.store[("users", "u1", "app_commands", "pending")]
-        assert cmd["screen"] == "explore"
+        await _drain_until(lambda: len(asked) == 1)
+        await asyncio.sleep(0.05)  # a net dispatch would have fired by now
+        assert net_calls == []
+        assert db.store.queued == []
+        assert dedupe.lookup("open_screen") is None
         assert session.generate_replies == []
 
     asyncio.run(_main())
