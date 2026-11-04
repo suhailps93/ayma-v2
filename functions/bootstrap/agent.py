@@ -99,6 +99,7 @@ import skills  # noqa: E402
 import voices  # noqa: E402
 from tool_labels import NO_CHIP as _NO_CHIP  # noqa: E402
 from tool_labels import GUIDED_TOUR_TOOLS as _GUIDED_TOUR_TOOLS  # noqa: E402
+from tool_labels import NAV_CHIP_TOOLS as _NAV_CLAIM_TOOLS  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
@@ -1655,6 +1656,86 @@ def _tools_by_name(tools: list) -> dict:
 _GOODBYE_RESULT = "call ended: the user said goodbye."
 
 
+# --- ack-gated spoken claims -------------------------------------------------
+#
+# The app-command tools have always known whether the app actually did what
+# was asked: a queued command waits (bounded) for the client's ack and
+# reports "the app did NOT navigate" when none comes (skills/app_control).
+# But the *spoken* narration belongs to the realtime model, and it can claim
+# success anyway (founder, 2026-11-03, 22:03 call: "I've opened the models
+# page" for a navigation that never happened — the page never even built;
+# the command had died unacked at a call-segment boundary). The client's
+# chips were already outcome-gated on the same results
+# (tool_labels.outcome_label -> NO_CHIP); speech was not. The gate below is
+# the speech counterpart, scoped to exactly the ack-gated navigation tools
+# (tool_labels.NAV_CHIP_TOOLS) and to the one outcome that must never be
+# narrated as success: a queued command the app never confirmed.
+
+#: The one line the agent itself speaks when an ack-gated command goes
+#: unconfirmed — short, truthful, and free of any success claim. Spoken via
+#: ``session.say`` (the literal words, not a model paraphrase) while the
+#: gate suppresses the model's own narration for the rest of the turn.
+_COMMAND_NOT_CONFIRMED_LINE = (
+    "Sorry, that didn't go through — the app didn't confirm it, "
+    "so nothing changed on your screen."
+)
+
+
+def _command_unconfirmed(name: str, result: object) -> bool:
+    """True when ``result`` is an ack-gated navigation tool's "queued but
+    never confirmed" outcome: the honest ack-timeout lines, or a bounded
+    tool timeout's ``error:`` string. Every other result — a ``navigated:``
+    success, a couldn't-find, a clarification — is a specific, truthful
+    outcome the model may narrate itself, so the gate leaves it alone."""
+    if name not in _NAV_CLAIM_TOOLS or not isinstance(result, str):
+        return False
+    return (
+        result == skills.app_control._NOT_NAVIGATED
+        or result == skills.app_control._NOT_APPLIED
+        or result.startswith("error:")
+    )
+
+
+class _CommandClaimGate:
+    """Per-session latch behind the ack-gated spoken claims (see the block
+    comment above). Fed every session-tool result through
+    :attr:`skills.VoiceTurnDedupe.outcome_observer` — the one funnel the
+    deterministic execution, a same-turn replay and a fresh model call all
+    pass through — plus the deterministic dispatcher's own execution and
+    failure paths. While latched, the model's auto-generated speech for the
+    rest of the user turn is interrupted at ``speech_created`` (the
+    primitive :func:`relay_mute_control` uses) so the unconfirmed action is
+    never narrated as done; the next finalized user turn re-arms it."""
+
+    def __init__(self, session: AgentSession) -> None:
+        self._session = session
+        self.failed = False
+        self._announced = False
+
+    def note_turn(self) -> None:
+        """A new finalized user turn started: re-arm."""
+        self.failed = False
+        self._announced = False
+
+    def note_failure(self) -> None:
+        """An ack-gated command went unconfirmed this turn: latch, and
+        speak the honest line once — from the agent, not the model."""
+        self.failed = True
+        if self._announced:
+            return
+        self._announced = True
+        try:
+            self._session.say(_COMMAND_NOT_CONFIRMED_LINE)
+        except Exception:  # noqa: BLE001 - the gate must never break the call
+            logger.exception("command claim gate could not speak its line")
+
+    def observe(self, name: str, result: object) -> None:
+        """``VoiceTurnDedupe.outcome_observer``: latch on an unconfirmed
+        ack-gated result, ignore everything else."""
+        if _command_unconfirmed(name, result):
+            self.note_failure()
+
+
 def relay_voice_commands(
     session: AgentSession,
     tools: list,
@@ -1690,6 +1771,12 @@ def relay_voice_commands(
     not tear the call down twice. Without ``interpret`` the relay runs the
     deterministic net alone, exactly as before."""
     tools_by_name = _tools_by_name(tools)
+    # Ack-gated spoken claims: the gate observes every result the dedupe
+    # wrapper settles (this dispatcher's executions and the model's own
+    # calls alike) and owns the turn's narration when an ack-gated command
+    # goes unconfirmed.
+    gate = _CommandClaimGate(session)
+    dedupe.outcome_observer = gate.observe
     # The teardown latch: ``note_turn`` retires the "end_call" claim on every
     # finalized turn, so a duplicated sign-off transcript would claim (and
     # run teardown) again — this keeps it to once per call, full stop.
@@ -1711,8 +1798,17 @@ def relay_voice_commands(
             if not fut.done():
                 fut.set_exception(exc)
                 fut.exception()  # mark retrieved: no warning when the model never calls
+            if name in _NAV_CLAIM_TOOLS:
+                # The execution itself blew up: nothing was confirmed, so
+                # the turn's narration is the gate's, not the model's.
+                gate.note_failure()
             logger.exception("deterministic voice command failed: %r", transcript)
             return
+        if _command_unconfirmed(name, result):
+            # Queued but never confirmed by the app: the gate owns this
+            # turn's narration (the dedupe observer reports the same
+            # result; note_failure is idempotent).
+            gate.note_failure()
         if not fut.done():
             fut.set_result(result)
 
@@ -1789,10 +1885,20 @@ def relay_voice_commands(
         if not transcript:
             return
         dedupe.note_turn()
+        gate.note_turn()
         if interpret is None:
             _dispatch(detect_voice_command(transcript), transcript)
             return
         asyncio.create_task(_run_skill_first(transcript))
+
+    @session.on("speech_created")
+    def _on_speech_created_gate(ev) -> None:  # noqa: ANN001 - SpeechCreatedEvent
+        # While the claim gate is latched, the model does not get to narrate
+        # this turn at all — its version could claim an unconfirmed action
+        # succeeded. The gate's own line (spoken at latch time) is the
+        # turn's only narration.
+        if gate.failed:
+            ev.speech_handle.interrupt(force=True)
 
 
 @dataclass

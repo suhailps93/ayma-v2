@@ -5183,3 +5183,217 @@ def test_end_call_goodbye_flushes_signals_deletes_then_shuts_down():
         ("shutdown", "user_goodbye"),
     ]
     assert published == [("call_ending", {"reason": "user_goodbye"}, True)]
+
+
+# ---------------------------------------------------------------------------
+# Ack-gated spoken claims: the command-claim gate.
+#
+# The app-command tools report "the app did NOT navigate" when the client
+# never acks, but the realtime model's narration could claim success anyway
+# (founder, 2026-11-03, 22:03 call). While the gate is latched the model's
+# speech for the turn is interrupted and the agent speaks the truth itself.
+# ---------------------------------------------------------------------------
+
+class _GateSession:
+    """Fake AgentSession for the claim gate: keeps every handler per event
+    (the real emitter does), and records ``say`` lines."""
+
+    def __init__(self):
+        self._handlers = {}
+        self.said = []
+        self.generate_replies = []
+
+    def on(self, name):
+        def _register(fn):
+            self._handlers.setdefault(name, []).append(fn)
+            return fn
+
+        return _register
+
+    def _fire(self, name, ev):
+        for fn in self._handlers.get(name, []):
+            fn(ev)
+
+    def user_turn(self, transcript, is_final=True):
+        self._fire("user_input_transcribed", _UserFinalEv(transcript, is_final))
+
+    def speech_created(self):
+        handle = _FakeSpeechHandle()
+        self._fire("speech_created", _SpeechCreatedEv(handle))
+        return handle
+
+    def say(self, text, **kwargs):
+        self.said.append(text)
+
+    def generate_reply(self, **kwargs):
+        self.generate_replies.append(kwargs)
+
+
+class _GateTool:
+    """A stand-in session tool: records calls, settles a canned result (or
+    raises it when the result is an exception)."""
+
+    def __init__(self, name, result):
+        from types import SimpleNamespace
+
+        self.info = SimpleNamespace(name=name)
+        self._result = result
+        self.calls = []
+
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def _gate_relay(tools):
+    import skills
+
+    session = _GateSession()
+    dedupe = skills.VoiceTurnDedupe()
+    agent.relay_voice_commands(session, tools, dedupe)
+    return session, dedupe
+
+
+def test_command_unconfirmed_scopes_the_gate_to_unconfirmed_nav_results():
+    import skills
+
+    nav = "open_screen"
+    assert agent._command_unconfirmed(nav, skills.app_control._NOT_NAVIGATED)
+    assert agent._command_unconfirmed(nav, skills.app_control._NOT_APPLIED)
+    assert agent._command_unconfirmed(nav, "error: tool exceeded 15.0s")
+    # A confirmed success, a truthful miss and a clarification are the
+    # model's to narrate — the gate never touches them.
+    assert not agent._command_unconfirmed(
+        nav, "navigated: screen=voice_preference"
+    )
+    assert not agent._command_unconfirmed(nav, "no member named Zorblax")
+    assert not agent._command_unconfirmed(
+        nav, skills.app_control.launch_clarification("open_practice_date")
+    )
+    # Non-navigation tools are out of scope entirely.
+    assert not agent._command_unconfirmed(
+        "send_dm_message", skills.app_control._NOT_NAVIGATED
+    )
+    assert not agent._command_unconfirmed(nav, None)
+
+
+def test_command_claim_gate_latches_on_an_unconfirmed_navigation():
+    import skills
+
+    async def _run():
+        tool = _GateTool("open_screen", skills.app_control._NOT_NAVIGATED)
+        session, dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(session.said))
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE]
+        # The model's own narration for this turn is suppressed.
+        assert session.speech_created().interrupted is True
+        # The honest result still settles the claim for the model's replay.
+        claim = dedupe.lookup("open_screen")
+        assert claim is not None
+        assert claim.future.result() == skills.app_control._NOT_NAVIGATED
+        assert tool.calls == [{"screen": "voice_preference"}]
+
+    asyncio.run(_run())
+
+
+def test_command_claim_gate_leaves_a_confirmed_navigation_alone():
+    async def _run():
+        tool = _GateTool(
+            "open_screen",
+            "navigated: screen=voice_preference — the user is now on Models.",
+        )
+        session, _dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(tool.calls))
+        await asyncio.sleep(0.1)
+        assert session.said == []
+        assert session.speech_created().interrupted is False
+
+    asyncio.run(_run())
+
+
+def test_command_claim_gate_rearms_on_the_next_user_turn():
+    import skills
+
+    async def _run():
+        tool = _GateTool("open_screen", skills.app_control._NOT_NAVIGATED)
+        session, _dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: len(session.said) == 1)
+        assert session.speech_created().interrupted is True
+
+        # A fresh finalized turn re-arms: ordinary chat is never suppressed.
+        session.user_turn("how are you today")
+        await asyncio.sleep(0.05)
+        assert session.speech_created().interrupted is False
+
+        # And a second unconfirmed command earns its own honest line.
+        session.user_turn("open the models page")
+        await _drain_until(lambda: len(session.said) == 2)
+        assert session.speech_created().interrupted is True
+
+    asyncio.run(_run())
+
+
+def test_command_claim_gate_latches_when_the_execution_itself_fails():
+    async def _run():
+        tool = _GateTool("open_screen", RuntimeError("firestore down"))
+        session, dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(session.said))
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE]
+        assert session.speech_created().interrupted is True
+        # The dead claim is dropped, so nothing replays an exception.
+        assert dedupe.lookup("open_screen") is None
+
+    asyncio.run(_run())
+
+
+class _NoAckStore(_CmdStore):
+    """A dead client: commands queue, acks never land."""
+
+    def __setitem__(self, key, value):
+        if key == self._pending and isinstance(value, dict) and value.get("id"):
+            self.queued.append(dict(value))
+            dict.__setitem__(self, key, value)
+            return
+        super().__setitem__(key, value)
+
+
+def test_command_claim_gate_dead_client_end_to_end(monkeypatch):
+    """The real tools against a client that never acks — the 22:03 shape:
+    the command queues, the ack wait times out, the gate speaks the truth
+    and suppresses the model's narration, on the deterministic path AND on
+    a fresh model-initiated call alike."""
+    import skills
+
+    db = _CmdDb("u1")
+    db.store = _NoAckStore("u1")
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+    monkeypatch.setattr(skills.app_control, "_ACK_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(skills.app_control, "_ACK_POLL_SECONDS", 0.05)
+    dedupe = skills.VoiceTurnDedupe()
+    session = _GateSession()
+    tools = agent._session_tools(_CmdCtx(), "u1", dedupe=dedupe)
+    by_name = agent._tools_by_name(tools)
+    agent.relay_voice_commands(session, tools, dedupe)
+
+    async def _run():
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(session.said), timeout=10.0)
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE]
+        assert session.speech_created().interrupted is True
+        assert db.store.queued and db.store.queued[0]["screen"] == "voice_preference"
+
+        # A fresh model-initiated call on the next turn is gated the same
+        # way, through the dedupe wrapper's outcome observer.
+        session.user_turn("thanks")
+        result = await by_name["open_screen"](screen="voice_preference")
+        assert result == skills.app_control._NOT_NAVIGATED
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE] * 2
+        assert session.speech_created().interrupted is True
+
+    asyncio.run(_run())

@@ -443,6 +443,13 @@ class VoiceTurnDedupe:
     def __init__(self) -> None:
         self._turn = 0
         self._claims: dict[tuple[int, str], _VoiceClaim] = {}
+        # Optional ``(name, result)`` observer invoked with every result a
+        # wrapped tool settles — a deterministic execution's, a same-turn
+        # replay's, or a fresh model call's alike (:func:`_deduped` is the
+        # one funnel all three pass through). agent.py's command-claim gate
+        # hangs its ack-gating on this; ``None`` (the default) changes
+        # nothing.
+        self.outcome_observer: Callable[[str, object], None] | None = None
 
     def note_turn(self) -> None:
         """A new finalized user turn started: retire every older claim."""
@@ -491,10 +498,17 @@ def _deduped(
     async def _wrapper(*args, **kwargs):
         claim = dedupe.lookup(name)
         if claim is not None and claim.task is not asyncio.current_task():
-            return await claim.future
-        result = fn(*args, **kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+            result = await claim.future
+        else:
+            result = fn(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+        observer = dedupe.outcome_observer
+        if observer is not None:
+            try:
+                observer(name, result)
+            except Exception:  # noqa: BLE001 - an observer must never break a tool
+                logger.exception("voice outcome observer failed for %s", name)
         return result
 
     return _wrapper

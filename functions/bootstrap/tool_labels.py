@@ -29,6 +29,10 @@ _NAV_CHIP_TOOLS = frozenset(
     "open_date_sim open_practice_date search_explore open_notification".split()
 )
 
+# Public alias: agent.py's command-claim gate scopes its speech suppression
+# to exactly the tools whose chips are outcome-gated here.
+NAV_CHIP_TOOLS = _NAV_CHIP_TOOLS
+
 TOOL_LABELS = {
     # Built-in grounding
     "web_search": "Searched the web",
