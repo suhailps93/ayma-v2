@@ -4188,6 +4188,14 @@ class _CmdRoom:
 class _CmdCtx:
     def __init__(self):
         self.room = _CmdRoom()
+        self.deleted_rooms = 0
+        self.shutdown_reasons = []
+
+    async def delete_room(self):
+        self.deleted_rooms += 1
+
+    def shutdown(self, reason):
+        self.shutdown_reasons.append(reason)
 
 
 async def _drain_until(predicate, timeout=5.0):
@@ -4200,9 +4208,14 @@ async def _drain_until(predicate, timeout=5.0):
     await asyncio.sleep(0.05)  # let fire-and-forget publishes land
 
 
-def _voice_command_harness(monkeypatch, uid="u1"):
+def _voice_command_harness(
+    monkeypatch, uid="u1", *, end_call=None, interpret=None,
+    get_context=None,
+):
     """The real session tools plus the real relay on fakes: returns
-    ``(db, session, ctx, by_name, dedupe)``."""
+    ``(db, session, ctx, by_name, dedupe)``. ``end_call`` wires the relay's
+    goodbye teardown, ``interpret``/``get_context`` the voice-actions skill
+    (all None runs the deterministic net alone, exactly as before)."""
     import skills
 
     db = _CmdDb(uid)
@@ -4212,8 +4225,23 @@ def _voice_command_harness(monkeypatch, uid="u1"):
     session = _CmdSession()
     tools = agent._session_tools(ctx, uid, dedupe=dedupe)
     by_name = agent._tools_by_name(tools)
-    agent.relay_voice_commands(session, tools, dedupe)
+    agent.relay_voice_commands(
+        session, tools, dedupe, end_call=end_call, interpret=interpret,
+        get_context=get_context,
+    )
     return db, session, ctx, by_name, dedupe
+
+
+def _skill_stub(verdict):
+    """A voice-actions ``interpret`` stub settling ``verdict`` (or raising
+    it when it is an exception)."""
+
+    async def _interpret(transcript, context, *, uid="", session_id=""):
+        if isinstance(verdict, Exception):
+            raise verdict
+        return verdict
+
+    return _interpret
 
 
 @pytest.mark.parametrize("phrase,tool,keys", [
@@ -4799,3 +4827,340 @@ def test_cascade_tts_error_signals_at_most_once():
 
     asyncio.run(_run())
     assert len(published) == 1
+
+
+# --- voice-actions skill first, deterministic net as fallback ----------------
+#
+# The skill interprets each finalized turn; its verdict executes through the
+# session's own tools claim-first, exactly like a detector match. A ``none``
+# verdict — or a skill failure — falls back to the untouched deterministic
+# net. A skill-interpreted "goodbye Ayma" ends the call through the call's
+# own teardown (the end_call_idle sequence with a "user_goodbye" reason).
+
+
+def test_voice_skill_verdict_executes_through_session_tools(monkeypatch):
+    """A skill navigate verdict queues the navigate through the session's
+    own open_screen tool with zero model involvement (the founder's
+    "Can you open up Explore?" shape)."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(Verdict(action="navigate", page="explore")),
+    )
+
+    async def _main():
+        session.user_turn("Can you open up Explore?")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["screen"] == "explore"
+        deterministic = dedupe.lookup("open_screen").future.result()
+        assert deterministic.startswith("navigated:")
+        dup = await by_name["open_screen"](screen="explore")
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_first_wins_over_the_net(monkeypatch):
+    """The skill is the interpreter: when it disagrees with the net, its
+    verdict is what executes — the net never also fires."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(Verdict(action="navigate", page="messages")),
+    )
+
+    async def _main():
+        session.user_turn("switch to explore")  # the net alone says explore
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["screen"] == "messages"
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_none_falls_back_to_the_net(monkeypatch):
+    """A ``none`` verdict leaves the turn to the interim net: a clear
+    command still executes deterministically."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_skill_stub(Verdict(action="none"))
+    )
+
+    async def _main():
+        session.user_turn("switch to explore")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["screen"] == "explore"
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_failure_falls_back_to_the_net(monkeypatch):
+    """A skill failure (gateway down, timeout) degrades to the net — never
+    a dead turn, never an error to the user from this layer."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_skill_stub(RuntimeError("gateway down"))
+    )
+
+    async def _main():
+        session.user_turn("switch to explore")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["screen"] == "explore"
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_none_with_no_net_match_runs_nothing(monkeypatch):
+    """Pure conversation: a ``none`` verdict on a non-command turn claims
+    nothing, queues nothing, and asks the model nothing."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_skill_stub(Verdict(action="none"))
+    )
+
+    async def _main():
+        session.user_turn("I love hiking and long walks on the beach")
+        await asyncio.sleep(0.05)  # a command would have fired by now
+        assert db.store.queued == []
+        assert dedupe.lookup("open_screen") is None
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_clarify_claims_the_launch_tool(monkeypatch):
+    """A skill ``clarify`` verdict settles the existing "who with?"
+    clarification on the launch tool — nothing launches, and the model's
+    same-turn call replays the clarification."""
+    import skills
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(
+            Verdict(action="clarify", clarify_for="launch_sim")
+        ),
+    )
+
+    async def _main():
+        session.user_turn("run a date sim")
+        await _drain_until(
+            lambda: dedupe.lookup("open_date_sim") is not None
+        )
+        result = await dedupe.lookup("open_date_sim").future
+        assert result == skills.app_control.launch_clarification(
+            "open_date_sim"
+        )
+        assert "who" in result.lower()
+        assert db.store.queued == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_launch_with_context_partner_navigates(monkeypatch):
+    """A skill launch verdict carrying the context-resolved partner ("talk
+    to her in practice" → Dillu) navigates to that member's practice page."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(
+            Verdict(action="launch_practice", partner="Sofia Ruiz")
+        ),
+    )
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn("Can I talk to her in practice?")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["path"] == "/practice/u-sofia"
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_receives_transcript_context_and_ids(monkeypatch):
+    """The relay hands the skill the transcript, the call context, and the
+    metering ids — verified on a second session sharing the harness tools."""
+    import skills
+    from skills.voice_actions import CallContext, Verdict
+
+    seen = {}
+    sentinel = CallContext(member="Dillu", page="profile")
+
+    async def _interpret(transcript, context, *, uid="", session_id=""):
+        seen["transcript"] = transcript
+        seen["context"] = context
+        seen["uid"] = uid
+        seen["session_id"] = session_id
+        return Verdict(action="none")
+
+    db = _CmdDb("u1")
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+    dedupe = skills.VoiceTurnDedupe()
+    ctx = _CmdCtx()
+    session = _CmdSession()
+    tools = agent._session_tools(ctx, "u1", dedupe=dedupe)
+    agent.relay_voice_commands(
+        session, tools, dedupe, interpret=_interpret,
+        get_context=lambda: sentinel, uid="u9", session_id="s9",
+    )
+
+    async def _main():
+        session.user_turn("hello there")
+        await _drain_until(lambda: "transcript" in seen)
+
+    asyncio.run(_main())
+    assert seen == {
+        "transcript": "hello there",
+        "context": sentinel,
+        "uid": "u9",
+        "session_id": "s9",
+    }
+
+
+def test_voice_skill_goodbye_ends_the_call(monkeypatch):
+    """A skill-interpreted sign-off ends the session through the real
+    teardown (memory flush, tell the client why, delete the room, shut
+    down) with zero model involvement, and the turn is claimed."""
+    from skills.voice_actions import Verdict
+
+    flushed = []
+
+    async def _flush():
+        flushed.append(True)
+
+    box = {}
+
+    async def _end_call():
+        await agent.end_call_goodbye(box["ctx"], "u1", _flush)
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, end_call=_end_call,
+        interpret=_skill_stub(Verdict(action="end_call")),
+    )
+    box["ctx"] = ctx
+
+    async def _main():
+        session.user_turn("goodbye Ayma")
+        await _drain_until(lambda: dedupe.lookup("end_call") is not None)
+        result = await dedupe.lookup("end_call").future
+        assert result == agent._GOODBYE_RESULT
+        assert flushed == [True]
+        assert ctx.deleted_rooms == 1
+        assert ctx.shutdown_reasons == ["user_goodbye"]
+        endings = [
+            p for p in ctx.room.local_participant.published
+            if p[0] == "call_ending"
+        ]
+        assert endings == [("call_ending", {"reason": "user_goodbye"}, True)]
+        assert db.store.queued == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_goodbye_duplicate_tears_down_once(monkeypatch):
+    """A duplicated finalized sign-off transcript still runs teardown
+    exactly once."""
+    from skills.voice_actions import Verdict
+
+    runs = []
+
+    async def _end_call():
+        runs.append(True)
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, end_call=_end_call,
+        interpret=_skill_stub(Verdict(action="end_call")),
+    )
+
+    async def _main():
+        session.user_turn("goodbye Ayma")
+        session.user_turn("goodbye Ayma")  # duplicate delivery of one final
+        await _drain_until(lambda: dedupe.lookup("end_call") is not None)
+        await dedupe.lookup("end_call").future
+        await asyncio.sleep(0.05)  # a second teardown would have run by now
+        assert runs == [True]
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_goodbye_without_teardown_stays_with_model(monkeypatch):
+    """An end_call verdict with no teardown callback neither crashes nor
+    tears anything down — the turn is left to the model."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_skill_stub(Verdict(action="end_call"))
+    )
+
+    async def _main():
+        session.user_turn("goodbye Ayma")
+        await asyncio.sleep(0.05)
+        assert ctx.deleted_rooms == 0
+        assert ctx.shutdown_reasons == []
+        assert ctx.room.local_participant.published == []
+        assert db.store.queued == []
+
+    asyncio.run(_main())
+
+
+def test_end_call_goodbye_flushes_signals_deletes_then_shuts_down():
+    """The user-hang-up sequence: memory write -> tell the client why
+    (user_goodbye) -> delete the room -> shut down. The idle stop's shape,
+    never an abrupt cutoff."""
+    order = []
+
+    async def _flush():
+        order.append("flush")
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            order.append("call_ending_published")
+            published.append((topic, json.loads(payload), reliable))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _FakeCtx:
+        room = _Room()
+
+        @staticmethod
+        async def delete_room():
+            order.append("room_deleted")
+
+        @staticmethod
+        def shutdown(reason):
+            order.append(("shutdown", reason))
+
+    asyncio.run(agent.end_call_goodbye(_FakeCtx(), "u1", _flush))
+
+    assert order == [
+        "flush",
+        "call_ending_published",
+        "room_deleted",
+        ("shutdown", "user_goodbye"),
+    ]
+    assert published == [("call_ending", {"reason": "user_goodbye"}, True)]
