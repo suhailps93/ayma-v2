@@ -47,7 +47,6 @@ from pydantic import BaseModel, Field
 
 import dm_moderation
 import dm_schema
-import notifications_triggers
 import persona_snapshot
 import practice_llm
 import token_ledger
@@ -368,10 +367,10 @@ async def _finalize(
     over the FULL transcript, so a continuation's read reflects the whole
     conversation.
 
-    A user-STOPPED run is never scored: the verdict stays empty and the caller
-    must not send the completion notification. The stop flag is re-read here
-    (not just between turns) so a stop that lands during the final turn —
-    after the generator's last between-turns check — is still honored."""
+    A user-STOPPED run is never scored: the verdict stays empty. The stop flag
+    is re-read here (not just between turns) so a stop that lands during the
+    final turn — after the generator's last between-turns check — is still
+    honored."""
     if not stopped:
         stopped = await _cancel_requested(sim_ref)
     moderation = await dm_moderation.moderate(
@@ -486,8 +485,8 @@ async def run_simulation(
             "status": STATUS_RUNNING,
             "other_uid": other_uid,
             # The deterministic DM pair id, persisted so a reopened sim (e.g.
-            # from its completion notification) can still "Message them for
-            # real" without the originating profile in hand.
+            # via the profile ✨) can still "Message them for real" without
+            # the originating profile in hand.
             "thread_id": dm_schema.thread_id(uid, other_uid),
             "max_messages": cap,
             "estimate": estimate_credits(cap),
@@ -538,15 +537,10 @@ async def run_simulation(
         await _fail(sim_ref, "failed", "The simulation failed.")
         raise
 
-    # Completed (status: done) — tell the user it finished and deep-link so a
-    # tap REOPENS this very sim (uid is the owner; carry other_uid + sim_id).
-    # Best-effort inside the trigger: a notification failure never fails the
-    # run. A run the user STOPPED gets no notification: they ended it on
-    # purpose, and there is no score to announce.
-    if not stopped:
-        await notifications_triggers.notify_date_sim_done(
-            db, uid, other_name, sim_id, other_uid, verdict["score"]
-        )
+    # Completed (status: done) — and deliberately NOT announced: no completion
+    # notification is sent (founder ruling 2026-11-05). The result shows once
+    # on the watching screen; afterwards the profile ✨ reopens the last
+    # completed result for the pair (latestCompletedSim).
 
     return {
         "simulation": True,
@@ -685,13 +679,8 @@ async def continue_simulation(
         await _fail(sim_ref, "failed", "The simulation failed.")
         raise
 
-    # Re-surface the completion entry with the refreshed score (deduped per sim,
-    # so a continuation resurfaces one rolling entry rather than stacking).
-    # Skipped when the user STOPPED the continuation — no score to announce.
-    if not stopped:
-        await notifications_triggers.notify_date_sim_done(
-            db, uid, other_name, sim_id, other_uid, verdict["score"]
-        )
+    # A continuation re-scores over the full transcript (above) and, like a
+    # fresh completion, sends no notification (founder ruling 2026-11-05).
 
     return {
         "simulation": True,
@@ -710,8 +699,7 @@ async def continue_simulation(
 async def stop_simulation(db, uid: str, sim_id: str) -> str:
     """Request a STOP of an in-flight simulation: set ``cancel_requested`` on
     the sim doc. The running generator picks it up between turns (and once
-    more at finalize) and halts, keeping what's already produced — unscored,
-    and with no completion notification.
+    more at finalize) and halts, keeping what's already produced — unscored.
 
     Returns ``"stopping"`` when the flag was set on a live run, or
     ``"already_finished"`` when the run had already reached a terminal state
@@ -851,8 +839,8 @@ async def date_sim_stop(
     sim_id: str, caller: Caller = Depends(require_caller)
 ) -> dict[str, object]:
     """STOP an in-flight simulation. Flags the caller's own sim doc; the running
-    generator halts between turns, keeps what's done, and does NOT score it or
-    send the completion notification. Idempotent — the response status is
+    generator halts between turns, keeps what's done, and does NOT score it.
+    Idempotent — the response status is
     ``"stopping"`` for a live run, or ``"already_finished"`` when the run had
     already ended (its score, if any, was already final)."""
     if not _SIM_ID_RE.match(sim_id):

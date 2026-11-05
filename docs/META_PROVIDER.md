@@ -480,8 +480,10 @@ switch their own voice **stack** from the "Ayma's models" settings screen via `G
   (`rime/coda`), Gradium (`gradium/default`), Google — with canonical model ids
   from the LiveKit docs (`docs.livekit.io/agents/models`). Availability is honest
   (`voice_catalog._availability`): a provider in `VOICE_CREDITED_PROVIDERS` shows
-  enabled; any other fallback entry (e.g. `cartesia`) shows **disabled** ("needs
-  LiveKit credits") rather than a silently-failing pick. Per-TTS **voice** lists
+  enabled; any other fallback entry shows **disabled** ("needs LiveKit credits")
+  rather than a silently-failing pick — except `cartesia`, which is hidden
+  entirely until `CARTESIA_API_KEY` is wired (`voice_catalog.cartesia_enabled`;
+  founder ruling 2026-11-05). Per-TTS **voice** lists
   are not in `/v1/models`, so they come from the documented fallback
   `voice_catalog._TTS_FALLBACK_VOICES` — the LiveKit docs' per-provider sample
   voices (overridable by `VOICE_TTS_VOICES_<PROVIDER>`); a wrong id only triggers a

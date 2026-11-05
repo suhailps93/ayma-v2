@@ -107,12 +107,14 @@ OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal
 # FLAG_VOICE_PROVIDER / FLAG_LLM_FALLBACK_TO_GOOGLE here (that reroutes off
 # LiveKit).
 # Cartesia (staging-first, grant-funded): VOICE_CREDITED_PROVIDERS appends
-# cartesia to the committed default so the staging catalog shows the Sonic/Ink
-# options enabled. Cartesia usage bills the Cartesia grant (plugin +
-# CARTESIA_API_KEY on the agent), NOT LiveKit credits — the committed config
-# default stays untouched until promotion. Needed on BOTH services: the API
-# serves GET /voice/engines availability, and the agent's set_stt/set_tts
-# skills re-validate availability against the same catalog.
+# cartesia to the committed default so wiring CARTESIA_API_KEY lights up the
+# Sonic/Ink options with no other change (the served catalog hides them until
+# that key exists — founder ruling 2026-11-05). Cartesia usage bills the
+# Cartesia grant (plugin + CARTESIA_API_KEY on the agent), NOT LiveKit credits
+# — the committed config default stays untouched until promotion. Needed on
+# BOTH services: the API serves GET /voice/engines availability, and the
+# agent's set_stt/set_tts skills re-validate availability against the same
+# catalog.
 CARTESIA_CREDITED_PROVIDERS="inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,cartesia"
 API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=cloudrun,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini,VOICE_CREDITED_PROVIDERS=${CARTESIA_CREDITED_PROVIDERS}"
 

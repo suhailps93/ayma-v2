@@ -461,21 +461,23 @@ def test_each_turn_is_written_the_moment_it_is_produced():
     assert [m["speaker"] for m in msgs] == ["you", "them", "you", "them"]
 
 
-def test_finalize_writes_completed_at_other_uid_thread_id_and_notifies(monkeypatch):
+def _notification_docs(db):
+    return [
+        n.to_dict()
+        for n in db.collection("users").document(VIEWER)
+        .collection("notifications").stream()
+    ]
+
+
+def test_finalize_writes_completed_at_other_uid_thread_id_and_sends_no_notification():
     """R2-H6: a completed sim is RE-OPENABLE — it records what it needs to be
     found again (``other_uid`` + ``completed_at`` for the latest-per-candidate
-    lookup, ``thread_id`` so "message for real" still works on reopen) and fires
-    a completion notification deep-linking back to THIS sim."""
+    lookup, ``thread_id`` so "message for real" still works on reopen) — and
+    completion writes NO notification doc (founder ruling 2026-11-05): the
+    result shows once on the watching screen and stays reachable via the
+    profile ✨ (``latestCompletedSim``)."""
     db = _seeded_db()
     _fake_personas()
-    fired: list[tuple] = []
-
-    async def fake_notify(db_, uid, name, sim_id, other_uid, score):
-        fired.append((uid, name, sim_id, other_uid, score))
-
-    monkeypatch.setattr(
-        date_sim.notifications_triggers, "notify_date_sim_done", fake_notify
-    )
     try:
         asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_notif_1"))
     finally:
@@ -487,40 +489,10 @@ def test_finalize_writes_completed_at_other_uid_thread_id_and_notifies(monkeypat
     assert parent["other_uid"] == MAYA  # which candidate it belongs to
     assert parent["thread_id"]  # DM pair id persisted for reopen
     assert "finished_at" not in parent  # renamed, no stale duplicate left
+    assert parent["verdict"]["score"] == 78  # the verdict (from _fake_personas)
 
-    # Exactly one completion notification, carrying the reopen coordinates.
-    assert len(fired) == 1
-    uid, name, sim_id, other_uid, score = fired[0]
-    assert uid == VIEWER
-    assert sim_id == "sim_notif_1"
-    assert other_uid == MAYA
-    assert score == 78  # the verdict score (from _fake_personas)
-
-
-def test_date_sim_notification_deep_link_reopens_the_sim():
-    """The completion trigger writes a centre entry whose deep link carries the
-    match uid + sim id so a tap reopens that exact simulation."""
-    import asyncio as _asyncio
-
-    import notifications_triggers
-    from notifications_schema import NOTIF_SKILL_DONE
-
-    db = _seeded_db()
-    _asyncio.run(
-        notifications_triggers.notify_date_sim_done(
-            db, VIEWER, "Maya", "sim_xyz", MAYA, 83
-        )
-    )
-    notes = [
-        n.to_dict()
-        for n in db.collection("users").document(VIEWER)
-        .collection("notifications").stream()
-    ]
-    assert len(notes) == 1
-    note = notes[0]
-    assert note["type"] == NOTIF_SKILL_DONE
-    assert note["deep_link"] == f"date_sim/{MAYA}/sim_xyz"
-    assert "Maya" in note["body"] and "83/100" in note["body"]
+    # No completion notification doc was written.
+    assert _notification_docs(db) == []
 
 
 def test_failure_marks_error_and_keeps_partial_transcript():
@@ -669,6 +641,7 @@ def test_continue_appends_more_turns_and_rescores():
     assert len(out["transcript"]) == 10
     assert after["status"] == "done"
     assert after["verdict"]["score_label"]  # re-scored over the full transcript
+    assert _notification_docs(db) == []  # a continuation sends none either
 
 
 def test_continue_missing_sim_raises_value_error():
@@ -720,24 +693,16 @@ def _sim_ref(db, sim_id):
     )
 
 
-def test_stop_halts_further_turns_and_keeps_partial(monkeypatch):
+def test_stop_halts_further_turns_and_keeps_partial():
     """D: a stop request (``cancel_requested``) set mid-run halts the generator
     between turns; the partial transcript is kept, status is ``done`` with
     ``stopped`` true — and the stopped run is NOT scored (the verdict call
-    never runs, the stored verdict stays empty) and fires NO completion
-    notification: the user ended it, so there is no result to announce."""
+    never runs, the stored verdict stays empty) and no notification doc is
+    written (none is ever sent for sims)."""
     db = _seeded_db()
     sim_ref = _sim_ref(db, "sim_stop_1")
     produced = {"n": 0}
     verdict_calls = {"n": 0}
-    fired: list[tuple] = []
-
-    async def fake_notify(db_, uid, name, sim_id, other_uid, score):
-        fired.append((uid, name, sim_id, other_uid, score))
-
-    monkeypatch.setattr(
-        date_sim.notifications_triggers, "notify_date_sim_done", fake_notify
-    )
 
     async def fake_text(system, message, uid, feature, session_id):
         produced["n"] += 1
@@ -764,26 +729,18 @@ def test_stop_halts_further_turns_and_keeps_partial(monkeypatch):
     assert parent["verdict"] == {"score": 0, "score_label": "", "summary": ""}
     assert out["stopped"] is True
     assert out["score"] == 0
-    # And no "your score is ready" notification for a run the user stopped.
-    assert fired == []
+    # And no notification doc for a run the user stopped.
+    assert _notification_docs(db) == []
 
 
-def test_stop_landing_during_the_final_turn_still_suppresses_the_score(monkeypatch):
+def test_stop_landing_during_the_final_turn_still_suppresses_the_score():
     """A stop that lands while the LAST turn is generating misses the
     generator's between-turns check (there is no next turn) — the finalize
     re-read must still honor it: all turns are kept, but no verdict is
-    produced and no completion notification fires."""
+    produced, and no notification doc is written."""
     db = _seeded_db()
     sim_ref = _sim_ref(db, "sim_stop_late")
     produced = {"n": 0}
-    fired: list[tuple] = []
-
-    async def fake_notify(db_, uid, name, sim_id, other_uid, score):
-        fired.append((uid, name, sim_id, other_uid, score))
-
-    monkeypatch.setattr(
-        date_sim.notifications_triggers, "notify_date_sim_done", fake_notify
-    )
 
     async def fake_text(system, message, uid, feature, session_id):
         produced["n"] += 1
@@ -806,7 +763,7 @@ def test_stop_landing_during_the_final_turn_still_suppresses_the_score(monkeypat
     assert parent["stopped"] is True
     assert parent["verdict"] == {"score": 0, "score_label": "", "summary": ""}
     assert out["stopped"] is True
-    assert fired == []
+    assert _notification_docs(db) == []
 
 
 def test_stop_simulation_sets_the_flag_and_404s_on_missing():

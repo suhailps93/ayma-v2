@@ -34,6 +34,9 @@ def test_categorize_live_none_when_no_types():
 
 
 def test_catalog_uses_live_when_fetch_succeeds(monkeypatch):
+    # The key is wired here (enabled), so the live cartesia realtime entry is
+    # served; keyless it is withheld (test_live_catalog_hides_cartesia_...).
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
     monkeypatch.setattr(
         vc, "_fetch_livekit_models", lambda: [
             {"id": "deepgram/nova-3", "type": "STT"},
@@ -59,10 +62,14 @@ def test_catalog_uses_live_when_fetch_succeeds(monkeypatch):
 
 def test_catalog_falls_back_when_fetch_fails(monkeypatch):
     monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
     vc.clear_cache()
     cat = vc.catalog()
     assert cat["source"] == "fallback"
-    assert [s["id"] for s in cat["stt"]] == list(vc.CONFIG.voice_cascade_stt_models)
+    # Keyless, so the gate withholds the cartesia STT ids from the config list.
+    assert [s["id"] for s in cat["stt"]] == [
+        m for m in vc.CONFIG.voice_cascade_stt_models if "cartesia" not in m
+    ]
     assert any(b["id"] == "meta-muse-spark" for b in cat["brains"])
 
 
@@ -203,23 +210,34 @@ def test_fallback_lists_credited_providers_with_types(monkeypatch):
 
 
 def test_fallback_marks_uncredited_provider_disabled(monkeypatch):
-    # Cartesia is a real LiveKit TTS but NOT in the founder's credited set, so
-    # on the fallback path it must be shown disabled (honest "needs enabling")
-    # rather than as a pick that would silently fail mid-call.
+    # A fallback-list provider outside the credited set is still shown
+    # disabled (honest "needs enabling") rather than as a silently-failing
+    # pick — pinned with a synthetic provider, since cartesia itself is now
+    # hidden while disabled (test_fallback_hides_cartesia_while_disabled).
+    import dataclasses
+
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
     monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG, voice_cascade_tts_models=(
+            *vc.CONFIG.voice_cascade_tts_models, "acme/synth-1",
+        ),
+    ))
     vc.clear_cache()
     cat = vc.catalog()
-    cartesia = next(t for t in cat["tts"] if t["id"] == "cartesia/sonic-3")
-    assert cartesia["available"] is False
-    assert cartesia["requires_secret"]  # a non-empty note
+    synth = next(t for t in cat["tts"] if t["id"] == "acme/synth-1")
+    assert synth["available"] is False
+    assert synth["requires_secret"]  # a non-empty note
 
 
 def test_fallback_enables_cartesia_when_credited(monkeypatch):
-    # Staging adds cartesia via the VOICE_CREDITED_PROVIDERS env override
-    # (scripts/deploy-staging.sh): the Sonic TTS + both Ink STT ids then show
+    # Enabled means credited AND key-wired: staging credits cartesia via the
+    # VOICE_CREDITED_PROVIDERS env override (scripts/deploy-staging.sh), and
+    # once CARTESIA_API_KEY lands the Sonic TTS + both Ink STT ids show
     # enabled on the fallback path.
     import dataclasses
 
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
     monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG, voice_credited_providers=(
@@ -237,10 +255,13 @@ def test_fallback_enables_cartesia_when_credited(monkeypatch):
     assert stt["cartesia/ink-whisper"]["available"] is True
 
 
-def test_fallback_lists_cartesia_stt_but_uncredited_by_default(monkeypatch):
-    # The committed default lists ink-2 (primary) + ink-whisper
-    # (wide-language fallback) after the credited two — still disabled
-    # until a deploy credits cartesia, so committed defaults are unchanged.
+def test_fallback_omits_cartesia_stt_while_uncredited_by_default(monkeypatch):
+    # The committed default still lists ink-2 (primary) + ink-whisper
+    # (wide-language fallback) after the credited two, and cartesia stays out
+    # of the committed credited set — but the served catalog omits them while
+    # the key is missing (founder ruling 2026-11-05), so committed defaults
+    # are unchanged AND nothing inactive is offered.
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
     monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
     assert "cartesia" not in vc.CONFIG.voice_credited_providers
@@ -251,14 +272,75 @@ def test_fallback_lists_cartesia_stt_but_uncredited_by_default(monkeypatch):
     stt = {s["id"]: s for s in cat["stt"]}
     assert stt["deepgram/nova-3"]["available"] is True
     assert stt["assemblyai/universal-streaming"]["available"] is True
-    assert stt["cartesia/ink-2"]["available"] is False
-    assert stt["cartesia/ink-whisper"]["available"] is False
-    assert stt["cartesia/ink-2"]["requires_secret"]
+    assert "cartesia/ink-2" not in stt
+    assert "cartesia/ink-whisper" not in stt
+
+
+def test_fallback_hides_cartesia_while_disabled(monkeypatch):
+    # Founder ruling 2026-11-05: while Cartesia is inactive (no
+    # CARTESIA_API_KEY wired) it must not appear in ANY served selection
+    # list — not shown-disabled, absent. The credited providers stay offered.
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    vc.clear_cache()
+    cat = vc.catalog()
+    assert cat["source"] == "fallback"
+    served = (
+        [s["id"] for s in cat["stt"]]
+        + [t["id"] for t in cat["tts"]]
+        + [m["id"] for m in cat["realtime_models"]]
+        + [b["id"] for b in cat["brains"]]
+    )
+    assert not [i for i in served if "cartesia" in i]
+    assert not vc.is_valid_stt("cartesia/ink-2")
+    assert not vc.is_valid_tts("cartesia/sonic-3")
+    stt = {s["id"]: s for s in cat["stt"]}
+    assert stt["deepgram/nova-3"]["available"] is True
+    assert stt["assemblyai/universal-streaming"]["available"] is True
+    tts = {t["id"]: t for t in cat["tts"]}
+    assert tts["inworld/inworld-tts-1"]["available"] is True
+
+
+def test_fallback_hides_cartesia_when_credited_but_keyless(monkeypatch):
+    # The staging state: the deploy credits the provider (so a future key
+    # lights it up with no other change) but the grant key is not wired yet —
+    # the key is the enablement signal, so Cartesia stays hidden.
+    import dataclasses
+
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG, voice_credited_providers=(
+            *vc.CONFIG.voice_credited_providers, "cartesia",
+        ),
+    ))
+    vc.clear_cache()
+    cat = vc.catalog()
+    served = [s["id"] for s in cat["stt"]] + [t["id"] for t in cat["tts"]]
+    assert not [i for i in served if "cartesia" in i]
+
+
+def test_live_catalog_hides_cartesia_realtime_while_disabled(monkeypatch):
+    # The gate covers the live path too: a cartesia realtime model LiveKit
+    # returns is withheld while the key is missing.
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    monkeypatch.setattr(
+        vc, "_fetch_livekit_models", lambda: [
+            {"id": "deepgram/nova-3", "type": "STT"},
+            {"id": "cartesia/sonic-realtime", "type": "realtime"},
+        ]
+    )
+    vc.clear_cache()
+    cat = vc.catalog()
+    assert cat["source"] == "livekit"
+    assert [m["id"] for m in cat["realtime_models"]] == ["gemini-live"]
 
 
 def test_live_catalog_marks_everything_available(monkeypatch):
     # When the live catalog IS populated, it lists exactly what credits enable,
-    # so a non-"credited-list" provider from it is still available.
+    # so a non-"credited-list" provider from it is still available. (The live
+    # cartesia entry appears only with its key wired — enabled here.)
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
     monkeypatch.setattr(
         vc, "_fetch_livekit_models", lambda: [
             {"id": "cartesia/sonic-3", "type": "TTS"},
@@ -268,6 +350,7 @@ def test_live_catalog_marks_everything_available(monkeypatch):
     vc.clear_cache()
     cat = vc.catalog()
     assert cat["source"] == "livekit"
+    assert "cartesia/sonic-3" in [t["id"] for t in cat["tts"]]
     assert all(t["available"] for t in cat["tts"])
 
 

@@ -101,6 +101,49 @@ def test_engines_openai_realtime_hidden_until_flag(monkeypatch):
     assert models["openai-realtime"]["requires_secret"] == "OPENAI_API_KEY"
 
 
+def test_engines_hides_cartesia_while_disabled(monkeypatch):
+    # Founder ruling 2026-11-05: the served catalog (what the models page
+    # renders) contains no cartesia entry while the key is missing — even
+    # when the deploy credits the provider (the staging state).
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "VOICE_CREDITED_PROVIDERS",
+        "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,cartesia",
+    )
+    monkeypatch.setattr(main, "CONFIG", config._load())
+    monkeypatch.setattr(voice_catalog, "CONFIG", config._load())
+    voice_catalog.clear_cache()
+    _patch_db(monkeypatch, _ProfileDoc())
+    body = client.get("/voice/engines", headers=_auth(monkeypatch)).json()
+    served = (
+        [s["id"] for s in body["stt"]]
+        + [t["id"] for t in body["tts"]]
+        + [m["id"] for m in body["realtime_models"]]
+        + [b["id"] for b in body["brains"]]
+    )
+    assert not [i for i in served if "cartesia" in i]
+
+
+def test_engines_lists_cartesia_when_enabled(monkeypatch):
+    # Genuinely enabled (credited + key wired): the Sonic TTS + both Ink STT
+    # ids are served, available.
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    monkeypatch.setenv(
+        "VOICE_CREDITED_PROVIDERS",
+        "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,cartesia",
+    )
+    monkeypatch.setattr(main, "CONFIG", config._load())
+    monkeypatch.setattr(voice_catalog, "CONFIG", config._load())
+    voice_catalog.clear_cache()
+    _patch_db(monkeypatch, _ProfileDoc())
+    body = client.get("/voice/engines", headers=_auth(monkeypatch)).json()
+    tts = {t["id"]: t for t in body["tts"]}
+    assert tts["cartesia/sonic-3"]["available"] is True
+    stt = {s["id"]: s for s in body["stt"]}
+    assert stt["cartesia/ink-2"]["available"] is True
+    assert stt["cartesia/ink-whisper"]["available"] is True
+
+
 def test_engines_reflects_saved_cascade_selection(monkeypatch):
     doc = _ProfileDoc(
         {

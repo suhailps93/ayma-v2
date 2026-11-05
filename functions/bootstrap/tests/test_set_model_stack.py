@@ -404,14 +404,49 @@ def test_set_tts_fish_audio_with_a_space_resolves():
     assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_TTS] == "fishaudio/s2.1-pro"
 
 
-def test_set_tts_uncredited_provider_is_honest_and_writes_nothing():
-    # Cartesia is a real LiveKit TTS but NOT credited on this account, so it must
-    # be refused with an honest reason — never silently picked (it would fail).
+def test_set_tts_uncredited_provider_is_honest_and_writes_nothing(monkeypatch):
+    # Cartesia is inactive here (no key wired, not credited), so selecting it
+    # must be refused with an honest reason — never silently picked.
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    voice_catalog.clear_cache()
     db = _Db()
     msg = _run(set_model_stack._bind_set_tts(db, "u1")("cartesia"))
     assert _PROFILE not in db.store
     assert "cartesia" in msg.lower()
     assert "inworld" in msg.lower()  # names the ones that DO work
+
+
+def test_set_tts_key_wired_but_uncredited_is_honest_and_writes_nothing(monkeypatch):
+    # Key wired but the provider not credited: still refused honestly
+    # (defense in depth) — never silently picked.
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    voice_catalog.clear_cache()
+    try:
+        db = _Db()
+        msg = _run(set_model_stack._bind_set_tts(db, "u1")("cartesia"))
+    finally:
+        voice_catalog.clear_cache()
+    assert _PROFILE not in db.store
+    assert "cartesia" in msg.lower()
+    assert "needs" in msg.lower()  # the honest "needs LiveKit credits" reason
+    assert "inworld" in msg.lower()  # names the ones that DO work
+
+
+def test_credited_providers_fill_gates_cartesia_on_the_key(monkeypatch):
+    # The set_stt/set_tts tool descriptions' option lists inherit the gate: a
+    # credited-but-keyless cartesia is not offered; key-wired it is.
+    import dataclasses
+
+    monkeypatch.setattr(voice_catalog, "CONFIG", dataclasses.replace(
+        voice_catalog.CONFIG, voice_credited_providers=(
+            *voice_catalog.CONFIG.voice_credited_providers, "cartesia",
+        ),
+    ))
+    models = ("deepgram/nova-3", "cartesia/ink-2")
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    assert set_model_stack._credited_providers(models) == "deepgram"
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    assert set_model_stack._credited_providers(models) == "deepgram, cartesia"
 
 
 def test_set_stt_unknown_is_honest_and_writes_nothing():

@@ -814,10 +814,16 @@ _REALTIME_DEFAULT_FILL = str(voice_catalog._realtime_models({})[0]["label"])
 def _credited_providers(models: tuple[str, ...]) -> str:
     """The provider names of ``models`` that carry LiveKit credits (so are
     offered), for a prompt hint. Config-only — no LiveKit network at import; the
-    tool's resolver re-validates against the live catalog at call time."""
+    tool's resolver re-validates against the live catalog at call time.
+    Cartesia is offered only when genuinely enabled (``CARTESIA_API_KEY``
+    wired): staging credits the provider but has no key yet, and an inactive
+    Cartesia must not appear in any list — not even this one (founder ruling
+    2026-11-05)."""
     out: list[str] = []
     for m in models:
         prov = m.split("/", 1)[0] if "/" in m else m
+        if prov == "cartesia" and not voice_catalog.cartesia_enabled():
+            continue
         if prov in voice_catalog.CONFIG.voice_credited_providers and prov not in out:
             out.append(prov)
     return ", ".join(out)

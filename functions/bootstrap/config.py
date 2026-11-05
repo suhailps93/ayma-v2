@@ -998,7 +998,10 @@ class Config:
     ``VOICE_CASCADE_STT_MODELS`` (CSV) overrides; extend by adding ids. The
     ``cartesia/ink-2`` (primary) / ``cartesia/ink-whisper`` (wide-language
     fallback) ids ride the grant-funded Cartesia plugin when the agent has
-    ``CARTESIA_API_KEY``, else the Inference construction (``agent.py``)."""
+    ``CARTESIA_API_KEY``, else the Inference construction (``agent.py``). The
+    served catalog withholds ``cartesia/*`` ids until that key is wired
+    (``voice_catalog.cartesia_enabled``) — an inactive Cartesia never appears
+    in a selection list (founder ruling 2026-11-05)."""
 
     voice_cascade_tts_models: tuple[str, ...]
     """Selectable TTS model ids for CASCADE mode, LiveKit Inference
@@ -1040,8 +1043,10 @@ class Config:
     2026-10-27 with an InferenceGrants JWT), so the dropdowns are built from the
     config fallback lists — and there we can't query the project. A cascade
     option whose provider is in THIS set is shown enabled; any other provider in
-    a fallback list (e.g. ``cartesia``) is shown DISABLED with a "needs
-    enabling" note rather than as a silently-failing option (``voice_catalog``).
+    a fallback list is shown DISABLED with a "needs enabling" note rather than
+    as a silently-failing option (``voice_catalog``). ``cartesia`` is the
+    exception: it is hidden entirely (not shown disabled) until its grant key
+    is wired — see ``voice_catalog.cartesia_enabled``.
 
     Default = the founder's active LiveKit startup credits (``inworld``,
     ``deepgram``, ``fishaudio``, ``assemblyai``, ``rime``, ``gradium``,
@@ -1049,8 +1054,9 @@ class Config:
     ``cartesia`` is deliberately NOT in the default: it is grant-funded via
     its own plugin + ``CARTESIA_API_KEY`` (Route A), not LiveKit credits,
     and is enabled per-deploy (staging adds it via
-    ``VOICE_CREDITED_PROVIDERS`` in ``scripts/deploy-staging.sh``) — the
-    committed default stays untouched until promotion."""
+    ``VOICE_CREDITED_PROVIDERS`` in ``scripts/deploy-staging.sh``, and the
+    catalog serves it once the key lands) — the committed default stays
+    untouched until promotion."""
 
     voice_accent_capable_providers: tuple[str, ...]
     """Provider segments whose voice honours a free-text ACCENT instruction
@@ -1368,22 +1374,23 @@ def _load() -> Config:
         ).strip().lower() == "true",
         # Cartesia STT after the credited two: ink-2 is the decided model, kept
         # alongside ink-whisper as the wide-language fallback (both ride the
-        # grant-funded plugin when the agent has CARTESIA_API_KEY). Still
-        # "needs enabling" under the committed default (cartesia is not in
-        # voice_credited_providers); staging enables it via env.
+        # grant-funded plugin when the agent has CARTESIA_API_KEY). Withheld
+        # from served lists until that key is wired (voice_catalog gate);
+        # staging credits the provider via env so the key lights it up.
         voice_cascade_stt_models=_csv(
             "VOICE_CASCADE_STT_MODELS",
             "deepgram/nova-3,assemblyai/universal-streaming,"
             "cartesia/ink-2,cartesia/ink-whisper",
         ),
         # Credited providers first (shown enabled on the fallback path), then
-        # cartesia/sonic-3 — a documented LiveKit TTS the founder has NOT
-        # confirmed credits for, kept selectable but marked "needs enabling"
-        # (see voice_credited_providers). IDs from LiveKit docs
+        # cartesia/sonic-3 — withheld from served lists until CARTESIA_API_KEY
+        # is wired (voice_catalog gate; an inactive Cartesia never appears in
+        # a selection list). IDs from LiveKit docs
         # (docs.livekit.io/agents/models/tts, verified 2026-10-27). Staging
-        # enables cartesia via VOICE_CREDITED_PROVIDERS + the grant key (Route
-        # A); the catalog id stays cartesia/sonic-3 while the plugin builds the
-        # pinned flagship (cartesia_tts_model, below).
+        # credits cartesia via VOICE_CREDITED_PROVIDERS so the grant key
+        # (Route A) lights it up with no other change; the catalog id stays
+        # cartesia/sonic-3 while the plugin builds the pinned flagship
+        # (cartesia_tts_model, below).
         voice_cascade_tts_models=_csv(
             "VOICE_CASCADE_TTS_MODELS",
             "inworld/inworld-tts-1,fishaudio/s2.1-pro,rime/coda,"

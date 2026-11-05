@@ -32,8 +32,13 @@ production today. Those lists enumerate the providers the project has LiveKit
 startup credits for, with canonical model ids from the LiveKit docs
 (docs.livekit.io/agents/models). On the fallback path availability is marked
 TRUTHFULLY (:func:`_availability`): a provider in ``CONFIG.voice_credited_providers``
-is enabled; any other (e.g. ``cartesia``) is shown disabled with a "needs LiveKit
-credits" note rather than a silently-failing pick. If LiveKit later populates
+is enabled; any other is shown disabled with a "needs LiveKit credits" note
+rather than a silently-failing pick. ``cartesia`` is the exception: it rides
+its own grant-funded plugin, so it is an ENABLEMENT gate, not an availability
+marking — :func:`cartesia_enabled` (``CARTESIA_API_KEY`` wired) decides whether
+its ids appear in the served lists at all, and while the key is missing they
+are absent entirely (founder ruling 2026-11-05), never shown disabled.
+If LiveKit later populates
 ``/v1/models``, the live path takes over automatically and everything it returns
 is enabled. Merged in on top either way: the direct Meta Muse brain (not a
 LiveKit model — via the Meta API) and the two realtime models (Gemini Live, the
@@ -235,6 +240,27 @@ def _provider_of(model: str) -> str:
     return model.split("/", 1)[0] if "/" in model else ""
 
 
+def cartesia_enabled() -> bool:
+    """Whether Cartesia may appear in any served selection list.
+
+    Cartesia STT/TTS ride the grant-funded ``livekit-plugins-cartesia`` legs,
+    which only exist when ``CARTESIA_API_KEY`` is wired — so the KEY is the
+    enablement signal, not the credited-providers list (staging credits the
+    provider via ``VOICE_CREDITED_PROVIDERS`` but has no key yet). Founder
+    ruling 2026-11-05: while Cartesia is inactive it must not appear at all —
+    not shown-disabled, absent — in voice/TTS/STT/model lists and the models
+    page. :func:`_sources` enforces this for the served catalog (every surface
+    inherits it); ``set_model_stack._credited_providers`` enforces it for the
+    voice skills' option fills. Selecting cartesia while uncredited still
+    errors honestly (defense in depth)."""
+    return bool(os.getenv("CARTESIA_API_KEY", "").strip())
+
+
+def _is_cartesia_model(model_id: str) -> bool:
+    mid = (model_id or "").strip()
+    return _provider_of(mid) == "cartesia" or mid == "cartesia"
+
+
 def _env_voices(provider: str) -> list[Voice] | None:
     raw = os.getenv(f"VOICE_TTS_VOICES_{provider.upper()}", "").strip()
     if not raw:
@@ -388,10 +414,15 @@ def _with_configured(ids: list[str], configured: str) -> list[str]:
 def _sources() -> dict[str, object]:
     """Resolved component model ids by category: the live LiveKit catalog when
     reachable, else the config fallback. Shared by the catalog + validators.
-    The configured Meta-cascade STT/TTS are always included."""
+    The configured Meta-cascade STT/TTS are always included. Cartesia ids are
+    withheld from every bucket while Cartesia is inactive
+    (:func:`cartesia_enabled`) — the one gate every served list inherits."""
     src = _raw_sources()
     src["stt"] = _with_configured(src["stt"], CONFIG.meta_cascade_stt_model)  # type: ignore[arg-type]
     src["tts"] = _with_configured(src["tts"], CONFIG.meta_cascade_tts_model)  # type: ignore[arg-type]
+    if not cartesia_enabled():
+        for key in ("llm", "stt", "tts", "realtime"):
+            src[key] = [m for m in src[key] if not _is_cartesia_model(m)]  # type: ignore[union-attr]
     return src
 
 
@@ -426,7 +457,9 @@ def _availability(provider: str, source: str) -> tuple[bool, str]:
     fallback option is returned ``available=False`` with a short note, so the UI
     shows it disabled ("needs LiveKit credits") instead of offering a pick that
     would silently fail mid-call. A bare id with no provider segment is left
-    available (nothing to check it against)."""
+    available (nothing to check it against). Cartesia never reaches this
+    marked-disabled: while its key is missing its ids are withheld upstream in
+    :func:`_sources` (see :func:`cartesia_enabled`)."""
     if source == "livekit":
         return True, ""
     if not provider or provider in CONFIG.voice_credited_providers:
