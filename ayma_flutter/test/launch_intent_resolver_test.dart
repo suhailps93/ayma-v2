@@ -63,7 +63,7 @@ void main() {
       });
       expect(intent, isA<GenericDeepLinkIntent>());
       expect((intent as GenericDeepLinkIntent).targetPath,
-          equals('/date-sim/her?sim_id=sim_abc'));
+          equals('/date-sim/her?sim_id=sim_abc&from=notification'));
     });
 
     test(

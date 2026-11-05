@@ -37,6 +37,7 @@ class DateSimScreen extends StatefulWidget {
     this.service,
     this.profiles,
     this.simId,
+    this.openedFromNotification = false,
   });
 
   static const path = '/date-sim/:uid';
@@ -54,6 +55,12 @@ class DateSimScreen extends StatefulWidget {
   /// Reopen an existing simulation (already running or finished) and watch it,
   /// instead of starting at the setup form. No new run is started.
   final String? simId;
+
+  /// True when this screen was opened from a notification — a warm bell-tap
+  /// push off the Notifications list or a cold FCM/deep-link open pushed over
+  /// the boot shell. Done then navigates to the origin profile instead of
+  /// popping (a pop would land on the list/shell beneath, Scout 2289).
+  final bool openedFromNotification;
 
   @override
   State<DateSimScreen> createState() => _DateSimScreenState();
@@ -316,11 +323,15 @@ class _DateSimScreenState extends State<DateSimScreen> {
 
   /// DONE on the finished result: exit the sim back to the origin profile —
   /// the person this sim was with. When the sim was started from their
-  /// profile it sits beneath us, so pop back to it; when it was opened cold
-  /// (completion notification / deep link) there is nothing beneath, so
-  /// navigate to that person's profile instead. Never back into the sim.
+  /// profile it sits beneath us, so pop back to it; when it was opened from
+  /// a notification (warm bell tap or cold FCM/deep-link open — always
+  /// pushed over the Notifications list or the boot shell, so `canPop()` is
+  /// true but the screen beneath is NOT the profile), navigate to that
+  /// person's profile instead. Never back into the sim.
   void _done() {
-    if (context.canPop()) {
+    if (widget.openedFromNotification) {
+      context.go('/profile/user/${widget.uid}');
+    } else if (context.canPop()) {
       context.pop();
     } else {
       context.go('/profile/user/${widget.uid}');

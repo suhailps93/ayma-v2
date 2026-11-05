@@ -163,7 +163,10 @@ class LaunchIntentResolver {
       final other = Uri.encodeComponent(dateSimMatch.group(1)!);
       final simId = Uri.encodeQueryComponent(dateSimMatch.group(2)!);
       return GenericDeepLinkIntent(
-        targetPath: '/date-sim/$other?sim_id=$simId',
+        // `from=notification` marks the notification origin so Done
+        // navigates to the origin profile instead of popping to the shell
+        // beneath (Scout 2289). Mirrors deepLinkToRoute's date_sim branch.
+        targetPath: '/date-sim/$other?sim_id=$simId&from=notification',
         rawPayload: data,
       );
     }

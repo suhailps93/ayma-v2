@@ -259,7 +259,7 @@ void main() {
       queue.notifyNavigationSettled();
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(routed, ['/date-sim/her?sim_id=sim123']);
+      expect(routed, ['/date-sim/her?sim_id=sim123&from=notification']);
     });
 
     test('a warm date_sim tap routes to that sim via the DeepLinkQueue',
@@ -296,7 +296,7 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(routed, ['/date-sim/her?sim_id=sim123']);
+      expect(routed, ['/date-sim/her?sim_id=sim123&from=notification']);
     });
 
     test('listenForTaps delegates to DeepLinkQueue', () async {

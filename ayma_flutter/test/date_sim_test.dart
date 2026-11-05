@@ -173,7 +173,9 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 /// The date-sim + profile routes as the production router builds them: the
-/// sim id rides the `sim_id` query param into [DateSimScreen].
+/// sim id rides the `sim_id` query param into [DateSimScreen], and a
+/// notification open carries `from=notification` into
+/// [DateSimScreen.openedFromNotification].
 List<RouteBase> _simRoutes(_Harness h) => [
   GoRoute(
     path: '/profile/user/:uid',
@@ -186,6 +188,8 @@ List<RouteBase> _simRoutes(_Harness h) => [
       uid: s.pathParameters['uid']!,
       api: h.api,
       simId: s.uri.queryParameters['sim_id'],
+      openedFromNotification:
+          s.uri.queryParameters['from'] == 'notification',
       service: DateSimService(auth: h.auth, firestore: h.fs),
       profiles: ProfileService(auth: h.auth, firestore: h.fs),
     ),
@@ -1025,7 +1029,7 @@ void main() {
       // The finished-sim notification's deep link carries the exact sim id as
       // a query param on the sim route.
       final route = deepLinkToRoute('date_sim/her/sim1', myUid: 'me');
-      expect(route, '/date-sim/her?sim_id=sim1');
+      expect(route, '/date-sim/her?sim_id=sim1&from=notification');
       final router = GoRouter(
         initialLocation: '/profile/user/her',
         routes: _simRoutes(h),
@@ -1140,6 +1144,122 @@ void main() {
 
       await sims.simController.close();
       await sims.msgController.close();
+    },
+  );
+
+  // --- H: a notification-opened sim exits Done to the profile, never the - //
+  // --- screen beneath (Scout 2289: Done popped to the Notifications list) - //
+  testWidgets(
+    'H: cold notification open (shell beneath, pushed like production) — '
+    'Done lands on the profile, not the shell',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.finish();
+      // Production cold open: the app boots to the `/` shell, then the
+      // DeepLinkQueue navigate pushes the deep-link route on top — so
+      // `canPop()` is TRUE beneath the sim (the G tests' bare
+      // initialLocation had nothing beneath, which is why they missed this).
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
+          ..._simRoutes(h),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+
+      navigateToRoute(deepLinkToRoute('date_sim/her/sim1', myUid: 'me'),
+          router: router);
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('dateSimDoneButton')));
+      await _settle(tester);
+
+      expect(find.text('PROFILE her'), findsOneWidget);
+      expect(find.byType(DateSimScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'H: warm bell tap (Notifications list beneath) — Done lands on the '
+    'profile, not the list',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.finish();
+      final router = GoRouter(
+        initialLocation: '/notifications',
+        routes: [
+          GoRoute(
+            path: '/notifications',
+            builder: (_, __) => const Scaffold(body: Text('NOTIFICATIONS')),
+          ),
+          ..._simRoutes(h),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+
+      // Warm tap: the notification centre pushes the deep-link route on top
+      // of the list.
+      navigateToRoute(deepLinkToRoute('date_sim/her/sim1', myUid: 'me'),
+          router: router);
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('dateSimDoneButton')));
+      await _settle(tester);
+
+      expect(find.text('PROFILE her'), findsOneWidget);
+      expect(find.text('NOTIFICATIONS'), findsNothing);
+      expect(find.byType(DateSimScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'H: dangling-notification empty-state (Notifications list beneath) — '
+    'Done lands on the profile, not the list',
+    (tester) async {
+      final h = _Harness();
+      // No sim doc is ever written: a Start-over wipe deleted it while its
+      // completion notification still dangles.
+      final router = GoRouter(
+        initialLocation: '/notifications',
+        routes: [
+          GoRoute(
+            path: '/notifications',
+            builder: (_, __) => const Scaffold(body: Text('NOTIFICATIONS')),
+          ),
+          ..._simRoutes(h),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+
+      navigateToRoute(deepLinkToRoute('date_sim/her/gone', myUid: 'me'),
+          router: router);
+      await _settle(tester);
+      expect(find.text('This sim is no longer available'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('dateSimDoneButton')));
+      await _settle(tester);
+
+      expect(find.text('PROFILE her'), findsOneWidget);
+      expect(find.text('NOTIFICATIONS'), findsNothing);
+      expect(find.byType(DateSimScreen), findsNothing);
     },
   );
 }

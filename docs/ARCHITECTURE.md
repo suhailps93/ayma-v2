@@ -2455,7 +2455,7 @@ flowchart LR
   V -- "verdict + status=done + completed_at<br/>(or status=error, partial kept)" --> FS
   V -- "status=done" --> NOTIF["notify_date_sim_done<br/>(skill_result, deduped per sim,<br/>deep link date_sim/{other_uid}/{sim_id})"]
   FS -- "owner-read snapshots<br/>(rules; Admin-SDK writes only)" --> UI["Flutter DateSimScreen<br/>live chat + typing row,<br/>then score + summary<br/>— never sent to the match<br/>confirmed-missing doc → honest empty-state"]
-  NOTIF -. "tap → deepLinkToRoute →<br/>/date-sim/{uid}?sim_id=…" .-> UI
+  NOTIF -. "tap → deepLinkToRoute →<br/>/date-sim/{uid}?sim_id=…&from=notification" .-> UI
   REOPEN["✨ re-entry / notification tap<br/>(latestCompletedSim: other_uid==x,<br/>status==done, newest completed_at)"] -. "reopen with sim_id" .-> UI
   UI -. "Keep the conversation going<br/>(chooser: +3/+5/+10)<br/>POST /date-sim/{id}/continue {more_messages}" .-> CONT["continue_simulation:<br/>resume at next seq,<br/>append the CHOSEN N turns, re-score<br/>over the FULL transcript"]
   CONT --> LOOP
@@ -2613,10 +2613,14 @@ deep link `date_sim/{other_uid}/{sim_id}` that reopens *that* sim; it is deduped
 per sim (`date_sim_{sim_id}`) so a continuation resurfaces one rolling entry
 with the refreshed score rather than stacking, and is best-effort (a push
 failure never fails the sim). `notification_service.deepLinkToRoute` maps that
-link to `/date-sim/{other_uid}?sim_id={sim_id}`; the date-sim route reads the
-`sim_id` query param (or `extra['sim_id']`) and passes it to
-`DateSimScreen(simId:)`, which reopens and watches the existing docs instead of
-showing the setup form. The ✨ entry on a profile checks
+link to `/date-sim/{other_uid}?sim_id={sim_id}&from=notification` (cold opens
+resolve the same shape through `LaunchIntentResolver`); the date-sim route
+reads the `sim_id` query param (or `extra['sim_id']`) and passes it to
+`DateSimScreen(simId:)`, which reopens and watches the existing docs instead
+of showing the setup form. `from=notification` marks the notification origin
+into `DateSimScreen(openedFromNotification:)`, so Done navigates to the
+origin profile instead of popping to the Notifications list / boot shell
+beneath (Scout 2289); a sim opened from a profile still pops back to it. The ✨ entry on a profile checks
 `DateSimService.latestCompletedSim(other_uid)` (two equality filters,
 `other_uid == x` + `status == done`, newest-by-`completed_at` client-side — no
 composite index) and, when one exists, routes with its `sim_id` so a re-tap

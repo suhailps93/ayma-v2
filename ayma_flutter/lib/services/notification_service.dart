@@ -274,12 +274,14 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
     return '/appearance/${Uri.encodeComponent(appearance.group(1)!)}';
   }
   // A finished AI Date Simulation (`date_sim/{other_uid}/{sim_id}`), reopening
-  // that exact sim on the date-sim screen (the sim id rides as a query param).
+  // that exact sim on the date-sim screen (the sim id rides as a query
+  // param). `from=notification` marks the notification origin so Done
+  // navigates to the origin profile instead of popping to the list beneath.
   final dateSim = RegExp(r'^date_sim/([^/]+)/(.+)$').firstMatch(deepLink);
   if (dateSim != null) {
     final other = Uri.encodeComponent(dateSim.group(1)!);
     final simId = Uri.encodeQueryComponent(dateSim.group(2)!);
-    return '/date-sim/$other?sim_id=$simId';
+    return '/date-sim/$other?sim_id=$simId&from=notification';
   }
   if (deepLink == 'matches') return '/matches';
   if (deepLink == 'profile_suggestions') return '/profile/me/updates';

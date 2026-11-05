@@ -295,12 +295,19 @@ final appRouter = GoRouter(
         final extra = state.extra as Map<String, dynamic>? ?? const {};
         // Reopen a specific (running or finished) sim when a `sim_id` is given
         // — the deep link's query param (completion notification) or `extra`.
+        // A notification open also carries `from=notification`, so Done
+        // navigates to the origin profile instead of popping to the
+        // Notifications list / boot shell beneath (Scout 2289).
         final simId =
             state.uri.queryParameters['sim_id'] ?? extra['sim_id'] as String?;
+        final fromNotification =
+            state.uri.queryParameters['from'] == 'notification' ||
+            extra['from'] == 'notification';
         return DateSimScreen(
           uid: state.pathParameters['uid']!,
           name: (extra['name'] as String?) ?? '',
           simId: simId,
+          openedFromNotification: fromNotification,
         );
       },
     ),
