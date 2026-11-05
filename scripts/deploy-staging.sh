@@ -216,20 +216,22 @@ deploy_agent() {
   local args=(run deploy "$AGENT_SERVICE"
     --project "$PROJECT" --region "$REGION" --image "$AGENT_IMAGE"
     --no-allow-unauthenticated
-    # STAGING keeps ONE warm worker (unlike prod's scale-to-zero + ayma-lk):
-    # staging routes voice to this automatic-dispatch Cloud Run worker
-    # (VOICE_AGENT_CLOUD_DEFAULT=cloudrun). At min-instances=0 the worker drains
-    # between calls and a call's room finds no registered worker -> stuck
-    # connecting. min=1 keeps it registered so staging voice reliably joins
-    # (within the Cloud credit).
-    --min-instances 1 --max-instances 20
+    # STAGING IS NEVER WARM (founder rule, 2026-11-04): min-instances=0,
+    # same as prod (docs/deploy.md §12.2). The old min=1 warm worker burned
+    # $9.28 idle in Nov 1-4 and is gone — do NOT set this back to 1 here.
+    # Staging voice cold-starts via the same wake ping as prod
+    # (agent_wake.py -> AYMA_AGENT_URL, wired in pass 2 below) plus the
+    # client's room-join wait; --no-cpu-throttling stays ON because a
+    # throttled instance never finishes LiveKit worker registration
+    # (orthogonal to min-instances — same as prod).
+    --min-instances 0 --max-instances 20
     --no-cpu-throttling --cpu-boost --memory 2Gi
     --timeout 3600)
   if $FULL; then
     # AYMA_AGENT_URL (own URL) is set in pass 2, after the URL exists.
     args+=(--set-env-vars "$AGENT_ENV_BASE" --set-secrets "$AGENT_SECRETS")
   fi
-  echo ">> deploying $AGENT_SERVICE (min-instances=1, warm worker for staging voice)"
+  echo ">> deploying $AGENT_SERVICE (min-instances=0, staging is never warm)"
   gcloud "${args[@]}"
 }
 
