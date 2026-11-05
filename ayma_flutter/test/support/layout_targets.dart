@@ -488,6 +488,25 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
           ),
         );
       },
+    // The deleted date-sim state (no doc behind the reopened sim id — a
+    // Start-over wipe left its notification dangling): the honest
+    // empty-state, held to the same sizes/scales/directions as the rest.
+    'date-sim live (missing)': (context) async {
+      final fs = FakeFirebaseFirestore();
+      if (!context.mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => DateSimScreen(
+            uid: 'her',
+            name: kLongName,
+            api: api,
+            simId: 'gone',
+            service: DateSimService(auth: kLayoutAuth, firestore: fs),
+            profiles: ProfileService(auth: kLayoutAuth, firestore: fs),
+          ),
+        ),
+      );
+    },
     // The date-sim "keep the conversation going" chooser (C): a bottom sheet
     // of +3/+5/+10 options, each with its rough credit cost.
     'date-sim continue chooser sheet': (context) async {

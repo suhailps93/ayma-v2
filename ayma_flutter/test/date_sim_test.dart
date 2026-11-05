@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:ayma_flutter/features/date_sim/date_sim_models.dart';
 import 'package:ayma_flutter/features/date_sim/date_sim_screen.dart';
+import 'package:ayma_flutter/routing/app_router.dart' show navigateToRoute;
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/date_sim_service.dart';
+import 'package:ayma_flutter/services/notification_service.dart'
+    show deepLinkToRoute;
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -166,6 +170,43 @@ Future<void> _settle(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// The date-sim + profile routes as the production router builds them: the
+/// sim id rides the `sim_id` query param into [DateSimScreen].
+List<RouteBase> _simRoutes(_Harness h) => [
+  GoRoute(
+    path: '/profile/user/:uid',
+    builder: (_, s) =>
+        Scaffold(body: Text('PROFILE ${s.pathParameters['uid']}')),
+  ),
+  GoRoute(
+    path: '/date-sim/:uid',
+    builder: (_, s) => DateSimScreen(
+      uid: s.pathParameters['uid']!,
+      api: h.api,
+      simId: s.uri.queryParameters['sim_id'],
+      service: DateSimService(auth: h.auth, firestore: h.fs),
+      profiles: ProfileService(auth: h.auth, firestore: h.fs),
+    ),
+  ),
+];
+
+/// A [DateSimService] whose streams the test drives by hand, so "still
+/// loading" (no emission yet) and "confirmed absent" (null emission) are two
+/// distinct, deterministic states.
+class _GatedSims extends DateSimService {
+  _GatedSims({required super.auth, required super.firestore});
+
+  final simController = StreamController<DateSimDoc?>.broadcast();
+  final msgController = StreamController<List<DateSimMessage>>.broadcast();
+
+  @override
+  Stream<DateSimDoc?> watchSim(String simId) => simController.stream;
+
+  @override
+  Stream<List<DateSimMessage>> watchMessages(String simId) =>
+      msgController.stream;
 }
 
 void main() {
@@ -968,6 +1009,137 @@ void main() {
       // No profile beneath (cold open): navigate to the sim person's profile.
       expect(find.text('PROFILE her'), findsOneWidget);
       expect(find.byType(DateSimScreen), findsNothing);
+    },
+  );
+
+  // --- Notification deep link pins: ?sim_id= -> sim result (warm + cold) --- //
+  testWidgets(
+    'G: warm notification tap (date_sim deep link) reopens the stored result',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.say(1, 'them', 'hi back!');
+      await h.finish();
+      // The finished-sim notification's deep link carries the exact sim id as
+      // a query param on the sim route.
+      final route = deepLinkToRoute('date_sim/her/sim1', myUid: 'me');
+      expect(route, '/date-sim/her?sim_id=sim1');
+      final router = GoRouter(
+        initialLocation: '/profile/user/her',
+        routes: _simRoutes(h),
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+
+      // Warm tap: the notification centre pushes the deep-link route on top.
+      navigateToRoute(route, router: router);
+      await _settle(tester);
+
+      // THAT stored sim's result — score + summary + transcript.
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+      expect(find.text('78'), findsOneWidget);
+      expect(
+        find.text('You two kept it light and curious — a promising start.'),
+        findsOneWidget,
+      );
+      expect(find.text('hey there!'), findsOneWidget);
+      expect(find.text('hi back!'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'G: cold notification open (date_sim deep link) shows the stored result '
+    "and Done lands on that person's profile",
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.finish();
+      final router = GoRouter(
+        // Cold open: the deep link IS the initial location (fresh stack).
+        initialLocation: deepLinkToRoute('date_sim/her/sim1', myUid: 'me'),
+        routes: _simRoutes(h),
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+      expect(find.text('78'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('dateSimDoneButton')));
+      await _settle(tester);
+
+      expect(find.text('PROFILE her'), findsOneWidget);
+      expect(find.byType(DateSimScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'G: a confirmed-absent sim shows the honest empty-state, with Done to '
+    'the origin profile',
+    (tester) async {
+      final h = _Harness();
+      // No sim doc is ever written: a Start-over wipe deleted it while its
+      // completion notification still dangles.
+      final router = GoRouter(
+        initialLocation: deepLinkToRoute('date_sim/her/gone', myUid: 'me'),
+        routes: _simRoutes(h),
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+
+      expect(find.text('This sim is no longer available'), findsOneWidget);
+      expect(find.byKey(const Key('dateSimMissingMessage')), findsOneWidget);
+      expect(find.byKey(const Key('dateSimTyping')), findsNothing);
+      expect(find.byKey(const Key('dateSimDoneButton')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('dateSimDoneButton')));
+      await _settle(tester);
+
+      expect(find.text('PROFILE her'), findsOneWidget);
+      expect(find.byType(DateSimScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'G: the missing copy never shows while the doc is still loading',
+    (tester) async {
+      final h = _Harness();
+      final sims = _GatedSims(auth: h.auth, firestore: h.fs);
+      await tester.pumpWidget(
+        _wrap(
+          DateSimScreen(
+            uid: 'her',
+            name: 'Dana',
+            api: h.api,
+            simId: 'sim1',
+            service: sims,
+            profiles: ProfileService(auth: h.auth, firestore: h.fs),
+          ),
+        ),
+      );
+      await _settle(tester);
+
+      // No emission yet: still honestly loading.
+      expect(find.text('Starting the conversation…'), findsOneWidget);
+      expect(find.text('This sim is no longer available'), findsNothing);
+
+      // Confirmed absent: the honest empty-state replaces the loader.
+      sims.simController.add(null);
+      await _settle(tester);
+      expect(find.text('This sim is no longer available'), findsOneWidget);
+      expect(find.byKey(const Key('dateSimTyping')), findsNothing);
+
+      await sims.simController.close();
+      await sims.msgController.close();
     },
   );
 }

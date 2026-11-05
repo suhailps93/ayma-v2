@@ -89,6 +89,13 @@ class _DateSimScreenState extends State<DateSimScreen> {
   DateSimReadiness? _readiness;
 
   DateSimDoc? _sim;
+
+  /// True once the watched sim doc is CONFIRMED absent: the doc stream
+  /// emitted (so this is not merely slow) and the doc does not exist — e.g. a
+  /// Start-over wipe deleted it while its completion notification still
+  /// dangles. Set only when reopening an existing sim (or a live doc
+  /// vanishes); a fresh run starts doc-less until the backend's first write.
+  bool _simMissing = false;
   List<DateSimMessage> _messages = const [];
   StreamSubscription<DateSimDoc?>? _simSub;
   StreamSubscription<List<DateSimMessage>>? _msgSub;
@@ -205,6 +212,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
       _phase = _Phase.setup;
       _error = message;
       _sim = null;
+      _simMissing = false;
       _messages = const [];
     });
     if (outOfCredits) await showOutOfCreditsSheet(context);
@@ -221,6 +229,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
       _simId = simId;
       _error = null;
       _sim = null;
+      _simMissing = false;
       _messages = const [];
       _taste = null;
     });
@@ -263,11 +272,24 @@ class _DateSimScreenState extends State<DateSimScreen> {
   }
 
   void _onSim(DateSimDoc? sim) {
-    if (!mounted || sim == null) return;
+    if (!mounted) return;
+    if (sim == null) {
+      // The stream emitted, so the doc is confirmed absent — not merely slow.
+      // Fresh runs start doc-less until the backend's first write (keep the
+      // "Starting…" row); a reopen that finds nothing is deleted data.
+      if (widget.simId != null || _sim != null) {
+        setState(() {
+          _sim = null;
+          _simMissing = true;
+        });
+      }
+      return;
+    }
     final finished =
         sim.status == DateSimStatus.done && _sim?.status != DateSimStatus.done;
     setState(() {
       _sim = sim;
+      _simMissing = false;
       // A user-stopped run produces no result to present: no score is written
       // (see the backend finalize) and no taste card is loaded under it.
       if (finished && !sim.stopped) _taste = loadTasteMatch(_api, widget.uid);
@@ -413,6 +435,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
       setState(() {
         _phase = _Phase.setup;
         _sim = null;
+        _simMissing = false;
         _messages = const [];
         _taste = null;
         _simId = null;
@@ -538,6 +561,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
 
   // --- live: banner + transcript as it streams + read + CTA -------------- //
   Widget _live(AymaTokens ac) {
+    if (_simMissing) return _missing(ac);
     final sim = _sim;
     final status = sim?.status ?? DateSimStatus.running;
     final running = status == DateSimStatus.running;
@@ -730,6 +754,43 @@ class _DateSimScreenState extends State<DateSimScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  /// Honest empty-state for a deleted sim: the watched doc is confirmed
+  /// absent (a Start-over wipe deletes sims but leaves their completion
+  /// notifications dangling), so say so instead of spinning forever. Shown
+  /// only after the doc stream confirms the absence — never while loading.
+  /// Done behaves exactly like the result screen's: back to the origin
+  /// profile, never back into the sim.
+  Widget _missing(AymaTokens ac) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(Icons.history_rounded, size: 40, color: ac.fgDim),
+          const SizedBox(height: 16),
+          Text(
+            'This sim is no longer available',
+            key: const Key('dateSimMissingMessage'),
+            textAlign: TextAlign.center,
+            style: AymaType.sans(size: 16, color: ac.fg, height: 1.4),
+          ),
+          const SizedBox(height: 28),
+          FilledButton.icon(
+            key: const Key('dateSimDoneButton'),
+            onPressed: _done,
+            style: FilledButton.styleFrom(
+              backgroundColor: ac.accent,
+              foregroundColor: ac.onAccent,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            icon: const Icon(Icons.check_rounded, size: 18),
+            label: const Text('Done'),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -2414,6 +2414,10 @@ transcript (clearly labelled *Simulated — not sent to <name>*) plus a
 compatibility read: a **0–100 score**, a short label, and a "how it went"
 summary, with a **Done** action returning to the origin profile. Nothing
 is ever sent to the other user — it is a one-sided, server-side preview.
+A reopened sim whose doc is confirmed absent (a Start-over wipe deletes
+sims but leaves their completion notifications dangling) shows an honest
+"This sim is no longer available" empty-state instead of spinning forever,
+with the same Done-to-profile exit — never while the doc is still loading.
 
 **Reuse, not reinvention.** It generalises the Practice Date persona machinery
 (`practice_core.py`) from "simulate one persona replying to the user" to "run
@@ -2450,7 +2454,7 @@ flowchart LR
   LOOP -. "each turn, the moment it is produced" .-> FS[("Firestore<br/>users/{uid}/date_sims/{sim_id}<br/>+ /messages/{seq}")]
   V -- "verdict + status=done + completed_at<br/>(or status=error, partial kept)" --> FS
   V -- "status=done" --> NOTIF["notify_date_sim_done<br/>(skill_result, deduped per sim,<br/>deep link date_sim/{other_uid}/{sim_id})"]
-  FS -- "owner-read snapshots<br/>(rules; Admin-SDK writes only)" --> UI["Flutter DateSimScreen<br/>live chat + typing row,<br/>then score + summary<br/>— never sent to the match"]
+  FS -- "owner-read snapshots<br/>(rules; Admin-SDK writes only)" --> UI["Flutter DateSimScreen<br/>live chat + typing row,<br/>then score + summary<br/>— never sent to the match<br/>confirmed-missing doc → honest empty-state"]
   NOTIF -. "tap → deepLinkToRoute →<br/>/date-sim/{uid}?sim_id=…" .-> UI
   REOPEN["✨ re-entry / notification tap<br/>(latestCompletedSim: other_uid==x,<br/>status==done, newest completed_at)"] -. "reopen with sim_id" .-> UI
   UI -. "Keep the conversation going<br/>(chooser: +3/+5/+10)<br/>POST /date-sim/{id}/continue {more_messages}" .-> CONT["continue_simulation:<br/>resume at next seq,<br/>append the CHOSEN N turns, re-score<br/>over the FULL transcript"]
