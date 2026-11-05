@@ -676,6 +676,93 @@ def _build_cascade_brain(brain_id: str):
     return inference.LLM(model=model)
 
 
+def _provider_of(model_id: str) -> str:
+    """``"cartesia/sonic-3"`` -> ``"cartesia"``; bare model -> ``""``."""
+    return model_id.split("/", 1)[0] if "/" in model_id else ""
+
+
+def _build_cartesia_stt(stt_id: str, language: str | None):
+    """A grant-funded Cartesia Ink STT leg for a ``cartesia/*`` ``stt_id``,
+    or ``None`` when inert — the id is not a Cartesia one,
+    ``CARTESIA_API_KEY`` is unset, or ``livekit-plugins-cartesia`` is
+    absent. ``None`` makes the caller keep the LiveKit Inference
+    construction, so selecting Cartesia before the secret exists can never
+    take voice down (the ``build_openai_realtime_model`` fail-soft
+    pattern). The plugin model is the id's suffix (``ink-2`` primary,
+    ``ink-whisper`` wide-language fallback — catalog ids, never
+    hardcoded)."""
+    if _provider_of(stt_id) != "cartesia":
+        return None
+    model = stt_id.split("/", 1)[1] if "/" in stt_id else ""
+    if not model:
+        logger.warning(
+            "Cartesia STT id %r carries no model — "
+            "using LiveKit Inference instead",
+            stt_id,
+        )
+        return None
+    key = os.getenv("CARTESIA_API_KEY", "")
+    if not key:
+        logger.warning(
+            "Cartesia STT is selected but CARTESIA_API_KEY is unset — using "
+            "LiveKit Inference instead (the founder must add the secret; see "
+            "docs/FEATURE_FLAGS.md)"
+        )
+        return None
+    try:
+        from livekit.plugins import cartesia
+    except ImportError:
+        # ImportError (not just ModuleNotFoundError) so any plugin-import
+        # failure — missing dep, broken install — fails soft, never the
+        # call.
+        logger.warning(
+            "livekit-plugins-cartesia is required for the Cartesia STT "
+            "leg — using LiveKit Inference instead"
+        )
+        return None
+    kwargs: dict[str, object] = {"model": model, "api_key": key}
+    if language:
+        kwargs["language"] = language
+    return cartesia.STT(**kwargs)
+
+
+def _build_cartesia_tts(tts_id: str, voice: str, language: str | None):
+    """A grant-funded Cartesia Sonic TTS leg for a ``cartesia/*`` ``tts_id``,
+    or ``None`` when inert (same fail-soft contract as
+    :func:`_build_cartesia_stt`). The plugin model is the PINNED flagship
+    (``CONFIG.cartesia_tts_model``) — the catalog id stays
+    ``cartesia/sonic-3``. ``voice`` is already validated for the provider
+    (``voice_catalog.safe_tts_voice``); empty means the vendor default and
+    is left unset so the plugin uses its own."""
+    if _provider_of(tts_id) != "cartesia":
+        return None
+    key = os.getenv("CARTESIA_API_KEY", "")
+    if not key:
+        logger.warning(
+            "Cartesia TTS is selected but CARTESIA_API_KEY is unset — using "
+            "LiveKit Inference instead (the founder must add the secret; see "
+            "docs/FEATURE_FLAGS.md)"
+        )
+        return None
+    try:
+        from livekit.plugins import cartesia
+    except ImportError:
+        # Same fail-soft widening as the STT leg above.
+        logger.warning(
+            "livekit-plugins-cartesia is required for the Cartesia TTS "
+            "leg — using LiveKit Inference instead"
+        )
+        return None
+    kwargs: dict[str, object] = {
+        "model": CONFIG.cartesia_tts_model, "api_key": key,
+    }
+    if voice:
+        kwargs["voice"] = voice
+    if language:
+        kwargs["language"] = language
+    return cartesia.TTS(**kwargs)
+
+
 def build_cascade_session(
     brain_id: str,
     stt_id: str,
@@ -689,11 +776,15 @@ def build_cascade_session(
 
     * **STT** — ``stt_id`` through the LiveKit Inference gateway
       (``inference.STT``), LiveKit-credit covered. ``voice_language`` biases its
-      language when given.
+      language when given. A ``cartesia/*`` id rides the grant-funded plugin
+      (``cartesia.STT``) when ``CARTESIA_API_KEY`` is present, else the same
+      Inference construction.
     * **brain (LLM)** — :func:`_build_cascade_brain` for ``brain_id``.
     * **TTS** — ``tts_id`` through the same gateway (``inference.TTS``);
       ``tts_voice`` (else ``CONFIG.meta_cascade_tts_voice``, else the vendor
-      default) picks the voice.
+      default) picks the voice. A ``cartesia/*`` id rides the grant-funded
+      plugin (``cartesia.TTS`` with the pinned ``CONFIG.cartesia_tts_model``)
+      when the key is present, else the same Inference construction.
     * **VAD** — bundled Silero (``inference.VAD``), local turn segmentation (the
       cascade has no server-side turn detection).
 
@@ -707,13 +798,19 @@ def build_cascade_session(
     from livekit.agents import inference
 
     stt_kwargs: dict[str, object] = {"model": stt_id}
+    stt_language: str | None = None
     if voice_language:
         lang = voices.bcp47_hint(voice_language)
         if lang:
             # Inference STT language is the primary subtag (e.g. "en"), not a
             # full BCP-47 region tag.
-            stt_kwargs["language"] = lang.split("-")[0]
-    stt = inference.STT(**stt_kwargs)
+            stt_language = lang.split("-")[0]
+            stt_kwargs["language"] = stt_language
+    cartesia_stt = _build_cartesia_stt(stt_id, stt_language)
+    if cartesia_stt is not None:
+        stt = cartesia_stt
+    else:
+        stt = inference.STT(**stt_kwargs)
     tts_kwargs: dict[str, object] = {"model": tts_id}
     requested_tts_voice = (tts_voice or "").strip() or CONFIG.meta_cascade_tts_voice
     # The voice must be VALID for the active TTS provider. A cross-provider id
@@ -729,9 +826,13 @@ def build_cascade_session(
             "and leave the call silent)",
             requested_tts_voice, tts_id,
         )
-    if chosen_tts_voice:
-        tts_kwargs["voice"] = chosen_tts_voice
-    tts = inference.TTS(**tts_kwargs)
+    cartesia_tts = _build_cartesia_tts(tts_id, chosen_tts_voice, stt_language)
+    if cartesia_tts is not None:
+        tts = cartesia_tts
+    else:
+        if chosen_tts_voice:
+            tts_kwargs["voice"] = chosen_tts_voice
+        tts = inference.TTS(**tts_kwargs)
     vad = inference.VAD(model=CONFIG.meta_cascade_vad_model)
     session_kwargs: dict[str, object] = {
         "stt": stt,

@@ -204,8 +204,25 @@ _TTS_FALLBACK_VOICES: dict[str, list[Voice]] = {
         Voice(id="6MFfc37kq0sBjBjy", label="Sterling",
               description="en-US", gender="masculine"),
     ],
+    # Cartesia Sonic voice-library UUIDs (docs.cartesia.ai sample voices for
+    # Sonic 3.x + the livekit-plugins-cartesia default, verified 2026-11-04):
+    # valid for the plugin route (agent.py builds cartesia.TTS with the pinned
+    # flagship model). Locales are per-voice (there is no free-text accent
+    # instruction — cartesia stays out of voice_accent_capable_providers).
     "cartesia": [
         Voice(id="", label="Default voice", description="the vendor default voice"),
+        Voice(id="f786b574-daa5-4673-aa0c-cbe3e8534c02", label="Katie",
+              description="the plugin default voice"),
+        Voice(id="db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", label="Skylar",
+              description="en-US", gender="feminine"),
+        Voice(id="47c38ca4-5f35-497b-b1a3-415245fb35e1", label="Daniel",
+              description="en-US", gender="masculine"),
+        Voice(id="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc", label="Jacqueline",
+              description="en-US", gender="feminine"),
+        Voice(id="62ae83ad-4f6a-430b-af41-a9bede9286ca", label="Gemma",
+              description="en-GB", gender="feminine"),
+        Voice(id="ef191366-f52f-447a-a398-ed8c0f2943a1", label="Archie",
+              description="en-GB", gender="masculine"),
     ],
     "elevenlabs": [
         Voice(id="", label="Default voice", description="the vendor default voice"),

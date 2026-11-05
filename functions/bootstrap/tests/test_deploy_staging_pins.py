@@ -100,6 +100,26 @@ def test_bases_pin_the_funded_livekit_project():
         assert "p_484u2zjk8ob" not in base
 
 
+def test_bases_enable_cartesia_on_staging():
+    # Staging-first Cartesia: both services carry the credited-providers
+    # override (the committed default set + cartesia) so the staging catalog
+    # (API) and the set_stt/set_tts skills (agent) offer it.
+    text = _script_text()
+    m = re.search(
+        r'^CARTESIA_CREDITED_PROVIDERS="([^"]*)"', text, re.MULTILINE
+    )
+    assert m, "CARTESIA_CREDITED_PROVIDERS assignment not found"
+    providers = m.group(1).split(",")
+    assert providers[-1] == "cartesia"
+    assert providers[:-1] == [
+        "inworld", "deepgram", "fishaudio", "assemblyai", "rime",
+        "gradium", "google",
+    ]
+    for base in (_base(text, "API_ENV_BASE"), _base(text, "AGENT_ENV_BASE")):
+        assert "VOICE_CREDITED_PROVIDERS=" in base
+        assert "${CARTESIA_CREDITED_PROVIDERS}" in base
+
+
 def test_livekit_secrets_use_the_staging_names():
     text = _script_text()
     api_secrets = _base(text, "API_SECRETS")

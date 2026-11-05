@@ -1002,13 +1002,28 @@ class Config:
     voice_cascade_stt_models: tuple[str, ...]
     """Selectable STT model ids for CASCADE mode, LiveKit Inference
     ``provider/model`` form (credit-covered, no key). The id IS the model string.
-    ``VOICE_CASCADE_STT_MODELS`` (CSV) overrides; extend by adding ids."""
+    ``VOICE_CASCADE_STT_MODELS`` (CSV) overrides; extend by adding ids. The
+    ``cartesia/ink-2`` (primary) / ``cartesia/ink-whisper`` (wide-language
+    fallback) ids ride the grant-funded Cartesia plugin when the agent has
+    ``CARTESIA_API_KEY``, else the Inference construction (``agent.py``)."""
 
     voice_cascade_tts_models: tuple[str, ...]
     """Selectable TTS model ids for CASCADE mode, LiveKit Inference
     ``provider/model`` form. Voices per provider come from ``voice_catalog``
     (LiveKit catalog when it ships one, else a documented fallback).
     ``VOICE_CASCADE_TTS_MODELS`` (CSV) overrides; extend by adding ids."""
+
+    cartesia_tts_model: str
+    """Plugin model string for Cartesia cascade TTS
+    (``livekit-plugins-cartesia`` ``cartesia.TTS``) — the pinned Sonic
+    flagship, NOT the catalog id. The catalog's persisted TTS id stays
+    ``cartesia/sonic-3`` (in ``voice_cascade_tts_models``); the agent builds
+    the plugin with THIS model whenever a ``cartesia/*`` TTS is selected
+    and ``CARTESIA_API_KEY`` is present, so usage bills the Cartesia grant
+    instead of LiveKit credits. Key or plugin missing → the agent warns and
+    keeps the Inference construction, so the selection can never take voice
+    down. ``CARTESIA_TTS_MODEL`` overrides (staging-first; production
+    defaults unchanged)."""
 
     voice_cascade_llm_models: tuple[str, ...]
     """FALLBACK brain (LLM) model ids for CASCADE mode when the live LiveKit
@@ -1037,7 +1052,12 @@ class Config:
 
     Default = the founder's active LiveKit startup credits (``inworld``,
     ``deepgram``, ``fishaudio``, ``assemblyai``, ``rime``, ``gradium``,
-    ``google``). ``VOICE_CREDITED_PROVIDERS`` (CSV, lowercase) overrides."""
+    ``google``). ``VOICE_CREDITED_PROVIDERS`` (CSV, lowercase) overrides.
+    ``cartesia`` is deliberately NOT in the default: it is grant-funded via
+    its own plugin + ``CARTESIA_API_KEY`` (Route A), not LiveKit credits,
+    and is enabled per-deploy (staging adds it via
+    ``VOICE_CREDITED_PROVIDERS`` in ``scripts/deploy-staging.sh``) — the
+    committed default stays untouched until promotion."""
 
     voice_accent_capable_providers: tuple[str, ...]
     """Provider segments whose voice honours a free-text ACCENT instruction
@@ -1353,20 +1373,32 @@ def _load() -> Config:
         voice_openai_realtime_enabled=os.getenv(
             "VOICE_OPENAI_REALTIME", "false"
         ).strip().lower() == "true",
+        # Cartesia STT after the credited two: ink-2 is the decided model, kept
+        # alongside ink-whisper as the wide-language fallback (both ride the
+        # grant-funded plugin when the agent has CARTESIA_API_KEY). Still
+        # "needs enabling" under the committed default (cartesia is not in
+        # voice_credited_providers); staging enables it via env.
         voice_cascade_stt_models=_csv(
             "VOICE_CASCADE_STT_MODELS",
-            "deepgram/nova-3,assemblyai/universal-streaming",
+            "deepgram/nova-3,assemblyai/universal-streaming,"
+            "cartesia/ink-2,cartesia/ink-whisper",
         ),
         # Credited providers first (shown enabled on the fallback path), then
         # cartesia/sonic-3 — a documented LiveKit TTS the founder has NOT
         # confirmed credits for, kept selectable but marked "needs enabling"
         # (see voice_credited_providers). IDs from LiveKit docs
-        # (docs.livekit.io/agents/models/tts, verified 2026-10-27).
+        # (docs.livekit.io/agents/models/tts, verified 2026-10-27). Staging
+        # enables cartesia via VOICE_CREDITED_PROVIDERS + the grant key (Route
+        # A); the catalog id stays cartesia/sonic-3 while the plugin builds the
+        # pinned flagship (cartesia_tts_model, below).
         voice_cascade_tts_models=_csv(
             "VOICE_CASCADE_TTS_MODELS",
             "inworld/inworld-tts-1,fishaudio/s2.1-pro,rime/coda,"
             "gradium/default,cartesia/sonic-3",
         ),
+        # Cartesia TTS plugin model (addendum pin): the Sonic flagship,
+        # passed to cartesia.TTS — NOT the catalog id (cartesia/sonic-3).
+        cartesia_tts_model=os.getenv("CARTESIA_TTS_MODEL", "sonic-3.6"),
         voice_cascade_llm_models=_csv(
             "VOICE_CASCADE_LLM_MODELS",
             "google/gemini-3.8-flash,google/gemini-3.7-flash,"

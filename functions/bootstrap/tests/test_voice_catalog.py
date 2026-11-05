@@ -155,6 +155,17 @@ def test_tts_voices_fallback_inworld():
     assert "" in ids and "Ashley" in ids
 
 
+def test_cartesia_fallback_voices_are_the_documented_uuids():
+    ids = vc.tts_voice_ids("cartesia/sonic-3")
+    assert "" in ids  # vendor default, always safe
+    assert "f786b574-daa5-4673-aa0c-cbe3e8534c02" in ids  # Katie, plugin dflt
+    assert "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4" in ids  # Skylar
+    assert "47c38ca4-5f35-497b-b1a3-415245fb35e1" in ids  # Daniel
+    assert "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc" in ids  # Jacqueline
+    assert "62ae83ad-4f6a-430b-af41-a9bede9286ca" in ids  # Gemma
+    assert "ef191366-f52f-447a-a398-ed8c0f2943a1" in ids  # Archie
+
+
 def test_fallback_lists_credited_providers_with_types(monkeypatch):
     # /v1/models is empty for this project, so the catalog is the config
     # fallback — assert every credited provider surfaces in the RIGHT dropdown.
@@ -201,6 +212,48 @@ def test_fallback_marks_uncredited_provider_disabled(monkeypatch):
     cartesia = next(t for t in cat["tts"] if t["id"] == "cartesia/sonic-3")
     assert cartesia["available"] is False
     assert cartesia["requires_secret"]  # a non-empty note
+
+
+def test_fallback_enables_cartesia_when_credited(monkeypatch):
+    # Staging adds cartesia via the VOICE_CREDITED_PROVIDERS env override
+    # (scripts/deploy-staging.sh): the Sonic TTS + both Ink STT ids then show
+    # enabled on the fallback path.
+    import dataclasses
+
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
+        vc.CONFIG, voice_credited_providers=(
+            *vc.CONFIG.voice_credited_providers, "cartesia",
+        ),
+    ))
+    vc.clear_cache()
+    cat = vc.catalog()
+    assert cat["source"] == "fallback"
+    cartesia = next(t for t in cat["tts"] if t["id"] == "cartesia/sonic-3")
+    assert cartesia["available"] is True
+    assert cartesia["requires_secret"] == ""
+    stt = {s["id"]: s for s in cat["stt"]}
+    assert stt["cartesia/ink-2"]["available"] is True
+    assert stt["cartesia/ink-whisper"]["available"] is True
+
+
+def test_fallback_lists_cartesia_stt_but_uncredited_by_default(monkeypatch):
+    # The committed default lists ink-2 (primary) + ink-whisper
+    # (wide-language fallback) after the credited two — still disabled
+    # until a deploy credits cartesia, so committed defaults are unchanged.
+    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+    vc.clear_cache()
+    assert "cartesia" not in vc.CONFIG.voice_credited_providers
+    assert vc.CONFIG.voice_cascade_stt_models[-2:] == (
+        "cartesia/ink-2", "cartesia/ink-whisper",
+    )
+    cat = vc.catalog()
+    stt = {s["id"]: s for s in cat["stt"]}
+    assert stt["deepgram/nova-3"]["available"] is True
+    assert stt["assemblyai/universal-streaming"]["available"] is True
+    assert stt["cartesia/ink-2"]["available"] is False
+    assert stt["cartesia/ink-whisper"]["available"] is False
+    assert stt["cartesia/ink-2"]["requires_secret"]
 
 
 def test_live_catalog_marks_everything_available(monkeypatch):
@@ -339,3 +392,11 @@ def test_safe_tts_voice_empty_stays_vendor_default():
     assert vc.safe_tts_voice("inworld/inworld-tts-1", "") == ""
     assert vc.safe_tts_voice("inworld/inworld-tts-1", None) == ""
     assert vc.safe_tts_voice("inworld/inworld-tts-1", "  ") == ""
+
+
+def test_safe_tts_voice_cartesia_uuids():
+    skylar = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
+    fish_hannah = "9a9cf47702da476aa4629e2506d4a857"
+    assert vc.safe_tts_voice("cartesia/sonic-3", skylar) == skylar
+    assert vc.safe_tts_voice("cartesia/sonic-3", fish_hannah) == ""
+    assert vc.safe_tts_voice("fishaudio/s2.1-pro", skylar) == ""

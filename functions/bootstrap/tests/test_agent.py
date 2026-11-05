@@ -4537,6 +4537,141 @@ def test_cascade_inworld_named_voice_kept(monkeypatch):
     assert captured["tts"]["voice"] == "Ashley"
 
 
+# --- Cartesia cascade legs (grant-funded plugin, staging-first) --------------
+
+
+def _install_fake_cartesia_plugin(monkeypatch, captured):
+    """Fake the ``livekit-plugins-cartesia`` TTS/STT the cascade builder
+    imports lazily, recording kwargs alongside the inference fakes."""
+    pytest.importorskip("livekit.plugins.cartesia")
+    import livekit.plugins.cartesia as lk_cartesia
+
+    class _FakeCartesiaSTT:
+        def __init__(self, **kwargs):
+            captured["cartesia_stt"] = kwargs
+
+    class _FakeCartesiaTTS:
+        def __init__(self, **kwargs):
+            captured["cartesia_tts"] = kwargs
+
+    monkeypatch.setattr(lk_cartesia, "STT", _FakeCartesiaSTT)
+    monkeypatch.setattr(lk_cartesia, "TTS", _FakeCartesiaTTS)
+
+
+def test_cascade_cartesia_legs_use_plugin_when_key_present(monkeypatch):
+    # Full Cartesia stack + key: STT builds the plugin with the catalog
+    # suffix (ink-2), TTS with the PINNED flagship
+    # (CONFIG.cartesia_tts_model, not the catalog's sonic-3), the valid
+    # cartesia voice kept, language as the primary subtag — and no
+    # Inference STT/TTS is built.
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    _install_fake_cartesia_plugin(monkeypatch, captured)
+
+    skylar = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
+    agent.build_cascade_session(
+        "google/gemini-3.7-flash", "cartesia/ink-2", "cartesia/sonic-3",
+        skylar, "en-US",
+    )
+    assert captured["cartesia_stt"]["model"] == "ink-2"
+    assert captured["cartesia_stt"]["language"] == "en"
+    assert captured["cartesia_stt"]["api_key"] == "test-cartesia-key"
+    assert captured["cartesia_tts"]["model"] == CONFIG.cartesia_tts_model
+    assert CONFIG.cartesia_tts_model == "sonic-3.6"  # addendum pin
+    assert captured["cartesia_tts"]["voice"] == skylar
+    assert captured["cartesia_tts"]["language"] == "en"
+    assert captured["cartesia_tts"]["api_key"] == "test-cartesia-key"
+    assert "stt" not in captured  # no Inference STT
+    assert "tts" not in captured  # no Inference TTS
+
+
+def test_cascade_cartesia_ink_whisper_passthrough(monkeypatch):
+    # Mixed stack: cartesia Ink STT (wide-language fallback id) + an Inference
+    # TTS — each leg builds independently, the STT suffix passing through.
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    _install_fake_cartesia_plugin(monkeypatch, captured)
+
+    agent.build_cascade_session(
+        "google/gemini-3.7-flash",
+        "cartesia/ink-whisper",
+        "fishaudio/s2.1-pro",
+    )
+    assert captured["cartesia_stt"]["model"] == "ink-whisper"
+    # No voice_language was given, so no language kwarg is passed.
+    assert "language" not in captured["cartesia_stt"]
+    assert captured["tts"]["model"] == "fishaudio/s2.1-pro"  # Inference leg
+    assert "stt" not in captured
+
+
+def test_cascade_cartesia_falls_back_to_inference_without_key(monkeypatch):
+    # Key missing: today's Inference construction with the full catalog ids —
+    # no new hard failure, so a missing secret can never take voice down.
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    _install_fake_cartesia_plugin(monkeypatch, captured)
+
+    skylar = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
+    agent.build_cascade_session(
+        "google/gemini-3.7-flash",
+        "cartesia/ink-2",
+        "cartesia/sonic-3",
+        skylar,
+    )
+    assert captured["stt"]["model"] == "cartesia/ink-2"
+    assert captured["tts"]["model"] == "cartesia/sonic-3"
+    assert captured["tts"]["voice"] == skylar
+    assert "cartesia_stt" not in captured
+    assert "cartesia_tts" not in captured
+
+
+def test_cascade_cartesia_missing_plugin_falls_back_to_inference(monkeypatch):
+    # Key present but the plugin unimportable: the same Inference fallthrough
+    # with a warning, never a hard failure.
+    import sys
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    # Block the lazy `from livekit.plugins import cartesia` however the module
+    # was loaded before: None in sys.modules makes the submodule import raise,
+    # and the parent attr must go too (`from`-imports try it first).
+    monkeypatch.setitem(sys.modules, "livekit.plugins.cartesia", None)
+    monkeypatch.delattr("livekit.plugins.cartesia", raising=False)
+
+    agent.build_cascade_session(
+        "google/gemini-3.7-flash", "cartesia/ink-2", "cartesia/sonic-3",
+    )
+    assert captured["stt"]["model"] == "cartesia/ink-2"
+    assert captured["tts"]["model"] == "cartesia/sonic-3"
+
+
+def test_cascade_cartesia_drops_cross_provider_voice(monkeypatch):
+    # The configured Fish Audio default carried onto Cartesia TTS: dropped to
+    # the vendor default (no voice kwarg) instead of reaching the plugin.
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    captured = _install_fake_cascade_plugins(monkeypatch)
+    _install_fake_cartesia_plugin(monkeypatch, captured)
+
+    fish_hannah = "9a9cf47702da476aa4629e2506d4a857"
+    agent.build_cascade_session(
+        "google/gemini-3.7-flash", "deepgram/nova-3", "cartesia/sonic-3",
+        fish_hannah,
+    )
+    assert captured["cartesia_tts"]["model"] == CONFIG.cartesia_tts_model
+    assert "voice" not in captured["cartesia_tts"]
+
+
+def test_build_cartesia_helpers_ignore_non_cartesia_ids(monkeypatch):
+    # Non-Cartesia ids (and a model-less "cartesia/" STT id) return None
+    # without touching the key or the plugin, so the caller keeps today's
+    # path.
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    assert agent._build_cartesia_stt("deepgram/nova-3", "en") is None
+    assert agent._build_cartesia_tts("fishaudio/s2.1-pro", "", None) is None
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
+    assert agent._build_cartesia_stt("cartesia/", "en") is None
+
+
 # --- no silent dead air on a cascade TTS error ------------------------------
 
 

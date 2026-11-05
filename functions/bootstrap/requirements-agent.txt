@@ -11,6 +11,11 @@ livekit-plugins-google==1.8.9
 # and VAD (bundled Silero) ride livekit-agents' built-in `inference` module, so
 # no TTS/VAD plugin is needed. See docs/META_PROVIDER.md "voice cascade".
 livekit-plugins-openai==1.8.9
+# Cartesia Sonic TTS / Ink STT for the cascade (staging-first, grant-funded):
+# agent.py builds these via the plugin when CARTESIA_API_KEY is present, else
+# falls back to the LiveKit Inference construction. Pinned to the agents stack
+# (1.8.9) like the other plugins — plugin 1.8.10 would force a stack bump.
+livekit-plugins-cartesia==1.8.9
 python-dotenv==1.0.1
 # Session-end raw_turns persistence (§1.7 step 8) — the worker writes Firestore
 # directly via the Admin SDK on shutdown, as its own Cloud Run identity.
