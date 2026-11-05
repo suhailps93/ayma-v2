@@ -29,6 +29,23 @@ def test_registry_exposes_the_questionnaire_skills_in_text_and_voice():
     assert want <= names
 
 
+def test_skills_package_imports_without_livekit_agents(monkeypatch):
+    # Deploy-crash regression (staging 00174/00175): the Main API image
+    # carries no livekit-agents (requirements.txt) but imports this package
+    # at startup via main.py — a top-level livekit.agents import anywhere in
+    # it crashes the container before it listens. Re-import the whole package
+    # with livekit.agents blocked and prove it still loads.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "livekit.agents", None)
+    for name in [m for m in sys.modules if m == "skills" or m.startswith("skills.")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    import skills as skills_without_livekit
+
+    names = {s.name for s in skills_without_livekit.all_skills()}
+    assert "add_followup_question" in names
+
+
 def test_record_feedback_tool_writes_to_the_feedback_bucket(monkeypatch):
     seen = {}
     monkeypatch.setattr(

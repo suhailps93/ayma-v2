@@ -20,10 +20,14 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from livekit.agents import llm
+import pytest
 
-import pair_key
-from skills import world_state
+pytest.importorskip("livekit.agents")
+
+from livekit.agents import llm  # noqa: E402
+
+import pair_key  # noqa: E402
+from skills import world_state  # noqa: E402
 
 
 def _run(coro):

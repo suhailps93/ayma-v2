@@ -37,8 +37,6 @@ import logging
 import time
 from typing import Callable
 
-from livekit.agents import llm
-
 import pair_key
 
 from . import app_control_mirror as mirror
@@ -280,6 +278,12 @@ class WorldStateRefresher:
         the last good state (returns False without clearing ``_applied``);
         a session whose agent is not up yet likewise retries on the next
         poke."""
+        # Lazy: the Main API image has no livekit-agents but imports this
+        # module at startup via the skills package (a top-level import
+        # crashes the API container — staging 00174/00175). The refresher
+        # only runs on the voice worker, which always has it.
+        from livekit.agents import llm
+
         try:
             text = await asyncio.to_thread(
                 build_world_state_text, self._db_factory(), self._uid
