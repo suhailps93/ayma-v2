@@ -1740,16 +1740,28 @@ class ApiClient {
   }
 
   /// `POST /date-sim/{simId}/stop` — STOP an in-flight simulation. The backend
-  /// flags the run; the server-side generator halts between turns, keeps what's
-  /// already produced and scores it, then flips the Firestore doc to `done`
-  /// (the client is already watching it). Idempotent: a stop on a finished run
-  /// is a harmless no-op. Throws [ApiException] on failure (404 no such sim).
-  Future<void> dateSimStop(String simId) async {
+  /// flags the run; the server-side generator halts between turns and keeps
+  /// what's already produced — WITHOUT scoring it and WITHOUT sending the
+  /// completion notification — then flips the Firestore doc to `done` (the
+  /// client is already watching it). Returns the server's outcome:
+  /// `'stopping'` when the flag was set on a live run, `'already_finished'`
+  /// when the run had already ended (its score, if any, was already final, so
+  /// the caller must not pretend the stop worked). Throws [ApiException] on
+  /// failure (404 no such sim).
+  Future<String> dateSimStop(String simId) async {
     final r = await _http.post(
       _uri('/date-sim/$simId/stop'),
       headers: await _headers(),
     );
-    if (r.statusCode == 200) return;
+    if (r.statusCode == 200) {
+      try {
+        final status = (jsonDecode(r.body) as Map<String, dynamic>)['status'];
+        if (status is String && status.isNotEmpty) return status;
+      } catch (_) {
+        // An unreadable body still means the stop was accepted.
+      }
+      return 'stopping';
+    }
     throw ApiException(
       'Stopping the simulation failed.',
       statusCode: r.statusCode,

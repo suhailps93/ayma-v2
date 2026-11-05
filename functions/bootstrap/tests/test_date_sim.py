@@ -720,13 +720,24 @@ def _sim_ref(db, sim_id):
     )
 
 
-def test_stop_halts_further_turns_and_keeps_partial():
+def test_stop_halts_further_turns_and_keeps_partial(monkeypatch):
     """D: a stop request (``cancel_requested``) set mid-run halts the generator
-    between turns; the partial transcript is kept and scored, status is ``done``
-    with ``stopped`` true."""
+    between turns; the partial transcript is kept, status is ``done`` with
+    ``stopped`` true — and the stopped run is NOT scored (the verdict call
+    never runs, the stored verdict stays empty) and fires NO completion
+    notification: the user ended it, so there is no result to announce."""
     db = _seeded_db()
     sim_ref = _sim_ref(db, "sim_stop_1")
     produced = {"n": 0}
+    verdict_calls = {"n": 0}
+    fired: list[tuple] = []
+
+    async def fake_notify(db_, uid, name, sim_id, other_uid, score):
+        fired.append((uid, name, sim_id, other_uid, score))
+
+    monkeypatch.setattr(
+        date_sim.notifications_triggers, "notify_date_sim_done", fake_notify
+    )
 
     async def fake_text(system, message, uid, feature, session_id):
         produced["n"] += 1
@@ -735,6 +746,7 @@ def test_stop_halts_further_turns_and_keeps_partial():
         return "a friendly line"
 
     async def fake_json(system, contents, schema, uid, feature):
+        verdict_calls["n"] += 1
         return {"score": 55, "score_label": "cut short", "summary": "stopped early"}
 
     practice_llm.set_override(text=fake_text, json=fake_json)
@@ -747,19 +759,78 @@ def test_stop_halts_further_turns_and_keeps_partial():
     assert len(msgs) == 3  # stopped after what was done — no further turns
     assert parent["status"] == "done"
     assert parent["stopped"] is True
-    assert parent["verdict"]["score"] == 55  # still scored over the partial
+    # NOT scored: the verdict LLM call never ran and the verdict stayed empty.
+    assert verdict_calls["n"] == 0
+    assert parent["verdict"] == {"score": 0, "score_label": "", "summary": ""}
     assert out["stopped"] is True
+    assert out["score"] == 0
+    # And no "your score is ready" notification for a run the user stopped.
+    assert fired == []
+
+
+def test_stop_landing_during_the_final_turn_still_suppresses_the_score(monkeypatch):
+    """A stop that lands while the LAST turn is generating misses the
+    generator's between-turns check (there is no next turn) — the finalize
+    re-read must still honor it: all turns are kept, but no verdict is
+    produced and no completion notification fires."""
+    db = _seeded_db()
+    sim_ref = _sim_ref(db, "sim_stop_late")
+    produced = {"n": 0}
+    fired: list[tuple] = []
+
+    async def fake_notify(db_, uid, name, sim_id, other_uid, score):
+        fired.append((uid, name, sim_id, other_uid, score))
+
+    monkeypatch.setattr(
+        date_sim.notifications_triggers, "notify_date_sim_done", fake_notify
+    )
+
+    async def fake_text(system, message, uid, feature, session_id):
+        produced["n"] += 1
+        if produced["n"] == 4:  # STOP lands during the final (4th) turn
+            sim_ref.update({"cancel_requested": True})
+        return "a friendly line"
+
+    async def fake_json(system, contents, schema, uid, feature):
+        return {"score": 71, "score_label": "ok", "summary": "fine"}
+
+    practice_llm.set_override(text=fake_text, json=fake_json)
+    try:
+        out = asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_stop_late"))
+    finally:
+        practice_llm.clear_override()
+
+    parent, msgs = _sim_docs(db, "sim_stop_late")
+    assert len(msgs) == 4  # every generated turn is kept
+    assert parent["status"] == "done"
+    assert parent["stopped"] is True
+    assert parent["verdict"] == {"score": 0, "score_label": "", "summary": ""}
+    assert out["stopped"] is True
+    assert fired == []
 
 
 def test_stop_simulation_sets_the_flag_and_404s_on_missing():
     db = _seeded_db()
+    # A live (still running) sim: the flag is set, the stop reports "stopping".
+    _sim_ref(db, "sim_stop_live").set(
+        {"status": "running", "cancel_requested": False}
+    )
+    outcome = asyncio.run(date_sim.stop_simulation(db, VIEWER, "sim_stop_live"))
+    assert outcome == "stopping"
+    assert _sim_ref(db, "sim_stop_live").get().to_dict()["cancel_requested"] is True
+
+    # An already-finished sim: the stop honestly reports it changed nothing,
+    # and the flag is NOT set (its score was already final, and a later
+    # continue must not inherit a stale stop request).
     _fake_personas()
     try:
         asyncio.run(date_sim.run_simulation(db, VIEWER, MAYA, 4, "sim_stop_api"))
     finally:
         practice_llm.clear_override()
-    asyncio.run(date_sim.stop_simulation(db, VIEWER, "sim_stop_api"))
-    assert _sim_ref(db, "sim_stop_api").get().to_dict()["cancel_requested"] is True
+    outcome = asyncio.run(date_sim.stop_simulation(db, VIEWER, "sim_stop_api"))
+    assert outcome == "already_finished"
+    assert _sim_ref(db, "sim_stop_api").get().to_dict()["cancel_requested"] is False
+
     with pytest.raises(ValueError):
         asyncio.run(date_sim.stop_simulation(db, VIEWER, "no_such_sim"))
 

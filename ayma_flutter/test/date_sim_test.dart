@@ -31,6 +31,8 @@ class _Harness {
     this.postBody = '{}',
     this.readiness,
     this.continueStatus = 200,
+    this.stopBody = const {'status': 'stopping'},
+    this.stopStatus = 200,
   }) {
     auth = MockFirebaseAuth(signedIn: true);
     fs = FakeFirebaseFirestore();
@@ -57,7 +59,7 @@ class _Harness {
         }
         if (req.url.path.endsWith('/stop')) {
           stopCalls.add(req.url.path);
-          return _json({'status': 'stopping'});
+          return _json(stopBody, stopStatus);
         }
         if (req.method == 'DELETE' && req.url.path.startsWith('/date-sim/pair/')) {
           resetCalls.add(req.url.path);
@@ -88,6 +90,12 @@ class _Harness {
   /// Status for `POST /date-sim/{id}/continue`, and the paths it was called
   /// with (so a test can assert the SAME sim was continued).
   final int continueStatus;
+
+  /// Body + status for `POST /date-sim/{id}/stop`: the server's outcome
+  /// (`stopping` for a live run, `already_finished` when the run had already
+  /// ended) or an HTTP failure.
+  final Map<String, dynamic> stopBody;
+  final int stopStatus;
   final List<String> continueCalls = <String>[];
 
   /// The `more_messages` each `/continue` was called with, so a test can assert
@@ -551,40 +559,112 @@ void main() {
   );
 
   // --- D: STOP halts an in-flight run -------------------------------------- //
-  testWidgets('D: a running sim shows a Stop control that calls stop', (
+  testWidgets(
+    'D: Stop calls stop and leaves the sim view as soon as it lands',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'running');
+      await h.say(0, 'you', 'hey there!');
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => const Scaffold(body: Text('HOME')),
+          ),
+          GoRoute(
+            path: '/date-sim/:uid',
+            builder: (_, __) => h.screen2('sim1'),
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+      router.push('/date-sim/her');
+      await _settle(tester);
+
+      // While running, the Stop control is shown and the finished CTAs are not.
+      expect(find.byKey(const Key('dateSimStopButton')), findsOneWidget);
+      expect(find.byKey(const Key('dateSimMessageForRealButton')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('dateSimStopButton')));
+      await _settle(tester);
+      expect(h.stopCalls, contains('/date-sim/sim1/stop'));
+
+      // The user does NOT sit on the sim watching it wind down: the stop
+      // lands and the view is left at once, back on the screen beneath.
+      expect(find.byType(DateSimScreen), findsNothing);
+      expect(find.text('HOME'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'D: a stop that lands after the run already finished says so honestly',
+    (tester) async {
+      final h = _Harness(stopBody: const {'status': 'already_finished'});
+      h.simId = 'sim1';
+      await h.start(status: 'running');
+      await h.say(0, 'you', 'hey there!');
+      await tester.pumpWidget(_wrap(h.screen2('sim1')));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const Key('dateSimStopButton')));
+      await _settle(tester);
+      expect(h.stopCalls, contains('/date-sim/sim1/stop'));
+
+      // No pretending the stop worked: we stay, with an honest note, and the
+      // already-final result is what gets presented when the stream lands.
+      expect(find.byType(DateSimScreen), findsOneWidget);
+      expect(find.textContaining('already finished'), findsOneWidget);
+      await h.finish();
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+    },
+  );
+
+  testWidgets('D: a failed stop keeps the user on the sim with an error', (
     tester,
   ) async {
-    final h = _Harness();
+    final h = _Harness(stopStatus: 500);
     h.simId = 'sim1';
     await h.start(status: 'running');
     await h.say(0, 'you', 'hey there!');
     await tester.pumpWidget(_wrap(h.screen2('sim1')));
     await _settle(tester);
 
-    // While running, the Stop control is shown and the finished CTAs are not.
-    expect(find.byKey(const Key('dateSimStopButton')), findsOneWidget);
-    expect(find.byKey(const Key('dateSimMessageForRealButton')), findsNothing);
-
     await tester.tap(find.byKey(const Key('dateSimStopButton')));
     await _settle(tester);
     expect(h.stopCalls, contains('/date-sim/sim1/stop'));
-
-    // Backend finalizes the partial as stopped → the finished view takes over
-    // with a "stopped early" note and the score over the partial.
-    await h.sim.update({
-      'status': 'done',
-      'stopped': true,
-      'verdict': {
-        'score': 44,
-        'score_label': 'Cut short',
-        'summary': 'A brief exchange before you stopped it.',
-      },
-    });
-    await _settle(tester);
-    expect(find.byKey(const Key('dateSimStopButton')), findsNothing);
-    expect(find.byKey(const Key('dateSimStoppedNote')), findsOneWidget);
-    expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+    expect(find.byType(DateSimScreen), findsOneWidget);
+    expect(
+      find.text("Couldn't stop the conversation. Please try again."),
+      findsOneWidget,
+    );
+    // The button is usable again (no wedged "Stopping…" state).
+    expect(find.byKey(const Key('dateSimStopButton')), findsOneWidget);
   });
+
+  testWidgets(
+    'D: a stopped sim reopens with its transcript, the stopped note, NO score',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'running');
+      await h.say(0, 'you', 'hey there!');
+      await h.say(1, 'them', 'hi! good to meet you.');
+      // The backend finalized the stopped run with NO verdict (unscored).
+      await h.sim.update({'status': 'done', 'stopped': true});
+      await tester.pumpWidget(_wrap(h.screen2('sim1')));
+      await _settle(tester);
+
+      expect(find.byKey(const Key('dateSimStoppedNote')), findsOneWidget);
+      expect(find.byKey(const Key('dateSimScore')), findsNothing);
+      expect(find.byKey(const Key('dateSimStopButton')), findsNothing);
+    },
+  );
 
   // --- E: RESET discards the pair's sim and returns to setup --------------- //
   testWidgets('E: Start over resets the pair and returns to the setup form', (

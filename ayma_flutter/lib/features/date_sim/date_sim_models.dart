@@ -91,7 +91,7 @@ class DateSimDoc {
   final bool usageCapped;
 
   /// True when the user STOPPED the run early; the partial transcript is kept
-  /// and still scored over what was produced.
+  /// and the run is NOT scored (no verdict is written for it).
   final bool stopped;
   final String errorMessage;
 

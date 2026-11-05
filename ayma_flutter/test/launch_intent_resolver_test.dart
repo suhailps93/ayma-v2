@@ -54,6 +54,18 @@ void main() {
           equals('sender_42'));
     });
 
+    test('Resolves GenericDeepLinkIntent for a finished date sim', () {
+      // The completion push carries `date_sim/{other_uid}/{sim_id}`; the
+      // intent must target that exact sim's result route.
+      final intent = LaunchIntentResolver.classify({
+        'deep_link': 'date_sim/her/sim_abc',
+        'notif_id': 'date_sim_sim_abc',
+      });
+      expect(intent, isA<GenericDeepLinkIntent>());
+      expect((intent as GenericDeepLinkIntent).targetPath,
+          equals('/date-sim/her?sim_id=sim_abc'));
+    });
+
     test(
         'Dynamic promotion — verifies edge N11 -> N12 is dynamically added on paywall intent',
         () {
