@@ -52,6 +52,13 @@ mono.save(OUT + 'ayma_orb_android_mono.png')
 # iOS: opaque, full-bleed. Diagonal gradient sampled from the orb's own rim
 # fills the corners; the orb is scaled past the canvas edge so no foreign
 # frame shows once iOS applies its rounded mask.
+#
+# This writes ayma_orb_ios_launcher.png — NOT ayma_orb_ios.png. That file is
+# the in-app logo mark (loaded by AymaLogoLoader + AppearanceReportCard), and
+# per the founder ruling (2026-11-05) nothing inside the app changes with the
+# launcher icon: the resting-orb ayma_orb_ios.png stays byte-identical, and
+# only the launcher pipeline (pubspec image_path_ios + this script) points at
+# the voice-live art.
 tl, br = (220, 80, 106), (190, 55, 81)
 bg = Image.new('RGB', (N, N))
 bp = bg.load()
@@ -62,7 +69,7 @@ for y in range(N):
 big = orb.resize((round(N * 1.04),) * 2, Image.LANCZOS)
 ios = bg.convert('RGBA')
 ios.alpha_composite(big, ((N - big.width) // 2, (N - big.height) // 2))
-ios.convert('RGB').save(OUT + 'ayma_orb_ios.png')
+ios.convert('RGB').save(OUT + 'ayma_orb_ios_launcher.png')
 
 # Android legacy (pre-API 26) launcher icon: the same opaque full-bleed art as
 # iOS, so no launcher can paint a black box behind transparent corners.

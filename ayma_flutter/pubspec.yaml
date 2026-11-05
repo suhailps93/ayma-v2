@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.30.0+2292
+version: 1.30.0+2293
 environment:
   sdk: ^3.13.4
 
@@ -103,11 +103,16 @@ dev_dependencies:
 # 2026-10-20: launcher icons show only the orb (no cream/black frame). After
 # the test generator below, run `python3 tool/build_icon_variants.py` to derive
 # the per-platform sources referenced in this config.
-# Ayma Sol app icon (dev-tool config, not a runtime asset list) — the calm
-# idle frame rendered straight from AymaOrbPainter by
-# tool/generate_app_icon_test.dart. Regenerate with:
+# Ayma Sol app icon (dev-tool config, not a runtime asset list) — the
+# voice-live frame rendered straight from AymaOrbPainter by
+# tool/generate_app_icon_test.dart (founder ruling 2026-11-05: the launcher
+# icon is the orb as it looks during a live voice call; nothing in-app
+# changes — ayma_orb_ios.png stays the resting-orb in-app mark, the iOS
+# launcher art lives in ayma_orb_ios_launcher.png). Regenerate with:
 #   flutter test tool/generate_app_icon_test.dart
+#   python3 tool/build_icon_variants.py
 #   dart run flutter_launcher_icons
+#   python3 tool/build_icon_variants.py   # re-stamp opaque round icons
 #
 # Root cause of the "black ring" bug (2026-09-13): the generator tool below
 # already insets the orb to 72% of its 1024x1024 canvas so the launcher's own
@@ -131,7 +136,7 @@ flutter_launcher_icons:
   adaptive_icon_foreground_inset: 0
   adaptive_icon_monochrome: "assets/icon/ayma_orb_android_mono.png"
   image_path_android: "assets/icon/ayma_orb_android_legacy.png"
-  image_path_ios: "assets/icon/ayma_orb_ios.png"
+  image_path_ios: "assets/icon/ayma_orb_ios_launcher.png"
   ios: true
   remove_alpha_ios: true
 

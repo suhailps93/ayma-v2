@@ -7,10 +7,19 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Offline generator for the Ayma Sol app-icon source image.
 ///
-/// Renders the exact calm-idle frame straight out of [AymaOrbPainter] — no
-/// separate logo artwork, per the spec's "App icon / static mark" section —
-/// at 1024x1024 with a transparent background, ready for
+/// Renders the voice-live frame straight out of [AymaOrbPainter] — the exact
+/// orb a live voice call shows (founder ruling, 2026-11-05: the launcher icon,
+/// outside the app, is the orb as it looks while Ayma voice is activated:
+/// wings bright and spread in their flutter pose, with the live glow) — at
+/// 1024x1024 with a transparent background, ready for
 /// `flutter_launcher_icons` to turn into both platforms' icon sets.
+///
+/// Nothing inside the app changes: this only feeds the launcher pipeline
+/// (`tool/build_icon_variants.py` + `flutter_launcher_icons`). In particular
+/// `assets/icon/ayma_orb_ios.png` — the in-app logo mark loaded by
+/// `AymaLogoLoader` and `AppearanceReportCard` — is deliberately NOT
+/// regenerated from this; the iOS launcher art goes to a separate source file
+/// (see `build_icon_variants.py`).
 ///
 /// Not part of the regular test suite (lives under tool/, which `flutter
 /// test` doesn't scan by default). Run explicitly:
@@ -31,38 +40,32 @@ void main() {
     canvas.save();
     canvas.translate(inset, inset);
     AymaOrbPainter(
-      // t=0 (and every phase near it) lands the idle blobs' orbit/wobble
-      // sines at values that leave the three internal blobs nearly
-      // concentric and barely deformed — a static frame from a genuinely
-      // flat instant in the cycle. t=185 is a phase, sampled and chosen by
-      // eye, where the blobs separate into a clearly readable curved
-      // internal band instead of overlapping into a featureless wash.
-      t: 185,
-      fromState: AymaOrbState.idle,
-      toState: AymaOrbState.idle,
+      // The live call's brightest, most-spread flutter frame: `speaking` is
+      // the only state with real wing flutter (flutterAmount 1.0) and the
+      // full white-hot connected glow, amplitude 1.0 is the loudest-syllable
+      // peak of the live mic/Ayma level, and t=9.9642 is the joint maximum
+      // of the two wings' opening angles over a full motion cycle (scanned
+      // offline against the painter's own angle math: both wings land within
+      // ~4% of their soft-open ceiling at once, versus the old single-wing
+      // flutter peak t=0.1068 where the left wing sits half-closed).
+      t: 9.9642,
+      fromState: AymaOrbState.speaking,
+      toState: AymaOrbState.speaking,
       transitionT: 1,
-      amplitude: 0,
+      amplitude: 1,
+      // The launcher can't follow the user's runtime accent pick, so it uses
+      // the default — same as every live call on a fresh install.
       accent: AymaColors.accent,
-      // reducedMotion(true) also multiplies idle's already-subtle wobble by
-      // 0.25x and its circulation by 0.08x — meant for continuous
-      // accessibility playback, not a single detail-bearing frame — so it
-      // is left off here; showGlow(false) already gives the calm-idle,
-      // no-glow look the spec asks for regardless.
       reducedMotion: false,
-      showGlow: false,
-      // staticDetail stays at its 1.0 default (2026-09-27, founder bug: the
-      // launcher icon's petal-intersection teardrop rendered as a dark
-      // shade while the in-app orb's reads as a lighter, luminous overlap).
-      // Measured offline against the nav-bar-style idle frame: the old 2.6
-      // "held contrast" boost — written for the retired amorphous blobs —
-      // was the whole divergence. It scaled the wing fill alpha
-      // (0.82 * 2.6, clamped to fully opaque), erasing the natural
-      // lighter-where-two-translucent-petals-stack overlap, and multiplied
-      // the 5b stacked-glass overlap-shading overlay from 0.18 to 0.468
-      // alpha — a 2.6x darker teardrop, exactly the region the founder
-      // flagged. The wings are clearly legible at 1.0 (unlike the blobs the
-      // boost was written for), and 1.0 reproduces the founder-approved
-      // in-app compositing bit-for-bit at icon scale.
+      // The voice-live glow, on: exactly what VoiceCallScreen passes during
+      // a live call (showGlow default true, voiceLive = isListening).
+      showGlow: true,
+      voiceLive: true,
+      // staticDetail stays at its 1.0 default — the value every live call
+      // site uses (the widget never passes it). The old 2.6 "held contrast"
+      // boost was written for the retired amorphous blobs and diverged the
+      // icon's compositing from the in-app orb (2026-09-27, founder bug);
+      // 1.0 reproduces the live orb bit-for-bit at icon scale.
     ).paint(canvas, const ui.Size(orbSize, orbSize));
     canvas.restore();
 
