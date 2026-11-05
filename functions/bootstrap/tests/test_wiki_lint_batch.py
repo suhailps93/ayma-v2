@@ -1,5 +1,7 @@
-"""``wiki_lint.lint_all``'s two-phase Gemini Batch sweep — submit when
-nothing is pending, finalize (or report "pending") when something is.
+"""``wiki_lint.lint_all`` — DISABLED (founder rule 2026-11-04): the sweep
+reports ``disabled`` and clears stale pending-batch state instead of
+submitting a Vertex batch. ``lint_user`` (synchronous, gateway-routed) still
+works.
 
 Uses a small self-contained in-memory Firestore fake (documents keyed by a
 tuple path) rather than a shared fixture, so this file has no dependency on
@@ -8,10 +10,9 @@ anything outside the test suite.
 
 import asyncio
 
-import gemini_batch
+import gemini
 import trust_flags
 import wiki_lint
-from google.genai import types as genai_types
 
 
 def _run(coro):
@@ -94,18 +95,6 @@ class FakeDb:
         return _CollRef(self, (name,))
 
 
-class _Out:
-    def __init__(self, dest):
-        self.gcs_output_directory = dest
-
-
-class _Job:
-    def __init__(self, state, dest=None, error=None):
-        self.state = state
-        self.error = error
-        self.output_info = _Out(dest) if dest else None
-
-
 def _seed(users_pages: dict[str, dict[str, dict]]) -> FakeDb:
     seed = {}
     for uid, pages in users_pages.items():
@@ -119,9 +108,7 @@ def _state(db):
     return db.collection("system").document("wiki_lint_batch")
 
 
-def test_submits_a_batch_for_users_with_two_plus_pages_and_clears_solo_users(
-    monkeypatch,
-):
+def test_lint_all_reports_disabled_with_no_pending_state():
     db = _seed(
         {
             "u1": {
@@ -130,63 +117,17 @@ def test_submits_a_batch_for_users_with_two_plus_pages_and_clears_solo_users(
                     "page_type": "identity", "ai_body": "Likes tea.", "links": [],
                 },
             },
-            "u2": {
-                "solo": {"page_type": "misc", "ai_body": "Only page.", "links": []}
-            },
         }
     )
 
-    calls = {}
-
-    def _fake_submit(items, system_prompt, schema, *, job_tag, **kw):
-        calls["items"] = items
-        calls["job_tag"] = job_tag
-        return gemini_batch.BatchSubmission(
-            job_name="batches/abc", dest_prefix="gemini_batches/wiki_lint/x/dest",
-            count=len(items),
-        )
-
-    monkeypatch.setattr(gemini_batch, "submit_json_batch", _fake_submit)
-
     result = _run(wiki_lint.lint_all(db))
 
-    assert result["status"] == "submitted"
-    assert result["job_name"] == "batches/abc"
-    assert result["batched"] == 1
-    assert result["users_checked"] == 1  # u2, cleared without a model call
-    assert calls["job_tag"] == "wiki_lint"
-    assert len(calls["items"]) == 1
-
-    state = _state(db).get().to_dict()
-    assert state["uids"] == ["u1"]
-    assert state["job_name"] == "batches/abc"
-
-    u2_flags = (
-        db.collection("users").document("u2").collection("wiki_pages")
-        .document("solo").get().to_dict()
-    )
-    assert u2_flags["lint_flags"] == []
+    assert result["status"] == "disabled"
+    assert result["reason"] == "batch_disabled_direct_google_killed"
+    assert not _state(db).get().exists  # nothing submitted, nothing parked
 
 
-def test_returns_done_directly_when_nobody_needs_the_model(monkeypatch):
-    db = _seed({"u1": {"solo": {"page_type": "misc", "ai_body": "x", "links": []}}})
-    called = False
-
-    def _fake_submit(*a, **k):
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr(gemini_batch, "submit_json_batch", _fake_submit)
-
-    result = _run(wiki_lint.lint_all(db))
-    assert result == {
-        "status": "done", "users_checked": 1, "pages_flagged": 0, "batched": 0,
-    }
-    assert called is False
-    assert not _state(db).get().exists
-
-
-def test_reports_pending_while_the_batch_job_is_still_running(monkeypatch):
+def test_lint_all_clears_stale_pending_state_and_reports_disabled():
     db = FakeDb(
         {
             ("system", "wiki_lint_batch"): {
@@ -197,17 +138,15 @@ def test_reports_pending_while_the_batch_job_is_still_running(monkeypatch):
             }
         }
     )
-    monkeypatch.setattr(
-        gemini_batch, "poll_json_batch",
-        lambda name: _Job(genai_types.JobState.JOB_STATE_RUNNING),
-    )
 
     result = _run(wiki_lint.lint_all(db))
-    assert result == {"status": "pending", "job_name": "batches/abc"}
-    assert _state(db).get().exists  # left alone for the next tick
+
+    assert result["status"] == "disabled"
+    assert result["job_name"] == "batches/abc"
+    assert not _state(db).get().exists  # stale state cleared, never polled
 
 
-def test_finalizes_a_succeeded_batch_and_applies_flags(monkeypatch):
+def test_lint_user_still_works_through_the_gateway(monkeypatch):
     db = _seed(
         {
             "u1": {
@@ -220,46 +159,25 @@ def test_finalizes_a_succeeded_batch_and_applies_flags(monkeypatch):
             },
         }
     )
-    db.docs[("system", "wiki_lint_batch")] = {
-        "job_name": "batches/abc",
-        "dest_prefix": "gemini_batches/wiki_lint/x/dest",
-        "uids": ["u1"],
-        "count": 1,
-    }
 
-    monkeypatch.setattr(
-        gemini_batch, "poll_json_batch",
-        lambda name: _Job(
-            genai_types.JobState.JOB_STATE_SUCCEEDED,
-            dest="gemini_batches/wiki_lint/x/actual_dest",
-        ),
-    )
+    async def _fake_json(*a, **k):
+        return {
+            "flags": [
+                {
+                    "page_id": "career", "type": "contradiction",
+                    "detail": "career says nurse; identity disagrees.",
+                }
+            ]
+        }
 
-    def _fake_fetch(dest, *, expected_count):
-        assert dest == "gemini_batches/wiki_lint/x/actual_dest"
-        assert expected_count == 1
-        return [
-            {
-                "flags": [
-                    {
-                        "page_id": "career", "type": "contradiction",
-                        "detail": "career says nurse; identity disagrees.",
-                    }
-                ]
-            }
-        ]
-
-    monkeypatch.setattr(gemini_batch, "fetch_json_batch_results", _fake_fetch)
-
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
     tf = []
     monkeypatch.setattr(
         trust_flags, "sync_self_contradictions",
         lambda db, uid, details: tf.append((uid, details)),
     )
 
-    result = _run(wiki_lint.lint_all(db))
-    assert result == {"status": "done", "users_checked": 1, "pages_flagged": 1}
-    assert not _state(db).get().exists
+    assert _run(wiki_lint.lint_user(db, "u1")) == 1
 
     career = (
         db.collection("users").document("u1").collection("wiki_pages")
@@ -274,50 +192,15 @@ def test_finalizes_a_succeeded_batch_and_applies_flags(monkeypatch):
     assert tf == [("u1", ["career says nurse; identity disagrees."])]
 
 
-def test_finalize_reports_failed_and_clears_state_on_a_terminal_job_state(
-    monkeypatch,
-):
-    db = FakeDb(
-        {
-            ("system", "wiki_lint_batch"): {
-                "job_name": "batches/abc", "dest_prefix": "d",
-                "uids": ["u1"], "count": 1,
-            }
-        }
-    )
+def test_lint_user_clears_flags_when_there_is_nothing_to_cross_check(monkeypatch):
+    db = _seed({"u1": {"solo": {"page_type": "misc", "ai_body": "x", "links": []}}})
     monkeypatch.setattr(
-        gemini_batch, "poll_json_batch",
-        lambda name: _Job(genai_types.JobState.JOB_STATE_FAILED, error="boom"),
+        trust_flags, "sync_self_contradictions", lambda *a: None
     )
 
-    result = _run(wiki_lint.lint_all(db))
-    assert result["status"] == "failed"
-    assert result["job_name"] == "batches/abc"
-    assert not _state(db).get().exists
-
-
-def test_finalize_reports_failed_when_results_cannot_be_read(monkeypatch):
-    db = _seed(
-        {
-            "u1": {
-                "a": {"page_type": "misc", "ai_body": "x", "links": []},
-                "b": {"page_type": "misc", "ai_body": "y", "links": []},
-            },
-        }
+    assert _run(wiki_lint.lint_user(db, "u1")) == 0
+    solo = (
+        db.collection("users").document("u1").collection("wiki_pages")
+        .document("solo").get().to_dict()
     )
-    db.docs[("system", "wiki_lint_batch")] = {
-        "job_name": "batches/abc", "dest_prefix": "d", "uids": ["u1"], "count": 1,
-    }
-    monkeypatch.setattr(
-        gemini_batch, "poll_json_batch",
-        lambda name: _Job(genai_types.JobState.JOB_STATE_SUCCEEDED, dest="d"),
-    )
-
-    def _boom(dest, *, expected_count):
-        raise RuntimeError("count mismatch")
-
-    monkeypatch.setattr(gemini_batch, "fetch_json_batch_results", _boom)
-
-    result = _run(wiki_lint.lint_all(db))
-    assert result["status"] == "failed"
-    assert not _state(db).get().exists
+    assert solo["lint_flags"] == []

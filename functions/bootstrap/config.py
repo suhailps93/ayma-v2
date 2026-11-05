@@ -223,11 +223,9 @@ class Config:
     ``global``."""
 
     gemini_live_use_dev_api: bool
-    """Opt-in: run the voice agent on the **Gemini Developer API** (with a
-    ``GOOGLE_API_KEY`` from Secret Manager, mounted on ``ayma-agent`` only)
-    instead of Vertex, so it can use ``gemini_live_dev_model``. Default False —
-    Vertex + ``gemini_live_model`` needs no key and is the launch default.
-    Flip with ``GEMINI_LIVE_USE_DEV_API=true`` on the agent service."""
+    """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
+    validate): voice always runs on LiveKit Inference, never the Developer
+    API. ``GEMINI_LIVE_USE_DEV_API``."""
 
     gemini_live_dev_model: str
     """The Gemini Live model id used only when ``gemini_live_use_dev_api`` is
@@ -267,11 +265,9 @@ class Config:
     model wires search separately."""
 
     gemini_maps_grounding: bool
-    """Google Maps grounding in text chat (place lookups — "good third-date
-    spots near me") via Vertex's built-in ``google_maps`` tool. Uses the
-    runtime service identity (ADC); no Maps API key or extra API is needed.
-    Billed per grounded prompt. **On by default**; ``GEMINI_MAPS_GROUNDING=false``
-    to disable."""
+    """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
+    validate): Maps grounding only existed on the direct-Google path.
+    ``GEMINI_MAPS_GROUNDING``."""
 
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
@@ -328,8 +324,9 @@ class Config:
     """Firebase Storage bucket the backend reads uploaded photos from."""
 
     use_vertex: bool
-    """True → call Gemini via Vertex AI with the runtime service identity (no
-    API key, §12.3). False → Gemini Developer API with ``GOOGLE_API_KEY``."""
+    """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
+    validate): no served path calls Gemini via Vertex or the Developer API
+    anymore — all inference goes through LiveKit."""
 
     vertex_location: str
 
@@ -345,28 +342,25 @@ class Config:
     Non-secret. ``LIVEKIT_INFERENCE_URL`` overrides it."""
 
     llm_route_json: str
-    """Where structured-JSON text jobs (matching, wiki, icebreakers, explore, …)
-    run: ``vertex`` (Vertex AI with the runtime identity — the default and the
-    rollback) or ``inference`` (LiveKit Inference). ``LLM_ROUTE_JSON``."""
+    """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
+    validate): structured-JSON text jobs always run on LiveKit Inference.
+    ``LLM_ROUTE_JSON``."""
 
     llm_route_vision: str
-    """Same switch for JSON calls that carry images (photo attributes, face /
-    body / appearance reports, moderation). ``LLM_ROUTE_VISION``."""
+    """INERT since the 2026-11-04 direct-Google kill: JSON calls that carry
+    images always run on LiveKit Inference. ``LLM_ROUTE_VISION``."""
 
     llm_route_chat: str
-    """Same switch for the text chat turn (``generate_reply_events``). On
-    ``inference`` Google Search / URL grounding becomes a ``web_search``
-    function tool that is answered by a grounded Vertex call (the gateway has
-    no grounding). ``LLM_ROUTE_CHAT``."""
+    """INERT since the 2026-11-04 direct-Google kill: the text chat turn
+    always runs on LiveKit Inference. ``LLM_ROUTE_CHAT``."""
 
     llm_percent_json: int
     llm_percent_vision: int
     llm_percent_chat: int
     llm_percent_voice: int
-    """Share (0-100) of calls/sessions sent to Inference when that group's
-    route is ``inference`` — the A/B dial. ``LLM_PERCENT_JSON`` / ``_VISION`` /
-    ``_CHAT`` / ``_VOICE``, default 100. The runtime override is the
-    ``llm_percent_<group>`` feature flag (``feature_flags.py``)."""
+    """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
+    validate): every group always sends 100% to LiveKit Inference.
+    ``LLM_PERCENT_JSON`` / ``_VISION`` / ``_CHAT`` / ``_VOICE``."""
 
     inference_json_model: str
     """LiveKit Inference model id for the JSON jobs when routed to Inference.
@@ -386,17 +380,16 @@ class Config:
     ``INFERENCE_CHAT_MAX_TOKENS`` (default 8192)."""
 
     llm_inference_fallback: bool
-    """When a LiveKit Inference text call fails (rate limit, credits
-    exhausted, outage), retry it once on Vertex instead of failing the user.
-    ``LLM_INFERENCE_FALLBACK`` (default true)."""
+    """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
+    validate): a failed Inference call is never retried on a direct provider.
+    ``LLM_INFERENCE_FALLBACK``."""
 
     inference_timeout_seconds: float
     """Per-call timeout for a LiveKit Inference completion."""
 
     voice_provider: str
-    """Voice backend for the agent worker: ``google`` (livekit-plugins-google
-    RealtimeModel — current behaviour) or ``inference``
-    (``livekit.agents.inference.RealtimeModel``, needs livekit-agents >= 1.8).
+    """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
+    validate): voice always runs on ``livekit.agents.inference.RealtimeModel``.
     ``VOICE_PROVIDER``."""
 
     inference_live_model: str

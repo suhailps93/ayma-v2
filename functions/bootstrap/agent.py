@@ -9,9 +9,9 @@ Current scope:
 
 * base persona instructions (shared `persona.md`, same character as `/chat`),
 * default voice from `config.py`,
-* Gemini Live's native (server-side) turn detection — no client VAD; the
-  server's automatic activity detection is tuned conservatively against
-  false triggers (see ``_turn_detection_config``), env-overridable,
+* Gemini Live's native (server-side) turn detection through the LiveKit
+  Inference gateway — no client VAD; the gateway server-VAD silence/padding
+  is env-overridable (see ``build_inference_realtime_model``),
 * Step 15: native input/output transcription, relayed to the client as
   ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6).
 * "Shut up" muting: a mute-trigger phrase silences Ayma's auto-generated
@@ -48,7 +48,6 @@ if "pytest" not in sys.modules:  # pragma: no cover - dev/deploy only
             load_dotenv(_parent / ".env")
             break
 
-from google.genai import types  # noqa: E402
 from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     Agent,
     AgentServer,
@@ -67,7 +66,6 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
 )
 from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.agents.types import NOT_GIVEN, NotGivenOr  # noqa: E402
-from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
 from agent_keepalive import CallKeepAlive, KeepAliveServer  # noqa: E402
@@ -190,74 +188,20 @@ _OUT_OF_CREDITS_GOODBYE_TIMEOUT_SECONDS = 12
 
 # --- Server-side turn detection (VAD) tuning --------------------------------
 #
-# Measured problem (production 2026-09-26, gemini-3.8-live, call
-# s-t83myxsFsvQLhbb_s64jTL): 5 of 15 billed turns in a ~3-minute call returned
-# out=6 tokens — essentially empty replies, three of them seconds apart —
-# classic VAD false triggers (breaths / noise / short pauses committing a
-# "user turn" with no content). Each such turn still re-bills the entire
-# resident input context (~9.2k tokens at that point): ~46k tokens (~$0.14, a
-# third of the call) spent on turns where the model said nothing.
+# Voice runs through the LiveKit Inference gateway, whose realtime protocol
+# carries only server-VAD padding / silence. Both stay env-tunable on
+# ayma-agent (no code deploy to adjust); the literal value "default" (or
+# empty) leaves that field unset so the server default applies.
 #
-# Gemini Live's server defaults are START_SENSITIVITY_HIGH +
-# END_SENSITIVITY_HIGH (verified in the installed google-genai
-# StartSensitivity/EndSensitivity enum docs) — the most trigger-happy profile.
-# The knobs below tune the *server's* automatic activity detection via
-# `realtime_input_config.automatic_activity_detection`, which the installed
-# livekit plugin (1.7.1) passes verbatim into the Live session setup
-# (realtime_api.py `conf.realtime_input_config = ...`). No client-side VAD or
-# transcript heuristics — configuration only, so real user speech is never
-# eaten by our own cleverness. `activity_handling` is deliberately left unset:
-# the plugin's interrupt() path checks it, and the default
-# START_OF_ACTIVITY_INTERRUPTS is the barge-in behavior we want.
-#
-# Every knob is env-tunable on ayma-agent (no code deploy to adjust). The
-# literal value "default" (or empty) leaves that field unset so the server
-# default applies; setting all four to "default" — or
-# GEMINI_LIVE_TURN_DETECTION_TUNING=off — restores the exact pre-tuning setup
-# (no realtime_input_config sent at all).
-#
-#   GEMINI_LIVE_TURN_DETECTION_TUNING  on|off        default on
-#   GEMINI_LIVE_START_SENSITIVITY      low|high|default   default "low":
-#       breaths and background noise are less likely to open a user turn at
-#       all (server default is HIGH).
-#   GEMINI_LIVE_END_SENSITIVITY        low|high|default   default "default"
-#       (server HIGH): end-of-speech eagerness is left alone —
-#       silence_duration_ms below is the direct, bounded knob for early
-#       commits, while END_SENSITIVITY_LOW adds unbounded extra lag on top.
 #   GEMINI_LIVE_PREFIX_PADDING_MS      int ms|default     default 300:
 #       detected speech must persist ~0.3s before start-of-speech commits, so
-#       a breath, click, or cough doesn't open (and bill) a turn. Audio is
-#       buffered server-side, so nothing said is lost — commit is just
-#       confirmed later.
+#       a breath, click, or cough doesn't open (and bill) a turn.
 #   GEMINI_LIVE_SILENCE_DURATION_MS    int ms|default     default 700:
 #       ~0.7s of non-speech before end-of-speech commits — mid-sentence
 #       thinking pauses no longer cut the caller off / commit an empty tail
 #       turn, while replies still start well under a second after the caller
 #       actually finishes. Raise toward 1000 if callers feel cut off; lower
 #       toward 500 if Ayma feels slow to answer.
-
-_START_SENSITIVITY = {
-    "low": types.StartSensitivity.START_SENSITIVITY_LOW,
-    "high": types.StartSensitivity.START_SENSITIVITY_HIGH,
-}
-_END_SENSITIVITY = {
-    "low": types.EndSensitivity.END_SENSITIVITY_LOW,
-    "high": types.EndSensitivity.END_SENSITIVITY_HIGH,
-}
-
-
-def _env_choice(name: str, default: str, allowed: dict) -> object | None:
-    """Read a low/high/default env knob; None means leave the field unset."""
-    raw = os.getenv(name, default).strip().lower()
-    if raw in ("", "default"):
-        return None
-    if raw in allowed:
-        return allowed[raw]
-    logger.warning(
-        "%s=%r is not one of %s|default — using %r",
-        name, raw, "|".join(allowed), default,
-    )
-    return allowed.get(default)
 
 
 def _env_ms(name: str, default: int) -> int | None:
@@ -276,34 +220,9 @@ def _env_ms(name: str, default: int) -> int | None:
         return default
 
 
-def _turn_detection_config() -> types.RealtimeInputConfig | None:
-    """Build the tuned automatic-activity-detection config (or None).
-
-    None (tuning off, or every field resolved to "default") means the session
-    setup carries no ``realtime_input_config`` at all — byte-identical to the
-    pre-tuning behavior.
-    """
-    if os.getenv("GEMINI_LIVE_TURN_DETECTION_TUNING", "on").strip().lower() in (
-        "off", "false", "0",
-    ):
-        return None
-    aad = types.AutomaticActivityDetection(
-        start_of_speech_sensitivity=_env_choice(
-            "GEMINI_LIVE_START_SENSITIVITY", "low", _START_SENSITIVITY
-        ),
-        end_of_speech_sensitivity=_env_choice(
-            "GEMINI_LIVE_END_SENSITIVITY", "default", _END_SENSITIVITY
-        ),
-        prefix_padding_ms=_env_ms("GEMINI_LIVE_PREFIX_PADDING_MS", 300),
-        silence_duration_ms=_env_ms("GEMINI_LIVE_SILENCE_DURATION_MS", 700),
-    )
-    if aad == types.AutomaticActivityDetection():
-        return None
-    return types.RealtimeInputConfig(automatic_activity_detection=aad)
-
-
 def build_inference_realtime_model(voice: str, model: str | None = None):
-    """Gemini Live through LiveKit Inference (``VOICE_PROVIDER=inference``).
+    """Gemini Live through LiveKit Inference — the ONLY voice path (founder
+    rule 2026-11-04, permanent: no direct-Google voice).
 
     ``model`` overrides ``CONFIG.inference_live_model`` so a per-user realtime
     selection (§13.9, a non-Gemini/non-OpenAI realtime model from the live
@@ -312,7 +231,7 @@ def build_inference_realtime_model(voice: str, model: str | None = None):
     ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
     gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
     protocol carries are passed: the voice preset, and server-VAD padding /
-    silence taken from the same env tuning as the direct path. Live probes
+    silence from the env tuning above. Live probes
     (docs/LIVEKIT_INFERENCE_MIGRATION.md section 1b) proved only
     ``silence_duration_ms`` is honoured; Gemini-specific options (temperature,
     start/end sensitivity, sliding-window context compression, affective
@@ -351,145 +270,22 @@ def build_realtime_model(
     voice_name: str | None = None,
     language: str | None = None,
     route: str | None = None,
-) -> RealtimeModel:
-    """Construct the Gemini Live model.
+):
+    """Construct the Gemini Live model — always through LiveKit Inference
+    (founder rule 2026-11-04, permanent: no direct-Google voice — see
+    ``docs/DIRECT_GOOGLE_KILL_AUDIT.md`` item 8).
 
-    Auth mirrors the Main API (`gemini.py`): Vertex AI with the Cloud Run
-    runtime identity when ``USE_VERTEX`` is set, otherwise the Gemini Developer
-    API with ``GOOGLE_API_KEY`` from the environment. The model id comes only
-    from ``config.py`` (AGENTS.md); ``voice_name`` is the user's
-    ``ayma_voice_name`` preference (§13.3) when set and valid, else the
-    ``config.py`` default. ``language`` is their ``ayma_voice_language``
-    (BCP-47) default — the system prompt still lets Ayma follow the caller into
-    another language mid-call. ``route`` (``"vertex"`` | ``"inference"``) is the
-    already-decided provider for this call (see :func:`_run_session`); omitted,
-    it is resolved here without a uid.
+    The model id comes only from ``config.py`` (AGENTS.md); ``voice_name`` is
+    the user's ``ayma_voice_name`` preference (§13.3) when set and valid, else
+    the ``config.py`` default. ``language`` and ``route`` are kept so every
+    existing call site keeps working unchanged: the gateway ignores the
+    language hint and there is only one route.
     """
     import voices
 
     voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
         else CONFIG.gemini_live_voice
-
-    if (route or llm_routing.route_for("voice")) == "inference":
-        return build_inference_realtime_model(voice)
-
-    dev_api = CONFIG.gemini_live_use_dev_api
-    model = (
-        CONFIG.gemini_live_dev_model if dev_api else CONFIG.gemini_live_model
-    )
-    kwargs: dict[str, object] = {
-        "model": model,
-        "voice": voice,
-        "temperature": 0.9,
-        # Native Gemini Live transcription of both sides of the call (§1.6,
-        # §1.7 step 11) — explicit rather than relying on the plugin default.
-        #
-        # Transcription audit (cost program 2026-09-26, Phase 1): BOTH sides
-        # are genuinely consumed downstream, so neither can be gated off —
-        # input transcription feeds `user_input_transcribed` (the client's
-        # live user captions via `relay_transcripts`, the "shut up" mute
-        # triggers via `relay_mute_control`, AND the user half of the
-        # `raw_turns` window that wiki ingest reads on shutdown); output
-        # transcription is where the plugin gets the assistant text for
-        # `conversation_item_added` (verified in the installed livekit
-        # plugin's realtime_api.py — model-turn text is never used for
-        # captions), which drives the client's agent captions and the Ayma
-        # half of `raw_turns`. Dropping either would silently lose captions
-        # and memory, not just cost.
-        "input_audio_transcription": types.AudioTranscriptionConfig(),
-        "output_audio_transcription": types.AudioTranscriptionConfig(),
-    }
-    # Server-VAD tuning against false turn triggers — see the block comment on
-    # `_turn_detection_config`. Field acceptance verified live against
-    # gemini-3.8-live on the Dev API (setupComplete with the tuned
-    # realtimeInputConfig) before enabling by default.
-    turn_detection = _turn_detection_config()
-    if turn_detection is not None:
-        kwargs["realtime_input_config"] = turn_detection
-    if context_opt.voice_compression_enabled():
-        # Phase 1 (cost program 2026-09-26): Live API sliding-window context
-        # compression. Without it the Live session re-bills the ENTIRE
-        # accumulated context (audio ≈25 tok/s + seeded history + wiki) on
-        # every single turn — the dominant term in voice cost. Field names
-        # verified against the installed google-genai SDK
-        # (ContextWindowCompressionConfig.trigger_tokens /
-        # SlidingWindow.target_tokens) and the installed livekit plugin's
-        # RealtimeModel(context_window_compression=...) parameter.
-        #
-        # BUT only for models that genuinely honor it. The legacy Dev-API
-        # `gemini-3.1-flash-live-preview` accepts the field (returns
-        # setupComplete) but does NOT evict: on audio it's a soft hint that
-        # keeps re-billing a growing window, and on the text-seed path it
-        # fatally closes the session with 1007. It is therefore gated OFF for
-        # that model — see context_opt.voice_compression_supported_for. On
-        # `gemini-3.8-live` (the current Dev-API default, 2026-09-26 upgrade)
-        # the sliding window was measured live to genuinely evict — bounded
-        # sawtooth ~8k..16k, no 1007 (details in context_opt.py) — and on the
-        # Vertex `gemini-live-2.5-flash-native-audio` launch model it works as
-        # intended, so it stays on for both.
-        if context_opt.voice_compression_supported_for(model):
-            kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
-                trigger_tokens=context_opt.voice_compression_trigger_tokens(),
-                sliding_window=types.SlidingWindow(
-                    target_tokens=context_opt.voice_compression_target_tokens()
-                ),
-            )
-        else:
-            # No safe client-side substitute exists on this model: the plugin
-            # marks its chat context immutable (mutable_chat_context=False for
-            # "3.1"), so update_chat_ctx can't push a trimmed window
-            # mid-session, truncate() is a no-op, and message removal is
-            # unsupported. The only lever left is the seed diet (level >= 2)
-            # plus a full session restart, which we deliberately do not force
-            # mid-call. Log it so the decision is visible in the worker logs.
-            logger.info(
-                "voice context_window_compression skipped: model %s does not "
-                "honor the sliding window (seed diet is the only active lever)",
-                model,
-            )
-    lang_code = voices.bcp47_hint(language) if language else None
-    if lang_code:
-        # An exact tag ("en-GB") or a best-guess from the free-text preference
-        # ("Malayalam mixed with English" -> "ml-IN"). This biases Gemini Live's
-        # transcription so romanised Indian-language speech isn't misdetected
-        # (often as Chinese). The system prompt still carries the full accent
-        # instruction and lets Ayma follow the caller mid-call.
-        kwargs["language"] = lang_code
-    # Native-audio-only Live features (read the caller's tone and reply with
-    # matching prosody; volunteer a thought unprompted). OFF by default — the
-    # Live model we run rejects the session setup when these are set, which
-    # takes voice down entirely. Opt back in per-env once on a native-audio
-    # model: GEMINI_LIVE_AFFECTIVE_DIALOG / GEMINI_LIVE_PROACTIVITY = true.
-    if CONFIG.gemini_live_affective_dialog:
-        kwargs["enable_affective_dialog"] = True
-    if CONFIG.gemini_live_proactivity:
-        kwargs["proactivity"] = True
-    if dev_api:
-        # Gemini Developer API — the only place Live 3.x is served. Key comes
-        # from GOOGLE_API_KEY (Secret Manager, mounted on ayma-agent only).
-        #
-        # Async function calling: livekit-plugins-google >= 1.8 defaults
-        # 3.8-live tool declarations to NON_BLOCKING (the model keeps talking
-        # while a tool runs). Every Ayma tool result is meant to be spoken
-        # about immediately, so pin BLOCKING — the synchronous flow verified
-        # live on 2026-09-26 (toolCall -> toolResponse -> model continues).
-        # Dev API only: Vertex rejects a per-declaration ``behavior``.
-        kwargs["tool_behavior"] = types.Behavior.BLOCKING
-        key = os.getenv("GOOGLE_API_KEY")
-        if not key:
-            raise RuntimeError(
-                "gemini_live_use_dev_api is on but GOOGLE_API_KEY is unset"
-            )
-        kwargs["vertexai"] = False
-        kwargs["api_key"] = key
-    elif CONFIG.use_vertex:
-        kwargs["vertexai"] = True
-        if CONFIG.project_id:
-            kwargs["project"] = CONFIG.project_id
-        # The native-audio Live model is served from us-central1, not the
-        # "global" endpoint the text models use (config.py LOCKED block).
-        kwargs["location"] = CONFIG.gemini_live_location
-    return RealtimeModel(**kwargs)
+    return build_inference_realtime_model(voice)
 
 
 def _cascade_tts_voice_for_gender(gender: str | None) -> str:
@@ -1387,11 +1183,10 @@ def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:
 # `llm.RealtimeModel` it checks `self._rt_turn_detection_enabled` and
 # returns immediately if true, *before* ever calling
 # `self._agent.on_user_turn_completed(...)`. `_rt_turn_detection_enabled`
-# resolves to `True` for our exact setup (Google `RealtimeModel`,
+# resolves to `True` for our exact setup (gateway `RealtimeModel`,
 # `capabilities.turn_detection=True`,
-# `capabilities.can_disable_turn_detection=False`, no client VAD and no
-# `automatic_activity_detection.disabled` anywhere — the sensitivity/padding
-# tuning in `_turn_detection_config` keeps server turn detection ON) — see
+# `capabilities.can_disable_turn_detection=False`, no client VAD and server
+# turn detection left ON) — see
 # `AgentActivity._resolve_rt_turn_detection_enabled`. So `StopResponse`
 # would simply never fire; it is not used below.
 #
@@ -2069,7 +1864,7 @@ def relay_token_usage(
         # — the same selection build_realtime_model makes), threaded into the
         # cost computation so the ledger prices real traffic, not the Vertex
         # default it may not be using (pre-2026-09-26 accuracy bug).
-        model = token_ledger.live_model_id(inference=inference)
+        model = token_ledger.live_model_id()
         logger.info(
             "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model, in_tok, out_tok, total,
@@ -2484,10 +2279,11 @@ class VoiceSwapper:
         return self._live_voice, self._hint(self._live_language, self._live_accent)
 
     def _hint(self, language: str, accent: str = "") -> str | None:
-        # The LiveKit Inference gateway ignores the language hint (see
-        # build_inference_realtime_model), so only the Google route has one.
-        # Otherwise the same precedence boot uses: the explicit language, else
-        # the BCP-47 hint derived from the free-text accent.
+        # The LiveKit Inference gateway (the only voice route) ignores the
+        # language hint (see build_inference_realtime_model), so this is
+        # always None today; the precedence below is kept for the message
+        # wording: the explicit language, else the BCP-47 hint derived from
+        # the free-text accent.
         if self._route == "inference" or (not language and not accent):
             return None
         return voices.bcp47_hint(language or voices.bcp47_hint(accent) or "")
@@ -2852,8 +2648,10 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     # may never come (see `post_turn.persist_and_ingest`'s docstring for the
     # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
-    # Provider decided ONCE per call (runtime Firestore flag, optional uid
-    # allowlist) and threaded to the model, the session record and the ledger.
+    # Provider decided ONCE per call and threaded to the model, the session
+    # record and the ledger. Always LiveKit Inference (founder rule
+    # 2026-11-04 — no direct-Google voice); the route plumbing is kept so the
+    # threading shape stays intact.
     route = llm_routing.route_for("voice", uid=seed.uid)
     use_inference = route == "inference"
     voice_provider = (

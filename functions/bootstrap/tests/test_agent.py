@@ -18,7 +18,6 @@ import json
 import pytest
 
 pytest.importorskip("livekit.agents")
-pytest.importorskip("livekit.plugins.google.realtime")
 
 import agent  # noqa: E402
 from config import CONFIG  # noqa: E402
@@ -28,40 +27,40 @@ def test_entrypoint_is_async():
     assert inspect.iscoroutinefunction(agent.entrypoint)
 
 
-def test_realtime_model_uses_config_model_id(monkeypatch):
+def _capture_inference_realtime(monkeypatch):
+    """Capture the kwargs ``build_inference_realtime_model`` passes to the
+    gateway RealtimeModel (voice runs only through LiveKit Inference)."""
+    from livekit.agents import inference
+
     captured = {}
 
     class _FakeRealtimeModel:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(inference, "RealtimeModel", _FakeRealtimeModel)
+    return captured
+
+
+def test_realtime_model_uses_config_model_id(monkeypatch):
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    assert captured["model"] == CONFIG.gemini_live_model
+    assert captured["model"] == CONFIG.inference_live_model
     assert captured["voice"] == CONFIG.gemini_live_voice
+    # Only the knobs the gateway protocol carries — no temperature,
+    # compression, transcription configs or native-audio flags.
+    assert set(captured) == {"model", "voice", "turn_detection"}
 
 
 def test_realtime_model_uses_a_valid_voice_preference(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model("Charon")
     assert captured["voice"] == "Charon"
 
 
 def test_realtime_model_falls_back_for_an_unknown_voice(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model("NotARealPreset")
     assert captured["voice"] == CONFIG.gemini_live_voice
 
@@ -115,180 +114,7 @@ def test_room_seed_carries_the_voice_name():
     assert agent._read_room_seed(_Ctx()).voice_name == "Zephyr"
 
 
-def test_realtime_model_enables_both_transcriptions(monkeypatch):
-    from google.genai import types
-
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    assert isinstance(
-        captured["input_audio_transcription"], types.AudioTranscriptionConfig
-    )
-    assert isinstance(
-        captured["output_audio_transcription"], types.AudioTranscriptionConfig
-    )
-
-
-def test_realtime_model_omits_context_compression_by_default(monkeypatch):
-    """CONTEXT_OPT_LEVEL unset/0 = the exact pre-cost-program session config:
-    no context_window_compression key at all."""
-    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    assert "context_window_compression" not in captured
-
-
-def test_realtime_model_enables_sliding_window_compression_at_level_1(monkeypatch):
-    """Phase 1 (cost program): with CONTEXT_OPT_LEVEL>=1 the Live session gets
-    sliding-window context compression — trigger ~16k tokens, retained window
-    ~8k — so the per-turn re-billed context stops growing unbounded."""
-    from google.genai import types
-
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    cwc = captured["context_window_compression"]
-    assert isinstance(cwc, types.ContextWindowCompressionConfig)
-    assert cwc.trigger_tokens == 16000
-    assert cwc.sliding_window.target_tokens == 8000
-
-
-def test_compression_thresholds_are_env_tunable(monkeypatch):
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    monkeypatch.setenv("CONTEXT_OPT_VOICE_TRIGGER_TOKENS", "20000")
-    monkeypatch.setenv("CONTEXT_OPT_VOICE_WINDOW_TOKENS", "10000")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    cwc = captured["context_window_compression"]
-    assert cwc.trigger_tokens == 20000
-    assert cwc.sliding_window.target_tokens == 10000
-
-
-def test_compression_omitted_for_dev_api_3_1_preview(monkeypatch):
-    """Root-cause fix (cost program 2026-09-26): even at CONTEXT_OPT_LEVEL>=1,
-    the Dev-API `gemini-3.1-flash-live-preview` must NOT receive
-    context_window_compression — it accepts but does not honor the sliding
-    window (soft hint on audio; fatal 1007 on the text-seed path). Verified
-    empirically against the live Dev API with the installed SDK."""
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "3")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG,
-            gemini_live_use_dev_api=True,
-            gemini_live_dev_model="gemini-3.1-flash-live-preview",
-        ),
-    )
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
-    agent.build_realtime_model()
-
-    assert captured["model"] == "gemini-3.1-flash-live-preview"
-    assert "context_window_compression" not in captured
-
-
-def test_compression_present_for_compression_capable_model(monkeypatch):
-    """The Vertex `gemini-live-2.5-flash-native-audio` launch model honors the
-    sliding window, so compression stays ON there at level>=1 (guards against
-    the model-aware gate over-reaching and disabling it everywhere)."""
-    from google.genai import types
-
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG,
-            gemini_live_use_dev_api=False,
-            gemini_live_model="gemini-live-2.5-flash-native-audio",
-        ),
-    )
-    agent.build_realtime_model()
-
-    assert captured["model"] == "gemini-live-2.5-flash-native-audio"
-    assert isinstance(
-        captured["context_window_compression"],
-        types.ContextWindowCompressionConfig,
-    )
-
-
-def test_compression_present_for_dev_api_3_8_live(monkeypatch):
-    """`gemini-3.8-live` (the Dev-API default since the 2026-09-26 upgrade)
-    DOES get context_window_compression at level>=1 — measured live against
-    the real Dev API that day: per-turn prompt tokens sawtoothed 15,478 ->
-    7,695 -> 15,593 -> 7,712 with trigger 16k / window 8k (a genuine, bounded
-    eviction), and the text client-content path never closed with 1007."""
-    from google.genai import types
-
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG,
-            gemini_live_use_dev_api=True,
-            gemini_live_dev_model="gemini-3.8-live",
-        ),
-    )
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
-    agent.build_realtime_model()
-
-    assert captured["model"] == "gemini-3.8-live"
-    cwc = captured["context_window_compression"]
-    assert isinstance(cwc, types.ContextWindowCompressionConfig)
-    assert cwc.trigger_tokens == 16000
-    assert cwc.sliding_window.target_tokens == 8000
-
-
 _TURN_DETECTION_ENVS = (
-    "GEMINI_LIVE_TURN_DETECTION_TUNING",
-    "GEMINI_LIVE_START_SENSITIVITY",
-    "GEMINI_LIVE_END_SENSITIVITY",
     "GEMINI_LIVE_PREFIX_PADDING_MS",
     "GEMINI_LIVE_SILENCE_DURATION_MS",
 )
@@ -299,171 +125,57 @@ def _clear_turn_detection_envs(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_realtime_model_tunes_server_turn_detection_by_default(monkeypatch):
-    """Anti-false-trigger VAD tuning (2026-09-26): by default the session
-    setup carries realtime_input_config with start sensitivity LOW, 300ms
-    prefix padding, 700ms end-of-speech silence — and nothing else: no
-    `disabled`, no `activity_handling` (barge-in must keep working), and end
-    sensitivity left to the server default."""
-    from google.genai import types
-
+def test_realtime_model_tunes_gateway_server_vad_by_default(monkeypatch):
+    """Anti-false-trigger VAD tuning: by default the gateway session carries
+    server-VAD with 300ms prefix padding and 700ms end-of-speech silence."""
     _clear_turn_detection_envs(monkeypatch)
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    ric = captured["realtime_input_config"]
-    assert isinstance(ric, types.RealtimeInputConfig)
-    assert ric.activity_handling is None
-    assert ric.turn_coverage is None
-    aad = ric.automatic_activity_detection
-    assert aad.disabled is None  # server turn detection stays ON
-    assert aad.start_of_speech_sensitivity == (
-        types.StartSensitivity.START_SENSITIVITY_LOW
-    )
-    assert aad.end_of_speech_sensitivity is None
-    assert aad.prefix_padding_ms == 300
-    assert aad.silence_duration_ms == 700
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms == 300
+    assert vad.silence_duration_ms == 700
 
 
 def test_turn_detection_knobs_are_env_tunable(monkeypatch):
-    from google.genai import types
-
     _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "high")
-    monkeypatch.setenv("GEMINI_LIVE_END_SENSITIVITY", "low")
     monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "150")
     monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "1000")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    aad = captured["realtime_input_config"].automatic_activity_detection
-    assert aad.start_of_speech_sensitivity == (
-        types.StartSensitivity.START_SENSITIVITY_HIGH
-    )
-    assert aad.end_of_speech_sensitivity == (
-        types.EndSensitivity.END_SENSITIVITY_LOW
-    )
-    assert aad.prefix_padding_ms == 150
-    assert aad.silence_duration_ms == 1000
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms == 150
+    assert vad.silence_duration_ms == 1000
 
 
-def test_turn_detection_tuning_kill_switch(monkeypatch):
-    """GEMINI_LIVE_TURN_DETECTION_TUNING=off restores the exact pre-tuning
-    session config: no realtime_input_config key at all."""
+def test_turn_detection_all_defaults_leaves_fields_unset(monkeypatch):
+    """Every knob set to "default" leaves the fields unset — the gateway
+    server default applies."""
     _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_TURN_DETECTION_TUNING", "off")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    assert "realtime_input_config" not in captured
-
-
-def test_turn_detection_all_defaults_sends_no_config(monkeypatch):
-    """Every knob set to \"default\" leaves all fields unset — then no
-    realtime_input_config is sent at all (same as the kill switch)."""
-    _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "default")
-    monkeypatch.setenv("GEMINI_LIVE_END_SENSITIVITY", "default")
     monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "default")
     monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "default")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    assert "realtime_input_config" not in captured
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms is None
+    assert vad.silence_duration_ms is None
 
 
 def test_turn_detection_invalid_env_values_fall_back(monkeypatch):
-    """Garbage env values must never take voice down: bad choice/int values
-    fall back to the shipped defaults (with a warning), not raise."""
-    from google.genai import types
-
+    """Garbage env values must never take voice down: bad int values fall
+    back to the shipped defaults (with a warning), not raise."""
     _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "verylow")
     monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "abc")
     monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "-5")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    aad = captured["realtime_input_config"].automatic_activity_detection
-    assert aad.start_of_speech_sensitivity == (
-        types.StartSensitivity.START_SENSITIVITY_LOW
-    )
-    assert aad.prefix_padding_ms == 300
-    assert aad.silence_duration_ms == 700
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms == 300
+    assert vad.silence_duration_ms == 700
 
-
-def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
-    """Both native-audio-only flags default OFF and must NOT be passed to the
-    Live model — passing them takes voice down on the model we run."""
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG, gemini_live_affective_dialog=False,
-            gemini_live_proactivity=False,
-        ),
-    )
-    agent.build_realtime_model()
-
-    assert "enable_affective_dialog" not in captured
-    assert "proactivity" not in captured
-
-
-def test_realtime_model_passes_native_audio_flags_when_enabled(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG, gemini_live_affective_dialog=True,
-            gemini_live_proactivity=True,
-        ),
-    )
-    agent.build_realtime_model()
-
-    assert captured["enable_affective_dialog"] is True
-    assert captured["proactivity"] is True
 
 
 def test_relay_transcripts_publishes_named_data_events():
@@ -555,42 +267,20 @@ def test_relay_agent_state_publishes_speaking_state():
     ]
 
 
-def test_realtime_model_vertex_auth_toggles_with_config(monkeypatch):
-    captured = {}
+def test_realtime_model_always_builds_on_livekit_inference(monkeypatch):
+    """The direct-Google voice branch is gone (founder rule 2026-11-04):
+    ``build_realtime_model`` always delegates to the Inference builder —
+    whatever the route override, USE_VERTEX or GEMINI_LIVE_USE_DEV_API say."""
+    seen = {}
 
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    def _fake_inference_builder(voice, model=None):
+        seen["voice"] = voice
+        seen["model"] = model
+        return "INFERENCE_MODEL"
 
     monkeypatch.setattr(
-        agent,
-        "CONFIG",
-        dataclasses.replace(
-            CONFIG, use_vertex=True, gemini_live_location="us-central1"
-        ),
+        agent, "build_inference_realtime_model", _fake_inference_builder
     )
-    agent.build_realtime_model()
-    assert captured.get("vertexai") is True
-    assert captured.get("location") == "us-central1"
-
-    captured.clear()
-    monkeypatch.setattr(
-        agent, "CONFIG", dataclasses.replace(CONFIG, use_vertex=False)
-    )
-    agent.build_realtime_model()
-    assert "vertexai" not in captured
-
-
-def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
     monkeypatch.setattr(
         agent,
         "CONFIG",
@@ -600,18 +290,24 @@ def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
     )
     monkeypatch.setenv("GOOGLE_API_KEY", "k-123")
 
-    agent.build_realtime_model()
-    assert captured["model"] == CONFIG.gemini_live_dev_model
-    assert captured["api_key"] == "k-123"
-    assert captured["vertexai"] is False
-    assert "location" not in captured
-    # livekit-plugins-google >= 1.8 would default 3.8-live to NON_BLOCKING
-    assert captured["tool_behavior"] == agent.types.Behavior.BLOCKING
+    for route in ("inference", "vertex", None):
+        seen.clear()
+        assert agent.build_realtime_model("Charon", route=route) == (
+            "INFERENCE_MODEL"
+        )
+        assert seen == {"voice": "Charon", "model": None}
 
-    # missing key is a hard error, not a silent Vertex fallback
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    with pytest.raises(RuntimeError):
-        agent.build_realtime_model()
+    # An invalid voice preset still resolves to the configured default.
+    assert agent.build_realtime_model("Nope") == "INFERENCE_MODEL"
+    assert seen["voice"] == CONFIG.gemini_live_voice
+
+
+def test_realtime_model_has_no_direct_google_auth_left():
+    """The google plugin model, the genai types and the Vertex/dev knobs are
+    gone from the worker — there is nothing left to aim at Google."""
+    assert not hasattr(agent, "RealtimeModel")
+    assert not hasattr(agent, "types")
+    assert not hasattr(agent, "_turn_detection_config")
 
 
 def test_worker_health_server_leaves_cloud_run_port_to_keepalive(monkeypatch):
@@ -2736,14 +2432,16 @@ def test_watch_for_idle_disabled_when_timeout_is_zero():
 
 def test_relay_token_usage_meters_inference_voice_with_provider(monkeypatch):
     """The Inference adapter emits the same RealtimeModelMetrics from
-    response.done usage; the ledger write must be priced on the Inference model
-    id and tagged `livekit_inference` (the google path stays untouched)."""
+    response.done usage; the ledger write is priced on the Inference model id
+    (the only voice model) and tagged per the session's provider flag."""
     import token_ledger
 
-    for inference, want_provider, want_model in (
-        (True, "livekit_inference", CONFIG.inference_live_model),
-        (False, token_ledger.provider_for("voice"), token_ledger.live_model_id(False)),
+    for inference, want_provider in (
+        (True, "livekit_inference"),
+        (False, token_ledger.provider_for("voice")),
     ):
+        want_model = token_ledger.live_model_id()
+        assert want_model == CONFIG.inference_live_model
         seen = {}
         monkeypatch.setattr(
             token_ledger, "add", lambda *a, **kw: seen.update(kw=kw, args=a)

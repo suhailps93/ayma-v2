@@ -2508,49 +2508,43 @@ def test_both_research_attempts_timeout_fails_the_run(monkeypatch):
     assert attempts["n"] == deep_dive._RESEARCH_ATTEMPTS  # tried twice, no more
 
 
-def test_research_timeout_bills_nothing(monkeypatch):
-    """No-double-charge proof at the metering layer: gemini.research records
-    the spend only AFTER the underlying call returns, so a timed-out attempt
-    raises first and bills nothing — a retry can never charge twice, and a
-    success bills exactly once."""
+def test_disabled_research_bills_nothing(monkeypatch):
+    """Grounded research is disabled with the direct-Google kill (founder
+    rule 2026-11-04): it raises instead of calling Google, so a dive attempt
+    can never be charged for it."""
+    import llm_routing
+
     recorded = {"n": 0}
-
-    async def _timeout(*_a, **_k):
-        raise asyncio.TimeoutError()
-
-    monkeypatch.setattr(gemini, "_generate", _timeout)
     monkeypatch.setattr(token_ledger, "check", lambda uid: None)
     monkeypatch.setattr(
         token_ledger, "record",
         lambda *a, **k: recorded.__setitem__("n", recorded["n"] + 1),
     )
 
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(llm_routing.DirectGoogleDisabledError):
         _run(gemini.research("anything", uid="u1", feature="deepdive"))
-    assert recorded["n"] == 0  # timed-out attempt → zero charges
+    assert recorded["n"] == 0  # a call that never runs bills nothing
 
 
-def test_research_success_bills_once(monkeypatch):
-    """Counterpart to the above: a succeeding attempt bills exactly once."""
-    recorded = {"n": 0}
+def test_disabled_research_is_not_retried():
+    """The disabled error is deterministic (``code`` 400), so the dive's
+    retry classifier treats it like a bad request: one attempt, no retry."""
+    import llm_routing
 
-    class _Resp:
-        text = "found them"
-        candidates = []
+    attempts = {"n": 0}
+    real_research = gemini.research
 
-    async def _ok(*_a, **_k):
-        return _Resp()
+    async def _counting(*a, **k):
+        attempts["n"] += 1
+        return await real_research(*a, **k)
 
-    monkeypatch.setattr(gemini, "_generate", _ok)
-    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
-    monkeypatch.setattr(
-        token_ledger, "record",
-        lambda *a, **k: recorded.__setitem__("n", recorded["n"] + 1),
-    )
-
-    prose, _sources = _run(gemini.research("anything", uid="u1", feature="deepdive"))
-    assert prose == "found them"
-    assert recorded["n"] == 1  # one completion → one charge
+    gemini.research = _counting
+    try:
+        with pytest.raises(llm_routing.DirectGoogleDisabledError):
+            _run(deep_dive._grounded_research("research Dana", uid="u1"))
+    finally:
+        gemini.research = real_research
+    assert attempts["n"] == 1  # no retry on a deterministic failure
 
 
 def test_deterministic_bad_request_is_not_retried(monkeypatch):

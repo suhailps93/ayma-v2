@@ -214,9 +214,9 @@ async def complete(
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> InferenceResponse:
-    """One chat completion through LiveKit Inference, with the same backed-off
-    retry-on-anything policy as ``gemini._generate``. A timeout is not retried
-    (the wait already spent the budget)."""
+    """One chat completion through LiveKit Inference, with a backed-off
+    retry-on-anything policy. A timeout is not retried (the wait already
+    spent the budget)."""
     kwargs: dict = {"model": model, "messages": messages}
     if tools:
         kwargs["tools"] = tools

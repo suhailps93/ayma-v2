@@ -222,7 +222,11 @@ def test_admin_feature_flags_view_is_password_gated_and_lists_every_flag(monkeyp
 # --- no silent Google fallback --------------------------------------------
 
 
-def test_inference_failure_surfaces_loudly_when_google_fallback_is_off(monkeypatch, caplog):
+def test_inference_failure_surfaces_loudly_with_no_google_fallback(monkeypatch):
+    """There is no Google fallback to consult (founder rule 2026-11-04): the
+    direct-Google helpers are deleted, so a gateway failure can only raise."""
+    import llm_routing
+
     _branch(monkeypatch)
     monkeypatch.setattr(gemini, "CONFIG", ff.CONFIG)
     monkeypatch.setattr(inference_llm, "CONFIG", ff.CONFIG)
@@ -230,17 +234,13 @@ def test_inference_failure_surfaces_loudly_when_google_fallback_is_off(monkeypat
     async def boom(**kw):
         raise RuntimeError("gateway 503")
 
-    async def must_not_run(*a, **k):
-        raise AssertionError("fell back to Google")
-
     monkeypatch.setattr(inference_llm, "complete", boom)
-    monkeypatch.setattr(gemini, "_generate", must_not_run)
-    with caplog.at_level("ERROR"):
-        with pytest.raises(RuntimeError, match="gateway 503"):
-            asyncio.run(gemini.generate_json("c", "s", None, enforce_cap=False))
-        with pytest.raises(RuntimeError, match="gateway 503"):
-            asyncio.run(_drain(gemini.generate_reply_events("hi", system_prompt="p")))
-    assert "Google fallback is" in caplog.text
+    assert not hasattr(gemini, "_generate")
+    assert llm_routing.fallback_enabled() is False
+    with pytest.raises(RuntimeError, match="gateway 503"):
+        asyncio.run(gemini.generate_json("c", "s", None, enforce_cap=False))
+    with pytest.raises(RuntimeError, match="gateway 503"):
+        asyncio.run(_drain(gemini.generate_reply_events("hi", system_prompt="p")))
 
 
 async def _drain(gen):

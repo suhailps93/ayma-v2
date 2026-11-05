@@ -8,14 +8,14 @@ and never resolves anything — flags are advisory.
 `lint_flags` is recomputed whole each run: a page that comes back clean has its
 flags cleared.
 
-``lint_all`` (the cron sweep) runs on the Gemini Batch API — see
-``gemini_batch.py`` for why: this is the ideal case for it (purely scheduled,
-nobody waiting on a result, advisory-only output) at 50% of the synchronous
-cost. It's a two-phase submit/poll: each `/cron/lint` tick either finalizes a
-previously-submitted job that has since finished, or submits a fresh one —
-never blocks the request on the job actually completing. ``lint_user`` (a
-single user, synchronous) is unchanged and still used directly by tests and
-any future one-off/manual lint.
+``lint_all`` (the cron sweep) is DISABLED (founder rule 2026-11-04 — see
+``docs/DIRECT_GOOGLE_KILL_AUDIT.md`` item 7): the two-phase submit/poll ran on
+the Vertex Batch API, which needs the direct-Google path, and the LiveKit
+gateway has no batch tier. Each ``/cron/lint`` tick reports
+``{"status": "disabled", ...}`` and clears any stale pending-batch state.
+``lint_user`` (a single user, synchronous, via the LiveKit-routed
+``gemini.generate_json``) still works and is used directly by tests and any
+future one-off/manual lint.
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
-import gemini_batch
 
 logger = logging.getLogger("ayma.wiki")
 
@@ -152,7 +151,7 @@ def _write_flags(db, uid: str, pages: list[dict], flags_by_page: dict) -> int:
 async def lint_user(db, uid: str) -> int:
     """Lint one user's wiki right now, synchronously. Returns the number of
     pages that ended up flagged. Used by tests and any future one-off/manual
-    lint; the scheduled sweep (``lint_all``) batches instead — see module
+    lint; the scheduled sweep (``lint_all``) is disabled — see the module
     docstring."""
     pages = _read_pages(db, uid)
     if len(pages) < 2:
@@ -180,107 +179,20 @@ def _load_pending(db) -> dict | None:
     return snap.to_dict() if snap.exists else None
 
 
-def _submit_new(db, limit: int | None) -> dict:
-    """Gather every user's wiki pages. Anyone with fewer than two pages needs
-    no model call — clear their flags immediately, same as ``lint_user``
-    would. Everyone else goes into one Batch job; nothing here waits for it."""
-    users = db.collection("users")
-    query = users.limit(limit) if limit else users
-
-    skipped = 0
-    batched_uids: list[str] = []
-    items: list[str] = []
-    for snap in query.stream():
-        uid = snap.id
-        try:
-            pages = _read_pages(db, uid)
-        except Exception:  # noqa: BLE001 - one bad user must not stop the sweep
-            logger.exception("lint: failed to read pages for %s", uid)
-            continue
-        if len(pages) < 2:
-            _write_flags(db, uid, pages, {})
-            skipped += 1
-            continue
-        batched_uids.append(uid)
-        items.append(_pages_block(pages))
-
-    if not items:
-        return {
-            "status": "done", "users_checked": skipped,
-            "pages_flagged": 0, "batched": 0,
-        }
-
-    submission = gemini_batch.submit_json_batch(
-        items, load_lint_prompt(), _RESPONSE_SCHEMA, job_tag="wiki_lint",
-    )
-    _state_ref(db).set(
-        {
-            "job_name": submission.job_name,
-            "dest_prefix": submission.dest_prefix,
-            "uids": batched_uids,
-            "count": submission.count,
-            "submitted_at": datetime.now(timezone.utc),
-        }
-    )
-    return {
-        "status": "submitted", "job_name": submission.job_name,
-        "users_checked": skipped, "batched": len(batched_uids),
-    }
-
-
-def _finalize(db, state: dict) -> dict | None:
-    """Poll the pending job once. Returns the run summary once it's done
-    (applying results and clearing state, whether it succeeded or hit a
-    terminal failure) — or ``None`` while it's still running, in which case
-    the caller reports "pending" and leaves the state doc alone for the next
-    tick to try again."""
-    job_name = state.get("job_name", "")
-    job = gemini_batch.poll_json_batch(job_name)
-    if not gemini_batch.is_batch_done(job):
-        return None
-
-    uids: list[str] = state.get("uids") or []
-    if not gemini_batch.is_batch_succeeded(job):
-        logger.error(
-            "wiki lint batch %s ended in %s: %s", job_name, job.state, job.error,
-        )
-        _state_ref(db).delete()
-        return {"status": "failed", "job_name": job_name, "job_state": str(job.state)}
-
-    dest = (
-        job.output_info.gcs_output_directory
-        if getattr(job, "output_info", None) else None
-    ) or state.get("dest_prefix", "")
-    try:
-        results = gemini_batch.fetch_json_batch_results(dest, expected_count=len(uids))
-    except Exception:  # noqa: BLE001 - never crash the cron endpoint
-        logger.exception("wiki lint: failed to read batch results for %s", job_name)
-        _state_ref(db).delete()
-        return {"status": "failed", "job_name": job_name, "job_state": "result_read_error"}
-
-    checked = 0
-    flagged_pages = 0
-    for uid, result in zip(uids, results):
-        try:
-            pages = _read_pages(db, uid)
-            flags_by_page = _flags_from_result(pages, result) if result is not None else {}
-            flagged_pages += _write_flags(db, uid, pages, flags_by_page)
-            checked += 1
-        except Exception:  # noqa: BLE001 - one bad user must not stop the sweep
-            logger.exception("wiki lint: failed to apply batch result for %s", uid)
-    _state_ref(db).delete()
-    return {"status": "done", "users_checked": checked, "pages_flagged": flagged_pages}
-
-
 async def lint_all(db, limit: int | None = None) -> dict:
-    """The scheduled sweep (optionally capped on a fresh submission). Each
-    tick either finalizes a previously-submitted Batch job that has since
-    completed, or — if nothing is pending — submits a new one. See the
-    module docstring; this never blocks on a job actually finishing."""
+    """The scheduled sweep — DISABLED (see the module docstring). Reports
+    ``disabled`` instead of submitting a Vertex batch, and clears any stale
+    pending-batch state left from before the kill so no tick ever polls
+    Google again. ``limit`` is kept so the cron call site is unchanged."""
     state = await asyncio.to_thread(_load_pending, db)
     if state:
-        result = await asyncio.to_thread(_finalize, db, state)
-        if result is not None:
-            return result
-        return {"status": "pending", "job_name": state.get("job_name", "")}
-    return await asyncio.to_thread(_submit_new, db, limit)
+        try:
+            await asyncio.to_thread(_state_ref(db).delete)
+        except Exception:  # noqa: BLE001 - state cleanup is best-effort
+            logger.warning("wiki lint: stale batch state cleanup failed")
+        return {
+            "status": "disabled",
+            "job_name": state.get("job_name", ""),
+            "reason": "batch_disabled_direct_google_killed",
+        }
+    return {"status": "disabled", "reason": "batch_disabled_direct_google_killed"}
