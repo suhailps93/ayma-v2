@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/instagram_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/oauth_code_dialog.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -149,7 +150,10 @@ class _InstagramScreenState extends State<InstagramScreen> {
               Text('Could not load status ($_error).',
                   style: AymaType.sans(size: 13, color: AymaColors.error))
             else if (connected == null)
-              const Center(child: CircularProgressIndicator())
+              // Link-status read still in flight.
+              const Center(
+                child: AymaWingLoader(lines: AymaLoaderLines.instagramStatus),
+              )
             else if (connected) ...[
               ListTile(
                 contentPadding: EdgeInsets.zero,

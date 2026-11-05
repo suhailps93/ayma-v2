@@ -17,6 +17,7 @@ import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart'
@@ -747,9 +748,13 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                     if (fresh != null) FreshnessIndicator.fromFresh(fresh),
                     Expanded(
                       child: msgs.isEmpty
+                          // First emission of the thread's message stream.
                           ? (waiting
                               ? const Center(
-                                  child: CircularProgressIndicator())
+                                  child: AymaWingLoader(
+                                    lines: AymaLoaderLines.dmThread,
+                                  ),
+                                )
                               : Center(
                                   child: Text(
                                     'Say something.',
@@ -778,15 +783,14 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 if (i >= msgs.length) {
                                   // History page in flight — pinned to the top
                                   // of the reversed transcript (last index).
+                                  // Older-messages query — inline slot, wings only.
                                   return const Padding(
                                     padding:
                                         EdgeInsets.symmetric(vertical: 16),
                                     child: Center(
-                                      child: SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2),
+                                      child: AymaWingLoader(
+                                        size: 20,
+                                        showLabel: false,
                                       ),
                                     ),
                                   );
@@ -993,13 +997,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                   ),
                   const SizedBox(width: 8),
                   _sending
+                      // POST /dm/{threadId}/messages in flight — the send
+                      // slot, wings only.
                       ? const Padding(
                           padding: EdgeInsets.all(8),
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
+                          child: AymaWingLoader(size: 24, showLabel: false),
                         )
                       : IconButton.filled(
                           onPressed: _send,
@@ -1485,7 +1487,10 @@ class _Bubble extends StatelessWidget {
                 height: 220,
                 color: ac.bgCard,
                 alignment: Alignment.center,
-                child: const CircularProgressIndicator(strokeWidth: 2),
+                child: const AymaWingLoader(
+                  size: 40,
+                  lines: AymaLoaderLines.photo,
+                ),
               ),
         errorBuilder: (ctx, _, __) => Container(
           width: 220,
@@ -1726,11 +1731,7 @@ class _TranslatableTextState extends State<_TranslatableText> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(strokeWidth: 1.6),
-            ),
+            const AymaWingLoader(size: 12, showLabel: false),
             const SizedBox(width: 6),
             Flexible(child: Text('Translating…', style: muted)),
           ],

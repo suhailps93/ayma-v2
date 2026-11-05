@@ -5,6 +5,7 @@ import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 
 /// Developer → Feedback: the product-feedback triage list (§15). Shows every
 /// row from the unified `feedback` collection's product sources — the in-chat
@@ -65,7 +66,10 @@ class _AdminFeedbackScreenState extends State<AdminFeedbackScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            // Feedback-rows fetch still in flight.
+            return const Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.adminFeedback),
+            );
           }
           if (snap.hasError) {
             return Center(

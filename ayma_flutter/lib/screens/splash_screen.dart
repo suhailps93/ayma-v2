@@ -14,7 +14,7 @@ import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
 import '../services/deep_link_queue.dart';
 import '../services/report_cache.dart';
-import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 import 'biometric_consent_screen.dart';
 import 'main_shell_screen.dart';
@@ -37,7 +37,7 @@ import 'underage_screen.dart';
 /// generous overall budget ([startupDeadline]) that comfortably covers a cold
 /// start plus a retry; a restored connection retries immediately. Only once
 /// that whole budget is spent does a branded "Couldn't connect — Retry" state
-/// replace the orb. Only a genuine auth failure (401/403) routes to sign-in; a
+/// replace the loader. Only a genuine auth failure (401/403) routes to sign-in; a
 /// network failure never bounces a signed-in user out of their session.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, this.apiClient, this.auth});
@@ -52,7 +52,7 @@ class SplashScreen extends StatefulWidget {
   /// Hard overall deadline for a startup cycle. However the per-call timeouts
   /// and the backoff loop fall out (or are defeated — an await that never
   /// completes, a plugin that never reports), the splash MUST show the Retry
-  /// affordance by now rather than an endless orb (§11.2). Public so the test
+  /// affordance by now rather than an endless loader (§11.2). Public so the test
   /// can assert the exact watchdog behaviour.
   ///
   /// Sized to comfortably cover a Cloud Run cold start (~18s+) plus an
@@ -115,7 +115,7 @@ class _SplashScreenState extends State<SplashScreen> {
     super.dispose();
   }
 
-  /// The belt-and-braces guarantee that startup can never hang on the orb: if
+  /// The belt-and-braces guarantee that startup can never hang on the loader: if
   /// nothing has navigated away from the splash within [SplashScreen
   /// .startupDeadline], force the branded Retry state. A successful bootstrap
   /// (or a route to sign-in) disposes this screen, which cancels the timer, so
@@ -478,8 +478,11 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 }
 
-/// The splash spinner: the branded orb, with a quiet "Reconnecting…" line
-/// while an auto-retry is pending so the user knows it's still working.
+/// The splash spinner: the shared wing loader. Stage 0 ("Waking up Ayma…")
+/// covers the `GET /health` wake-ping plus the first `/bootstrap` attempt;
+/// stage 1 ("Reconnecting…") shows while an auto-retry is pending or in
+/// flight — wired to the existing [_SplashScreenState._retrying] flag, so the
+/// line always names what startup is actually doing.
 class SplashLoading extends StatelessWidget {
   const SplashLoading({super.key, this.reconnecting = false});
 
@@ -489,23 +492,10 @@ class SplashLoading extends StatelessWidget {
   Widget build(BuildContext context) {
     return CenteredScroll(
       padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const AymaOrb(size: 128, state: AymaOrbState.thinking),
-          if (reconnecting) ...[
-            const SizedBox(height: 20),
-            Text(
-              'Reconnecting…',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant,
-                  ),
-            ),
-          ],
-        ],
+      child: AymaWingLoader(
+        size: 96,
+        lines: AymaLoaderLines.startup,
+        stage: reconnecting ? 1 : 0,
       ),
     );
   }

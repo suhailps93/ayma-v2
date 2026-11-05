@@ -6,6 +6,7 @@ import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 
 /// A master "Push notifications" row mirroring the real OS permission, then
@@ -162,7 +163,10 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
                   style: AymaType.sans(size: 14, color: AymaColors.error)),
             )
           : _prefs == null
-              ? const Center(child: CircularProgressIndicator())
+              // The notification_prefs read still in flight.
+              ? const Center(
+                  child: AymaWingLoader(lines: AymaLoaderLines.notifPrefs),
+                )
               : ListView(
                   children: [
                     _pushSection(ac),

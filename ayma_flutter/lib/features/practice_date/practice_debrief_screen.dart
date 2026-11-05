@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_client.dart';
 import '../../theme.dart';
+import '../../widgets/ayma_wing_loader.dart';
 import 'practice_models.dart';
 
 /// Practice Date debrief (hackathon deliverable B) — shown after the user ends a
@@ -104,7 +105,10 @@ class _PracticeDebriefScreenState extends State<PracticeDebriefScreen> {
 
   Widget _body(AymaTokens ac) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      // practiceDebrief building the review still in flight.
+      return const Center(
+        child: AymaWingLoader(lines: AymaLoaderLines.debrief),
+      );
     }
     if (_error != null) {
       return Center(

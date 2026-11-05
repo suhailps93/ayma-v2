@@ -13,6 +13,7 @@ import '../services/theme_controller.dart';
 import '../services/tour_request.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import 'accent_color_screen.dart';
 import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
@@ -354,10 +355,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'on your profile.',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
               ),
+              // Selfie capture + POST /verification/selfie in flight.
               trailing: _verifying
-                  ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const AymaWingLoader(size: 18, showLabel: false)
                   : const Icon(Icons.chevron_right),
               onTap: _verifying ? null : _verifyFace,
             ),

@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 
 /// Product feedback — bugs and feature requests (§15). Lands in the unified
 /// `feedback` collection as `source: 'settings_form'` (the in-chat feedback
@@ -195,12 +196,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
           const SizedBox(height: 24),
           FilledButton(
             onPressed: _sending ? null : _submit,
+            // Screenshot uploads + feedback submit in flight — wings only.
             child: _sending
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                ? const AymaWingLoader(size: 18, showLabel: false)
                 : const Text('Send'),
           ),
         ],

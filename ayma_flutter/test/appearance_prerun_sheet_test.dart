@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:ayma_flutter/screens/skills_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/services/chat_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -295,7 +296,7 @@ void main() {
 
     // A spinner placeholder is visible, but no new tile yet.
     expect(find.text('Uploading…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(AymaWingLoader), findsOneWidget);
     expect(find.byIcon(Icons.check), findsNWidgets(2));
 
     // The upload completes -> placeholder gone, the new tile JOINS the Face
@@ -305,7 +306,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('Uploading…'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(AymaWingLoader), findsNothing);
     expect(find.byIcon(Icons.check), findsNWidgets(3));
   });
 

@@ -11,6 +11,7 @@ import '../services/share_service.dart';
 import '../theme.dart';
 import 'ayma_photo.dart';
 import 'ayma_toast.dart';
+import 'ayma_wing_loader.dart';
 
 /// The AppBar Share action the web-research and Match report screens carry
 /// (Appearance shares its image report card instead, straight to the native
@@ -265,9 +266,16 @@ class RecipientPickerState extends State<RecipientPicker> {
                           "Couldn't load your conversations.");
                     }
                     if (!snap.hasData) {
+                      // Threads + matches + mini-profiles for the picker.
                       return const SizedBox(
-                          height: 160,
-                          child: Center(child: CircularProgressIndicator()));
+                        height: 160,
+                        child: Center(
+                          child: AymaWingLoader(
+                            size: 44,
+                            lines: AymaLoaderLines.messages,
+                          ),
+                        ),
+                      );
                     }
                     final all = snap.data!;
                     if (all.isEmpty) {

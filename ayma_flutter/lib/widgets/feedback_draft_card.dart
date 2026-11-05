@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/chat_service.dart';
 import '../theme.dart';
 import 'ayma_toast.dart';
+import 'ayma_wing_loader.dart';
 
 /// The in-chat feedback catcher's confirmation card (F5 / founder request),
 /// modelled on Claude Duet's "Send this feature request?" card.
@@ -296,12 +297,9 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
             FilledButton(
               key: const ValueKey('feedback-send'),
               onPressed: _sending ? null : _send,
+              // Screenshot upload + feedback submit in flight — wings only.
               child: _sending
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AymaWingLoader(size: 16, showLabel: false)
                   : const Text('Send'),
             ),
             if (!_editing)

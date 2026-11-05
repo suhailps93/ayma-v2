@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/report_events.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -166,7 +167,7 @@ void main() {
     expect(find.byTooltip('Running your analysis…'), findsOneWidget);
     expect(find.byTooltip('Re-run'), findsNothing);
     expect(find.text('Updating your report…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.byType(AymaWingLoader), findsWidgets);
 
     // The run lands -> back to the idle Re-run control, banner gone.
     ReportEvents.instance.stopped('appearance');

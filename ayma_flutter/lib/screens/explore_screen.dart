@@ -10,7 +10,7 @@ import '../services/paged_fresh_data.dart';
 import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
-import '../widgets/app_loading_indicator.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/overflow_guards.dart';
@@ -377,7 +377,8 @@ class ExploreScreenState extends State<ExploreScreen> {
           ],
           body: Builder(builder: (context) {
             if (_feed.refreshing && !_feed.hasData) {
-              return const AppLoadingIndicator();
+              // GET /explore page 1 (cold-start retries included).
+              return const AymaWingLoader(lines: AymaLoaderLines.explore);
             }
             if (_feed.error != null && !_feed.hasData) {
               // Shown only after the cold-start retry budget is spent (see
@@ -484,11 +485,8 @@ class _PageFooter extends StatelessWidget {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 20),
         child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
+          // GET /explore next page — footer slot, no room for a line.
+          child: AymaWingLoader(size: 20, showLabel: false),
         ),
       );
     }

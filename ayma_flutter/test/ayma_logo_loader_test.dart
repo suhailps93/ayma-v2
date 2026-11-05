@@ -1,7 +1,7 @@
 // The branded animated-logo loader (founder: "the Ayma logo should have a
 // loading animation"). It is now reserved for the VOICE wake/connect state only
-// (the chat composer's connecting slot) — page/report loads use the standard
-// `AppLoadingIndicator` (see `app_loading_indicator_test.dart`). Confirms it
+// (the chat composer's connecting slot) — page/report loads use the shared
+// `AymaWingLoader` (see `ayma_wing_loader_test.dart`). Confirms it
 // renders the logo, animates by default, and goes completely still under
 // reduced motion — the latter matters because the voice-connect state must not
 // keep ticking when the user has asked the OS to reduce motion.

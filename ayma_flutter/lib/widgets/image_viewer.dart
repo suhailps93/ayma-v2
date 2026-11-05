@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import '../services/gallery_saver.dart';
 import '../theme.dart';
 import 'ayma_toast.dart';
+import 'ayma_wing_loader.dart';
 
 /// Full-screen image viewer shared by the Ayma chat transcript and DM
 /// threads: black ground, pinch / double-tap zoom, swipe-down or X to
@@ -328,16 +329,14 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
                       onTap: () => Navigator.of(context).pop(),
                     ),
                     const Spacer(),
+                    // Share/download prep in flight — chrome slot, wings only.
                     if (_busy)
                       Padding(
                         padding: const EdgeInsets.only(right: 12),
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: ink,
-                          ),
+                        child: AymaWingLoader(
+                          size: 18,
+                          showLabel: false,
+                          color: ink,
                         ),
                       ),
                     _ChromeButton(

@@ -7,8 +7,8 @@ import '../services/app_context.dart';
 import '../services/auto_retry.dart';
 import '../services/match_activity.dart';
 import '../services/match_report_cache.dart';
-import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
@@ -253,7 +253,10 @@ class _MatchReportScreenState extends State<MatchReportScreen>
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: AymaOrb(size: 64, state: AymaOrbState.thinking));
+            // GET /match/{id} still in flight (uncached first load).
+            return const Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.matchReport),
+            );
           }
           final r = snap.data;
           if (snap.hasError) {

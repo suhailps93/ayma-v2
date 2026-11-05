@@ -26,7 +26,7 @@ import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import '../widgets/ask_ayma_context.dart';
 import '../widgets/ayma_chat_modal.dart';
-import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
@@ -2489,7 +2489,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           return const SizedBox.shrink();
                         }
                         if (_loadingHistory) {
-                          return const Center(child: CircularProgressIndicator());
+                          // GET /chat/history (+ its images): one operation,
+                          // so the two lines are rephrasings, not stages.
+                          return const Center(
+                            child: AymaWingLoader(
+                              lines: AymaLoaderLines.chatHistory,
+                              autoRotate: true,
+                            ),
+                          );
                         }
                         if (_historyError != null) {
                           return CenteredScroll(
@@ -2562,16 +2569,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               // (GATE-RED). Keying every row makes the loader a
                               // clean keyed insert/remove with no turn moves.
                               if (loaderRow == 1 && i == 0) {
+                                // Older-messages query — slot fits wings only.
                                 return const Padding(
                                   key: ValueKey('chat-older-loader'),
                                   padding: EdgeInsets.symmetric(vertical: 12),
                                   child: Center(
-                                    child: SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
+                                    child: AymaWingLoader(
+                                      size: 18,
+                                      showLabel: false,
                                     ),
                                   ),
                                 );
@@ -3300,11 +3305,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // A 16px/1.5-line-height first line is ~24px tall; nudge
-                  // the smaller 14px orb down so it sits centered against
+                  // the smaller 14px loader down so it sits centered against
                   // that first line instead of pinned to the row's top.
                   const Padding(
                     padding: EdgeInsets.only(top: 5),
-                    child: AymaOrb(size: 14, state: AymaOrbState.thinking),
+                    child: AymaWingLoader(size: 14, showLabel: false),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -3805,7 +3810,7 @@ class _InlineReportCardState extends State<_InlineReportCard> {
         if (snap.connectionState != ConnectionState.done) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
-            child: AymaOrb(size: 16, state: AymaOrbState.thinking),
+            child: AymaWingLoader(size: 16, showLabel: false),
           );
         }
         Widget? view;

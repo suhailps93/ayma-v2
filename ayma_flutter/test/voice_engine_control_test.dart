@@ -4,6 +4,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/widgets/voice_engine_control.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -228,7 +229,7 @@ void main() {
     // First load failed + retry scheduled: loading spinner, NO hard error.
     await tester.pump();
     expect(find.byKey(const ValueKey('voice-engine-error')), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(AymaWingLoader), findsOneWidget);
 
     // Ride out the backoff into the warm, successful load.
     await tester.pumpAndSettle();

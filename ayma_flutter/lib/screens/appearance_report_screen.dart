@@ -15,6 +15,7 @@ import '../theme.dart';
 import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/living_report_view.dart';
 import 'skills_screen.dart';
 
@@ -353,12 +354,9 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                 ? null
                 : () => runAppearanceFromPreRunSheet(
                     context, widget.apiClient ?? ApiClient()),
+            // POST /appearance/report in flight — icon slot, wings only.
             icon: running
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                ? const AymaWingLoader(size: 20, showLabel: false)
                 : const Icon(Icons.refresh),
           ),
         ],
@@ -422,12 +420,9 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                     key: const ValueKey('reportCardShare'),
                     onPressed:
                         _sharing ? null : () => _openShare(card, ac.accent),
+                    // Report-card PNG render + share sheet — wings only.
                     icon: _sharing
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                        ? const AymaWingLoader(size: 18, showLabel: false)
                         : const Icon(Icons.ios_share),
                     label: const Text('Share'),
                   ),
@@ -502,11 +497,7 @@ class _UpdatingBanner extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
         child: Row(
           children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2, color: ac.accent),
-            ),
+            const AymaWingLoader(size: 16, showLabel: false),
             const SizedBox(width: 12),
             Expanded(
               child: Text(

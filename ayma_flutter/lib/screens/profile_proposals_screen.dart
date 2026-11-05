@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 
 /// Ayma's pending updates to the user's PUBLIC profile, grouped by section.
@@ -133,7 +134,10 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
               ),
             )
           : list == null
-              ? const Center(child: CircularProgressIndicator())
+              // GET /profile/proposals still in flight.
+              ? const Center(
+                  child: AymaWingLoader(lines: AymaLoaderLines.proposals),
+                )
               : list.isEmpty
                   ? const CenteredScroll(
                       padding: EdgeInsets.all(24),

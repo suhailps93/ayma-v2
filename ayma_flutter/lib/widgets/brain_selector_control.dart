@@ -8,6 +8,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import 'ayma_toast.dart';
+import 'ayma_wing_loader.dart';
 
 /// The unified **Brain** picker (ARCHITECTURE §13.10). Reads
 /// `GET /brain/preference` and lets the user choose the ONE LLM that drives
@@ -174,9 +175,15 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
       );
     }
     if (_cat == null || _selected == null) {
+      // GET /brain/preference (cold-start retries included) still in flight.
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
+        child: Center(
+          child: AymaWingLoader(
+            size: 44,
+            lines: AymaLoaderLines.brains,
+          ),
+        ),
       );
     }
     final cat = _cat!;
@@ -218,11 +225,9 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
           child: FilledButton(
             key: const ValueKey('brain-selector-save'),
             onPressed: _saving ? null : _save,
+            // POST /brain/preference in flight — button slot, wings only.
             child: _saving
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                ? const AymaWingLoader(size: 16, showLabel: false)
                 : const Text('Save brain'),
           ),
         ),

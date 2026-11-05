@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'ayma_wing_loader.dart';
 
 /// AppBar action for a report's re-run / recalculate: the refresh icon, which
 /// becomes a small spinner and is disabled while [busy].
@@ -23,12 +24,9 @@ class ReportRefreshButton extends StatelessWidget {
     return IconButton(
       tooltip: busy ? busyTooltip : tooltip,
       onPressed: busy ? null : onPressed,
+      // The caller's re-run in flight — icon slot, wings only.
       icon: busy
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
+          ? const AymaWingLoader(size: 18, showLabel: false)
           : const Icon(Icons.refresh),
     );
   }
@@ -49,11 +47,7 @@ class ReportProgressBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2, color: ac.accent),
-          ),
+          const AymaWingLoader(size: 14, showLabel: false),
           const SizedBox(width: 10),
           Expanded(
             child: Text(

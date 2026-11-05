@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/orb_animation_settings.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import 'connect_agent_screen.dart';
 import 'voice_preference_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -150,10 +151,9 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
             subtitle: Text('Clears your wiki + history; keeps your account.',
                 style:
                     AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            // Wiki/history wipe in flight — trailing slot, wings only.
             trailing: _resetting
-                ? const SizedBox(
-                    width: 18, height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                ? const AymaWingLoader(size: 18, showLabel: false)
                 : null,
             onTap: _resetting ? null : _confirmReset,
           ),

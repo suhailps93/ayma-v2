@@ -5,6 +5,7 @@ import '../services/app_context.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/nav_bar_shell.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
@@ -56,7 +57,10 @@ class _MatchesScreenState extends State<MatchesScreen>
             );
           }
           if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            // First emission of the scored-matches stream.
+            return const Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.matches),
+            );
           }
           final items = snap.data!;
           if (items.isEmpty) {
@@ -224,8 +228,12 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
+            // The match doc + their public profile still loading.
             return const SafeArea(
-                child: Center(child: CircularProgressIndicator()));
+              child: Center(
+                child: AymaWingLoader(lines: AymaLoaderLines.matchDetail),
+              ),
+            );
           }
           if (snap.hasError || !snap.hasData) {
             return SafeArea(

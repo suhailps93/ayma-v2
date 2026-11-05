@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
 import 'ayma_photo.dart';
+import 'ayma_wing_loader.dart';
 
 /// Drives inline photo management on the "My public profile" carousel (§8.3):
 /// add, remove-from-public (with a deferred, undoable commit), set-primary,
@@ -471,12 +472,9 @@ class _AddTile extends StatelessWidget {
           color: Colors.white.withValues(alpha: 0.06),
         ),
         alignment: Alignment.center,
+        // Photo upload + grid add in flight — tile slot, wings only.
         child: busy
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
+            ? const AymaWingLoader(size: 20, showLabel: false)
             : Icon(Icons.add_a_photo_outlined, color: accent, size: 24),
       ),
     );

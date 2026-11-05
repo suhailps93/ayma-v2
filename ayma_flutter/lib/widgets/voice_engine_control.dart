@@ -9,6 +9,7 @@ import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import 'ayma_toast.dart';
+import 'ayma_wing_loader.dart';
 
 /// The voice STACK picker (ARCHITECTURE §13.9). Reads `GET /voice/engines` and
 /// lets the user choose:
@@ -329,9 +330,15 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       );
     }
     if (_cat == null || _sel == null) {
+      // GET /voice/engines (cold-start retries included) still in flight.
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
+        child: Center(
+          child: AymaWingLoader(
+            size: 44,
+            lines: AymaLoaderLines.voiceEngines,
+          ),
+        ),
       );
     }
     final cat = _cat!, sel = _sel!;
@@ -363,11 +370,9 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           child: FilledButton(
             key: const ValueKey('voice-engine-save'),
             onPressed: _saving ? null : _save,
+            // POST /voice/preference in flight — button slot, wings only.
             child: _saving
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                ? const AymaWingLoader(size: 16, showLabel: false)
                 : const Text('Save voice'),
           ),
         ),

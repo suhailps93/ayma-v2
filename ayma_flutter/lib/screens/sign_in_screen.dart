@@ -16,6 +16,7 @@ import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/phone_number_field.dart';
 import 'biometric_info_screen.dart';
 import 'privacy_screen.dart';
@@ -74,6 +75,21 @@ class _SignInScreenState extends State<SignInScreen> {
 
   _Stage _stage = _Stage.pick;
   bool _busy = false;
+
+  /// True only while [_forgotPassword]'s reset-email send is the in-flight
+  /// op — label state only, so the busy line below names the real work.
+  bool _sendingReset = false;
+
+  /// The busy line names the actual in-flight op, derived from existing
+  /// state: OAuth/email sign-ins, account creation, phone verification
+  /// (code send and code confirm are both number verification), or the
+  /// password-reset send.
+  List<String> get _busyLines {
+    if (_sendingReset) return AymaLoaderLines.resetEmail;
+    if (_stage == _Stage.phone) return AymaLoaderLines.phoneVerify;
+    if (_stage == _Stage.email && _createMode) return AymaLoaderLines.signUp;
+    return AymaLoaderLines.signIn;
+  }
 
   /// The two clickwrap boxes; both are required before any sign-in.
   bool _termsAccepted = false;
@@ -392,7 +408,10 @@ class _SignInScreenState extends State<SignInScreen> {
           kind: AymaToastKind.warning);
       return;
     }
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _sendingReset = true;
+    });
     try {
       await _auth.sendPasswordResetEmail(email);
       if (mounted) setState(() => _resetSentTo = email);
@@ -409,7 +428,12 @@ class _SignInScreenState extends State<SignInScreen> {
       _snack('Couldn’t send the reset email. Try again in a moment.',
           kind: AymaToastKind.error);
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _sendingReset = false;
+        });
+      }
     }
   }
 
@@ -575,7 +599,9 @@ class _SignInScreenState extends State<SignInScreen> {
                     if (_stage == _Stage.phone) ..._phoneForm(ac),
                     const SizedBox(height: 22),
                     if (_busy)
-                      const Center(child: CircularProgressIndicator())
+                      Center(
+                        child: AymaWingLoader(size: 56, lines: _busyLines),
+                      )
                     else if (_stage != _Stage.pick)
                       TextButton(
                         onPressed: () => setState(() {

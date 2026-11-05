@@ -8,6 +8,7 @@ import '../services/biometric_consent.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/markdown_text.dart';
 import 'sign_in_screen.dart';
 
@@ -168,12 +169,9 @@ class _BiometricConsentSettingsScreenState
             key: const Key('biometric_withdraw'),
             style: FilledButton.styleFrom(backgroundColor: ac.error),
             onPressed: _working ? null : _withdraw,
+            // Consent-withdrawal (+ face-data + account delete) in flight.
             child: _working
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                ? const AymaWingLoader(size: 20, showLabel: false)
                 : const Text('Withdraw consent and delete my account'),
           ),
           const SizedBox(height: 8),

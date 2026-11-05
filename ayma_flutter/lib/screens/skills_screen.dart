@@ -12,8 +12,8 @@ import '../services/chat_service.dart';
 import '../services/profile_service.dart';
 import '../services/report_events.dart';
 import '../theme.dart';
-import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import 'main_shell_screen.dart';
 import 'plan_screen.dart';
@@ -654,10 +654,14 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
             ),
             const SizedBox(height: 16),
             if (_loading)
+              // GET /appearance/eligibility still in flight.
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(
-                  child: AymaOrb(size: 40, state: AymaOrbState.thinking),
+                  child: AymaWingLoader(
+                    size: 40,
+                    lines: AymaLoaderLines.appearanceEligibility,
+                  ),
                 ),
               )
             else ...[
@@ -982,11 +986,8 @@ class _UploadingTile extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2, color: ac.fgDim),
-            ),
+            // Storage photo upload in flight — tile slot, wings only.
+            AymaWingLoader(size: 16, showLabel: false, color: ac.fgDim),
             const SizedBox(height: 5),
             Text('Uploading…', style: AymaType.sans(size: 9, color: ac.fgMute)),
           ],

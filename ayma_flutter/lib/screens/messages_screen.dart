@@ -10,6 +10,7 @@ import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/freshness_indicator.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
@@ -176,7 +177,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       FreshnessIndicator.fromFresh(freshness),
                     Expanded(
                       child: waiting
-                          ? const Center(child: CircularProgressIndicator())
+                          // First emission of the threads + mutual-matches
+                          // streams.
+                          ? const Center(
+                              child: AymaWingLoader(
+                                lines: AymaLoaderLines.messages,
+                              ),
+                            )
                           : _list(
                               context,
                               ac,
@@ -246,12 +253,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
           // Archive page in flight — a footer spinner below the live tier.
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
+            // Archive-tier threads fetch — footer slot, no room for a line.
             child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              child: AymaWingLoader(size: 20, showLabel: false),
             ),
           );
         }

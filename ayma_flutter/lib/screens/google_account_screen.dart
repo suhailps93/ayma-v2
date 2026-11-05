@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/google_account_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/oauth_code_dialog.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -160,7 +161,10 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
               Text('Could not load status ($_error).',
                   style: AymaType.sans(size: 13, color: AymaColors.error))
             else if (status == null)
-              const Center(child: CircularProgressIndicator())
+              // Link-status read still in flight.
+              const Center(
+                child: AymaWingLoader(lines: AymaLoaderLines.googleStatus),
+              )
             else if (status.connected) ...[
               ListTile(
                 contentPadding: EdgeInsets.zero,

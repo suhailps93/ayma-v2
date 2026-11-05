@@ -51,7 +51,7 @@ sequenceDiagram
     participant DB as Firestore (users)
 
     UI->>UI: _load() called (initState / pull-to-refresh)
-    UI->>UI: Set _loading = true (renders AppLoadingIndicator)
+    UI->>UI: Set _loading = true (renders AymaWingLoader)
     UI->>API: explore(q: search, filters: chips)
     Note over API: No limit or cursor params passed
     API->>Server: GET /explore?q=... (limit default 30)
@@ -75,7 +75,7 @@ sequenceDiagram
 #### Detailed Code Evidence:
 1. **Client Blocking on Full Load**:
    - In [`explore_screen.dart:116-144`](file:///home/suhailps/workspace/ayma/.fleet-worktrees/perf2-pagination-design/ayma_flutter/lib/screens/explore_screen.dart#L116-L144), `_load()` sets `_loading = true` and `_error = null`.
-   - In [`explore_screen.dart:213-214`](file:///home/suhailps/workspace/ayma/.fleet-worktrees/perf2-pagination-design/ayma_flutter/lib/screens/explore_screen.dart#L213-L214), while `_loading == true`, the entire screen body is replaced with `AppLoadingIndicator()`. The user cannot see previous cards or interact with the screen.
+   - In [`explore_screen.dart:213-214`](file:///home/suhailps/workspace/ayma/.fleet-worktrees/perf2-pagination-design/ayma_flutter/lib/screens/explore_screen.dart#L213-L214), while `_loading == true`, the entire screen body is replaced with the shared loader (`AymaWingLoader()`). The user cannot see previous cards or interact with the screen.
 2. **Missing Client Pagination Parameters**:
    - In [`api_client.dart:216-234`](file:///home/suhailps/workspace/ayma/.fleet-worktrees/perf2-pagination-design/ayma_flutter/lib/services/api_client.dart#L216-L234), `explore({String q = '', Map<String, String> filters = const {}})` accepts only `q` and `filters`. It passes **zero pagination parameters** (no `limit`, no `cursor`, no `offset`) to `GET /explore`.
 3. **Backend Full-Table Scan & N+1 Waterfall**:

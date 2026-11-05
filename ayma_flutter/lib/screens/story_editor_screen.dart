@@ -9,8 +9,8 @@ import '../services/app_context.dart';
 import '../theme.dart';
 import '../util/text_diff.dart';
 import '../widgets/ask_ayma_overlay.dart';
-import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/career_timeline_view.dart';
 import '../widgets/overflow_guards.dart';
@@ -1605,9 +1605,10 @@ class _AppearanceCardState extends State<_AppearanceCard> {
                     style: AymaType.sans(size: 12, color: ac.fgMute)),
               ),
               if (_running)
+                // POST /appearance/report in flight — row slot, wings only.
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: AymaOrb(size: 16, state: AymaOrbState.thinking),
+                  child: AymaWingLoader(size: 16, showLabel: false),
                 )
               else
                 TextButton(onPressed: _runNow, child: const Text('Run it')),

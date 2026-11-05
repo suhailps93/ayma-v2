@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/widgets/brain_selector_control.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -103,7 +104,7 @@ void main() {
     await tester.pumpWidget(_host(BrainSelectorControl(api: api)));
     await tester.pump(); // first load failed, retry scheduled
     expect(find.byKey(const ValueKey('brain-selector-error')), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(AymaWingLoader), findsOneWidget);
 
     await tester.pumpAndSettle(); // ride backoff into the warm load
     expect(find.byKey(const ValueKey('brain-selector-error')), findsNothing);

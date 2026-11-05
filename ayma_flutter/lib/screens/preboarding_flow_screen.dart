@@ -13,6 +13,7 @@ import '../services/profile_service.dart';
 import '../services/push_permission.dart';
 import '../services/revenuecat_service.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import 'trial_paywall_screen.dart';
 import 'underage_screen.dart';
 import '../theme.dart';
@@ -702,12 +703,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                 padding: const EdgeInsets.all(16),
                 child: FilledButton(
                   onPressed: _saving ? null : _save,
+                  // Photo uploads + preboarding save in flight — wings only.
                   child: _saving
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const AymaWingLoader(size: 20, showLabel: false)
                       : const Text('Save'),
                 ),
               ),

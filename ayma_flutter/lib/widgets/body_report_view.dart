@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/auto_retry.dart';
 import '../theme.dart';
-import 'app_loading_indicator.dart';
+import 'ayma_wing_loader.dart';
 import 'face_report_view.dart' show AddToStoryButton, resolvePhotoUrl;
 import 'score_bar.dart';
 
@@ -75,10 +75,11 @@ class _StoredBodyReportSheetState extends State<_StoredBodyReportSheet> {
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
+              // GET /skills/report/body/{id} (+ photo URL) still in flight.
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(32),
-                  child: AppLoadingIndicator(),
+                  child: AymaWingLoader(lines: AymaLoaderLines.bodyReport),
                 ),
               );
             }
@@ -127,7 +128,12 @@ class _ReportPhoto extends StatelessWidget {
               : Container(
                   height: 220,
                   color: ac.bgCard,
-                  child: const Center(child: CircularProgressIndicator()),
+                  child: const Center(
+                    child: AymaWingLoader(
+                      size: 40,
+                      lines: AymaLoaderLines.photo,
+                    ),
+                  ),
                 ),
           errorBuilder: (c, e, s) => Container(
             height: 120,

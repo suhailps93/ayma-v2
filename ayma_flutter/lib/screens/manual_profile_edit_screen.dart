@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_wing_loader.dart';
 
 /// Plain multi-line editor for the user's own public profile text. Each
 /// section sits under a `## Title` heading; the server diffs the edit, keeps
@@ -88,11 +89,9 @@ class _ManualProfileEditScreenState extends State<ManualProfileEditScreen> {
         actions: [
           TextButton(
             onPressed: doc == null || _saving ? null : _save,
+            // PUT /profile/public-text in flight — save slot, wings only.
             child: _saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                ? const AymaWingLoader(size: 18, showLabel: false)
                 : const Text('Save'),
           ),
         ],
@@ -108,7 +107,10 @@ class _ManualProfileEditScreenState extends State<ManualProfileEditScreen> {
               ),
             )
           : doc == null
-              ? const Center(child: CircularProgressIndicator())
+              // GET /profile/public-text still in flight.
+              ? const Center(
+                  child: AymaWingLoader(lines: AymaLoaderLines.profileText),
+                )
               : Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                   child: Column(

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_client.dart';
 import '../../theme.dart';
+import '../../widgets/ayma_wing_loader.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/chat_composer.dart' show kChatListBottomInset;
 import '../../widgets/out_of_credits.dart';
@@ -291,7 +292,15 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   Widget _body(AymaTokens ac) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      // POST /practice/start building the persona session.
+      final name = widget.name;
+      return Center(
+        child: AymaWingLoader(
+          lines: name.isEmpty
+              ? AymaLoaderLines.practiceSetup
+              : ['Setting up practice with $name…'],
+        ),
+      );
     }
     if (_error != null) {
       return Center(
@@ -368,11 +377,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
           IconButton(
             key: const Key('practiceSendButton'),
             onPressed: _sending ? null : _send,
+            // practiceChat reply in flight — send slot, wings only.
             icon: _sending
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                ? const AymaWingLoader(size: 20, showLabel: false)
                 : Icon(Icons.send_rounded, color: ac.accent),
             tooltip: 'Send',
           ),

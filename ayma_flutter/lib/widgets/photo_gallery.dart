@@ -5,6 +5,7 @@ import '../theme.dart';
 import 'ask_ayma_action.dart';
 import 'ayma_photo.dart';
 import 'ayma_toast.dart';
+import 'ayma_wing_loader.dart';
 
 /// Shared photo-gallery pieces used by Your Story's inline Photos section
 /// (see `story_editor_screen.dart`) and by the appearance report screen's
@@ -195,10 +196,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const SizedBox(
-                    width: 16, height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                  const AymaWingLoader(size: 16, showLabel: false),
                   const SizedBox(width: 10),
                   Text(_acting == 'publish' ? 'Publishing…' : 'Deleting…',
                       style: AymaType.sans(size: 13, color: ac.fgMute)),

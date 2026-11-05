@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/deep_dive_activity.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/overflow_guards.dart';
@@ -232,7 +233,10 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
             ),
           Expanded(
             child: _searching && meta == null
-                ? const Center(child: CircularProgressIndicator())
+                // First web search still running, nothing to show yet.
+                ? const Center(
+                    child: AymaWingLoader(lines: AymaLoaderLines.deepDive),
+                  )
                 : LivingReportView(
                     key: _reportKey,
                     reportType: 'deep_dive',

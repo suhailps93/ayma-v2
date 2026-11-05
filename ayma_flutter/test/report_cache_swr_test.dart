@@ -14,7 +14,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/report_cache.dart';
 import 'package:ayma_flutter/services/report_events.dart';
-import 'package:ayma_flutter/widgets/app_loading_indicator.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -87,7 +87,7 @@ void main() {
     // network has returned anything.
     expect(find.text('Cached'), findsOneWidget);
     expect(find.text('Fresh'), findsNothing);
-    expect(find.byType(AppLoadingIndicator), findsNothing);
+    expect(find.byType(AymaWingLoader), findsNothing);
 
     // The fresh fetch lands and swaps in.
     gate.complete();
@@ -120,12 +120,12 @@ void main() {
     await tester.pump();
 
     // Nothing cached: the standard accent loader stands in while we wait.
-    expect(find.byType(AppLoadingIndicator), findsOneWidget);
+    expect(find.byType(AymaWingLoader), findsOneWidget);
     expect(find.text('Fresh'), findsNothing);
 
     gate.complete();
     await tester.pumpAndSettle();
-    expect(find.byType(AppLoadingIndicator), findsNothing);
+    expect(find.byType(AymaWingLoader), findsNothing);
     expect(find.text('Fresh'), findsOneWidget);
   });
 

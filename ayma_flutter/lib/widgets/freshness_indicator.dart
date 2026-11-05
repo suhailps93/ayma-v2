@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/fresh_data.dart';
 import '../theme.dart';
+import 'ayma_wing_loader.dart';
 
 /// Minimal strip that surfaces non-[FreshnessState.live] data.
 ///
@@ -67,15 +68,9 @@ class FreshnessIndicator extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(
             children: [
+              // The host screen's background refresh in flight.
               if (showSpinner)
-                SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    color: color,
-                  ),
-                )
+                AymaWingLoader(size: 12, showLabel: false, color: color)
               else
                 Icon(icon, size: 14, color: color),
               const SizedBox(width: 8),

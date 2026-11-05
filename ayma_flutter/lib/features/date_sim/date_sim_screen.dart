@@ -8,6 +8,7 @@ import '../../services/api_client.dart';
 import '../../services/date_sim_service.dart';
 import '../../services/profile_service.dart';
 import '../../theme.dart';
+import '../../widgets/ayma_wing_loader.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/out_of_credits.dart';
 import '../../widgets/overflow_guards.dart';
@@ -645,14 +646,12 @@ class _DateSimScreenState extends State<DateSimScreen> {
                     side: BorderSide(color: ac.error),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
+                  // dateSimStop in flight — button slot, wings only.
                   icon: _stopping
-                      ? SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: ac.error,
-                          ),
+                      ? AymaWingLoader(
+                          size: 16,
+                          showLabel: false,
+                          color: ac.error,
                         )
                       : const Icon(Icons.stop_circle_outlined, size: 18),
                   label: Text(_stopping ? 'Stopping…' : 'Stop'),
@@ -688,15 +687,9 @@ class _DateSimScreenState extends State<DateSimScreen> {
                       side: BorderSide(color: ac.accent),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
+                    // dateSimContinue in flight — button slot, wings only.
                     icon: _continuing
-                        ? SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: ac.accent,
-                            ),
-                          )
+                        ? const AymaWingLoader(size: 16, showLabel: false)
                         : const Icon(Icons.forum_outlined, size: 18),
                     label: Text(
                       _continuing
@@ -723,14 +716,12 @@ class _DateSimScreenState extends State<DateSimScreen> {
                   key: const Key('dateSimResetButton'),
                   onPressed: _resetting ? null : _reset,
                   style: TextButton.styleFrom(foregroundColor: ac.fgDim),
+                  // dateSimReset in flight — button slot, wings only.
                   icon: _resetting
-                      ? SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: ac.fgDim,
-                          ),
+                      ? AymaWingLoader(
+                          size: 16,
+                          showLabel: false,
+                          color: ac.fgDim,
                         )
                       : const Icon(Icons.refresh_rounded, size: 18),
                   label: Text(_resetting ? 'Starting over…' : 'Start over'),
@@ -761,11 +752,7 @@ class _TypingIndicator extends StatelessWidget {
             ? MainAxisAlignment.end
             : MainAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2, color: ac.fgDim),
-          ),
+          AymaWingLoader(size: 14, showLabel: false, color: ac.fgDim),
           const SizedBox(width: 8),
           Flexible(
             child: Text(label, style: AymaType.sans(size: 13, color: ac.fgDim)),
@@ -911,14 +898,12 @@ class _AvatarGate extends StatelessWidget {
             foregroundColor: ac.onAccent,
             padding: const EdgeInsets.symmetric(vertical: 14),
           ),
+          // Avatar-enable write in flight — button slot, wings only.
           child: busy
-              ? SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: ac.onAccent,
-                  ),
+              ? AymaWingLoader(
+                  size: 18,
+                  showLabel: false,
+                  color: ac.onAccent,
                 )
               : const Text('Turn on AI Avatar'),
         ),

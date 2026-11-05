@@ -5,6 +5,7 @@ import '../env.dart';
 import '../services/mcp_connect_service.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 
 /// "Connect an agent" — the in-app approval step of the Ayma MCP server's OAuth
 /// device flow (`docs/MCP_SERVER.md`). An outside AI client (e.g. Claude) shows
@@ -230,9 +231,15 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
           Text('Connected agents', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
           if (_loadingConnections)
+            // Connected-agents list still loading.
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(
+                child: AymaWingLoader(
+                  size: 44,
+                  lines: AymaLoaderLines.agents,
+                ),
+              ),
             )
           else if (_connections.isEmpty)
             Text('No agents are connected.', style: theme.textTheme.bodyMedium)

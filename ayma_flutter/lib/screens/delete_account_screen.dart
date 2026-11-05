@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_wing_loader.dart';
 import 'sign_in_screen.dart';
 
 /// Account deletion (§3.6): explains what is removed and the 30-day recovery
@@ -144,11 +145,9 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AymaColors.error),
             onPressed: _confirmed && !_working ? _delete : null,
+            // POST /account/delete (+ sign-out) in flight — wings only.
             child: _working
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                ? const AymaWingLoader(size: 18, showLabel: false)
                 : const Text('Delete my account'),
           ),
           const SizedBox(height: 8),

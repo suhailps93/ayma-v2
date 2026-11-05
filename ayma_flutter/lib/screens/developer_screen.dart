@@ -14,6 +14,7 @@ import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import 'admin_feedback_screen.dart';
 import 'main_shell_screen.dart';
 import 'plan_screen.dart';
@@ -337,12 +338,9 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       FilledButton(
         key: const ValueKey('dev-unlock'),
         onPressed: _unlocking ? null : _unlock,
+        // POST /dev/verify in flight — button slot, wings only.
         child: _unlocking
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
+            ? const AymaWingLoader(size: 18, showLabel: false)
             : const Text('Unlock'),
       ),
     ];
@@ -383,7 +381,13 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           }
           final u = snap.data;
           if (u == null) {
-            return const Center(child: CircularProgressIndicator());
+            // GET /usage still in flight.
+            return const Center(
+              child: AymaWingLoader(
+                size: 44,
+                lines: AymaLoaderLines.devSpend,
+              ),
+            );
           }
           if (!u.isDev) {
             return Text(
@@ -713,12 +717,9 @@ class _Spend extends StatelessWidget {
               OutlinedButton(
                 key: ValueKey('dev-test-upgrade-$id'),
                 onPressed: upgradingPlan != null ? null : () => onTestUpgrade(id),
+                // POST /dev/test-upgrade in flight — wings only.
                 child: upgradingPlan == id
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const AymaWingLoader(size: 18, showLabel: false)
                     : Text(label),
               ),
           ],

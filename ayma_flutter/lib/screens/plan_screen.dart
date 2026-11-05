@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/freshness_indicator.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/overflow_guards.dart';
@@ -453,7 +454,11 @@ class _PlanScreenState extends State<PlanScreen> {
                               ),
                             ),
                           )
-                        : const Center(child: CircularProgressIndicator())
+                        // Plan status + plans + usage + trial still loading.
+                        : const Center(
+                            child:
+                                AymaWingLoader(lines: AymaLoaderLines.plan),
+                          )
                     : RefreshIndicator(
                         onRefresh: () async {
                           _reload();
@@ -986,14 +991,11 @@ class _CreditHistoryState extends State<_CreditHistory> {
             ),
           const SizedBox(height: 4),
           if (_loading)
+            // This period's usage fetch — section slot, wings only.
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
+                child: AymaWingLoader(size: 18, showLabel: false),
               ),
             )
           else if (_failed || u == null)

@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 import 'notification_prefs_screen.dart';
@@ -137,7 +138,10 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
               );
             }
             if (!snap.hasData) {
-              return const Center(child: CircularProgressIndicator());
+              // First emission of the notifications stream.
+              return const Center(
+                child: AymaWingLoader(lines: AymaLoaderLines.notifications),
+              );
             }
             if (entries.isEmpty) {
               return Center(

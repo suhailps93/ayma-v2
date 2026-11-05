@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../theme.dart';
-import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 
 /// A stored physical-attributes report, re-opened from a `[physical:<id>]` chat
@@ -56,7 +56,10 @@ class _PhysicalAttributesReportScreenState
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: AymaOrb(size: 64, state: AymaOrbState.thinking));
+            // GET /physical-attributes-report/{id} still in flight.
+            return const Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.physicalReport),
+            );
           }
           if (snap.hasError || snap.data == null) {
             return _Message(

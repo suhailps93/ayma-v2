@@ -14,8 +14,8 @@ import '../services/report_cache.dart';
 import '../services/report_events.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
-import 'app_loading_indicator.dart';
 import 'ayma_photo.dart';
+import 'ayma_wing_loader.dart';
 import 'overflow_guards.dart';
 import 'score_bar.dart';
 
@@ -604,10 +604,11 @@ class LivingReportViewState extends State<LivingReportView>
       // No cached copy to show yet: the standard page/report loader (shown
       // only when there's NO cache — a cached report paints instantly above
       // via `_restoreFromCache`, with the fresh fetch swapping in silently).
+      // GET /report/{type}/{id} still in flight.
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
-          child: AppLoadingIndicator(),
+          child: AymaWingLoader(lines: AymaLoaderLines.report),
         ),
       );
     }

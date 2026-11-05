@@ -8,6 +8,7 @@ import '../widgets/overflow_guards.dart';
 import '../widgets/completeness_ring.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_wing_loader.dart';
 
 /// "Complete your profile" (route `/complete-profile`). Shows the completeness
 /// score, the per-section breakdown from the questionnaire tree, and routes the
@@ -79,7 +80,10 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
+            // GET /completeness + GET /questionnaire still in flight.
+            return const Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.profileProgress),
+            );
           }
           if (snap.hasError || snap.data == null) {
             return _Message(

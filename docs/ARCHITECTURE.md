@@ -1854,12 +1854,21 @@ hand-off any more — both belonged to the old dismiss-and-push-a-route design a
 
 Four client-side perceived-performance improvements, all behind no flag (pure UX polish; no backend change):
 
-- **Loaders — two kinds, standardized.** (1) **Standard page/report loader** (`lib/widgets/app_loading_indicator.dart`,
-  `AppLoadingIndicator`) — a `CircularProgressIndicator` tinted to the user's accent (`context.ac.accent`), centred. The
-  ONE indicator for every PAGE/REPORT loading state so they all look the same: Explore (`explore_screen.dart`),
-  `living_report_view.dart` (Appearance, deep-dive, Story, Match), `body_report_view.dart`, `face_report_view.dart`.
+- **Loaders — one shared wing loader.** (1) **Standard loader** (`lib/widgets/ayma_wing_loader.dart`,
+  `AymaWingLoader`) — the two wing lobes of the Ayma emblem, drawn with `CustomPainter` (the same Bézier curves as the
+  logo fit in `AymaOrbPainter`) and fluttering on a ~900ms ease-in-out loop, tinted to the user's accent
+  (`context.ac.accent`, the same source the old circular spinner used). The ONE indicator for every user-facing loading
+  state app-wide (startup, chat, Explore, Messages, DMs, notifications, matches, reports, profile, plan, settings,
+  practice/date-sim): page/section states show a truthful status line under the wings (see `AymaLoaderLines` — every
+  line names the operation actually in flight, wired to the caller's real stage/futures; a timer may only rephrase
+  within one operation), while tight inline slots (buttons, rows, footers) use a small wings-only variant. Short
+  viewports degrade gracefully (caption drops, then the mark shrinks) instead of overflowing; reduced motion renders
+  the wings still with no controller running; semantics label is always "Loading". Replaces the old
+  `AppLoadingIndicator` circular spinner everywhere (deleted 2026-11-05; the one remaining `CircularProgressIndicator`
+  is the nav bar's determinate hold-to-talk progress ring, which is progress, not a loader).
   Founder: "when loading a page don't show the Ayma logo; show the loading logo used in Explore — use a standardized one
-  everywhere." (2) **Animated-logo loader** (`lib/widgets/ayma_logo_loader.dart`, `AymaLogoLoader`) — the branded "Ayma
+  everywhere" (2026-10), then "a loader shaped like the wing emblem, with playful lines matching what the app is
+  actually doing" (2026-11-05). (2) **Animated-logo loader** (`lib/widgets/ayma_logo_loader.dart`, `AymaLogoLoader`) — the branded "Ayma
   is waking up" indicator: the bundled orb mark (`assets/icon/ayma_orb_ios.png`) with a breathing pulse + accent halo
   glow; respects reduced motion (`MediaQuery.disableAnimations` or a forced `reduceMotion`): renders completely still,
   no controller running. NOTE (founder 2026-10-28): this loader is **no longer wired to any production surface** — the

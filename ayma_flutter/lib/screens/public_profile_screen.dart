@@ -18,6 +18,7 @@ import '../widgets/ayma_rail_icons.dart';
 import '../widgets/inline_photo_carousel.dart';
 import '../widgets/ayma_tab_bar.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import 'voice_call_screen.dart';
@@ -353,7 +354,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   : (p.name.isEmpty ? 'Profile' : p.name);
           Widget content;
           if (snap.connectionState != ConnectionState.done) {
-            content = const Center(child: CircularProgressIndicator());
+            // GET /explore/profile/{uid} still in flight.
+            content = const Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.publicProfile),
+            );
           } else if (snap.hasError || p == null) {
             content = _Message(
               text: "Couldn't load this profile.",
@@ -941,9 +945,12 @@ class ProfileBody extends StatelessWidget {
       children: [
         if (leading != null) leading!,
         if (headerLoading)
+          // Own profile header (name/photos) still loading.
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 48),
-            child: Center(child: CircularProgressIndicator()),
+            child: Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.profile),
+            ),
           )
         else if (p != null && edit != null)
           // Own profile: rebuild the header on every edit so the carousel
@@ -1154,10 +1161,8 @@ class _Actions extends StatelessWidget {
               active: hasScore,
               onPressed: busy ? null : () => onRunMatch(p),
               icon: busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
+                  // Compatibility scoring (or its recalc poll) in flight.
+                  ? const AymaWingLoader(size: 18, showLabel: false)
                   : AymaMatchGlyph(accent: accent, filled: hasScore),
             );
           },

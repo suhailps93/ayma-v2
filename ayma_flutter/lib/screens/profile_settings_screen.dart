@@ -7,6 +7,7 @@ import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/partner_preferences_fields.dart';
 
@@ -186,7 +187,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         leading: const AymaBackButton(),
         title: const Text('Edit profile')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          // The profile/main read still in flight.
+          ? const Center(
+              child: AymaWingLoader(lines: AymaLoaderLines.profile),
+            )
           : _error != null
               ? CenteredScroll(
                   padding: const EdgeInsets.all(24),

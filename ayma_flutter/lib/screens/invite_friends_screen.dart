@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/ayma_wing_loader.dart';
 
 /// "Invite friends" (founder feature 2026-09-29): the user's personal referral
 /// link, one big Share button (into any other app via the system share sheet),
@@ -93,9 +94,14 @@ class _InviteFriendsScreenState extends State<InviteFriendsScreen> {
                       style: AymaType.sans(size: 14, color: ac.fgMute),
                     )
                   : _link == null
+                      // Referral code + link fetch still in flight.
                       ? const Padding(
                           padding: EdgeInsets.symmetric(vertical: 48),
-                          child: Center(child: CircularProgressIndicator()),
+                          child: Center(
+                            child: AymaWingLoader(
+                              lines: AymaLoaderLines.inviteLink,
+                            ),
+                          ),
                         )
                       : _body(ac),
             ),

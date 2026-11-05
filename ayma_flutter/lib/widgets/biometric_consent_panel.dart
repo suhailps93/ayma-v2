@@ -8,6 +8,7 @@ import '../screens/terms_screen.dart';
 import '../services/api_client.dart';
 import '../services/biometric_consent.dart';
 import '../theme.dart';
+import 'ayma_wing_loader.dart';
 import 'markdown_text.dart';
 
 /// The face-matching consent: the plain-language explanation, a required
@@ -133,12 +134,9 @@ class _BiometricConsentPanelState extends State<BiometricConsentPanel> {
         FilledButton(
           key: const Key('biometric_consent_agree'),
           onPressed: _canAgree && !_saving ? _agree : null,
+          // POST /biometric-consent in flight — button slot, wings only.
           child: _saving
-              ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AymaWingLoader(size: 20, showLabel: false)
               : const Text('I agree'),
         ),
       ],

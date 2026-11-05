@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../theme.dart';
+import 'ayma_wing_loader.dart';
 
 /// A small, dependency-free renderer for the slice of Markdown Ayma actually
 /// emits in chat: **bold**, *italic* / _italic_, `code`, [links](url), bullet
@@ -80,7 +81,12 @@ class MarkdownText extends StatelessWidget {
                   ? w
                   : const SizedBox(
                       height: 140,
-                      child: Center(child: CircularProgressIndicator()),
+                      child: Center(
+                        child: AymaWingLoader(
+                          size: 32,
+                          lines: AymaLoaderLines.image,
+                        ),
+                      ),
                     ),
             ),
           ),

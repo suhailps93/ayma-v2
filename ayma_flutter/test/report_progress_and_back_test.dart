@@ -12,6 +12,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/pending_chat_queue.dart';
 import 'package:ayma_flutter/widgets/ayma_back_button.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -179,7 +180,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text('Searching the web again…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.byType(AymaWingLoader), findsWidgets);
     expect(
         tester.widget<IconButton>(find.byType(IconButton).last).onPressed,
         isNull);

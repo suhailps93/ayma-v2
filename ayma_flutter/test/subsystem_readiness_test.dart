@@ -7,6 +7,7 @@ import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/meta_integrations.dart';
 import 'package:ayma_flutter/services/report_cache.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -136,14 +137,14 @@ void main() {
 
       // Initial pump: PlanScreen is in loading state waiting on ensureReady
       await tester.pump();
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(AymaWingLoader), findsOneWidget);
 
       // Release ensureReady gate
       controllableRc.gate.complete();
       await tester.pumpAndSettle();
 
       // Content has rendered, loader is gone
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(AymaWingLoader), findsNothing);
       expect(find.text('FREE PLAN'), findsOneWidget);
     });
   });
