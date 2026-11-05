@@ -12,12 +12,16 @@ import 'practice_models.dart';
 class PracticeDebriefScreen extends StatefulWidget {
   const PracticeDebriefScreen({
     super.key,
+    required this.uid,
     required this.sessionId,
     this.name = '',
     this.api,
   });
 
   static const path = '/practice/:uid/debrief';
+
+  /// The match the practice was with — the origin profile Done returns to.
+  final String uid;
 
   final String sessionId;
   final String name;
@@ -61,6 +65,22 @@ class _PracticeDebriefScreenState extends State<PracticeDebriefScreen> {
           _error = "Couldn't build your debrief. Please try again.";
         });
       }
+    }
+  }
+
+  /// DONE: exit the whole practice flow back to the surface the practice
+  /// was launched from (the origin profile). The debrief sits on top of the
+  /// finished session, so a single pop would land back IN that session —
+  /// pop through both, and only when there is nothing beneath (a cold open)
+  /// navigate to the practised-with person's profile instead.
+  void _done() {
+    var popped = 0;
+    while (popped < 2 && context.canPop()) {
+      context.pop();
+      popped++;
+    }
+    if (popped < 2 && widget.uid.isNotEmpty) {
+      context.go('/profile/user/${widget.uid}');
     }
   }
 
@@ -140,7 +160,7 @@ class _PracticeDebriefScreenState extends State<PracticeDebriefScreen> {
         Center(
           child: FilledButton(
             key: const Key('debriefDoneButton'),
-            onPressed: () => context.pop(),
+            onPressed: _done,
             child: const Text('Done'),
           ),
         ),

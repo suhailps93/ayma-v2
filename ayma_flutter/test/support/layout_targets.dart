@@ -183,11 +183,10 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     PracticeScreen.path: () =>
         PracticeScreen(uid: 'her', name: 'Dana', api: api),
     PracticeDebriefScreen.path: () =>
-        PracticeDebriefScreen(sessionId: 'p1', name: 'Dana', api: api),
+        PracticeDebriefScreen(uid: 'her', sessionId: 'p1', name: 'Dana', api: api),
     DateSimScreen.path: () => DateSimScreen(
       uid: 'her',
       name: 'Dana',
-      threadId: 'her__me',
       api: api,
       profiles: profiles,
     ),

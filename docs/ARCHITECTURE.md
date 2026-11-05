@@ -2403,8 +2403,8 @@ personas — the current user's and the match's — each grounded in that person
 real profile, bounded by a user-set message cap. The user then sees the
 transcript (clearly labelled *Simulated — not sent to <name>*) plus a
 compatibility read: a **0–100 score**, a short label, and a "how it went"
-summary, with a **Message them for real** CTA. Nothing is ever sent to the
-other user — it is a one-sided, server-side preview.
+summary, with a **Done** action returning to the origin profile. Nothing
+is ever sent to the other user — it is a one-sided, server-side preview.
 
 **Reuse, not reinvention.** It generalises the Practice Date persona machinery
 (`practice_core.py`) from "simulate one persona replying to the user" to "run
@@ -2560,8 +2560,9 @@ only):
   brand-new sim runs from scratch (`latestCompletedSim` then finds nothing).
 
 **Continue the conversation.** After a sim finishes, the result screen offers
-"Keep the conversation going" (`dateSimContinueButton`) beside the primary
-"Message `<name>` for real" CTA. `POST /date-sim/{sim_id}/continue
+"Keep the conversation going" (`dateSimContinueButton`) beside **Done**
+(`dateSimDoneButton`), which exits the flow to the origin profile.
+`POST /date-sim/{sim_id}/continue
 {more_messages}` runs `continue_simulation`, which reads the already-streamed
 transcript from `.../messages`, rebuilds **both** personas from the same
 snapshots/grounding the first run used, and resumes the alternation at the next
@@ -2590,8 +2591,8 @@ layout-matrix entries for the chooser sheet and the reset dialog.
 **Re-opening a finished sim (R2-H6).** A completed sim is persistent and
 re-openable — it never has to be re-run to be seen again. On create the doc
 records `other_uid` (which candidate it belongs to) and `thread_id` (the
-deterministic DM pair id, so "Message them for real" still works on a reopen
-with no originating profile in hand); `_finalize` stamps `completed_at`. On
+deterministic DM pair id); `_finalize` stamps `completed_at`. Done exits via
+the sim's `uid`, so a reopen needs no originating profile in hand. On
 `done`, `date_sim.run_simulation` / `continue_simulation` fire
 `notifications_triggers.notify_date_sim_done` — a `skill_result`-type
 notification (same type as the match report) with a score-bearing preview and a

@@ -250,8 +250,8 @@ void main() {
         return http.Response('no', 404);
       }),
     );
-    await tester.pumpWidget(_wrap(
-        PracticeDebriefScreen(sessionId: 'practice_1', name: 'Dana', api: api)));
+    await tester.pumpWidget(_wrap(PracticeDebriefScreen(
+        uid: 'her', sessionId: 'practice_1', name: 'Dana', api: api)));
     await _settle(tester);
 
     expect(find.byKey(const Key('practiceDebrief')), findsOneWidget);
@@ -413,5 +413,103 @@ void main() {
     await _settle(tester);
     expect(pushed, contains('/practice/her'));
     expect(find.text('PRACTICE SIM'), findsOneWidget);
+  });
+
+  // --- Debrief Done exits the whole flow to the origin profile ------------- //
+
+  testWidgets(
+      'debrief Done exits the whole practice flow back to the origin profile',
+      (tester) async {
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/practice/start') {
+          return _json({
+            'session_id': 'practice_1',
+            'simulation': true,
+            'persona': {
+              'name': 'Dana',
+              'age': 30,
+              'location': 'Berlin',
+              'photo_count': 2,
+            },
+            'banner':
+                "Practice mode — you're talking to a simulated version of Dana, not the real person.",
+          });
+        }
+        if (req.url.path == '/practice/chat') {
+          return _json({
+            'reply': 'haha thanks! what got you into climbing?',
+            'coach_hint': 'Great opener — now ask an open question back.',
+            'simulation': true,
+          });
+        }
+        if (req.url.path == '/practice/debrief') {
+          return _json({
+            'simulation': true,
+            'what_worked': ['You kept it light and curious.'],
+            'suggested_next_lines': ['Ask what she is throwing on the wheel.'],
+            'avoid': ['Do not push for her address.'],
+          });
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    final router = GoRouter(
+      initialLocation: '/profile/user/her',
+      routes: [
+        GoRoute(
+          path: '/profile/user/:uid',
+          builder: (_, s) =>
+              Scaffold(body: Text('PROFILE ${s.pathParameters['uid']}')),
+        ),
+        // Listed first, like the app router: the 3-segment debrief pattern
+        // matches before the 2-segment session one.
+        GoRoute(
+          path: '/practice/:uid/debrief',
+          builder: (_, s) {
+            final extra = s.extra as Map<String, dynamic>? ?? const {};
+            return PracticeDebriefScreen(
+              uid: s.pathParameters['uid']!,
+              sessionId: (extra['session_id'] as String?) ?? '',
+              name: (extra['name'] as String?) ?? '',
+              api: api,
+            );
+          },
+        ),
+        GoRoute(
+          path: '/practice/:uid',
+          builder: (_, s) => PracticeScreen(
+            uid: s.pathParameters['uid']!,
+            name: s.extra is String ? s.extra as String : '',
+            api: api,
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router));
+    await _settle(tester);
+
+    // Start practice from Dana's profile, like the profile rail button does.
+    router.push('/practice/her', extra: 'Dana');
+    await _settle(tester);
+    expect(find.byType(PracticeScreen), findsOneWidget);
+
+    // Have a turn so End appears, then end the session into the debrief.
+    await tester.enterText(find.byKey(const Key('practiceInput')), 'hey!');
+    await tester.tap(find.byKey(const Key('practiceSendButton')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('practiceEndButton')));
+    await _settle(tester);
+    expect(find.byKey(const Key('practiceDebrief')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('debriefDoneButton')));
+    await _settle(tester);
+
+    // Back on Dana's profile — never back into the finished session.
+    expect(find.text('PROFILE her'), findsOneWidget);
+    expect(find.byType(PracticeScreen), findsNothing);
+    expect(find.byType(PracticeDebriefScreen), findsNothing);
   });
 }

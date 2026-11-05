@@ -208,7 +208,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final query = simId != null ? '?sim_id=${Uri.encodeQueryComponent(simId)}' : '';
     context.push(
       '/date-sim/${p.uid}$query',
-      extra: {'name': p.name, 'thread_id': p.threadId},
+      extra: {'name': p.name},
     );
   }
 

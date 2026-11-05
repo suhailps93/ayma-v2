@@ -259,7 +259,7 @@ void main() {
     expect(find.text('Taste match'), findsNothing);
     // The rest of the date-sim result is intact and usable.
     expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
-    expect(find.byKey(const Key('dateSimMessageForRealButton')), findsOneWidget);
+    expect(find.byKey(const Key('dateSimDoneButton')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -344,7 +344,7 @@ void main() {
     expect(find.text('Taste match unavailable right now.'), findsNothing);
     // The date-sim result itself is intact and usable.
     expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
-    expect(find.byKey(const Key('dateSimMessageForRealButton')), findsOneWidget);
+    expect(find.byKey(const Key('dateSimDoneButton')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

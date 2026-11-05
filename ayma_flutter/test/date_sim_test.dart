@@ -322,7 +322,7 @@ void main() {
     // No blocking spinner page: the live view is up straight away.
     expect(find.byKey(const Key('dateSimTranscript')), findsOneWidget);
     expect(find.byKey(const Key('dateSimTyping')), findsOneWidget);
-    expect(find.byKey(const Key('dateSimMessageForRealButton')), findsNothing);
+    expect(find.byKey(const Key('dateSimDoneButton')), findsNothing);
 
     await h.start();
     await h.say(0, 'you', 'hey! your climbing photos are unreal');
@@ -345,7 +345,8 @@ void main() {
     expect(find.text('78'), findsOneWidget);
     expect(find.textContaining('Worth a shot'), findsOneWidget);
     expect(find.textContaining('light and curious'), findsOneWidget);
-    expect(find.textContaining('Message Dana for real'), findsOneWidget);
+    expect(find.byKey(const Key('dateSimDoneButton')), findsOneWidget);
+    expect(find.text('Done'), findsOneWidget);
 
     h.release.complete();
     await _settle(tester);
@@ -452,12 +453,9 @@ void main() {
       );
       await _settle(tester);
 
-      // Finished: both the continue action and the primary CTA are present.
+      // Finished: both the continue action and Done are present.
       expect(find.byKey(const Key('dateSimContinueButton')), findsOneWidget);
-      expect(
-        find.byKey(const Key('dateSimMessageForRealButton')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('dateSimDoneButton')), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('dateSimContinueButton')));
       await _settle(tester);
@@ -588,7 +586,7 @@ void main() {
 
       // While running, the Stop control is shown and the finished CTAs are not.
       expect(find.byKey(const Key('dateSimStopButton')), findsOneWidget);
-      expect(find.byKey(const Key('dateSimMessageForRealButton')), findsNothing);
+      expect(find.byKey(const Key('dateSimDoneButton')), findsNothing);
 
       await tester.tap(find.byKey(const Key('dateSimStopButton')));
       await _settle(tester);
@@ -888,6 +886,88 @@ void main() {
       expect(pushed, isNotEmpty);
       expect(pushed.single, startsWith('/date-sim/her'));
       expect(pushed.single, contains('sim_id=simDone'));
+    },
+  );
+
+  // --- Done exits the finished sim to the origin profile ------------------- //
+  testWidgets(
+    'F: Done on a finished sim returns to the profile it was started from',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.finish();
+      final router = GoRouter(
+        initialLocation: '/profile/user/her',
+        routes: [
+          GoRoute(
+            path: '/profile/user/:uid',
+            builder: (_, s) => Scaffold(
+              body: Text('PROFILE ${s.pathParameters['uid']}'),
+            ),
+          ),
+          GoRoute(
+            path: '/date-sim/:uid',
+            builder: (_, __) => h.screen2('sim1'),
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+
+      // Started from Dana's profile, like the profile rail button does.
+      router.push('/date-sim/her', extra: {'name': 'Dana'});
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('dateSimDoneButton')));
+      await _settle(tester);
+
+      // Back on Dana's profile — never back into the finished sim.
+      expect(find.text('PROFILE her'), findsOneWidget);
+      expect(find.byType(DateSimScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'F: Done on a cold-opened sim (notification/deep link) navigates to '
+    "that person's profile",
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey there!');
+      await h.finish();
+      final router = GoRouter(
+        initialLocation: '/date-sim/her?sim_id=sim1',
+        routes: [
+          GoRoute(
+            path: '/profile/user/:uid',
+            builder: (_, s) => Scaffold(
+              body: Text('PROFILE ${s.pathParameters['uid']}'),
+            ),
+          ),
+          GoRoute(
+            path: '/date-sim/:uid',
+            builder: (_, __) => h.screen2('sim1'),
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.dark, routerConfig: router),
+      );
+      await _settle(tester);
+      expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('dateSimDoneButton')));
+      await _settle(tester);
+
+      // No profile beneath (cold open): navigate to the sim person's profile.
+      expect(find.text('PROFILE her'), findsOneWidget);
+      expect(find.byType(DateSimScreen), findsNothing);
     },
   );
 }

@@ -274,6 +274,7 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>? ?? const {};
         return PracticeDebriefScreen(
+          uid: state.pathParameters['uid']!,
           sessionId: (extra['session_id'] as String?) ?? '',
           name: (extra['name'] as String?) ?? '',
         );
@@ -287,7 +288,7 @@ final appRouter = GoRouter(
       ),
     ),
     // AI Date Simulation (hackathon flagship): the two-persona conversation
-    // preview. Entered from a match's profile with their name + DM pair id.
+    // preview. Entered from a match's profile with their name.
     GoRoute(
       path: DateSimScreen.path,
       builder: (context, state) {
@@ -299,7 +300,6 @@ final appRouter = GoRouter(
         return DateSimScreen(
           uid: state.pathParameters['uid']!,
           name: (extra['name'] as String?) ?? '',
-          threadId: extra['thread_id'] as String?,
           simId: simId,
         );
       },

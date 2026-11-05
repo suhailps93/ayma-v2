@@ -20,8 +20,8 @@ import '../../widgets/taste_models.dart';
 /// personas exchange and runs it; the (clearly-labelled "simulated, not sent")
 /// transcript then appears live, message by message, as the backend writes it
 /// to Firestore, followed by a compatibility read: a 0–100 score and a short
-/// "how it went" summary, with a "Message them for real" CTA. A failed run
-/// shows an inline error under the partial transcript.
+/// "how it went" summary, with a Done action that returns to the origin
+/// profile. A failed run shows an inline error under the partial transcript.
 /// Under the read, a [TasteMatchCard] (Qloo taste overlap + date ideas).
 ///
 /// Reuses the shared [ChatBubble] so the simulated chat reads like a real one,
@@ -32,7 +32,6 @@ class DateSimScreen extends StatefulWidget {
     super.key,
     required this.uid,
     this.name = '',
-    this.threadId,
     this.api,
     this.service,
     this.profiles,
@@ -44,12 +43,8 @@ class DateSimScreen extends StatefulWidget {
   /// The match whose persona the user simulates a date with.
   final String uid;
 
-  /// Their name (for the header/CTA before the result arrives).
+  /// Their name (for the header before the result arrives).
   final String name;
-
-  /// The deterministic DM pair id, passed from the profile, so "Message them
-  /// for real" can open the real thread. Null → the CTA just returns.
-  final String? threadId;
 
   final ApiClient? api;
   final DateSimService? service;
@@ -296,12 +291,16 @@ class _DateSimScreenState extends State<DateSimScreen> {
     });
   }
 
-  void _messageForReal() {
-    final tid = widget.threadId;
-    if (tid != null && tid.isNotEmpty) {
-      context.push('/dm/$tid');
-    } else {
+  /// DONE on the finished result: exit the sim back to the origin profile —
+  /// the person this sim was with. When the sim was started from their
+  /// profile it sits beneath us, so pop back to it; when it was opened cold
+  /// (completion notification / deep link) there is nothing beneath, so
+  /// navigate to that person's profile instead. Never back into the sim.
+  void _done() {
+    if (context.canPop()) {
       context.pop();
+    } else {
+      context.go('/profile/user/${widget.uid}');
     }
   }
 
@@ -708,19 +707,15 @@ class _DateSimScreenState extends State<DateSimScreen> {
                   const SizedBox(height: 10),
                 ],
                 FilledButton.icon(
-                  key: const Key('dateSimMessageForRealButton'),
-                  onPressed: _messageForReal,
+                  key: const Key('dateSimDoneButton'),
+                  onPressed: _done,
                   style: FilledButton.styleFrom(
                     backgroundColor: ac.accent,
                     foregroundColor: ac.onAccent,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  icon: const Icon(Icons.send_rounded, size: 18),
-                  label: Text(
-                    _name.isEmpty
-                        ? 'Message them for real'
-                        : 'Message $_name for real',
-                  ),
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: const Text('Done'),
                 ),
                 const SizedBox(height: 10),
                 // RESET — discard this pair's sim and start a fresh one.
