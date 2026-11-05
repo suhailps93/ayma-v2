@@ -162,12 +162,28 @@ status() {
   echo "  pixel_serial: $(pixel_serial || true) (empty = unreachable)"
 }
 
+# --- cycle lock: held by a parent `flock -o`, never inherited by children --- #
+# `flock -o` closes the lock fd before exec of the command, so the lock is
+# held only by the parent flock process: daemonizing children spawned inside
+# a cycle (adb fork-server, etc.) never inherit it and cannot wedge later
+# polls after the cycle exits. Returns 99 when another cycle holds the lock.
+with_cycle_lock() {
+  exec 9>&- 2>/dev/null || true
+  flock -n -E 99 -o "$STATE/cycle.lock" "$@"
+}
+
 cycle_once() {
-  exec 9>"$STATE/cycle.lock"
-  if ! flock -n 9; then
+  local rc=0
+  with_cycle_lock bash "$0" --cycle-inner || rc=$?
+  if (( rc == 99 )); then
     log "previous cycle still running; skipping this poll"
     exit 0
   fi
+  exit "$rc"
+}
+
+cycle_inner() {
+  exec 9>&- 2>/dev/null || true
   ensure_deploys_header
   ensure_worktree || exit 1
   git -C "$WT" fetch origin staging -q || { log "fetch failed (transient; will retry next poll)"; exit 1; }
@@ -205,9 +221,11 @@ cycle_once() {
   git -C "$WT" reset --hard origin/staging -q
   git -C "$WT" clean -fdq -e build 2>/dev/null || true
   # Run the rest of the cycle with the code AT the commit being deployed.
+  # Re-exec to --cycle-inner (not --once): the outer `flock -o` parent still
+  # holds the lock across this exec, so re-acquiring would wrongly skip.
   if [[ "${WATCHER_REEXEC:-0}" != "1" ]]; then
     export WATCHER_REEXEC=1
-    exec bash "$WT/ops/deploy-watcher/staging-autodeploy.sh" --once
+    exec bash "$WT/ops/deploy-watcher/staging-autodeploy.sh" --cycle-inner
   fi
 
   # (1) deploy staging cloud (code-only; keeps env + secrets)
@@ -297,6 +315,7 @@ daemon() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 case "${1:---once}" in
   --once)   cycle_once ;;
+  --cycle-inner) cycle_inner ;; # internal: run cycle assuming lock held
   --daemon) daemon ;;
   --status) status ;;
   -h|--help)
