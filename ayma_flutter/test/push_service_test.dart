@@ -226,6 +226,79 @@ void main() {
       expect(completed, isTrue);
     });
 
+    test('a cold-start date_sim tap routes to that sim via the DeepLinkQueue',
+        () async {
+      DeepLinkQueue.instance.resetForTest();
+      final fcm = _FakeFcm(initialTap: {
+        'deep_link': 'date_sim/her/sim123',
+        'notif_id': 'date_sim_sim123',
+      });
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final queue = DeepLinkQueue.instance;
+      final mockAuth = MockFirebaseAuth(
+        mockUser: MockUser(uid: 'me'),
+        signedIn: true,
+      );
+      final authService = AuthService(auth: mockAuth);
+      authService.notifyAuthSessionRestored(MockUser(uid: 'me'));
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(path: '/', builder: (_, __) => const SizedBox()),
+          GoRoute(
+              path: '/date-sim/:uid', builder: (_, __) => const SizedBox()),
+        ],
+      );
+      final routed = <String>[];
+      await svc.listenForTaps(
+        navigate: routed.add,
+        queue: queue,
+        authService: authService,
+        router: router,
+      );
+      queue.notifyNavigationSettled();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(routed, ['/date-sim/her?sim_id=sim123']);
+    });
+
+    test('a warm date_sim tap routes to that sim via the DeepLinkQueue',
+        () async {
+      DeepLinkQueue.instance.resetForTest();
+      final fcm = _FakeFcm();
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final queue = DeepLinkQueue.instance;
+      final mockAuth = MockFirebaseAuth(
+        mockUser: MockUser(uid: 'me'),
+        signedIn: true,
+      );
+      final authService = AuthService(auth: mockAuth);
+      authService.notifyAuthSessionRestored(MockUser(uid: 'me'));
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(path: '/', builder: (_, __) => const SizedBox()),
+          GoRoute(
+              path: '/date-sim/:uid', builder: (_, __) => const SizedBox()),
+        ],
+      );
+      final routed = <String>[];
+      await svc.listenForTaps(
+        navigate: routed.add,
+        queue: queue,
+        authService: authService,
+        router: router,
+      );
+      queue.notifyNavigationSettled();
+      fcm.tap({
+        'deep_link': 'date_sim/her/sim123',
+        'notif_id': 'date_sim_sim123',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(routed, ['/date-sim/her?sim_id=sim123']);
+    });
+
     test('listenForTaps delegates to DeepLinkQueue', () async {
       final fcm = _FakeFcm();
       final svc = PushService(tokens: fcm, apiClient: _api((_) {}));

@@ -106,8 +106,9 @@ class _DateSimScreenState extends State<DateSimScreen> {
   /// until the doc flips back to `running` and the live view takes over).
   bool _continuing = false;
 
-  /// True while a "stop" request is in flight (keeps the Stop button disabled
-  /// until the doc flips to `done`/`error` and the finished view takes over).
+  /// True while a "stop" request is in flight (the Stop button shows
+  /// "Stopping…" until the request resolves and we either leave the sim view
+  /// or report why we stayed).
   bool _stopping = false;
 
   /// True while a "reset" (discard this pair's sim) request is in flight.
@@ -271,7 +272,9 @@ class _DateSimScreenState extends State<DateSimScreen> {
         sim.status == DateSimStatus.done && _sim?.status != DateSimStatus.done;
     setState(() {
       _sim = sim;
-      if (finished) _taste = loadTasteMatch(_api, widget.uid);
+      // A user-stopped run produces no result to present: no score is written
+      // (see the backend finalize) and no taste card is loaded under it.
+      if (finished && !sim.stopped) _taste = loadTasteMatch(_api, widget.uid);
     });
     _scrollToEnd();
   }
@@ -342,9 +345,14 @@ class _DateSimScreenState extends State<DateSimScreen> {
   static const _continueError =
       "Couldn't continue the conversation. Please try again.";
 
-  /// STOP the in-flight run. The backend halts generation between turns and
-  /// keeps what's done; the sim doc then flips to `done` and the finished view
-  /// (with the partial transcript + its score) takes over via the stream.
+  /// STOP the in-flight run. The tap is acknowledged at once (the button
+  /// shows "Stopping…"); the backend halts generation between turns, keeps
+  /// what's done, and for a stopped run writes NO score and sends NO
+  /// completion notification. As soon as the stop lands we LEAVE the sim
+  /// view — sitting on it while the backend winds down (the in-flight turn
+  /// plus the finalize write) is what made Stop feel stuck. If the server
+  /// says the run had ALREADY finished, we stay and say so honestly: its
+  /// score was already final, and the finished view presents it.
   Future<void> _stop() async {
     final simId = _simId;
     if (simId == null || _stopping) return;
@@ -353,13 +361,35 @@ class _DateSimScreenState extends State<DateSimScreen> {
       _error = null;
     });
     try {
-      await _api.dateSimStop(simId);
+      final outcome = await _api.dateSimStop(simId);
+      if (!mounted) return;
+      if (outcome == 'already_finished') {
+        setState(() => _error = 'That simulation had already finished — '
+            'here is its result.');
+        return;
+      }
+      _leaveSimView();
     } on ApiException {
       if (mounted) setState(() => _error = _stopError);
     } catch (_) {
-      // Transport failure: the run keeps going; the stream reports the outcome.
+      // Transport failure: the stop did not land and the run keeps going.
+      // Say so and stay — the stream reports the real outcome.
+      if (mounted) setState(() => _error = _stopError);
     } finally {
       if (mounted) setState(() => _stopping = false);
+    }
+  }
+
+  /// Leave the sim view after a stop: back to wherever the user came from,
+  /// or to the main shell when the sim was opened cold (deep link) with
+  /// nothing beneath it to pop to.
+  void _leaveSimView() {
+    _stopListening();
+    if (!mounted) return;
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/');
     }
   }
 
@@ -570,8 +600,8 @@ class _DateSimScreenState extends State<DateSimScreen> {
               const _InlineError(
                 key: Key('dateSimStoppedNote'),
                 message:
-                    'You stopped the conversation early. The read below '
-                    'covers what was said so far.',
+                    'You stopped the conversation early, so it was not '
+                    'scored. The transcript above is what was said.',
                 partial: false,
               ),
             ],

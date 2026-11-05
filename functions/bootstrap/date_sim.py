@@ -361,16 +361,24 @@ async def _finalize(
     uid: str,
     deadline: float,
     stopped: bool = False,
-) -> tuple[dict, dict, bool]:
+) -> tuple[dict, dict, bool, bool]:
     """Moderate the whole transcript (advisory, never blocks), re-score it, and
     write ``status: done`` with the fresh verdict + moderation. Returns
-    ``(verdict, moderation, usage_capped)``. The verdict is re-scored over the
-    FULL transcript, so a continuation's read reflects the whole conversation."""
+    ``(verdict, moderation, usage_capped, stopped)``. The verdict is re-scored
+    over the FULL transcript, so a continuation's read reflects the whole
+    conversation.
+
+    A user-STOPPED run is never scored: the verdict stays empty and the caller
+    must not send the completion notification. The stop flag is re-read here
+    (not just between turns) so a stop that lands during the final turn —
+    after the generator's last between-turns check — is still honored."""
+    if not stopped:
+        stopped = await _cancel_requested(sim_ref)
     moderation = await dm_moderation.moderate(
         "\n".join(t["text"] for t in transcript)
     )
     verdict: dict = {"score": 0, "score_label": "", "summary": ""}
-    if transcript and not usage_capped:
+    if transcript and not usage_capped and not stopped:
         try:
             verdict = await asyncio.wait_for(
                 _verdict(self_name, other_name, transcript, uid=uid),
@@ -391,8 +399,9 @@ async def _finalize(
             "verdict": verdict,
             "moderation": mod,
             "usage_capped": usage_capped,
-            # True when the user STOPPED the run early (partial transcript kept,
-            # still scored over what was produced). Cleared on a fresh continue.
+            # True when the user STOPPED the run early (partial transcript
+            # kept, NOT scored — the verdict above stays empty). Cleared on a
+            # fresh continue.
             "stopped": stopped,
             "cancel_requested": False,
             # The completion timestamp a reopen uses to surface the LATEST
@@ -400,7 +409,7 @@ async def _finalize(
             "completed_at": datetime.now(timezone.utc),
         },
     )
-    return verdict, mod, usage_capped
+    return verdict, mod, usage_capped, stopped
 
 
 async def run_simulation(
@@ -508,7 +517,7 @@ async def run_simulation(
             uid,
             deadline,
         )
-        verdict, mod, usage_capped = await _finalize(
+        verdict, mod, usage_capped, stopped = await _finalize(
             sim_ref,
             self_name,
             other_name,
@@ -531,10 +540,13 @@ async def run_simulation(
 
     # Completed (status: done) — tell the user it finished and deep-link so a
     # tap REOPENS this very sim (uid is the owner; carry other_uid + sim_id).
-    # Best-effort inside the trigger: a notification failure never fails the run.
-    await notifications_triggers.notify_date_sim_done(
-        db, uid, other_name, sim_id, other_uid, verdict["score"]
-    )
+    # Best-effort inside the trigger: a notification failure never fails the
+    # run. A run the user STOPPED gets no notification: they ended it on
+    # purpose, and there is no score to announce.
+    if not stopped:
+        await notifications_triggers.notify_date_sim_done(
+            db, uid, other_name, sim_id, other_uid, verdict["score"]
+        )
 
     return {
         "simulation": True,
@@ -547,7 +559,7 @@ async def run_simulation(
         "summary": verdict["summary"],
         "moderation": mod,
         "usage_capped": usage_capped,
-        "stopped": cancelled,
+        "stopped": stopped,
     }
 
 
@@ -652,7 +664,7 @@ async def continue_simulation(
             uid,
             deadline,
         )
-        verdict, mod, usage_capped = await _finalize(
+        verdict, mod, usage_capped, stopped = await _finalize(
             sim_ref,
             self_name,
             other_name,
@@ -675,9 +687,11 @@ async def continue_simulation(
 
     # Re-surface the completion entry with the refreshed score (deduped per sim,
     # so a continuation resurfaces one rolling entry rather than stacking).
-    await notifications_triggers.notify_date_sim_done(
-        db, uid, other_name, sim_id, other_uid, verdict["score"]
-    )
+    # Skipped when the user STOPPED the continuation — no score to announce.
+    if not stopped:
+        await notifications_triggers.notify_date_sim_done(
+            db, uid, other_name, sim_id, other_uid, verdict["score"]
+        )
 
     return {
         "simulation": True,
@@ -689,21 +703,29 @@ async def continue_simulation(
         "summary": verdict["summary"],
         "moderation": mod,
         "usage_capped": usage_capped,
-        "stopped": cancelled,
+        "stopped": stopped,
     }
 
 
-async def stop_simulation(db, uid: str, sim_id: str) -> None:
-    """Request a STOP of an in-flight simulation: set ``cancel_requested`` on the
-    sim doc. The running generator picks it up between turns and halts, keeping
-    what's already produced and scoring over it. A no-op (but not an error) when
-    the run has already finished. Raises :class:`ValueError` when the sim is
-    missing."""
+async def stop_simulation(db, uid: str, sim_id: str) -> str:
+    """Request a STOP of an in-flight simulation: set ``cancel_requested`` on
+    the sim doc. The running generator picks it up between turns (and once
+    more at finalize) and halts, keeping what's already produced — unscored,
+    and with no completion notification.
+
+    Returns ``"stopping"`` when the flag was set on a live run, or
+    ``"already_finished"`` when the run had already reached a terminal state
+    (its score, if any, is already final — the stop changed nothing, and the
+    client must say so rather than pretend the stop worked). Raises
+    :class:`ValueError` when the sim is missing."""
     sim_ref = _sims(db, uid).document(sim_id)
     snap = await asyncio.to_thread(sim_ref.get)
     if not getattr(snap, "exists", False):
         raise ValueError("no such simulation")
+    if (snap.to_dict() or {}).get("status") in (STATUS_DONE, STATUS_ERROR):
+        return "already_finished"
     await _write(sim_ref.update, {"cancel_requested": True})
+    return "stopping"
 
 
 async def reset_pair_sims(db, uid: str, other_uid: str) -> int:
@@ -829,15 +851,17 @@ async def date_sim_stop(
     sim_id: str, caller: Caller = Depends(require_caller)
 ) -> dict[str, object]:
     """STOP an in-flight simulation. Flags the caller's own sim doc; the running
-    generator halts between turns, keeps what's done and scores it. Idempotent —
-    a stop on an already-finished run is a harmless no-op."""
+    generator halts between turns, keeps what's done, and does NOT score it or
+    send the completion notification. Idempotent — the response status is
+    ``"stopping"`` for a live run, or ``"already_finished"`` when the run had
+    already ended (its score, if any, was already final)."""
     if not _SIM_ID_RE.match(sim_id):
         raise HTTPException(status_code=422, detail="Invalid sim_id.")
     try:
-        await stop_simulation(get_db(), caller.uid, sim_id)
+        outcome = await stop_simulation(get_db(), caller.uid, sim_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="No simulation to stop.") from exc
-    return {"sim_id": sim_id, "status": "stopping"}
+    return {"sim_id": sim_id, "status": outcome}
 
 
 @router.delete("/date-sim/pair/{other_uid}")
