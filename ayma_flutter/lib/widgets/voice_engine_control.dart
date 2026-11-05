@@ -56,6 +56,12 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   String? _error;
   bool _saving = false;
 
+  /// True once the catalog load's first attempt has failed and a cold-start
+  /// backoff retry is pending/in flight: the loader swaps its line to
+  /// "Reconnecting…" instead of holding the original line indefinitely
+  /// (loader retest, Nov 2026, Leg 4). Reset on every new load.
+  bool _retrying = false;
+
   // Last-saved accent/language (§13.9 hot-swap): only a save that actually
   // changes one of these nudges the live call; a voice/stack-only save never
   // rebuilds the running session.
@@ -161,10 +167,18 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     // over a generous budget — staying on the loading spinner (initial) or the
     // current dropdowns (re-fetch) — and only a sustained failure surfaces the
     // error + Retry.
-    if (mounted && _error != null) setState(() => _error = null);
+    if (mounted && (_error != null || _retrying)) {
+      setState(() {
+        _error = null;
+        _retrying = false;
+      });
+    }
     try {
       final cat = await withColdStartRetry(
         () => widget.api.voiceEngines(timeout: kColdStartCallTimeout),
+        onRetry: () {
+          if (mounted) setState(() => _retrying = true);
+        },
       );
       if (!mounted) return;
       setState(() {
@@ -330,13 +344,17 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       );
     }
     if (_cat == null || _sel == null) {
-      // GET /voice/engines (cold-start retries included) still in flight.
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
+      // GET /voice/engines (cold-start retries included) still in flight;
+      // while a retry is pending/in flight the line says so instead of
+      // holding the original line indefinitely.
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
         child: Center(
           child: AymaWingLoader(
             size: 44,
-            lines: AymaLoaderLines.voiceEngines,
+            lines: _retrying
+                ? AymaLoaderLines.reconnect
+                : AymaLoaderLines.voiceEngines,
           ),
         ),
       );

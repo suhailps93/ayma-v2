@@ -271,6 +271,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int _seededCount = 0;
   bool _loadingHistory = true;
 
+  /// True once the initial history load's first attempt has failed and a
+  /// cold-start backoff retry is pending/in flight: the loader swaps its line
+  /// to "Reconnecting…" instead of holding the original line indefinitely
+  /// (loader retest, Nov 2026, Leg 4). Reset on every new load.
+  bool _historyRetrying = false;
+
   /// The `/chat/history` cursor for the next older page, or null once the
   /// start of history is reached (or the initial load hasn't resolved yet).
   /// Set from the normal (non-target) load's own `next_before`, or — on a
@@ -1128,6 +1134,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // the manual "Couldn't load — Retry" state — never the first timeout.
       var page = await withColdStartRetry(
         () => _api.chatHistory(limit: 40, timeout: kColdStartCallTimeout),
+        onRetry: () {
+          if (mounted) setState(() => _historyRetrying = true);
+        },
       );
       var messages = page.messages;
       // A target may sit further back than the most recent page — keep
@@ -1329,6 +1338,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     setState(() {
       _loadingHistory = true;
       _historyError = null;
+      _historyRetrying = false;
     });
     _loadHistory();
   }
@@ -2490,11 +2500,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         }
                         if (_loadingHistory) {
                           // GET /chat/history (+ its images): one operation,
-                          // so the two lines are rephrasings, not stages.
-                          return const Center(
+                          // so the two lines are rephrasings, not stages —
+                          // until a retry is scheduled, when the line must say
+                          // so instead of holding the original indefinitely.
+                          return Center(
                             child: AymaWingLoader(
-                              lines: AymaLoaderLines.chatHistory,
-                              autoRotate: true,
+                              lines: _historyRetrying
+                                  ? AymaLoaderLines.reconnect
+                                  : AymaLoaderLines.chatHistory,
+                              autoRotate: !_historyRetrying,
                             ),
                           );
                         }

@@ -70,6 +70,12 @@ class ExploreScreenState extends State<ExploreScreen> {
   /// growing the model without bound.
   static const _maxCards = 120;
 
+  /// True once the initial feed load's first attempt has failed and a
+  /// cold-start backoff retry is pending/in flight: the loader swaps its line
+  /// to "Reconnecting…" instead of holding the original line indefinitely
+  /// (loader retest, Nov 2026, Leg 4). Reset on every new initial load.
+  bool _initialRetrying = false;
+
   /// Test seam for the §4.1 fling guard: prefetches are suppressed above
   /// this scroll velocity (logical px/s). Widget tests drive the clock, so
   /// they pin this to [double.infinity] to exercise paging deterministically.
@@ -168,6 +174,7 @@ class ExploreScreenState extends State<ExploreScreen> {
     }
     setState(() {
       _feed = _feed.copyWith(refreshing: true, clearError: true);
+      _initialRetrying = false;
     });
     try {
       // Ride through a scale-to-zero cold start: the first feed page uses a
@@ -180,6 +187,9 @@ class ExploreScreenState extends State<ExploreScreen> {
           q: _searchController.text.trim(),
           timeout: kColdStartCallTimeout,
         ),
+        onRetry: () {
+          if (mounted) setState(() => _initialRetrying = true);
+        },
       );
       if (!mounted) return;
       _seenUids
@@ -377,8 +387,14 @@ class ExploreScreenState extends State<ExploreScreen> {
           ],
           body: Builder(builder: (context) {
             if (_feed.refreshing && !_feed.hasData) {
-              // GET /explore page 1 (cold-start retries included).
-              return const AymaWingLoader(lines: AymaLoaderLines.explore);
+              // GET /explore page 1 (cold-start retries included): while a
+              // retry is pending/in flight the line says so instead of
+              // holding the original line indefinitely.
+              return AymaWingLoader(
+                lines: _initialRetrying
+                    ? AymaLoaderLines.reconnect
+                    : AymaLoaderLines.explore,
+              );
             }
             if (_feed.error != null && !_feed.hasData) {
               // Shown only after the cold-start retry budget is spent (see

@@ -110,6 +110,53 @@ void main() {
   });
 
   testWidgets(
+      'a retrying history load surfaces the Reconnecting line instead of '
+      'holding the original line', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Loader retest (Scout, Nov 2026, Leg 4): with the network cut, the chat
+    // line held "Loading your conversation…" indefinitely with no retry
+    // signal. Models a cold backend: the first two `/chat/history` calls fail
+    // transiently (503), the third (warm) succeeds. Two failures, because
+    // ApiClient's own bounded GET retry absorbs the first 503 internally —
+    // the cold-start backoff (and its retry signal) starts when the whole
+    // load attempt fails.
+    var calls = 0;
+    final mockHttp = MockClient((request) async {
+      if (request.url.path == '/chat/history') {
+        calls++;
+        if (calls <= 2) {
+          return http.Response('cold', 503, headers: _jsonUtf8);
+        }
+        final page = _history.sublist(_history.length - 40);
+        return http.Response(
+          jsonEncode({'messages': page, 'next_before': null}),
+          200,
+          headers: _jsonUtf8,
+        );
+      }
+      return http.Response('{}', 200, headers: _jsonUtf8);
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(MaterialApp(home: ChatScreen(apiClient: api)));
+    // The first load attempt has failed (past ApiClient's internal 300ms
+    // absorb) and the 1s cold-start backoff is elapsing: the loader must say
+    // so instead of holding the original line.
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Reconnecting…'), findsOneWidget);
+
+    // The retry succeeds and history lands as before.
+    await tester.pumpAndSettle();
+    expect(find.text('hist message 89'), findsOneWidget);
+    expect(calls, 3);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an older-page history load failure flips the loader row without ErrorWidget',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);

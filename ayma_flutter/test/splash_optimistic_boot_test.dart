@@ -1,7 +1,8 @@
 // Optimistic cold start (founder 2026-10-28: "during initial boot-up it takes
 // a while… should we just show the cached page and bootstrap in the backend?"
-// — yes). With a cached entry route for the signed-in user, the splash paints
-// the last-known UI IMMEDIATELY and runs the full bootstrap in the background:
+// — yes). With a cached entry route for the signed-in user, the splash shows
+// the cached screen after a short dwell (so the wake line is actually visible)
+// and runs the full bootstrap in the background:
 //  - it shows the cached screen without waiting on the bootstrap future;
 //  - if bootstrap reveals the session is signed out (token rejected), it
 //    corrects the optimistic UI to sign-in — the existing hardening, layered,
@@ -71,8 +72,10 @@ void main() {
 
     await tester.pumpWidget(MaterialApp.router(routerConfig: _router(api)));
     // Let the fast cache read + optimistic navigation run — the bootstrap
-    // future is still gated (unresolved).
+    // future is still gated (unresolved). The splash holds for its minimum
+    // dwell first (so the wake line is actually visible), then navigates.
     await tester.pump();
+    await tester.pump(SplashScreen.minSplashDwell);
     await tester.pump();
 
     expect(find.text('screen:shell'), findsOneWidget);

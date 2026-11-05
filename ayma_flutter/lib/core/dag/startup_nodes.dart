@@ -15,6 +15,7 @@ import '../../firebase_options.dart';
 import '../../models/boot_config.dart';
 import '../../routing/app_router.dart';
 import '../../routing/entry.dart';
+import '../../screens/splash_screen.dart';
 import '../../services/accent_color_controller.dart';
 import '../../services/api_client.dart';
 import '../../services/app_command_host.dart';
@@ -179,6 +180,13 @@ class StartupNodes {
       },
       critical: true,
       action: (ctx) async {
+        // N12's optimistic cached-route navigation must not leave the splash
+        // before its minimum dwell has elapsed since this mount (loader
+        // retest, Nov 2026: the wake line never surfaced otherwise).
+        ctx.put(
+          'first_frame_mount_at_ms',
+          DateTime.now().millisecondsSinceEpoch,
+        );
         runApp(app ?? const SizedBox.shrink());
       },
     );
@@ -262,6 +270,20 @@ class StartupNodes {
             ? ctx.get<BootConfig?>('boot_config')
             : null;
         if (config != null && config.entryRoute.isNotEmpty) {
+          // Same minimum dwell as the splash's own optimistic navigation:
+          // without it this `go` can land pre-first-frame and the wake line
+          // never paints at all. Absent mount time (a node under test, never
+          // in production) means no wait.
+          final mountAtMs = ctx.getOrNull<int>('first_frame_mount_at_ms');
+          if (mountAtMs != null) {
+            final wait = SplashScreen.dwellRemaining(
+              shownAtMs: mountAtMs,
+              nowMs: DateTime.now().millisecondsSinceEpoch,
+            );
+            if (wait > Duration.zero) {
+              await Future<void>.delayed(wait);
+            }
+          }
           effectiveRouter.go(config.entryRoute);
           DeepLinkQueue.instance.notifyNavigationSettled();
         }

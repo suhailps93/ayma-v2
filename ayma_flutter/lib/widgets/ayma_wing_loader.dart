@@ -21,6 +21,13 @@ abstract final class AymaLoaderLines {
   /// attempt run, `1` while a backoff retry is pending/in flight.
   static const startup = ['Waking up Ayma…', 'Reconnecting…'];
 
+  /// Retry signal: a load whose first attempt failed and whose backoff retry
+  /// is pending/in flight swaps its thematic set for this single line (with
+  /// `autoRotate: false`) instead of holding the original line indefinitely.
+  /// A swap — not an appended entry — so rotating rephrasing sets can never
+  /// show it spuriously while the first attempt is still fresh.
+  static const reconnect = ['Reconnecting…'];
+
   /// Chat home ([ChatScreen]): the initial `/chat/history` load (single
   /// operation — rotate to rephrase).
   static const chatHistory = [

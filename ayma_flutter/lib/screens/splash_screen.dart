@@ -61,6 +61,25 @@ class SplashScreen extends StatefulWidget {
   /// the primary failure path: a reachable backend lands long before it fires.
   static const startupDeadline = Duration(seconds: 45);
 
+  /// Minimum time the cold-start splash stays up — with the wing loader and
+  /// the "Waking up Ayma…" line — before an optimistic cached-route
+  /// navigation may leave it. Without this the cached route lands before the
+  /// splash has been visible for any real time (loader retest, Nov 2026: the
+  /// wake line NEVER surfaced in 3 cold starts). Not faked work: the wake-ping
+  /// has just fired and the background bootstrap is starting/running while
+  /// this holds. Shared with the startup DAG's destination routing (N12),
+  /// which can otherwise navigate pre-first-frame down the same cached path.
+  static const minSplashDwell = Duration(milliseconds: 800);
+
+  /// How much of [minSplashDwell] is still unelapsed for a splash first
+  /// mounted at [shownAtMs] (epoch ms), as of [nowMs]. The startup DAG's
+  /// destination routing (N12) — which can reach its own optimistic
+  /// navigation long after mount — holds exactly this before navigating.
+  static Duration dwellRemaining({required int shownAtMs, required int nowMs}) {
+    final remaining = minSplashDwell.inMilliseconds - (nowMs - shownAtMs);
+    return remaining > 0 ? Duration(milliseconds: remaining) : Duration.zero;
+  }
+
   final ApiClient? apiClient;
   final FirebaseAuth? auth;
 
@@ -188,6 +207,14 @@ class _SplashScreenState extends State<SplashScreen> {
     final cachedRoute = cachedConfig?.entryRoute ??
         await ReportCache.instance.readBootRoute(user.uid);
     if (cachedRoute != null && cachedRoute.isNotEmpty && mounted) {
+      // Hold the splash for the minimum dwell so the wake line is actually
+      // visible: without this the navigation below lands before the splash
+      // has been up for any real time. A fixed hold, deliberately not
+      // elapsed-subtracted — this branch runs within milliseconds of mount,
+      // and a real-clock subtraction would be timing-flaky under test.
+      // Still never waits on bootstrap.
+      await Future<void>.delayed(SplashScreen.minSplashDwell);
+      if (!mounted) return;
       _inFlight = false;
       final router = GoRouter.of(context);
       DeepLinkQueue.instance.notifyNavigationSettled();
