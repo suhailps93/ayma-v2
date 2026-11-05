@@ -102,7 +102,9 @@ def _resolve_brain(text: str) -> tuple[str | None, str]:
         return None, (
             "open-weights isn't one of the main brains (those are "
             + " and ".join(catalog.values())
-            + "); it's a voice brain you pick in cascade mode"
+            + "); it IS available as the brain under Voice \u2014 call "
+            "set_voice_brain with 'open weights' to switch the voice "
+            "brain to it (cascade mode); the main brain stays unchanged"
         )
     names = ", ".join(f"{label}" for label in catalog.values())
     return None, f"'{text.strip()}' isn't an available brain — those are {names}"
@@ -129,6 +131,120 @@ def _bind_set_brain(db, uid: str) -> Callable[..., object]:
         )
 
     return set_brain
+
+
+
+# --- voice brain (the brain under Voice) -------------------------------------
+#
+# The cascade voice stack has its OWN brain, distinct from the unified main
+# brain above: the LLM the voice pipeline thinks with on a cascade call (Meta
+# Muse Spark, the self-hosted open-weights Llama, or a LiveKit Inference LLM).
+# Before this tool existed the two were conflated: an "under voice, change the
+# brain to the open-weights model" ask hit ``set_brain``, whose catalog has no
+# open-weights entry, so Ayma told the founder she "didn't have an
+# open-weights option" even with it enabled (founder bug, 2026-11-03). The
+# catalog here is ``voice_catalog``'s \u2014 the SAME list the models screen
+# shows \u2014 so open weights is offered exactly when ``OPEN_WEIGHTS_BASE_URL``
+# is set, and a switch persists to the SAME profile field the screen writes.
+
+_VOICE_BRAIN_ALIASES: dict[str, str] = {
+    "muse": voice_catalog.BRAIN_META,
+    "muse spark": voice_catalog.BRAIN_META,
+    "muse-spark": voice_catalog.BRAIN_META,
+    "meta": voice_catalog.BRAIN_META,
+    "meta muse spark": voice_catalog.BRAIN_META,
+    "open weights": voice_catalog.BRAIN_OPEN_WEIGHTS,
+    "open-weights": voice_catalog.BRAIN_OPEN_WEIGHTS,
+    "openweights": voice_catalog.BRAIN_OPEN_WEIGHTS,
+    "open weight": voice_catalog.BRAIN_OPEN_WEIGHTS,
+    "open-weight": voice_catalog.BRAIN_OPEN_WEIGHTS,
+    "llama": voice_catalog.BRAIN_OPEN_WEIGHTS,
+    "llama 3.1 8b": voice_catalog.BRAIN_OPEN_WEIGHTS,
+}
+
+
+def _voice_brain_catalog() -> dict[str, str]:
+    """``{id: label}`` for every cascade voice brain in the catalog
+    (``voice_catalog.catalog()["brains"]``) \u2014 grounded in the live config,
+    so open weights is present only when its endpoint is configured."""
+    return {
+        str(b["id"]): str(b["label"])
+        for b in voice_catalog.catalog()["brains"]  # type: ignore[index]
+    }
+
+
+def _available_voice_brains() -> dict[str, str]:
+    """The AVAILABLE subset of :func:`_voice_brain_catalog` \u2014 a brain whose
+    provider isn't available on this account is never offered or saved."""
+    return {
+        str(b["id"]): str(b["label"])
+        for b in voice_catalog.catalog()["brains"]  # type: ignore[index]
+        if b.get("available")
+    }
+
+
+def _resolve_voice_brain(text: str) -> tuple[str | None, str]:
+    """``(brain_id, "")`` for a recognised, AVAILABLE voice brain, else
+    ``(None, reason)`` with an honest, user-facing reason naming the real
+    options. Accepts canonical ids (``run_stack_command`` passes them)."""
+    raw = (text or "").strip().lower()
+    available = _available_voice_brains()
+    labels = ", ".join(available.values())
+    if not raw:
+        return None, f"ask which voice brain they want \u2014 {labels}"
+    chosen = _VOICE_BRAIN_ALIASES.get(raw, raw)
+    if chosen in available:
+        return chosen, ""
+    full = _voice_brain_catalog()
+    if chosen in full:
+        return None, (
+            f"the {full[chosen]} voice brain isn't available on this "
+            f"account right now \u2014 the voice brains are: {labels}"
+        )
+    norm = _norm(raw)
+    for bid, label in available.items():
+        if norm and (norm in _norm(bid) or norm in _norm(label)):
+            return bid, ""
+    return None, (
+        f"'{text.strip()}' isn't an available voice brain \u2014 "
+        f"the voice brains are: {labels}"
+    )
+
+
+def _persist_voice_brain(db, uid: str, text: str) -> str:
+    """Validate (voice catalog) and save the cascade voice brain + cascade
+    mode. Returns the user-facing result. Runs in a worker thread
+    (``catalog()`` may touch the LiveKit Inference gateway); never raises."""
+    brain_id, reason = _resolve_voice_brain(text)
+    if brain_id is None:
+        return reason
+    label = _available_voice_brains()[brain_id]
+    try:
+        _write_many(
+            db, uid,
+            {
+                schema.PF_AYMA_CASCADE_BRAIN: brain_id,
+                # The voice brain only applies in cascade mode; set it too,
+                # like the STT/TTS setters, so the choice takes effect.
+                schema.PF_AYMA_VOICE_MODE: voice_catalog.MODE_CASCADE,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("set_voice_brain write failed for %s", uid)
+        return "The app did NOT save that voice brain \u2014 tell the user it didn't work."
+    return (
+        f"voice brain \u2192 {label} \u2014 that's the brain under Voice (cascade "
+        "mode), saved as your default; your main brain is unchanged. It "
+        "takes effect on your next voice call, or say 'reconnect' to apply "
+        "it to this call."
+    )
+
+
+def _bind_set_voice_brain(db, uid: str) -> Callable[..., object]:
+    async def set_voice_brain(brain: str = "") -> str:
+        return await asyncio.to_thread(_persist_voice_brain, db, uid, brain)
+
+    return set_voice_brain
 
 
 # --- voice mode ---------------------------------------------------------------
@@ -370,6 +486,25 @@ _RECONNECT_COOLDOWN_SECONDS = 45.0
 # Epoch-seconds marker on users/{uid}/profile/main, kept local to this module —
 # it is internal reconnect bookkeeping, not a user-facing model-settings field.
 _PF_RECONNECT_AT = "ayma_reconnect_requested_at"
+# One-shot "announce the reconnect" flag, set in the same write as the marker:
+# the OLD session stays silent once a reconnect is queued (agent.py's claim
+# gate suppresses its narration — its speech is cut off by the teardown
+# anyway, founder 2026-11-03), and the NEW session claims this flag at open
+# (:func:`claim_reconnect_announcement`) to speak the one "I'm back" line
+# exactly once. A separate flag (not the timestamp) so claiming the
+# announcement can never disarm the loop-guard cooldown above.
+_PF_RECONNECT_PENDING = "ayma_reconnect_announce_pending"
+# How long a pending announcement stays claimable: the continuation session
+# opens seconds after the teardown; far past this the flag is stale (the
+# reconnect never landed) and a claim just clears it, silently.
+_RECONNECT_ANNOUNCE_WINDOW_SECONDS = 120.0
+
+#: ``reconnect_voice``'s queued-and-acked result — the exact string agent.py's
+#: claim gate matches to silence the old session's narration for the turn.
+_RECONNECT_QUEUED_RESULT = (
+    "Reconnecting now — I'll drop for a second and come back on your "
+    "updated setup."
+)
 
 
 def _recently_reconnected(db, uid: str) -> bool:
@@ -387,10 +522,39 @@ def _recently_reconnected(db, uid: str) -> bool:
 def _mark_reconnected(db, uid: str) -> None:
     try:
         schema.profile_doc(db, uid).set(
-            {_PF_RECONNECT_AT: time.time()}, merge=True
+            {_PF_RECONNECT_AT: time.time(), _PF_RECONNECT_PENDING: True},
+            merge=True,
         )
     except Exception:  # noqa: BLE001 - best-effort; the client breaker backs it up
         logger.exception("could not mark reconnect for %s", uid)
+
+
+def claim_reconnect_announcement(db, uid: str) -> bool:
+    """Claim the one-shot post-reconnect announcement for ``uid``.
+
+    True exactly once: for the first session that opens while a reconnect
+    announcement is pending and still fresh — the reconnect's continuation
+    session, which speaks the one "I'm back" line (agent.py
+    ``_open_main_call``). The claim clears the flag, so a fresh call started
+    later — or a fallback session re-opening on the same room — never
+    repeats the line. A stale flag (the continuation never opened) is
+    cleared and reports False. Never raises: a Firestore hiccup just means
+    no announcement, never a broken call.
+    """
+    if not uid:
+        return False
+    try:
+        ref = schema.profile_doc(db, uid)
+        data = ref.get().to_dict() or {}
+        if not data.get(_PF_RECONNECT_PENDING):
+            return False
+        at = float(data.get(_PF_RECONNECT_AT) or 0.0)
+        fresh = (time.time() - at) < _RECONNECT_ANNOUNCE_WINDOW_SECONDS
+        ref.set({_PF_RECONNECT_PENDING: False}, merge=True)
+        return fresh
+    except Exception:  # noqa: BLE001 - best-effort; no announcement beats a crash
+        logger.exception("could not claim reconnect announcement for %s", uid)
+        return False
 
 
 def _bind_reconnect_voice(db, uid: str) -> Callable[..., object]:
@@ -412,10 +576,7 @@ def _bind_reconnect_voice(db, uid: str) -> Callable[..., object]:
             # Mark BEFORE the client actually tears down + re-bootstraps (that
             # runs after this ack), so the new session sees the cooldown.
             await asyncio.to_thread(_mark_reconnected, db, uid)
-            return (
-                "Reconnecting now — I'll drop for a second and come back on your "
-                "updated setup."
-            )
+            return _RECONNECT_QUEUED_RESULT
         return (
             "There's no live voice call to reconnect right now — your saved "
             "changes will apply on your next voice call."
@@ -527,6 +688,16 @@ def detect_stack_command(message: str) -> tuple[str, str] | None:
         engine = _scan_engine(m, _TTS_KEYWORDS)
         if engine:
             return ("set_tts", engine)
+    # Brain under Voice — an explicit voice qualifier ("under voice",
+    # "voice brain", "for voice", "in voice") routes to the CASCADE voice
+    # brain, never the main brain (the two-brain conflation, founder
+    # 2026-11-03). Only voice-catalog targets are intercepted; the binder
+    # re-validates availability and gives the honest refusal otherwise.
+    if re.search(r"\bunder voice\b|\bvoice brain\b|\bfor voice\b|\bin voice\b", m):
+        if "open weight" in m or "open-weight" in m or "llama" in m:
+            return ("set_voice_brain", voice_catalog.BRAIN_OPEN_WEIGHTS)
+        if re.search(r"\b(muse|meta)\b", m):
+            return ("set_voice_brain", voice_catalog.BRAIN_META)
     # Brain (either direction) — gated by the word "brain" or an explicit
     # "to <brain>" so a stray brand mention ("I use Gemini at work") can't trip it.
     if "brain" in m or _TO_BRAIN.search(m):
@@ -548,6 +719,8 @@ async def run_stack_command(db, uid: str, name: str, value: str) -> str:
     model would call, so the write and the confirmation text are identical."""
     if name == "set_brain":
         return await _bind_set_brain(db, uid)(brain=value)
+    if name == "set_voice_brain":
+        return await _bind_set_voice_brain(db, uid)(brain=value)
     if name == "set_voice_mode":
         return await _bind_set_voice_mode(db, uid)(mode=value)
     if name == "set_realtime_model":
@@ -558,6 +731,76 @@ async def run_stack_command(db, uid: str, name: str, value: str) -> str:
         return await _bind_set_tts(db, uid)(engine=value)
     raise ValueError(f"unknown model-stack command {name!r}")
 
+
+
+def model_stack_context(db, uid: str) -> str:
+    """The two-brain context block for Ayma's system prompt: her MAIN brain
+    and the brain UNDER VOICE as separate, labeled facts \u2014 current values
+    from the user's saved profile (else the catalog defaults), option lists
+    from the SAME catalogs the models screen serves, so she never conflates
+    the two brains and never denies an option that is actually enabled (open
+    weights appears exactly when ``OPEN_WEIGHTS_BASE_URL`` is set). Tolerant:
+    a failed profile read just falls back to the defaults. Never raises."""
+    prof: dict = {}
+    try:
+        snap = schema.profile_doc(db, uid).get()
+        prof = snap.to_dict() or {}
+    except Exception:  # noqa: BLE001 - context must never break a turn
+        logger.exception("model_stack_context profile read failed for %s", uid)
+    main_labels = _brain_catalog()
+    main_id = str(prof.get(schema.PF_AYMA_BRAIN_MODEL) or "").strip()
+    if main_id not in main_labels:
+        main_id = PROVIDER_GEMINI
+    default = voice_catalog.default_selection()
+    mode = (
+        str(prof.get(schema.PF_AYMA_VOICE_MODE) or "").strip()
+        or str(default["mode"])
+    )
+    voice_labels = _available_voice_brains()
+    voice_id = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN) or "").strip()
+    if voice_id not in voice_labels:
+        voice_id = (
+            str(default["brain_id"])
+            if str(default["brain_id"]) in voice_labels
+            else next(iter(voice_labels), "")
+        )
+    return "\n".join([
+        "Your model stack \u2014 you have TWO different brains; never mix them up:",
+        f"- Main brain (your text replies and reasoning): {main_labels[main_id]}. "
+        f"Main-brain options: {', '.join(main_labels.values())}.",
+        f"- Voice mode: {mode}. The brain under Voice (what you think with on a "
+        f"cascade voice call): {voice_labels.get(voice_id, voice_id)}. "
+        f"Voice-brain options: {', '.join(voice_labels.values())}.",
+        "\"The brain\" with no qualifier means your main brain; only an "
+        "\"under Voice\" ask is about the voice brain. Every option listed "
+        "here IS available \u2014 never say you don't have it.",
+    ])
+
+
+def _voice_brains_fill() -> str:
+    """The available voice brains for the tool description \u2014 built from the
+    static catalog builder (no LiveKit network at import), so open weights is
+    listed exactly when its endpoint is configured."""
+    brains = voice_catalog._brains({"source": "fallback", "llm": []})
+    return ", ".join(
+        f"{b['id']} ({b['label']})" for b in brains if b.get("available")
+    )
+
+
+_VOICE_BRAINS_FILL = _voice_brains_fill()
+
+SET_VOICE_BRAIN = Skill(
+    declaration={
+        "name": "set_voice_brain",
+        "description": _prompt("set_voice_brain", VOICE_BRAINS=_VOICE_BRAINS_FILL),
+        "parameters": {
+            "type": "object",
+            "properties": {"brain": {"type": "string"}},
+            "required": ["brain"],
+        },
+    },
+    bind=_bind_set_voice_brain,
+)
 
 # --- declarations -------------------------------------------------------------
 
@@ -660,5 +903,6 @@ RECONNECT_VOICE = Skill(
 )
 
 SKILLS: list[Skill] = [
-    SET_BRAIN, SET_VOICE_MODE, SET_REALTIME_MODEL, SET_STT, SET_TTS, RECONNECT_VOICE,
+    SET_BRAIN, SET_VOICE_BRAIN, SET_VOICE_MODE, SET_REALTIME_MODEL, SET_STT,
+    SET_TTS, RECONNECT_VOICE,
 ]

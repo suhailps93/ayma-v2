@@ -34,6 +34,11 @@ def _livekit_env(monkeypatch, *, url="wss://test.livekit.cloud"):
         seeds.append((room, seed_json))
 
     monkeypatch.setattr(main, "seed_room_context", _fake_seed)
+
+    async def _fake_watch(_room):
+        return False
+
+    monkeypatch.setattr(main, "watch_hosted_dispatch", _fake_watch)
     return seeds
 
 
@@ -428,7 +433,11 @@ def test_welcome_token_needs_no_auth_and_seeds_a_greeting(monkeypatch):
     assert "sign in" in seed_json
 
 
-def test_welcome_token_wakes_the_scale_to_zero_agent(monkeypatch):
+def test_welcome_token_no_longer_wakes_the_scale_to_zero_agent(monkeypatch):
+    # The welcome room routes to the hosted LiveKit worker now (§1.1; founder
+    # directive 2026-11-03 — everything on LiveKit Cloud, GCP only if LiveKit
+    # crashes). The Cloud Run wake fires only inside the failure-only fallback
+    # watcher (livekit_token.watch_hosted_dispatch), never at welcome-seed time.
     _livekit_env(monkeypatch)
     main._welcome_hits.clear()
     woken = []
@@ -436,7 +445,7 @@ def test_welcome_token_wakes_the_scale_to_zero_agent(monkeypatch):
 
     resp = client.post("/welcome/token")
     assert resp.status_code == 200
-    assert woken == [1]
+    assert woken == []
 
 
 def test_welcome_token_rate_limits_per_ip(monkeypatch):

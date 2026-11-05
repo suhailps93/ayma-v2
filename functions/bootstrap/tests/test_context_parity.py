@@ -120,6 +120,11 @@ def _livekit_env(monkeypatch):
         seeds.append((room, seed_json))
 
     monkeypatch.setattr(main, "seed_room_context", _fake_seed)
+
+    async def _fake_watch(_room):
+        return False
+
+    monkeypatch.setattr(main, "watch_hosted_dispatch", _fake_watch)
     return seeds
 
 

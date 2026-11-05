@@ -79,7 +79,6 @@ import math
 from datetime import datetime, timedelta, timezone
 
 import billing
-import feature_flags
 import start_grant
 from config import CONFIG, PLAN_FREE
 from db import get_db
@@ -322,25 +321,13 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
 CACHED_INPUT_RATE_FACTOR = 0.10
 
 
-def live_model_id(inference: bool | None = None) -> str:
-    """The Gemini Live model id voice traffic ACTUALLY uses right now — the
-    Developer-API model (``gemini-3.8-live``, or whatever
-    ``GEMINI_LIVE_DEV_MODEL`` overrides it to) when ``GEMINI_LIVE_USE_DEV_API``
-    is on (the deployed configuration), else the Vertex native-audio model. The one
-    source of truth ``agent.build_realtime_model`` and the ledger share, so
-    the ledger can never again price voice against a model it isn't running
-    (the pre-2026-09-26 accuracy bug: voice was always priced as
-    ``gemini-live-2.5-flash-native-audio`` while real traffic ran
-    ``gemini-3.1-flash-live-preview``)."""
-    if inference is None:
-        inference = feature_flags.get("voice_provider") == "inference"
-    if inference:
-        return CONFIG.inference_live_model
-    return (
-        CONFIG.gemini_live_dev_model
-        if CONFIG.gemini_live_use_dev_api
-        else CONFIG.gemini_live_model
-    )
+def live_model_id() -> str:
+    """The Gemini Live model id voice traffic ACTUALLY uses right now — always
+    the LiveKit Inference realtime model (founder rule 2026-11-04: no
+    direct-Google voice). The one source of truth
+    ``agent.build_realtime_model`` and the ledger share, so the ledger can
+    never price voice against a model it isn't running."""
+    return CONFIG.inference_live_model
 
 
 PROVIDER_VERTEX = "google_vertex"
@@ -353,10 +340,10 @@ def provider_for(feature: str, model: str | None = None) -> str:
     """Which backend billed a recorded call — the ``provider`` field on
     ``spend_events`` docs and the ``token_usage.providers`` buckets. Inference
     model ids are provider-prefixed (``google/...``); Meta Muse Spark ids
-    (any id containing ``muse-spark``) bill to Meta; otherwise voice follows
-    ``GEMINI_LIVE_USE_DEV_API`` and every other call is Vertex. Rows written
-    before this field existed have no ``provider`` (readers treat that as
-    ``google``)."""
+    (any id containing ``muse-spark``) bill to Meta; the unprefixed
+    ``google_vertex`` / ``google_dev_api`` arms only ever match rows written
+    before the 2026-11-04 direct-Google kill. Rows written before this field
+    existed have no ``provider`` (readers treat that as ``google``)."""
     if (model or "").startswith("google/"):
         return PROVIDER_LIVEKIT_INFERENCE
     if "muse-spark" in (model or "").lower():

@@ -70,8 +70,10 @@ from livekit_token import (  # noqa: E402
     LiveKitConfigError,
     build_room_seed,
     mint_access_token,
+    resolve_voice_agent_cloud,
     room_name_for,
     seed_room_context,
+    watch_hosted_dispatch,
 )
 import account_ops  # noqa: E402
 import age_gate  # noqa: E402
@@ -128,6 +130,7 @@ from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 import prompt as prompt_module  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
+from skills import set_model_stack  # noqa: E402
 import session_mode  # noqa: E402
 from skills import (  # noqa: E402
     make_session_tool_fns,
@@ -290,14 +293,10 @@ def _voice_agent_cloud(uid: str) -> str:
     (opt-out via the Developer screen, ``PF_AYMA_VOICE_CLOUD``). Any
     unknown/absent value falls back to ``schema.VOICE_AGENT_CLOUD_DEFAULT`` (the
     one authoritative default); a user who explicitly set ``cloudrun`` still
-    routes to Cloud Run."""
-    try:
-        snap = schema.profile_doc(get_db(), uid).get()
-        val = str((snap.to_dict() or {}).get(schema.PF_AYMA_VOICE_CLOUD, "")).strip()
-    except Exception:  # noqa: BLE001 - never block a voice start on this read
-        logger.exception("could not read voice_agent_cloud for %s", uid)
-        return schema.VOICE_AGENT_CLOUD_DEFAULT
-    return val if val in schema.VOICE_AGENT_CLOUDS else schema.VOICE_AGENT_CLOUD_DEFAULT
+    routes to Cloud Run. Thin wrapper over
+    :func:`livekit_token.resolve_voice_agent_cloud`, which Practice Date voice
+    shares so every voice room resolves its target the same way."""
+    return resolve_voice_agent_cloud(get_db(), uid)
 
 
 def _server_ts():
@@ -833,6 +832,7 @@ async def bootstrap(
             profile_progress=_interview_progress(uid, mode),
             preferences_context=_preferences_context(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
+            model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
             db=get_db(),
             summary_context=summary_text,
             # Voice persona variant (prompt.py `_persona_variant`): the Live
@@ -891,6 +891,13 @@ async def bootstrap(
             )
         except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
             logger.exception("failed to seed room context for %s", room)
+
+        if agent_cloud == "livekit":
+            # Failure-only GCP fallback (§1.1): if the hosted worker never
+            # joins this room, re-route it to the Cloud Run worker in the
+            # background (livekit_token.watch_hosted_dispatch). GCP serves
+            # voice only when LiveKit Cloud itself is failing.
+            background.add_task(watch_hosted_dispatch, room)
 
         if turns:
             _persist_session(uid, session_id, turns)
@@ -985,15 +992,14 @@ async def welcome_token(
     if not CONFIG.livekit_url:
         raise HTTPException(status_code=503, detail="Voice is unavailable.")
 
-    # The pre-sign-in welcome room has no uid and no voice_agent_cloud pref, so
-    # it is created with NO explicit agent dispatch — LiveKit auto-dispatches it
-    # to the Cloud Run worker (the LiveKit-hosted worker is explicit-dispatch
-    # only, agent_name "ayma-lk"). So welcome always needs the Cloud Run wake,
-    # unlike authenticated /bootstrap, which wakes Cloud Run only for the
-    # "cloudrun"-routed users. This is the one remaining always-on Cloud Run
-    # consumer (see docs/LIVEKIT_AGENT_MIGRATION.md — full retirement of Cloud
-    # Run requires migrating the welcome flow to explicit ayma-lk dispatch).
-    background.add_task(agent_wake.wake_agent)
+    # The pre-sign-in welcome room has no uid and no voice_agent_cloud pref;
+    # it routes to the hosted worker like everything else (founder directive
+    # 2026-11-03: everything on LiveKit Cloud, GCP only if LiveKit crashes) —
+    # explicit dispatch to "ayma-lk" plus a "livekit" seed marker, which is
+    # what the hosted worker's request_fnc guard requires to accept the room.
+    # No Cloud Run wake: the failure-only fallback watcher below wakes Cloud
+    # Run itself if the hosted agent never joins. This retired the last
+    # always-on Cloud Run consumer (see docs/LIVEKIT_AGENT_MIGRATION.md).
     room = f"welcome-{secrets.token_urlsafe(9)}"
     try:
         token = mint_access_token(f"guest-{room}", room)
@@ -1009,10 +1015,14 @@ async def welcome_token(
                 "",
                 "",
                 greeting_instructions=_WELCOME_GREETING,
+                voice_agent_cloud="livekit",
             ),
+            agent_name=CONFIG.agent_name_livekit,
         )
     except Exception:  # noqa: BLE001 - best-effort; the agent still has a base persona
         logger.exception("failed to seed welcome room %s", room)
+    # Failure-only GCP fallback (§1.1), same as /bootstrap.
+    background.add_task(watch_hosted_dispatch, room)
 
     return {"livekit": {"token": token, "url": CONFIG.livekit_url, "room": room}}
 
@@ -1282,13 +1292,29 @@ async def _prepare_chat(
     # Meta (Muse Spark), the switch turn itself runs on Muse Spark, whose weaker
     # tool-calling often fails to emit set_brain — making "change back to Gemini"
     # silently do nothing (founder 2026-11-02). Mirrors the #28 determinism fix.
+    # Uses the module-level ``set_model_stack`` import: a local import here
+    # would shadow it for the WHOLE function, leaving the name unbound on
+    # image/photo turns (which skip this block) and crashing the
+    # ``compose_system_prompt`` call below (regression from 7f9e0374).
     if not req.image_path.strip() and not req.photo_url.strip():
-        from skills import set_model_stack
-
         stack_cmd = set_model_stack.detect_stack_command(req.message)
         if stack_cmd is not None:
             reply = await set_model_stack.run_stack_command(
                 get_db(), uid, *stack_cmd
+            )
+            return ({"reply": reply}, None)
+
+        # Deterministic named-profile (§13.9): a profile ask that NAMES a
+        # member ("open Sofia's profile") is open_profile, not the You tab —
+        # detect_app_command below maps the bare word "profile" to the
+        # user's own profile and drops the name (Scout retest 2026-11-03).
+        # Runs through the same bound open_profile the model calls; an
+        # unresolvable name answers with its couldn't-find clarification
+        # instead of silently landing on the user's own profile.
+        profile_name = app_control_mod.detect_profile_command(req.message)
+        if profile_name is not None:
+            reply = await app_control_mod.run_profile_command(
+                get_db(), uid, profile_name
             )
             return ({"reply": reply}, None)
 
@@ -1427,6 +1453,7 @@ async def _prepare_chat(
         profile_progress=_interview_progress(uid, mode),
         preferences_context=_preferences_context(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
+        model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
         viewing_profile_context=public_profile_mod._viewing_profile_context(
             get_db(), uid, viewing_profile_uid
         ),
@@ -1844,6 +1871,38 @@ def _finalize_chat(
             )
 
 
+def _persist_early_turn(req: ChatRequest, caller: Caller, early: dict) -> None:
+    """Persist the user+assistant pair for a turn ``_prepare_chat`` answered
+    WITHOUT the model — turn cap, deterministic stack switch, deterministic
+    nav, named-profile. Those ``early`` returns used to bypass
+    :func:`_persist_user_turn` / :func:`_finalize_chat` entirely, so the pair
+    never landed in chat history and vanished on relaunch (Scout observation,
+    2026-11-03). Reuses ``_finalize_chat`` with a minimal ctx so the persisted
+    shape — user-turn de-dup, ``client_msg_id`` stamping, the ``raw_turns``
+    window — is exactly the model path's. Best-effort: ``_finalize_chat``
+    never raises.
+
+    The deterministic paths never run on an image turn (the pre-model net is
+    image-guarded in ``_prepare_chat``), and the one early path that can carry
+    an image — a capped turn — never downloaded it, so ``image`` stays None:
+    no photo followups, no double-write of an image turn. The request's
+    ``image_path`` is still recorded on the user turn, as the model path
+    records it. A tour-continuation ping is a synthetic control signal, never
+    a user message — skipped, as everywhere else."""
+    if req.tour_continuation:
+        return
+    ctx = _ChatCtx(
+        uid=caller.uid,
+        image=None,
+        image_path=req.image_path.strip(),
+        window=_to_turns(req.recent_turns),
+        system_prompt="",
+    )
+    finalize_bg = BackgroundTasks()
+    _finalize_chat(finalize_bg, ctx, req, str(early.get("reply") or ""), [])
+    _spawn_turn(finalize_bg())
+
+
 @app.post("/chat", dependencies=[Depends(require_not_underage_uid)])
 async def chat(
     req: ChatRequest,
@@ -1874,6 +1933,7 @@ async def chat(
 
     early, ctx = await _prepare_chat(req, caller)
     if early is not None:
+        _persist_early_turn(req, caller, early)
         return early
     assert ctx is not None
 
@@ -2069,6 +2129,7 @@ async def chat_stream(
 
     early, ctx = await _prepare_chat(req, caller)
     if early is not None:
+        _persist_early_turn(req, caller, early)
         return _sse_response(_sse_once({"type": "reply", **early}))
     assert ctx is not None
 

@@ -57,8 +57,8 @@ flowchart LR
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
     Links["Link validation (web research)<br/>404 / soft-404 / grounding redirects dropped,<br/>Links vs Social profiles de-duplicated"]
-    Vertex["Vertex AI (Gemini)<br/>exceptions only, see table"]
     VSearch["Vertex AI Search<br/>ayma-public-web engine"]
+    Disabled["DISABLED sub-paths (kill 2026-11-04,<br/>founder-decision items):<br/>grounded research, embeddings,<br/>batch, TTS previews, image edit"]
     Sched[Cloud Scheduler<br/>/cron/* with X-Cron-Secret]
     SM[Secret Manager]
     BQ[(BigQuery billing_export)]
@@ -84,14 +84,13 @@ flowchart LR
   Voice -->|/bootstrap: token + room| API
   Voice <-->|WebRTC| Room
   Room <--> Agent
-  Agent -->|voice_provider=inference| Gateway
-  Agent -->|voice_provider=google| Vertex
+  Agent -->|voice (Inference-only)| Gateway
   Agent -->|raw_turns flush, tools| FS
   Agent -->|app_commands/pending| FS
   FS -->|app_commands| Cmd
-  API -->|llm_route_json/vision/chat=inference| Gateway
+  API -->|chat, JSON, vision (Inference-only)| Gateway
   API -->|DM assist /dm/assist §6.9 (dm_coach=meta default);<br/>DM translate /dm/translate §6.12 (translate=meta default);<br/>other surfaces when flipped to meta| MetaAPI
-  API -->|web_search, research, embeddings,<br/>batch, TTS, image edit| Vertex
+  API -.->|disabled, raise honestly| Disabled
   API -->|deep dive discovery| VSearch
   API -->|og:image fetch| Web
   API --> Links -->|HEAD/GET, public IPs only| Web
@@ -118,28 +117,25 @@ flowchart LR
   App -->|2. user approves code in-app<br/>/mcp/connect/approve ID token| MCP
   ExtAgent -->|3. MCP tools over streamable-HTTP<br/>Bearer per-user token, NO Ayma LLM| MCP
   MCP -->|hands + memory: reads, gated writes| FS
-  MCP -.->|moderation classifier only<br/>DM send, cents, not billed to user| Vertex
+  MCP -.->|moderation classifier only<br/>DM send, cents, not billed to user| Gateway
 ```
 
-**Model routing (LiveKit Inference vs Vertex AI).** Model ids live only in `config.py`.
+**Model routing (LiveKit Inference only).** Model ids live only in `config.py`. Founder rule
+(2026-11-04, permanent — see `docs/DIRECT_GOOGLE_KILL_AUDIT.md`): ALL inference goes through
+LiveKit; the direct-Google (Vertex / Developer API) path is deleted, and the routing /
+fallback settings are retained but inert. An Inference failure raises honestly.
 
-| Work | Default route on this branch | Flag | Always on Vertex (no gateway equivalent) |
-|---|---|---|---|
-| JSON jobs (wiki ingest, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
-| Match scoring (`matching_skill`) | **Meta Muse Spark** (`LLM_PROVIDER_MATCHING=meta` in `deploy-api.sh`; Gemini fallback) | `llm_provider_matching` | — when flipped to `gemini` it runs as a JSON job on the row above |
-| Face / body reports (`face_report`, `body_report`) | **Meta Muse Spark** (`LLM_PROVIDER_REPORTS=meta`; Gemini fallback) | `llm_provider_reports` | — when flipped to `gemini` it runs on the vision row below |
-| DM assist / icebreakers (§6.9) | **Meta Muse Spark** (`LLM_PROVIDER_DM_COACH=meta` default; Gemini fallback) | `llm_provider_dm_coach` | — when flipped to `gemini` it runs as a JSON job on the row above |
-| DM translate / cross-language (§6.12) | **Meta Muse Spark** (`LLM_PROVIDER_TRANSLATE=meta` default; Gemini fallback) | `llm_provider_translate` | — when flipped to `gemini` it runs as a JSON job on the first row |
-| Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference | `llm_route_vision` | media the gateway cannot take (HEIC, m4a, webm, ogg, aac) |
-| Text chat with tools | **Meta Muse Spark** (`LLM_PROVIDER_CHAT=meta` in `deploy-api.sh`; Gemini fallback). Leaves LiveKit Inference coverage: bills the Meta $150 credit, not LiveKit. With `chat=gemini` it is Inference via `llm_route_chat` | `llm_provider_chat` (`llm_route_chat` only applies on the Gemini path) | the `web_search` tool (grounded `research()` call); Maps grounding (`maps_grounding`) |
-| Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` | |
-| `gemini.research` (deep dive discovery, skills) | Vertex | | Google Search + URL-context grounding |
-| Embeddings (`media_embed`, face match) | Vertex `gemini-embedding-2` | | stored 2048-d index |
-| Batch (`gemini_batch`, wiki lint) | Vertex | | Batch API is half price |
-| Voice preview TTS, image edit | Vertex | | models not on the gateway |
-
-`llm_percent_*` and `llm_allowlist_*` narrow each route; `llm_fallback_to_google` is OFF on this branch
-(an Inference failure is logged at ERROR and raised). Details: `docs/LIVEKIT_INFERENCE_MIGRATION.md`.
+| Work | Route | Flag |
+|---|---|---|
+| JSON jobs (wiki ingest, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` (inert) |
+| Match scoring (`matching_skill`) | **Meta Muse Spark** (`LLM_PROVIDER_MATCHING=meta` in `deploy-api.sh`; Gemini fallback) | `llm_provider_matching` |
+| Face / body reports (`face_report`, `body_report`) | **Meta Muse Spark** (`LLM_PROVIDER_REPORTS=meta`; Gemini fallback) | `llm_provider_reports` |
+| DM assist / icebreakers (§6.9) | **Meta Muse Spark** (`LLM_PROVIDER_DM_COACH=meta` default; Gemini fallback) | `llm_provider_dm_coach` |
+| DM translate / cross-language (§6.12) | **Meta Muse Spark** (`LLM_PROVIDER_TRANSLATE=meta` default; Gemini fallback) | `llm_provider_translate` |
+| Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference (media the gateway cannot take — HEIC, m4a, webm, ogg, aac — raises honestly) | `llm_route_vision` (inert) |
+| Text chat with tools | **Meta Muse Spark** (`LLM_PROVIDER_CHAT=meta` in `deploy-api.sh`; Gemini fallback). Leaves LiveKit Inference coverage: bills the Meta $150 credit, not LiveKit. With `chat=gemini` it is Inference | `llm_provider_chat` |
+| Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` (inert) |
+| DISABLED (founder-decision items): `gemini.research` (grounded deep-dive/skills search), embeddings (`media_embed`), batch (`gemini_batch`, wiki lint), voice preview TTS, image generate/edit | raise `DirectGoogleDisabledError` — the gateway has no equivalent, so these are off, not rerouted | — |
 
 **Inference chat completion budget.** The chat model on the gateway is a *thinking* model, and its
 `completion_tokens` includes reasoning tokens (`inference_llm._usage`). The completion budget is a single
@@ -239,8 +235,9 @@ reroute to work around an empty response.
   an explicit `non_navigable` entry with a reason, enforced by `tests/test_app_registry.py` (which now also enumerates
   imperative pushes) and `ayma_flutter/test/app_registry_test.dart`.
 - *Deep-dive photo sources*: Custom Search image API (only when `IMAGE_SEARCH_API_KEY`/`_CSE_ID` are set),
-  public profile pages from a grounded Gemini call plus Vertex AI Search (`deepdive_public_profiles`,
-  `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
+  public profile pages from Vertex AI Search (`deepdive_public_profiles`, `vertex_ai_search`, skipped for
+  `deepdive_blocked_regions`; the grounded-Gemini discovery source is DISABLED with the 2026-11-04
+  direct-Google kill), and the member's own links. Every outbound fetch
   goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
   verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
 - *Web-research photo discovery → "Photos to confirm" (`reverse_image_search.py`)*: a separate path from the
@@ -251,9 +248,10 @@ reroute to work around an empty response.
   candidate** under `users/{uid}/web_photo_candidates/{id}` that the user explicitly confirms/rejects
   (`confirm_candidate`/`reject_candidate`, surfaced via `GET /web-search/photos/candidates`). **Face-match gate
   (`scan` → `_face_matches_user`):** before a candidate is *ever* staged it must clear the same embedding pipeline
-  used everywhere else — fetch → `media_embed.embed_image_bytes` (Vertex `gemini-embedding-2`) → cosine
-  `classify_face_match` against the user's reference embedding(s) (`reference_embeddings_for`: the verified selfie
-  embedding, else the profile-photo embeddings; consent-gated via `biometric_consent`) → `_has_detectable_face`.
+  used everywhere else — fetch → `media_embed.embed_image_bytes` → cosine `classify_face_match` against the user's
+  reference embedding(s) (`reference_embeddings_for`: the verified selfie embedding, else the profile-photo embeddings;
+  consent-gated via `biometric_consent`) → `_has_detectable_face`. (New embeddings are DISABLED with the
+  2026-11-04 direct-Google kill, so this gate currently yields no match and candidates are discarded.)
   The cutoff is **`CONFIG.web_photo_facematch_threshold`** (`WEB_PHOTO_FACEMATCH_THRESHOLD`, default **0.65**),
   deliberately stricter than the shared 0.55 used by the name-based dive — this whole-image path's failure mode is
   a stranger's look-alike thumbnail scoring just over a loose bar, so it errs toward precision (miss a real photo
@@ -518,17 +516,10 @@ reroute to work around an empty response.
     links (`disputed_links`) are excluded. This composes with the empty-sweep guard: an empty new sweep still
     leaves the stored set completely untouched. Applied at `store_dive` and reflected in `deep_dive.run`'s return
     value so all re-run entry paths (chat tool re-run and report-page refresh) inherit the merged set.
-  - **Research retry + timeout (reliability).** Because the dive is this polled *background* job (not bound by the
-    client's 55s long-request budget), the grounded discovery call (`deep_dive._grounded_research` → `gemini.research`)
-    runs with a longer per-attempt timeout — `gemini.RESEARCH_TIMEOUT_SECONDS` (120s) rather than the 75s synchronous
-    default (`gemini._GENERATE_TIMEOUT_SECONDS`, still used by client-blocking callers like the chat web-search tool) —
-    and **auto-retries once** on an inference `TimeoutError` or a transient server error (5xx / 408 / 429 / a
-    status-less transport error), with a short backoff (`_RESEARCH_ATTEMPTS = 2`). It does **not** retry a deterministic
-    4xx bad request, and it stays on the chosen Brain — **no** model fallback / `fallback_to_google` (that flag flip is a
-    separate, founder-gated change). Worst case stays bounded at ≈ 2× the per-attempt timeout. **No double-charge:**
-    `gemini.research` records the spend only *after* the underlying call returns, so a timed-out attempt (which raises
-    first) bills nothing — only the succeeding attempt is metered, exactly once. On final failure after the retry the
-    job keeps its honest contract: the run is marked `failed` and logged loudly (nothing silently swallowed).
+  - **Research step (reliability).** The grounded discovery call (`deep_dive._grounded_research` → `gemini.research`)
+    is DISABLED with the 2026-11-04 direct-Google kill: it raises `DirectGoogleDisabledError` (deterministic,
+    `code` 400, so the retry classifier does not retry it) and bills nothing, and the job keeps its honest
+    contract — the run is marked `failed` and logged loudly (nothing silently swallowed).
 - *Ayma sends a DM for the user* (`skills/dm_outreach.py`, text and voice): one tool, `send_dm_message`, and
   exactly one confirmation. `confirmed=false` records a pending send (recipient, exact text, id, 5 min expiry) in
   `users/{uid}/sessions/{id}.pending_dm` and returns the preview; Ayma asks once. `confirmed=true` sends only when the
@@ -1049,7 +1040,7 @@ Each Pass-2 run produces:
 
 A match score is deterministic — the same two wikis always produce the same numbers — so a scored pair's report is served from `matches/{matchId}` (keyed by `pair_key.sorted_pair_key`, deterministic per pair) **without recomputing**. `POST /check-compatibility` returns the stored report when it is **complete** and only re-runs on `force=true` (the "Recalculate" button); `GET /match/{match_id}` reads the stored doc directly. "Complete" (`main._match_doc_is_complete`) means the full scorer wrote it — a `score` **plus** `structured_score` and `method`. A stale **"lite"** doc (score-only, no breakdown — once written by the demo seed) is treated as a cache **miss**: `check-compatibility` re-scores it, and `GET /match` serves it once but queues a silent background recompute (`_match_job(..., notify=False)` — no chat event or push) so the next open shows the full dimension breakdown. The demo seed (`scripts/seed_demo_accounts.py` `persist_match`) now writes the full report payload itself, so re-seeding produces complete docs.
 
-- **Inference retry (reliability).** Scoring runs inside a polled *background* job (`POST /check-compatibility` returns `{queued: True}`, the client polls `matches/{id}`), not bound by the client's long-request budget, so the matching LLM call (`matching_skill._run_llm` → the chosen Brain's `generate_json`) **auto-retries once** on an inference `TimeoutError` or a transient server error (5xx / 408 / 429 / a status-less transport error), with a short backoff (`_LLM_ATTEMPTS = 2`). It does **not** retry a deterministic 4xx bad request or a credit cap (`TokenCapExceeded`), and it stays on the user's chosen Brain — the provider is resolved once and reused across attempts, **no** model fallback / `fallback_to_google` (that flag flip is a separate, founder-gated change). The matching call is a plain JSON generate (not grounded web research), so it keeps gemini's 75s synchronous timeout (`gemini._GENERATE_TIMEOUT_SECONDS`) rather than the longer deep-dive research timeout; worst case stays bounded at ≈ 2× that. **No double-charge:** every provider's `generate_json` records spend only *after* the underlying call returns, so a timed-out/failed attempt (which raises first) bills nothing — only the succeeding attempt is metered, exactly once. On final failure after the retry the job keeps its honest contract: `_match_job` logs the failure loudly and drops the result (nothing silently swallowed; the run simply produces no match doc). Mirrors the deep-dive research retry (§ deep dive above).
+- **Inference retry (reliability).** Scoring runs inside a polled *background* job (`POST /check-compatibility` returns `{queued: True}`, the client polls `matches/{id}`), not bound by the client's long-request budget, so the matching LLM call (`matching_skill._run_llm` → the chosen Brain's `generate_json`) **auto-retries once** on an inference `TimeoutError` or a transient server error (5xx / 408 / 429 / a status-less transport error), with a short backoff (`_LLM_ATTEMPTS = 2`). It does **not** retry a deterministic 4xx bad request or a credit cap (`TokenCapExceeded`), and it stays on the user's chosen Brain — the provider is resolved once and reused across attempts, **no** model fallback (there is no direct-Google fallback since the 2026-11-04 kill). The matching call is a plain JSON generate (not grounded web research), so it keeps the 75s synchronous gateway timeout (`CONFIG.inference_timeout_seconds`); worst case stays bounded at ≈ 2× that. **No double-charge:** every provider's `generate_json` records spend only *after* the underlying call returns, so a timed-out/failed attempt (which raises first) bills nothing — only the succeeding attempt is metered, exactly once. On final failure after the retry the job keeps its honest contract: `_match_job` logs the failure loudly and drops the result (nothing silently swallowed; the run simply produces no match doc). Mirrors the deep-dive research retry (§ deep dive above).
 
 **Input-staleness invalidation (bug F staleness, founder 2026-10-29).** Complete = served instantly, but **auto-refreshed when its inputs changed**. A complete doc is also treated as a cache miss when it is **stale** relative to the inputs the scorer read — `main._match_doc_is_stale` compares the report's `updated_at`/`scored_at` against `_match_inputs_mtime` for **both** parties (the newest `updated_at` across each person's `profile/main` — which carries every preference change: partner age range, location, `interested_in`, relocation radius — and their `questionnaire/*` answer docs). So when someone narrows their age range (adding a dealbreaker that should now zero the score), the cached 65% is served **this** open (no regression to F's speed win) while a silent background recompute runs, and the next open shows the corrected 0% with its "Why this is 0%" reasons. The check is conservative: it returns `False` (not stale) whenever it can't positively tell (missing timestamps, read error), so a genuinely fresh doc is never needlessly recomputed. The manual "Recalculate" (`force=true`) is still the immediate force-refresh.
 

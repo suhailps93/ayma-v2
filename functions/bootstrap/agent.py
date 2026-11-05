@@ -9,9 +9,9 @@ Current scope:
 
 * base persona instructions (shared `persona.md`, same character as `/chat`),
 * default voice from `config.py`,
-* Gemini Live's native (server-side) turn detection — no client VAD; the
-  server's automatic activity detection is tuned conservatively against
-  false triggers (see ``_turn_detection_config``), env-overridable,
+* Gemini Live's native (server-side) turn detection through the LiveKit
+  Inference gateway — no client VAD; the gateway server-VAD silence/padding
+  is env-overridable (see ``build_inference_realtime_model``),
 * Step 15: native input/output transcription, relayed to the client as
   ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6).
 * "Shut up" muting: a mute-trigger phrase silences Ayma's auto-generated
@@ -48,7 +48,6 @@ if "pytest" not in sys.modules:  # pragma: no cover - dev/deploy only
             load_dotenv(_parent / ".env")
             break
 
-from google.genai import types  # noqa: E402
 from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     Agent,
     AgentServer,
@@ -67,7 +66,6 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
 )
 from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.agents.types import NOT_GIVEN, NotGivenOr  # noqa: E402
-from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
 from agent_keepalive import CallKeepAlive, KeepAliveServer  # noqa: E402
@@ -85,20 +83,22 @@ from prompt import (  # noqa: E402
     compose_system_prompt,
     load_practice_greeting,
     load_tour_tapped_kick,
-    load_voice_dangling_reply,
-    load_voice_opener,
     load_voice_session_seed,
     load_voice_tool_use,
+    load_voice_verbatim_line,
+    reconnect_back,
     voice_accent_directive,
     voice_swap_confirm,
     voice_swap_failed,
     voice_swap_note,
     voice_vocab_directive,
 )
+import schema  # noqa: E402
 import skills  # noqa: E402
 import voices  # noqa: E402
 from tool_labels import NO_CHIP as _NO_CHIP  # noqa: E402
 from tool_labels import GUIDED_TOUR_TOOLS as _GUIDED_TOUR_TOOLS  # noqa: E402
+from tool_labels import NAV_CHIP_TOOLS as _NAV_CLAIM_TOOLS  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
@@ -114,15 +114,18 @@ TOPIC_AGENT_STATE = "agent_state"  # §1.3 — drives the client's speaking/barg
 # {"name": tool name, "label": user-facing label, "phase": "start" | "end"}.
 TOPIC_TOOL_USED = "tool_used"
 # The agent is about to end the call itself, right before it disconnects —
-# distinguishes a deliberate, graceful stop (currently only "out_of_credits",
-# §F3 mid-call credit cap) from an ordinary dropped connection so the client
-# can show the actionable "reload credits" affordance (`cappedError` in
-# `voice_session_controller.dart`) instead of a generic "connection dropped"
-# error. Payload: {"reason": "out_of_credits"}.
+# distinguishes a deliberate, graceful stop ("out_of_credits" §F3 mid-call
+# credit cap, "idle_timeout", "user_goodbye") from an ordinary dropped
+# connection so the client can show the right affordance (`cappedError` in
+# `voice_session_controller.dart` for the credit cap) instead of a generic
+# "connection dropped" error. Payload: {"reason": <reason>}.
 TOPIC_CALL_ENDING = "call_ending"
 # `call_ending` reason sent when there was no activity for the idle window
 # (`CONFIG.voice_idle_timeout_seconds`).
 REASON_IDLE_TIMEOUT = "idle_timeout"
+# `call_ending` reason sent when the caller signed off ("goodbye Ayma") — a
+# deliberate user hang-up, interpreted by the voice-actions skill.
+REASON_USER_GOODBYE = "user_goodbye"
 # Ayma was told to "shut up" (or called back by name) — published on every
 # muted<->unmuted transition so the client can show an "Ayma is quiet" chip
 # instead of a call that looks broken. Payload: {"muted": bool}. Also
@@ -185,74 +188,20 @@ _OUT_OF_CREDITS_GOODBYE_TIMEOUT_SECONDS = 12
 
 # --- Server-side turn detection (VAD) tuning --------------------------------
 #
-# Measured problem (production 2026-09-26, gemini-3.8-live, call
-# s-t83myxsFsvQLhbb_s64jTL): 5 of 15 billed turns in a ~3-minute call returned
-# out=6 tokens — essentially empty replies, three of them seconds apart —
-# classic VAD false triggers (breaths / noise / short pauses committing a
-# "user turn" with no content). Each such turn still re-bills the entire
-# resident input context (~9.2k tokens at that point): ~46k tokens (~$0.14, a
-# third of the call) spent on turns where the model said nothing.
+# Voice runs through the LiveKit Inference gateway, whose realtime protocol
+# carries only server-VAD padding / silence. Both stay env-tunable on
+# ayma-agent (no code deploy to adjust); the literal value "default" (or
+# empty) leaves that field unset so the server default applies.
 #
-# Gemini Live's server defaults are START_SENSITIVITY_HIGH +
-# END_SENSITIVITY_HIGH (verified in the installed google-genai
-# StartSensitivity/EndSensitivity enum docs) — the most trigger-happy profile.
-# The knobs below tune the *server's* automatic activity detection via
-# `realtime_input_config.automatic_activity_detection`, which the installed
-# livekit plugin (1.7.1) passes verbatim into the Live session setup
-# (realtime_api.py `conf.realtime_input_config = ...`). No client-side VAD or
-# transcript heuristics — configuration only, so real user speech is never
-# eaten by our own cleverness. `activity_handling` is deliberately left unset:
-# the plugin's interrupt() path checks it, and the default
-# START_OF_ACTIVITY_INTERRUPTS is the barge-in behavior we want.
-#
-# Every knob is env-tunable on ayma-agent (no code deploy to adjust). The
-# literal value "default" (or empty) leaves that field unset so the server
-# default applies; setting all four to "default" — or
-# GEMINI_LIVE_TURN_DETECTION_TUNING=off — restores the exact pre-tuning setup
-# (no realtime_input_config sent at all).
-#
-#   GEMINI_LIVE_TURN_DETECTION_TUNING  on|off        default on
-#   GEMINI_LIVE_START_SENSITIVITY      low|high|default   default "low":
-#       breaths and background noise are less likely to open a user turn at
-#       all (server default is HIGH).
-#   GEMINI_LIVE_END_SENSITIVITY        low|high|default   default "default"
-#       (server HIGH): end-of-speech eagerness is left alone —
-#       silence_duration_ms below is the direct, bounded knob for early
-#       commits, while END_SENSITIVITY_LOW adds unbounded extra lag on top.
 #   GEMINI_LIVE_PREFIX_PADDING_MS      int ms|default     default 300:
 #       detected speech must persist ~0.3s before start-of-speech commits, so
-#       a breath, click, or cough doesn't open (and bill) a turn. Audio is
-#       buffered server-side, so nothing said is lost — commit is just
-#       confirmed later.
+#       a breath, click, or cough doesn't open (and bill) a turn.
 #   GEMINI_LIVE_SILENCE_DURATION_MS    int ms|default     default 700:
 #       ~0.7s of non-speech before end-of-speech commits — mid-sentence
 #       thinking pauses no longer cut the caller off / commit an empty tail
 #       turn, while replies still start well under a second after the caller
 #       actually finishes. Raise toward 1000 if callers feel cut off; lower
 #       toward 500 if Ayma feels slow to answer.
-
-_START_SENSITIVITY = {
-    "low": types.StartSensitivity.START_SENSITIVITY_LOW,
-    "high": types.StartSensitivity.START_SENSITIVITY_HIGH,
-}
-_END_SENSITIVITY = {
-    "low": types.EndSensitivity.END_SENSITIVITY_LOW,
-    "high": types.EndSensitivity.END_SENSITIVITY_HIGH,
-}
-
-
-def _env_choice(name: str, default: str, allowed: dict) -> object | None:
-    """Read a low/high/default env knob; None means leave the field unset."""
-    raw = os.getenv(name, default).strip().lower()
-    if raw in ("", "default"):
-        return None
-    if raw in allowed:
-        return allowed[raw]
-    logger.warning(
-        "%s=%r is not one of %s|default — using %r",
-        name, raw, "|".join(allowed), default,
-    )
-    return allowed.get(default)
 
 
 def _env_ms(name: str, default: int) -> int | None:
@@ -271,34 +220,9 @@ def _env_ms(name: str, default: int) -> int | None:
         return default
 
 
-def _turn_detection_config() -> types.RealtimeInputConfig | None:
-    """Build the tuned automatic-activity-detection config (or None).
-
-    None (tuning off, or every field resolved to "default") means the session
-    setup carries no ``realtime_input_config`` at all — byte-identical to the
-    pre-tuning behavior.
-    """
-    if os.getenv("GEMINI_LIVE_TURN_DETECTION_TUNING", "on").strip().lower() in (
-        "off", "false", "0",
-    ):
-        return None
-    aad = types.AutomaticActivityDetection(
-        start_of_speech_sensitivity=_env_choice(
-            "GEMINI_LIVE_START_SENSITIVITY", "low", _START_SENSITIVITY
-        ),
-        end_of_speech_sensitivity=_env_choice(
-            "GEMINI_LIVE_END_SENSITIVITY", "default", _END_SENSITIVITY
-        ),
-        prefix_padding_ms=_env_ms("GEMINI_LIVE_PREFIX_PADDING_MS", 300),
-        silence_duration_ms=_env_ms("GEMINI_LIVE_SILENCE_DURATION_MS", 700),
-    )
-    if aad == types.AutomaticActivityDetection():
-        return None
-    return types.RealtimeInputConfig(automatic_activity_detection=aad)
-
-
 def build_inference_realtime_model(voice: str, model: str | None = None):
-    """Gemini Live through LiveKit Inference (``VOICE_PROVIDER=inference``).
+    """Gemini Live through LiveKit Inference — the ONLY voice path (founder
+    rule 2026-11-04, permanent: no direct-Google voice).
 
     ``model`` overrides ``CONFIG.inference_live_model`` so a per-user realtime
     selection (§13.9, a non-Gemini/non-OpenAI realtime model from the live
@@ -307,7 +231,7 @@ def build_inference_realtime_model(voice: str, model: str | None = None):
     ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
     gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
     protocol carries are passed: the voice preset, and server-VAD padding /
-    silence taken from the same env tuning as the direct path. Live probes
+    silence from the env tuning above. Live probes
     (docs/LIVEKIT_INFERENCE_MIGRATION.md section 1b) proved only
     ``silence_duration_ms`` is honoured; Gemini-specific options (temperature,
     start/end sensitivity, sliding-window context compression, affective
@@ -346,145 +270,22 @@ def build_realtime_model(
     voice_name: str | None = None,
     language: str | None = None,
     route: str | None = None,
-) -> RealtimeModel:
-    """Construct the Gemini Live model.
+):
+    """Construct the Gemini Live model — always through LiveKit Inference
+    (founder rule 2026-11-04, permanent: no direct-Google voice — see
+    ``docs/DIRECT_GOOGLE_KILL_AUDIT.md`` item 8).
 
-    Auth mirrors the Main API (`gemini.py`): Vertex AI with the Cloud Run
-    runtime identity when ``USE_VERTEX`` is set, otherwise the Gemini Developer
-    API with ``GOOGLE_API_KEY`` from the environment. The model id comes only
-    from ``config.py`` (AGENTS.md); ``voice_name`` is the user's
-    ``ayma_voice_name`` preference (§13.3) when set and valid, else the
-    ``config.py`` default. ``language`` is their ``ayma_voice_language``
-    (BCP-47) default — the system prompt still lets Ayma follow the caller into
-    another language mid-call. ``route`` (``"vertex"`` | ``"inference"``) is the
-    already-decided provider for this call (see :func:`_run_session`); omitted,
-    it is resolved here without a uid.
+    The model id comes only from ``config.py`` (AGENTS.md); ``voice_name`` is
+    the user's ``ayma_voice_name`` preference (§13.3) when set and valid, else
+    the ``config.py`` default. ``language`` and ``route`` are kept so every
+    existing call site keeps working unchanged: the gateway ignores the
+    language hint and there is only one route.
     """
     import voices
 
     voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
         else CONFIG.gemini_live_voice
-
-    if (route or llm_routing.route_for("voice")) == "inference":
-        return build_inference_realtime_model(voice)
-
-    dev_api = CONFIG.gemini_live_use_dev_api
-    model = (
-        CONFIG.gemini_live_dev_model if dev_api else CONFIG.gemini_live_model
-    )
-    kwargs: dict[str, object] = {
-        "model": model,
-        "voice": voice,
-        "temperature": 0.9,
-        # Native Gemini Live transcription of both sides of the call (§1.6,
-        # §1.7 step 11) — explicit rather than relying on the plugin default.
-        #
-        # Transcription audit (cost program 2026-09-26, Phase 1): BOTH sides
-        # are genuinely consumed downstream, so neither can be gated off —
-        # input transcription feeds `user_input_transcribed` (the client's
-        # live user captions via `relay_transcripts`, the "shut up" mute
-        # triggers via `relay_mute_control`, AND the user half of the
-        # `raw_turns` window that wiki ingest reads on shutdown); output
-        # transcription is where the plugin gets the assistant text for
-        # `conversation_item_added` (verified in the installed livekit
-        # plugin's realtime_api.py — model-turn text is never used for
-        # captions), which drives the client's agent captions and the Ayma
-        # half of `raw_turns`. Dropping either would silently lose captions
-        # and memory, not just cost.
-        "input_audio_transcription": types.AudioTranscriptionConfig(),
-        "output_audio_transcription": types.AudioTranscriptionConfig(),
-    }
-    # Server-VAD tuning against false turn triggers — see the block comment on
-    # `_turn_detection_config`. Field acceptance verified live against
-    # gemini-3.8-live on the Dev API (setupComplete with the tuned
-    # realtimeInputConfig) before enabling by default.
-    turn_detection = _turn_detection_config()
-    if turn_detection is not None:
-        kwargs["realtime_input_config"] = turn_detection
-    if context_opt.voice_compression_enabled():
-        # Phase 1 (cost program 2026-09-26): Live API sliding-window context
-        # compression. Without it the Live session re-bills the ENTIRE
-        # accumulated context (audio ≈25 tok/s + seeded history + wiki) on
-        # every single turn — the dominant term in voice cost. Field names
-        # verified against the installed google-genai SDK
-        # (ContextWindowCompressionConfig.trigger_tokens /
-        # SlidingWindow.target_tokens) and the installed livekit plugin's
-        # RealtimeModel(context_window_compression=...) parameter.
-        #
-        # BUT only for models that genuinely honor it. The legacy Dev-API
-        # `gemini-3.1-flash-live-preview` accepts the field (returns
-        # setupComplete) but does NOT evict: on audio it's a soft hint that
-        # keeps re-billing a growing window, and on the text-seed path it
-        # fatally closes the session with 1007. It is therefore gated OFF for
-        # that model — see context_opt.voice_compression_supported_for. On
-        # `gemini-3.8-live` (the current Dev-API default, 2026-09-26 upgrade)
-        # the sliding window was measured live to genuinely evict — bounded
-        # sawtooth ~8k..16k, no 1007 (details in context_opt.py) — and on the
-        # Vertex `gemini-live-2.5-flash-native-audio` launch model it works as
-        # intended, so it stays on for both.
-        if context_opt.voice_compression_supported_for(model):
-            kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
-                trigger_tokens=context_opt.voice_compression_trigger_tokens(),
-                sliding_window=types.SlidingWindow(
-                    target_tokens=context_opt.voice_compression_target_tokens()
-                ),
-            )
-        else:
-            # No safe client-side substitute exists on this model: the plugin
-            # marks its chat context immutable (mutable_chat_context=False for
-            # "3.1"), so update_chat_ctx can't push a trimmed window
-            # mid-session, truncate() is a no-op, and message removal is
-            # unsupported. The only lever left is the seed diet (level >= 2)
-            # plus a full session restart, which we deliberately do not force
-            # mid-call. Log it so the decision is visible in the worker logs.
-            logger.info(
-                "voice context_window_compression skipped: model %s does not "
-                "honor the sliding window (seed diet is the only active lever)",
-                model,
-            )
-    lang_code = voices.bcp47_hint(language) if language else None
-    if lang_code:
-        # An exact tag ("en-GB") or a best-guess from the free-text preference
-        # ("Malayalam mixed with English" -> "ml-IN"). This biases Gemini Live's
-        # transcription so romanised Indian-language speech isn't misdetected
-        # (often as Chinese). The system prompt still carries the full accent
-        # instruction and lets Ayma follow the caller mid-call.
-        kwargs["language"] = lang_code
-    # Native-audio-only Live features (read the caller's tone and reply with
-    # matching prosody; volunteer a thought unprompted). OFF by default — the
-    # Live model we run rejects the session setup when these are set, which
-    # takes voice down entirely. Opt back in per-env once on a native-audio
-    # model: GEMINI_LIVE_AFFECTIVE_DIALOG / GEMINI_LIVE_PROACTIVITY = true.
-    if CONFIG.gemini_live_affective_dialog:
-        kwargs["enable_affective_dialog"] = True
-    if CONFIG.gemini_live_proactivity:
-        kwargs["proactivity"] = True
-    if dev_api:
-        # Gemini Developer API — the only place Live 3.x is served. Key comes
-        # from GOOGLE_API_KEY (Secret Manager, mounted on ayma-agent only).
-        #
-        # Async function calling: livekit-plugins-google >= 1.8 defaults
-        # 3.8-live tool declarations to NON_BLOCKING (the model keeps talking
-        # while a tool runs). Every Ayma tool result is meant to be spoken
-        # about immediately, so pin BLOCKING — the synchronous flow verified
-        # live on 2026-09-26 (toolCall -> toolResponse -> model continues).
-        # Dev API only: Vertex rejects a per-declaration ``behavior``.
-        kwargs["tool_behavior"] = types.Behavior.BLOCKING
-        key = os.getenv("GOOGLE_API_KEY")
-        if not key:
-            raise RuntimeError(
-                "gemini_live_use_dev_api is on but GOOGLE_API_KEY is unset"
-            )
-        kwargs["vertexai"] = False
-        kwargs["api_key"] = key
-    elif CONFIG.use_vertex:
-        kwargs["vertexai"] = True
-        if CONFIG.project_id:
-            kwargs["project"] = CONFIG.project_id
-        # The native-audio Live model is served from us-central1, not the
-        # "global" endpoint the text models use (config.py LOCKED block).
-        kwargs["location"] = CONFIG.gemini_live_location
-    return RealtimeModel(**kwargs)
+    return build_inference_realtime_model(voice)
 
 
 def _cascade_tts_voice_for_gender(gender: str | None) -> str:
@@ -1251,6 +1052,29 @@ async def end_call_idle(
     ctx.shutdown(reason=REASON_IDLE_TIMEOUT)
 
 
+async def end_call_goodbye(
+    ctx: JobContext, uid: str, flush: Callable[[], Awaitable[None]]
+) -> None:
+    """User-hang-up stop: the caller signed off ("goodbye Ayma", interpreted
+    by the voice-actions skill — see :func:`relay_voice_commands`), so end
+    the call exactly the honest way :func:`end_call_idle` does: flush the
+    memory write, tell the client why, delete the room (disconnects the user
+    participant) and shut the job down (shutdown callbacks log the
+    token-ledger totals). No spoken sign-off — the model's own "bye!" may or
+    may not beat the disconnect; either way the call ends cleanly."""
+    logger.info("voice user-goodbye stop for %s", uid)
+    try:
+        await flush()
+    except Exception:  # noqa: BLE001 - the call must still end
+        logger.exception("user-goodbye memory flush failed for %s", uid)
+    await _publish_call_ending(ctx, REASON_USER_GOODBYE)
+    try:
+        await ctx.delete_room()
+    except Exception:  # noqa: BLE001 - shutdown below still drops the agent
+        logger.exception("user-goodbye room delete failed for %s", uid)
+    ctx.shutdown(reason=REASON_USER_GOODBYE)
+
+
 def watch_for_idle(
     ctx: JobContext,
     session: AgentSession,
@@ -1460,11 +1284,10 @@ def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:
 # `llm.RealtimeModel` it checks `self._rt_turn_detection_enabled` and
 # returns immediately if true, *before* ever calling
 # `self._agent.on_user_turn_completed(...)`. `_rt_turn_detection_enabled`
-# resolves to `True` for our exact setup (Google `RealtimeModel`,
+# resolves to `True` for our exact setup (gateway `RealtimeModel`,
 # `capabilities.turn_detection=True`,
-# `capabilities.can_disable_turn_detection=False`, no client VAD and no
-# `automatic_activity_detection.disabled` anywhere — the sensitivity/padding
-# tuning in `_turn_detection_config` keeps server turn detection ON) — see
+# `capabilities.can_disable_turn_detection=False`, no client VAD and server
+# turn detection left ON) — see
 # `AgentActivity._resolve_rt_turn_detection_enabled`. So `StopResponse`
 # would simply never fire; it is not used below.
 #
@@ -1674,6 +1497,7 @@ def relay_mute_control(
 # reaches the model").
 _STACK_TOOL_KWARGS = {
     "set_brain": "brain",
+    "set_voice_brain": "brain",
     "set_voice_mode": "mode",
     "set_realtime_model": "model",
     "set_stt": "engine",
@@ -1685,9 +1509,11 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     """``(tool_name, kwargs)`` for a deterministic voice command, else ``None``.
 
     Same detection the text lane runs before the model, in the same order
-    (stack switch, then navigation, then guided-tour start) and with the same
-    strictness, so ordinary in-call chat is never intercepted. The kwargs are
-    the ones the model itself would pass for the match."""
+    (stack switch, then navigation, then launch, then guided-tour start) and
+    with the same strictness, so ordinary in-call chat is never intercepted.
+    The kwargs are the ones the model itself would pass for the match — a
+    partner-less launch carries ``{"name": ""}`` and the relay answers it
+    with the "who with?" clarification instead of launching."""
     text = (transcript or "").strip()
     if not text:
         return None
@@ -1701,6 +1527,10 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     app_dest = skills.app_control.detect_app_command(text)
     if app_dest is not None:
         return "open_screen", {"screen": app_dest}
+    launch_cmd = skills.app_control.detect_launch_command(text)
+    if launch_cmd is not None:
+        name, partner = launch_cmd
+        return name, {"name": partner or ""}
     tour_tool = skills.guided_tour.detect_tour_command(text)
     if tour_tool is not None:
         return tour_tool, {}
@@ -1718,23 +1548,196 @@ def _tools_by_name(tools: list) -> dict:
     return by_name
 
 
+# The settled result of a skill-interpreted goodbye turn. No model tool
+# awaits it (there is no "end_call" tool); it exists so the claim has a
+# value like every other command family's.
+_GOODBYE_RESULT = "call ended: the user said goodbye."
+
+
+# --- ack-gated spoken claims -------------------------------------------------
+#
+# The app-command tools have always known whether the app actually did what
+# was asked: a queued command waits (bounded) for the client's ack and
+# reports "the app did NOT navigate" when none comes (skills/app_control).
+# But the *spoken* narration belongs to the realtime model, and it can claim
+# success anyway (founder, 2026-11-03, 22:03 call: "I've opened the models
+# page" for a navigation that never happened — the page never even built;
+# the command had died unacked at a call-segment boundary). The client's
+# chips were already outcome-gated on the same results
+# (tool_labels.outcome_label -> NO_CHIP); speech was not. The gate below is
+# the speech counterpart, scoped to exactly the ack-gated navigation tools
+# (tool_labels.NAV_CHIP_TOOLS) and to the one outcome that must never be
+# narrated as success: a queued command the app never confirmed.
+#
+# The same gate carries a second, quieter latch for ``reconnect_voice``
+# (founder, 2026-11-03, later that night): once a reconnect is queued the
+# client tears the session down, and the model's "reconnecting now…"
+# narration was cut off mid-sentence. While the silence latch is set the
+# model's speech is interrupted exactly as above, but the gate speaks NO
+# line of its own — the confirmation is the continuation session's one
+# "I'm back" line (``_open_main_call``), spoken once it is actually live.
+
+#: The one line the agent itself speaks when an ack-gated command goes
+#: unconfirmed — short, truthful, and free of any success claim. Spoken via
+#: ``session.say`` (the literal words, not a model paraphrase) while the
+#: gate suppresses the model's own narration for the rest of the turn.
+_COMMAND_NOT_CONFIRMED_LINE = (
+    "Sorry, that didn't go through — the app didn't confirm it, "
+    "so nothing changed on your screen."
+)
+
+
+def _command_unconfirmed(name: str, result: object) -> bool:
+    """True when ``result`` is an ack-gated navigation tool's "queued but
+    never confirmed" outcome: the honest ack-timeout lines, or a bounded
+    tool timeout's ``error:`` string. Every other result — a ``navigated:``
+    success, a couldn't-find, a clarification — is a specific, truthful
+    outcome the model may narrate itself, so the gate leaves it alone."""
+    if name not in _NAV_CLAIM_TOOLS or not isinstance(result, str):
+        return False
+    return (
+        result == skills.app_control._NOT_NAVIGATED
+        or result == skills.app_control._NOT_APPLIED
+        or result.startswith("error:")
+    )
+
+
+def _reconnect_queued(name: str, result: object) -> bool:
+    """True when ``result`` is ``reconnect_voice``'s queued outcome: the
+    client acked a live call and is about to tear this session down and
+    re-establish it on the saved stack. Every other outcome — the cooldown
+    refusal, the no-live-call line — is spoken in a session that stays up,
+    so the gate leaves them to the model."""
+    return (
+        name == "reconnect_voice"
+        and isinstance(result, str)
+        and result == skills.set_model_stack._RECONNECT_QUEUED_RESULT
+    )
+
+
+class _CommandClaimGate:
+    """Per-session latch behind the ack-gated spoken claims (see the block
+    comment above). Fed every session-tool result through
+    :attr:`skills.VoiceTurnDedupe.outcome_observer` — the one funnel the
+    deterministic execution, a same-turn replay and a fresh model call all
+    pass through — plus the deterministic dispatcher's own execution and
+    failure paths. While latched, the model's auto-generated speech for the
+    rest of the user turn is interrupted at ``speech_created`` (the
+    primitive :func:`relay_mute_control` uses) so the unconfirmed action is
+    never narrated as done; the next finalized user turn re-arms it. The
+    ``silenced`` latch is the same suppression for a queued reconnect (see
+    :meth:`note_silence`), except the gate speaks no line at all."""
+
+    def __init__(self, session: AgentSession) -> None:
+        self._session = session
+        self.failed = False
+        self.silenced = False
+        self._announced = False
+
+    def note_turn(self) -> None:
+        """A new finalized user turn started: re-arm."""
+        self.failed = False
+        self.silenced = False
+        self._announced = False
+
+    def note_failure(self) -> None:
+        """An ack-gated command went unconfirmed this turn: latch, and
+        speak the honest line once — from the agent, not the model."""
+        self.failed = True
+        if self._announced:
+            return
+        self._announced = True
+        try:
+            self._session.say(_COMMAND_NOT_CONFIRMED_LINE)
+        except Exception:  # noqa: BLE001 - the gate must never break the call
+            # say() cannot run on a realtime session with no TTS whose
+            # model does not support it (Gemini Live, supports_say False) -
+            # the honest line then rides generate_reply under a
+            # say-exactly-this instruction, fire-and-forget exactly like
+            # the say() above (its handle is likewise unchecked here).
+            try:
+                self._session.generate_reply(
+                    instructions=load_voice_verbatim_line(
+                        _COMMAND_NOT_CONFIRMED_LINE
+                    )
+                )
+            except Exception:  # noqa: BLE001 - never break the call
+                logger.exception(
+                    "command claim gate could not speak its line"
+                )
+
+    def note_silence(self) -> None:
+        """A reconnect was queued this turn: latch the suppression WITHOUT
+        speaking a line of the gate's own. The client is tearing this
+        session down, so anything said now is cut off mid-sentence
+        (founder, 2026-11-03); the confirmation belongs to the
+        continuation session (see ``_open_main_call``)."""
+        self.silenced = True
+
+    def observe(self, name: str, result: object) -> None:
+        """``VoiceTurnDedupe.outcome_observer``: latch on an unconfirmed
+        ack-gated result, latch the silence on a queued reconnect, ignore
+        everything else."""
+        if _command_unconfirmed(name, result):
+            self.note_failure()
+        elif _reconnect_queued(name, result):
+            self.note_silence()
+
+
 def relay_voice_commands(
     session: AgentSession,
     tools: list,
     dedupe: skills.VoiceTurnDedupe,
+    *,
+    end_call: Callable[[], Awaitable[None]] | None = None,
+    interpret: Callable | None = None,
+    get_context: Callable[[], object] | None = None,
+    uid: str = "",
+    session_id: str = "",
 ) -> None:
-    """Run the deterministic voice-command backstop on ``session``: on each
-    finalized user turn, execute a stack / navigation / tour-start match
+    """Run the voice-command backstop on ``session``: on each finalized user
+    turn, execute a stack / navigation / launch / tour-start / hang-up match
     through the session's own tool (so its guard, timeout and ``tool_used``
     events apply exactly as for a model call). Non-command turns pass through
     untouched. The execution is claimed in ``dedupe`` first, so the model's
     own same-turn call to that tool replays the result instead of running the
-    action twice."""
+    action twice. A partner-less launch (``name`` empty) claims the launch
+    tool the same way but settles the "who with?" clarification instead of
+    executing it — nothing launches, and the model's same-turn call replays
+    the clarification rather than a "couldn't find someone" error.
+
+    The interpreter is the voice-actions skill (``interpret`` +
+    ``get_context``, wired by both main-session starters): its verdict maps
+    to a command via ``skills.voice_actions.verdict_to_command``. Only a
+    skill failure (outage / gateway / timeout) falls back to the
+    deterministic :func:`detect_voice_command` net, which stays in place
+    untouched as the interim backstop; an authoritative ``none`` verdict
+    stays conversational with no net call. A "goodbye Ayma" sign-off
+    (``"end_call"``, not a
+    session tool) runs ``end_call`` — the call's own teardown — claimed the
+    same way, exactly once per call: a duplicated finalized transcript must
+    not tear the call down twice. Without ``interpret`` the relay runs the
+    deterministic net alone, exactly as before."""
     tools_by_name = _tools_by_name(tools)
+    # Ack-gated spoken claims: the gate observes every result the dedupe
+    # wrapper settles (this dispatcher's executions and the model's own
+    # calls alike) and owns the turn's narration when an ack-gated command
+    # goes unconfirmed.
+    gate = _CommandClaimGate(session)
+    dedupe.outcome_observer = gate.observe
+    # The teardown latch: ``note_turn`` retires the "end_call" claim on every
+    # finalized turn, so a duplicated sign-off transcript would claim (and
+    # run teardown) again — this keeps it to once per call, full stop.
+    goodbye_done = {"fired": False}
 
     async def _run(name: str, kwargs: dict, tool, transcript: str) -> None:
         fut = dedupe.claim(name)
         if fut is None:
+            return
+        partnerless = not (kwargs.get("name") or "").strip()
+        if name in ("open_practice_date", "open_date_sim") and partnerless:
+            if not fut.done():
+                fut.set_result(skills.app_control.launch_clarification(name))
             return
         try:
             result = await tool(**kwargs)
@@ -1743,10 +1746,84 @@ def relay_voice_commands(
             if not fut.done():
                 fut.set_exception(exc)
                 fut.exception()  # mark retrieved: no warning when the model never calls
+            if name in _NAV_CLAIM_TOOLS:
+                # The execution itself blew up: nothing was confirmed, so
+                # the turn's narration is the gate's, not the model's.
+                gate.note_failure()
             logger.exception("deterministic voice command failed: %r", transcript)
             return
+        if _command_unconfirmed(name, result):
+            # Queued but never confirmed by the app: the gate owns this
+            # turn's narration (the dedupe observer reports the same
+            # result; note_failure is idempotent).
+            gate.note_failure()
         if not fut.done():
             fut.set_result(result)
+
+    async def _run_goodbye(transcript: str) -> None:
+        fut = dedupe.claim("end_call")
+        if fut is None:
+            return
+        if goodbye_done["fired"]:
+            if not fut.done():
+                fut.set_result(_GOODBYE_RESULT)
+            return
+        goodbye_done["fired"] = True
+        if end_call is None:
+            logger.warning(
+                "voice goodbye %r has no teardown callback; "
+                "turn left to the model",
+                transcript,
+            )
+            dedupe.drop("end_call")
+            if not fut.done():
+                fut.set_result(_GOODBYE_RESULT)
+            return
+        try:
+            await end_call()
+        except Exception:  # noqa: BLE001 - teardown already logs; settle below
+            dedupe.drop("end_call")
+            logger.exception("voice goodbye teardown failed: %r", transcript)
+        if not fut.done():
+            fut.set_result(_GOODBYE_RESULT)
+
+    def _dispatch(match: tuple[str, dict] | None, transcript: str) -> None:
+        if match is None:
+            return
+        name, kwargs = match
+        if name == "end_call":
+            asyncio.create_task(_run_goodbye(transcript))
+            return
+        tool = tools_by_name.get(name)
+        if tool is None:
+            logger.warning(
+                "voice command %r has no session tool; turn left to the model",
+                transcript,
+            )
+            return
+        asyncio.create_task(_run(name, kwargs, tool, transcript))
+
+    async def _run_skill_first(transcript: str) -> None:
+        try:
+            context = (
+                await asyncio.to_thread(get_context)
+                if get_context is not None
+                else None
+            )
+            verdict = await interpret(
+                transcript, context, uid=uid, session_id=session_id
+            )
+            match = skills.voice_actions.verdict_to_command(verdict)
+        except Exception:  # noqa: BLE001 - the net below is the fallback
+            logger.exception(
+                "voice-actions skill failed; falling back to the net: %r",
+                transcript,
+            )
+            match = detect_voice_command(transcript)
+        # An authoritative skill verdict — including ``none`` — never
+        # consults the net: the turn stays conversational with no
+        # ``detect_voice_command`` call.
+        _dispatch(match, transcript)
 
     @session.on("user_input_transcribed")
     def _on_user_final(ev: UserInputTranscribedEvent) -> None:
@@ -1756,18 +1833,22 @@ def relay_voice_commands(
         if not transcript:
             return
         dedupe.note_turn()
-        match = detect_voice_command(transcript)
-        if match is None:
+        gate.note_turn()
+        if interpret is None:
+            _dispatch(detect_voice_command(transcript), transcript)
             return
-        name, kwargs = match
-        tool = tools_by_name.get(name)
-        if tool is None:
-            logger.warning(
-                "voice command %r has no session tool; turn left to the model",
-                transcript,
-            )
-            return
-        asyncio.create_task(_run(name, kwargs, tool, transcript))
+        asyncio.create_task(_run_skill_first(transcript))
+
+    @session.on("speech_created")
+    def _on_speech_created_gate(ev) -> None:  # noqa: ANN001 - SpeechCreatedEvent
+        # While the claim gate is latched, the model does not get to narrate
+        # this turn at all — its version could claim an unconfirmed action
+        # succeeded. The gate's own line (spoken at latch time) is the
+        # turn's only narration; on the silence latch there is no line at
+        # all — the turn ends quietly and the continuation session speaks
+        # once the reconnect lands.
+        if gate.failed or gate.silenced:
+            ev.speech_handle.interrupt(force=True)
 
 
 @dataclass
@@ -1884,7 +1965,7 @@ def relay_token_usage(
         # — the same selection build_realtime_model makes), threaded into the
         # cost computation so the ledger prices real traffic, not the Vertex
         # default it may not be using (pre-2026-09-26 accuracy bug).
-        model = token_ledger.live_model_id(inference=inference)
+        model = token_ledger.live_model_id()
         logger.info(
             "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model, in_tok, out_tok, total,
@@ -1926,6 +2007,37 @@ def relay_token_usage(
                 tally["input"], tally["output"], tally["total"],
             )
         ctx.add_shutdown_callback(_log_session_total)
+
+
+def relay_world_state(
+    session: AgentSession, uid: str
+) -> "skills.world_state.WorldStateRefresher | None":
+    """Per-turn live-context refresh (founder, 2026-11-03): keep the model's
+    picture of the world — the screen the user is on right now, and the
+    outcomes of async work launched during the call (agent dates, match
+    reports) — current on EVERY turn, instead of only when the model
+    happens to call ``current_screen``. Without it she answers from
+    whatever the screen was when the call started and keeps saying "let's
+    see when the report comes through" about reports that already
+    finished. Silent context maintenance (see ``skills.world_state``):
+    the refresher only replaces one tagged item in the chat context; it
+    never speaks. Wired on both main voice paths next to
+    ``relay_voice_commands``, hanging off the same final-transcript event
+    the mute gate and the command relay use."""
+    if not uid:
+        return None
+    refresher = skills.world_state.WorldStateRefresher(
+        db_factory=get_db,
+        uid=uid,
+        get_agent=lambda: session.current_agent,
+    )
+
+    @session.on("user_input_transcribed")
+    def _on_user_final(ev: UserInputTranscribedEvent) -> None:
+        if ev.is_final:
+            refresher.poke()
+
+    return refresher
 
 
 def _read_room_seed(ctx: JobContext) -> RoomSeed:
@@ -2268,10 +2380,11 @@ class VoiceSwapper:
         return self._live_voice, self._hint(self._live_language, self._live_accent)
 
     def _hint(self, language: str, accent: str = "") -> str | None:
-        # The LiveKit Inference gateway ignores the language hint (see
-        # build_inference_realtime_model), so only the Google route has one.
-        # Otherwise the same precedence boot uses: the explicit language, else
-        # the BCP-47 hint derived from the free-text accent.
+        # The LiveKit Inference gateway (the only voice route) ignores the
+        # language hint (see build_inference_realtime_model), so this is
+        # always None today; the precedence below is kept for the message
+        # wording: the explicit language, else the BCP-47 hint derived from
+        # the free-text accent.
         if self._route == "inference" or (not language and not accent):
             return None
         return voices.bcp47_hint(language or voices.bcp47_hint(accent) or "")
@@ -2636,8 +2749,10 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     # may never come (see `post_turn.persist_and_ingest`'s docstring for the
     # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
-    # Provider decided ONCE per call (runtime Firestore flag, optional uid
-    # allowlist) and threaded to the model, the session record and the ledger.
+    # Provider decided ONCE per call and threaded to the model, the session
+    # record and the ledger. Always LiveKit Inference (founder rule
+    # 2026-11-04 — no direct-Google voice); the route plumbing is kept so the
+    # threading shape stays intact.
     route = llm_routing.route_for("voice", uid=seed.uid)
     use_inference = route == "inference"
     voice_provider = (
@@ -2758,6 +2873,29 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     )
 
 
+def _reconnect_setup_label(seed: RoomSeed, *, cascade: bool) -> str:
+    """The user-facing name of the stack a session is running, for the
+    post-reconnect "I'm back" line: the brain on the cascade path, the
+    realtime model on the realtime path. Static labels for the canonical
+    options (the same labels the models screen shows); any other id names
+    itself, exactly as the catalog lists it."""
+    import voice_catalog
+
+    if cascade:
+        brain_id = seed.brain_id or voice_catalog.BRAIN_META
+        if brain_id == voice_catalog.BRAIN_META:
+            return "Meta Muse Spark"
+        if brain_id == voice_catalog.BRAIN_OPEN_WEIGHTS:
+            return "Llama 3.1 8B (open weights)"
+        return brain_id
+    model_id = seed.realtime_model_id
+    if model_id == voice_catalog.REALTIME_OPENAI:
+        return "OpenAI Realtime"
+    if model_id and model_id != voice_catalog.REALTIME_GEMINI:
+        return model_id
+    return "Gemini Live"
+
+
 async def _open_main_call(
     session: AgentSession,
     seed: RoomSeed,
@@ -2786,6 +2924,41 @@ async def _open_main_call(
     Realtime models (Gemini Live / Inference RealtimeModel) never hit that path,
     so they leave it False."""
     brain = seed.brain_id or seed.realtime_model_id or "gemini-live"
+    if seed.uid and await asyncio.to_thread(
+        skills.set_model_stack.claim_reconnect_announcement, get_db(), seed.uid
+    ):
+        # Post-reconnect confirmation (founder, 2026-11-03): this session is
+        # the continuation of a user-requested reconnect. The OLD session
+        # stayed silent (the claim gate's silence latch), so this "I'm back"
+        # line — one sentence, naming the stack now running — is the only
+        # word spoken about the switch, and it is spoken only now that the
+        # new session is actually live on it. The claim is one-shot, so a
+        # fresh call (or a fallback re-open on this room) never repeats it;
+        # it replaces the generic opener below rather than stacking on it.
+        setup = _reconnect_setup_label(seed, cascade=seed_user_turn)
+        reply_kwargs: dict = {"instructions": reconnect_back(setup)}
+        if seed_user_turn:
+            reply_kwargs["user_input"] = load_voice_session_seed()
+        logger.info(
+            "voice opener FIRED kind=reconnect setup=%s brain=%s session=%s "
+            "— awaiting generate_reply",
+            setup, brain, seed.session_id or "?",
+        )
+        try:
+            await session.generate_reply(**reply_kwargs)
+        except Exception:  # noqa: BLE001 - a missed line shouldn't kill the call
+            logger.exception(
+                "reconnect announcement generate_reply ERRORED brain=%s "
+                "session=%s",
+                brain, seed.session_id or "?",
+            )
+        else:
+            logger.info(
+                "voice opener generate_reply COMPLETED kind=reconnect "
+                "brain=%s session=%s",
+                brain, seed.session_id or "?",
+            )
+        return
     if seed.greeting_instructions:
         reply_kwargs: dict = {"instructions": seed.greeting_instructions}
         if seed_user_turn:
@@ -3024,10 +3197,23 @@ async def _start_main_gemini_session(
         tour_gate=tour_gate,
         dedupe=dedupe,
     )
-    # Deterministic pre-model backstop (stack / navigation / tour-start): a
+    async def _goodbye() -> None:
+        await end_call_goodbye(ctx, seed.uid, flush.run)
+
+    # Voice-actions skill first, deterministic net as the interim backstop: a
     # clear command in a finalized user turn executes through the session's
     # own tools, exactly as in the text lane.
-    relay_voice_commands(session, tools, dedupe)
+    relay_voice_commands(
+        session, tools, dedupe,
+        end_call=_goodbye,
+        interpret=skills.voice_actions.interpret_voice_action,
+        get_context=lambda: skills.voice_actions.read_call_context(
+            get_db(), seed.uid, window
+        ),
+        uid=seed.uid,
+        session_id=seed.session_id,
+    )
+    relay_world_state(session, seed.uid)
     if swapper:
         swapper.tools = tools
         # A settings save mid-call arrives on the data channel (§13.9).
@@ -3124,10 +3310,23 @@ async def _start_main_cascade_session(
         tour_gate=tour_gate,
         dedupe=dedupe,
     )
-    # Deterministic pre-model backstop (stack / navigation / tour-start): a
+    async def _goodbye() -> None:
+        await end_call_goodbye(ctx, seed.uid, flush.run)
+
+    # Voice-actions skill first, deterministic net as the interim backstop: a
     # clear command in a finalized user turn executes through the session's
     # own tools, exactly as in the text lane.
-    relay_voice_commands(session, tools, dedupe)
+    relay_voice_commands(
+        session, tools, dedupe,
+        end_call=_goodbye,
+        interpret=skills.voice_actions.interpret_voice_action,
+        get_context=lambda: skills.voice_actions.read_call_context(
+            get_db(), seed.uid, window
+        ),
+        uid=seed.uid,
+        session_id=seed.session_id,
+    )
+    relay_world_state(session, seed.uid)
     agent_kwargs: dict = {
         # The voice tool-use directive rides in the instructions (via
         # _compose_instructions) on both main voice paths: Meta Muse Spark's
@@ -3566,13 +3765,55 @@ def _opener_prior_context(seed_turns: list[Turn]) -> tuple[bool, str]:
     return bool(hint), hint
 
 
+def _profile_first_name(db, uid: str) -> str:
+    """The caller's first name from ``users/{uid}/profile/main``, or "".
+
+    Sync Firestore read (call via ``asyncio.to_thread``). Never raises: a
+    missing profile, a blank name, or a read error all degrade to the
+    nameless greeting rather than costing the opener."""
+    try:
+        data = schema.profile_doc(db, uid).get().to_dict() or {}
+        parts = str(data.get(schema.PF_NAME) or "").split()
+    except Exception:  # noqa: BLE001 - the greeting must survive a bad read
+        return ""
+    return parts[0] if parts else ""
+
+
+async def _attempt_voice_say(
+    session: AgentSession, text: str
+) -> BaseException | None:
+    """Speak one literal line via ``session.say``; None on success, the
+    error on failure.
+
+    The same swallowed-failure discipline as opener ``generate_reply``
+    attempts (staging voice-silence audit, 2026-11-02): awaiting a LiveKit
+    ``SpeechHandle`` never raises — a synthesis failure is only exposed via
+    ``handle.exception()`` — so check both: a synchronous raise (session
+    not running / closing, or a raising test fake) AND the returned
+    handle's ``exception()``. A None handle (some test fakes) counts as
+    spoken."""
+    try:
+        handle = session.say(text)
+        if handle is not None:
+            await handle
+    except Exception as exc:  # noqa: BLE001 - any failure fails this attempt only
+        return exc
+    get_error = getattr(handle, "exception", None)
+    if not callable(get_error):
+        return None
+    try:
+        return get_error()
+    except Exception as exc:  # noqa: BLE001 - an unreadable handle fails it too
+        return exc
+
+
 async def _attempt_voice_reply(
     session: AgentSession, **kwargs: object
 ) -> BaseException | None:
-    """Fire one opener ``generate_reply``; None on success, the error on failure.
+    """Fire one ``generate_reply``; None on success, the error on failure.
 
     A try/except around the await alone can NEVER see a generation failure:
-    awaiting a LiveKit ``SpeechHandle`` never raises — the error is swallowed
+    awaiting a LiveKit ``SpeechHandle`` never raises - the error is swallowed
     and only exposed via ``handle.exception()`` (livekit-agents 1.8.9
     ``speech_handle.py``; staging voice-silence audit, 2026-11-02). So check
     both: a synchronous raise (session not running / closing, or a raising
@@ -3605,51 +3846,41 @@ async def maybe_open_conversation(
 
     Waits the grace window after the session is live; if the caller has not
     started speaking (user_state_changed -> speaking, or any
-    user_input_transcribed) and nobody has spoken in the room, generates one
-    short contextual opener from ``prompts/voice_opener.md`` through the same
-    ``generate_reply`` path (so the turn is metered by the usual
-    ``metrics_collected`` ledger relay). Returns True if the opener fired.
-    Skipped for the welcome room (it has its own greeting) or when the opener
-    is disabled by config. Runs at most once per session by construction.
+    user_input_transcribed) and nobody has spoken in the room, she opens
+    with the name greeting below. Returns True if the greeting fired.
+    Skipped for the welcome room (it has its own greeting) or when the
+    opener is disabled by config. Runs at most once per session by
+    construction.
 
-    A history ending on an UNANSWERED caller turn is NOT skipped (founder
-    behaviour, 2026-11-02 — a user-initiated call never opens in silence):
-    when the caller stays silent through the grace window, Ayma opens by
-    ANSWERING that dangling message (``prompts/voice_dangling_reply.md``),
-    and only if that reply cannot be generated (error, or a blank message
-    with nothing to answer) does she fall back to the standard greeting
-    opener. A history ending on an agent turn follows the greeting path
-    exactly as before.
+    The greeting itself (founder ruling, 2026-11-03 23:06 PT): a FRESH
+    session opens with JUST a short name greeting — "Hey {first name}." —
+    and nothing about the previous conversation: no recap, no "pick up
+    where we left off" choice, no answer to a dangling last message. This
+    supersedes the 2026-10-28 greet+choice opener and the 2026-11-02
+    dangling-answer opener FOR THE OPENING LINE ONLY. The full seeded
+    context still rides in the agent's own ``chat_ctx`` for every later
+    turn, so anything the caller wants to pick up is one turn away — they
+    raise it; the opener never does. The line is spoken via
+    ``session.say`` (the literal words, the same mechanism as the
+    ack-gate's not-confirmed line) so no model can embellish it into a
+    recap, and it is a status greeting, not an action claim, so the
+    ack-gating contract is untouched. On a realtime session whose model
+    cannot say() (Gemini Live), say() raises instead — the line then
+    rides ``generate_reply`` under a say-exactly-this instruction (see
+    the fallback in the body), because the app produces no first
+    response — and holds the caller's mic — until the agent speaks. A mid-call RECONNECT continuation
+    never reaches here — it returns from :func:`_open_main_call` on the
+    claim branch — so its "I'm back" line and in-call continuity are
+    unaffected.
 
-    Opener behaviour (founder, 2026-10-28): when this caller HAS prior
-    conversation context, the opener is a GREET + a choice — "pick up where we
-    left off about X, or something else?" — and explicitly does NOT continue the
-    old topic itself; with no prior context it is a plain fresh warm opener. The
-    has-prior flag and a short one-line last-topic hint (never the full
-    transcript) are computed from ``seed.seed_turns`` and passed into the opener
-    instruction (:func:`prompt.load_voice_opener`). The full context still rides
-    in the agent's own ``chat_ctx``, so if the caller then says "continue" it
-    works. This applies on BOTH the Meta cascade and Gemini Live.
-
-    ``opener_chat_ctx`` is a secondary guard that scopes the history the opener's
-    ``generate_reply`` generates against, WITHOUT touching the agent's own
-    ``chat_ctx`` (which keeps the full window for every later real turn). The Meta
-    cascade passes a history-free context so the chat LLM has no previous-turn
-    object to answer the instant it opens (the greet+choice is driven by the
-    instruction above regardless); left NOT_GIVEN (Gemini Live / every other
-    path), the opener generates against the agent's full context.
-
-    ``seed_user_turn`` is the cascade (text-LLM) guard: the greeting opener's
-    ``generate_reply`` carries a synthetic opening user turn
-    (:func:`load_voice_session_seed`) so the chat LLM never receives a system-only
-    message list — which the OpenAI-compatible gateway (incl. LiveKit Inference)
-    rejects with HTTP 400. The dangling-message answer carries the REAL message
-    as its ``user_input`` instead (which satisfies the same guard). Realtime
-    paths leave it False (they don't hit that LLM request shape), so their
-    opener is byte-identical to before."""
+    ``opener_chat_ctx`` / ``seed_user_turn`` are accepted for signature
+    compatibility with the starters and are now inert: the greeting is a
+    literal ``say``, not a ``generate_reply``, so there is no LLM request
+    to scope to a history-free context or to seed a user turn into.
+    """
     # Opener observability (2026-11-02): today a silent stall and a deliberately
     # skipped opener look identical in the logs. Log, at INFO, whether the opener
-    # FIRED or was SKIPPED (+ why) and — once fired — whether generate_reply
+    # FIRED or was SKIPPED (+ why) and — once fired — whether the say
     # COMPLETED or errored, tagged with the brain id. This powers the honest
     # open-weights status and gives a first-response trace on every path.
     brain = seed.brain_id or seed.realtime_model_id or "gemini-live"
@@ -3662,17 +3893,6 @@ async def maybe_open_conversation(
             "disabled" if grace <= 0 else "has_greeting", seed.session_id or "?",
         )
         return False
-    # A trailing UNANSWERED caller turn no longer skips the opener (founder,
-    # 2026-11-02): after the grace window below, a silent caller gets an
-    # answer to that dangling message instead of silence. A blank tail has
-    # nothing to answer, so it takes the plain greeting path instead.
-    dangling = ""
-    if seed.seed_turns and seed.seed_turns[-1].role == ROLE_USER:
-        dangling = seed.seed_turns[-1].text.strip()
-        logger.info(
-            "voice opener DANGLING_USER_TAIL brain=%s chars=%d session=%s",
-            brain, len(dangling), seed.session_id or "?",
-        )
 
     user_started = asyncio.Event()
 
@@ -3701,59 +3921,50 @@ async def maybe_open_conversation(
             brain, seed.session_id or "?",
         )
         return False
-    has_prior, last_topic_hint = _opener_prior_context(seed.seed_turns)
-    if dangling:
-        # Option (c): open by ANSWERING the dangling message. The answer
-        # generates against the agent's own context on BOTH stacks — realtime
-        # already holds the tail turn; the cascade's agent context had it
-        # stripped, so the message rides as this reply's user_input (which
-        # also satisfies the cascade's never-system-only guard with a real
-        # user turn instead of the synthetic seed). The history-free
-        # opener_chat_ctx stays exclusive to the greeting below, where "don't
-        # continue the old topic" is the point; here the old topic IS the job.
-        answer_kwargs: dict = {"instructions": load_voice_dangling_reply()}
-        if seed_user_turn:
-            answer_kwargs["user_input"] = dangling
-        logger.info(
-            "voice opener FIRED kind=dangling_reply brain=%s session=%s — "
-            "awaiting generate_reply", brain, seed.session_id or "?",
-        )
-        answer_error = await _attempt_voice_reply(session, **answer_kwargs)
-        if answer_error is None:
-            logger.info(
-                "voice opener generate_reply COMPLETED kind=dangling_reply "
-                "brain=%s session=%s", brain, seed.session_id or "?",
-            )
-            return True
-        logger.warning(
-            "voice opener generate_reply ERRORED kind=dangling_reply brain=%s "
-            "session=%s err=%s — falling back to greeting", brain,
-            seed.session_id or "?", answer_error,
-        )
-    reply_kwargs: dict = {
-        "instructions": load_voice_opener(has_prior, last_topic_hint)
-    }
-    if opener_chat_ctx is not NOT_GIVEN:
-        reply_kwargs["chat_ctx"] = opener_chat_ctx
-    if seed_user_turn:
-        reply_kwargs["user_input"] = load_voice_session_seed()
+
+    first = ""
+    if seed.uid:
+        first = await asyncio.to_thread(_profile_first_name, get_db(), seed.uid)
+    greeting = f"Hey {first}." if first else "Hey there."
     logger.info(
-        "voice opener FIRED brain=%s session=%s — awaiting generate_reply",
-        brain, seed.session_id or "?",
+        "voice opener FIRED kind=name_greeting brain=%s session=%s — "
+        "awaiting say", brain, seed.session_id or "?",
     )
-    greeting_error = await _attempt_voice_reply(session, **reply_kwargs)
-    if greeting_error is not None:
-        # logger.error, not logger.exception: the error usually arrives via
-        # handle.exception(), outside any except block, so there is no active
-        # traceback to attach — the carried error string is the signal.
-        logger.error(
-            "voice opener generate_reply ERRORED brain=%s session=%s err=%s",
-            brain, seed.session_id or "?", greeting_error,
+    say_error = await _attempt_voice_say(session, greeting)
+    if say_error is not None:
+        # A realtime session with no TTS whose model cannot say() (Gemini
+        # Live: the google plugin leaves capabilities.supports_say False)
+        # raises RuntimeError from say() - the literal line then rides
+        # generate_reply under a say-exactly-this instruction instead, the
+        # same mechanism the welcome greeting and the reconnect line
+        # already use on realtime. This fallback is load-bearing, not
+        # cosmetic: the app holds the caller's mic until the agent's
+        # first genuine response lands, so an opener that produces
+        # nothing leaves a fresh realtime call stuck on "Connecting..."
+        # until the app's first-response guard tears it down (founder
+        # bug, 2026-11-03 - fresh Gemini Live starts never connected).
+        logger.warning(
+            "voice opener say ERRORED kind=name_greeting brain=%s "
+            "session=%s err=%s - falling back to generate_reply",
+            brain, seed.session_id or "?", say_error,
         )
-        return False
+        reply_error = await _attempt_voice_reply(
+            session, instructions=load_voice_verbatim_line(greeting)
+        )
+        if reply_error is not None:
+            # logger.error, not logger.exception: the error usually
+            # arrives via handle.exception(), outside any except block,
+            # so there is no active traceback to attach - the carried
+            # error string is the signal.
+            logger.error(
+                "voice opener generate_reply ERRORED kind=name_greeting "
+                "brain=%s session=%s err=%s",
+                brain, seed.session_id or "?", reply_error,
+            )
+            return False
     logger.info(
-        "voice opener generate_reply COMPLETED brain=%s session=%s", brain,
-        seed.session_id or "?",
+        "voice opener COMPLETED kind=name_greeting brain=%s session=%s",
+        brain, seed.session_id or "?",
     )
     return True
 

@@ -41,8 +41,10 @@ def no_routing_doc(monkeypatch):
     import feature_flags
 
     monkeypatch.setattr(feature_flags, "_read_docs", lambda: {})
-    # Baseline for the existing suite: Google routes, fallback on, optional
-    # features off. The branch's ON defaults are asserted in test_feature_flags.
+    # Baseline for the existing suite: HOSTILE routing flags (Google routes,
+    # fallback on) — the 2026-11-04 kill means routing ignores them and every
+    # call still goes to Inference. Optional features off. The branch's ON
+    # defaults are asserted in test_feature_flags.
     monkeypatch.setattr(
         feature_flags,
         "CONFIG",

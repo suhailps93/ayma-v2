@@ -447,6 +447,27 @@ void main() {
       expect((await pending().get()).exists, isFalse); // still cleaned up
     });
 
+    test('a command queued at a session boundary (60s old on attach) '
+        'still executes and acks', () async {
+      // The 2026-11-03 founder bug: the command was queued in the last
+      // second of a voice segment; the next segment attached ~30s later
+      // and the old 25s stale window deleted it unexecuted and unacked.
+      await pending().set({
+        'action': 'navigate',
+        'screen': 'profile', 'path': '/profile',
+        'id': 'cmd-boundary',
+        'ts': Timestamp.fromDate(
+            DateTime.now().subtract(const Duration(seconds: 60))),
+      });
+      await pumpEventQueue();
+
+      expect(nav, ['/profile']);
+      final ackDoc = (await ack().get()).data();
+      expect(ackDoc?['id'], 'cmd-boundary');
+      expect(ackDoc?['ok'], isTrue);
+      expect((await pending().get()).exists, isFalse);
+    });
+
     test('a re-delivered snapshot of an already-handled id is not executed '
         'twice', () async {
       final cmd = {

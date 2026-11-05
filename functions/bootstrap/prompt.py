@@ -57,6 +57,8 @@ _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
 _VOICE_ACCENT_PATH = _DIR / "prompts" / "voice_accent.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 _VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
+_RECONNECT_BACK_PATH = _DIR / "prompts" / "reconnect_back.md"
+_VOICE_VERBATIM_LINE_PATH = _DIR / "prompts" / "voice_verbatim_line.md"
 _VOICE_VOCAB_PATH = _DIR / "prompts" / "voice_vocab.md"
 _VOICE_VOCAB_LIVE_PATH = _DIR / "prompts" / "voice_vocab_live.md"
 _VOICE_VOCAB_NEXT_CALL_PATH = _DIR / "prompts" / "voice_vocab_next_call.md"
@@ -389,6 +391,34 @@ def voice_swap_confirm(change: str) -> str:
     )
 
 
+def reconnect_back(setup: str) -> str:
+    """The one-shot reply instruction for the continuation session's first
+    line after a user-requested reconnect (``prompts/reconnect_back.md``):
+    the single "I'm back" confirmation, spoken only once the new session is
+    actually live on the new setup (founder 2026-11-03 — the old session
+    stays silent, its "reconnecting" narration was cut off by the teardown).
+    """
+    return _RECONNECT_BACK_PATH.read_text(encoding="utf-8").strip().replace(
+        "{setup}", setup
+    )
+
+
+def load_voice_verbatim_line(line: str) -> str:
+    """A ``generate_reply`` instruction that speaks one literal line and
+    nothing else (``prompts/voice_verbatim_line.md``).
+
+    The fallback for surfaces where ``session.say`` cannot run: a realtime
+    session with no TTS whose model does not support say() (Gemini Live -
+    the google plugin leaves ``capabilities.supports_say`` False, so
+    livekit-agents raises RuntimeError from say()). ``generate_reply`` IS
+    supported there - it is how the welcome greeting and the reconnect
+    "I'm back" line already speak on realtime - so the literal line rides
+    it under a say-exactly-this instruction."""
+    return _VOICE_VERBATIM_LINE_PATH.read_text(encoding="utf-8").strip().replace(
+        "{line}", line
+    )
+
+
 def voice_swap_failed(change: str) -> str:
     """The one-shot reply instruction after a mid-call voice switch failed
     and the call is back on (or never left) the previous voice: the honest
@@ -453,6 +483,7 @@ def compose_system_prompt(
     viewing_profile_context: str = "",
     profile_progress: str = "",
     preferences_context: str = "",
+    model_stack_context: str = "",
     story_context: str = "",
     shared_photo_note: str = "",
     questionnaire_note: str = "",
@@ -545,6 +576,12 @@ def compose_system_prompt(
     # distance) — so Ayma never claims not to know what they asked for.
     if preferences_context.strip():
         parts.append(preferences_context.strip())
+
+    # The user's model stack — main brain vs the brain under Voice as
+    # labeled facts (skills.set_model_stack.model_stack_context), so she
+    # never conflates the two brains or denies an enabled voice-brain option.
+    if model_stack_context.strip():
+        parts.append(model_stack_context.strip())
 
     # Active-mode nudge: where the questionnaire-completeness score is < 100,
     # the current score + the highest-priority nodes still to fill in.

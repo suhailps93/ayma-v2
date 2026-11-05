@@ -4,6 +4,13 @@ Branch `livekit-inference` (not merged, nothing deployed). Researched and tested
 Every claim below is either linked to a source or marked **[verified live]** (a real call
 through the gateway with this project's `LIVEKIT_API_KEY`/`SECRET`) or **[unknown]**.
 
+> SUPERSEDED 2026-11-04: the founder ordered the direct-Google path killed outright
+> (see `docs/DIRECT_GOOGLE_KILL_AUDIT.md`). Routing is now Inference-only with no
+> fallback, and the rows below marked "Keep on Vertex" (grounded research, image
+> generate/edit, TTS previews, embeddings, batch) are DISABLED, not kept — each a
+> founder-decision item. This document is retained for its live-probe evidence
+> (gateway capabilities, limits, pricing), which the kill relies on.
+
 ## 0. Read this first: the credits probably do not pay for Gemini
 
 The goal was "run Gemini through LiveKit Inference so the $17k credits pay for it". The

@@ -673,31 +673,28 @@ def test_out_of_credits_message_unknown_context_does_not_raise():
 # --- ledger model accuracy (cost program 2026-09-26, Phase 0) ----------------
 
 
-def test_live_model_id_follows_the_dev_api_flag(monkeypatch):
-    monkeypatch.setattr(
-        token_ledger, "CONFIG",
-        dataclasses.replace(CONFIG, gemini_live_use_dev_api=False),
-    )
-    assert token_ledger.live_model_id() == CONFIG.gemini_live_model
-
-    monkeypatch.setattr(
-        token_ledger, "CONFIG",
-        dataclasses.replace(CONFIG, gemini_live_use_dev_api=True),
-    )
-    assert token_ledger.live_model_id() == CONFIG.gemini_live_dev_model
+def test_live_model_id_is_always_the_inference_model(monkeypatch):
+    """Voice runs only on LiveKit Inference (founder rule 2026-11-04) — the
+    ledger prices it at the gateway model whatever the inert flags say."""
+    for dev_api in (False, True):
+        monkeypatch.setattr(
+            token_ledger, "CONFIG",
+            dataclasses.replace(CONFIG, gemini_live_use_dev_api=dev_api),
+        )
+        assert token_ledger.live_model_id() == CONFIG.inference_live_model
 
 
 def test_voice_feature_prices_against_the_actual_live_model(monkeypatch, _patch):
-    """The pre-2026-09-26 accuracy bug: voice was always priced as the Vertex
-    native-audio model while real traffic (GEMINI_LIVE_USE_DEV_API=true) ran
-    gemini-3.1-flash-live-preview. _model_for_feature must follow the flag."""
+    """The ledger prices voice at the model it actually runs — the Inference
+    realtime model (the pre-2026-09-26 accuracy bug was pricing it as a
+    model it wasn't running)."""
     monkeypatch.setattr(
         token_ledger, "CONFIG",
         dataclasses.replace(CONFIG, gemini_live_use_dev_api=True),
     )
     assert (
         token_ledger._model_for_feature(token_ledger.FEATURE_VOICE)
-        == CONFIG.gemini_live_dev_model
+        == CONFIG.inference_live_model
     )
 
 

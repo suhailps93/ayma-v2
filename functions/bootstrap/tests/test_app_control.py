@@ -1780,3 +1780,192 @@ def test_run_app_command_is_honest_when_the_app_never_navigates(monkeypatch):
     assert "didn't switch screens" in out
     # Never a false success and never the raw directive string.
     assert not out.startswith("Opening ") and "navigated:" not in out
+
+
+
+# --- deterministic pre-model named-profile navigation (Scout retest 2026-11-03)
+#
+# "open Sofia's profile" resolved through detect_app_command to the registry's
+# own-profile destination — the You tab — with the name dropped. A profile ask
+# that names a member is open_profile: detected BEFORE detect_app_command and
+# executed through the same bound open_profile (and _resolve_person) the model
+# / voice path uses. No name keeps the You-tab route; an unknown name gets the
+# tool's couldn't-find clarification, never a silent You-tab landing.
+
+
+@pytest.mark.parametrize("phrase,name", [
+    ("open Sofia's profile", "Sofia"),  # Scout's exact retest case
+    ("show me Sofia's profile", "Sofia"),
+    ("take me to Sofia's profile", "Sofia"),
+    ("open Sofia Marino's profile", "Sofia Marino"),
+    ("open the profile of Sofia", "Sofia"),
+    ("go to the profile of Sofia Marino", "Sofia Marino"),
+    ("open the profile of Sofia please", "Sofia"),
+    ("open Sophia's profile", "Sophia"),  # resolver fuzzy-matches to Sofia
+])
+def test_detect_profile_command_names_the_member(phrase, name):
+    assert app_control.detect_profile_command(phrase) == name
+
+
+@pytest.mark.parametrize("phrase", [
+    "open my profile",               # no name → the You tab route stands
+    "open profile",
+    "open the profile",
+    "go to my profile",
+    "open my public profile",        # a different registered destination
+    "open the profile of my match",  # a generic head names nobody
+    "Sofia's profile is great",      # no nav verb → stays with the model
+    "tell me about Sofia",           # no profile ask at all
+    "open the models page",          # navigation keeps what is hers
+    "start a practice date with Sofia",  # a launch, not a profile open
+    "",
+    "x" * 201,                       # over the length guard
+])
+def test_detect_profile_command_leaves_unnamed_asks_alone(phrase):
+    assert app_control.detect_profile_command(phrase) is None
+
+
+def test_unnamed_profile_ask_still_routes_to_the_you_tab():
+    # The pair that pins the split: unnamed → detect_app_command / You tab,
+    # named → detect_profile_command / the member.
+    assert app_control.detect_profile_command("open my profile") is None
+    assert app_control.detect_app_command("open my profile") == "profile"
+
+
+def test_run_profile_command_opens_the_named_members_profile():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    db.seed_user("u-sam", "Sam Fox")
+    name = app_control.detect_profile_command("open Sofia's profile")
+    out = _run(app_control.run_profile_command(db, "me", name))
+    assert out == "Opening Sofia Ruiz's profile for you."
+    # The queued command is open_profile for Sofia — never a You-tab navigate.
+    cmd = db.store[_PENDING]
+    assert cmd == {**cmd, "action": "open_profile", "uid": "u-sofia"}
+
+
+def test_run_profile_command_unknown_name_clarifies_never_you_tab():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sam", "Sam Fox")
+    name = app_control.detect_profile_command("open Taylor's profile")
+    out = _run(app_control.run_profile_command(db, "me", name))
+    # The skill's own couldn't-find line — a clarification, and NO command
+    # was queued at all (a You-tab landing would queue a navigate).
+    assert out == "I couldn't find someone called Taylor in the app."
+    assert _PENDING not in db.store
+
+
+def test_run_profile_command_is_honest_when_the_app_never_navigates(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()  # no client ever acks
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    out = _run(app_control.run_profile_command(db, "me", "Sofia"))
+    assert "didn't switch screens" in out
+    assert not out.startswith("Opening ")
+
+# --- deterministic pre-model launch commands (voice backstop, prod 2284) ----
+#
+# Practice Date / Agent Date launches refused from the call get the same
+# deterministic treatment as navigation: a clear launch ask fires
+# open_practice_date / open_date_sim BEFORE the model. Partner-less asks
+# (no name, or a tail naming nobody in particular) return a None partner —
+# the voice relay answers those with the "who with?" clarification instead
+# of launching.
+
+
+@pytest.mark.parametrize("phrase,tool,name", [
+    # Named-partner practice launches.
+    ("start a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("let me practice with Daniel", "open_practice_date", "Daniel"),
+    ("open a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("set up a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("I want to practice with Daniel", "open_practice_date", "Daniel"),
+    ("let us practice with Daniel", "open_practice_date", "Daniel"),
+    ("wanna practice with Daniel", "open_practice_date", "Daniel"),
+    ("practice date with Sofia", "open_practice_date", "Sofia"),
+    # Named-partner sim launches.
+    ("start an agent date with Sofia", "open_date_sim", "Sofia"),
+    ("run a date sim with Daniel", "open_date_sim", "Daniel"),
+    ("simulate a date with Sofia", "open_date_sim", "Sofia"),
+    ("launch an agent-to-agent sim with Sofia", "open_date_sim", "Sofia"),
+    ("give me a date simulation with Sofia", "open_date_sim", "Sofia"),
+    ("start a dating sim with Sofia", "open_date_sim", "Sofia"),
+    ("start an AI date with Sofia", "open_date_sim", "Sofia"),
+    ("date sim with Sofia", "open_date_sim", "Sofia"),
+    ("run a date sim for Sofia", "open_date_sim", "Sofia"),
+    # The founder's verbatim sim ask (build 2246 suite above) fires too.
+    ("Can you open an agent to agent simulation with Sophia?",
+     "open_date_sim", "Sophia"),
+])
+def test_detect_launch_command_fires_a_named_launch(phrase, tool, name):
+    assert app_control.detect_launch_command(phrase) == (tool, name)
+
+
+@pytest.mark.parametrize("phrase,tool", [
+    ("start a practice date", "open_practice_date"),
+    ("run a date sim for me", "open_date_sim"),
+    ("open a practice date for me", "open_practice_date"),
+    ("start a practice date with my girlfriend", "open_practice_date"),
+    ("run a date sim with someone", "open_date_sim"),
+])
+def test_detect_launch_command_marks_a_partnerless_ask(phrase, tool):
+    assert app_control.detect_launch_command(phrase) == (tool, None)
+
+
+@pytest.mark.parametrize("phrase", [
+    # The four required discussion/question near-misses.
+    "my practice date yesterday went well",
+    "what is a practice date?",
+    "do you think the simulation is accurate?",
+    "tell me about my date sim results",
+    # Past-tense talk stays with the model even when a name is present.
+    "my practice date with Sofia went well",
+    # Report/result requests stay with the model.
+    "open my date sim results",
+    "show me my practice date results",
+    "tell me about my practice date debrief",
+    # Navigation keeps what is hers.
+    "open Sofia's profile",
+    # A verb-less tail naming nobody in particular is not a launch.
+    "practice date with my girlfriend",
+    # Bare feature names, questions, plurals: not launches.
+    "practice date",
+    "date sim",
+    "do you practice with real people",
+    "what do practice dates do",
+    "I love dating sims",
+    "",
+    "x" * 201,  # over the length guard
+])
+def test_detect_launch_command_leaves_discussion_alone(phrase):
+    assert app_control.detect_launch_command(phrase) is None
+
+
+@pytest.mark.parametrize("phrase", [
+    "start a practice date with Sofia",
+    "let me practice with Daniel",
+    "open a practice date with Sofia",
+    "practice date with Sofia",
+    "start a practice date",
+    "start an agent date with Sofia",
+    "run a date sim for me",
+    "run a date sim with Daniel",
+    "simulate a date with Sofia",
+    "date sim with Sofia",
+    "Can you open an agent to agent simulation with Sophia?",
+])
+def test_detect_app_command_does_not_swallow_a_launch(phrase):
+    # /practice and /date-sim are parameterized (not destinations), so no
+    # launch phrasing may resolve as navigation — verified, not assumed.
+    assert app_control.detect_app_command(phrase) is None
+
+
+@pytest.mark.parametrize("tool", ["open_practice_date", "open_date_sim"])
+def test_launch_clarification_asks_who_with(tool):
+    out = app_control.launch_clarification(tool)
+    low = out.lower()
+    assert "who" in low and "with" in low
+    assert "couldn't find" not in low

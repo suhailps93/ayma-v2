@@ -1,8 +1,16 @@
-"""Voice-preset preview: cached Gemini TTS samples for the settings picker."""
+"""Voice-preset preview: cached TTS samples for the settings picker.
+
+Synthesis is DISABLED (founder rule 2026-11-04 — the direct-Google TTS model
+is gone): ``preview_url`` serves already-cached clips and fails honestly for
+an uncached preset.
+"""
 
 import asyncio
+import uuid
 
-import gemini
+import pytest
+
+import llm_routing
 import main
 import voice_preview
 from fastapi.testclient import TestClient
@@ -15,7 +23,7 @@ def _auth(monkeypatch, uid="me"):
     monkeypatch.setattr(
         firebase_auth, "verify_id_token", lambda _t: {"uid": uid}
     )
-    return {"Authorization": "Bearer valid"}
+    return {"Authorization": "Bearer [REDACTED]"}
 
 
 # --------------------------------------------------------------------------- #
@@ -59,85 +67,47 @@ class _FakeBucket:
 
 
 def _install_fakes(monkeypatch):
-    """Patch out Storage + the Gemini TTS call. Returns
-    ``(store, tts_calls)``."""
+    """Patch out Storage. Returns the store dict."""
     store: dict = {}
-    tts_calls: list = []
     monkeypatch.setattr(voice_preview, "_bucket", lambda: _FakeBucket(store))
-    monkeypatch.setattr(gemini, "_client", lambda: object())
-
-    async def _fake_generate(_client, **kwargs):
-        tts_calls.append(kwargs)
-
-        class _Inline:
-            data = b"\x01\x02\x03\x04" * 600  # stand-in PCM
-            mime_type = "audio/L16;codec=pcm;rate=24000"
-
-        class _Part:
-            inline_data = _Inline()
-
-        class _Content:
-            parts = [_Part()]
-
-        class _Cand:
-            content = _Content()
-
-        class _Resp:
-            candidates = [_Cand()]
-
-        return _Resp()
-
-    monkeypatch.setattr(gemini, "_generate", _fake_generate)
-    return store, tts_calls
+    return store
 
 
 # --------------------------------------------------------------------------- #
 # voice_preview.preview_url
 # --------------------------------------------------------------------------- #
-def test_known_voice_generates_uploads_and_returns_a_url(monkeypatch):
-    store, tts_calls = _install_fakes(monkeypatch)
+def test_uncached_voice_fails_honestly_without_synthesis(monkeypatch):
+    store = _install_fakes(monkeypatch)
 
-    url = asyncio.run(voice_preview.preview_url("Charon"))
+    with pytest.raises(llm_routing.DirectGoogleDisabledError):
+        asyncio.run(voice_preview.preview_url("Charon"))
 
-    assert len(tts_calls) == 1
-    cfg = tts_calls[0]["config"]
-    assert cfg.response_modalities == ["AUDIO"]
-    assert (
-        cfg.speech_config.voice_config.prebuilt_voice_config.voice_name
-        == "Charon"
-    )
-    assert tts_calls[0]["model"] == main.CONFIG.gemini_tts_model
-    # uploaded once, as a WAV
-    assert "voice_previews/Charon.wav" in store
-    blob = store["voice_previews/Charon.wav"]
-    assert blob["content_type"] == "audio/wav"
-    assert blob["data"].startswith(b"RIFF")  # WAV header wrapped around the PCM
-    # a token-based Firebase download URL
-    assert url.startswith("https://firebasestorage.googleapis.com/v0/b/")
-    assert "voice_previews%2FCharon.wav" in url
-    assert "token=" in url
+    assert store == {}  # nothing generated, nothing uploaded
 
 
-def test_second_call_is_served_from_cache_without_a_second_tts_call(monkeypatch):
-    store, tts_calls = _install_fakes(monkeypatch)
+def test_cached_clip_is_served_without_synthesis(monkeypatch):
+    store = _install_fakes(monkeypatch)
+    store["voice_previews/Aoede.wav"] = {
+        "data": b"RIFF....fake-wav",
+        "content_type": "audio/wav",
+        "metadata": {"firebaseStorageDownloadTokens": str(uuid.uuid4())},
+    }
 
     first = asyncio.run(voice_preview.preview_url("Aoede"))
     second = asyncio.run(voice_preview.preview_url("Aoede"))
 
-    assert len(tts_calls) == 1  # no regeneration
     assert first == second
+    assert first.startswith("https://firebasestorage.googleapis.com/v0/b/")
+    assert "voice_previews%2FAoede.wav" in first
+    assert "token=" in first
 
 
-def test_unknown_voice_is_rejected_before_any_tts_call(monkeypatch):
-    _store, tts_calls = _install_fakes(monkeypatch)
+def test_unknown_voice_is_rejected_before_any_storage_read(monkeypatch):
+    store = _install_fakes(monkeypatch)
 
-    try:
+    with pytest.raises(ValueError):
         asyncio.run(voice_preview.preview_url("Nonsense"))
-    except ValueError:
-        pass
-    else:  # pragma: no cover
-        raise AssertionError("expected ValueError for an unknown preset")
-    assert tts_calls == []
+    assert store == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -160,7 +130,7 @@ def test_endpoint_unknown_voice_is_404(monkeypatch):
 
 def test_endpoint_generation_failure_is_502(monkeypatch):
     async def _boom(_name):
-        raise RuntimeError("tts upstream down")
+        raise llm_routing.DirectGoogleDisabledError("tts disabled")
 
     monkeypatch.setattr(voice_preview, "preview_url", _boom)
     resp = client.get("/voice/preview/Aoede", headers=_auth(monkeypatch))

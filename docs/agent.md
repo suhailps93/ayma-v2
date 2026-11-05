@@ -30,11 +30,12 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   prod agent (default `ayma-` prefix) rejects `ayma-staging-*` and serves the
   rest. Default-safe: a prod/ambiguous worker never joins a staging room, so it
   can never write a staging call into **prod** Firestore (2026-11-01 incident).
-- The Live model comes from the `voice_provider` flag (`docs/FEATURE_FLAGS.md`):
-  `inference` = `inference.RealtimeModel` through the LiveKit Inference gateway
+- The Live model always runs through the LiveKit Inference gateway
   (`build_inference_realtime_model`, `google/gemini-3.8-live`; only
-  `silence_duration_ms` is honoured), `google` = the plugin below. The decision
-  is made once per call and tagged on `raw_turns.voice_provider`.
+  `silence_duration_ms` is honoured) — the direct-Google voice path was deleted
+  2026-11-04 (see `docs/DIRECT_GOOGLE_KILL_AUDIT.md`) and the `voice_provider`
+  flag is inert. The route is resolved once per call and tagged on
+  `raw_turns.voice_provider`.
 - A mid-call `set_voice_preference` hot-swaps the Live model (`VoiceSwapper`:
   heads-up line, `update_agent` to a `SwappedVoiceAgent` on a new model with the
   spoken history carried over, then a confirmation in the new voice). The
@@ -49,8 +50,8 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   (`VoiceSwapError`, tags `session_id`, `voice_provider`). Muted ("shut up")
   silence is not counted as a failure. The tool maps a preset named anywhere
   (`request="Puck"`, any case) and a gender word put in `accent_language`
-  ("male" -> Charon, "female" -> Kore); the `en-US` hint for "American English"
-  is passed on the Google route only (Inference ignores hints).
+  ("male" -> Charon, "female" -> Kore). The gateway ignores language hints, so
+  an accent change is carried by the rebuilt instructions, not a model hint.
 - The app-control tools (`current_screen`, `open_screen`, `app_action`,
   `account_action`) read `users/{uid}/voice_context/current` and queue commands
   at `users/{uid}/app_commands/pending` (`functions/bootstrap/app_registry.json`).
@@ -140,18 +141,15 @@ call never touches this service. Don't flip `min-instances` back to 1 to
 "fix" a cold-start issue — that just reintroduces the ~$75/mo idle cost this
 was built to remove; fix the wake ping or the client's wake-timeout instead.
 
-Voice model (LOCKED in `config.py`): with `GEMINI_LIVE_USE_DEV_API=true` the
-worker runs **`gemini-3.8-live`** via the Gemini Developer API (rollback:
-`GEMINI_LIVE_DEV_MODEL=gemini-3.1-flash-live-preview`, the legacy preview) —
-Vertex has no Live 3.x, and that API only authenticates with a key, so
-`GOOGLE_API_KEY` is mounted from Secret Manager. Set the flag `false` to fall
-back to Vertex **`gemini-live-2.5-flash-native-audio`** (`us-central1`), which
-needs no key. Either way, all text / matchmaking / embedding calls stay keyless
-on Vertex — only this one model is on the keyed path.
+Voice model (LOCKED in `config.py`): the worker runs **`google/gemini-3.8-live`**
+through the LiveKit Inference gateway — the direct-Google voice path (Developer
+API / Vertex plugin) was deleted 2026-11-04 (see
+`docs/DIRECT_GOOGLE_KILL_AUDIT.md`). `GEMINI_LIVE_USE_DEV_API` is inert;
+`GOOGLE_API_KEY` stays mounted but is no longer read on any served path.
 
 Secrets: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (also mint the Inference
-gateway JWT), `GOOGLE_API_KEY`, `SENTRY_DSN_AGENT` (Secret Manager, mounted at
-deploy).
+gateway JWT), `GOOGLE_API_KEY` (inert since the kill, kept mounted),
+`SENTRY_DSN_AGENT` (Secret Manager, mounted at deploy).
 
 ## Tests
 

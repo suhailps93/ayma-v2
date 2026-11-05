@@ -51,42 +51,15 @@ def test_process_media_writes_a_user_media_doc_with_a_vector(monkeypatch):
     assert w["dim"] == 3
 
 
-def test_embed_image_bytes_calls_embed_content_on_the_global_endpoint(
-    monkeypatch,
-):
-    import io
-    import json
+def test_embed_image_bytes_is_disabled():
+    """Embeddings need direct Vertex, which is killed (founder rule
+    2026-11-04) — no aiplatform call is ever made."""
+    import pytest
 
-    class _Creds:
-        token = "tok"
+    import llm_routing
 
-        def refresh(self, _req):
-            pass
-
-    monkeypatch.setattr(
-        media_embed.google.auth, "default", lambda scopes=None: (_Creds(), "p")
-    )
-    captured = {}
-
-    def _fake_urlopen(req, timeout=None):
-        captured["url"] = req.full_url
-        captured["body"] = json.loads(req.data)
-        captured["auth"] = req.headers["Authorization"]
-        return io.BytesIO(
-            json.dumps({"embedding": {"values": [1.0, 2.0, 3.0]}}).encode()
-        )
-
-    monkeypatch.setattr(media_embed.urllib.request, "urlopen", _fake_urlopen)
-
-    out = media_embed.embed_image_bytes(b"imgbytes", "image/png")
-    assert out == [1.0, 2.0, 3.0]
-    assert ":embedContent" in captured["url"]
-    # global endpoint has no region prefix
-    assert "//aiplatform.googleapis.com/" in captured["url"]
-    assert media_embed.CONFIG.image_embedding_model in captured["url"]
-    assert captured["auth"] == "Bearer tok"
-    part = captured["body"]["content"]["parts"][0]["inlineData"]
-    assert part["mimeType"] == "image/png"
+    with pytest.raises(llm_routing.DirectGoogleDisabledError):
+        media_embed.embed_image_bytes(b"imgbytes", "image/png")
 
 
 def test_find_similar_media_uses_cosine_find_nearest():

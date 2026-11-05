@@ -18,7 +18,6 @@ import json
 import pytest
 
 pytest.importorskip("livekit.agents")
-pytest.importorskip("livekit.plugins.google.realtime")
 
 import agent  # noqa: E402
 from config import CONFIG  # noqa: E402
@@ -28,40 +27,40 @@ def test_entrypoint_is_async():
     assert inspect.iscoroutinefunction(agent.entrypoint)
 
 
-def test_realtime_model_uses_config_model_id(monkeypatch):
+def _capture_inference_realtime(monkeypatch):
+    """Capture the kwargs ``build_inference_realtime_model`` passes to the
+    gateway RealtimeModel (voice runs only through LiveKit Inference)."""
+    from livekit.agents import inference
+
     captured = {}
 
     class _FakeRealtimeModel:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(inference, "RealtimeModel", _FakeRealtimeModel)
+    return captured
+
+
+def test_realtime_model_uses_config_model_id(monkeypatch):
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    assert captured["model"] == CONFIG.gemini_live_model
+    assert captured["model"] == CONFIG.inference_live_model
     assert captured["voice"] == CONFIG.gemini_live_voice
+    # Only the knobs the gateway protocol carries — no temperature,
+    # compression, transcription configs or native-audio flags.
+    assert set(captured) == {"model", "voice", "turn_detection"}
 
 
 def test_realtime_model_uses_a_valid_voice_preference(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model("Charon")
     assert captured["voice"] == "Charon"
 
 
 def test_realtime_model_falls_back_for_an_unknown_voice(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model("NotARealPreset")
     assert captured["voice"] == CONFIG.gemini_live_voice
 
@@ -115,180 +114,7 @@ def test_room_seed_carries_the_voice_name():
     assert agent._read_room_seed(_Ctx()).voice_name == "Zephyr"
 
 
-def test_realtime_model_enables_both_transcriptions(monkeypatch):
-    from google.genai import types
-
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    assert isinstance(
-        captured["input_audio_transcription"], types.AudioTranscriptionConfig
-    )
-    assert isinstance(
-        captured["output_audio_transcription"], types.AudioTranscriptionConfig
-    )
-
-
-def test_realtime_model_omits_context_compression_by_default(monkeypatch):
-    """CONTEXT_OPT_LEVEL unset/0 = the exact pre-cost-program session config:
-    no context_window_compression key at all."""
-    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    assert "context_window_compression" not in captured
-
-
-def test_realtime_model_enables_sliding_window_compression_at_level_1(monkeypatch):
-    """Phase 1 (cost program): with CONTEXT_OPT_LEVEL>=1 the Live session gets
-    sliding-window context compression — trigger ~16k tokens, retained window
-    ~8k — so the per-turn re-billed context stops growing unbounded."""
-    from google.genai import types
-
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    cwc = captured["context_window_compression"]
-    assert isinstance(cwc, types.ContextWindowCompressionConfig)
-    assert cwc.trigger_tokens == 16000
-    assert cwc.sliding_window.target_tokens == 8000
-
-
-def test_compression_thresholds_are_env_tunable(monkeypatch):
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    monkeypatch.setenv("CONTEXT_OPT_VOICE_TRIGGER_TOKENS", "20000")
-    monkeypatch.setenv("CONTEXT_OPT_VOICE_WINDOW_TOKENS", "10000")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    cwc = captured["context_window_compression"]
-    assert cwc.trigger_tokens == 20000
-    assert cwc.sliding_window.target_tokens == 10000
-
-
-def test_compression_omitted_for_dev_api_3_1_preview(monkeypatch):
-    """Root-cause fix (cost program 2026-09-26): even at CONTEXT_OPT_LEVEL>=1,
-    the Dev-API `gemini-3.1-flash-live-preview` must NOT receive
-    context_window_compression — it accepts but does not honor the sliding
-    window (soft hint on audio; fatal 1007 on the text-seed path). Verified
-    empirically against the live Dev API with the installed SDK."""
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "3")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG,
-            gemini_live_use_dev_api=True,
-            gemini_live_dev_model="gemini-3.1-flash-live-preview",
-        ),
-    )
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
-    agent.build_realtime_model()
-
-    assert captured["model"] == "gemini-3.1-flash-live-preview"
-    assert "context_window_compression" not in captured
-
-
-def test_compression_present_for_compression_capable_model(monkeypatch):
-    """The Vertex `gemini-live-2.5-flash-native-audio` launch model honors the
-    sliding window, so compression stays ON there at level>=1 (guards against
-    the model-aware gate over-reaching and disabling it everywhere)."""
-    from google.genai import types
-
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG,
-            gemini_live_use_dev_api=False,
-            gemini_live_model="gemini-live-2.5-flash-native-audio",
-        ),
-    )
-    agent.build_realtime_model()
-
-    assert captured["model"] == "gemini-live-2.5-flash-native-audio"
-    assert isinstance(
-        captured["context_window_compression"],
-        types.ContextWindowCompressionConfig,
-    )
-
-
-def test_compression_present_for_dev_api_3_8_live(monkeypatch):
-    """`gemini-3.8-live` (the Dev-API default since the 2026-09-26 upgrade)
-    DOES get context_window_compression at level>=1 — measured live against
-    the real Dev API that day: per-turn prompt tokens sawtoothed 15,478 ->
-    7,695 -> 15,593 -> 7,712 with trigger 16k / window 8k (a genuine, bounded
-    eviction), and the text client-content path never closed with 1007."""
-    from google.genai import types
-
-    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG,
-            gemini_live_use_dev_api=True,
-            gemini_live_dev_model="gemini-3.8-live",
-        ),
-    )
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
-    agent.build_realtime_model()
-
-    assert captured["model"] == "gemini-3.8-live"
-    cwc = captured["context_window_compression"]
-    assert isinstance(cwc, types.ContextWindowCompressionConfig)
-    assert cwc.trigger_tokens == 16000
-    assert cwc.sliding_window.target_tokens == 8000
-
-
 _TURN_DETECTION_ENVS = (
-    "GEMINI_LIVE_TURN_DETECTION_TUNING",
-    "GEMINI_LIVE_START_SENSITIVITY",
-    "GEMINI_LIVE_END_SENSITIVITY",
     "GEMINI_LIVE_PREFIX_PADDING_MS",
     "GEMINI_LIVE_SILENCE_DURATION_MS",
 )
@@ -299,171 +125,57 @@ def _clear_turn_detection_envs(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_realtime_model_tunes_server_turn_detection_by_default(monkeypatch):
-    """Anti-false-trigger VAD tuning (2026-09-26): by default the session
-    setup carries realtime_input_config with start sensitivity LOW, 300ms
-    prefix padding, 700ms end-of-speech silence — and nothing else: no
-    `disabled`, no `activity_handling` (barge-in must keep working), and end
-    sensitivity left to the server default."""
-    from google.genai import types
-
+def test_realtime_model_tunes_gateway_server_vad_by_default(monkeypatch):
+    """Anti-false-trigger VAD tuning: by default the gateway session carries
+    server-VAD with 300ms prefix padding and 700ms end-of-speech silence."""
     _clear_turn_detection_envs(monkeypatch)
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    ric = captured["realtime_input_config"]
-    assert isinstance(ric, types.RealtimeInputConfig)
-    assert ric.activity_handling is None
-    assert ric.turn_coverage is None
-    aad = ric.automatic_activity_detection
-    assert aad.disabled is None  # server turn detection stays ON
-    assert aad.start_of_speech_sensitivity == (
-        types.StartSensitivity.START_SENSITIVITY_LOW
-    )
-    assert aad.end_of_speech_sensitivity is None
-    assert aad.prefix_padding_ms == 300
-    assert aad.silence_duration_ms == 700
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms == 300
+    assert vad.silence_duration_ms == 700
 
 
 def test_turn_detection_knobs_are_env_tunable(monkeypatch):
-    from google.genai import types
-
     _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "high")
-    monkeypatch.setenv("GEMINI_LIVE_END_SENSITIVITY", "low")
     monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "150")
     monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "1000")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    aad = captured["realtime_input_config"].automatic_activity_detection
-    assert aad.start_of_speech_sensitivity == (
-        types.StartSensitivity.START_SENSITIVITY_HIGH
-    )
-    assert aad.end_of_speech_sensitivity == (
-        types.EndSensitivity.END_SENSITIVITY_LOW
-    )
-    assert aad.prefix_padding_ms == 150
-    assert aad.silence_duration_ms == 1000
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms == 150
+    assert vad.silence_duration_ms == 1000
 
 
-def test_turn_detection_tuning_kill_switch(monkeypatch):
-    """GEMINI_LIVE_TURN_DETECTION_TUNING=off restores the exact pre-tuning
-    session config: no realtime_input_config key at all."""
+def test_turn_detection_all_defaults_leaves_fields_unset(monkeypatch):
+    """Every knob set to "default" leaves the fields unset — the gateway
+    server default applies."""
     _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_TURN_DETECTION_TUNING", "off")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    agent.build_realtime_model()
-
-    assert "realtime_input_config" not in captured
-
-
-def test_turn_detection_all_defaults_sends_no_config(monkeypatch):
-    """Every knob set to \"default\" leaves all fields unset — then no
-    realtime_input_config is sent at all (same as the kill switch)."""
-    _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "default")
-    monkeypatch.setenv("GEMINI_LIVE_END_SENSITIVITY", "default")
     monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "default")
     monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "default")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    assert "realtime_input_config" not in captured
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms is None
+    assert vad.silence_duration_ms is None
 
 
 def test_turn_detection_invalid_env_values_fall_back(monkeypatch):
-    """Garbage env values must never take voice down: bad choice/int values
-    fall back to the shipped defaults (with a warning), not raise."""
-    from google.genai import types
-
+    """Garbage env values must never take voice down: bad int values fall
+    back to the shipped defaults (with a warning), not raise."""
     _clear_turn_detection_envs(monkeypatch)
-    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "verylow")
     monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "abc")
     monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "-5")
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    captured = _capture_inference_realtime(monkeypatch)
     agent.build_realtime_model()
 
-    aad = captured["realtime_input_config"].automatic_activity_detection
-    assert aad.start_of_speech_sensitivity == (
-        types.StartSensitivity.START_SENSITIVITY_LOW
-    )
-    assert aad.prefix_padding_ms == 300
-    assert aad.silence_duration_ms == 700
+    vad = captured["turn_detection"]
+    assert vad.prefix_padding_ms == 300
+    assert vad.silence_duration_ms == 700
 
-
-def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
-    """Both native-audio-only flags default OFF and must NOT be passed to the
-    Live model — passing them takes voice down on the model we run."""
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG, gemini_live_affective_dialog=False,
-            gemini_live_proactivity=False,
-        ),
-    )
-    agent.build_realtime_model()
-
-    assert "enable_affective_dialog" not in captured
-    assert "proactivity" not in captured
-
-
-def test_realtime_model_passes_native_audio_flags_when_enabled(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
-    monkeypatch.setattr(
-        agent, "CONFIG",
-        dataclasses.replace(
-            CONFIG, gemini_live_affective_dialog=True,
-            gemini_live_proactivity=True,
-        ),
-    )
-    agent.build_realtime_model()
-
-    assert captured["enable_affective_dialog"] is True
-    assert captured["proactivity"] is True
 
 
 def test_relay_transcripts_publishes_named_data_events():
@@ -555,42 +267,20 @@ def test_relay_agent_state_publishes_speaking_state():
     ]
 
 
-def test_realtime_model_vertex_auth_toggles_with_config(monkeypatch):
-    captured = {}
+def test_realtime_model_always_builds_on_livekit_inference(monkeypatch):
+    """The direct-Google voice branch is gone (founder rule 2026-11-04):
+    ``build_realtime_model`` always delegates to the Inference builder —
+    whatever the route override, USE_VERTEX or GEMINI_LIVE_USE_DEV_API say."""
+    seen = {}
 
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    def _fake_inference_builder(voice, model=None):
+        seen["voice"] = voice
+        seen["model"] = model
+        return "INFERENCE_MODEL"
 
     monkeypatch.setattr(
-        agent,
-        "CONFIG",
-        dataclasses.replace(
-            CONFIG, use_vertex=True, gemini_live_location="us-central1"
-        ),
+        agent, "build_inference_realtime_model", _fake_inference_builder
     )
-    agent.build_realtime_model()
-    assert captured.get("vertexai") is True
-    assert captured.get("location") == "us-central1"
-
-    captured.clear()
-    monkeypatch.setattr(
-        agent, "CONFIG", dataclasses.replace(CONFIG, use_vertex=False)
-    )
-    agent.build_realtime_model()
-    assert "vertexai" not in captured
-
-
-def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
-    captured = {}
-
-    class _FakeRealtimeModel:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
     monkeypatch.setattr(
         agent,
         "CONFIG",
@@ -600,18 +290,24 @@ def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
     )
     monkeypatch.setenv("GOOGLE_API_KEY", "k-123")
 
-    agent.build_realtime_model()
-    assert captured["model"] == CONFIG.gemini_live_dev_model
-    assert captured["api_key"] == "k-123"
-    assert captured["vertexai"] is False
-    assert "location" not in captured
-    # livekit-plugins-google >= 1.8 would default 3.8-live to NON_BLOCKING
-    assert captured["tool_behavior"] == agent.types.Behavior.BLOCKING
+    for route in ("inference", "vertex", None):
+        seen.clear()
+        assert agent.build_realtime_model("Charon", route=route) == (
+            "INFERENCE_MODEL"
+        )
+        assert seen == {"voice": "Charon", "model": None}
 
-    # missing key is a hard error, not a silent Vertex fallback
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    with pytest.raises(RuntimeError):
-        agent.build_realtime_model()
+    # An invalid voice preset still resolves to the configured default.
+    assert agent.build_realtime_model("Nope") == "INFERENCE_MODEL"
+    assert seen["voice"] == CONFIG.gemini_live_voice
+
+
+def test_realtime_model_has_no_direct_google_auth_left():
+    """The google plugin model, the genai types and the Vertex/dev knobs are
+    gone from the worker — there is nothing left to aim at Google."""
+    assert not hasattr(agent, "RealtimeModel")
+    assert not hasattr(agent, "types")
+    assert not hasattr(agent, "_turn_detection_config")
 
 
 def test_worker_health_server_leaves_cloud_run_port_to_keepalive(monkeypatch):
@@ -2161,12 +1857,17 @@ class _OpenerSession(_FakeMuteSession):
         self.replies = []
         self.reply_chat_ctxs = []
         self.reply_user_inputs = []
+        self.said = []
 
     async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
                              user_input=_UNSET):
         self.replies.append(instructions)
         self.reply_chat_ctxs.append(chat_ctx)
         self.reply_user_inputs.append(user_input)
+
+    def say(self, text):
+        self.said.append(text)
+        return _SpeechHandleStub(None)
 
 
 class _SpeechHandleStub:
@@ -2184,32 +1885,6 @@ class _SpeechHandleStub:
 
     def exception(self):
         return self._error
-
-
-class _ScriptedOpenerSession(_FakeMuteSession):
-    """Opener fake with a scripted per-call outcome (extra calls succeed): an
-    Exception instance raises out of generate_reply; ("handle_error", exc)
-    resolves the await cleanly but carries exc on the handle (the swallowed
-    livekit failure mode); anything else succeeds."""
-
-    def __init__(self, outcomes):
-        super().__init__()
-        self._outcomes = list(outcomes)
-        self.replies = []
-        self.reply_chat_ctxs = []
-        self.reply_user_inputs = []
-
-    def generate_reply(self, instructions=None, chat_ctx=_UNSET,
-                       user_input=_UNSET):
-        self.replies.append(instructions)
-        self.reply_chat_ctxs.append(chat_ctx)
-        self.reply_user_inputs.append(user_input)
-        outcome = self._outcomes.pop(0) if self._outcomes else "ok"
-        if isinstance(outcome, Exception):
-            raise outcome
-        if isinstance(outcome, tuple) and outcome[0] == "handle_error":
-            return _SpeechHandleStub(outcome[1])
-        return _SpeechHandleStub(None)
 
 
 class _StateEv:
@@ -2235,12 +1910,43 @@ async def _run_opener(session, seed, window, user_event=None):
     return await task
 
 
-def test_opener_fires_when_user_is_silent():
+class _ProfileDb:
+    """Minimal Firestore fake: every collection/document hop returns self,
+    and the terminal get() yields a snapshot over the canned profile."""
+
+    def __init__(self, data):
+        self._data = data
+
+    def collection(self, _name):
+        return self
+
+    def document(self, _id):
+        return self
+
+    def get(self):
+        data = self._data
+
+        class _Snap:
+            def to_dict(self):
+                return data
+
+        return _Snap()
+
+
+def _arm_profile(monkeypatch, data):
+    monkeypatch.setattr(agent, "get_db", lambda: _ProfileDb(data))
+
+
+def test_opener_fires_when_user_is_silent(monkeypatch):
+    """Fresh session, silent caller: the opener fires exactly once — the
+    spoken name greeting — and generates NO reply at all."""
     import asyncio
 
+    _arm_profile(monkeypatch, {"name": "Suhail Pallath Sulaiman"})
     s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    assert len(s.replies) == 1 and s.replies[0]
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert s.said == ["Hey Suhail."]
+    assert s.replies == []
 
 
 def test_opener_suppressed_when_user_speaks_first_by_vad():
@@ -2273,59 +1979,168 @@ def test_opener_skipped_for_welcome_greeting():
     assert s.replies == []
 
 
-def test_opener_answers_dangling_user_turn():
-    """Founder behaviour (2026-11-02, supersedes the old mid-turn skip): a
-    history ending on an UNANSWERED caller turn opens by ANSWERING that
-    dangling message — a user-initiated call never opens in silence."""
+def test_opener_prior_context_never_recapped(monkeypatch):
+    """Founder ruling (2026-11-03 23:06): even WITH a prior conversation,
+    a fresh session opens with just the name greeting — no "pick up where
+    we left off", no topic reference, no generated text of any kind."""
     import asyncio
 
-    from prompt import load_voice_dangling_reply
+    _arm_profile(monkeypatch, {"name": "Suhail Pallath Sulaiman"})
+    s = _OpenerSession()
+    seed = _opener_seed(
+        uid="u1",
+        seed_turns=[
+            agent.Turn(role=agent.ROLE_USER, text="should I text Priya back"),
+            agent.Turn(role=agent.ROLE_AYMA, text="whether to text Priya back"),
+        ],
+    )
+    assert asyncio.run(_run_opener(s, seed, [])) is True
+    assert s.said == ["Hey Suhail."]
+    assert s.replies == []
 
+
+def test_opener_dangling_tail_still_opens_with_name_greeting(monkeypatch):
+    """A history ending on an UNANSWERED caller turn used to open by
+    answering it (founder behaviour 2026-11-02); the 2026-11-03 ruling
+    supersedes that for the opening line — the dangling message stays in
+    context for the caller's first real turn, unanswered by the opener."""
+    import asyncio
+
+    _arm_profile(monkeypatch, {"name": "Suhail Pallath Sulaiman"})
     s = _OpenerSession()
     turns = [agent.Turn(role=agent.ROLE_USER, text="so about friday")]
-    seed = _opener_seed(seed_turns=turns)
+    seed = _opener_seed(uid="u1", seed_turns=turns)
     assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert s.replies == [load_voice_dangling_reply()]
-    # Realtime shape: the tail turn is already the agent context's last item,
-    # so the answer carries no scoped chat_ctx and no duplicate user_input.
-    assert s.reply_chat_ctxs == [_UNSET]
-    assert s.reply_user_inputs == [_UNSET]
+    assert s.said == ["Hey Suhail."]
+    assert s.replies == []
 
 
 def test_opener_greets_when_dangling_tail_is_blank():
-    """A blank trailing caller turn has nothing sensible to answer, so it
-    takes the plain greeting path directly — one greeting reply, never the
-    dangling-answer instruction and never silence."""
+    """A blank trailing caller turn takes the same greeting path — one
+    spoken greeting, no generated reply, never silence."""
     import asyncio
-
-    from prompt import load_voice_dangling_reply, load_voice_opener
 
     s = _OpenerSession()
     turns = [agent.Turn(role=agent.ROLE_USER, text="   ")]
     seed = _opener_seed(seed_turns=turns)
     assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert len(s.replies) == 1
-    assert s.replies[0] != load_voice_dangling_reply()
-    assert s.replies[0] == load_voice_opener(False, "")
+    assert s.said == ["Hey there."]
+    assert s.replies == []
 
 
-def test_opener_agent_tail_greeting_unchanged():
-    """Proof the agent-tail path is byte-identical: one greeting reply with
-    the exact standard opener instruction, no dangling-answer attempt."""
+def test_opener_greeting_falls_back_without_a_profile_name(monkeypatch):
+    """No name on the profile: the greeting degrades to a plain
+    "Hey there." — never a fabricated name, never silence."""
     import asyncio
 
-    from prompt import load_voice_dangling_reply, load_voice_opener
-
+    _arm_profile(monkeypatch, {})
     s = _OpenerSession()
-    turns = [
-        agent.Turn(role=agent.ROLE_USER, text="should I text her back"),
-        agent.Turn(role=agent.ROLE_AYMA, text="sleep on it first"),
-    ]
-    seed = _opener_seed(seed_turns=turns)
-    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert s.said == ["Hey there."]
+
+
+def test_opener_greeting_survives_a_profile_read_error(monkeypatch):
+    """A failing profile read cannot cost the greeting (or the call)."""
+    import asyncio
+
+    class _BoomDb:
+        def collection(self, _name):
+            raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(agent, "get_db", lambda: _BoomDb())
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert s.said == ["Hey there."]
+
+
+_SAY_UNSUPPORTED = (
+    "trying to generate speech from text without a TTS model or a "
+    "RealtimeSession that supports say(); add a TTS model to "
+    "AgentSession to enable say()"
+)
+
+
+class _RealtimeOpenerSession(_OpenerSession):
+    """A Gemini Live-shaped session (founder bug, 2026-11-03): no TTS and
+    a realtime model whose capabilities.supports_say is False, so
+    session.say() raises the livekit-agents RuntimeError synchronously -
+    exactly what a fresh Gemini Live start hits in the opener."""
+
+    def say(self, text):
+        raise RuntimeError(_SAY_UNSUPPORTED)
+
+
+class _HandleErrorOpenerSession(_OpenerSession):
+    """say() returns a handle whose failure only surfaces via
+    exception() - the swallowed-failure shape."""
+
+    def say(self, text):
+        return _SpeechHandleStub(RuntimeError(_SAY_UNSUPPORTED))
+
+
+def test_opener_falls_back_to_generate_reply_when_say_raises(monkeypatch):
+    """Fresh realtime start path: say() is unsupported, so the name
+    greeting rides generate_reply under the say-exactly-this instruction.
+    Without this the call produces no first response at all - and the app
+    holds the caller's mic until one lands, so the call never connects
+    (it sits on "Connecting..." until the first-response guard fires)."""
+    import asyncio
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _RealtimeOpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
     assert len(s.replies) == 1
-    assert s.replies[0] != load_voice_dangling_reply()
-    assert s.replies[0] == load_voice_opener(True, "sleep on it first")
+    assert '"Hey Daniel."' in s.replies[0]
+    assert "word for word" in s.replies[0]
+
+
+def test_opener_falls_back_when_say_handle_carries_the_error(monkeypatch):
+    """The say() failure can also arrive only via the handle's
+    exception() - same fallback."""
+    import asyncio
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _HandleErrorOpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is True
+    assert len(s.replies) == 1
+    assert '"Hey Daniel."' in s.replies[0]
+
+
+def test_opener_fails_only_when_say_and_generate_reply_both_fail(monkeypatch):
+    """Both speech paths dead: the opener reports failure (and the call's
+    own guards take it from there) instead of pretending it spoke."""
+    import asyncio
+
+    class _DeadSession(_RealtimeOpenerSession):
+        async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
+                                 user_input=_UNSET):
+            raise RuntimeError("realtime session not established")
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _DeadSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is False
+
+
+def test_command_claim_gate_speaks_via_generate_reply_when_say_raises():
+    """Same root cause mid-call: on a say()-less realtime session the
+    claim gate's honest line falls back to generate_reply under the
+    say-exactly-this instruction instead of being silently dropped."""
+
+    class _Sess:
+        def __init__(self):
+            self.replies = []
+
+        def say(self, _text):
+            raise RuntimeError(_SAY_UNSUPPORTED)
+
+        def generate_reply(self, instructions=None, **_k):
+            self.replies.append(instructions)
+
+    s = _Sess()
+    gate = agent._CommandClaimGate(s)
+    gate.note_failure()
+    assert len(s.replies) == 1
+    assert agent._COMMAND_NOT_CONFIRMED_LINE in s.replies[0]
 
 
 def test_opener_skipped_when_someone_already_spoke():
@@ -2363,94 +2178,6 @@ def test_opener_disabled_by_zero_grace():
     assert asyncio.run(go()) is False
 
 
-def test_opener_uses_agent_context_by_default():
-    """Gemini Live / default path: no opener_chat_ctx is passed, so the opener's
-    generate_reply is NOT given a chat_ctx and generates against the agent's own
-    full seeded history exactly as before (path unchanged)."""
-    import asyncio
-
-    s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    assert len(s.replies) == 1 and s.replies[0]
-    # chat_ctx kwarg was never forwarded -> generate_reply falls back to the
-    # agent's full context, the pre-fix behaviour for Gemini Live.
-    assert s.reply_chat_ctxs == [_UNSET]
-
-
-def test_cascade_opener_generates_against_history_free_context():
-    """Cascade cold-start fix (founder bug 2026-10-28): when a history-free
-    opener_chat_ctx is supplied, the opener's generate_reply generates against
-    THAT context (no previous-conversation turns), so the chat LLM has no old
-    message to answer/continue when it opens the call."""
-    import asyncio
-    from livekit.agents import llm
-
-    s = _OpenerSession()
-    fresh = llm.ChatContext.empty()
-
-    async def go():
-        return await agent.maybe_open_conversation(
-            s, _opener_seed(), window=[], grace_seconds=0.05,
-            opener_chat_ctx=fresh,
-        )
-
-    assert asyncio.run(go()) is True
-    assert len(s.reply_chat_ctxs) == 1
-    passed = s.reply_chat_ctxs[0]
-    assert passed is fresh
-    # The opener generates with ZERO prior turns in context, so it cannot reply
-    # to the previous conversation's last message.
-    assert list(passed.items) == []
-
-
-def test_cascade_opener_seeds_user_turn_so_inference_never_gets_system_only():
-    """Regression (Sentry ayma-agent inference HTTP 400, first seen Oct 26 2026:
-    ``messages must contain at least one message with role user or tool``).
-
-    On the cascade (text chat LLM, incl. the LiveKit-Inference brain) an
-    agent-initiated opener with no prior user turn produced a SYSTEM-ONLY message
-    list — LiveKit's OpenAI provider format does not inject a dummy user message —
-    and the gateway rejected it with 400. ``seed_user_turn`` now carries one
-    benign synthetic user turn. Asserts the opener seeds a non-empty user_input
-    AND that replaying the framework's generate_reply composition (user turn, then
-    the opener instruction as a system message) over the OpenAI provider format
-    yields a message list with >= 1 user/tool message."""
-    import asyncio
-    from livekit.agents import llm
-    from prompt import load_voice_session_seed
-
-    s = _OpenerSession()
-    fresh = llm.ChatContext.empty()
-
-    async def go():
-        return await agent.maybe_open_conversation(
-            s, _opener_seed(), window=[], grace_seconds=0.05,
-            opener_chat_ctx=fresh, seed_user_turn=True,
-        )
-
-    assert asyncio.run(go()) is True
-    seed_text = load_voice_session_seed()
-    assert seed_text.strip()
-    assert s.reply_user_inputs == [seed_text]
-
-    composed = llm.ChatContext.empty()
-    composed.add_message(role="user", content=[s.reply_user_inputs[0]])
-    composed.add_message(role="system", content=[s.replies[0]])
-    messages, _ = composed.to_provider_format("openai")
-    assert any(m.get("role") in ("user", "tool") for m in messages), messages
-
-
-def test_realtime_opener_is_not_seeded():
-    """Realtime paths (Gemini Live / Inference RealtimeModel) do not reach the
-    chat-completions request shape, so the opener is left unseeded — byte-for-byte
-    the pre-fix behaviour."""
-    import asyncio
-
-    s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    assert s.reply_user_inputs == [_UNSET]
-
-
 def test_welcome_greeting_seeds_user_turn_on_cascade():
     """The pre-sign-in welcome greeting takes the same cascade guard: its
     generate_reply carries the synthetic user turn so it is never a system-only
@@ -2479,6 +2206,93 @@ def test_welcome_greeting_not_seeded_on_realtime():
     assert s.reply_user_inputs == [_UNSET]
 
 
+def _arm_reconnect_claim(monkeypatch, claimed):
+    """Point the opener's reconnect claim at a canned answer."""
+    import skills
+
+    monkeypatch.setattr(agent, "get_db", lambda: object())
+    monkeypatch.setattr(
+        skills.set_model_stack, "claim_reconnect_announcement",
+        lambda db, uid: claimed,
+    )
+
+
+def _recording_opener(monkeypatch):
+    calls = []
+
+    async def _fake_open(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    return calls
+
+
+def test_reconnect_continuation_opens_with_the_back_line(monkeypatch):
+    """A session that claims the reconnect announcement opens with the one
+    "I'm back" line naming the stack it is running — and the generic
+    opener never runs, so the line is spoken exactly once."""
+    import asyncio
+
+    _arm_reconnect_claim(monkeypatch, True)
+    opener_calls = _recording_opener(monkeypatch)
+    s = _OpenerSession()
+    seed = _opener_seed(uid="u1")  # realtime, Gemini Live by default
+    asyncio.run(agent._open_main_call(s, seed, window=[]))
+    assert len(s.replies) == 1
+    assert "reconnected" in s.replies[0]
+    assert "Gemini Live" in s.replies[0]
+    assert opener_calls == []
+
+
+def test_reconnect_continuation_on_cascade_names_the_brain(monkeypatch):
+    """Cascade continuation: the line names the brain and — like every
+    cascade opener — carries the synthetic user turn so the chat LLM
+    never gets a system-only request."""
+    import asyncio
+    from prompt import load_voice_session_seed
+
+    _arm_reconnect_claim(monkeypatch, True)
+    _recording_opener(monkeypatch)
+    s = _OpenerSession()
+    seed = _opener_seed(uid="u1", brain_id="meta-muse-spark")
+    asyncio.run(
+        agent._open_main_call(s, seed, window=[], seed_user_turn=True)
+    )
+    assert len(s.replies) == 1
+    assert "Meta Muse Spark" in s.replies[0]
+    assert s.reply_user_inputs == [load_voice_session_seed()]
+
+
+def test_fresh_call_never_opens_with_the_back_line(monkeypatch):
+    """No pending announcement (an ordinary fresh call): the claim declines
+    and the normal opener path runs untouched — no "I'm back" line."""
+    import asyncio
+
+    _arm_reconnect_claim(monkeypatch, False)
+    opener_calls = _recording_opener(monkeypatch)
+    s = _OpenerSession()
+    seed = _opener_seed(uid="u1")
+    asyncio.run(agent._open_main_call(s, seed, window=[]))
+    assert s.replies == []
+    assert len(opener_calls) == 1
+
+
+def test_reconnect_setup_label_names_the_running_stack():
+    import voice_catalog
+
+    seed = _opener_seed()
+    assert agent._reconnect_setup_label(seed, cascade=False) == "Gemini Live"
+    seed = _opener_seed(realtime_model_id=voice_catalog.REALTIME_OPENAI)
+    assert agent._reconnect_setup_label(seed, cascade=False) == "OpenAI Realtime"
+    seed = _opener_seed(brain_id=voice_catalog.BRAIN_META)
+    assert agent._reconnect_setup_label(seed, cascade=True) == "Meta Muse Spark"
+    seed = _opener_seed(brain_id=voice_catalog.BRAIN_OPEN_WEIGHTS)
+    assert (
+        agent._reconnect_setup_label(seed, cascade=True)
+        == "Llama 3.1 8B (open weights)"
+    )
+
+
 def test_opener_prior_context_helper():
     """has-prior / last-topic-hint derivation for the opener signal."""
     assert agent._opener_prior_context([]) == (False, "")
@@ -2501,125 +2315,41 @@ def test_opener_prior_context_helper():
     assert len(hint) <= agent._OPENER_HINT_MAX_CHARS + 1  # +1 for the ellipsis
 
 
-def test_opener_offers_choice_when_prior_context_exists():
-    """New call WITH prior context: the opener instruction greets + offers the
-    continue-or-switch choice and references the last topic, rather than
-    continuing it (founder behaviour, 2026-10-28)."""
-    import asyncio
-
-    s = _OpenerSession()
-    seed = _opener_seed(
-        seed_turns=[
-            agent.Turn(role=agent.ROLE_USER, text="should I text Priya back"),
-            agent.Turn(role=agent.ROLE_AYMA, text="whether to text Priya back"),
-        ]
-    )
-    assert asyncio.run(_run_opener(s, seed, [])) is True
-    instr = s.replies[0].lower()
-    assert "whether to text priya back" in instr
-    assert "do not" in instr and ("continue" in instr or "resume" in instr)
-    assert "no particular prior conversation" not in instr
-
-
-def test_opener_is_fresh_when_no_prior_context():
-    """New call with NO prior context: a plain fresh warm opener, no choice."""
-    import asyncio
-
-    s = _OpenerSession()
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
-    instr = s.replies[0].lower()
-    assert "no particular prior conversation" in instr
-    assert "pick up where we left off" not in instr
-
-
-def test_opener_swallows_generate_failure():
+def test_opener_say_failure_falls_back_to_generate_reply():
+    """A say that raises outright no longer fails the opener: the
+    greeting falls back to generate_reply (the realtime-shaped failure -
+    a fresh call produces no first response without it)."""
     import asyncio
 
     s = _OpenerSession()
 
-    async def boom(instructions=None):
+    def boom(text):
         raise RuntimeError("x")
 
-    s.generate_reply = boom
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
-
-
-def test_opener_falls_back_to_greeting_when_dangling_reply_fails_on_handle():
-    """Option (b) backup: the dangling answer's await resolves cleanly but its
-    SpeechHandle carries an error (livekit's swallowed failure mode) — the
-    opener falls back to the standard greeting and still opens the call."""
-    import asyncio
-
-    from prompt import load_voice_dangling_reply, load_voice_opener
-
-    s = _ScriptedOpenerSession([("handle_error", RuntimeError("timed out"))])
-    turns = [agent.Turn(role=agent.ROLE_USER, text="are you there")]
-    seed = _opener_seed(seed_turns=turns)
-    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert s.replies == [
-        load_voice_dangling_reply(),
-        load_voice_opener(True, "are you there"),
-    ]
-
-
-def test_opener_falls_back_to_greeting_when_dangling_reply_raises():
-    """Same fallback when the answer attempt raises outright instead of
-    failing on the handle."""
-    import asyncio
-
-    from prompt import load_voice_dangling_reply, load_voice_opener
-
-    s = _ScriptedOpenerSession([RuntimeError("session closing")])
-    turns = [agent.Turn(role=agent.ROLE_USER, text="are you there")]
-    seed = _opener_seed(seed_turns=turns)
-    assert asyncio.run(_run_opener(s, seed, list(turns))) is True
-    assert s.replies == [
-        load_voice_dangling_reply(),
-        load_voice_opener(True, "are you there"),
-    ]
-
-
-def test_opener_greeting_reports_handle_error():
-    """A swallowed handle failure on the (agent-tail) greeting is reported as
-    a miss (False, exactly one attempt) instead of being misreported as a
-    successful open — the client's honest-error guard is the backstop."""
-    import asyncio
-
-    s = _ScriptedOpenerSession([("handle_error", RuntimeError("timed out"))])
-    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
+    s.say = boom
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
     assert len(s.replies) == 1
+    assert '"Hey there."' in s.replies[0]
 
 
-def test_cascade_dangling_answer_carries_real_user_turn():
-    """Cascade stack: the dangling answer passes the REAL message as its
-    user_input (the agent context had the tail stripped) with NO scoped
-    chat_ctx, so the chat LLM answers with full history — and the composed
-    request still carries a user message (no system-only 400)."""
+def test_opener_say_handle_error_falls_back_to_generate_reply():
+    """A swallowed handle failure on the greeting say is not a successful
+    open either - it falls back to generate_reply (exactly one say
+    attempt, then the fallback speaks)."""
     import asyncio
-    from livekit.agents import llm
-
-    from prompt import load_voice_dangling_reply
 
     s = _OpenerSession()
-    fresh = llm.ChatContext.empty()
-    turns = [agent.Turn(role=agent.ROLE_USER, text="which dress then")]
+    calls = []
 
-    async def go():
-        return await agent.maybe_open_conversation(
-            s, _opener_seed(seed_turns=turns), window=list(turns),
-            grace_seconds=0.05, opener_chat_ctx=fresh, seed_user_turn=True,
-        )
+    def say(text):
+        calls.append(text)
+        return _SpeechHandleStub(RuntimeError("timed out"))
 
-    assert asyncio.run(go()) is True
-    assert s.replies == [load_voice_dangling_reply()]
-    assert s.reply_user_inputs == ["which dress then"]
-    assert s.reply_chat_ctxs == [_UNSET]
-
-    composed = llm.ChatContext.empty()
-    composed.add_message(role="user", content=[s.reply_user_inputs[0]])
-    composed.add_message(role="system", content=[s.replies[0]])
-    messages, _ = composed.to_provider_format("openai")
-    assert any(m.get("role") in ("user", "tool") for m in messages), messages
+    s.say = say
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    assert calls == ["Hey there."]
+    assert len(s.replies) == 1
+    assert '"Hey there."' in s.replies[0]
 
 
 # --- idle-timeout wiring -----------------------------------------------------
@@ -2702,14 +2432,16 @@ def test_watch_for_idle_disabled_when_timeout_is_zero():
 
 def test_relay_token_usage_meters_inference_voice_with_provider(monkeypatch):
     """The Inference adapter emits the same RealtimeModelMetrics from
-    response.done usage; the ledger write must be priced on the Inference model
-    id and tagged `livekit_inference` (the google path stays untouched)."""
+    response.done usage; the ledger write is priced on the Inference model id
+    (the only voice model) and tagged per the session's provider flag."""
     import token_ledger
 
-    for inference, want_provider, want_model in (
-        (True, "livekit_inference", CONFIG.inference_live_model),
-        (False, token_ledger.provider_for("voice"), token_ledger.live_model_id(False)),
+    for inference, want_provider in (
+        (True, "livekit_inference"),
+        (False, token_ledger.provider_for("voice")),
     ):
+        want_model = token_ledger.live_model_id()
+        assert want_model == CONFIG.inference_live_model
         seen = {}
         monkeypatch.setattr(
             token_ledger, "add", lambda *a, **kw: seen.update(kw=kw, args=a)
@@ -4072,9 +3804,10 @@ def test_main_voice_instructions_carry_the_tool_use_directive():
 
 
 class _CmdSnap:
-    def __init__(self, data):
+    def __init__(self, data, doc_id=""):
         self._data = data
         self.exists = data is not None
+        self.id = doc_id
 
     def to_dict(self):
         return dict(self._data) if self._data is not None else None
@@ -4125,6 +3858,15 @@ class _CmdCol:
     def document(self, doc_id):
         return _CmdDoc(self.store, (*self.key, doc_id))
 
+    def stream(self):
+        # Enough for _resolve_person's roster scan (users collection only).
+        seen = []
+        d = len(self.key)
+        for k in list(self.store):
+            if len(k) == d + 1 and k[:d] == self.key:
+                seen.append(_CmdSnap(self.store[k], k[-1]))
+        return iter(seen)
+
 
 class _CmdDb:
     def __init__(self, uid="u1"):
@@ -4132,6 +3874,10 @@ class _CmdDb:
 
     def collection(self, name):
         return _CmdCol(self.store, (name,))
+
+    def seed_user(self, uid, name):
+        self.store[("users", uid)] = {"x": 1}
+        self.store[("users", uid, "profile", "main")] = {"name": name}
 
 
 class _CmdSession:
@@ -4174,6 +3920,14 @@ class _CmdRoom:
 class _CmdCtx:
     def __init__(self):
         self.room = _CmdRoom()
+        self.deleted_rooms = 0
+        self.shutdown_reasons = []
+
+    async def delete_room(self):
+        self.deleted_rooms += 1
+
+    def shutdown(self, reason):
+        self.shutdown_reasons.append(reason)
 
 
 async def _drain_until(predicate, timeout=5.0):
@@ -4186,9 +3940,14 @@ async def _drain_until(predicate, timeout=5.0):
     await asyncio.sleep(0.05)  # let fire-and-forget publishes land
 
 
-def _voice_command_harness(monkeypatch, uid="u1"):
+def _voice_command_harness(
+    monkeypatch, uid="u1", *, end_call=None, interpret=None,
+    get_context=None,
+):
     """The real session tools plus the real relay on fakes: returns
-    ``(db, session, ctx, by_name, dedupe)``."""
+    ``(db, session, ctx, by_name, dedupe)``. ``end_call`` wires the relay's
+    goodbye teardown, ``interpret``/``get_context`` the voice-actions skill
+    (all None runs the deterministic net alone, exactly as before)."""
     import skills
 
     db = _CmdDb(uid)
@@ -4198,8 +3957,23 @@ def _voice_command_harness(monkeypatch, uid="u1"):
     session = _CmdSession()
     tools = agent._session_tools(ctx, uid, dedupe=dedupe)
     by_name = agent._tools_by_name(tools)
-    agent.relay_voice_commands(session, tools, dedupe)
+    agent.relay_voice_commands(
+        session, tools, dedupe, end_call=end_call, interpret=interpret,
+        get_context=get_context,
+    )
     return db, session, ctx, by_name, dedupe
+
+
+def _skill_stub(verdict):
+    """A voice-actions ``interpret`` stub settling ``verdict`` (or raising
+    it when it is an exception)."""
+
+    async def _interpret(transcript, context, *, uid="", session_id=""):
+        if isinstance(verdict, Exception):
+            raise verdict
+        return verdict
+
+    return _interpret
 
 
 @pytest.mark.parametrize("phrase,tool,keys", [
@@ -4360,6 +4134,172 @@ def test_voice_non_command_turn_runs_no_tool(monkeypatch, phrase):
         await asyncio.sleep(0.05)  # a command would have fired by now
         assert db.store.profile_writes == []
         assert db.store.queued == []
+        assert ctx.room.local_participant.published == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+# --- deterministic pre-model launch commands (prod 2284 follow-on) ---------
+#
+# Practice Date / Agent Date launches are the asks the founder was refused on
+# prod 2284. A named-partner ask executes open_practice_date / open_date_sim
+# deterministically through the same relay/dedupe path as the other families;
+# a partner-less ask settles the "who with?" clarification instead.
+
+
+@pytest.mark.parametrize("phrase,tool,name", [
+    ("start a practice date with Sofia", "open_practice_date", "Sofia"),
+    ("let me practice with Daniel", "open_practice_date", "Daniel"),
+    ("practice date with Sofia", "open_practice_date", "Sofia"),
+    ("start an agent date with Sofia", "open_date_sim", "Sofia"),
+    ("run a date sim with Daniel", "open_date_sim", "Daniel"),
+    ("simulate a date with Sofia", "open_date_sim", "Sofia"),
+    ("date sim with Sofia", "open_date_sim", "Sofia"),
+])
+def test_detect_voice_command_routes_a_named_launch(phrase, tool, name):
+    assert agent.detect_voice_command(phrase) == (tool, {"name": name})
+
+
+@pytest.mark.parametrize("phrase,tool", [
+    ("start a practice date", "open_practice_date"),
+    ("run a date sim for me", "open_date_sim"),
+    ("start a practice date with my girlfriend", "open_practice_date"),
+])
+def test_detect_voice_command_marks_a_partnerless_launch(phrase, tool):
+    assert agent.detect_voice_command(phrase) == (tool, {"name": ""})
+
+
+def test_detect_voice_command_launch_precedence():
+    # "open Sofia's profile" stays navigation; a launch phrase is never it.
+    assert agent.detect_voice_command("open Sofia's profile") == (
+        "open_screen", {"screen": "profile"},
+    )
+    assert agent.detect_voice_command("practice date with Sofia") == (
+        "open_practice_date", {"name": "Sofia"},
+    )
+
+
+@pytest.mark.parametrize("phrase", [
+    "my practice date yesterday went well",
+    "what is a practice date?",
+    "do you think the simulation is accurate?",
+    "tell me about my date sim results",
+    "my practice date with Sofia went well",
+    "open my date sim results",
+    "open Sofia's profile",
+])
+def test_detect_voice_command_leaves_launch_discussion_alone(phrase):
+    match = agent.detect_voice_command(phrase)
+    if phrase == "open Sofia's profile":
+        assert match == ("open_screen", {"screen": "profile"})
+    else:
+        assert match is None
+
+
+def _seed_roster(db):
+    db.seed_user("u1", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    db.seed_user("u-daniel", "Daniel Fox")
+
+
+def test_voice_practice_launch_executes_deterministically(monkeypatch):
+    """A named practice ask runs open_practice_date through the session's own
+    tool (navigation queued for the resolved partner) with zero model
+    involvement; the model's same-turn duplicate replays instead of
+    queueing a second navigate."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn("start a practice date with Sofia")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["path"] == "/practice/u-sofia"
+        deterministic = dedupe.lookup("open_practice_date").future.result()
+        assert deterministic.startswith("navigated:")
+        assert "Sofia Ruiz" in deterministic
+        dup = await by_name["open_practice_date"](name="Sofia")
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_date_sim_launch_executes_deterministically(monkeypatch):
+    """Same exactly-once path for an Agent Date ask."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn("run a date sim with Daniel")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["path"] == "/date-sim/u-daniel"
+        deterministic = dedupe.lookup("open_date_sim").future.result()
+        assert deterministic.startswith("navigated:")
+        assert "Daniel Fox" in deterministic
+        dup = await by_name["open_date_sim"](name="Daniel")
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+@pytest.mark.parametrize("phrase,tool", [
+    ("start a practice date", "open_practice_date"),
+    ("run a date sim for me", "open_date_sim"),
+])
+def test_voice_partnerless_launch_asks_who_with(monkeypatch, phrase, tool):
+    """A partner-less launch launches nothing and relays no "couldn't find
+    someone" error: the claimed result is the "who with?" clarification,
+    which the model's same-turn call replays."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn(phrase)
+        await _drain_until(lambda: dedupe.lookup(tool) is not None)
+        await asyncio.sleep(0.05)  # a launch would have queued by now
+        assert db.store.queued == []
+        clarification = dedupe.lookup(tool).future.result()
+        low = clarification.lower()
+        assert "who" in low and "with" in low
+        assert "couldn't find" not in low
+        assert "navigated:" not in clarification
+        dup = await by_name[tool](name="")
+        assert dup == clarification
+        assert db.store.queued == []
+        assert ctx.room.local_participant.published == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+@pytest.mark.parametrize("phrase", [
+    "my practice date yesterday went well",
+    "what is a practice date?",
+    "do you think the simulation is accurate?",
+    "tell me about my date sim results",
+    "my practice date with Sofia went well",
+    "open my date sim results",
+])
+def test_voice_launch_near_miss_runs_no_tool(monkeypatch, phrase):
+    """Launch discussion at the relay level: no queued command, no claimed
+    tool, no tool chip, nothing asked of the model."""
+    db, session, ctx, by_name, dedupe = _voice_command_harness(monkeypatch)
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn(phrase)
+        await asyncio.sleep(0.05)  # a command would have fired by now
+        assert db.store.queued == []
+        assert dedupe.lookup("open_practice_date") is None
+        assert dedupe.lookup("open_date_sim") is None
         assert ctx.room.local_participant.published == []
         assert session.generate_replies == []
 
@@ -4754,3 +4694,641 @@ def test_cascade_tts_error_signals_at_most_once():
 
     asyncio.run(_run())
     assert len(published) == 1
+
+
+# --- voice-actions skill first, deterministic net as fallback ----------------
+#
+# The skill interprets each finalized turn; its verdict executes through the
+# session's own tools claim-first, exactly like a detector match. A ``none``
+# verdict — or a skill failure — falls back to the untouched deterministic
+# net. A skill-interpreted "goodbye Ayma" ends the call through the call's
+# own teardown (the end_call_idle sequence with a "user_goodbye" reason).
+
+
+def test_voice_skill_verdict_executes_through_session_tools(monkeypatch):
+    """A skill navigate verdict queues the navigate through the session's
+    own open_screen tool with zero model involvement (the founder's
+    "Can you open up Explore?" shape)."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(Verdict(action="navigate", page="explore")),
+    )
+
+    async def _main():
+        session.user_turn("Can you open up Explore?")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["screen"] == "explore"
+        deterministic = dedupe.lookup("open_screen").future.result()
+        assert deterministic.startswith("navigated:")
+        dup = await by_name["open_screen"](screen="explore")
+        assert dup == deterministic
+        assert len(db.store.queued) == 1
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_first_wins_over_the_net(monkeypatch):
+    """The skill is the interpreter: when it disagrees with the net, its
+    verdict is what executes — the net never also fires."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(Verdict(action="navigate", page="messages")),
+    )
+
+    async def _main():
+        session.user_turn("switch to explore")  # the net alone says explore
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["screen"] == "messages"
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_none_is_authoritative_never_consults_the_net(monkeypatch):
+    """An authoritative ``none`` verdict stays conversational: the relay
+    never consults the deterministic net — no ``detect_voice_command``
+    call — even on a transcript the net would have matched. Nothing is
+    claimed, nothing is queued, and the model is asked nothing."""
+    from skills.voice_actions import Verdict
+
+    asked = []
+    net_calls = []
+
+    async def _interpret(transcript, context, *, uid="", session_id=""):
+        asked.append(transcript)
+        return Verdict(action="none")
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_interpret
+    )
+    real_net = agent.detect_voice_command
+    assert real_net("switch to explore") is not None  # the net WOULD match
+
+    def _spy(transcript):
+        net_calls.append(transcript)
+        return real_net(transcript)
+
+    monkeypatch.setattr(agent, "detect_voice_command", _spy)
+
+    async def _main():
+        session.user_turn("switch to explore")
+        await _drain_until(lambda: len(asked) == 1)
+        await asyncio.sleep(0.05)  # a net dispatch would have fired by now
+        assert net_calls == []
+        assert db.store.queued == []
+        assert dedupe.lookup("open_screen") is None
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_failure_falls_back_to_the_net(monkeypatch):
+    """A skill failure (gateway down, timeout) degrades to the net — never
+    a dead turn, never an error to the user from this layer."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_skill_stub(RuntimeError("gateway down"))
+    )
+
+    async def _main():
+        session.user_turn("switch to explore")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["screen"] == "explore"
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_none_with_no_net_match_runs_nothing(monkeypatch):
+    """Pure conversation: a ``none`` verdict on a non-command turn claims
+    nothing, queues nothing, and asks the model nothing."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_skill_stub(Verdict(action="none"))
+    )
+
+    async def _main():
+        session.user_turn("I love hiking and long walks on the beach")
+        await asyncio.sleep(0.05)  # a command would have fired by now
+        assert db.store.queued == []
+        assert dedupe.lookup("open_screen") is None
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_clarify_claims_the_launch_tool(monkeypatch):
+    """A skill ``clarify`` verdict settles the existing "who with?"
+    clarification on the launch tool — nothing launches, and the model's
+    same-turn call replays the clarification."""
+    import skills
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(
+            Verdict(action="clarify", clarify_for="launch_sim")
+        ),
+    )
+
+    async def _main():
+        session.user_turn("run a date sim")
+        await _drain_until(
+            lambda: dedupe.lookup("open_date_sim") is not None
+        )
+        result = await dedupe.lookup("open_date_sim").future
+        assert result == skills.app_control.launch_clarification(
+            "open_date_sim"
+        )
+        assert "who" in result.lower()
+        assert db.store.queued == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_launch_with_context_partner_navigates(monkeypatch):
+    """A skill launch verdict carrying the context-resolved partner ("talk
+    to her in practice" → Dillu) navigates to that member's practice page."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch,
+        interpret=_skill_stub(
+            Verdict(action="launch_practice", partner="Sofia Ruiz")
+        ),
+    )
+    _seed_roster(db)
+
+    async def _main():
+        session.user_turn("Can I talk to her in practice?")
+        await _drain_until(lambda: len(db.store.queued) == 1)
+        cmd = db.store[("users", "u1", "app_commands", "pending")]
+        assert cmd["action"] == "navigate"
+        assert cmd["path"] == "/practice/u-sofia"
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_receives_transcript_context_and_ids(monkeypatch):
+    """The relay hands the skill the transcript, the call context, and the
+    metering ids — verified on a second session sharing the harness tools."""
+    import skills
+    from skills.voice_actions import CallContext, Verdict
+
+    seen = {}
+    sentinel = CallContext(member="Dillu", page="profile")
+
+    async def _interpret(transcript, context, *, uid="", session_id=""):
+        seen["transcript"] = transcript
+        seen["context"] = context
+        seen["uid"] = uid
+        seen["session_id"] = session_id
+        return Verdict(action="none")
+
+    db = _CmdDb("u1")
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+    dedupe = skills.VoiceTurnDedupe()
+    ctx = _CmdCtx()
+    session = _CmdSession()
+    tools = agent._session_tools(ctx, "u1", dedupe=dedupe)
+    agent.relay_voice_commands(
+        session, tools, dedupe, interpret=_interpret,
+        get_context=lambda: sentinel, uid="u9", session_id="s9",
+    )
+
+    async def _main():
+        session.user_turn("hello there")
+        await _drain_until(lambda: "transcript" in seen)
+
+    asyncio.run(_main())
+    assert seen == {
+        "transcript": "hello there",
+        "context": sentinel,
+        "uid": "u9",
+        "session_id": "s9",
+    }
+
+
+def test_voice_skill_goodbye_ends_the_call(monkeypatch):
+    """A skill-interpreted sign-off ends the session through the real
+    teardown (memory flush, tell the client why, delete the room, shut
+    down) with zero model involvement, and the turn is claimed."""
+    from skills.voice_actions import Verdict
+
+    flushed = []
+
+    async def _flush():
+        flushed.append(True)
+
+    box = {}
+
+    async def _end_call():
+        await agent.end_call_goodbye(box["ctx"], "u1", _flush)
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, end_call=_end_call,
+        interpret=_skill_stub(Verdict(action="end_call")),
+    )
+    box["ctx"] = ctx
+
+    async def _main():
+        session.user_turn("goodbye Ayma")
+        await _drain_until(lambda: dedupe.lookup("end_call") is not None)
+        result = await dedupe.lookup("end_call").future
+        assert result == agent._GOODBYE_RESULT
+        assert flushed == [True]
+        assert ctx.deleted_rooms == 1
+        assert ctx.shutdown_reasons == ["user_goodbye"]
+        endings = [
+            p for p in ctx.room.local_participant.published
+            if p[0] == "call_ending"
+        ]
+        assert endings == [("call_ending", {"reason": "user_goodbye"}, True)]
+        assert db.store.queued == []
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_goodbye_duplicate_tears_down_once(monkeypatch):
+    """A duplicated finalized sign-off transcript still runs teardown
+    exactly once."""
+    from skills.voice_actions import Verdict
+
+    runs = []
+
+    async def _end_call():
+        runs.append(True)
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, end_call=_end_call,
+        interpret=_skill_stub(Verdict(action="end_call")),
+    )
+
+    async def _main():
+        session.user_turn("goodbye Ayma")
+        session.user_turn("goodbye Ayma")  # duplicate delivery of one final
+        await _drain_until(lambda: dedupe.lookup("end_call") is not None)
+        await dedupe.lookup("end_call").future
+        await asyncio.sleep(0.05)  # a second teardown would have run by now
+        assert runs == [True]
+        assert session.generate_replies == []
+
+    asyncio.run(_main())
+
+
+def test_voice_skill_goodbye_without_teardown_stays_with_model(monkeypatch):
+    """An end_call verdict with no teardown callback neither crashes nor
+    tears anything down — the turn is left to the model."""
+    from skills.voice_actions import Verdict
+
+    db, session, ctx, by_name, dedupe = _voice_command_harness(
+        monkeypatch, interpret=_skill_stub(Verdict(action="end_call"))
+    )
+
+    async def _main():
+        session.user_turn("goodbye Ayma")
+        await asyncio.sleep(0.05)
+        assert ctx.deleted_rooms == 0
+        assert ctx.shutdown_reasons == []
+        assert ctx.room.local_participant.published == []
+        assert db.store.queued == []
+
+    asyncio.run(_main())
+
+
+def test_end_call_goodbye_flushes_signals_deletes_then_shuts_down():
+    """The user-hang-up sequence: memory write -> tell the client why
+    (user_goodbye) -> delete the room -> shut down. The idle stop's shape,
+    never an abrupt cutoff."""
+    order = []
+
+    async def _flush():
+        order.append("flush")
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            order.append("call_ending_published")
+            published.append((topic, json.loads(payload), reliable))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _FakeCtx:
+        room = _Room()
+
+        @staticmethod
+        async def delete_room():
+            order.append("room_deleted")
+
+        @staticmethod
+        def shutdown(reason):
+            order.append(("shutdown", reason))
+
+    asyncio.run(agent.end_call_goodbye(_FakeCtx(), "u1", _flush))
+
+    assert order == [
+        "flush",
+        "call_ending_published",
+        "room_deleted",
+        ("shutdown", "user_goodbye"),
+    ]
+    assert published == [("call_ending", {"reason": "user_goodbye"}, True)]
+
+
+# ---------------------------------------------------------------------------
+# Ack-gated spoken claims: the command-claim gate.
+#
+# The app-command tools report "the app did NOT navigate" when the client
+# never acks, but the realtime model's narration could claim success anyway
+# (founder, 2026-11-03, 22:03 call). While the gate is latched the model's
+# speech for the turn is interrupted and the agent speaks the truth itself.
+# ---------------------------------------------------------------------------
+
+class _GateSession:
+    """Fake AgentSession for the claim gate: keeps every handler per event
+    (the real emitter does), and records ``say`` lines."""
+
+    def __init__(self):
+        self._handlers = {}
+        self.said = []
+        self.generate_replies = []
+
+    def on(self, name):
+        def _register(fn):
+            self._handlers.setdefault(name, []).append(fn)
+            return fn
+
+        return _register
+
+    def _fire(self, name, ev):
+        for fn in self._handlers.get(name, []):
+            fn(ev)
+
+    def user_turn(self, transcript, is_final=True):
+        self._fire("user_input_transcribed", _UserFinalEv(transcript, is_final))
+
+    def speech_created(self):
+        handle = _FakeSpeechHandle()
+        self._fire("speech_created", _SpeechCreatedEv(handle))
+        return handle
+
+    def say(self, text, **kwargs):
+        self.said.append(text)
+
+    def generate_reply(self, **kwargs):
+        self.generate_replies.append(kwargs)
+
+
+class _GateTool:
+    """A stand-in session tool: records calls, settles a canned result (or
+    raises it when the result is an exception)."""
+
+    def __init__(self, name, result):
+        from types import SimpleNamespace
+
+        self.info = SimpleNamespace(name=name)
+        self._result = result
+        self.calls = []
+
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def _gate_relay(tools):
+    import skills
+
+    session = _GateSession()
+    dedupe = skills.VoiceTurnDedupe()
+    agent.relay_voice_commands(session, tools, dedupe)
+    return session, dedupe
+
+
+def test_command_unconfirmed_scopes_the_gate_to_unconfirmed_nav_results():
+    import skills
+
+    nav = "open_screen"
+    assert agent._command_unconfirmed(nav, skills.app_control._NOT_NAVIGATED)
+    assert agent._command_unconfirmed(nav, skills.app_control._NOT_APPLIED)
+    assert agent._command_unconfirmed(nav, "error: tool exceeded 15.0s")
+    # A confirmed success, a truthful miss and a clarification are the
+    # model's to narrate — the gate never touches them.
+    assert not agent._command_unconfirmed(
+        nav, "navigated: screen=voice_preference"
+    )
+    assert not agent._command_unconfirmed(nav, "no member named Zorblax")
+    assert not agent._command_unconfirmed(
+        nav, skills.app_control.launch_clarification("open_practice_date")
+    )
+    # Non-navigation tools are out of scope entirely.
+    assert not agent._command_unconfirmed(
+        "send_dm_message", skills.app_control._NOT_NAVIGATED
+    )
+    assert not agent._command_unconfirmed(nav, None)
+
+
+def test_command_claim_gate_latches_on_an_unconfirmed_navigation():
+    import skills
+
+    async def _run():
+        tool = _GateTool("open_screen", skills.app_control._NOT_NAVIGATED)
+        session, dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(session.said))
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE]
+        # The model's own narration for this turn is suppressed.
+        assert session.speech_created().interrupted is True
+        # The honest result still settles the claim for the model's replay.
+        claim = dedupe.lookup("open_screen")
+        assert claim is not None
+        assert claim.future.result() == skills.app_control._NOT_NAVIGATED
+        assert tool.calls == [{"screen": "voice_preference"}]
+
+    asyncio.run(_run())
+
+
+def test_command_claim_gate_leaves_a_confirmed_navigation_alone():
+    async def _run():
+        tool = _GateTool(
+            "open_screen",
+            "navigated: screen=voice_preference — the user is now on Models.",
+        )
+        session, _dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(tool.calls))
+        await asyncio.sleep(0.1)
+        assert session.said == []
+        assert session.speech_created().interrupted is False
+
+    asyncio.run(_run())
+
+
+def test_command_claim_gate_rearms_on_the_next_user_turn():
+    import skills
+
+    async def _run():
+        tool = _GateTool("open_screen", skills.app_control._NOT_NAVIGATED)
+        session, _dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: len(session.said) == 1)
+        assert session.speech_created().interrupted is True
+
+        # A fresh finalized turn re-arms: ordinary chat is never suppressed.
+        session.user_turn("how are you today")
+        await asyncio.sleep(0.05)
+        assert session.speech_created().interrupted is False
+
+        # And a second unconfirmed command earns its own honest line.
+        session.user_turn("open the models page")
+        await _drain_until(lambda: len(session.said) == 2)
+        assert session.speech_created().interrupted is True
+
+    asyncio.run(_run())
+
+
+def test_command_claim_gate_latches_when_the_execution_itself_fails():
+    async def _run():
+        tool = _GateTool("open_screen", RuntimeError("firestore down"))
+        session, dedupe = _gate_relay([tool])
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(session.said))
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE]
+        assert session.speech_created().interrupted is True
+        # The dead claim is dropped, so nothing replays an exception.
+        assert dedupe.lookup("open_screen") is None
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Reconnect silence: once ``reconnect_voice`` has queued the reconnect, the
+# old session must say NOTHING about it (founder, 2026-11-03 — its
+# "reconnecting now…" narration was cut off mid-sentence by the teardown).
+# The claim gate's silence latch suppresses the model's narration for the
+# rest of the turn and speaks no line of its own; the continuation session
+# confirms the switch after the reconnect (see the _open_main_call tests).
+# ---------------------------------------------------------------------------
+
+
+def test_reconnect_queued_scopes_the_silence_latch():
+    import skills
+
+    queued = skills.set_model_stack._RECONNECT_QUEUED_RESULT
+    assert agent._reconnect_queued("reconnect_voice", queued)
+    # The staying-up outcomes are the model's to narrate.
+    assert not agent._reconnect_queued(
+        "reconnect_voice",
+        "You're already reconnecting onto your updated setup — give it a "
+        "moment. No need to reconnect again.",
+    )
+    assert not agent._reconnect_queued(
+        "reconnect_voice",
+        "There's no live voice call to reconnect right now — your saved "
+        "changes will apply on your next voice call.",
+    )
+    # Other tools are out of scope entirely.
+    assert not agent._reconnect_queued("open_screen", queued)
+    assert not agent._reconnect_queued("reconnect_voice", None)
+
+
+def test_claim_gate_silences_the_turn_a_reconnect_is_queued():
+    import skills
+
+    async def _run():
+        session, dedupe = _gate_relay([])
+        # Exactly what the dedupe wrapper does with a model-initiated call's
+        # settled result.
+        dedupe.outcome_observer(
+            "reconnect_voice", skills.set_model_stack._RECONNECT_QUEUED_RESULT
+        )
+        # No line from the gate, and the model's narration is suppressed.
+        assert session.said == []
+        assert session.speech_created().interrupted is True
+
+        # The next finalized turn re-arms: ordinary chat is never suppressed.
+        session.user_turn("thanks, that worked")
+        await asyncio.sleep(0.05)
+        assert session.speech_created().interrupted is False
+
+    asyncio.run(_run())
+
+
+def test_claim_gate_ignores_other_reconnect_outcomes():
+    async def _run():
+        session, dedupe = _gate_relay([])
+        dedupe.outcome_observer(
+            "reconnect_voice",
+            "There's no live voice call to reconnect right now — your saved "
+            "changes will apply on your next voice call.",
+        )
+        await asyncio.sleep(0.05)
+        assert session.said == []
+        assert session.speech_created().interrupted is False
+
+    asyncio.run(_run())
+
+
+class _NoAckStore(_CmdStore):
+    """A dead client: commands queue, acks never land."""
+
+    def __setitem__(self, key, value):
+        if key == self._pending and isinstance(value, dict) and value.get("id"):
+            self.queued.append(dict(value))
+            dict.__setitem__(self, key, value)
+            return
+        super().__setitem__(key, value)
+
+
+def test_command_claim_gate_dead_client_end_to_end(monkeypatch):
+    """The real tools against a client that never acks — the 22:03 shape:
+    the command queues, the ack wait times out, the gate speaks the truth
+    and suppresses the model's narration, on the deterministic path AND on
+    a fresh model-initiated call alike."""
+    import skills
+
+    db = _CmdDb("u1")
+    db.store = _NoAckStore("u1")
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+    monkeypatch.setattr(skills.app_control, "_ACK_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(skills.app_control, "_ACK_POLL_SECONDS", 0.05)
+    dedupe = skills.VoiceTurnDedupe()
+    session = _GateSession()
+    tools = agent._session_tools(_CmdCtx(), "u1", dedupe=dedupe)
+    by_name = agent._tools_by_name(tools)
+    agent.relay_voice_commands(session, tools, dedupe)
+
+    async def _run():
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(session.said), timeout=10.0)
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE]
+        assert session.speech_created().interrupted is True
+        assert db.store.queued and db.store.queued[0]["screen"] == "voice_preference"
+
+        # A fresh model-initiated call on the next turn is gated the same
+        # way, through the dedupe wrapper's outcome observer.
+        session.user_turn("thanks")
+        result = await by_name["open_screen"](screen="voice_preference")
+        assert result == skills.app_control._NOT_NAVIGATED
+        assert session.said == [agent._COMMAND_NOT_CONFIRMED_LINE] * 2
+        assert session.speech_created().interrupted is True
+
+    asyncio.run(_run())

@@ -2,8 +2,13 @@
 
 One short spoken sample per built-in voice preset ("Hi, I'm Ayma…") so a user
 can hear a preset before choosing it. Generated on first request and then cached
-forever in the app's Storage bucket at ``voice_previews/{voice_name}.wav`` —
-cheap: at most one Gemini TTS call per preset, ever.
+forever in the app's Storage bucket at ``voice_previews/{voice_name}.wav``.
+
+Generation is DISABLED (founder rule 2026-11-04 — see
+``docs/DIRECT_GOOGLE_KILL_AUDIT.md`` item 5): TTS previews need the
+direct-Google TTS model, which the LiveKit gateway does not serve.
+:func:`preview_url` still serves already-cached clips; an uncached preset
+fails honestly (the endpoint maps it to a 502).
 
 The sample script lives in ``prompts/voice_preview.txt`` (AGENTS.md — no
 prompt/script text inline in code); the TTS model id comes only from
@@ -13,62 +18,17 @@ prompt/script text inline in code); the TTS model id comes only from
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import uuid
-import wave
-from functools import lru_cache
-from pathlib import Path
 from urllib.parse import quote
 
-from google.genai import types
-
-import gemini
+import llm_routing
 import voices
 from config import CONFIG
 
 logger = logging.getLogger("ayma.voice_preview")
 
-_PROMPT_PATH = Path(__file__).parent / "prompts" / "voice_preview.txt"
 _STORAGE_PREFIX = "voice_previews"
-
-# Gemini TTS returns single-channel signed-16-bit little-endian PCM at 24 kHz;
-# it needs a WAV container to be playable in the app.
-_PCM_RATE = 24_000
-_PCM_CHANNELS = 1
-_PCM_SAMPLE_WIDTH = 2  # bytes (16-bit)
-
-
-@lru_cache(maxsize=1)
-def preview_script() -> str:
-    """The fixed sample line, loaded from ``prompts/voice_preview.txt``."""
-    text = _PROMPT_PATH.read_text(encoding="utf-8").strip()
-    if not text:
-        raise RuntimeError(f"empty voice preview script at {_PROMPT_PATH}")
-    return text
-
-
-def _rate_from_mime(mime: str | None) -> int:
-    """Pull the sample rate out of a ``audio/L16;codec=pcm;rate=24000`` mime,
-    falling back to the documented 24 kHz."""
-    for part in (mime or "").split(";"):
-        part = part.strip()
-        if part.startswith("rate="):
-            try:
-                return int(part[len("rate=") :])
-            except ValueError:
-                break
-    return _PCM_RATE
-
-
-def _pcm_to_wav(pcm: bytes, rate: int) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wav:
-        wav.setnchannels(_PCM_CHANNELS)
-        wav.setsampwidth(_PCM_SAMPLE_WIDTH)
-        wav.setframerate(rate)
-        wav.writeframes(pcm)
-    return buf.getvalue()
 
 
 def _bucket():
@@ -116,35 +76,13 @@ def _store(voice_name: str, wav_bytes: bytes) -> str:
 
 
 async def _synthesize(voice_name: str) -> bytes:
-    """Run the Gemini TTS model for ``voice_name`` and return playable WAV
-    bytes. Reuses ``gemini``'s Vertex/dev client + backed-off retry wrapper."""
-    response = await gemini._generate(
-        gemini._client(),
-        model=CONFIG.gemini_tts_model,
-        contents=preview_script(),
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=voice_name
-                    )
-                )
-            ),
-        ),
+    """DISABLED: generating a new TTS preview needs the direct-Google TTS
+    model, which the LiveKit gateway does not serve. Raises instead of
+    calling Google (cached clips still serve via :func:`preview_url`)."""
+    raise llm_routing.DirectGoogleDisabledError(
+        "voice preview generation is unavailable: TTS needs direct Google, "
+        "which is disabled — all inference goes through LiveKit"
     )
-    try:
-        inline = response.candidates[0].content.parts[0].inline_data
-        audio = inline.data
-    except (AttributeError, IndexError, TypeError) as exc:
-        raise RuntimeError("Gemini TTS returned no audio part") from exc
-    if not audio:
-        raise RuntimeError("Gemini TTS returned empty audio")
-
-    mime = (getattr(inline, "mime_type", "") or "").lower()
-    if "wav" in mime:
-        return audio
-    return _pcm_to_wav(audio, _rate_from_mime(mime))
 
 
 async def preview_url(voice_name: str) -> str:

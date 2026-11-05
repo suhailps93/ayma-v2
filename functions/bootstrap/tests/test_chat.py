@@ -1662,3 +1662,186 @@ def test_chat_switch_brain_is_deterministic_regardless_of_active_brain(monkeypat
     assert r.status_code == 200
     assert r.json().get("reply")  # a confirmation was returned
     assert called["model"] is False  # handled deterministically; model never ran
+
+
+# --- Early (pre-model) turns must persist their pair ------------------------
+# _prepare_chat answers some turns WITHOUT the model — turn cap,
+# deterministic stack switch, deterministic nav, named-profile. Those early
+# returns used to bypass _persist_user_turn/_finalize_chat entirely, so the
+# user+assistant pair never landed in chat history and vanished on relaunch
+# (Scout observation, 2026-11-03). _persist_early_turn now finalizes them
+# with the model path's shape; these tests prove the pair survives a reload
+# (a fresh chat_history.recent read against the same db).
+
+
+def _reloaded_pairs(db, uid="test-uid"):
+    import main
+
+    page = main.chat_history.recent(db, uid)
+    return [(m["role"], m["text"]) for m in page["messages"]]
+
+
+def test_chat_deterministic_nav_turn_survives_a_history_reload(monkeypatch):
+    import main
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    async def _run_nav(_db, _uid, _dest):
+        return "Opening Explore for you."
+
+    monkeypatch.setattr(main.app_control_mod, "run_app_command", _run_nav)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "open Explore",
+            "client_msg_id": "cm-nav-1",
+            "session_id": "sess-nav",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == "Opening Explore for you."
+    pairs = _reloaded_pairs(db)
+    assert pairs.count(("user", "open Explore")) == 1, pairs
+    assert pairs.count(("ayma", "Opening Explore for you.")) == 1, pairs
+    # user turn lands before its reply
+    assert pairs.index(("user", "open Explore")) < pairs.index(
+        ("ayma", "Opening Explore for you.")
+    )
+
+    # A retry of the same send is answered from the persisted reply and does
+    # NOT write the pair a second time.
+    retry = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "open Explore",
+            "client_msg_id": "cm-nav-1",
+            "session_id": "sess-nav",
+        },
+    )
+    assert retry.status_code == 200
+    assert retry.json()["duplicate"] is True
+    pairs = _reloaded_pairs(db)
+    assert pairs.count(("user", "open Explore")) == 1, pairs
+    assert pairs.count(("ayma", "Opening Explore for you.")) == 1, pairs
+
+
+def test_chat_named_profile_turn_survives_a_history_reload(monkeypatch):
+    import main
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    async def _run_profile(_db, _uid, name):
+        assert name == "Sofia"
+        return "Opening Sofia Marino's profile for you."
+
+    monkeypatch.setattr(main.app_control_mod, "run_profile_command", _run_profile)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "open Sofia's profile",
+            "client_msg_id": "cm-prof-1",
+            "session_id": "sess-prof",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == "Opening Sofia Marino's profile for you."
+    pairs = _reloaded_pairs(db)
+    assert pairs.count(("user", "open Sofia's profile")) == 1, pairs
+    assert pairs.count(("ayma", "Opening Sofia Marino's profile for you.")) == 1, pairs
+
+
+def test_chat_stack_switch_turn_persists(monkeypatch):
+    import main
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    async def _run_stack(_db, _uid, *_args):
+        return "Done — switched your brain to Meta Muse Spark."
+
+    monkeypatch.setattr(main.set_model_stack, "run_stack_command", _run_stack)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "change the brain to meta",
+            "client_msg_id": "cm-stack-1",
+            "session_id": "sess-stack",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == "Done — switched your brain to Meta Muse Spark."
+    pairs = _reloaded_pairs(db)
+    assert pairs.count(("user", "change the brain to meta")) == 1, pairs
+    assert pairs.count(
+        ("ayma", "Done — switched your brain to Meta Muse Spark.")
+    ) == 1, pairs
+
+
+def test_chat_capped_turn_persists_its_pair(monkeypatch):
+    import main
+    from tests.fake_firestore import FakeDb
+    from turn_caps import TurnCapResult
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    class _Caps:
+        @staticmethod
+        def evaluate(_db, _uid, _mode):
+            return TurnCapResult(False, "tap get started", False, "marketing", 11, 10)
+
+    monkeypatch.setattr(main, "turn_caps", _Caps)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "still here?",
+            "client_msg_id": "cm-cap-1",
+            "session_id": "sess-cap",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["capped"] is True
+    assert body["reply"] == "tap get started"
+    pairs = _reloaded_pairs(db)
+    assert pairs.count(("user", "still here?")) == 1, pairs
+    assert pairs.count(("ayma", "tap get started")) == 1, pairs
+
+
+def test_chat_stream_deterministic_nav_turn_persists(monkeypatch):
+    import main
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    async def _run_nav(_db, _uid, _dest):
+        return "Opening Explore for you."
+
+    monkeypatch.setattr(main.app_control_mod, "run_app_command", _run_nav)
+    resp = client.post(
+        "/chat/stream",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "open Explore",
+            "client_msg_id": "cm-nav-s1",
+            "session_id": "sess-nav-s",
+        },
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert len(events) == 1 and events[0]["type"] == "reply"
+    assert events[0]["reply"] == "Opening Explore for you."
+    pairs = _reloaded_pairs(db)
+    assert pairs.count(("user", "open Explore")) == 1, pairs
+    assert pairs.count(("ayma", "Opening Explore for you.")) == 1, pairs

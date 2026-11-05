@@ -273,56 +273,27 @@ def test_moderation_rejection_is_never_uploaded(monkeypatch):
 # --------------------------------------------------------------------- billing
 
 
-def test_gemini_generate_image_meters_the_real_model_and_feature(monkeypatch):
-    """Ledger row shape: gemini.generate_image records through token_ledger
-    with the ACTUAL image model id and the caller's feature key — the same
-    record() path edit_image (photo_edit) meters through."""
-    import types as pytypes
-
+def test_gemini_generate_image_is_disabled_and_meters_nothing(monkeypatch):
+    """Image generation is disabled with the direct-Google kill (founder rule
+    2026-11-04): it raises instead of calling the image model, and a call
+    that never runs meters nothing."""
     import gemini as gemini_mod
-    from config import CONFIG
+    import llm_routing
 
-    inline = pytypes.SimpleNamespace(data=b"IMGBYTES", mime_type="image/png")
-    response = pytypes.SimpleNamespace(
-        candidates=[
-            pytypes.SimpleNamespace(
-                content=pytypes.SimpleNamespace(
-                    parts=[pytypes.SimpleNamespace(inline_data=inline)]
-                )
-            )
-        ],
-        text="",
-    )
-
-    seen: dict = {}
-
-    async def fake_generate(client, *, model, contents, config):
-        seen["model"] = model
-        seen["contents"] = contents
-        return response
-
-    monkeypatch.setattr(gemini_mod, "_generate", fake_generate)
-    monkeypatch.setattr(gemini_mod, "_client", lambda: object())
+    recorded = []
     monkeypatch.setattr(gemini_mod.token_ledger, "check", lambda uid: None)
+    monkeypatch.setattr(
+        gemini_mod.token_ledger, "record",
+        lambda *a, **k: recorded.append((a, k)),
+    )
 
-    def fake_record(uid, feature, resp, *, model=None, session_id=None):
-        seen["record"] = (uid, feature, model)
-
-    monkeypatch.setattr(gemini_mod.token_ledger, "record", fake_record)
-
-    out = asyncio.run(
-        gemini_mod.generate_image(
-            "a caricature", uid="u9", feature=token_ledger.FEATURE_IMAGE_GEN
+    with pytest.raises(llm_routing.DirectGoogleDisabledError):
+        asyncio.run(
+            gemini_mod.generate_image(
+                "a caricature", uid="u9", feature=token_ledger.FEATURE_IMAGE_GEN
+            )
         )
-    )
-
-    assert out == (b"IMGBYTES", "image/png")
-    assert seen["model"] == CONFIG.gemini_image_edit_model
-    assert seen["record"] == (
-        "u9", token_ledger.FEATURE_IMAGE_GEN, CONFIG.gemini_image_edit_model
-    )
-    # Pure generation: no input photo part, just the prompt.
-    assert seen["contents"] == ["a caricature"]
+    assert recorded == []
 
 
 def test_cost_usd_for_image_gen_prices_image_output():

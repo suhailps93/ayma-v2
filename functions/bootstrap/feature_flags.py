@@ -51,12 +51,10 @@ ROUTES = ("vertex", "inference")
 VOICE_PROVIDERS = ("google", "inference")
 ROUTE_GROUPS = ("json", "vision", "chat", "voice")
 
-# Flags the demo/judge ``all_flags_on_uids`` override must NEVER force ON:
-# forcing them would arm an off-LiveKit (direct-Google) inference path, which
-# the founder has permanently banned (see AGENT_ALL inference-on-LiveKit rule,
-# routing-audit H11). ``llm_fallback_to_google`` makes a gateway 429 silently
-# retry on direct Google — exactly the banned off-LiveKit spend. These flags
-# resolve normally (env/Firestore/default) even for an all-flags-on uid.
+# Flags the demo/judge ``all_flags_on_uids`` override must NEVER force ON.
+# (Kept as a guardrail even though ``llm_fallback_to_google`` is INERT since
+# the 2026-11-04 direct-Google kill: if anyone ever re-honors it, the denylist
+# still stops an all-flags-on uid from arming an off-LiveKit path.)
 ALL_FLAGS_ON_DENYLIST = frozenset({"llm_fallback_to_google"})
 
 
@@ -70,18 +68,25 @@ class Flag:
 
 
 def _route_flags() -> list[Flag]:
+    # INERT since the 2026-11-04 direct-Google kill: llm_routing always
+    # resolves to Inference and never falls back, whatever these say. Kept so
+    # old Firestore/env values validate and stay visible (never re-honor them).
     out: list[Flag] = []
     for g in ("json", "vision", "chat"):
         out.append(Flag(f"llm_route_{g}", "route", f"llm_route_{g}",
-                        f"{g} jobs: 'inference' (LiveKit Inference) or 'vertex'"))
+                        f"INERT (kill 2026-11-04): {g} jobs always run on "
+                        "LiveKit Inference"))
     out.append(Flag("voice_provider", "provider", "voice_provider",
-                    "voice backend: 'inference' (LiveKit Inference) or 'google'"))
+                    "INERT (kill 2026-11-04): voice always runs on LiveKit "
+                    "Inference"))
     for g in ROUTE_GROUPS:
         out.append(Flag(f"llm_percent_{g}", "percent", f"llm_percent_{g}",
-                        f"share (0-100) of {g} calls sent to Inference"))
+                        f"INERT (kill 2026-11-04): {g} always sends 100% to "
+                        "Inference"))
     for g in ROUTE_GROUPS:
         out.append(Flag(f"llm_allowlist_{g}", "list", None,
-                        f"uids restricted to Inference for {g} (empty = everyone)",
+                        f"INERT (kill 2026-11-04): no allowlist, everyone is "
+                        f"on Inference for {g}",
                         default=()))
     return out
 
@@ -90,9 +95,11 @@ REGISTRY: dict[str, Flag] = {
     f.name: f
     for f in _route_flags() + [
         Flag("llm_fallback_to_google", "bool", "llm_inference_fallback",
-             "on an Inference failure, retry on Google instead of failing loudly"),
+             "INERT (kill 2026-11-04): an Inference failure always surfaces, "
+             "never retries on Google"),
         Flag("maps_grounding", "bool", "gemini_maps_grounding",
-             "Google Maps grounding in text chat"),
+             "INERT (kill 2026-11-04): Maps grounding only existed on the "
+             "direct-Google path"),
         Flag("deepdive_public_profiles", "bool", "deepdive_public_profiles",
              "deep-dive public social-profile photo discovery"),
         Flag("deepdive_validate_links", "bool", None,

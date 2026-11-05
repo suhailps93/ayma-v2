@@ -399,6 +399,11 @@ class _PlanScreenState extends State<PlanScreen> {
         onPressed: _busy ? null : () => _devTestUpgrade(p),
       );
     }
+    // Only a plan resolved from a live store entitlement may be passed as
+    // `replacing`: Google Play rejects a plan change when there is no
+    // existing store subscription to replace (DEVELOPER_ERROR). A plan that
+    // only the backend reports (no live store subscription) buys fresh.
+    final replacing = s.fromStore ? s.productId : null;
     final unavailable = _unavailable(p);
     return (
       label: label,
@@ -406,7 +411,7 @@ class _PlanScreenState extends State<PlanScreen> {
       onPressed: unavailable == null && !_busy
           ? () => _run(
               () =>
-                  _rc.purchase(p, replacing: s.productId, isUpgrade: isUpgrade),
+                  _rc.purchase(p, replacing: replacing, isUpgrade: isUpgrade),
               success: '${p.name} is active.',
               empty: '',
             )

@@ -12,7 +12,7 @@ Inference-vs-Vertex routing table are in `docs/ARCHITECTURE.md` section 0.
 0. **Per-uid demo override** (bool flags only): when `resolve(name, uid)` is called with a `uid` in `CONFIG.all_flags_on_uids`, every boolean flag resolves `True` (source `user_override`) — see "Per-uid all-flags-on override" below. Never touches the global doc.
 1. `FLAG_<NAME>` environment variable (local dev, tests, emergency pin), e.g. `FLAG_MAPS_GROUNDING=false`.
 2. `config/feature_flags` -> `<name>`.
-3. Legacy docs, still honoured: `config/llm_routing` (`json|vision|chat|voice` groups, `fallback`) and `app_config/sentry` (`enabled`).
+3. Legacy docs, still read: `config/llm_routing` (`json|vision|chat|voice` groups, `fallback`) and `app_config/sentry` (`enabled`). Note: routing no longer honors `config/llm_routing` values since the 2026-11-04 direct-Google kill (everything is Inference-only) — the doc is retained for visibility only.
 4. Code default in `config.py` (fed by the old per-flag env vars such as `LLM_ROUTE_JSON`).
 
 A wrong-typed value is logged and ignored (next layer applies). An unreadable Firestore keeps the last good doc.
@@ -21,14 +21,14 @@ A wrong-typed value is logged and ignored (next layer applies). An unreadable Fi
 
 | Flag | Type | Default (this branch) | Controls |
 |---|---|---|---|
-| `llm_route_json` | `inference`/`vertex` | `inference` | text JSON jobs (matching, wiki, icebreakers, ...) |
-| `llm_route_vision` | `inference`/`vertex` | `inference` | JSON jobs with images / wav / mp3 |
-| `llm_route_chat` | `inference`/`vertex` | `inference` | text chat turn incl. function calling |
-| `voice_provider` | `inference`/`google` | `inference` | voice agent backend (LiveKit Inference realtime vs Google Live) |
-| `llm_percent_json` / `_vision` / `_chat` / `_voice` | 0-100 | 100 | share of calls sent to Inference when the route is `inference` |
-| `llm_allowlist_json` / `_vision` / `_chat` / `_voice` | uid list | empty | non-empty = only these uids use Inference |
-| `llm_fallback_to_google` | bool | **false** | on an Inference failure retry on Google. Off = the error is logged at ERROR and raised, no silent fallback. Other branches keep it on. **Denylisted from the per-uid all-flags-on override** (`feature_flags.ALL_FLAGS_ON_DENYLIST`, routing-audit H11): a demo/judge uid never force-enables it, because a forced-on Google fallback is a banned off-LiveKit path. |
-| `maps_grounding` | bool | true | Google Maps grounding in text chat |
+| `llm_route_json` | `inference`/`vertex` | `inference` | **INERT since the 2026-11-04 direct-Google kill** — text JSON jobs always run on LiveKit Inference (see `docs/DIRECT_GOOGLE_KILL_AUDIT.md`) |
+| `llm_route_vision` | `inference`/`vertex` | `inference` | **INERT since the 2026-11-04 kill** — vision JSON jobs always run on LiveKit Inference |
+| `llm_route_chat` | `inference`/`vertex` | `inference` | **INERT since the 2026-11-04 kill** — the text chat turn always runs on LiveKit Inference |
+| `voice_provider` | `inference`/`google` | `inference` | **INERT since the 2026-11-04 kill** — voice always runs on the LiveKit Inference realtime model |
+| `llm_percent_json` / `_vision` / `_chat` / `_voice` | 0-100 | 100 | **INERT since the 2026-11-04 kill** — every group always sends 100% to Inference |
+| `llm_allowlist_json` / `_vision` / `_chat` / `_voice` | uid list | empty | **INERT since the 2026-11-04 kill** — no allowlist, everyone is on Inference |
+| `llm_fallback_to_google` | bool | **false** | **INERT since the 2026-11-04 kill** — an Inference failure always surfaces, never retries on Google. **Denylisted from the per-uid all-flags-on override** (`feature_flags.ALL_FLAGS_ON_DENYLIST`, routing-audit H11) as a guardrail in case anyone ever re-honors it. |
+| `maps_grounding` | bool | true | **INERT since the 2026-11-04 kill** — Maps grounding only existed on the direct-Google path |
 | `deepdive_public_profiles` | bool | true | deep-dive public social-profile photo discovery |
 | `deepdive_validate_links` | bool | true | validate every deep-dive link (404, soft-404, dead host dropped; login-walled profiles kept only when grounded) before it is stored or shown |
 | `deepdive_blocked_regions` | string list | `illinois, texas, eu` | region keys (`illinois`, `texas`, `washington`, `eu`; mapped to cities/states/countries/codes in `region_data.json`) for which that step is skipped |
@@ -51,8 +51,8 @@ no global flag, so no other account is affected.
 
 Flags in `feature_flags.ALL_FLAGS_ON_DENYLIST` are **exempt** from this override
 even though they are bools — currently `llm_fallback_to_google` (routing-audit
-H11): forcing it on would arm a silent off-LiveKit direct-Google retry on a
-gateway 429, which is permanently banned, so it always resolves normally.
+H11, kept as a guardrail although the flag is INERT since the 2026-11-04
+direct-Google kill): it always resolves normally.
 
 The override only applies where a call site passes a `uid`. User-facing gates with
 a uid in hand (e.g. the deep-dive public-profiles gate) honour it; a few uid-less
@@ -121,8 +121,8 @@ Opt-in cascade TTS/STT via the official `livekit-plugins-cartesia` (`==1.8.9` in
 
 ```
 python3 scripts/flags.py list                              # effective value + source of every flag
-python3 scripts/flags.py set maps_grounding=false --yes    # without --yes it is a dry run
-python3 scripts/flags.py set llm_fallback_to_google=true llm_route_chat=vertex --yes
+python3 scripts/flags.py set qloo_enabled=false --yes      # without --yes it is a dry run
+python3 scripts/flags.py set deepdive_validate_links=false --yes
 python3 scripts/flags.py rollback --yes                    # one line: restore the values from before the last write
 python3 scripts/flags.py history
 python3 scripts/flags.py load scripts/feature_flags.seed.json --yes   # first-time seed

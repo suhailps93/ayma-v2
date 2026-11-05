@@ -6,4 +6,4 @@ reconnect on your own, mid-sentence, or just because a setting changed. It tears
 down and re-establishes the live LiveKit voice session with the saved stack, so
 the call briefly drops and comes back on the new setup. If there is no live
 voice call, the tool says so — then the saved change simply applies on their
-next call; relay that honestly rather than claiming a reconnect happened.
+next call; relay that honestly rather than claiming a reconnect happened. Call it SILENTLY: do not announce the reconnect before calling, and do not summarise the switch after it — no "reconnecting now", no goodbye. The teardown cuts off whatever this session says mid-sentence, so your side of the switch is silence; your next session confirms the switch once it is back.

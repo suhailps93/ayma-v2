@@ -6,6 +6,7 @@ the "Ayma's models" screen writes, and reconnect_voice drives the client command
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -211,6 +212,57 @@ def test_failed_reconnect_does_not_mark_so_a_later_reconnect_still_works(monkeyp
     assert (db.store.get(_PROFILE) or {}).get("ayma_reconnect_requested_at") is None
 
 
+# --- the post-reconnect announcement claim ------------------------------------
+#
+# A queued reconnect arms a one-shot announcement: the OLD session stays
+# silent (agent.py's claim gate), and the continuation session claims this
+# to speak the one "I'm back" line at open. The claim must fire exactly
+# once, only while the reconnect is fresh, and never for a plain fresh call.
+
+
+def test_a_queued_reconnect_arms_the_announcement_and_it_claims_once():
+    db = _Db(ok=True)
+    msg = _run(set_model_stack._bind_reconnect_voice(db, "u1")())
+    assert msg == set_model_stack._RECONNECT_QUEUED_RESULT
+    profile = db.store[_PROFILE]
+    assert profile["ayma_reconnect_announce_pending"] is True
+    assert profile["ayma_reconnect_requested_at"] > 0
+
+    # The continuation session claims it — exactly once.
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is True
+    assert db.store[_PROFILE]["ayma_reconnect_announce_pending"] is False
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+
+
+def test_no_announcement_is_claimed_on_a_fresh_call():
+    # Nothing was ever marked: a plain session open must not claim.
+    db = _Db(ok=True)
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+    assert set_model_stack.claim_reconnect_announcement(db, "") is False
+
+
+def test_a_failed_reconnect_arms_no_announcement(monkeypatch):
+    monkeypatch.setattr(app_control, "_ACK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(app_control, "_ACK_POLL_SECONDS", 0.01)
+    db = _Db(ok=False)  # no live call — nothing was reconnected
+    _run(set_model_stack._bind_reconnect_voice(db, "u1")())
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+
+
+def test_a_stale_announcement_is_cleared_not_claimed():
+    # The reconnect was queued long ago but its continuation never opened
+    # (or this is a much later call): the flag must not fire the line now.
+    db = _Db(ok=True)
+    db.store[_PROFILE] = {
+        "ayma_reconnect_requested_at": (
+            time.time() - set_model_stack._RECONNECT_ANNOUNCE_WINDOW_SECONDS - 60
+        ),
+        "ayma_reconnect_announce_pending": True,
+    }
+    assert set_model_stack.claim_reconnect_announcement(db, "u1") is False
+    assert db.store[_PROFILE]["ayma_reconnect_announce_pending"] is False
+
+
 # --- registration -------------------------------------------------------------
 
 
@@ -389,3 +441,122 @@ def test_all_model_stack_tools_are_registered_for_text_and_voice():
 
     reg = {s.name for s in skills._REGISTRY}
     assert expected <= reg
+
+
+# --- set_voice_brain (the brain under Voice) ---------------------------------
+#
+# The two-brain fix (founder, 2026-11-03): an "under voice" ask must reach the
+# CASCADE voice brain (open weights included when enabled), never the main
+# brain's catalog, and the two settings must never bleed into each other.
+
+
+def test_detect_under_voice_open_weights_routes_to_voice_brain():
+    # The founder's verbatim Beat-7 / live phrasings.
+    assert set_model_stack.detect_stack_command(
+        "Under voice, can you change the brain to open weight model?"
+    ) == ("set_voice_brain", voice_catalog.BRAIN_OPEN_WEIGHTS)
+    assert set_model_stack.detect_stack_command(
+        "under Voice, switch the brain to the open-weights model"
+    ) == ("set_voice_brain", voice_catalog.BRAIN_OPEN_WEIGHTS)
+
+
+def test_detect_voice_brain_muse_routes_to_voice_brain():
+    assert set_model_stack.detect_stack_command(
+        "switch the voice brain to Muse"
+    ) == ("set_voice_brain", voice_catalog.BRAIN_META)
+
+
+def test_detect_bare_brain_stays_main_brain():
+    assert set_model_stack.detect_stack_command(
+        "switch my brain to Muse"
+    ) == ("set_brain", "meta")
+
+
+def test_set_voice_brain_meta_persists_cascade_brain_and_mode():
+    db = _Db()
+    msg = _run(set_model_stack._bind_set_voice_brain(db, "u1")("Muse"))
+    prof = db.store[_PROFILE]
+    assert prof[schema.PF_AYMA_CASCADE_BRAIN] == voice_catalog.BRAIN_META
+    assert prof[schema.PF_AYMA_VOICE_MODE] == "cascade"
+    assert schema.PF_AYMA_BRAIN_MODEL not in prof  # main brain untouched
+    assert "voice brain" in msg and "main brain is unchanged" in msg
+
+
+def test_set_voice_brain_open_weights_persists_when_enabled():
+    if not voice_catalog.CONFIG.open_weights_api_base_url:
+        pytest.skip("open weights not configured in this environment")
+    db = _Db()
+    msg = _run(set_model_stack._bind_set_voice_brain(db, "u1")("open weights"))
+    prof = db.store[_PROFILE]
+    assert prof[schema.PF_AYMA_CASCADE_BRAIN] == voice_catalog.BRAIN_OPEN_WEIGHTS
+    assert "Llama" in msg and "brain under Voice" in msg
+
+
+def test_open_weights_voice_brain_not_offered_when_disabled(monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(
+        voice_catalog, "CONFIG",
+        dataclasses.replace(
+            voice_catalog.CONFIG, open_weights_api_base_url=""),
+    )
+    voice_catalog.clear_cache()
+    try:
+        brain_id, reason = set_model_stack._resolve_voice_brain("open weights")
+        assert brain_id is None
+        offered = reason.rsplit("voice brains are:", 1)[-1]
+        assert "Llama" not in offered and "open" not in offered.lower()
+        ctx = set_model_stack.model_stack_context(_Db(), "u1")
+        assert "Llama 3.1 8B" not in ctx
+    finally:
+        voice_catalog.clear_cache()
+
+
+def test_run_stack_command_voice_brain_end_to_end():
+    db = _Db()
+    msg = _run(set_model_stack.run_stack_command(
+        db, "u1", "set_voice_brain", voice_catalog.BRAIN_META))
+    assert db.store[_PROFILE][schema.PF_AYMA_CASCADE_BRAIN] == voice_catalog.BRAIN_META
+    assert "voice brain" in msg
+
+
+def test_model_stack_context_carries_both_brains_with_current_values():
+    db = _Db()
+    db.store[_PROFILE] = {
+        schema.PF_AYMA_BRAIN_MODEL: "gemini",
+        schema.PF_AYMA_VOICE_MODE: "cascade",
+        schema.PF_AYMA_CASCADE_BRAIN: voice_catalog.BRAIN_META,
+    }
+    ctx = set_model_stack.model_stack_context(db, "u1")
+    assert "Main brain" in ctx and "Gemini" in ctx
+    assert "brain under Voice" in ctx and "Meta Muse Spark" in ctx
+    if voice_catalog.CONFIG.open_weights_api_base_url:
+        assert "Llama 3.1 8B" in ctx  # enabled -> offered as a voice brain
+
+
+def test_open_weights_voice_brain_offered_and_persists_when_enabled(monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(
+        voice_catalog, "CONFIG",
+        dataclasses.replace(
+            voice_catalog.CONFIG,
+            open_weights_api_base_url="http://localhost:0/v1"),
+    )
+    voice_catalog.clear_cache()
+    try:
+        brain_id, reason = set_model_stack._resolve_voice_brain("open weights")
+        assert brain_id == voice_catalog.BRAIN_OPEN_WEIGHTS, reason
+        db = _Db()
+        msg = _run(set_model_stack.run_stack_command(
+            db, "u1", *set_model_stack.detect_stack_command(
+                "under Voice, switch the brain to the open-weights model")))
+        prof = db.store[_PROFILE]
+        assert prof[schema.PF_AYMA_CASCADE_BRAIN] == voice_catalog.BRAIN_OPEN_WEIGHTS
+        assert prof[schema.PF_AYMA_VOICE_MODE] == "cascade"
+        assert schema.PF_AYMA_BRAIN_MODEL not in prof
+        assert "Llama" in msg
+        ctx = set_model_stack.model_stack_context(_Db(), "u1")
+        assert "Llama 3.1 8B" in ctx  # enabled -> offered in her context
+    finally:
+        voice_catalog.clear_cache()

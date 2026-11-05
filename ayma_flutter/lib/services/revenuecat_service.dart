@@ -429,8 +429,12 @@ class RevenueCatService {
 
   /// Buys [plan]. With [replacing] (the product id of the active plan) on
   /// Android this is a plan change: upgrades apply now with the unused time
-  /// prorated, downgrades take effect at the next renewal. A user-cancelled
-  /// flow is [PurchaseOutcome.cancelled]; any other failure throws
+  /// prorated, downgrades take effect at the next renewal. Callers must only
+  /// pass [replacing] for a product id backed by a live store entitlement
+  /// (see [SubscriptionStatus.fromStore]); with no live store subscription
+  /// there is nothing to replace and Play rejects the change, so pass null
+  /// for a plain new purchase instead. A user-cancelled flow is
+  /// [PurchaseOutcome.cancelled]; any other failure throws
   /// [PurchaseFailure].
   Future<PurchaseOutcome> purchase(
     PlanOption plan, {

@@ -20,14 +20,14 @@ region, project id, bucket, `LIVEKIT_URL`) stays as plain env vars per §12.3.
 | `DEV_PANEL_PASSWORD` | ayma-api | Password for `POST /dev/verify` (unlock the app's Developer panel contents). Compared server-side in constant time, never logged; unset = refused (503) |
 | `REVENUECAT_WEBHOOK_SECRET` | ayma-api | Shared secret RevenueCat sends in the `Authorization` header of `POST /webhooks/revenuecat` (mounted by `scripts/deploy-api.sh --full`; the endpoint returns 403 to everything without it). Put the same value in the RevenueCat webhook config. Plans: free ($5 one-time start grant = 500 credits, then 100 credits/day UTC, no rollover), `ayma_plus_monthly` (700 credits), `ayma_pro_monthly` (1400), `ayma_max_monthly` (8000); 1 credit = $0.01 of token cost (`CREDITS_PER_USD`) |
 | `INSTAGRAM_APP_SECRET` | ayma-api | Meta app secret (§8.6). Placeholder until an Instagram app is registered (V2). `instagram/*` returns 404 while the `meta_integrations` flag is off, and 503 while `INSTAGRAM_APP_ID` is unset |
-| `GOOGLE_API_KEY` | ayma-agent | Gemini Developer API key. Voice runs `gemini-3.8-live`, which is Developer-API-only (Vertex has no Live 3.x) and only authenticates with a key. Gated by `GEMINI_LIVE_USE_DEV_API=true`; set it `false` to fall back to Vertex `gemini-live-2.5-flash-native-audio` and this secret is unused. |
+| `GOOGLE_API_KEY` | ayma-agent | Gemini Developer API key. INERT since the 2026-11-04 direct-Google kill (voice runs `google/gemini-3.8-live` through LiveKit Inference; nothing reads this on any served path) — kept mounted, do not delete the secret yet. |
 
-All Vertex calls (both services) use the Cloud Run runtime service identity
-(`USE_VERTEX=true`) — **no key**. On `all-features-on`, JSON/vision/chat/voice
-default to LiveKit Inference instead (`docs/ARCHITECTURE.md` section 0), which
-authenticates with a short-lived JWT minted from `LIVEKIT_API_KEY`/`_SECRET`. The
-only keyed path is the voice agent's Live 3.1 model above. Firebase Admin SDK
-likewise uses the runtime identity, no key file.
+All inference on both services goes through LiveKit Inference
+(`docs/ARCHITECTURE.md` section 0), which authenticates with a short-lived JWT
+minted from `LIVEKIT_API_KEY`/`_SECRET` — **no key**. Firebase Admin SDK
+likewise uses the runtime identity, no key file. (`USE_VERTEX=true` stays in the
+deploy envs but is inert for inference; `GOOGLE_CLOUD_PROJECT` still selects the
+Firestore/Storage data plane.)
 
 Grant once per secret:
 

@@ -1,7 +1,18 @@
-"""Gemini client: text chat replies (§1.7 step 2) and structured JSON calls
-for the wiki ingest pipeline (§2.3, Step 21).
+"""Gemini chat + structured calls, served ONLY through LiveKit Inference.
 
-The model id comes only from ``config.py`` (AGENTS.md).
+Founder rule (2026-11-04, permanent — see
+``docs/DIRECT_GOOGLE_KILL_AUDIT.md``): there is no direct-Google path in this
+module. Every call goes to the LiveKit Inference gateway via
+:mod:`inference_llm`; a gateway failure fails the call honestly, never falls
+back to Vertex or the Developer API.
+
+Sub-paths the gateway provably cannot serve (grounded research, image
+generate/edit) are DISABLED — they raise
+:exc:`llm_routing.DirectGoogleDisabledError` instead of calling Google. Each is
+a founder-decision item: restore only with a LiveKit-served equivalent or an
+explicit founder exception.
+
+The model ids come only from ``config.py`` (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -12,13 +23,8 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from functools import lru_cache
-
-from google import genai
-from google.genai import types
 
 import inference_llm
-import feature_flags
 import llm_routing
 import token_ledger
 from config import CONFIG
@@ -78,109 +84,32 @@ def strip_inline_refs(text: str) -> str:
     return out.strip()
 
 
-def _grounding_tools(response) -> list[str]:
-    """Built-in grounding the API ran itself this turn (no function round-trip):
-    ``web_search`` when it issued search queries, ``url_context`` when it fetched
-    a URL. Best-effort — the metadata shape varies by model/SDK."""
-    out: list[str] = []
-    try:
-        cand = (response.candidates or [None])[0]
-        gm = getattr(cand, "grounding_metadata", None)
-        if gm and getattr(gm, "google_maps_widget_context_token", None):
-            out.append("google_maps")
-        elif gm and (
-            getattr(gm, "web_search_queries", None)
-            or getattr(gm, "grounding_chunks", None)
-        ):
-            out.append("web_search")
-        if getattr(cand, "url_context_metadata", None):
-            out.append("url_context")
-    except Exception:  # noqa: BLE001 - metadata is advisory only
-        pass
-    return out
-
-# A cold Cloud Run instance's first Gemini call sometimes fails — a transient
-# 429/5xx from the Vertex `global` endpoint, or an ADC/gRPC hiccup fetching the
-# first auth token. The call has no side effects before it returns, so a couple
-# of backed-off retries on *any* error are safe. TokenCapExceeded is raised by
-# token_ledger.check outside this helper, so it is never retried here.
-_RETRIES = 2
-_RETRY_BACKOFF = 0.6
-
 # A hung model call or tool must end in an error the user can retry, never an
-# endless "Thinking…" (founder tester report, 2026-10-20). A timed-out Gemini
-# call is not retried — the wait already burned the budget. Module-level so
+# endless "Thinking…" (founder tester report, 2026-10-20). Module-level so
 # tests can shrink them.
-_GENERATE_TIMEOUT_SECONDS = 75.0
 _TOOL_TIMEOUT_SECONDS = 120.0
 # Grounded web research (google_search + url_context) legitimately runs longer
 # than a plain generate — and the deep-dive path that uses it is a polled
 # BACKGROUND job (the client POSTs /deep-dive then polls /deep-dive/mine), so
 # it is not bound by the client's long-request budget and can afford a longer
-# wait than the 75s synchronous default. Callers on a client-blocking path
-# (e.g. the chat web-search tool) pass no timeout and keep the 75s default; the
-# deep-dive research call passes this explicitly. Kept bounded so a retry's
-# worst case stays ≈ 2× this. See deep_dive._grounded_research.
+# wait than the 75s synchronous default. Kept so the (now disabled) research
+# call shape stays intact for a future LiveKit-served equivalent.
 RESEARCH_TIMEOUT_SECONDS = 120.0
 
 
-@lru_cache(maxsize=1)
-def _client() -> genai.Client:
-    if CONFIG.use_vertex:
-        # ADC = the Cloud Run runtime service identity; no API key.
-        return genai.Client(
-            vertexai=True,
-            project=CONFIG.project_id or None,
-            # gemini_model is Vertex-global-only (3.x flash 404s regionally).
-            location=CONFIG.gemini_location,
-        )
-    return genai.Client()  # picks up GOOGLE_API_KEY from the environment
-
-
-async def _generate(client, *, timeout: float | None = None, **kwargs):
-    """`client.aio.models.generate_content` with a couple of backed-off
-    retries — see the note above. ``timeout`` overrides the 75s synchronous
-    default for callers that can afford longer (grounded research on the
-    background deep-dive path)."""
-    deadline = _GENERATE_TIMEOUT_SECONDS if timeout is None else timeout
-    for attempt in range(_RETRIES + 1):
-        try:
-            return await asyncio.wait_for(
-                client.aio.models.generate_content(**kwargs),
-                timeout=deadline,
-            )
-        except asyncio.TimeoutError:
-            logger.error("gemini generate timed out after %.0fs", deadline)
-            raise
-        except Exception as exc:  # noqa: BLE001 - broad on purpose; see note
-            if attempt >= _RETRIES:
-                raise
-            logger.warning(
-                "gemini generate failed (%s: %s) on attempt %d/%d — retrying",
-                type(exc).__name__, exc, attempt + 1, _RETRIES + 1,
-            )
-            await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
-
-
 async def warmup() -> None:
-    """Pay the cold-start cost (ADC token, gRPC channel, first-call flake)
-    before the instance serves real traffic. Best-effort."""
+    """One minimal gateway ping before the instance serves real traffic, so a
+    credential/route problem surfaces in the startup logs instead of the first
+    user turn. Best-effort."""
     try:
-        await _generate(
-            _client(),
-            model=CONFIG.gemini_model,
-            contents="ping",
-            config=types.GenerateContentConfig(max_output_tokens=1),
+        await inference_llm.complete(
+            model=CONFIG.inference_chat_model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
         )
-        logger.info("gemini warmup ok")
+        logger.info("inference warmup ok")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("gemini warmup failed: %s", exc)
-
-
-class _InferenceUnavailable(Exception):
-    """The first LiveKit Inference call of a chat turn failed and Vertex
-    fallback is enabled. Raised before any tool has run, so the turn can be
-    replayed on Vertex without repeating a side effect."""
+        logger.warning("inference warmup failed: %s", exc)
 
 
 _WEB_SEARCH_TOOL = {
@@ -204,9 +133,11 @@ _WEB_SEARCH_TOOL = {
 
 
 async def _web_search_tool(query: str, *, uid: str | None, feature: str) -> str:
-    """Grounded lookup for the Inference chat path: the gateway has no Google
-    Search grounding, so the search itself runs as a (small) grounded Vertex
-    call and the answer is handed back to the Inference model as a tool result."""
+    """The chat `web_search` tool backend. Grounded search needs direct Google
+    grounding, which is disabled — :func:`research` raises, the tool wrapper
+    below turns it into an honest tool error, and the model tells the user
+    search is unavailable. The tool stays attached (rather than removed) so a
+    search request fails visibly instead of being answered from stale data."""
     prose, sources = await research(query, uid=uid, feature=feature)
     if sources:
         listed = "; ".join(s["url"] for s in sources[:5])
@@ -225,8 +156,9 @@ async def _reply_events_inference(
     feature: str,
     session_id: str,
 ):
-    """LiveKit Inference twin of the Vertex chat loop in
-    :func:`generate_reply_events` — same events, same one-tool-round shape."""
+    """The LiveKit Inference chat loop: same events, same one-tool-round
+    shape the Vertex twin used to have. A gateway failure propagates to the
+    caller — there is no fallback."""
     declarations = list(tool_declarations or [])
     fns = dict(tool_fns or {})
     if CONFIG.gemini_web_search:
@@ -265,17 +197,7 @@ async def _reply_events_inference(
 
     token_ledger.check(uid)
     yield {"type": "status", "label": "Thinking…"}
-    try:
-        response = await _call()
-    except Exception as exc:  # noqa: BLE001 - see _InferenceUnavailable
-        if llm_routing.fallback_enabled():
-            raise _InferenceUnavailable() from exc
-        logger.error(
-            "chat: LiveKit Inference failed and the Google fallback is off "
-            "(llm_fallback_to_google) — surfacing the error: %s: %s",
-            type(exc).__name__, exc,
-        )
-        raise
+    response = await _call()
     token_ledger.record(
         uid, feature, response, model=model, session_id=session_id or None,
     )
@@ -377,153 +299,15 @@ async def generate_reply_events(
     client can show *"Searching the web…"* while it actually happens instead of
     a flat *"thinking"*), then one final
     ``{"type": "reply", "text": str, "tools_used": list[str]}``.
+
+    Served only through LiveKit Inference — a gateway failure raises, there is
+    no direct-Google fallback.
     """
-    fallback_from: str | None = None
-    if llm_routing.route_for("chat", uid) == "inference":
-        try:
-            async for ev in _reply_events_inference(
-                message, system_prompt, tool_declarations, tool_fns,
-                image=image, uid=uid, feature=feature, session_id=session_id,
-            ):
-                yield ev
-            return
-        except _InferenceUnavailable as exc:
-            logger.warning(
-                "chat: LiveKit Inference failed (%s) — falling back to Vertex",
-                exc.__cause__,
-            )
-            fallback_from = token_ledger.PROVIDER_LIVEKIT_INFERENCE
-
-    tools: list | None = None
-    afc = None
-    if tool_declarations:
-        tools = [types.Tool(function_declarations=tool_declarations)]
-        afc = types.AutomaticFunctionCallingConfig(disable=True)
-    if CONFIG.gemini_web_search:
-        # Built-in grounding: live Google Search + reading any URL the user
-        # pastes. The API runs these itself in the same turn — no function-call
-        # round-trip — so they sit alongside the session's function tools.
-        tools = (tools or []) + [
-            types.Tool(google_search=types.GoogleSearch()),
-            types.Tool(url_context=types.UrlContext()),
-        ]
-    if feature_flags.enabled("maps_grounding"):
-        # Google Maps grounding (place lookups) — Vertex built-in tool, no key.
-        tools = (tools or []) + [types.Tool(google_maps=types.GoogleMaps())]
-
-    thinking = None
-    lvl = (CONFIG.gemini_chat_thinking_level or "").strip().lower()
-    if lvl in ("low", "medium", "high"):
-        thinking = types.ThinkingConfig(thinking_level=lvl)
-
-    def _config() -> types.GenerateContentConfig:
-        return types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.9,
-            max_output_tokens=1024,
-            tools=tools,
-            automatic_function_calling=afc,
-            thinking_config=thinking,
-        )
-
-    image_part = (
-        types.Part.from_bytes(data=image[0], mime_type=image[1])
-        if image is not None
-        else None
-    )
-    contents: object = message
-    if image_part is not None:
-        contents = [image_part, message]
-
-    token_ledger.check(uid)
-    client = _client()
-
-    yield {"type": "status", "label": "Thinking…"}
-    response = await _generate(
-        client,
-        model=CONFIG.gemini_model, contents=contents, config=_config(),
-    )
-    token_ledger.record(
-        uid, feature, response, model=CONFIG.gemini_model,
-        session_id=session_id or None, fallback_from=fallback_from,
-    )
-
-    used: list[str] = []
-    seen: set[str] = set()
-
-    def _note(name: str, label: str | None = None) -> None:
-        if label == _NO_CHIP:
-            return
-        key = label or name
-        if key not in seen:
-            seen.add(key)
-            used.append(label or _tool_label(name))
-
-    for name in _grounding_tools(response):
-        _note(name)
-
-    calls = list(response.function_calls or [])
-    if calls and tool_fns:
-        parts = []
-        for call in calls:
-            label = None
-            if call.name == "deep_dive":
-                who = str((call.args or {}).get("full_name") or "").strip()
-                if who:
-                    subj = "yourself" if (
-                        str((call.args or {}).get("subject")) == "self"
-                    ) else who
-                    label = f"Researched {subj} online"
-            # The slow part — a research call, a vision call — happens right
-            # here. Tell the client what it's waiting on.
-            yield {"type": "status", "label": _working_label(call.name)}
-            fn = tool_fns.get(call.name)
-            try:
-                result = fn(**dict(call.args or {})) if fn else "unknown tool"
-                if inspect.isawaitable(result):
-                    result = await asyncio.wait_for(
-                        result, timeout=_TOOL_TIMEOUT_SECONDS
-                    )
-            except asyncio.TimeoutError:
-                logger.error("tool %s timed out", call.name)
-                result = (
-                    "error: that took too long and was not completed — "
-                    "tell the user it didn't work."
-                )
-            except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
-                result = f"error: {exc}"
-            # Noted after the call: some labels depend on what it did.
-            _note(call.name, label or _outcome_label(call.name, result))
-            parts.append(
-                types.Part.from_function_response(
-                    name=call.name, response={"result": result}
-                )
-            )
-        first_parts = [types.Part(text=message)]
-        if image_part is not None:
-            first_parts.insert(0, image_part)
-        yield {"type": "status", "label": "Writing…"}
-        response = await _generate(
-            client,
-            model=CONFIG.gemini_model,
-            contents=[
-                types.Content(role="user", parts=first_parts),
-                response.candidates[0].content,
-                types.Content(role="user", parts=parts),
-            ],
-            config=_config(),
-        )
-        token_ledger.record(
-            uid, feature, response, model=CONFIG.gemini_model,
-            session_id=session_id or None, fallback_from=fallback_from,
-        )
-        for name in _grounding_tools(response):
-            _note(name)
-
-    text = strip_inline_refs((response.text or "").strip())
-    if not text:
-        raise RuntimeError("Gemini returned an empty response.")
-    yield {"type": "reply", "text": text, "tools_used": used}
+    async for ev in _reply_events_inference(
+        message, system_prompt, tool_declarations, tool_fns,
+        image=image, uid=uid, feature=feature, session_id=session_id,
+    ):
+        yield ev
 
 
 async def generate_reply(
@@ -568,45 +352,18 @@ async def research(
     max_output_tokens: int = 4096,
     timeout: float | None = None,
 ) -> tuple[str, list[dict]]:
-    """A single grounded web-research call: ``google_search`` + ``url_context``
-    on, no function tools, no JSON schema. Returns ``(prose, sources)`` where
-    ``sources`` is ``[{"url", "title"}]`` pulled from the grounding metadata.
-    Metered like any Gemini call — the spend is recorded only after the call
-    returns, so a timed-out attempt (which raises before ``record``) bills
-    nothing. ``timeout`` overrides the 75s default for background callers."""
-    token_ledger.check(uid)
-    cfg = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        temperature=0.3,
-        max_output_tokens=max_output_tokens,
-        tools=[
-            types.Tool(google_search=types.GoogleSearch()),
-            types.Tool(url_context=types.UrlContext()),
-        ],
+    """DISABLED (founder rule 2026-11-04 — see ``docs/DIRECT_GOOGLE_KILL_AUDIT.md``
+    item 3): grounded web research needs Google Search / URL-context grounding,
+    which only exists on the direct-Google path. The LiveKit gateway has no
+    equivalent, so this raises instead of calling Google. Founder-decision
+    item: restore only with a LiveKit-served equivalent or an explicit
+    exception. The signature is kept so every caller keeps working unchanged
+    (each already treats a research failure as an honest, non-fatal error)."""
+    raise llm_routing.DirectGoogleDisabledError(
+        "live web search is unavailable: grounded research needs direct "
+        "Google grounding, which is disabled — all inference goes through "
+        "LiveKit (founder decision required to restore it)"
     )
-    response = await _generate(
-        _client(), model=CONFIG.gemini_model, contents=prompt, config=cfg,
-        timeout=timeout,
-    )
-    token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
-
-    sources: list[dict] = []
-    seen_urls: set[str] = set()
-    try:
-        cand = (response.candidates or [None])[0]
-        gm = getattr(cand, "grounding_metadata", None)
-        for chunk in (getattr(gm, "grounding_chunks", None) or []):
-            web = getattr(chunk, "web", None)
-            url = getattr(web, "uri", None)
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                sources.append(
-                    {"url": url, "title": getattr(web, "title", "") or url}
-                )
-    except Exception:  # noqa: BLE001 - metadata is advisory
-        logger.warning("research: grounding metadata parse failed", exc_info=True)
-
-    return strip_inline_refs((response.text or "").strip()), sources
 
 
 def _parse_json_text(text: str) -> object:
@@ -674,6 +431,10 @@ async def generate_json(
     out-of-credits gate — for Ayma-initiated background work (e.g. the
     re-engagement check-in) that shouldn't fail just because the user is broke.
 
+    Served only through LiveKit Inference. A media type the gateway cannot
+    take (e.g. HEIC, m4a) raises honestly instead of going to Vertex; a
+    gateway failure raises, there is no direct-Google fallback.
+
     Raises on an empty or unparseable response so callers can treat it as
     best-effort.
     """
@@ -681,63 +442,17 @@ async def generate_json(
         token_ledger.check(uid)
 
     photo_parts = list(images or ([image] if image is not None else []))
-    route = llm_routing.route_for("vision" if photo_parts else "json", uid)
-    if route == "inference" and any(
-        inference_llm.media_part(b"", m) is None for _, m in photo_parts
-    ):
-        # A media type the gateway cannot take (e.g. HEIC, m4a): not a failure,
-        # so no Inference attempt and no fallback tag — straight to Vertex.
-        logger.info(
-            "%s: media type not supported by LiveKit Inference — using Vertex",
-            feature,
+    bad = [m for _, m in photo_parts if inference_llm.media_part(b"", m) is None]
+    if bad:
+        raise llm_routing.DirectGoogleDisabledError(
+            "media type(s) not served by LiveKit Inference and the direct "
+            f"path is disabled: {', '.join(sorted(set(bad)))}"
         )
-        route = "vertex"
-    fallback_from: str | None = None
-    if route == "inference":
-        try:
-            return await _generate_json_inference(
-                contents, system_prompt, response_schema, photo_parts,
-                uid=uid, feature=feature, temperature=temperature,
-                session_id=session_id,
-            )
-        except Exception as exc:  # noqa: BLE001 - fall back or re-raise below
-            if not llm_routing.fallback_enabled():
-                logger.error(
-                    "%s: LiveKit Inference failed and the Google fallback is "
-                    "off (llm_fallback_to_google) — surfacing the error: %s: %s",
-                    feature, type(exc).__name__, exc,
-                )
-                raise
-            logger.warning(
-                "%s: LiveKit Inference failed (%s: %s) — falling back to Vertex",
-                feature, type(exc).__name__, exc,
-            )
-            fallback_from = token_ledger.PROVIDER_LIVEKIT_INFERENCE
-    parts: object = contents
-    if photo_parts:
-        parts = [
-            types.Part.from_bytes(data=b, mime_type=m) for b, m in photo_parts
-        ] + [contents]
-    response = await _generate(
-        _client(),
-        model=CONFIG.gemini_model,
-        contents=parts,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=temperature,
-            max_output_tokens=4096,
-            response_mime_type="application/json",
-            response_schema=response_schema,
-        ),
+    return await _generate_json_inference(
+        contents, system_prompt, response_schema, photo_parts,
+        uid=uid, feature=feature, temperature=temperature,
+        session_id=session_id,
     )
-    token_ledger.record(
-        uid, feature, response, model=CONFIG.gemini_model,
-        session_id=session_id or None, fallback_from=fallback_from,
-    )
-    text = (response.text or "").strip()
-    if not text:
-        raise RuntimeError("Gemini returned an empty JSON response.")
-    return json.loads(text)
 
 
 async def edit_image(
@@ -748,13 +463,9 @@ async def edit_image(
     uid: str | None = None,
     feature: str = "misc",
 ) -> tuple[bytes, str]:
-    """Edit ``image_bytes`` per ``instruction`` with the LOCKED Gemini
-    image-edit model (``config.py`` — the ``edit_photo`` tool, §"Chat about
-    it"). Returns the edited image's raw bytes and mime type.
-
-    Thin wrapper over :func:`generate_image` (same model, same call shape) —
-    kept as its own name so the edit path's callers/tests and the generation
-    path's stay independently greppable."""
+    """DISABLED (founder rule 2026-11-04 — see ``docs/DIRECT_GOOGLE_KILL_AUDIT.md``
+    item 4): photo editing needs the direct-Google image model, which the
+    LiveKit gateway does not serve. Raises instead of calling Google."""
     return await generate_image(
         instruction, image=(image_bytes, mime_type), uid=uid, feature=feature
     )
@@ -767,44 +478,10 @@ async def generate_image(
     uid: str | None = None,
     feature: str = "misc",
 ) -> tuple[bytes, str]:
-    """Generate an image from ``prompt`` with the LOCKED Gemini image model
-    (``config.py`` — the ``generate_image`` / ``edit_photo`` tools). Pass
-    ``image=(bytes, mime)`` to ground the generation in a reference photo
-    (an edit, or "a caricature of ME"); without it this is pure text-to-image.
-    Returns the generated image's raw bytes and mime type.
-
-    Same shape as the TTS preview path (``voice_preview._synthesize``): a
-    ``generate_content`` call with a non-text ``response_modalities`` entry,
-    reading the result back out of the first ``inline_data`` part. Raises
-    ``RuntimeError`` when the model returns no image part — a content-policy
-    refusal, or a transient failure — so the caller (``skills.photo_edit`` /
-    ``skills.generate_image``) can fall back to plain text instead of a
-    broken chat turn.
-    """
-    token_ledger.check(uid)
-    parts: list = []
-    if image is not None:
-        parts.append(types.Part.from_bytes(data=image[0], mime_type=image[1]))
-    parts.append(prompt)
-    response = await _generate(
-        _client(),
-        model=CONFIG.gemini_image_edit_model,
-        contents=parts,
-        config=types.GenerateContentConfig(
-            response_modalities=["TEXT", "IMAGE"],
-        ),
+    """DISABLED (founder rule 2026-11-04 — see ``docs/DIRECT_GOOGLE_KILL_AUDIT.md``
+    item 4): image generation needs the direct-Google image model, which the
+    LiveKit gateway does not serve. Raises instead of calling Google. The
+    message is user-safe: both skill callers interpolate it into a chat reply."""
+    raise llm_routing.DirectGoogleDisabledError(
+        "image generation isn't available right now"
     )
-    token_ledger.record(uid, feature, response, model=CONFIG.gemini_image_edit_model)
-    try:
-        parts = response.candidates[0].content.parts or []
-    except (AttributeError, IndexError, TypeError):
-        parts = []
-    for part in parts:
-        inline = getattr(part, "inline_data", None)
-        data = getattr(inline, "data", None) if inline else None
-        if data:
-            mime = (getattr(inline, "mime_type", "") or "image/png").strip()
-            return data, mime
-    # No image part — most likely a safety/content-policy refusal in the text.
-    refusal = strip_inline_refs((getattr(response, "text", "") or "").strip())
-    raise RuntimeError(refusal or "Gemini did not return an edited image")

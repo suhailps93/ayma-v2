@@ -5,12 +5,13 @@ import types as pytypes
 import pytest
 
 import gemini
+import inference_llm
 import skills
 import token_ledger
 from config import CONFIG
 
-# The built-in grounding tools Ayma can use without a function round-trip —
-# ``gemini._grounding_tools`` emits these names, so they need labels too.
+# The chat `web_search` function tool (grounded lookup is disabled with the
+# direct-Google kill, but the tool name still needs labels for the kicker).
 _GROUNDING_TOOLS = ["web_search", "url_context", "google_maps"]
 
 
@@ -40,16 +41,46 @@ def test_every_registered_tool_has_a_non_generic_label_in_both_maps():
     assert not missing_working, f"no _WORKING_LABELS entry: {missing_working}"
 
 
-def test_generate_reply_events_emits_a_working_status_then_the_label(monkeypatch):
-    fake = _FakeClient(
-        [
-            _FakeResponse(
-                function_calls=[_FakeCall("record_feedback", {"note": "loved it"})]
-            ),
-            _FakeResponse(text="Noted, thanks for telling me."),
-        ]
+def _resp(text="", calls=None):
+    return inference_llm.InferenceResponse(
+        text=text,
+        function_calls=list(calls or []),
+        assistant_message={"role": "assistant", "content": text},
+        usage_metadata=pytypes.SimpleNamespace(
+            prompt_token_count=10, candidates_token_count=5,
+            total_token_count=15, cached_content_token_count=0,
+        ),
     )
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+
+
+def _call(name, args=None, cid="c1"):
+    return inference_llm.FunctionCall(
+        id=cid, name=name, args=dict(args or {}))
+
+
+def _install_complete(monkeypatch, replies):
+    """Serve scripted gateway replies; returns the captured request kwargs."""
+    sent = []
+    queue = list(replies)
+
+    async def _fake_complete(**kw):
+        sent.append(kw)
+        return queue.pop(0)
+
+    monkeypatch.setattr(inference_llm, "complete", _fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    return sent
+
+
+def test_generate_reply_events_emits_a_working_status_then_the_label(monkeypatch):
+    sent = _install_complete(monkeypatch, [
+        _resp("", [_call("record_feedback", {"note": "loved it"})]),
+        _resp("Noted, thanks for telling me."),
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
 
     events = []
 
@@ -68,67 +99,18 @@ def test_generate_reply_events_emits_a_working_status_then_the_label(monkeypatch
     assert "Making a note of your feedback…" in labels
     reply = next(e for e in events if e["type"] == "reply")
     assert reply["tools_used"] == ["Noted your feedback"]
-
-
-class _FakeCall:
-    def __init__(self, name, args):
-        self.name = name
-        self.args = args
-
-
-class _FakeResponse:
-    def __init__(self, *, function_calls=None, text=None, searched=False):
-        self.function_calls = function_calls or []
-        self.text = text
-        gm = (
-            pytypes.SimpleNamespace(
-                web_search_queries=["new dune release date"],
-                grounding_chunks=[object()],
-            )
-            if searched
-            else None
-        )
-        self.candidates = [
-            pytypes.SimpleNamespace(
-                content="<model-turn>",
-                grounding_metadata=gm,
-                url_context_metadata=None,
-            )
-        ]
-
-
-class _FakeModels:
-    def __init__(self, responses):
-        self._responses = list(responses)
-        self.calls = []
-
-    async def generate_content(self, *, model, contents, config):
-        self.calls.append(contents)
-        self.configs = getattr(self, "configs", [])
-        self.configs.append(config)
-        return self._responses.pop(0)
-
-
-class _FakeClient:
-    def __init__(self, responses):
-        self.aio = pytypes.SimpleNamespace(models=_FakeModels(responses))
+    assert len(sent) == 2
 
 
 def test_generate_reply_runs_one_tool_round(monkeypatch):
-    fake = _FakeClient(
-        [
-            _FakeResponse(
-                function_calls=[
-                    _FakeCall(
-                        "add_followup_question",
-                        {"question_text": "how's your dad?", "category": "family"},
-                    )
-                ]
-            ),
-            _FakeResponse(text="Noted — let's get back to your message."),
-        ]
+    sent = _install_complete(monkeypatch, [
+        _resp("", [_call("add_followup_question", {
+            "question_text": "how's your dad?", "category": "family"})]),
+        _resp("Noted — let's get back to your message."),
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
     )
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
 
     invoked = {}
 
@@ -148,48 +130,34 @@ def test_generate_reply_runs_one_tool_round(monkeypatch):
     assert out.text == "Noted — let's get back to your message."
     assert out.tools_used == ["Noted a follow-up"]
     assert invoked == {"question_text": "how's your dad?", "category": "family"}
-    assert len(fake.aio.models.calls) == 2
+    assert len(sent) == 2
 
 
 def test_generate_reply_without_tools_is_a_single_call(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="hello!")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    sent = _install_complete(monkeypatch, [_resp("hello!")])
     monkeypatch.setattr(
         gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
     )
     out = asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
     assert out.text == "hello!"
-    assert len(fake.aio.models.calls) == 1
+    assert len(sent) == 1
 
 
-def _tool_kinds(config):
-    kinds = set()
-    for t in config.tools or []:
-        if getattr(t, "google_search", None) is not None:
-            kinds.add("google_search")
-        if getattr(t, "url_context", None) is not None:
-            kinds.add("url_context")
-        if getattr(t, "function_declarations", None):
-            kinds.add("functions")
-    return kinds
+def _tool_names(sent_kw):
+    return [t["function"]["name"] for t in (sent_kw.get("tools") or [])]
 
 
-def test_web_search_tools_attached_when_enabled(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="the film is out friday")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+def test_web_search_tool_attached_when_enabled(monkeypatch):
+    sent = _install_complete(monkeypatch, [_resp("the film is out friday")])
     monkeypatch.setattr(
         gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
     )
     asyncio.run(gemini.generate_reply("when's the new dune out?", system_prompt="p"))
-    assert _tool_kinds(fake.aio.models.configs[0]) == {
-        "google_search",
-        "url_context",
-    }
+    assert _tool_names(sent[0]) == ["web_search"]
 
 
-def test_web_search_tools_sit_alongside_function_tools(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="ok")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+def test_web_search_tool_sits_alongside_function_tools(monkeypatch):
+    sent = _install_complete(monkeypatch, [_resp("ok")])
     monkeypatch.setattr(
         gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
     )
@@ -201,81 +169,62 @@ def test_web_search_tools_sit_alongside_function_tools(monkeypatch):
             tool_fns={"add_followup_question": lambda **k: "ok"},
         )
     )
-    assert _tool_kinds(fake.aio.models.configs[0]) == {
-        "functions",
-        "google_search",
-        "url_context",
-    }
+    assert _tool_names(sent[0]) == ["add_followup_question", "web_search"]
 
 
-def test_web_search_tools_absent_when_disabled(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="hi")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+def test_web_search_tool_absent_when_disabled(monkeypatch):
+    sent = _install_complete(monkeypatch, [_resp("hi")])
     monkeypatch.setattr(
         gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
     )
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
-    assert not (fake.aio.models.configs[0].tools or [])
+    assert sent[0].get("tools") is None
 
 
-def test_reply_reports_a_web_search_label_when_the_model_grounded(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="Out this Friday.", searched=True)])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+def test_reply_reports_a_web_search_label_when_the_tool_runs(monkeypatch):
+    # Grounding itself is disabled with the kill, but the tool round-trip and
+    # its kicker label still work: the error result is reported to the model.
+    sent = _install_complete(monkeypatch, [
+        _resp("", [_call("web_search", {"query": "dune release"})]),
+        _resp("Out this Friday."),
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
+    )
     out = asyncio.run(gemini.generate_reply("when's dune out?", system_prompt="p"))
     assert out.tools_used == ["Searched the web"]
+    assert sent[1]["messages"][-1]["role"] == "tool"
 
 
 def test_reply_tools_used_is_empty_for_a_plain_answer(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="just chatting")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    _install_complete(monkeypatch, [_resp("just chatting")])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
     out = asyncio.run(gemini.generate_reply("hey", system_prompt="p"))
     assert out.tools_used == []
 
 
 def test_chat_thinking_level_is_applied(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="ok")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    sent = _install_complete(monkeypatch, [_resp("ok")])
     monkeypatch.setattr(
         gemini, "CONFIG",
-        dataclasses.replace(CONFIG, gemini_chat_thinking_level="low"),
+        dataclasses.replace(
+            CONFIG, gemini_web_search=False, gemini_chat_thinking_level="low"),
     )
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
-    tc = fake.aio.models.configs[0].thinking_config
-    assert tc is not None and str(tc.thinking_level).lower().endswith("low")
+    assert sent[0]["reasoning_effort"] == "low"
 
 
 def test_chat_thinking_level_blank_leaves_the_model_default(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="ok")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    sent = _install_complete(monkeypatch, [_resp("ok")])
     monkeypatch.setattr(
         gemini, "CONFIG",
-        dataclasses.replace(CONFIG, gemini_chat_thinking_level=""),
+        dataclasses.replace(
+            CONFIG, gemini_web_search=False, gemini_chat_thinking_level=""),
     )
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
-    assert fake.aio.models.configs[0].thinking_config is None
-
-
-def test_maps_tool_added_only_when_the_flag_is_on(monkeypatch):
-    fake = _FakeClient([_FakeResponse(text="ok"), _FakeResponse(text="ok")])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
-
-    monkeypatch.setattr(
-        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
-    )
-    asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
-    kinds = {
-        "maps"
-        for t in (fake.aio.models.configs[0].tools or [])
-        if getattr(t, "google_maps", None) is not None
-    }
-    assert kinds == set()
-
-    monkeypatch.setenv("FLAG_MAPS_GROUNDING", "true")
-    asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
-    assert any(
-        getattr(t, "google_maps", None) is not None
-        for t in (fake.aio.models.configs[1].tools or [])
-    )
+    assert sent[0].get("reasoning_effort") is None
 
 
 # --- credit gate: still intact everywhere except the wiki-ingest bypass ---
@@ -339,17 +288,17 @@ def test_strip_inline_refs_keeps_real_brackets():
     assert s("") == ""
 
 
-class _HangingModels:
-    async def generate_content(self, *, model, contents, config):
-        await asyncio.sleep(3600)
+def test_a_hung_gateway_call_times_out_instead_of_hanging(monkeypatch):
+    class _HangingCompletions:
+        async def create(self, **kw):
+            await asyncio.sleep(3600)
 
-
-def test_a_hung_gemini_call_times_out_instead_of_hanging(monkeypatch):
-    monkeypatch.setattr(gemini, "_GENERATE_TIMEOUT_SECONDS", 0.05)
+    fake_client = pytypes.SimpleNamespace(
+        chat=pytypes.SimpleNamespace(completions=_HangingCompletions()))
+    monkeypatch.setattr(inference_llm, "_client", lambda: fake_client)
     monkeypatch.setattr(
-        gemini, "_client",
-        lambda: pytypes.SimpleNamespace(aio=pytypes.SimpleNamespace(
-            models=_HangingModels())),
+        inference_llm, "CONFIG",
+        dataclasses.replace(CONFIG, inference_timeout_seconds=0.05),
     )
 
     async def _drain():
@@ -364,11 +313,13 @@ def test_a_hung_tool_is_reported_to_the_model_and_the_turn_still_replies(
     monkeypatch,
 ):
     monkeypatch.setattr(gemini, "_TOOL_TIMEOUT_SECONDS", 0.05)
-    fake = _FakeClient([
-        _FakeResponse(function_calls=[_FakeCall("record_feedback", {})]),
-        _FakeResponse(text="That didn't work, sorry."),
+    sent = _install_complete(monkeypatch, [
+        _resp("", [_call("record_feedback", {})]),
+        _resp("That didn't work, sorry."),
     ])
-    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
 
     async def _hang(**_k):
         await asyncio.sleep(3600)
@@ -385,5 +336,4 @@ def test_a_hung_tool_is_reported_to_the_model_and_the_turn_still_replies(
 
     asyncio.run(_collect())
     assert events[-1]["type"] == "reply"
-    sent = fake.aio.models.calls[1][2].parts[0]
-    assert "took too long" in str(sent)
+    assert "took too long" in sent[1]["messages"][-1]["content"]
