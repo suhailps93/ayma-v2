@@ -36,3 +36,29 @@ class GallerySaver {
     }
   }
 }
+
+/// The outcome of a best-effort save into the user's photo library.
+enum LibrarySaveOutcome { saved, denied, failed }
+
+/// Saves [bytes] into the user's photo library through [saver] (the
+/// existing `ayma/media_save` flow), mapping the channel's `PERMISSION`
+/// refusal to [LibrarySaveOutcome.denied] and any other failure to
+/// [LibrarySaveOutcome.failed], so callers can keep their other copy of
+/// the photo either way and report the library state honestly.
+Future<LibrarySaveOutcome> saveToPhotoLibrary(
+  GallerySaver saver,
+  Uint8List bytes,
+  String name,
+  String mime,
+) async {
+  try {
+    await saver.save(bytes, name, mime);
+    return LibrarySaveOutcome.saved;
+  } on PlatformException catch (e) {
+    return e.code == 'PERMISSION'
+        ? LibrarySaveOutcome.denied
+        : LibrarySaveOutcome.failed;
+  } catch (_) {
+    return LibrarySaveOutcome.failed;
+  }
+}

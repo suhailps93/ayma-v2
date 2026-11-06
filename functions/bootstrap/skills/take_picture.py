@@ -91,6 +91,14 @@ def _bind_take_picture(db, uid: str) -> Callable[..., str]:
         )
         if image_path:
             done += f" (image_path: {image_path})"
+        if ack.get("library_saved") is False:
+            done += (
+                " It did NOT get saved to their photo library —"
+                " photo-library access is off — so tell them the photo"
+                " lives in this chat, not in their library."
+            )
+        elif ack.get("library_saved") is True:
+            done += " It was also saved to their photo library."
         if result:
             return (
                 f"{done} You already reacted to it in the chat with this "

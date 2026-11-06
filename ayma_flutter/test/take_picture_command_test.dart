@@ -58,6 +58,7 @@ void main() {
       expect(ackDoc?['id'], 'pic-1');
       expect(ackDoc?['ok'], isTrue);
       expect(ackDoc?['image_path'], 'uploads/me/chat_1.jpg');
+      expect(ackDoc?['library_saved'], isTrue);
       expect(ackDoc?['result'], 'Nice light in here!');
       expect((await pending().get()).exists, isFalse);
     });
@@ -80,6 +81,31 @@ void main() {
       expect(ackDoc?['id'], 'pic-2');
       expect(ackDoc?['ok'], isFalse);
       expect(ackDoc?['reason'], 'cancelled');
+      expect((await pending().get()).exists, isFalse);
+    });
+
+    test('a capture whose library save was refused acks library_saved '
+        'false, so the tool can say the library copy is missing', () async {
+      final svc = svcWith((_) async => const TakePictureOutcome.captured(
+            imagePath: 'uploads/me/chat_1.jpg',
+            result: 'Nice light in here!',
+            librarySaved: false,
+            libraryDenied: true,
+          ))
+        ..start();
+      addTearDown(svc.stop);
+
+      await pending().set({
+        'action': 'take_picture',
+        'camera': 'back',
+        'id': 'pic-3',
+        'ts': Timestamp.now(),
+      });
+      await pumpEventQueue();
+
+      final ackDoc = (await ack().get()).data();
+      expect(ackDoc?['ok'], isTrue);
+      expect(ackDoc?['library_saved'], isFalse);
       expect((await pending().get()).exists, isFalse);
     });
 

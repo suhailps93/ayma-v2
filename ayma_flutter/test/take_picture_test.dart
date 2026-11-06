@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_service.dart';
+import 'package:ayma_flutter/services/gallery_saver.dart';
 import 'package:ayma_flutter/services/take_picture_intent.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -44,7 +45,7 @@ class _FakeImagePicker extends ImagePicker {
     calls.add((source: source, device: preferredCameraDevice));
     if (error != null) throw error!;
     if (returnNull) return null;
-    return XFile(path);
+    return _FakeXFile(path);
   }
 }
 
@@ -85,6 +86,38 @@ http.Response _historyResponse() => http.Response(
     headers: _jsonUtf8);
 
 /// Pumps a [ChatScreen] wired to a MockClient that records `/chat/stream`
+/// An [XFile] whose bytes come from memory: the library-save flow reads
+/// the capture through [XFile.readAsBytes], and a real dart:io read would
+/// never complete inside the fake-async test zone. The byte content is
+/// never decoded on that path (the saver just records it); the on-screen
+/// image still renders from the fixture file at [path].
+class _FakeXFile extends XFile {
+  _FakeXFile(super.path);
+
+  @override
+  Future<Uint8List> readAsBytes() async =>
+      Uint8List.fromList(const [0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3, 4]);
+}
+
+/// Stands in for the photo-library save (the existing GallerySaver
+/// flow): records every save and can be told to throw — a
+/// [PlatformException] with code PERMISSION is the library refusing
+/// access.
+class _FakeGallerySaver extends GallerySaver {
+  _FakeGallerySaver({this.error});
+
+  final Object? error;
+  final List<({int bytes, String name, String mime})> calls = [];
+
+  @override
+  Future<String> save(Uint8List bytes, String name, String mime) async {
+    calls.add((bytes: bytes.length, name: name, mime: mime));
+    final e = error;
+    if (e != null) throw e;
+    return 'Pictures/Ayma';
+  }
+}
+
 /// bodies and replies with [reply] — the vision reaction Ayma gives after
 /// seeing the captured photo through the existing `/chat` vision path.
 Future<({_FakeImagePicker picker, _RecordingChatService chat})> _pumpChat(
@@ -92,6 +125,7 @@ Future<({_FakeImagePicker picker, _RecordingChatService chat})> _pumpChat(
   required List<Map<String, dynamic>> streamBodies,
   String reply = 'Lovely shot!',
   _RecordingChatService? chatService,
+  _FakeGallerySaver? gallerySaver,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 1.0;
@@ -121,9 +155,15 @@ Future<({_FakeImagePicker picker, _RecordingChatService chat})> _pumpChat(
   );
   final chat = chatService ?? _ImmediateChatService();
   final picker = _FakeImagePicker(_fixturePath);
+  final saver = gallerySaver ?? _FakeGallerySaver();
 
   await tester.pumpWidget(MaterialApp(
-    home: ChatScreen(apiClient: api, chatService: chat, imagePicker: picker),
+    home: ChatScreen(
+      apiClient: api,
+      chatService: chat,
+      imagePicker: picker,
+      gallerySaver: saver,
+    ),
   ));
   await tester.pumpAndSettle();
   return (picker: picker, chat: chat);
@@ -194,8 +234,13 @@ void main() {
       (tester) async {
     final streamBodies = <Map<String, dynamic>>[];
     final gated = _GatedChatService();
-    final rig =
-        await _pumpChat(tester, streamBodies: streamBodies, chatService: gated);
+    final saver = _FakeGallerySaver();
+    final rig = await _pumpChat(
+      tester,
+      streamBodies: streamBodies,
+      chatService: gated,
+      gallerySaver: saver,
+    );
 
     await _typeAndSend(tester, 'take a picture');
 
@@ -235,6 +280,40 @@ void main() {
     expect(streamBodies, hasLength(1));
     expect(streamBodies.single['image_path'], 'uploads/u1/chat_9.jpg');
     expect(find.text('Lovely shot!'), findsOneWidget);
+
+    // Second destination: the same capture was saved to the user's photo
+    // library through the existing gallery flow.
+    expect(saver.calls, hasLength(1));
+    expect(saver.calls.single.bytes, greaterThan(0));
+    expect(saver.calls.single.name, endsWith('.jpg'));
+    expect(saver.calls.single.mime, 'image/jpeg');
+  });
+
+  testWidgets(
+      'library save refused: the chat copy still lands and Ayma says the '
+      'library save was off', (tester) async {
+    final streamBodies = <Map<String, dynamic>>[];
+    final saver = _FakeGallerySaver(
+      error: PlatformException(code: 'PERMISSION', message: 'denied'),
+    );
+    final rig = await _pumpChat(
+      tester,
+      streamBodies: streamBodies,
+      gallerySaver: saver,
+    );
+
+    await _typeAndSend(tester, 'take a picture');
+    await tester.tap(find.text('Back camera'));
+    await tester.pumpAndSettle();
+
+    // Capture happened, the library save was attempted and refused…
+    expect(rig.picker.calls, hasLength(1));
+    expect(saver.calls, hasLength(1));
+    // …the chat copy still landed and went through the vision path…
+    expect(streamBodies.single['image_path'], 'uploads/u1/chat_9.jpg');
+    expect(find.text('Lovely shot!'), findsOneWidget);
+    // …and Ayma said, in the chat, that the library save was off.
+    expect(find.textContaining('photo-library access is off'), findsOneWidget);
   });
 
   testWidgets(

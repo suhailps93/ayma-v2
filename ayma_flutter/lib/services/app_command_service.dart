@@ -16,6 +16,7 @@ import 'api_client.dart';
 import 'app_context.dart';
 import 'ayma_session.dart';
 import 'chat_service.dart';
+import 'gallery_saver.dart';
 import 'guided_tour_controller.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
@@ -116,7 +117,10 @@ class AppCommandService {
     Future<void> Function(int index)? sendTourStop,
     Future<TakePictureOutcome> Function(Map<String, dynamic> cmd)?
         takePicture,
-  })  : _takePicture = takePicture ?? _performTakePicture,
+    Future<LibrarySaveOutcome> Function(XFile file)? saveToLibrary,
+  })  : _takePicture = takePicture ??
+            ((cmd) => _performTakePicture(
+                cmd, saveToLibrary ?? _defaultSaveToLibrary)),
         _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
         _sendTourStop = sendTourStop ?? _postTourStop,
         _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
@@ -193,12 +197,20 @@ class AppCommandService {
   /// The vision step is best-effort: if it fails, the capture still
   /// succeeds, with an empty `result` the tool reports honestly.
   ///
+  /// Every capture is ALSO saved into the user's photo library through
+  /// the existing gallery flow ([saveToLibrary] → [GallerySaver] →
+  /// MediaStore `Pictures/Ayma` / iOS Photos) — founder spec: both
+  /// destinations, every time. A library refusal never blocks the chat
+  /// copy: the outcome carries `librarySaved`/`libraryDenied`, and when
+  /// the save did not land an Ayma turn in the conversation says so.
+  ///
   /// Mid-call note: the system camera UI presents over the app while the
   /// LiveKit room stays connected (the picker never tears the session
   /// down — the same way the app already opens the picker from other
   /// screens during a call), so no disconnect/reconnect cycle is needed.
   static Future<TakePictureOutcome> _performTakePicture(
-      Map<String, dynamic> cmd) async {
+      Map<String, dynamic> cmd,
+      Future<LibrarySaveOutcome> Function(XFile file) saveToLibrary) async {
     final camera = (cmd['camera'] as String? ?? '').trim().toLowerCase();
     if (camera != 'front' && camera != 'back') {
       // The backend tool confirms the choice before queueing, so a command
@@ -221,6 +233,7 @@ class AppCommandService {
       return const TakePictureOutcome.failed('cancelled');
     }
     final file = File(picked.path);
+    final libraryOutcome = await saveToLibrary(picked);
     final ChatImageUpload up;
     try {
       up = await ChatService().uploadChatImage(file);
@@ -250,9 +263,42 @@ class AppCommandService {
     } catch (_) {
       reaction = ''; // capture stands; the tool reports vision did not land
     }
+    if (libraryOutcome != LibrarySaveOutcome.saved) {
+      store.addTurn(
+        TurnRole.ayma,
+        libraryOutcome == LibrarySaveOutcome.denied
+            ? "That photo is in our chat, but it was not saved to your "
+                'photo library — photo-library access is off for Ayma.'
+            : "That photo is in our chat, but it could not be saved to "
+                'your photo library.',
+        TurnSource.text,
+      );
+    }
     return TakePictureOutcome.captured(
       imagePath: up.storagePath,
       result: reaction,
+      librarySaved: libraryOutcome == LibrarySaveOutcome.saved,
+      libraryDenied: libraryOutcome == LibrarySaveOutcome.denied,
+    );
+  }
+
+  /// The production library save for a captured photo: the file's bytes
+  /// through the existing [GallerySaver] flow under the image viewer's
+  /// naming convention. Never throws — the outcome enum says what
+  /// happened.
+  static Future<LibrarySaveOutcome> _defaultSaveToLibrary(
+      XFile file) async {
+    final Uint8List bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } catch (_) {
+      return LibrarySaveOutcome.failed;
+    }
+    return saveToPhotoLibrary(
+      const GallerySaver(),
+      bytes,
+      'ayma_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      'image/jpeg',
     );
   }
 
@@ -640,7 +686,8 @@ class AppCommandService {
   }
 
   /// Capture the picture, then ack with the outcome: `ok`, plus the
-  /// capture's `image_path` and the vision reaction (`result`) on success,
+  /// capture's `image_path`, whether it also landed in the user's photo
+  /// library (`library_saved`) and the vision reaction (`result`) on success,
   /// or the failure `reason` (`cancelled` / `camera_unavailable` /
   /// `upload_failed`) the backend tool turns into an honest line.
   Future<void> _runTakePicture(DocumentReference<Map<String, dynamic>> ref,
@@ -650,6 +697,7 @@ class AppCommandService {
       'id': id,
       'ok': out.ok,
       if (out.ok) 'image_path': out.imagePath else 'reason': out.reason,
+      if (out.ok) 'library_saved': out.librarySaved,
       if (out.ok && out.result.isNotEmpty) 'result': out.result,
       'ts': FieldValue.serverTimestamp(),
     }).catchError((_) {});
@@ -882,17 +930,30 @@ class AppCommandService {
 /// machine `reason` (`cancelled`, `camera_unavailable`, `upload_failed`)
 /// the tool turns into an honest user-facing line.
 class TakePictureOutcome {
-  const TakePictureOutcome.captured({required this.imagePath, this.result = ''})
-      : ok = true,
+  const TakePictureOutcome.captured({
+    required this.imagePath,
+    this.result = '',
+    this.librarySaved = true,
+    this.libraryDenied = false,
+  })  : ok = true,
         reason = '';
 
   const TakePictureOutcome.failed(this.reason)
       : ok = false,
         imagePath = '',
-        result = '';
+        result = '',
+        librarySaved = false,
+        libraryDenied = false;
 
   final bool ok;
   final String reason;
   final String imagePath;
   final String result;
+
+  /// Whether the capture was ALSO saved into the user's photo library
+  /// (founder spec: chat copy AND library copy, every time), and when it
+  /// was not, whether the library refused access ([libraryDenied])
+  /// versus the save itself failing.
+  final bool librarySaved;
+  final bool libraryDenied;
 }

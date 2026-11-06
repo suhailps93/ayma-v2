@@ -21,6 +21,7 @@ import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/connection_heartbeat.dart';
 import '../services/credits_balance.dart';
+import '../services/gallery_saver.dart';
 import '../services/ids.dart';
 import '../services/pending_chat_queue.dart';
 import '../services/profile_service.dart';
@@ -71,6 +72,7 @@ class ChatScreen extends StatefulWidget {
     this.transcriptStore,
     this.chatService,
     this.imagePicker,
+    this.gallerySaver,
     this.viewingProfileUid = '',
     this.marketing = false,
     this.profileService,
@@ -104,6 +106,7 @@ class ChatScreen extends StatefulWidget {
   final TranscriptStore? transcriptStore;
   final ChatService? chatService;
   final ImagePicker? imagePicker;
+  final GallerySaver? gallerySaver;
   final FirebaseAuth? auth;
 
   /// The screen the user was on when this chat was opened (the global
@@ -252,6 +255,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       widget.transcriptStore ?? TranscriptStore();
   late final ChatService _chat = widget.chatService ?? ChatService();
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
+  late final GallerySaver _gallerySaver =
+      widget.gallerySaver ?? const GallerySaver();
   late final VoiceSessionController _voice =
       widget.voiceController ??
       VoiceSessionController(
@@ -2024,9 +2029,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// conversation through the normal send path: the photo shows as a user
   /// image turn, uploads as a chat image, and `/chat` receives its
   /// `image_path` — so Ayma sees and reacts to it via the existing vision
-  /// path, exactly like a manually attached photo. A denied camera
-  /// permission (the picker throws) or a closed camera degrades to a
-  /// plain Ayma line, never a crash or a silent dead end.
+  /// path, exactly like a manually attached photo. The capture is ALSO
+  /// saved into the user's photo library through the existing
+  /// [GallerySaver] flow (founder spec: both destinations, every time);
+  /// if that save is refused or fails, the chat copy still lands and an
+  /// Ayma line says the library save was off. A denied camera permission
+  /// (the picker throws) or a closed camera degrades to a plain Ayma
+  /// line, never a crash or a silent dead end.
   Future<void> _capturePicture(String camera) async {
     final XFile? picked;
     try {
@@ -2058,8 +2067,49 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
     if (!mounted) return;
-    setState(() => _pendingImage = File(picked!.path));
+    final file = File(picked.path);
+    // Library copy (founder spec: both destinations, every time): kicked
+    // off now through the existing gallery flow and awaited after the
+    // chat send, so a slow or refused library save never delays — or
+    // blocks — the chat copy.
+    final librarySave = _saveCaptureToLibrary(picked);
+    final turnsBefore = _store.turns.length;
+    setState(() => _pendingImage = file);
     await _send();
+    if (!mounted) return;
+    final libraryOutcome = await librarySave;
+    if (libraryOutcome == LibrarySaveOutcome.saved) return;
+    // Only claim "in our chat" when the photo actually landed (the send
+    // path removes the optimistic turn when the upload fails).
+    final landed = _store.turns.skip(turnsBefore).any((t) =>
+        t.role == TurnRole.user && (t.imageUrl != null || t.imageFile != null));
+    if (!landed) return;
+    _store.addTurn(
+      TurnRole.ayma,
+      libraryOutcome == LibrarySaveOutcome.denied
+          ? "That photo is in our chat, but it was not saved to your "
+              'photo library — photo-library access is off for Ayma.'
+          : "That photo is in our chat, but it could not be saved to "
+              'your photo library.',
+      TurnSource.text,
+    );
+  }
+
+  /// Best-effort save of a just-captured photo into the user's photo
+  /// library through the existing [GallerySaver] flow; never throws —
+  /// the [LibrarySaveOutcome] says what happened.
+  Future<LibrarySaveOutcome> _saveCaptureToLibrary(XFile picked) async {
+    try {
+      final bytes = await picked.readAsBytes();
+      return await saveToPhotoLibrary(
+        _gallerySaver,
+        bytes,
+        'ayma_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        'image/jpeg',
+      );
+    } catch (_) {
+      return LibrarySaveOutcome.failed;
+    }
   }
 
   Future<void> _pickImage(ImageSource source) async {

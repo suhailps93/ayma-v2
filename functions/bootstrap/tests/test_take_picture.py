@@ -17,10 +17,11 @@ class _PictureAckStore(dict):
     capture outcome (image_path + the vision reaction as ``result``), or
     with a failure ``reason`` when ``ok`` is False."""
 
-    def __init__(self, *a, ok=True, reason="", **k):
+    def __init__(self, *a, ok=True, reason="", library_saved=True, **k):
         super().__init__(*a, **k)
         self._ok = ok
         self._reason = reason
+        self._library_saved = library_saved
 
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
@@ -29,6 +30,7 @@ class _PictureAckStore(dict):
             if self._ok:
                 ack["image_path"] = "uploads/me/chat_123.jpg"
                 ack["result"] = "You look great — that jacket really suits you."
+                ack["library_saved"] = self._library_saved
             elif self._reason:
                 ack["reason"] = self._reason
             super().__setitem__(_ACK, ack)
@@ -58,6 +60,15 @@ def test_front_camera_queues_capture_and_relays_the_vision_reaction():
     # The reaction Ayma already gave in chat (from actually seeing the
     # photo through the /chat vision path) is relayed for consistency.
     assert "that jacket really suits you" in out
+    # Founder spec: both destinations — the library copy is reported too.
+    assert "also saved to their photo library" in out
+
+
+def test_library_save_off_is_reported_not_hidden():
+    db = _Db(_PictureAckStore(library_saved=False))
+    out = _run(app_control._bind_take_picture(db, "me")("front"))
+    assert "did NOT get saved to their photo library" in out
+    assert "that jacket really suits you" in out  # vision reaction relayed
 
 
 def test_back_camera_is_passed_through():
