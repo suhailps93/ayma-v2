@@ -1026,12 +1026,16 @@ async def welcome_token(
     # The pre-sign-in welcome room has no uid and no voice_agent_cloud pref;
     # it routes to the hosted worker like everything else (founder directive
     # 2026-11-03: everything on LiveKit Cloud, GCP only if LiveKit crashes) —
-    # explicit dispatch to "ayma-lk" plus a "livekit" seed marker, which is
-    # what the hosted worker's request_fnc guard requires to accept the room.
+    # explicit dispatch to CONFIG.agent_name_livekit plus a "livekit" seed
+    # marker, which is what the hosted worker's request_fnc guard
+    # requires to accept the room. The room name carries the environment
+    # room prefix so the dispatched worker also passes its staging/prod
+    # name guard (a staging welcome room must look like a staging room
+    # to the ayma-lk-staging worker).
     # No Cloud Run wake: the failure-only fallback watcher below wakes Cloud
     # Run itself if the hosted agent never joins. This retired the last
     # always-on Cloud Run consumer (see docs/LIVEKIT_AGENT_MIGRATION.md).
-    room = f"welcome-{secrets.token_urlsafe(9)}"
+    room = f"{CONFIG.livekit_room_prefix}welcome-{secrets.token_urlsafe(9)}"
     try:
         token = mint_access_token(f"guest-{room}", room)
     except LiveKitConfigError as exc:
