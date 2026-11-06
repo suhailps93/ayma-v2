@@ -1,14 +1,15 @@
-"""App-control account actions: ``account_action`` runs sign out and wipe memory.
+"""App-control account actions: ``account_action`` runs sign out.
 
-Only after an explicit confirmation in a later turn — and delete account,
-withdraw face-matching consent and every purchase stay navigate-only (founder
-rule, 2026-10-25): the tool opens the page and the user acts there themselves.
-Split out of ``skills/app_control.py`` (Tier-2 sweep item #8).
+Only after an explicit confirmation in a later turn. Delete account,
+withdraw face-matching consent, every purchase and — since the ACTION
+PARITY exclusions config (founder, 2026-11-06; ``exclusions`` in
+``app_registry.json``) — clearing what Ayma has learned (wipe memory)
+stay navigate-only: the tool opens the page and the user acts there
+themselves. Split out of ``skills/app_control.py`` (Tier-2 sweep item #8).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import time
@@ -49,19 +50,6 @@ def _pending_doc(db, uid: str):
         .collection("app_commands")
         .document("account_action_pending")
     )
-
-
-def _run_account_action(db, uid: str, act: dict) -> str:
-    """The server-side destructive actions (wipe memory). Raises on failure."""
-    if act["handler"] == "wipe_memory":
-        import knowledge_wipe
-
-        knowledge_wipe.wipe_knowledge(db, uid)
-        return (
-            "Done: wiped what Ayma had learned (wiki and history). The "
-            "account, profile and photos stay."
-        )
-    raise ValueError(f"no server handler for {act['key']}")
 
 
 def _bind_account_action(
@@ -130,11 +118,11 @@ def _bind_account_action(
             )
         ref.delete()
         if act["handler"] != "client":
-            try:
-                return await asyncio.to_thread(_run_account_action, db, uid, act)
-            except Exception:  # noqa: BLE001
-                logger.exception("account action %s failed for %s", act["key"], uid)
-                return _NOT_APPLIED
+            # Unreachable by construction: every non-client account action
+            # is navigate_only and returned above. Refuse rather than run
+            # anything server-side from here (exclusions config).
+            logger.error("account action %s has no client handler", act["key"])
+            return _NOT_APPLIED
         cmd_id = _queue_command(
             db, uid, {"action": "app_action", "name": act["key"]}
         )

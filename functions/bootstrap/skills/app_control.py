@@ -31,16 +31,19 @@ the single source of truth (founder bug, 2026-10-25: asked to open the "Your
 profile is 59% complete" card, Ayma said no such page existed). ``open_screen``
 opens any registered destination by key or the user's own words and sends the
 client the route ``path`` to push; ``app_action`` changes any registered
-setting; ``account_action`` runs sign out and wipe memory only after an
+setting; ``account_action`` runs sign out only after an
 explicit confirmation in a later turn. ``ui_action`` operates any visible
 control (tap, toggle, pick, slide, type, scroll, back) by the id the live
 screen capture gave it, except what the registry's ``ui_action_policy``
 denies (checked here on the label and again by the app on the real control).
 Pages that need a specific person/record go through ``open_profile``,
 ``open_message_thread`` and ``open_match_report``. Delete account, withdraw
-face-matching consent and every purchase are navigate-only (founder rule,
-2026-10-25): the tool opens the page and the user acts there themselves; no
-tool path here can delete the account, withdraw consent or buy anything.
+face-matching consent, every purchase and clearing what Ayma has learned
+are navigate-only (founder rules, 2026-10-25 and the ACTION PARITY
+exclusions config, 2026-11-06): the tool opens the page and the user acts
+there themselves; no tool path here can delete the account, withdraw
+consent, buy anything or clear her memory. ``play_voice_clip`` plays a
+voice clip in the open chat (``app_control_playback``).
 """
 
 from __future__ import annotations
@@ -53,7 +56,8 @@ from __future__ import annotations
 # ``app_control_navigation`` (open_screen, search_explore, open_profile,
 # open_message_thread, open_match_report), ``app_control_settings``
 # (app_action), ``app_control_account`` (account_action) and
-# ``app_control_ui`` (ui_action). The re-exported private names below are the
+# ``app_control_ui`` (ui_action) and ``app_control_playback``
+# (play_voice_clip). The re-exported private names below are the
 # backward-compatibility surface: production (``main._describe``,
 # ``dm_outreach.queue_command``) and the test suite reach them through this
 # module, so they all stay importable from here.
@@ -65,7 +69,6 @@ from .app_control_account import (
     _CONFIRM_TTL_SECONDS,
     _NEGATIVE,
     _pending_doc,
-    _run_account_action,
 )
 from .app_control_mirror import (
     _ago,
@@ -153,6 +156,7 @@ from .app_control_settings import (
     _resolve_accent,
     _setting_line,
 )
+from .app_control_playback import _bind_play_voice_clip, _PLAY_VOICE_CLIP
 from .app_control_ui import (
     _bind_ui_action,
     _UI_ACTION,
@@ -183,6 +187,12 @@ _ACK_POLL_SECONDS = 0.25
 # lapses the tool still returns the honest _NOT_APPLIED, never hanging.
 _SCROLL_ACK_TIMEOUT_SECONDS = 30.0
 
+# play_voice_clip acks only once playback has actually started; on a live
+# call the client first waits out the announcement grace (~1.2s) and
+# disconnects the voice session, so its ack legitimately lands later
+# than a navigation's. Still bounded, so the turn never hangs.
+_PLAYBACK_ACK_TIMEOUT_SECONDS = 15.0
+
 # After a search_explore is acked, how long to wait for the client to report
 # the loaded results (the feed is a network call after navigation).
 _RESULT_TIMEOUT_SECONDS = 6.0
@@ -206,6 +216,7 @@ COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_APP_ACTION, bind=_bind_app_action),
     Skill(declaration=_ACCOUNT_ACTION, bind=_bind_account_action),
     Skill(declaration=_UI_ACTION, bind=_bind_ui_action),
+    Skill(declaration=_PLAY_VOICE_CLIP, bind=_bind_play_voice_clip),
 ]
 
 VOICE_SKILLS: list[Skill] = [

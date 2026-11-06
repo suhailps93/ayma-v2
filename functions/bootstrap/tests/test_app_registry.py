@@ -118,14 +118,18 @@ def test_settings_and_actions_are_complete():
         assert a["question"].endswith(("?", ".")), a
 
 
-def test_delete_withdraw_and_purchase_are_navigate_only():
+def test_delete_withdraw_purchase_and_clear_memory_are_navigate_only():
     acts = {a["key"]: a for a in app_registry.account_actions()}
     assert acts["delete_account"]["destination"] == "delete_account"
     assert acts["withdraw_consent"]["destination"] == "biometric_consent"
-    for key in ("delete_account", "withdraw_consent"):
+    # Clear memory joined the navigate-only set with the ACTION PARITY
+    # exclusions config (founder, 2026-11-06): Ayma never wipes what she
+    # has learned; she opens Ayma's settings and the user taps it.
+    assert acts["wipe_memory"]["destination"] == "ayma_settings"
+    for key in ("delete_account", "withdraw_consent", "wipe_memory"):
         assert acts[key]["handler"] == "navigate_only"
     assert {a["key"] for a in acts.values() if a["handler"] != "navigate_only"} == {
-        "sign_out", "wipe_memory"
+        "sign_out"
     }
     purchase = next(u for u in app_registry.unavailable() if u["key"] == "purchase")
     assert purchase["navigate"] == "credits"
