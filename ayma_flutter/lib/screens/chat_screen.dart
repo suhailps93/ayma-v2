@@ -2,13 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
@@ -26,6 +29,7 @@ import '../services/pending_chat_queue.dart';
 import '../services/profile_service.dart';
 import '../services/report_cache.dart';
 import '../services/tour_anchors.dart';
+import '../services/feedback_bubble.dart';
 import '../services/transcript_store.dart';
 import '../services/thumbs_down_store.dart';
 import '../services/voice_entry_gate.dart';
@@ -43,6 +47,7 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
+import '../widgets/feedback_bubble_card.dart';
 import '../widgets/feedback_draft_card.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
@@ -265,6 +270,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _canSend = false;
   bool _sending = false;
 
+  /// In-chat feedback bubble (founder spec, 2026-11-06): the current
+  /// offer (null = no bubble in the stream), its once-per-session gate,
+  /// and the conversational fill mirrored into the card. See
+  /// `feedback_bubble.dart` for the triggers and caps.
+  final FeedbackBubbleGate _bubbleGate = FeedbackBubbleGate();
+  FeedbackBubbleRequest? _bubble;
+  bool _bubbleDone = false;
+  String _bubbleFillText = '';
+  int _bubbleFillRevision = 0;
+  bool _bubbleDictating = false;
+  final Set<TranscriptTurn> _bubbleScanned = {};
+
+  /// Auto-screenshot for the bubble: [_appShotKey] bounds the live
+  /// transcript area; when a bubble is offered, one frame of it is
+  /// captured BEFORE the card renders (so the shot shows the app as it
+  /// looked when the feedback was triggered, not the card itself),
+  /// uploaded under `uploads/{uid}/feedback_…`, and handed to the card
+  /// as a removable thumbnail. Best-effort: any failure just flags
+  /// [_bubbleShotFailed] and the submission goes without it.
+  final GlobalKey _appShotKey = GlobalKey();
+  File? _bubbleShotFile;
+  String? _bubbleShotPath;
+  bool _bubbleShotFailed = false;
+  bool _bubblePresenting = false;
+
   /// The page the user was on when this chat was opened/switched to — seeded
   /// from [ChatScreen.pageContext] (a fresh embed, e.g. the global launcher's
   /// sheet) and updatable afterwards via a `page_context` [ChatKickoff] (the
@@ -456,6 +486,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
     _store.addListener(_scrollToBottom);
     _store.addListener(_onStoreCapped);
+    _store.addListener(_scanTurnsForBubble);
     _scrollController.addListener(_maybeLoadOlderHistory);
     if (widget.askAymaContext == null) {
       // So Ayma's `current_screen` tool can answer "what page am I on?"
@@ -1038,6 +1069,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         feedbackTitle: result.feedbackCard?.title ?? '',
         feedbackBody: result.feedbackCard?.body ?? '',
       );
+      _offerServerBubble(result.feedbackBubble);
       if (result.usageCapped) {
         if (_canQueue && rec.queueable) {
           _holdForCredits(
@@ -2345,6 +2377,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         feedbackTitle: result.feedbackCard?.title ?? '',
         feedbackBody: result.feedbackCard?.body ?? '',
       );
+      _offerServerBubble(result.feedbackBubble);
       if (result.usageCapped && _canQueue && !skipUserTurn) {
         _holdForCredits(
           message: message,
@@ -2458,6 +2491,116 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
+
+
+  /// Feedback bubble: scan newly finalized LIVE user turns (typed,
+  /// voice-call segments, voice notes — all land in this one store with
+  /// no `createdAt`; history turns carry one and are never scanned, so
+  /// an old "capture feedback" cannot re-fire on reopen). While a
+  /// bubble is up, a new user turn's words are mirrored into the card
+  /// (the "just tell Ayma" path) instead of triggering anything new.
+  void _scanTurnsForBubble() {
+    if (!mounted) return;
+    for (final t in _store.turns) {
+      if (t.role != TurnRole.user || !t.isFinal || t.createdAt != null) {
+        continue;
+      }
+      if (!_bubbleScanned.add(t)) continue;
+      final text = t.text.trim();
+      if (text.isEmpty) continue;
+      if (_bubble != null && !_bubbleDone) {
+        if (!isExplicitFeedbackRequest(text)) {
+          setState(() {
+            _bubbleFillText = text;
+            _bubbleFillRevision++;
+            _bubbleDictating = false;
+          });
+        }
+        continue;
+      }
+      if (_bubble != null) continue;
+      final req = evaluateUserTurnForBubble(text, _bubbleGate);
+      if (req != null) unawaited(_presentBubble(req));
+    }
+  }
+
+  /// A server-signalled bubble offer (the reply's `feedback_bubble` —
+  /// e.g. Ayma's own `record_feedback` fired this turn). Claimed
+  /// through the same gate, so it can never double-offer a trigger the
+  /// client already showed.
+  void _offerServerBubble(FeedbackBubble? payload) {
+    if (payload == null || _bubble != null) return;
+    final req = requestFromServerPayload(
+      {'trigger': payload.trigger, 'prefill': payload.prefill},
+      _bubbleGate,
+    );
+    if (req == null || !mounted) return;
+    unawaited(_presentBubble(req));
+  }
+
+  /// Capture the app as it currently looks, then show the bubble with
+  /// the shot attached. Capture runs while the card is NOT yet in the
+  /// tree. Any failure leaves the bubble fully usable without a shot.
+  Future<void> _presentBubble(FeedbackBubbleRequest req) async {
+    if (_bubblePresenting || _bubble != null) return;
+    _bubblePresenting = true;
+    File? shotFile;
+    String? shotPath;
+    var shotFailed = false;
+    try {
+      final ctx = _appShotKey.currentContext;
+      final boundary = ctx?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) throw StateError('no shot boundary');
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      try {
+        final data =
+            await image.toByteData(format: ui.ImageByteFormat.png);
+        if (data == null) throw StateError('png encode failed');
+        final dir = await getTemporaryDirectory();
+        shotFile = File(
+            '${dir.path}/feedback_shot_${DateTime.now().millisecondsSinceEpoch}.png');
+        await shotFile.writeAsBytes(data.buffer.asUint8List());
+        final up = await _chat.uploadImage(shotFile, prefix: 'feedback');
+        shotPath = up.storagePath;
+      } finally {
+        image.dispose();
+      }
+    } catch (_) {
+      shotFile = null;
+      shotPath = null;
+      shotFailed = true;
+    }
+    _bubblePresenting = false;
+    if (!mounted || _bubble != null) return;
+    setState(() {
+      _bubble = req;
+      _bubbleDone = false;
+      _bubbleFillText = '';
+      _bubbleFillRevision = 0;
+      _bubbleShotFile = shotFile;
+      _bubbleShotPath = shotPath;
+      _bubbleShotFailed = shotFailed;
+      _bubbleDictating = false;
+    });
+  }
+
+  /// The bubble's Dictate button: reuse the chat's existing voice
+  /// machinery. In a live call the user just talks — the finalized
+  /// segment mirrors into the card. Otherwise tapping starts the call
+  /// the same way the composer mic does; the words land in the card
+  /// via the same mirror, never as a spoken interruption.
+  void _dictateForBubble() {
+    if (_voice.isActive) {
+      AymaToast.show(
+        context,
+        'Just say your feedback — it lands in the card.',
+      );
+      setState(() => _bubbleDictating = true);
+      return;
+    }
+    setState(() => _bubbleDictating = true);
+    unawaited(_toggleVoice());
+  }
 
   Future<void> _getStarted() async {
     try {
@@ -2740,6 +2883,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ? _voiceQueue.activeAymaStageLine
                           : null;
                       final aymaVoiceRow = aymaVoiceProcessing != null ? 1 : 0;
+                      final bubbleRow = _bubble != null ? 1 : 0;
                       if ((turns.isEmpty &&
                               waiting.isEmpty &&
                               aymaVoiceRow == 0) ||
@@ -2834,7 +2978,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         onNotification: _handleListMetrics,
                         child: NotificationListener<ScrollNotification>(
                           onNotification: _handleListScrollNotification,
-                          child: ListView.builder(
+                          child: RepaintBoundary(
+                            key: _appShotKey,
+                            child: ListView.builder(
                             controller: _scrollController,
                             // iOS has no keyboard-dismiss key — dragging the
                             // transcript away is the native escape hatch.
@@ -2850,6 +2996,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 turns.length +
                                 waiting.length +
                                 aymaVoiceRow +
+                                bubbleRow +
                                 1 +
                                 loaderRow,
                             itemBuilder: (context, i) {
@@ -2891,6 +3038,38 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 return _AymaVoiceProgressLine(
                                   key: const ValueKey('ayma-voice-progress'),
                                   stageLine: aymaVoiceProcessing!,
+                                );
+                              }
+                              if (bubbleRow == 1 &&
+                                  idx ==
+                                      turns.length +
+                                          waiting.length +
+                                          aymaVoiceRow) {
+                                return Padding(
+                                  key: const ValueKey('feedback-bubble-row'),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  child: FeedbackBubbleCard(
+                                    trigger: _bubble!.trigger,
+                                    initialText: _bubble!.prefill,
+                                    fillText: _bubbleFillText,
+                                    fillRevision: _bubbleFillRevision,
+                                    api: _api,
+                                    screenshotFile: _bubbleShotFile,
+                                    screenshotPath: _bubbleShotPath,
+                                    screenshotFailed: _bubbleShotFailed,
+                                    onDictate: _dictateForBubble,
+                                    dictating: _bubbleDictating,
+                                    onDismiss: () => setState(() {
+                                      _bubble = null;
+                                      _bubbleDictating = false;
+                                      _bubbleShotFile = null;
+                                      _bubbleShotPath = null;
+                                      _bubbleShotFailed = false;
+                                    }),
+                                    onSent: () =>
+                                        setState(() => _bubbleDone = true),
+                                  ),
                                 );
                               }
                               if (idx >= turns.length) {
@@ -2968,6 +3147,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               }
                               return highlightedLine;
                             },
+                            ),
                           ),
                         ),
                       );

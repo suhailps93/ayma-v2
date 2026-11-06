@@ -3383,6 +3383,7 @@ class ChatResult {
     this.toolsUsed = const [],
     this.imageUrl = '',
     this.feedbackCard,
+    this.feedbackBubble,
   });
 
   factory ChatResult.fromMap(Map<String, dynamic> m) => ChatResult(
@@ -3399,6 +3400,10 @@ class ChatResult {
     feedbackCard: m['feedback_card'] is Map
         ? FeedbackCard.fromMap(
             (m['feedback_card'] as Map).cast<String, dynamic>())
+        : null,
+    feedbackBubble: m['feedback_bubble'] is Map
+        ? FeedbackBubble.fromMap(
+            (m['feedback_bubble'] as Map).cast<String, dynamic>())
         : null,
   );
 
@@ -3424,6 +3429,28 @@ class ChatResult {
   /// the user to review, edit and send — null for a normal turn. Nothing is
   /// filed until the user taps Send on the card.
   final FeedbackCard? feedbackCard;
+
+  /// A feedback-bubble offer for this turn (server rule in
+  /// `feedback_bubble.py`: explicit "capture feedback" or Ayma's own
+  /// `record_feedback` fired) — the chat renders the in-chat bubble
+  /// card asking the user for their feedback. Null for a normal turn.
+  final FeedbackBubble? feedbackBubble;
+}
+
+/// The server's feedback-bubble offer payload (`feedback_bubble` on a
+/// chat reply). The client-side trigger/gate types live in
+/// `feedback_bubble.dart`; this is only the wire shape.
+class FeedbackBubble {
+  const FeedbackBubble({required this.trigger, this.prefill = ''});
+
+  factory FeedbackBubble.fromMap(Map<String, dynamic> m) => FeedbackBubble(
+        trigger: (m['trigger'] as String?) ?? '',
+        prefill: (m['prefill'] as String?) ?? '',
+      );
+
+  /// `'explicit'` or `'frustration'`.
+  final String trigger;
+  final String prefill;
 }
 
 /// A product-feedback card Ayma drafted mid-chat (the `submit_feedback` tool).
