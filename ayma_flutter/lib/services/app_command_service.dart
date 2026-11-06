@@ -598,7 +598,15 @@ class AppCommandService {
         if (uid.isEmpty) return false;
         final me = _auth.currentUser?.uid;
         if (me == null || me.isEmpty) return false;
-        _navigate('/dm/${sortedPairKey(me, uid)}');
+        // Through [_open], not a bare push (founder feedback item 6,
+        // 2026-11-06: the opened conversation bounced straight back to the
+        // conversations page): a bare push stacks the thread ON TOP of
+        // Ayma's still-open chat popup, and the next popup-close pop —
+        // which pops the top route assuming it is the popup — kills the
+        // thread route instead. [_open] closes the popup first and skips
+        // the push when the user is already on this thread, exactly like
+        // the `navigate` and `open_notification` cases.
+        _open('/dm/${sortedPairKey(me, uid)}');
         return true;
       case 'open_notification':
         // The backend already picked the latest unread notification and hands
