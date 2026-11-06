@@ -13,6 +13,7 @@ import 'package:ayma_flutter/services/connection_heartbeat.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -290,6 +291,184 @@ void main() {
       );
     },
   );
+
+  test(
+    'regression (note 111): restored offline job reconciles in-session when '
+    'first reconcile observes non-terminal phase and later completes',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final dir = await Directory.systemTemp.createTemp('avc-111-restore');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final store = TranscriptStore();
+      final api = _FakeApi();
+      final hb = _FakeHeartbeat(initial: ConnectionQuality.offline);
+      final queue = AsyncVoiceQueue(
+        api: api,
+        store: store,
+        sessionId: 's-1',
+        currentUid: () => 'u1',
+        uploader: _FakeUploader(),
+        firestore: _FailOnceFirestore(),
+        heartbeat: hb,
+        clipsDir: () async => dir,
+        watchRetryDelay: const Duration(milliseconds: 50),
+      );
+      addTearDown(queue.dispose);
+      await queue.activate();
+
+      final recorder = _FakeRecorder()..writeFile = true;
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      addTearDown(controller.dispose);
+
+      // Record offline: submitted is false, nothing submitted yet.
+      expect(await controller.startRecording(), isTrue);
+      final jobId = controller.activeJobId!;
+      await controller.stopAndSend();
+      expect(controller.state, AsyncVoiceUiState.working);
+      expect(api.submits, isEmpty);
+      expect(queue.items.map((m) => m.jobId), [jobId]);
+
+      // Server is in 'speaking' phase when submit arrives.
+      api.answer = (id) => VoiceAsyncSubmit(
+        jobId: id,
+        status: 'speaking',
+      );
+
+      // Restore connection: trigger flush.
+      hb.change(ConnectionQuality.ok);
+
+      // Job is submitted; the watch fails; first reconcile observes
+      // non-terminal phase ('speaking').
+      await _eventually(
+        () => api.submits.contains(jobId),
+        'the first submit after restore',
+      );
+      // Wait long enough for the first reconcile to observe 'speaking'.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      // The job later completes server-side.
+      api.answer = (id) => VoiceAsyncSubmit(
+        jobId: id,
+        status: 'done',
+        transcript: 'Yes, offline question.',
+        replyText: 'Online answer.',
+        replyAudioUrl: 'https://cdn.example/ans.wav',
+      );
+
+      // Reconcile must re-check and adopt the done job in-session without relaunch.
+      await _eventually(
+        () => controller.state == AsyncVoiceUiState.idle,
+        'the controller to idle after re-armed reconcile',
+      );
+      expect(queue.jobStatuses, isEmpty);
+      expect(queue.isEmpty, isTrue);
+      expect(
+        store.turns.map((t) => t.text).toList(),
+        ['Yes, offline question.', 'Online answer.'],
+      );
+    },
+  );
+
+  test(
+    'regression (note 111): while a restored job sits unreconciled, '
+    'startRecording() for a new send succeeds (not wedged)',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'async_voice_queue_v1:u1':
+            '[{"id":"v-offline","file":"v-offline.wav","storage_path":"uploads/u1/v-offline.wav","submitted":true,"created_at":"2026-11-05T21:00:00.000Z"}]',
+      });
+      final dir = await Directory.systemTemp.createTemp('avc-111-unwedged');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      // Create clip file on disk so the loaded queue item is kept.
+      final clipsDir = Directory('${dir.path}/async_voice_clips');
+      await clipsDir.create(recursive: true);
+      await File('${clipsDir.path}/v-offline.wav')
+          .writeAsBytes(List.filled(2048, 0));
+
+      final store = TranscriptStore();
+      final api = _FakeApi();
+      final queue = AsyncVoiceQueue(
+        api: api,
+        store: store,
+        sessionId: 's-1',
+        currentUid: () => 'u1',
+        uploader: _FakeUploader(),
+        firestore: _ErrorFirestore(),
+        heartbeat: ConnectionHeartbeat(
+          probe: () async => ProbeOutcome.good,
+          connectivityChanges: const Stream.empty(),
+        ),
+        clipsDir: () async => dir,
+        watchRetryDelay: const Duration(milliseconds: 50),
+      );
+      addTearDown(queue.dispose);
+      await queue.activate();
+
+      // The restored job is unreconciled in the queue (e.g. server still processing).
+      api.answer = (id) => VoiceAsyncSubmit(jobId: id, status: 'speaking');
+      expect(queue.items.map((m) => m.jobId), contains('v-offline'));
+
+      // A controller starts: it must not wedge on startRecording().
+      final recorder = _FakeRecorder()..writeFile = true;
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      addTearDown(controller.dispose);
+
+      expect(controller.state, AsyncVoiceUiState.idle);
+      expect(await controller.startRecording(), isTrue);
+      expect(controller.state, AsyncVoiceUiState.recording);
+      expect(controller.activeJobId, isNot('v-offline'));
+    },
+  );
+}
+
+class _FailOnceFirestore extends Fake implements FirebaseFirestore {
+  int watchAttempts = 0;
+
+  @override
+  DocumentReference<Map<String, dynamic>> doc(String path) =>
+      _FailOnceDocRef(this);
+}
+
+class _FailOnceDocRef extends Fake
+    implements DocumentReference<Map<String, dynamic>> {
+  _FailOnceDocRef(this.store);
+  final _FailOnceFirestore store;
+
+  @override
+  Stream<DocumentSnapshot<Map<String, dynamic>>> snapshots({
+    bool includeMetadataChanges = false,
+    ListenSource? source,
+  }) {
+    store.watchAttempts++;
+    if (store.watchAttempts == 1) {
+      return Stream.error(
+        FirebaseException(plugin: 'firestore', code: 'permission-denied'),
+      );
+    }
+    // Subsequent watch does not deliver events (hung/silent live watch).
+    return const Stream.empty();
+  }
+}
+
+class _FakeHeartbeat extends Fake implements ConnectionHeartbeat {
+  _FakeHeartbeat({ConnectionQuality initial = ConnectionQuality.ok})
+    : notifier = ValueNotifier(initial);
+
+  final ValueNotifier<ConnectionQuality> notifier;
+
+  @override
+  ValueListenable<ConnectionQuality> get listenable => notifier;
+
+  @override
+  ConnectionQuality get state => notifier.value;
+
+  void change(ConnectionQuality q) {
+    notifier.value = q;
+  }
 }
 
 Future<void> _eventually(bool Function() cond, String what) async {

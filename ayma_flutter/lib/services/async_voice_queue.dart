@@ -283,11 +283,28 @@ class AsyncVoiceQueue extends ChangeNotifier {
       debugPrint('AsyncVoiceQueue load failed: $e');
     }
     notifyListeners();
-    unawaited(flush());
+    _reconcileSubmitted();
   }
 
   void _onConnectionChanged() {
-    if (_heartbeat.state != ConnectionQuality.offline) unawaited(flush());
+    if (_heartbeat.state != ConnectionQuality.offline) {
+      _reconcileSubmitted();
+    }
+  }
+
+  /// Trigger reconciliation of any submitted-but-unresolved jobs across
+  /// connectivity restore or queue transitions. Dropping their watchers and
+  /// marking them watch-failed forces the flush pass to query the idempotent
+  /// submit directly instead of relying on a potentially dead/silent watch
+  /// (Scout note 111).
+  void _reconcileSubmitted() {
+    for (final m in _items) {
+      if (m.submitted) {
+        _watchFailed.add(m.jobId);
+        unawaited(_stopWatching(m.jobId));
+      }
+    }
+    unawaited(flush());
   }
 
   /// Hold a fresh recording ([recordedFile], any path) for delivery under
@@ -322,6 +339,13 @@ class AsyncVoiceQueue extends ChangeNotifier {
     _items.add(item);
     notifyListeners();
     await _persist();
+    // Queue transition: reconcile any earlier submitted-but-unresolved job.
+    for (final m in _items) {
+      if (m.jobId != item.jobId && m.submitted) {
+        _watchFailed.add(m.jobId);
+        unawaited(_stopWatching(m.jobId));
+      }
+    }
     unawaited(flush());
     return item;
   }
@@ -337,6 +361,10 @@ class AsyncVoiceQueue extends ChangeNotifier {
     await _stopWatching(jobId);
     _watchFailed.remove(jobId);
     _jobStatuses.remove(jobId);
+    if (_items.isEmpty) {
+      _reconcileTimer?.cancel();
+      _reconcileTimer = null;
+    }
     notifyListeners();
     await _persist();
     await _deleteClip(jobId);
@@ -356,8 +384,11 @@ class AsyncVoiceQueue extends ChangeNotifier {
         if (_heartbeat.state == ConnectionQuality.offline) return;
         // Adopted (or cancelled) while this flush ran.
         if (!_items.any((m) => m.jobId == item.jobId)) continue;
-        // Submitted — the watcher owns it now.
-        if (_watchers.containsKey(item.jobId)) continue;
+        // Submitted — the watcher owns it now, unless its watch failed.
+        if (_watchers.containsKey(item.jobId) &&
+            !_watchFailed.contains(item.jobId)) {
+          continue;
+        }
         if (!await _deliver(item)) return;
       }
     } finally {
@@ -428,10 +459,34 @@ class AsyncVoiceQueue extends ChangeNotifier {
         await _remove(current);
         return true;
       }
-      await _watch(current);
+      if (submit.status == 'error') {
+        await _adoptError(
+          current,
+          file,
+          transcript: submit.transcript,
+          error: '',
+          usageCapped: false,
+        );
+        await _remove(current);
+        return true;
+      }
+      if (submit.status.isNotEmpty) {
+        _jobStatuses[current.jobId] = submit.status;
+        if (!_disposed) notifyListeners();
+      }
+      if (_watchFailed.contains(current.jobId)) {
+        // The watch failed or was dropped for reconcile: re-arm the delayed
+        // reconcile until the server reports a terminal state (Scout note 111).
+        _scheduleReconcile();
+      } else {
+        await _watch(current);
+      }
       return true;
     } catch (e) {
       debugPrint('AsyncVoiceQueue delivery failed: $e');
+      if (_watchFailed.contains(current.jobId)) {
+        _scheduleReconcile();
+      }
       return false;
     } finally {
       _sendingId = null;
@@ -443,7 +498,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
     final uid = _loadedUid ?? _currentUid();
     if (uid == null || uid.isEmpty || _watchers.containsKey(item.jobId)) return;
     final ref = _db.doc('users/$uid/async_voice_jobs/${item.jobId}');
-    _jobStatuses[item.jobId] = 'transcribing';
+    _jobStatuses.putIfAbsent(item.jobId, () => 'transcribing');
     if (!_disposed) notifyListeners();
     _watchers[item.jobId] = ref.snapshots().listen(
       (snap) => unawaited(_onJobSnap(item, snap)),
@@ -614,6 +669,10 @@ class AsyncVoiceQueue extends ChangeNotifier {
     _items.removeWhere((m) => m.jobId == item.jobId);
     _jobStatuses.remove(item.jobId);
     _watchFailed.remove(item.jobId);
+    if (_items.isEmpty) {
+      _reconcileTimer?.cancel();
+      _reconcileTimer = null;
+    }
     if (!_disposed) notifyListeners();
     await _persist();
     await _deleteClip(item.jobId);
