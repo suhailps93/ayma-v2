@@ -144,6 +144,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
     FirebaseFirestore? firestore,
     ConnectionHeartbeat? heartbeat,
     Future<Directory> Function()? clipsDir,
+    this._watchRetryDelay = const Duration(seconds: 10),
   }) : _apiOverride = api,
        _storeOverride = store,
        _sessionIdOverride = sessionId,
@@ -176,6 +177,10 @@ class AsyncVoiceQueue extends ChangeNotifier {
   final ConnectionHeartbeat? _heartbeatOverride;
   final Future<Directory> Function()? _clipsDirOverride;
 
+  /// Delay before a watcher failure is reconciled through the idempotent
+  /// submit (see [_scheduleReconcile]). Injectable for tests.
+  final Duration _watchRetryDelay;
+
   late final ApiClient _api = _apiOverride ?? ApiClient();
   TranscriptStore get _store => _storeOverride ?? AymaSession.instance.store;
   String get _sessionId => _sessionIdOverride ?? AymaSession.instance.sessionId;
@@ -188,6 +193,12 @@ class AsyncVoiceQueue extends ChangeNotifier {
   final List<QueuedVoiceMessage> _items = [];
   final Map<String, String> _jobStatuses = {};
   final Map<String, StreamSubscription<DocumentSnapshot>> _watchers = {};
+
+  /// Jobs whose Firestore watch has failed (permission-denied, offline
+  /// flap): they are reconciled through the submit fallback in [flush],
+  /// never blindly re-watched (see [_reapWatchers]).
+  final Set<String> _watchFailed = {};
+  Timer? _reconcileTimer;
   String? _loadedUid;
   bool _flushing = false;
   bool _listening = false;
@@ -324,6 +335,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
     _items.removeWhere((m) => m.jobId == jobId);
     if (_items.length == before) return;
     await _stopWatching(jobId);
+    _watchFailed.remove(jobId);
     _jobStatuses.remove(jobId);
     notifyListeners();
     await _persist();
@@ -357,10 +369,15 @@ class AsyncVoiceQueue extends ChangeNotifier {
   /// landed server-side but never got its watcher (kill between the two)
   /// would otherwise sit silent forever. Uploaded-but-never-submitted
   /// items are NOT watched here: the flush below submits them (idempotent
-  /// server-side) and the watcher attaches on that path instead.
+  /// server-side) and the watcher attaches on that path instead. Jobs in
+  /// [_watchFailed] are skipped for the opposite reason: their flush-loop
+  /// turn goes through [_deliver], whose idempotent resubmit reconciles
+  /// them from the stored outcome.
   void _reapWatchers() {
     for (final m in _items) {
-      if (m.submitted && !_watchers.containsKey(m.jobId)) {
+      if (m.submitted &&
+          !_watchers.containsKey(m.jobId) &&
+          !_watchFailed.contains(m.jobId)) {
         unawaited(_watch(m));
       }
     }
@@ -431,12 +448,29 @@ class AsyncVoiceQueue extends ChangeNotifier {
     _watchers[item.jobId] = ref.snapshots().listen(
       (snap) => unawaited(_onJobSnap(item, snap)),
       onError: (Object e) {
-        // Offline / permission blip: drop the watcher; the next flush
-        // re-watches (the job keeps running server-side either way).
+        // The watch is dead (permission-denied, offline flap): drop it and
+        // mark the job watch-failed so the reconcile flush below goes
+        // through the idempotent submit — whose answer carries a finished
+        // job's full payload — instead of re-watching blind. Without this
+        // a job could sit at "Hearing you out…" forever with its reply
+        // already written server-side (Scout note 109, 2026-11-05).
         debugPrint('AsyncVoiceQueue watch failed: $e');
+        _watchFailed.add(item.jobId);
         unawaited(_stopWatching(item.jobId));
+        _scheduleReconcile();
       },
     );
+  }
+
+  /// Arm the delayed reconcile flush after a watcher failure. One timer
+  /// at a time; the flush itself re-arms (via the next watch error) if the
+  /// job is still running and its fresh watch fails again.
+  void _scheduleReconcile() {
+    if (_disposed || _reconcileTimer != null || _items.isEmpty) return;
+    _reconcileTimer = Timer(_watchRetryDelay, () {
+      _reconcileTimer = null;
+      unawaited(flush());
+    });
   }
 
   Future<void> _stopWatching(String jobId) async {
@@ -453,6 +487,8 @@ class AsyncVoiceQueue extends ChangeNotifier {
     DocumentSnapshot snap,
   ) async {
     if (_disposed) return;
+    // A snapshot arrived: the watch path is healthy for this job again.
+    _watchFailed.remove(item.jobId);
     final data = snap.data();
     if (data is! Map) return;
     final m = data.cast<String, dynamic>();
@@ -603,6 +639,8 @@ class AsyncVoiceQueue extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _reconcileTimer?.cancel();
+    _reconcileTimer = null;
     if (_listening) {
       _listening = false;
       _heartbeat.listenable.removeListener(_onConnectionChanged);

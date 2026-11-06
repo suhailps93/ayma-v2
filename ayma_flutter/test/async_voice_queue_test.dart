@@ -1,9 +1,15 @@
+// The error-Firestore fake below implements the sealed DocumentReference
+// to make snapshots() fail on demand; there is no composable way to do
+// that in a unit test.
+// ignore_for_file: subtype_of_sealed_class
+import 'dart:async';
 import 'dart:io';
 
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/async_voice_queue.dart';
 import 'package:ayma_flutter/services/connection_heartbeat.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -43,6 +49,27 @@ class _FakeApi extends ApiClient {
     submits.add(jobId);
     return answer(jobId);
   }
+}
+
+/// A Firestore whose every doc watch errors immediately — the live
+/// failure behind Scout note 109 (the job-doc stream answered
+/// permission-denied, so the client never heard the job finish).
+/// DocumentReference is sealed; a test fake is the only way to make its
+/// snapshots() fail on demand (see the ignore_for_file at the top).
+class _ErrorDocRef extends Fake
+    implements DocumentReference<Map<String, dynamic>> {
+  @override
+  Stream<DocumentSnapshot<Map<String, dynamic>>> snapshots({
+    bool includeMetadataChanges = false,
+    ListenSource? source,
+  }) => Stream.error(
+    FirebaseException(plugin: 'firestore', code: 'permission-denied'),
+  );
+}
+
+class _ErrorFirestore extends Fake implements FirebaseFirestore {
+  @override
+  DocumentReference<Map<String, dynamic>> doc(String path) => _ErrorDocRef();
 }
 
 class _Harness {
@@ -414,5 +441,62 @@ void main() {
     expect(QueuedVoiceMessage.fromJson([]), isNull);
     expect(QueuedVoiceMessage.fromJson({'id': '', 'file': 'x'}), isNull);
     expect(QueuedVoiceMessage.fromJson({'id': 'v-1'}), isNull);
+  });
+
+  test('regression (note 109): a job whose watch errors still reconciles '
+      'once the server finishes it — queue clears, turns land', () async {
+    SharedPreferences.setMockInitialValues({});
+    final dir = await Directory.systemTemp.createTemp('avq-err');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final store = TranscriptStore();
+    final uploader = _FakeUploader();
+    final api = _FakeApi();
+    final queue = AsyncVoiceQueue(
+      api: api,
+      store: store,
+      sessionId: 's-1',
+      currentUid: () => 'u1',
+      uploader: uploader,
+      firestore: _ErrorFirestore(),
+      heartbeat: ConnectionHeartbeat(
+        probe: () async => ProbeOutcome.good,
+        connectivityChanges: const Stream.empty(),
+      ),
+      clipsDir: () async => dir,
+      watchRetryDelay: const Duration(milliseconds: 100),
+    );
+    addTearDown(queue.dispose);
+    await queue.activate();
+
+    // Record + send: the submit is accepted, then the job watch dies
+    // (permission-denied) — the exact stuck state Scout found.
+    final clip = File('${dir.path}/rec.wav');
+    await clip.writeAsBytes(List.filled(2048, 0));
+    await queue.enqueue('v-stuck', clip);
+    await _eventually(() => api.submits.isNotEmpty, 'the first submit');
+    expect(queue.items.map((m) => m.jobId), ['v-stuck']);
+    // Let the watch error land and the reconcile timer arm.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    // The server finishes the job (its doc says done) — but no watch will
+    // ever report it. The queue must reconcile through the idempotent
+    // submit on its own: no manual flush, no relaunch.
+    api.answer = (jobId) => VoiceAsyncSubmit(
+      jobId: jobId,
+      status: 'done',
+      transcript: 'A fine question.',
+      replyText: 'Here is my answer.',
+      replyAudioUrl: 'https://cdn.example/r.wav',
+    );
+    await _eventually(() => queue.isEmpty, 'the queue to reconcile');
+    expect(api.submits.where((id) => id == 'v-stuck').length,
+        greaterThanOrEqualTo(2));
+    final texts = store.turns.map((t) => t.text).toList();
+    expect(texts, contains('A fine question.'));
+    expect(texts, contains('Here is my answer.'));
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('async_voice_queue_v1:u1'), isNull);
   });
 }
