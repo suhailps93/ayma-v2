@@ -124,6 +124,7 @@ class ConnectionHeartbeat {
     CheckConnectivityFn? checkConnectivity,
     Stream<List<ConnectivityResult>>? connectivityChanges,
     this._httpClient,
+    this._probeIntervalOverride,
   })  : _probeOverride = probe,
         _checkConnectivityOverride = checkConnectivity,
         _connectivityChangesOverride = connectivityChanges;
@@ -166,6 +167,20 @@ class ConnectionHeartbeat {
   final CheckConnectivityFn? _checkConnectivityOverride;
   final Stream<List<ConnectivityResult>>? _connectivityChangesOverride;
   final http.Client? _httpClient;
+
+  /// Test seam: replaces the 15s/60s probe cadence (the production intervals
+  /// are the class constants). Lets a test prove the timer chain re-arms.
+  final Duration? _probeIntervalOverride;
+
+  /// The most recent completed probe's outcome and wall-clock duration
+  /// (null before the first probe). Observability hook: a device retest can
+  /// read these (via logcat's per-probe line) to see exactly what the
+  /// classifier saw — this is how the weak banner's absence under a network
+  /// throttle gets proven or disproven on-device instead of argued from code.
+  ProbeOutcome? get lastProbeOutcome => _lastProbeOutcome;
+  ProbeOutcome? _lastProbeOutcome;
+  Duration? get lastProbeElapsed => _lastProbeElapsed;
+  Duration? _lastProbeElapsed;
 
   final ConnectionClassifier _classifier = ConnectionClassifier();
   final ValueNotifier<ConnectionQuality> _state =
@@ -233,14 +248,27 @@ class ConnectionHeartbeat {
   Future<void> probeNow() async {
     if (_probeInFlight) return;
     _probeInFlight = true;
+    final probeStopwatch = Stopwatch()..start();
     try {
       final outcome = await _runProbe();
+      _lastProbeOutcome = outcome;
+      _lastProbeElapsed = probeStopwatch.elapsed;
       _classifier.record(outcome);
       _state.value = _classifier.state;
+      debugPrint(
+        '[heartbeat] probe $outcome in ${_lastProbeElapsed!.inMilliseconds}ms '
+        '-> ${_state.value} (probe ${probeCount + 1})',
+      );
     } catch (_) {
       // Belt and braces: a probe must never take down its trigger.
+      _lastProbeOutcome = ProbeOutcome.failure;
+      _lastProbeElapsed = probeStopwatch.elapsed;
       _classifier.record(ProbeOutcome.failure);
       _state.value = _classifier.state;
+      debugPrint(
+        '[heartbeat] probe failure in ${_lastProbeElapsed!.inMilliseconds}ms '
+        '-> ${_state.value} (probe ${probeCount + 1})',
+      );
     } finally {
       _probeCount++;
       _probeInFlight = false;
@@ -318,7 +346,8 @@ class ConnectionHeartbeat {
     _timer?.cancel();
     _timer = null;
     if (!_started || !_foreground) return;
-    _timer = Timer(intervalFor(_lastResults), () async {
+    _timer = Timer(_probeIntervalOverride ?? intervalFor(_lastResults),
+        () async {
       await probeNow();
       _scheduleNext();
     });

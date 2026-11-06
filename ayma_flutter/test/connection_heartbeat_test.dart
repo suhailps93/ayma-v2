@@ -201,6 +201,44 @@ void main() {
       expect(hb.state, ConnectionQuality.offline);
     });
 
+    test('a slow real probe (over the 4s budget) classifies as slow, and two '
+        'slow probes flip the state to weak', () async {
+      final hb = ConnectionHeartbeat(
+        checkConnectivity: () async => [ConnectivityResult.wifi],
+        httpClient: MockClient((_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 4500));
+          return http.Response('{}', 200);
+        }),
+      );
+      await hb.probeNow();
+      expect(hb.lastProbeOutcome, ProbeOutcome.slow);
+      expect(hb.lastProbeElapsed!.inMilliseconds, greaterThanOrEqualTo(4000));
+      expect(hb.state, ConnectionQuality.ok);
+      await hb.probeNow();
+      expect(hb.lastProbeOutcome, ProbeOutcome.slow);
+      expect(hb.state, ConnectionQuality.weak);
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
+    test('start() keeps probing on its interval (timer chain re-arms)',
+        () async {
+      final hb = ConnectionHeartbeat(
+        probe: () async => ProbeOutcome.good,
+        connectivityChanges: const Stream.empty(),
+        probeIntervalOverride: const Duration(milliseconds: 100),
+      );
+      try {
+        hb.start();
+        // Initial probe + at least two timer ticks.
+        for (var i = 0; i < 200 && hb.probeCount < 3; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(hb.probeCount, greaterThanOrEqualTo(3));
+        expect(hb.state, ConnectionQuality.ok);
+      } finally {
+        hb.stop();
+      }
+    });
+
     test('start/stop lifecycle arms and disarms without leaking', () async {
       final hb = ConnectionHeartbeat(
         probe: () async => ProbeOutcome.good,
