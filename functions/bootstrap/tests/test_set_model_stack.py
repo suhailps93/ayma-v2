@@ -418,7 +418,18 @@ def test_set_tts_uncredited_provider_is_honest_and_writes_nothing(monkeypatch):
 
 def test_set_tts_key_wired_but_uncredited_is_honest_and_writes_nothing(monkeypatch):
     # Key wired but the provider not credited: still refused honestly
-    # (defense in depth) — never silently picked.
+    # (defense in depth) — never silently picked. Cartesia IS in the
+    # committed credited default (union, 2026-11-06), so this scenario
+    # now needs an explicit credited set without it (e.g. a deploy whose
+    # VOICE_CREDITED_PROVIDERS override omits it).
+    import dataclasses
+
+    monkeypatch.setattr(voice_catalog, "CONFIG", dataclasses.replace(
+        voice_catalog.CONFIG, voice_credited_providers=tuple(
+            p for p in voice_catalog.CONFIG.voice_credited_providers
+            if p != "cartesia"
+        ),
+    ))
     monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
     voice_catalog.clear_cache()
     try:
