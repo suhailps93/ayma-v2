@@ -111,9 +111,12 @@ def test_bases_enable_cartesia_on_staging():
     assert m, "CARTESIA_CREDITED_PROVIDERS assignment not found"
     providers = m.group(1).split(",")
     assert providers[-1] == "cartesia"
+    # Union corrected 2026-11-06: live staging list (deepgram, elevenlabs,
+    # openai, google, cartesia, inworld, fishaudio, rime, gradium) plus the
+    # previously committed assemblyai — no entries dropped.
     assert providers[:-1] == [
         "inworld", "deepgram", "fishaudio", "assemblyai", "rime",
-        "gradium", "google",
+        "gradium", "google", "elevenlabs", "openai",
     ]
     for base in (_base(text, "API_ENV_BASE"), _base(text, "AGENT_ENV_BASE")):
         assert "VOICE_CREDITED_PROVIDERS=" in base
