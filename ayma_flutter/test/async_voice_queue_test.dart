@@ -278,9 +278,10 @@ void main() {
       'error': 'Out of credits.',
       'usage_capped': true,
     });
-    await _eventually(() => h.store.turns.length == 1, 'the capped turn');
-    expect(h.store.turns[0].capped, isTrue);
-    expect(h.store.turns[0].text, 'Out of credits.');
+    await _eventually(() => h.store.turns.length == 2, 'the capped turn');
+    expect(h.store.turns[0].role, TurnRole.user);
+    expect(h.store.turns[1].capped, isTrue);
+    expect(h.store.turns[1].text, 'Out of credits.');
   });
 
   test('an already-shown reply is never adopted twice', () async {
@@ -292,7 +293,9 @@ void main() {
     await _eventually(() => h.api.submits.isNotEmpty, 'the submit');
     await h.firestore.doc('users/u1/async_voice_jobs/v-1').set(_doneDoc());
     await _eventually(() => h.queue.isEmpty, 'the cleanup');
-    expect(h.store.turns.length, 1);
+    // Initial Ayma turn + user's sent turn; Ayma's reply is not adopted twice.
+    expect(h.store.turns.length, 2);
+    expect(h.store.turns.where((t) => t.role == TurnRole.ayma).length, 1);
   });
 
   test('cancel drops the message and deletes its clip', () async {
@@ -499,4 +502,55 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('async_voice_queue_v1:u1'), isNull);
   });
+
+  test(
+    'regression (decouple): offline release: bubble is sent locally while offline, uploads on restore, reply appends in-session, and note-111 reconcile path recovers',
+    () async {
+      final h = await _Harness.make();
+      addTearDown(h.dispose);
+      await h.goOffline();
+      await h.queue.activate();
+
+      // 1. Release while offline: user turn lands immediately in store, playable locally
+      final clip = await h.record('offline_clip');
+      await h.queue.enqueue('v-offline-1', clip);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(h.store.turns, hasLength(1));
+      final userTurn = h.store.turns.first;
+      expect(userTurn.role, TurnRole.user);
+      expect(userTurn.source, TurnSource.voice);
+      expect(userTurn.audioFile?.path, contains('v-offline-1.wav'));
+
+      // No uploads or submits have occurred yet
+      expect(h.uploader.uploads, isEmpty);
+      expect(h.api.submits, isEmpty);
+      expect(h.queue.items.map((m) => m.jobId), ['v-offline-1']);
+
+      // 2. Reconnect: upload completes, job submits
+      await h.goOnline();
+      await _eventually(() => h.uploader.uploads.isNotEmpty, 'the upload');
+      expect(h.uploader.uploads, ['uploads/u1/async_voice/v-offline-1.wav']);
+      await _eventually(() => h.api.submits.isNotEmpty, 'the submit');
+      expect(h.api.submits, ['v-offline-1']);
+
+      // 3. Backend finishes: reply appends in-session, user bubble text attaches additively
+      h.uploader.urls['uploads/u1/async_voice/v-offline-1.wav'] =
+          'https://cdn.example/u-offline.wav';
+      await h.firestore.doc('users/u1/async_voice_jobs/v-offline-1').set({
+        'status': 'done',
+        'transcript': 'note for later',
+        'reply_text': 'saved your note',
+        'reply_audio_url': 'https://cdn.example/r-offline.wav',
+      });
+      await _eventually(() => h.store.turns.length == 2, 'the thread turns');
+      expect(h.store.turns[0].text, 'note for later');
+      expect(h.store.turns[0].audioUrl, 'https://cdn.example/u-offline.wav');
+      expect(h.store.turns[1].role, TurnRole.ayma);
+      expect(h.store.turns[1].text, 'saved your note');
+      expect(h.store.turns[1].audioUrl, 'https://cdn.example/r-offline.wav');
+
+      await _eventually(() => h.queue.isEmpty, 'queue cleanup');
+    },
+  );
 }

@@ -109,6 +109,26 @@ class _FakeQueue extends AsyncVoiceQueue {
   Map<String, String> get jobStatuses => Map.unmodifiable(statuses);
 
   @override
+  String? get activeAymaStageLine {
+    for (final m in live) {
+      final status = statuses[m.jobId];
+      final line = switch (status) {
+        'transcribing' => 'Hearing you out…',
+        'thinking' => 'Ayma is thinking…',
+        'speaking' => 'Ayma is answering…',
+        _ => null,
+      };
+      if (line != null) return line;
+    }
+    return null;
+  }
+
+  void setStatus(String jobId, String status) {
+    statuses[jobId] = status;
+    notifyListeners();
+  }
+
+  @override
   Future<void> activate() async {}
 
   @override
@@ -120,6 +140,12 @@ class _FakeQueue extends AsyncVoiceQueue {
       createdAt: DateTime.now(),
     );
     live.add(m);
+    store.addTurn(
+      TurnRole.user,
+      '',
+      TurnSource.voice,
+      audioFile: file,
+    );
     notifyListeners();
     return m;
   }
@@ -136,12 +162,21 @@ class _FakeQueue extends AsyncVoiceQueue {
     required String reply,
     required String replyAudioUrl,
   }) {
-    store.addTurn(
-      TurnRole.user,
-      transcript,
-      TurnSource.voice,
-      audioUrl: 'https://cdn.example/u.wav',
-    );
+    final userTurn = store.turns.where((t) => t.role == TurnRole.user).firstOrNull;
+    if (userTurn != null) {
+      store.updateTurn(
+        userTurn,
+        text: transcript,
+        audioUrl: 'https://cdn.example/u.wav',
+      );
+    } else {
+      store.addTurn(
+        TurnRole.user,
+        transcript,
+        TurnSource.voice,
+        audioUrl: 'https://cdn.example/u.wav',
+      );
+    }
     store.addTurn(
       TurnRole.ayma,
       reply,
@@ -242,13 +277,19 @@ void main() {
     expect(voice.phase, VoiceSessionPhase.idle);
     expect(find.text('Release to send'), findsOneWidget);
 
-    // Release: the message queues as a waiting bubble with the live stage.
+    // Release: the clip renders in the thread immediately as the user's sent,
+    // playable voice bubble (from the local file) — before upload or server processing.
     await gesture.up();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(queue.delivered, hasLength(1));
     expect(find.text('Voice message'), findsOneWidget);
-    expect(find.text('Sending your voice…'), findsOneWidget);
+    expect(find.text('Sending your voice…'), findsNothing);
+
+    // Playable locally right away:
+    await tester.tap(find.text('Voice message').first);
+    await tester.pump();
+    expect(player.playedFiles, hasLength(1));
 
     // The cloud finishes: both turns land in the thread, playable.
     queue.complete(
@@ -262,10 +303,10 @@ void main() {
     expect(find.text('done, see you at eight'), findsOneWidget);
     expect(find.text('Voice message'), findsNWidgets(2));
 
-    // Tapping a play row plays that turn's clip, and only one at a time.
-    await tester.tap(find.text('Voice message').first);
+    // Tapping Ayma's play row plays her remote reply audio.
+    await tester.tap(find.text('Voice message').last);
     await tester.pump();
-    expect(player.playedUrls, ['https://cdn.example/u.wav']);
+    expect(player.playedUrls, ['https://cdn.example/r.wav']);
   });
 
   testWidgets('a call that cannot connect offers the voice-message fallback', (
@@ -354,4 +395,190 @@ void main() {
     expect(queue.delivered, isEmpty);
     expect(find.text('Release to send'), findsNothing);
   });
+
+  testWidgets(
+    'regression (decouple): release-to-sent: after a send, user bubble state is SENT + playable (local source) before any job status exists',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = TranscriptStore();
+      final voice = _FakeVoice();
+      final queue = _FakeQueue(store);
+      final recorder = _FakeRecorder();
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      final player = _FakePlayer();
+      addTearDown(controller.dispose);
+      addTearDown(queue.dispose);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: ChatScreen(
+            apiClient: await _api(),
+            voiceController: voice,
+            transcriptStore: store,
+            asyncVoiceController: controller,
+            asyncVoiceQueue: queue,
+            asyncVoicePlayer: player,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final mic = find.byIcon(Icons.mic_none_rounded);
+      final gesture = await tester.startGesture(tester.getCenter(mic));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(controller.state, AsyncVoiceUiState.recording);
+
+      // Release mic: the clip renders in the thread immediately as sent + playable
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Delivered to queue, no job status yet exists
+      expect(queue.delivered, hasLength(1));
+      expect(queue.jobStatuses, isEmpty);
+      expect(queue.activeAymaStageLine, isNull);
+
+      // User bubble is in transcript store and rendered in thread
+      expect(store.turns, hasLength(1));
+      expect(store.turns.first.role, TurnRole.user);
+      expect(store.turns.first.source, TurnSource.voice);
+      expect(store.turns.first.audioFile, isNotNull);
+      expect(find.text('Voice message'), findsOneWidget);
+
+      // Playable from local file immediately
+      await tester.tap(find.text('Voice message').first);
+      await tester.pump();
+      expect(player.playedFiles, hasLength(1));
+      expect(player.playedUrls, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'regression (decouple): background completion: job completion appends Ayma reply and does not mutate user bubble sent state; transcript attach is optional/additive only',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = TranscriptStore();
+      final voice = _FakeVoice();
+      final queue = _FakeQueue(store);
+      final recorder = _FakeRecorder();
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      final player = _FakePlayer();
+      addTearDown(controller.dispose);
+      addTearDown(queue.dispose);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: ChatScreen(
+            apiClient: await _api(),
+            voiceController: voice,
+            transcriptStore: store,
+            asyncVoiceController: controller,
+            asyncVoiceQueue: queue,
+            asyncVoicePlayer: player,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final mic = find.byIcon(Icons.mic_none_rounded);
+      final gesture = await tester.startGesture(tester.getCenter(mic));
+      await tester.pump(const Duration(milliseconds: 600));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final userTurnBefore = store.turns.first;
+      expect(userTurnBefore.role, TurnRole.user);
+      expect(userTurnBefore.audioFile, isNotNull);
+
+      // Backend progress updates Ayma stage, does not mutate user bubble
+      queue.setStatus(queue.delivered.first, 'thinking');
+      await tester.pump();
+      expect(find.text('Ayma is thinking…'), findsOneWidget);
+      expect(store.turns.first.audioFile, userTurnBefore.audioFile);
+
+      // Job completion lands Ayma reply and additively attaches transcript
+      queue.complete(
+        queue.delivered.first,
+        transcript: 'remind me tomorrow',
+        reply: 'reminder set for tomorrow',
+        replyAudioUrl: 'https://cdn.example/reply.wav',
+      );
+      await tester.pump();
+
+      expect(store.turns, hasLength(2));
+      final userTurnAfter = store.turns[0];
+      final aymaTurn = store.turns[1];
+
+      // User bubble is still SENT at index 0, same role, transcript attached additively
+      expect(userTurnAfter.role, TurnRole.user);
+      expect(userTurnAfter.text, 'remind me tomorrow');
+      expect(userTurnAfter.source, TurnSource.voice);
+      expect(userTurnAfter.audioFile, userTurnBefore.audioFile);
+
+      // Ayma reply appended
+      expect(aymaTurn.role, TurnRole.ayma);
+      expect(aymaTurn.text, 'reminder set for tomorrow');
+      expect(aymaTurn.audioUrl, 'https://cdn.example/reply.wav');
+      expect(find.text('remind me tomorrow'), findsOneWidget);
+      expect(find.text('reminder set for tomorrow'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'regression (decouple): no-holdover: no user-bubble state named or behaving as sending until processed remains in async voice path',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = TranscriptStore();
+      final voice = _FakeVoice();
+      final queue = _FakeQueue(store);
+      final recorder = _FakeRecorder();
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      final player = _FakePlayer();
+      addTearDown(controller.dispose);
+      addTearDown(queue.dispose);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: ChatScreen(
+            apiClient: await _api(),
+            voiceController: voice,
+            transcriptStore: store,
+            asyncVoiceController: controller,
+            asyncVoiceQueue: queue,
+            asyncVoicePlayer: player,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final mic = find.byIcon(Icons.mic_none_rounded);
+      final gesture = await tester.startGesture(tester.getCenter(mic));
+      await tester.pump(const Duration(milliseconds: 600));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final jobId = queue.delivered.first;
+      queue.setStatus(jobId, 'transcribing');
+      await tester.pump();
+
+      // No sending state on the user's bubble
+      expect(find.text('Sending your voice…'), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Cancel'), findsNothing);
+
+      // "Hearing you out…" surfaces ONLY as Ayma-side progress line, NOT on user bubble
+      expect(find.byKey(const ValueKey('ayma-voice-progress')), findsOneWidget);
+      expect(find.text('Hearing you out…'), findsOneWidget);
+
+      // User bubble remains fully playable locally during processing
+      await tester.tap(find.text('Voice message').first);
+      await tester.pump();
+      expect(player.playedFiles, hasLength(1));
+    },
+  );
 }

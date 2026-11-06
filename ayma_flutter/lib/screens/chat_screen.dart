@@ -2731,12 +2731,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       final waiting = _canQueue
                           ? _queue.waiting
                           : const <QueuedChatMessage>[];
-                      final voiceWaiting = _canQueue
-                          ? _voiceQueue.waiting
-                          : const <QueuedVoiceMessage>[];
+                      final aymaVoiceProcessing = _canQueue
+                          ? _voiceQueue.activeAymaStageLine
+                          : null;
+                      final aymaVoiceRow = aymaVoiceProcessing != null ? 1 : 0;
                       if ((turns.isEmpty &&
                               waiting.isEmpty &&
-                              voiceWaiting.isEmpty) ||
+                              aymaVoiceRow == 0) ||
                           partialSheet) {
                         if (askAyma != null) {
                           // The quick-suggestion chips show here, as the body:
@@ -2843,7 +2844,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             itemCount:
                                 turns.length +
                                 waiting.length +
-                                voiceWaiting.length +
+                                aymaVoiceRow +
                                 1 +
                                 loaderRow,
                             itemBuilder: (context, i) {
@@ -2880,15 +2881,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 );
                               }
                               final idx = i - 1 - loaderRow;
-                              if (idx >= turns.length + waiting.length) {
-                                final queued =
-                                    voiceWaiting[idx -
-                                        turns.length -
-                                        waiting.length];
-                                return _QueuedVoiceBubble(
-                                  key: ValueKey(queued.jobId),
-                                  message: queued,
-                                  queue: _voiceQueue,
+                              if (aymaVoiceRow == 1 &&
+                                  idx == turns.length + waiting.length) {
+                                return _AymaVoiceProgressLine(
+                                  key: const ValueKey('ayma-voice-progress'),
+                                  stageLine: aymaVoiceProcessing!,
                                 );
                               }
                               if (idx >= turns.length) {
@@ -3500,9 +3497,8 @@ class _TranscriptLineState extends State<_TranscriptLine> {
 
     if (!isAyma) {
       // You — a right-aligned rounded bubble (Gemini style).
-      final userClip = turn.text.isNotEmpty
-          ? _clipRow(ac.onAccent, ac.onAccent.withValues(alpha: 0.85))
-          : null;
+      final userClip = _clipRow(ac.onAccent, ac.onAccent.withValues(alpha: 0.85));
+      final showBubble = turn.text.isNotEmpty || userClip != null;
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Align(
@@ -3514,62 +3510,65 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               children: [
                 if (turn.sharedKind.isNotEmpty)
                   Padding(
-                    padding: EdgeInsets.only(bottom: turn.text.isEmpty ? 0 : 6),
+                    padding: EdgeInsets.only(bottom: !showBubble ? 0 : 6),
                     child: _SharedRefCard(turn: turn),
                   ),
                 if (hasImage)
                   Padding(
-                    padding: EdgeInsets.only(bottom: turn.text.isEmpty ? 0 : 6),
+                    padding: EdgeInsets.only(bottom: !showBubble ? 0 : 6),
                     child: _photo(context, rounded: true),
                   ),
-                if (turn.text.isNotEmpty)
+                if (showBubble)
                   CopyOnLongPress(
-                    text: turn.text,
+                    text: turn.text.isNotEmpty ? turn.text : 'Voice message',
                     child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      // Solid accent, same as a sent DM bubble — one "mine"
-                      // treatment app-wide (founder, 2026-09-27; was the
-                      // washed-out accentFaint tint).
-                      color: ac.accent,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(16),
-                        topRight: Radius.circular(16),
-                        bottomLeft: Radius.circular(16),
-                        bottomRight: Radius.circular(4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
                       ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
+                      decoration: BoxDecoration(
+                        // Solid accent, same as a sent DM bubble — one "mine"
+                        // treatment app-wide (founder, 2026-09-27; was the
+                        // washed-out accentFaint tint).
+                        color: ac.accent,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(16),
+                          bottomLeft: Radius.circular(16),
+                          bottomRight: Radius.circular(4),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                           if (userClip != null)
                             Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
+                              padding: EdgeInsets.only(
+                                bottom: turn.text.isNotEmpty ? 6 : 0,
+                              ),
                               child: userClip,
                             ),
-                        Text(
-                          turn.text,
-                          style: AymaType.message(color: ac.onAccent),
-                        ),
-                        if (timeStr != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            timeStr,
-                            style: AymaType.sans(
-                              size: 10.5,
-                              color: ac.onAccent.withValues(alpha: 0.72),
+                          if (turn.text.isNotEmpty)
+                            Text(
+                              turn.text,
+                              style: AymaType.message(color: ac.onAccent),
                             ),
-                          ),
+                          if (timeStr != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              timeStr,
+                              style: AymaType.sans(
+                                size: 10.5,
+                                color: ac.onAccent.withValues(alpha: 0.72),
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                  ),
-                if (turn.text.isEmpty && timeStr != null)
+                if (!showBubble && timeStr != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 2, right: 4),
                     child: Text(
@@ -3989,117 +3988,36 @@ class _QueuedBubble extends StatelessWidget {
   }
 }
 
-/// A voice message waiting in the [AsyncVoiceQueue]: the user's bubble,
-/// dimmed, with the live delivery stage beneath it (the same wing-loader
-/// lines the sheet shows) and a way to cancel it.
-class _QueuedVoiceBubble extends StatelessWidget {
-  const _QueuedVoiceBubble({
+/// Ayma-side progress line shown while an async voice message is being
+/// processed by the backend (transcribing / thinking / answering).
+class _AymaVoiceProgressLine extends StatelessWidget {
+  const _AymaVoiceProgressLine({
     super.key,
-    required this.message,
-    required this.queue,
+    required this.stageLine,
   });
 
-  final QueuedVoiceMessage message;
-  final AsyncVoiceQueue queue;
+  final String stageLine;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final width = MediaQuery.of(context).size.width;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: width * 0.82),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Opacity(
-                opacity: 0.6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: ac.accent,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(16),
-                      topRight: Radius.circular(16),
-                      bottomLeft: Radius.circular(16),
-                      bottomRight: Radius.circular(4),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.mic_rounded, size: 18, color: ac.onAccent),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Voice message',
-                        style: AymaType.sans(
-                          size: 15,
-                          color: ac.onAccent,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              ListenableBuilder(
-                listenable: Listenable.merge([
-                  queue,
-                  ConnectionHeartbeat.instance.listenable,
-                ]),
-                builder: (context, _) {
-                  final offline =
-                      ConnectionHeartbeat.instance.state ==
-                      ConnectionQuality.offline;
-                  final line = offline
-                      ? "Queued — sends when you're back online"
-                      : AymaLoaderLines.asyncVoice[queue.stageFor(
-                          message.jobId,
-                        )];
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (!offline)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 6),
-                          child: AymaWingLoader(size: 14, showLabel: false),
-                        )
-                      else
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Icon(
-                            Icons.schedule_rounded,
-                            size: 14,
-                            color: ac.fgMute,
-                          ),
-                        ),
-                      Flexible(
-                        child: Text(
-                          line,
-                          style: AymaType.sans(size: 12, color: ac.fgMute),
-                        ),
-                      ),
-                      TextButton(
-                        style: TextButton.styleFrom(
-                          minimumSize: const Size(44, 44),
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                        ),
-                        onPressed: () => queue.cancel(message.jobId),
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ],
+      padding: const EdgeInsets.only(top: 12, bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 5),
+            child: AymaWingLoader(size: 14, showLabel: false),
           ),
-        ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              stageLine,
+              style: AymaType.message(color: ac.fgDim),
+            ),
+          ),
+        ],
       ),
     );
   }
