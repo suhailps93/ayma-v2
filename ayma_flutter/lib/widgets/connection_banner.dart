@@ -83,7 +83,20 @@ class _ConnectionBannerState extends State<ConnectionBanner>
               const _OfflineStrip()
             else
               const _WeakStrip(),
-            Expanded(child: widget.child),
+            Expanded(
+              // The strip above already consumed the status-bar inset
+              // (its own SafeArea, top: true). Remove that inset from
+              // the MediaQuery the child subtree inherits, so each
+              // page's own SafeArea does not apply the same inset a
+              // second time -- the double-count was the dead band of
+              // empty space under the banner on every page (founder
+              // report, Nov 5 2026).
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: widget.child,
+              ),
+            ),
           ],
         );
       },
