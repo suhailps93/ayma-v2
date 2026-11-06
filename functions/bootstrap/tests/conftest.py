@@ -120,6 +120,12 @@ def no_firestore(monkeypatch):
     monkeypatch.setattr(main, "_session_mode", lambda _caller: "marketing")
     monkeypatch.setattr(main, "_recovery_required", lambda _uid: False)
     monkeypatch.setattr(main, "get_db", lambda: object())
+    # Practice Date endpoints also call get_db directly, so patch it there too
+    try:
+        import practice_date
+        monkeypatch.setattr(practice_date, "get_db", lambda: object())
+    except ModuleNotFoundError:  # pragma: no cover - agent venv
+        pass
     # The 18+ gate has its own tests (test_age_gate.py); everywhere else every
     # test caller is treated as a verified adult.
     monkeypatch.setattr(
