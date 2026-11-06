@@ -193,6 +193,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
   final List<QueuedVoiceMessage> _items = [];
   final Map<String, String> _jobStatuses = {};
   final Map<String, StreamSubscription<DocumentSnapshot>> _watchers = {};
+  final Map<String, TranscriptTurn> _userTurns = {};
 
   /// Jobs whose Firestore watch has failed (permission-denied, offline
   /// flap): they are reconciled through the submit fallback in [flush],
@@ -219,6 +220,27 @@ class AsyncVoiceQueue extends ChangeNotifier {
   /// The latest known job status per watched job (`transcribing`,
   /// `thinking`, `speaking`, `done`, `error`) — drives the loader stage.
   Map<String, String> get jobStatuses => Map.unmodifiable(_jobStatuses);
+
+  /// The user-facing Ayma-side progress stage line if a voice job is
+  /// currently being processed on the backend ('Hearing you out…',
+  /// 'Ayma is thinking…', 'Ayma is answering…').
+  ///
+  /// Null when idle, offline, or while uploading before server processing.
+  String? get activeAymaStageLine {
+    if (_heartbeat.state == ConnectionQuality.offline) return null;
+    for (final item in _items) {
+      final status = _jobStatuses[item.jobId];
+      if (status == null) continue;
+      final line = switch (status) {
+        'transcribing' => 'Hearing you out…',
+        'thinking' => 'Ayma is thinking…',
+        'speaking' => 'Ayma is answering…',
+        _ => null,
+      };
+      if (line != null) return line;
+    }
+    return null;
+  }
 
   /// Loader stage for [jobId] into `AymaLoaderLines.asyncVoice`: 0 while
   /// the clip uploads, 1 transcribing, 2 thinking, 3 speaking/settling.
@@ -273,8 +295,10 @@ class AsyncVoiceQueue extends ChangeNotifier {
             // A queued row whose clip file is gone (user cleared data, a
             // failed move) can never be delivered — drop it rather than
             // wedge the flush behind an item that always fails.
-            if (await File('${dir.path}/${m.fileName}').exists()) {
+            final clipFile = File('${dir.path}/${m.fileName}');
+            if (await clipFile.exists()) {
               _items.add(m);
+              _adoptUserTurnImmediate(m, clipFile);
             }
           }
         }
@@ -337,6 +361,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
       createdAt: DateTime.now(),
     );
     _items.add(item);
+    _adoptUserTurnImmediate(item, target);
     notifyListeners();
     await _persist();
     // Queue transition: reconcile any earlier submitted-but-unresolved job.
@@ -361,6 +386,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
     await _stopWatching(jobId);
     _watchFailed.remove(jobId);
     _jobStatuses.remove(jobId);
+    _userTurns.remove(jobId);
     if (_items.isEmpty) {
       _reconcileTimer?.cancel();
       _reconcileTimer = null;
@@ -433,6 +459,12 @@ class AsyncVoiceQueue extends ChangeNotifier {
         current = current.withStoragePath(path);
         _replace(item, current);
         await _persist();
+      }
+      if (current.storagePath.isNotEmpty) {
+        final userUrl = await _uploader.downloadUrl(current.storagePath);
+        if (userUrl != null) {
+          _updateUserTurn(current.jobId, audioUrl: userUrl);
+        }
       }
       final window = _store.wireTurns();
       final submit = await _api.submitVoiceMessage(
@@ -583,6 +615,73 @@ class AsyncVoiceQueue extends ChangeNotifier {
     await _remove(item);
   }
 
+  /// Ensure the user's turn renders immediately in the thread upon release/enqueue,
+  /// playable from the local file [file].
+  void _adoptUserTurnImmediate(QueuedVoiceMessage item, File file) {
+    if (_userTurns.containsKey(item.jobId)) return;
+    final existing = _store.turns.where((t) =>
+      t.role == TurnRole.user &&
+      t.source == TurnSource.voice &&
+      t.audioFile?.path == file.path,
+    ).firstOrNull;
+    if (existing != null) {
+      _userTurns[item.jobId] = existing;
+      return;
+    }
+    final turn = _store.addTurn(
+      TurnRole.user,
+      '',
+      TurnSource.voice,
+      audioFile: file,
+      createdAt: item.createdAt,
+    );
+    _userTurns[item.jobId] = turn;
+  }
+
+  void _updateUserTurn(String jobId, {String? transcript, String? audioUrl}) {
+    final turn = _userTurns[jobId];
+    if (turn != null) {
+      final updated = _store.updateTurn(
+        turn,
+        text: transcript,
+        audioUrl: audioUrl,
+      );
+      if (updated != null) _userTurns[jobId] = updated;
+    }
+  }
+
+  /// Attach server transcript and remote download URL to the user's turn once
+  /// server processing completes.
+  Future<void> _attachUserTurnDetails(
+    QueuedVoiceMessage item,
+    File file,
+    String transcript,
+  ) async {
+    var turn = _userTurns[item.jobId];
+    if (turn == null) {
+      final targetPath = file.path;
+      turn = _store.turns.where((t) =>
+        t.role == TurnRole.user &&
+        t.source == TurnSource.voice &&
+        (t.audioFile?.path == targetPath || (t.text == transcript && transcript.isNotEmpty)),
+      ).firstOrNull;
+    }
+    String? userUrl;
+    if (item.storagePath.isNotEmpty) {
+      userUrl = await _uploader.downloadUrl(item.storagePath);
+    }
+    if (turn != null) {
+      final updated = _store.updateTurn(
+        turn,
+        text: transcript,
+        audioUrl: userUrl,
+      );
+      if (updated != null) _userTurns[item.jobId] = updated;
+    } else {
+      await _adoptUserTurn(item, file, transcript);
+    }
+  }
+
   /// Show the user's recorded turn: the local clip plays instantly, and the
   /// resolved remote URL swaps in when it lands (so the bubble keeps
   /// playing after the local file is cleaned up).
@@ -598,6 +697,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
       TurnSource.voice,
       audioFile: await file.exists() ? file : null,
     );
+    _userTurns[item.jobId] = turn;
     if (item.storagePath.isEmpty) return;
     final userUrl = await _uploader.downloadUrl(item.storagePath);
     if (userUrl != null) store.updateTurnAudio(turn, userUrl);
@@ -618,7 +718,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
         .take(10)
         .any((t) => t.role == TurnRole.ayma && t.isFinal && t.text == reply);
     if (alreadyShown) return;
-    await _adoptUserTurn(item, file, transcript);
+    await _attachUserTurnDetails(item, file, transcript);
     store.addTurn(
       TurnRole.ayma,
       reply,
@@ -645,7 +745,9 @@ class AsyncVoiceQueue extends ChangeNotifier {
         ? "Ayma couldn't answer that voice message. Please try again."
         : error.trim();
     if (transcript.trim().isNotEmpty) {
-      await _adoptUserTurn(item, file, transcript.trim());
+      await _attachUserTurnDetails(item, file, transcript.trim());
+    } else {
+      _adoptUserTurnImmediate(item, file);
     }
     store.addPending('Thinking…');
     store.resolvePending(copy, capped: usageCapped);
@@ -669,6 +771,7 @@ class AsyncVoiceQueue extends ChangeNotifier {
     _items.removeWhere((m) => m.jobId == item.jobId);
     _jobStatuses.remove(item.jobId);
     _watchFailed.remove(item.jobId);
+    _userTurns.remove(item.jobId);
     if (_items.isEmpty) {
       _reconcileTimer?.cancel();
       _reconcileTimer = null;

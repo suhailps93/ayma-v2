@@ -133,11 +133,9 @@ class TranscriptStore extends ChangeNotifier {
   List<Map<String, String>> wireTurns({int skip = 0}) => [
         for (final t in _turns.skip(skip))
           if (t.isFinal &&
-          (t.text.isNotEmpty ||
-              t.imageUrl != null ||
-              t.imageFile != null ||
-              t.audioUrl != null ||
-              t.audioFile != null))
+              (t.text.isNotEmpty ||
+                  t.imageUrl != null ||
+                  t.imageFile != null))
             {
               'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
               'text': () {
@@ -227,16 +225,28 @@ class TranscriptStore extends ChangeNotifier {
   /// with a local [TranscriptTurn.audioFile] (async voice message whose clip
   /// was still uploading). No-op if [turn] is no longer in the window.
   void updateTurnAudio(TranscriptTurn turn, String audioUrl) {
+    updateTurn(turn, audioUrl: audioUrl);
+  }
+
+  /// Update an existing [turn] with [text], [audioUrl], or [audioFile].
+  /// Returns the updated turn, or null if [turn] was not found in the window.
+  TranscriptTurn? updateTurn(
+    TranscriptTurn turn, {
+    String? text,
+    String? audioUrl,
+    File? audioFile,
+  }) {
     final i = _turns.indexOf(turn);
-    if (i == -1) return;
-    _turns[i] = TranscriptTurn(
+    if (i == -1) return null;
+    final updated = TranscriptTurn(
       role: turn.role,
-      text: turn.text,
+      text: text != null ? text.trim() : turn.text,
       source: turn.source,
       isFinal: turn.isFinal,
       imageUrl: turn.imageUrl,
       imageFile: turn.imageFile,
-      audioUrl: audioUrl,
+      audioUrl: audioUrl ?? turn.audioUrl,
+      audioFile: audioFile ?? turn.audioFile,
       tools: turn.tools,
       subjectImage: turn.subjectImage,
       capped: turn.capped,
@@ -247,8 +257,14 @@ class TranscriptStore extends ChangeNotifier {
       sharedName: turn.sharedName,
       sharedPhoto: turn.sharedPhoto,
       sharedRefId: turn.sharedRefId,
+      feedbackKind: turn.feedbackKind,
+      feedbackTitle: turn.feedbackTitle,
+      feedbackBody: turn.feedbackBody,
+      createdAt: turn.createdAt,
     );
+    _turns[i] = updated;
     notifyListeners();
+    return updated;
   }
 
   /// Drop a turn that was shown optimistically (see [addTurn]) once its image

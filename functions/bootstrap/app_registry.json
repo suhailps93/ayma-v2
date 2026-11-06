@@ -164,12 +164,12 @@
     "reason": "Ambient status chrome driven by the client heartbeat; Ayma neither opens nor changes it. If asked about it, explain what it means (the phone cannot reach, or barely reaches, the Ayma API) — never claim to fix the user's connection."
   },
   "async_voice": {
-    "_doc": "Async voice messages (Nov 2026, Chunk A): press-and-hold the chat mic (or take the offered fallback when a live call cannot connect) to record a voice message; the clip uploads when the connection allows and Ayma's spoken reply + transcript land in the same thread. Overlay-only chrome with no route, so — like guided_tour and connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
+    "_doc": "Async voice messages (Nov 2026, Chunk A): press-and-hold the chat mic (or take the offered fallback when a live call cannot connect) to record a voice message; on mic release, the clip renders in the thread immediately as a sent, playable voice bubble while uploading and processing in the background, and Ayma's spoken reply + transcript land when ready. Overlay-only chrome with no route, so — like guided_tour and connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
     "key": "async_voice",
     "label": "Voice messages",
     "aliases": ["voice message", "voice messages", "voice note", "voice notes", "send a voice message", "leave a voice message", "record a voice message", "async voice", "voice memo", "talk to ayma offline", "voice message mode"],
     "operated_by_ayma": false,
-    "reason": "A client recording + upload flow Ayma neither opens nor changes: hold the chat mic to record, release to send — the clip queues on the phone when offline and Ayma's spoken reply lands in the thread. If asked about it, explain how to send one; never claim to record, play, or re-send it yourself."
+    "reason": "A client recording + background-delivery flow Ayma neither opens nor changes: hold the chat mic to record, release to send — the clip renders immediately as a sent, playable voice bubble, uploads in the background (queued on the phone when offline), and Ayma's spoken reply lands in the thread. If asked about it, explain how to send one; never claim to record, play, or re-send it yourself."
   },
 
   "voice_call_resilience": {
