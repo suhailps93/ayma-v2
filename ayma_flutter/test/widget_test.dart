@@ -51,12 +51,17 @@ void main() {
     expect(find.text('Say hello to start a conversation.'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
 
+    // WhatsApp composer model (founder, 2026-11-06): with an empty input
+    // the send slot is the voice mic (Step 14's mic, in its new home).
+    expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+
     await tester.enterText(find.byType(TextField), 'hello ayma');
     await tester.pump();
     expect(find.text('hello ayma'), findsOneWidget);
 
-    // Step 14: the voice mic button is present in the composer.
-    expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+    // Once text is typed the slot swaps to SEND and the mic is gone.
+    expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.mic_none_rounded), findsNothing);
   });
 
   testWidgets(

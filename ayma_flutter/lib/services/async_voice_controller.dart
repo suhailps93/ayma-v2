@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'async_voice_queue.dart';
 import 'async_voice_recorder.dart';
 import 'ids.dart';
+import 'voice_note_controller.dart';
 
 /// What the async voice UI is doing right now.
 enum AsyncVoiceUiState {
@@ -25,7 +26,7 @@ enum AsyncVoiceUiState {
 /// Owns the recorder and the handoff into [AsyncVoiceQueue]; the UI reads
 /// [state]/[elapsed]/[activeJobId] from here and the delivery stage from
 /// the queue. One message at a time: starting while busy is a no-op.
-class AsyncVoiceController extends ChangeNotifier {
+class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
   AsyncVoiceController({AsyncVoiceRecorder? recorder, AsyncVoiceQueue? queue})
     : _recorder = recorder ?? RecordPluginRecorder(),
       _queue = queue ?? AsyncVoiceQueue.instance;
@@ -41,9 +42,39 @@ class AsyncVoiceController extends ChangeNotifier {
   AsyncVoiceUiState get state => _state;
 
   /// How long the current recording has run (ticks while [state] is
-  /// [AsyncVoiceUiState.recording]).
+  /// [AsyncVoiceUiState.recording]). Paused spans (locked pause) do not
+  /// count - the clock freezes while paused.
+  @override
   Duration get elapsed => _elapsed;
   Duration _elapsed = Duration.zero;
+
+  // --- VoiceNoteEngine -------------------------------------------------
+  @override
+  bool get isRecording => _state == AsyncVoiceUiState.recording;
+
+  @override
+  bool get isPaused => _pausedAt != null;
+
+  @override
+  Duration get maxClipDuration => maxDuration;
+
+  @override
+  Future<void> sendRecording() => stopAndSend();
+
+  /// Total time spent paused during the current recording, and when the
+  /// current pause began (null while not paused). The cap timer is disarmed
+  /// while paused and re-armed on resume with whatever time was left.
+  Duration _pausedAccum = Duration.zero;
+  DateTime? _pausedAt;
+  Duration? _capRemaining;
+
+  Duration _effectiveElapsed() {
+    final started = _startedAt;
+    if (started == null) return _elapsed;
+    final end = _pausedAt ?? DateTime.now();
+    final raw = end.difference(started) - _pausedAccum;
+    return raw.isNegative ? Duration.zero : raw;
+  }
 
   /// The in-flight message's job id, while recording or working.
   String? get activeJobId => _jobId;
@@ -51,6 +82,7 @@ class AsyncVoiceController extends ChangeNotifier {
 
   /// A one-shot recording failure for the UI to surface (`mic denied`,
   /// `couldn't start recording`) — cleared once read.
+  @override
   String? takeError() {
     final e = _error;
     _error = null;
@@ -70,6 +102,7 @@ class AsyncVoiceController extends ChangeNotifier {
   /// A new mic hold while a previous job is in flight starts recording
   /// immediately (the recorder is idle; delivery runs concurrently in the
   /// queue).
+  @override
   Future<bool> startRecording() async {
     if (_state == AsyncVoiceUiState.recording) return false;
     _error = null;
@@ -96,12 +129,15 @@ class AsyncVoiceController extends ChangeNotifier {
     _queue.removeListener(_onQueueChanged);
     _jobId = jobId;
     _tempPath = tempPath;
+    _pausedAccum = Duration.zero;
+    _pausedAt = null;
+    _capRemaining = null;
     _startedAt = DateTime.now();
     _elapsed = Duration.zero;
     _state = AsyncVoiceUiState.recording;
     _ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (_disposed || _startedAt == null) return;
-      _elapsed = DateTime.now().difference(_startedAt!);
+      _elapsed = _effectiveElapsed();
       notifyListeners();
     });
     _capTimer = Timer(maxDuration, () {
@@ -110,6 +146,43 @@ class AsyncVoiceController extends ChangeNotifier {
     });
     notifyListeners();
     return true;
+  }
+
+  /// Pause the current recording (WhatsApp locked-state pause): the
+  /// native recorder pauses when it supports it, the elapsed clock freezes,
+  /// and the max-duration cap is disarmed until [resumeRecording].
+  @override
+  Future<void> pauseRecording() async {
+    if (_state != AsyncVoiceUiState.recording || _pausedAt != null) return;
+    _pausedAt = DateTime.now();
+    _elapsed = _effectiveElapsed();
+    _capRemaining = maxDuration - _elapsed;
+    _capTimer?.cancel();
+    _capTimer = null;
+    final r = _recorder;
+    if (r is RecordPluginRecorder) await r.pause();
+    notifyListeners();
+  }
+
+  /// Resume a recording paused with [pauseRecording].
+  @override
+  Future<void> resumeRecording() async {
+    final pausedAt = _pausedAt;
+    if (_state != AsyncVoiceUiState.recording || pausedAt == null) return;
+    _pausedAccum += DateTime.now().difference(pausedAt);
+    _pausedAt = null;
+    final remaining = _capRemaining;
+    _capRemaining = null;
+    if (remaining != null) {
+      if (remaining <= Duration.zero) {
+        unawaited(stopAndSend());
+        return;
+      }
+      _capTimer = Timer(remaining, () => unawaited(stopAndSend()));
+    }
+    final r = _recorder;
+    if (r is RecordPluginRecorder) await r.resume();
+    notifyListeners();
   }
 
   /// Release: stop the recorder and hand the clip to the queue for upload
@@ -175,6 +248,7 @@ class AsyncVoiceController extends ChangeNotifier {
 
   /// Give up on the in-progress recording (release outside the button,
   /// sheet dismissed mid-record): nothing is queued or sent.
+  @override
   Future<void> cancelRecording() async {
     if (_state != AsyncVoiceUiState.recording) return;
     _stopTimers();
@@ -233,6 +307,9 @@ class AsyncVoiceController extends ChangeNotifier {
     _jobId = null;
     _elapsed = Duration.zero;
     _startedAt = null;
+    _pausedAccum = Duration.zero;
+    _pausedAt = null;
+    _capRemaining = null;
     if (_state != AsyncVoiceUiState.idle) {
       _state = AsyncVoiceUiState.idle;
       notifyListeners();

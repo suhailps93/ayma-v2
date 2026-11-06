@@ -10,6 +10,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/async_voice_player.dart';
+import '../services/async_voice_recorder.dart';
+import '../services/dm_voice_engine.dart';
+import '../services/voice_note_controller.dart';
 import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../services/fresh_data.dart';
@@ -28,6 +32,8 @@ import '../widgets/keyboard_dismiss.dart';
 import '../widgets/message_timestamp.dart';
 import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
+import '../widgets/voice_clip_row.dart';
+import '../widgets/voice_note_composer.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
 import '../services/screen_capture.dart';
@@ -54,6 +60,8 @@ class DmThreadScreen extends StatefulWidget {
     this.dmService,
     this.apiClient,
     this.picker,
+    this.voiceNoteRecorder,
+    this.voicePlayer,
   });
 
   static const path = '/dm';
@@ -63,6 +71,11 @@ class DmThreadScreen extends StatefulWidget {
   final DmService? dmService;
   final ApiClient? apiClient;
   final ImagePicker? picker;
+
+  /// Test seams for the voice-note composer: a fake recorder / player.
+  /// Null builds the real ones.
+  final AsyncVoiceRecorder? voiceNoteRecorder;
+  final AsyncVoicePlayer? voicePlayer;
 
   @override
   State<DmThreadScreen> createState() => _DmThreadScreenState();
@@ -76,6 +89,28 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
   bool _sending = false;
+
+  /// Voice notes (WhatsApp model, founder 2026-11-06): the engine records
+  /// and hands finished clips to [_sendVoiceClip]; the gesture controller
+  /// drives the composer mic / recording bar.
+  late final DmVoiceNoteEngine _voiceEngine = DmVoiceNoteEngine(
+    recorder: widget.voiceNoteRecorder,
+    onSendClip: _sendVoiceClip,
+  );
+  late final VoiceNoteController _voiceNote = VoiceNoteController(
+    engine: _voiceEngine,
+  );
+  late final AsyncVoicePlayer _clipPlayer =
+      widget.voicePlayer ?? JustAudioVoicePlayer();
+
+  /// Which DM voice clip is playing (VoiceClipRow keys) - one at a time.
+  final ValueNotifier<String?> _nowPlaying = ValueNotifier<String?>(null);
+
+  /// Voice notes I just sent, shown immediately as playable bubbles from
+  /// their local files while the upload + post lands; each is hidden once
+  /// the stream echoes a voice message of mine at/after its send time.
+  final List<DmMessage> _localVoice = [];
+  final Map<String, String> _localVoiceFiles = {};
 
   /// Transcript window (Phase 2 pagination design §3.3): the live tail
   /// (newest 30) streams in; [_olderMessages] holds paged history
@@ -138,6 +173,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   void initState() {
     super.initState();
     _listController.addListener(_onListScroll);
+    _composer.addListener(_onComposerTextChanged);
+    _voiceEngine.addListener(_onVoiceEngineChanged);
     reassertScreenContext();
     _loadOther();
     _preferredLang = _deviceLanguage();
@@ -292,6 +329,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     _listController
       ..removeListener(_onListScroll)
       ..dispose();
+    _composer.removeListener(_onComposerTextChanged);
+    _voiceEngine.removeListener(_onVoiceEngineChanged);
+    _voiceNote.dispose();
+    _voiceEngine.dispose();
+    _nowPlaying.dispose();
     _composer.dispose();
     _composerFocus.dispose();
     super.dispose();
@@ -350,6 +392,76 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               _assist.safety.reason != _dismissedSafety)
           ? _assist.safety
           : null;
+
+  /// Composer text changed - the mic/send slot swap follows it.
+  void _onComposerTextChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Surface a voice-note recording failure once, as a toast.
+  void _onVoiceEngineChanged() {
+    final error = _voiceEngine.takeError();
+    if (error != null && mounted) {
+      AymaToast.show(context, error, kind: AymaToastKind.error);
+    }
+  }
+
+  /// A finished voice-note clip from the composer: show it immediately as
+  /// a playable bubble from the local file, then upload + post it in the
+  /// background. The stream echo replaces the local bubble (see
+  /// [_visibleLocalVoice]); a failed upload keeps the local bubble and
+  /// says so - the clip itself is never silently dropped.
+  Future<void> _sendVoiceClip(File file) async {
+    final id = 'local-voice-${DateTime.now().microsecondsSinceEpoch}';
+    final local = DmMessage(
+      id: id,
+      senderUid: _dm.uid,
+      type: 'voice',
+      body: '',
+      createdAt: DateTime.now(),
+    );
+    if (mounted) {
+      setState(() {
+        _localVoice.add(local);
+        _localVoiceFiles[id] = file.path;
+      });
+    } else {
+      _localVoice.add(local);
+      _localVoiceFiles[id] = file.path;
+    }
+    try {
+      final att = await _dm.uploadVoiceClip(file, threadId: widget.threadId);
+      await _dm.sendVoice(widget.threadId, att.storagePath);
+    } catch (e) {
+      if (mounted) {
+        AymaToast.show(
+          context,
+          "Voice message couldn't send ($e).",
+          kind: AymaToastKind.error,
+        );
+      }
+    }
+  }
+
+  /// Local voice bubbles not yet echoed by the stream: a stream voice
+  /// message from me created at/after a local's send time replaces it.
+  List<DmMessage> _visibleLocalVoice(List<DmMessage> streamed) {
+    if (_localVoice.isEmpty) return const [];
+    final echoedAt = <DateTime>[
+      for (final m in streamed)
+        if (m.type == 'voice' && m.senderUid == _dm.uid && m.createdAt != null)
+          m.createdAt!,
+    ];
+    return [
+      for (final local in _localVoice)
+        if (!echoedAt.any(
+          (t) => !t.isBefore(
+            local.createdAt!.subtract(const Duration(seconds: 2)),
+          ),
+        ))
+          local,
+    ];
+  }
 
   Future<void> _send() async {
     final text = _composer.text.trim();
@@ -720,7 +832,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               builder: (context, snap) {
                 final fresh = snap.data;
                 final tail = fresh?.data ?? const <DmMessage>[];
-                final msgs = _mergeTail(tail);
+                final merged = _mergeTail(tail);
+                final msgs = [
+                  ...merged,
+                  ..._visibleLocalVoice(merged),
+                ];
                 _oldestId = msgs.isEmpty ? null : msgs.first.id;
                 _tailFull = tail.length >= _historyPageSize;
                 _markReadIfIncoming(msgs);
@@ -805,6 +921,10 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 final bubble = _Bubble(
                                   message: m,
                                   mine: mine,
+                                  voicePlayer: _clipPlayer,
+                                  nowPlaying: _nowPlaying,
+                                  localVoiceFile: _localVoiceFiles[m.id],
+                                  voiceUrlResolver: _dm.voiceDownloadUrl,
                                   // Incoming text bubbles get the translate
                                   // affordance; auto-translate kicks in when
                                   // the thread toggle is on.
@@ -937,7 +1057,15 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           KeepKeyboardOnTap(
             child: Padding(
               padding: kComposerBarPadding,
-              child: Row(
+              child: ListenableBuilder(
+                listenable: _voiceNote,
+                // Stack, always: the row stays MOUNTED under the recording
+                // bar while a hold is in progress - replacing it unmounted
+                // the held mic button and killed its gesture recognizer,
+                // so the release that sends the clip never fired.
+                builder: (context, _) => Stack(
+                  children: [
+                    Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   // The attach button lives inside the pill's left edge
@@ -996,18 +1124,43 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  _sending
-                      // POST /dm/{threadId}/messages in flight — the send
-                      // slot, wings only.
-                      ? const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: AymaWingLoader(size: 24, showLabel: false),
-                        )
-                      : IconButton.filled(
-                          onPressed: _send,
-                          icon: const Icon(Icons.arrow_upward_rounded),
-                        ),
+                  // WhatsApp swap (founder, 2026-11-06): the slot is the
+                  // MIC while the input is empty and nothing is staged,
+                  // and SEND only with text or a staged attachment.
+                  if (_sending)
+                    // POST /dm/{threadId}/messages in flight - the send
+                    // slot, wings only.
+                    const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: AymaWingLoader(size: 24, showLabel: false),
+                    )
+                  else if (_composer.text.trim().isNotEmpty ||
+                      _pending != null)
+                    IconButton.filled(
+                      key: const ValueKey('composerSendButton'),
+                      onPressed: _send,
+                      icon: const Icon(Icons.arrow_upward_rounded),
+                    )
+                  else
+                    VoiceNoteMicButton(
+                      controller: _voiceNote,
+                      background: ac.bgElev,
+                      foreground: ac.fgDim,
+                      onTap: () => AymaToast.show(
+                        context,
+                        'Hold to record a voice message.',
+                      ),
+                    ),
                 ],
+              ),
+                    if (_voiceNote.isActive)
+                      Positioned.fill(
+                        child: VoiceNoteRecordingBar(
+                          controller: _voiceNote,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1348,6 +1501,98 @@ class _CoachTip extends StatelessWidget {
   }
 }
 
+/// A DM voice-note bubble: the shared WhatsApp-style playable row
+/// ([VoiceClipRow]) over the clip. While the sender's upload is still
+/// landing it plays the local file; afterwards it resolves the stored
+/// clip's storage path (the message body) to a download URL.
+class _DmVoiceBubble extends StatefulWidget {
+  const _DmVoiceBubble({
+    required this.message,
+    required this.player,
+    required this.nowPlaying,
+    required this.iconColor,
+    required this.captionColor,
+    this.localFile,
+    this.urlResolver,
+  });
+
+  final DmMessage message;
+  final AsyncVoicePlayer player;
+  final ValueNotifier<String?> nowPlaying;
+  final Color iconColor;
+  final Color captionColor;
+  final String? localFile;
+  final Future<String?> Function(String storagePath)? urlResolver;
+
+  @override
+  State<_DmVoiceBubble> createState() => _DmVoiceBubbleState();
+}
+
+class _DmVoiceBubbleState extends State<_DmVoiceBubble> {
+  String? _url;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DmVoiceBubble old) {
+    super.didUpdateWidget(old);
+    if (old.message.id != widget.message.id ||
+        old.localFile != widget.localFile) {
+      _url = null;
+      _resolve();
+    }
+  }
+
+  Future<void> _resolve() async {
+    final m = widget.message;
+    if (widget.localFile != null && widget.localFile!.isNotEmpty) return;
+    if (m.attachmentUrl.isNotEmpty) {
+      _url = m.attachmentUrl;
+      return;
+    }
+    final resolver = widget.urlResolver;
+    if (resolver == null || m.body.isEmpty) return;
+    try {
+      final url = await resolver(m.body);
+      if (mounted && url != null) setState(() => _url = url);
+    } catch (_) {
+      // Unresolvable right now - the labelled placeholder stays.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final local = widget.localFile;
+    final hasLocal = local != null && local.isNotEmpty;
+    if (!hasLocal && _url == null) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.mic_rounded, size: 18, color: widget.captionColor),
+          const SizedBox(width: 8),
+          Text(
+            'Voice message',
+            style: AymaType.sans(size: 12, color: widget.captionColor),
+          ),
+        ],
+      );
+    }
+    return VoiceClipRow(
+      audioUrl: hasLocal ? null : _url,
+      audioFile: hasLocal ? local : null,
+      player: widget.player,
+      nowPlaying: widget.nowPlaying,
+      clipKey: 'dm-${widget.message.id}',
+      iconColor: widget.iconColor,
+      captionColor: widget.captionColor,
+    );
+  }
+}
+
 class _Bubble extends StatelessWidget {
   const _Bubble({
     required this.message,
@@ -1356,9 +1601,22 @@ class _Bubble extends StatelessWidget {
     this.autoTranslate = false,
     this.onDetected,
     this.preferredLang = '',
+    this.voicePlayer,
+    this.nowPlaying,
+    this.localVoiceFile,
+    this.voiceUrlResolver,
   });
   final DmMessage message;
   final bool mine;
+
+  /// Voice-note playback wiring (voice messages only): the shared player,
+  /// the app-wide now-playing key, this bubble's local file while its
+  /// upload is still landing, and a resolver from a stored clip's storage
+  /// path (the message body) to a playable URL.
+  final AsyncVoicePlayer? voicePlayer;
+  final ValueNotifier<String?>? nowPlaying;
+  final String? localVoiceFile;
+  final Future<String?> Function(String storagePath)? voiceUrlResolver;
 
   /// Translate this bubble's text into the reader's language (incoming text
   /// bubbles only; null disables the affordance). [autoTranslate] runs it on
@@ -1378,7 +1636,20 @@ class _Bubble extends StatelessWidget {
     final report = message.reportShare;
     final bool tight;
     final Widget content;
-    if (message.isSharedReport && report != null) {
+    if (message.type == 'voice' && voicePlayer != null && nowPlaying != null) {
+      // A voice note: a playable WhatsApp-style row, from the local file
+      // while uploading or from the stored clip's URL once posted.
+      tight = false;
+      content = _DmVoiceBubble(
+        message: message,
+        player: voicePlayer!,
+        nowPlaying: nowPlaying!,
+        localFile: localVoiceFile,
+        urlResolver: voiceUrlResolver,
+        iconColor: _ink(ac),
+        captionColor: _ink(ac),
+      );
+    } else if (message.isSharedReport && report != null) {
       tight = true;
       content = SharedReportCard(
         share: report,

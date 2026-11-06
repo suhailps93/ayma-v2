@@ -656,8 +656,9 @@ void main() {
     expect(find.text('Delete'), findsOneWidget);
 
     await tester.tap(find.text('Make public'));
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    // The quick-action chip fills the composer AND sends in one tap; no
+    // separate send tap follows (the WhatsApp composer model swaps the
+    // cleared composer's send slot back to the mic).
     await tester.pumpAndSettle();
 
     expect(api.correctCalls, hasLength(1));

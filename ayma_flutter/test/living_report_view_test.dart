@@ -944,8 +944,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('livingReportBlock:candidate:c1')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('This is me'));
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    // The chip fills the composer AND sends in one tap (the quick-action
+    // onPick calls send directly). No separate send tap follows: under
+    // the WhatsApp composer model the send slot shows the mic again once
+    // the composer clears, so there is no send button left to tap.
     await tester.pumpAndSettle();
 
     expect(correctCalls, hasLength(1));
@@ -1427,8 +1429,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('livingReportBlock:attr:build')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Make public'));
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      // Same as the candidate chips: the quick action sends on tap, and
+      // the cleared composer swaps the send slot back to the mic.
       await tester.pumpAndSettle();
 
       expect(correctCalls, hasLength(1));
