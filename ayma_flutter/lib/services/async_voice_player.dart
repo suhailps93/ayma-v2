@@ -55,8 +55,33 @@ class JustAudioVoicePlayer implements AsyncVoicePlayer {
 
   void _watch(AudioPlayer p) {
     _sub = p.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.completed) {
+        // just_audio keeps `playing` true after a clip finishes naturally
+        // — it stays true until pause()/stop() is called (see the play()
+        // docs in just_audio 0.10.6). Copying state.playing verbatim here
+        // therefore left VoiceClipRow stuck on the pause icon after a
+        // clip ended on its own (founder, 2026-11-06, build 2317).
+        // A completed clip is finished: report not-playing so the button
+        // resets to play, and pause + rewind the platform player so its
+        // own state matches and a replay starts from the beginning.
+        _playing.value = false;
+        _resetAfterCompletion(p);
+        return;
+      }
       _playing.value = state.playing;
     });
+  }
+
+  /// Pauses and rewinds [p] after natural completion. Fire-and-forget:
+  /// the clip is already over, so a failure here is not actionable — the
+  /// next play goes through [_start], which stops and reloads anyway.
+  Future<void> _resetAfterCompletion(AudioPlayer p) async {
+    try {
+      await p.pause();
+      await p.seek(Duration.zero);
+    } catch (_) {
+      // Player disposed or platform gone — nothing left to reset.
+    }
   }
 
   @override
