@@ -7,8 +7,8 @@
 # Modes (same convention as the prod scripts):
 #   (default)  code-only redeploy of both staging services (keeps env + secrets)
 #   --full     also (re)sets every env var and secret mount (two-pass: deploys,
-#              reads back the assigned Cloud Run URLs, then sets AYMA_AGENT_URL
-#              and GOOGLE_IMPORT_REDIRECT_URI which depend on those URLs)
+#              reads back the assigned Cloud Run URL, then sets
+#              GOOGLE_IMPORT_REDIRECT_URI which depends on that URL)
 #
 # Flags:
 #   --firebase-project ID   Firestore/Auth/Storage project the staging services
@@ -27,7 +27,10 @@
 #
 # Staging services (same GCP project + region as prod, scale to zero):
 #   ayma-api-staging    (--source build, like prod ayma-api)
-#   ayma-agent-staging  (Dockerfile.agent image tagged :staging, like prod)
+#   ayma-agent-staging  RETIRED - deleted 2026-11-06 (founder order).
+#                       Staging voice is served by the hosted LiveKit worker
+#                       (ayma-lk-staging) only; this script never deploys the
+#                       Cloud Run agent (deploying it would recreate it).
 #
 # Secrets: staging-only values live in *-staging Secret Manager secrets
 # (CRON_SECRET_STAGING, ADMIN_PASSWORD_STAGING, DEV_PANEL_PASSWORD_STAGING,
@@ -166,7 +169,7 @@ preflight() {
     echo "     destructive testing (docs/STAGING.md)."
   fi
   echo "api service:      $API_SERVICE"
-  echo "agent service:    $AGENT_SERVICE (image tag: staging)"
+  echo "agent service:    $AGENT_SERVICE - RETIRED (deleted 2026-11-06), never deployed"
   echo "mode:             $(if $FULL; then echo full; else echo code-only; fi)"
   echo ""
   echo "-- required Secret Manager secrets --"
@@ -217,6 +220,9 @@ deploy_api() {
 }
 
 deploy_agent() {
+  echo "ERROR: deploy_agent is retired - $AGENT_SERVICE was deleted 2026-11-06 (founder order)." >&2
+  echo "Staging voice runs on the hosted LiveKit worker (ayma-lk-staging)." >&2
+  return 1
   echo ">> building agent image ($AGENT_IMAGE)"
   ( cd "$SRC" && gcloud builds submit --project "$PROJECT" \
       --config cloudbuild.agent.yaml \
@@ -248,6 +254,13 @@ if $CHECK_ONLY; then
   exit $?
 fi
 
+if $AGENT_ONLY; then
+  echo "ERROR: --agent-only is retired: $AGENT_SERVICE was deleted 2026-11-06" >&2
+  echo "(founder order). Staging voice runs on the hosted LiveKit worker" >&2
+  echo "(ayma-lk-staging); there is no Cloud Run agent to deploy." >&2
+  exit 1
+fi
+
 # Always pre-flight first; abort before deploying anything if secrets are missing.
 preflight || exit 1
 
@@ -255,27 +268,26 @@ if ! $AGENT_ONLY; then
   deploy_api
 fi
 if ! $API_ONLY; then
-  deploy_agent
+  # ayma-agent-staging deleted 2026-11-06 (founder order) - staging voice is
+  # hosted-LiveKit-only, exactly like prod. deploy_agent() is kept above for
+  # history but must never run again: it would recreate the service.
+  echo ">> skipping $AGENT_SERVICE deploy (retired 2026-11-06; hosted worker ayma-lk-staging serves staging voice)"
 fi
 
 if $FULL && ! $API_ONLY && ! $AGENT_ONLY; then
   echo ">> pass 2: wiring staging service URLs"
-  AGENT_URL="$(service_url "$AGENT_SERVICE")"
   API_URL="$(service_url "$API_SERVICE")"
-  echo "   agent: $AGENT_URL"
   echo "   api:   $API_URL"
   gcloud run services update "$API_SERVICE" --project "$PROJECT" --region "$REGION" \
-    --update-env-vars "AYMA_AGENT_URL=${AGENT_URL},GOOGLE_IMPORT_REDIRECT_URI=${API_URL}/google/oauth-complete"
-  gcloud run services update "$AGENT_SERVICE" --project "$PROJECT" --region "$REGION" \
-    --update-env-vars "AYMA_AGENT_URL=${AGENT_URL}"
+    --update-env-vars "GOOGLE_IMPORT_REDIRECT_URI=${API_URL}/google/oauth-complete"
   echo ""
   echo "ACTION REQUIRED: register this redirect URI on the Google OAuth client:"
   echo "  ${API_URL}/google/oauth-complete"
 elif $FULL; then
   echo ""
   echo "NOTE: single-service --full deploy — cross-service URLs not rewired."
-  echo "Run a full both-services --full deploy (or copy AYMA_AGENT_URL /"
-  echo "GOOGLE_IMPORT_REDIRECT_URI from the other staging service) to finish."
+  echo "Run a full both-services --full deploy (or copy GOOGLE_IMPORT_REDIRECT_URI"
+  echo "from the API service) to finish."
 fi
 
 echo "== staging deploy done =="
