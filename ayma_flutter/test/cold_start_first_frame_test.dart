@@ -130,4 +130,103 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('screen:shell'), findsOneWidget);
   });
+
+  // Loader fix ROUND 3 (Scout 2295 retest, Nov 2026): the round-2 gate is
+  // framework-time — N12 holds its dwell from the splash's first post-frame
+  // callback — but on the slow bench the first frame's PRESENTATION
+  // sometimes lags past the dwell, so the navigation lands before the splash
+  // is ever displayed (white straight to chat-load, 2/3). Widget tests
+  // cannot observe real engine rasterization (the timings callback never
+  // fires under flutter_test), so the gated [waitForPresentation] hook
+  // stands in for the engine signal: presentation stays pending while the
+  // fake clock runs well past the dwell, and the test fails while any
+  // navigation lands before the splash is presented.
+  testWidgets(
+      'cold start with slow presentation: nothing navigates until the splash '
+      'frame is presented, however far past the dwell the clock runs',
+      (tester) async {
+    // Presentation lags past the dwell: the engine holds the first frame
+    // while the framework clock keeps running (the slow-bench race).
+    final presented = Completer<void>();
+    SplashFirstPaint.setWaitForPresentationForTest(() => presented.future);
+
+    SharedPreferences.setMockInitialValues({'boot_route:u1': '/'});
+    final gate = Completer<void>();
+    var bootstrapStarted = false;
+    final api = ApiClient(
+      auth: _auth(),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/bootstrap') {
+          bootstrapStarted = true;
+          await gate.future;
+          return http.Response(
+            jsonEncode({
+              'session_mode': 'active',
+              'uid': 'u1',
+              'livekit': {'token': 't', 'url': 'wss://x', 'room': 'r'},
+            }),
+            200,
+          );
+        }
+        return http.Response('nope', 404);
+      }),
+    );
+    final router = GoRouter(
+      initialLocation: '/splash',
+      routes: [
+        GoRoute(
+          path: '/splash',
+          builder: (_, __) => SplashScreen(apiClient: api, auth: _auth()),
+        ),
+        GoRoute(
+          path: '/',
+          builder: (_, __) => const _Marker('screen:shell'),
+        ),
+      ],
+    );
+    final n12done =
+        StartupNodes.createDestinationRoutingNode(router: router).execute(
+      DAGContext()
+        ..put(
+          'boot_config',
+          const BootConfig(
+            uid: 'u1',
+            sessionMode: 'active',
+            entryRoute: '/',
+            cachedAtEpochMs: 0,
+          ),
+        ),
+    );
+    var n12Completed = false;
+    unawaited(n12done.then((_) => n12Completed = true));
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    expect(find.text('Waking up Ayma…'), findsOneWidget);
+
+    // (1) The clock runs to 3x the dwell with the frame still unpresented:
+    // neither N12 nor the splash's own optimistic navigation may land — on
+    // the round-2 code the cached route lands here, on a splash that was
+    // never displayed.
+    await tester.pump(SplashScreen.minSplashDwell * 3);
+    await tester.pump();
+    expect(find.text('Waking up Ayma…'), findsOneWidget);
+    expect(find.text('screen:shell'), findsNothing);
+    expect(n12Completed, isFalse);
+
+    // (2) The engine presents the splash: the dwell runs from HERE, then the
+    // cached route lands via N12's own action while the wake step (the
+    // bootstrap) is still real work in flight.
+    presented.complete();
+    await tester.pump();
+    await tester.pump(SplashScreen.minSplashDwell);
+    await tester.pump();
+    expect(find.text('screen:shell'), findsOneWidget);
+    expect(n12Completed, isTrue);
+    expect(bootstrapStarted, isTrue);
+    expect(gate.isCompleted, isFalse);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('screen:shell'), findsOneWidget);
+  });
 }

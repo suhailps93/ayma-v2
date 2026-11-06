@@ -74,6 +74,9 @@ class _Marker extends StatelessWidget {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  // Presentation is immediate unless gated (the engine never reports
+  // rasterization under flutter_test) — see SplashFirstPaint.resetForTest.
+  setUp(SplashFirstPaint.resetForTest);
 
   for (final (mode, marker) in const [
     ('marketing', 'screen:chat'),

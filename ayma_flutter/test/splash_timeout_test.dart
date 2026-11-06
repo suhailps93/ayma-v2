@@ -66,6 +66,9 @@ Future<void> _settleRetries(WidgetTester tester) async {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  // Presentation is immediate unless gated (the engine never reports
+  // rasterization under flutter_test) — see SplashFirstPaint.resetForTest.
+  setUp(SplashFirstPaint.resetForTest);
 
   testWidgets(
       'bootstrap network failure shows Retry and does NOT route to sign-in',

@@ -640,6 +640,9 @@ void defineLayoutMatrix({required int shard, required int shards}) {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // Presentation is immediate (the engine never reports rasterization
+    // under flutter_test) — see SplashFirstPaint.resetForTest.
+    SplashFirstPaint.resetForTest();
     TabRequest.instance.consume();
     isAymaSheetOpen = false;
     isAymaSheetScoped = false;

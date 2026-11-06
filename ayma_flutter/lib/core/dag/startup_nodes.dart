@@ -233,12 +233,15 @@ class StartupNodes {
     );
   }
 
-  /// Completes once the cold-start splash has painted its first frame, so an
-  /// optimistic navigation issued after this can only ever replace a painted
-  /// splash, never pre-empt it. Already complete for a late-arriving caller,
-  /// which proceeds immediately. Bounded: a node driven with no pumped
-  /// splash (or a wedged frame pipeline) degrades to navigating without the
-  /// gate instead of stalling startup — and N14 behind it — forever.
+  /// Completes once the cold-start splash's first frame has been presented
+  /// (rasterized — loader fix round 3: a post-frame signal is framework-time
+  /// and presentation can lag past the dwell on a slow device), so an
+  /// optimistic navigation issued after this can only ever replace a
+  /// displayed splash, never pre-empt it. Already complete for a
+  /// late-arriving caller, which proceeds immediately. Bounded: a node driven
+  /// with no pumped splash (or a wedged frame pipeline) degrades to
+  /// navigating without the gate instead of stalling startup — and N14
+  /// behind it — forever.
   static Future<void> _waitForSplashFirstPaint() async {
     try {
       await SplashFirstPaint.done.timeout(const Duration(seconds: 10));
@@ -277,18 +280,19 @@ class StartupNodes {
             ? ctx.get<BootConfig?>('boot_config')
             : null;
         if (config != null && config.entryRoute.isNotEmpty) {
-          // This `go` must NEVER land pre-first-frame: the splash (the
-          // router's initial route, with the "Waking up Ayma…" line) has to
-          // paint at least one frame first. Measuring the dwell from
-          // runApp-call time cannot guarantee that — auth-restore latency
-          // consumes the whole budget before the first frame rasterizes, so
-          // the navigation lands on a splash that never painted (Scout
-          // 2290+2291 retest: white native splash straight to chat-load,
-          // 3/3). Gate on the splash having painted its first frame, then
-          // hold the full dwell so the line is visible for real time — the
-          // same fixed hold the splash's own optimistic navigation uses.
-          // Still never waits on the bootstrap future (N14 runs it in the
-          // background afterwards).
+          // This `go` must NEVER land before the splash is displayed: the
+          // splash (the router's initial route, with the "Waking up Ayma…"
+          // line) has to present at least one frame first. Framework-time
+          // signals cannot guarantee that — runApp-call time lets
+          // auth-restore latency consume the whole budget (Scout 2290+2291:
+          // white native splash straight to chat-load, 3/3), and even the
+          // first post-frame callback fires before the frame is presented,
+          // which on a slow bench lags past the dwell (Scout 2295: wake line
+          // displayed only 1/3). Gate on the splash's first frame being
+          // presented, then hold the full dwell so the line is visible for
+          // real time — the same fixed hold the splash's own optimistic
+          // navigation uses. Still never waits on the bootstrap future (N14
+          // runs it in the background afterwards).
           await _waitForSplashFirstPaint();
           await Future<void>.delayed(SplashScreen.minSplashDwell);
           effectiveRouter.go(config.entryRoute);

@@ -37,6 +37,9 @@ http.Response _json(Object body, [int status = 200]) =>
 void main() {
   setUp(BiometricConsentState.instance.clear);
   setUp(RecoveryRequiredState.instance.clear);
+  // Presentation is immediate unless gated (the engine never reports
+  // rasterization under flutter_test) — see SplashFirstPaint.resetForTest.
+  setUp(SplashFirstPaint.resetForTest);
 
   group('BiometricConsentPanel', () {
     testWidgets(

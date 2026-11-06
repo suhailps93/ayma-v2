@@ -68,10 +68,10 @@ class SplashScreen extends StatefulWidget {
   /// wake line NEVER surfaced in 3 cold starts). Not faked work: the wake-ping
   /// has just fired and the background bootstrap is starting/running while
   /// this holds. Shared with the startup DAG's destination routing (N12),
-  /// which holds this AFTER the splash has painted its first frame —
-  /// measuring from runApp-call time lets the navigation land
-  /// pre-first-frame down the same cached path (loader fix round 2,
-  /// Nov 2026).
+  /// which holds this AFTER the splash's first frame is presented —
+  /// framework-time signals (runApp-call time, the first post-frame
+  /// callback) let the navigation land before the splash is ever displayed
+  /// (loader fix round 3, Nov 2026).
   static const minSplashDwell = Duration(milliseconds: 800);
 
   final ApiClient? apiClient;
@@ -81,17 +81,19 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-/// Process-lifetime signal: the cold-start splash has painted its first
-/// frame. Marked once, from the splash's own first post-frame callback; the
-/// startup DAG's destination routing (N12) awaits [done] before its
-/// optimistic cached-route navigation so that navigation can only ever
-/// replace a painted splash, never pre-empt it (loader fix round 2: N12
-/// measuring its dwell from runApp-call time let the navigation land
-/// pre-first-frame while auth-restore latency consumed the whole budget).
-/// Sticky: a caller arriving after the paint gets an already-completed
-/// future and proceeds immediately.
+/// Process-lifetime signal: the cold-start splash's first frame has been
+/// PRESENTED (rasterized by the engine — within ~a vsync of display), not
+/// merely built by the framework. Marked once; the startup DAG's destination
+/// routing (N12) awaits [done] before its optimistic cached-route navigation
+/// so that navigation can only ever replace a displayed splash, never
+/// pre-empt it (loader fix round 3: the round-2 post-frame signal is
+/// framework-time, and presentation can lag past the dwell on a slow
+/// device — Scout 2295: the wake line displayed only 1/3 cold starts).
+/// Sticky: a caller arriving after the presentation gets an
+/// already-completed future and proceeds immediately.
 abstract final class SplashFirstPaint {
   static Completer<void>? _painted;
+  static Future<void> Function()? _waitForPresentationForTest;
 
   /// Completes when the splash paints its first frame.
   static Future<void> get done {
@@ -99,15 +101,46 @@ abstract final class SplashFirstPaint {
     return completer.future;
   }
 
-  /// Called once, from the splash's first post-frame callback. Idempotent.
+  /// Called once, after the splash's first frame is presented (see
+  /// [_SplashScreenState] presentation gate). Idempotent.
   static void markPainted() {
     final completer = _painted ??= Completer<void>();
     if (!completer.isCompleted) completer.complete();
   }
 
+  /// Presentation-time wait (loader fix round 3, Nov 2026): completes once
+  /// the engine has rasterized the first frame — within ~a vsync of it being
+  /// displayed — so a dwell measured from here covers real visible time.
+  /// Bounded: a wedged frame pipeline degrades to proceeding rather than
+  /// hanging startup (N12 carries its own failsafe on [done] too).
+  static Future<void> waitForPresentation() async {
+    final testWait = _waitForPresentationForTest;
+    if (testWait != null) {
+      await testWait();
+      return;
+    }
+    try {
+      await WidgetsBinding.instance.waitUntilFirstFrameRasterized
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // No rasterization signal in time: proceed rather than hang startup.
+    }
+  }
+
   @visibleForTesting
   static void resetForTest() {
     _painted = null;
+    // The engine never reports rasterization under flutter_test, so tests
+    // treat the first built frame as presented unless they gate it via
+    // [setWaitForPresentationForTest] (the slow-presentation test does).
+    _waitForPresentationForTest = () async {};
+  }
+
+  /// Overrides [waitForPresentation] for one test: the stand-in for the
+  /// engine's rasterization signal, which widget tests cannot observe.
+  @visibleForTesting
+  static void setWaitForPresentationForTest(Future<void> Function() wait) {
+    _waitForPresentationForTest = wait;
   }
 }
 
@@ -147,11 +180,10 @@ class _SplashScreenState extends State<SplashScreen> {
       _watchConnectivity();
       _startWatchdog();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        // The first frame containing the splash was just drawn: the wake
-        // line is on screen, so N12's cached-route navigation may proceed
-        // (it must never land pre-first-frame — loader fix round 2).
-        SplashFirstPaint.markPainted();
-        _resolve();
+        // The first frame containing the splash was just built — but built
+        // is not displayed: wait for presentation before marking painted and
+        // resolving, so every dwell starts with the wake line on screen.
+        unawaited(_onFirstFrameBuilt());
       });
     }
   }
@@ -206,6 +238,23 @@ class _SplashScreenState extends State<SplashScreen> {
     } catch (_) {
       // connectivity_plus unavailable here — degrade to backoff + manual Retry.
     }
+  }
+
+  /// Presentation-time gate (loader fix round 3, Nov 2026): the round-2 gate
+  /// marked the splash painted in its first post-frame callback
+  /// (framework-time), but on a slow device the frame's presentation can lag
+  /// past the dwell — so a navigation timed from the build lands before the
+  /// splash is ever displayed (Scout 2295: white straight to chat-load, 2/3).
+  /// Holding for the engine's rasterization signal first means N12's dwell
+  /// and the splash's own dwell in [_resolve] both start with the wake line
+  /// actually on screen. Still real work in flight, never a faked delay: the
+  /// wake-ping fired in [initState] and the background bootstrap runs while
+  /// the dwells hold.
+  Future<void> _onFirstFrameBuilt() async {
+    await SplashFirstPaint.waitForPresentation();
+    if (!mounted) return;
+    SplashFirstPaint.markPainted();
+    unawaited(_resolve());
   }
 
   Future<void> _resolve() async {
