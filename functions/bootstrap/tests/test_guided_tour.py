@@ -58,6 +58,8 @@ class _Doc:
         # Simulate the client acking every spotlight command: ok unless this
         # step's index is in the store's "absent anchor" set.
         if self.key[-1] == "pending" and patch.get("action") == "tour_step":
+            if int(patch.get("index", -1)) in getattr(self.store, "unacked", set()):
+                return
             ack = (*self.key[:-1], "ack")
             ok = int(patch.get("index", -1)) not in self.store.absent
             self.store[ack] = {"id": patch.get("id"), "ok": ok}
@@ -75,14 +77,15 @@ class _Col:
 
 
 class _Store(dict):
-    def __init__(self, absent=()):
+    def __init__(self, absent=(), unacked=()):
         super().__init__()
         self.absent = set(absent)
+        self.unacked = set(unacked)
 
 
 class _Db:
-    def __init__(self, absent=()):
-        self.store = _Store(absent=absent)
+    def __init__(self, absent=(), unacked=()):
+        self.store = _Store(absent=absent, unacked=unacked)
 
     def collection(self, name):
         return _Col(self.store, (name,))
@@ -577,4 +580,73 @@ def test_detect_tour_command_matches_a_clear_start(phrase):
 ])
 def test_detect_tour_command_leaves_everything_else_alone(phrase):
     assert guided_tour.detect_tour_command(phrase) is None
+
+
+def test_unacked_step_does_not_advance_and_reprompts(monkeypatch):
+    """F1: A step the client never acks (timeout) must NOT auto-skip to the next
+    step. It stays on current and re-prompts."""
+    monkeypatch.setattr(guided_tour, "_SPOTLIGHT_ACK_TIMEOUT_SECONDS", 0.01)
+    db = _Db(unacked={1})
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 0
+    _tap(db, 0)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    # State remains 0, did NOT advance to 1 or 2!
+    assert db.store[_STATE]["index"] == 0
+    assert "Still on step 1" in msg
+    assert "waiting for" in msg
+
+
+def test_start_guided_tour_while_active_continues_from_current():
+    """F4: Calling start_guided_tour while a tour is active continues from the
+    current step instead of restarting at step 0."""
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 0
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    # Invoking start_guided_tour again: continues from step 1
+    msg = _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    assert "step 2 of" in msg
+
+
+def test_back_guided_tour():
+    """F4: back_guided_tour moves back to previous step."""
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 0
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    # Move back
+    msg = _run(guided_tour._bind_back_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 0
+    assert "step 1 of" in msg
+    # At step 0, back stays at 0
+    msg0 = _run(guided_tour._bind_back_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 0
+    assert "step 1 of" in msg0
+
+
+def test_consume_stop_if_pending():
+    """F2: The server consumes an unconsumed stop event in text path."""
+    db = _Db()
+    now = datetime.now(timezone.utc)
+    db.store[_STATE] = {"index": 2, "active": True, "updated_at": now}
+    db.store[_EVENT] = {"index": 2, "event": "stop", "ts": now}
+    consumed = _run(guided_tour.consume_stop_if_pending(db, "u1"))
+    assert consumed is True
+    assert db.store[_STATE]["active"] is False
+    assert _EVENT not in db.store
+
+
+def test_open_screen_blocked_during_active_tour():
+    """F3: Mid-tour questions must not trigger navigation away from tour."""
+    db = _Db()
+    db.store[_STATE] = {"index": 1, "active": True, "updated_at": datetime.now(timezone.utc)}
+    res = _run(skills.app_control._bind_open_screen(db, "u1")(screen="credits"))
+    assert "The guided tour is currently active" in res
+    assert _PENDING not in db.store
 

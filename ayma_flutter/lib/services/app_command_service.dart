@@ -98,7 +98,9 @@ class AppCommandService {
     bool Function()? hasActiveVoice,
     Future<void> Function()? reconnectVoice,
     Future<void> Function(int index)? sendTourContinuation,
+    Future<void> Function(int index)? sendTourStop,
   })  : _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
+        _sendTourStop = sendTourStop ?? _postTourStop,
         _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
         _hasActiveVoice = hasActiveVoice ??
             (() => VoiceSessionController.active?.isActive ?? false),
@@ -163,12 +165,20 @@ class AppCommandService {
   /// for tests; the default POSTs a non-persisted tour-continuation turn.
   final Future<void> Function(int index) _sendTourContinuation;
 
+  /// Fires a guided-tour stop signal for the TEXT surface when user clicks "Skip tour" (§11.2b):
+  /// a minimal `/chat` ping that makes the model consume stop and clean up tour state.
+  final Future<void> Function(int index) _sendTourStop;
+
   /// The one-line tour-tap signal the model reads as "a real tap happened —
   /// advance." A fixed control signal, not a persona/prompt template (it is
   /// never persisted; the backend drops it via `tour_continuation`).
   static const _tourTapSignal =
       'The user just tapped the highlighted control in the guided tour. '
       'Continue the tour: call advance_guided_tour now to move to the next step.';
+
+  static const _tourStopSignal =
+      'The user clicked "Skip tour" in the guided tour. '
+      'Call stop_guided_tour now to end the tour.';
 
   /// Default TEXT continuation: a fire-and-forget `/chat` turn flagged
   /// `tour_continuation` so neither the ping nor the narration persists. The
@@ -179,6 +189,14 @@ class AppCommandService {
       await ApiClient().chat(_tourTapSignal, tourContinuation: true);
     } catch (e) {
       debugPrint('Ayma tour continuation ping failed: $e');
+    }
+  }
+
+  static Future<void> _postTourStop(int index) async {
+    try {
+      await ApiClient().chat(_tourStopSignal, tourContinuation: true);
+    } catch (e) {
+      debugPrint('Ayma tour stop ping failed: $e');
     }
   }
 
@@ -194,6 +212,14 @@ class AppCommandService {
       return;
     }
     unawaited(_sendTourContinuation(index));
+  }
+
+  void _kickTourStop(int index) {
+    final voice = VoiceSessionController.active;
+    if (voice != null && voice.isActive) {
+      return;
+    }
+    unawaited(_sendTourStop(index));
   }
 
   /// When the last reconnect was scheduled — a circuit breaker so a session that
@@ -480,10 +506,11 @@ class AppCommandService {
         guided.clearStep();
         _kickTourAdvance(index);
       },
-      // The tiny "Skip tour" affordance ends the whole session.
+      // The "Skip tour" affordance ends the whole session.
       onStop: () {
         event('stop');
         guided.endSession();
+        _kickTourStop(index);
       },
     ));
   }
