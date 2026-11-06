@@ -63,6 +63,9 @@ class IdleWatchdog:
             if remaining <= 0:
                 break
             await asyncio.sleep(min(remaining, _MAX_POLL_SECONDS))
+        fire_ts = self._clock()
+        logger.info("idle watchdog FIRE: ts=%.3f last_activity_ts=%.3f elapsed=%.1fs", 
+                    fire_ts, self._last_activity, fire_ts - self._last_activity)
         try:
             await self._on_idle()
         except Exception:  # noqa: BLE001 - never let the watchdog crash the job
@@ -70,6 +73,8 @@ class IdleWatchdog:
 
     def start(self) -> None:
         if self._task is None:
+            arm_ts = self._clock()
+            logger.info("idle watchdog ARM: ts=%.3f timeout=%.1fs", arm_ts, self._timeout)
             self._task = asyncio.create_task(self.run())
 
     def stop(self) -> None:

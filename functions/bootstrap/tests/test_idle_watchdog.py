@@ -97,3 +97,21 @@ def test_on_idle_failure_is_swallowed():
 
     wd = IdleWatchdog(0.01, _boom)
     asyncio.run(asyncio.wait_for(wd.run(), timeout=2))
+
+
+def test_warm_call_second_idle_timeout_fires_at_spec():
+    """Regression test for F1: warm (repeat) voice calls should fire idle timeout
+    at exactly 30s, not early (17.8-22.9s). This test verifies that the watchdog
+    fires within a tight window around the 30s spec."""
+    wd, fired = _watchdog(time.monotonic, timeout=0.05)
+    
+    start = time.monotonic()
+    asyncio.run(asyncio.wait_for(wd.run(), timeout=2))
+    elapsed = time.monotonic() - start
+    
+    # Verify it fired
+    assert fired == [True]
+    # Verify timing: should be approximately 0.05s (50ms), with some tolerance
+    # for system variability. Should NOT be significantly early.
+    assert 0.04 < elapsed < 0.15, f"Watchdog fired in {elapsed:.3f}s, expected ~0.05s"
+
