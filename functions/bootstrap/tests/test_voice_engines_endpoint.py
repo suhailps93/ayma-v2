@@ -53,9 +53,9 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _offline_catalog(monkeypatch):
-    """Force the config fallback (no live LiveKit fetch) for deterministic,
-    network-free tests. The live path is covered in test_voice_catalog.py."""
-    monkeypatch.setattr(voice_catalog, "_fetch_livekit_models", lambda: None)
+    """The catalog is the config fallback (the gateway /v1/models route is
+    a stub — there is no live fetch), so tests are deterministic and
+    network-free; just clear the catalog cache around each test."""
     voice_catalog.clear_cache()
     yield
     voice_catalog.clear_cache()
