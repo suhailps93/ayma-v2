@@ -502,7 +502,9 @@ _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "list_conversations",
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
-    "ui_action", "play_voice_clip",
+    "ui_action", "play_voice_clip", "mark_all_notifications_read",
+    "clear_all_notifications", "set_notification_filter",
+    "mark_all_conversations_read",
 }
 
 
