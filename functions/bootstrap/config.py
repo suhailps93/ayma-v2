@@ -1057,13 +1057,12 @@ class Config:
 
     voice_credited_providers: tuple[str, ...]
     """LiveKit-Inference provider segments (``inworld``, ``deepgram``, …) this
-    project has confirmed credits for. Used ONLY on the config FALLBACK path.
-
-    The live ``/v1/models`` catalog, when reachable, lists exactly what the
-    project's credits enable, so everything it returns is marked available. But
-    for this project ``GET /v1/models`` returns an empty ``{}`` (verified
-    2026-10-27 with an InferenceGrants JWT), so the dropdowns are built from the
-    config fallback lists — and there we can't query the project. A cascade
+    project has confirmed credits for. The catalog is ALWAYS built from the
+    config fallback lists: ``GET /v1/models`` on the inference gateway is a
+    stub route returning ``{}`` to every caller (root cause verified
+    2026-11-06; the same token completes real inference calls, so the
+    project is provisioned — the route is simply not a catalog API), so
+    there is no live catalog to query the project against. A cascade
     option whose provider is in THIS set is shown enabled; any other provider in
     a fallback list is shown DISABLED with a "needs enabling" note rather than
     as a silently-failing option (``voice_catalog``). ``cartesia`` is the

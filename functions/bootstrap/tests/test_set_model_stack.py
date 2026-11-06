@@ -82,9 +82,9 @@ class _Db:
 
 @pytest.fixture(autouse=True)
 def _offline_catalog(monkeypatch):
-    """Force the voice catalog's documented offline fallback so realtime-model
-    validation is deterministic and never hits the LiveKit gateway in tests."""
-    monkeypatch.setattr(voice_catalog, "_fetch_livekit_models", lambda: None)
+    """The voice catalog is the config fallback (no live gateway fetch
+    exists), so realtime-model validation is deterministic; just clear
+    the catalog cache around each test."""
     voice_catalog.clear_cache()
     yield
     voice_catalog.clear_cache()

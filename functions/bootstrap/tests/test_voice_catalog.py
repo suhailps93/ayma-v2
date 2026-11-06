@@ -1,5 +1,6 @@
-"""`voice_catalog` — the LIVE LiveKit inference catalog fetch + categorization,
-and the fallback to config (§13.9)."""
+"""`voice_catalog` — the config-fallback voice catalog (§13.9). The gateway
+``/v1/models`` route is a stub (verified 2026-11-06), so there is no live
+fetch: the config lists are the permanent catalog source."""
 
 import voice_catalog as vc
 
@@ -8,60 +9,7 @@ def setup_function(_):
     vc.clear_cache()
 
 
-def teardown_function(_):
-    vc.clear_cache()
-
-
-def test_categorize_live_buckets_by_type():
-    items = [
-        {"id": "deepgram/nova-3", "type": "STT"},
-        {"id": "assemblyai/universal-streaming", "type": "stt"},
-        {"id": "inworld/inworld-tts-1.5-mini", "type": "TTS"},
-        {"id": "fishaudio/s2.1-pro", "type": "tts"},
-        {"id": "google/gemini-3.8-flash", "type": "LLM"},
-        {"id": "x/turn-detector", "type": "TD"},     # ignored
-        {"id": "y/interrupt", "type": "INT"},        # ignored
-    ]
-    cat = vc._categorize_live(items)
-    assert cat["stt"] == ["deepgram/nova-3", "assemblyai/universal-streaming"]
-    assert cat["tts"] == ["inworld/inworld-tts-1.5-mini", "fishaudio/s2.1-pro"]
-    assert cat["llm"] == ["google/gemini-3.8-flash"]
-
-
-def test_categorize_live_none_when_no_types():
-    # Unknown shape (no TYPE on any item) → fall back rather than misclassify.
-    assert vc._categorize_live([{"id": "a"}, {"id": "b"}]) is None
-
-
-def test_catalog_uses_live_when_fetch_succeeds(monkeypatch):
-    # The key is wired here (enabled), so the live cartesia realtime entry is
-    # served; keyless it is withheld (test_live_catalog_hides_cartesia_...).
-    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
-    monkeypatch.setattr(
-        vc, "_fetch_livekit_models", lambda: [
-            {"id": "deepgram/nova-3", "type": "STT"},
-            {"id": "fishaudio/s2.1-pro", "type": "TTS"},
-            {"id": "google/gemini-3.7-flash", "type": "LLM"},
-            {"id": "cartesia/sonic-realtime", "type": "realtime"},
-        ]
-    )
-    vc.clear_cache()
-    cat = vc.catalog()
-    assert cat["source"] == "livekit"
-    assert [s["id"] for s in cat["stt"]] == ["deepgram/nova-3"]
-    assert "fishaudio/s2.1-pro" in [t["id"] for t in cat["tts"]]
-    brain_ids = [b["id"] for b in cat["brains"]]
-    # Meta Muse (direct API) is merged on top of the live LLM list.
-    assert "meta-muse-spark" in brain_ids
-    assert "google/gemini-3.7-flash" in brain_ids
-    # A non-google/non-openai realtime model from the catalog is selectable.
-    assert any(m["id"] == "cartesia/sonic-realtime" for m in cat["realtime_models"])
-    # Gemini Live is always present; new TTS get their fallback voice list.
-    assert any(m["id"] == "gemini-live" for m in cat["realtime_models"])
-
-
-def test_catalog_falls_back_when_fetch_fails(monkeypatch):
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
+def test_catalog_source_is_the_fallback(monkeypatch):
     monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
     vc.clear_cache()
     cat = vc.catalog()
@@ -73,19 +21,22 @@ def test_catalog_falls_back_when_fetch_fails(monkeypatch):
     assert any(b["id"] == "meta-muse-spark" for b in cat["brains"])
 
 
+def test_no_live_fetch_remains():
+    # GET /v1/models is a stub returning {} to every caller (root cause
+    # verified 2026-11-06) — the dead fetch path was deleted rather than
+    # left as a wasted HTTP round-trip per cache expiry, and the served
+    # catalog is the config fallback, permanently.
+    assert not hasattr(vc, "_fetch_livekit_models")
+    assert vc.catalog()["source"] == "fallback"
+
+
 def test_meta_never_a_realtime_model(monkeypatch):
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
     assert not vc.is_valid_realtime_model("meta-muse-spark")
     assert vc.is_valid_brain("meta-muse-spark")
 
 
 def test_brain_route_meta_vs_inference(monkeypatch):
-    monkeypatch.setattr(
-        vc, "_fetch_livekit_models", lambda: [
-            {"id": "google/gemini-3.8-flash", "type": "LLM"},
-        ]
-    )
     vc.clear_cache()
     assert vc.brain_route("meta-muse-spark") == (vc.ROUTE_META, vc.CONFIG.meta_chat_model)
     assert vc.brain_route("google/gemini-3.8-flash") == (
@@ -97,7 +48,6 @@ def test_brain_route_meta_vs_inference(monkeypatch):
 def test_open_weights_brain_listed_only_when_configured(monkeypatch):
     import dataclasses
 
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     # Unset (production): the open-weights brain is NOT offered.
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG, open_weights_api_base_url="", open_weights_model=""))
@@ -123,7 +73,6 @@ def test_open_weights_brain_listed_only_when_configured(monkeypatch):
 def test_brain_route_open_weights(monkeypatch):
     import dataclasses
 
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     # Unconfigured → unknown brain (route None).
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG, open_weights_api_base_url="", open_weights_model=""))
@@ -145,7 +94,6 @@ def test_open_weights_brain_never_the_default(monkeypatch):
 
     # Even with the endpoint configured, the default stack is unchanged — the
     # open-weights brain is opt-in only and never auto-selected as the default.
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG,
         llm_provider_voice_main=vc.PROVIDER_META,
@@ -176,7 +124,6 @@ def test_cartesia_fallback_voices_are_the_documented_uuids():
 def test_fallback_lists_credited_providers_with_types(monkeypatch):
     # /v1/models is empty for this project, so the catalog is the config
     # fallback — assert every credited provider surfaces in the RIGHT dropdown.
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
     cat = vc.catalog()
     assert cat["source"] == "fallback"
@@ -217,7 +164,6 @@ def test_fallback_marks_uncredited_provider_disabled(monkeypatch):
     import dataclasses
 
     monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG, voice_cascade_tts_models=(
             *vc.CONFIG.voice_cascade_tts_models, "acme/synth-1",
@@ -238,7 +184,6 @@ def test_fallback_enables_cartesia_when_credited(monkeypatch):
     import dataclasses
 
     monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG, voice_credited_providers=(
             *vc.CONFIG.voice_credited_providers, "cartesia",
@@ -275,7 +220,6 @@ def test_fallback_omits_cartesia_stt_while_keyless(monkeypatch):
     # 2026-11-05), so nothing inactive is offered. The key, not the
     # credited list, is Cartesia's gate.
     monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
     assert "cartesia" in vc.CONFIG.voice_credited_providers
     assert vc.CONFIG.voice_cascade_stt_models[-2:] == (
@@ -294,7 +238,6 @@ def test_fallback_hides_cartesia_while_disabled(monkeypatch):
     # CARTESIA_API_KEY wired) it must not appear in ANY served selection
     # list — not shown-disabled, absent. The credited providers stay offered.
     monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
     cat = vc.catalog()
     assert cat["source"] == "fallback"
@@ -321,7 +264,6 @@ def test_fallback_hides_cartesia_when_credited_but_keyless(monkeypatch):
     import dataclasses
 
     monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG, voice_credited_providers=(
             *vc.CONFIG.voice_credited_providers, "cartesia",
@@ -331,40 +273,6 @@ def test_fallback_hides_cartesia_when_credited_but_keyless(monkeypatch):
     cat = vc.catalog()
     served = [s["id"] for s in cat["stt"]] + [t["id"] for t in cat["tts"]]
     assert not [i for i in served if "cartesia" in i]
-
-
-def test_live_catalog_hides_cartesia_realtime_while_disabled(monkeypatch):
-    # The gate covers the live path too: a cartesia realtime model LiveKit
-    # returns is withheld while the key is missing.
-    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
-    monkeypatch.setattr(
-        vc, "_fetch_livekit_models", lambda: [
-            {"id": "deepgram/nova-3", "type": "STT"},
-            {"id": "cartesia/sonic-realtime", "type": "realtime"},
-        ]
-    )
-    vc.clear_cache()
-    cat = vc.catalog()
-    assert cat["source"] == "livekit"
-    assert [m["id"] for m in cat["realtime_models"]] == ["gemini-live"]
-
-
-def test_live_catalog_marks_everything_available(monkeypatch):
-    # When the live catalog IS populated, it lists exactly what credits enable,
-    # so a non-"credited-list" provider from it is still available. (The live
-    # cartesia entry appears only with its key wired — enabled here.)
-    monkeypatch.setenv("CARTESIA_API_KEY", "test-cartesia-key")
-    monkeypatch.setattr(
-        vc, "_fetch_livekit_models", lambda: [
-            {"id": "cartesia/sonic-3", "type": "TTS"},
-            {"id": "fishaudio/s2.1-pro", "type": "TTS"},
-        ]
-    )
-    vc.clear_cache()
-    cat = vc.catalog()
-    assert cat["source"] == "livekit"
-    assert "cartesia/sonic-3" in [t["id"] for t in cat["tts"]]
-    assert all(t["available"] for t in cat["tts"])
 
 
 def test_meta_default_is_configured_cascade_not_first_entry(monkeypatch):
@@ -377,7 +285,6 @@ def test_meta_default_is_configured_cascade_not_first_entry(monkeypatch):
         meta_cascade_tts_model="rime/coda",
     )
     monkeypatch.setattr(vc, "CONFIG", cfg)
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
     d = vc.default_selection()
     assert d["stt_id"] == "assemblyai/universal-streaming"
@@ -400,7 +307,6 @@ def test_no_pref_default_resolves_to_meta_cascade_hannah(monkeypatch):
         meta_cascade_tts_model="fishaudio/s2.1-pro",
         meta_cascade_tts_voice="9a9cf47702da476aa4629e2506d4a857",  # Hannah
     ))
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
     d = vc.default_selection()
     assert d["mode"] == vc.MODE_CASCADE
@@ -413,15 +319,13 @@ def test_no_pref_default_resolves_to_meta_cascade_hannah(monkeypatch):
     assert d["voice_id"] in vc.tts_voice_ids("fishaudio/s2.1-pro")
 
 
-def test_configured_models_added_when_missing_from_live(monkeypatch):
+def test_configured_models_present_in_catalog(monkeypatch):
     import dataclasses
 
     monkeypatch.setattr(vc, "CONFIG", dataclasses.replace(
         vc.CONFIG, llm_provider_voice_main=vc.PROVIDER_META,
         meta_cascade_stt_model="deepgram/nova-3",
         meta_cascade_tts_model="inworld/inworld-tts-1"))
-    monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: [
-        {"id": "x/stt", "type": "STT"}, {"id": "y/tts", "type": "TTS"}])
     vc.clear_cache()
     cat = vc.catalog()
     assert "deepgram/nova-3" in [s["id"] for s in cat["stt"]]
