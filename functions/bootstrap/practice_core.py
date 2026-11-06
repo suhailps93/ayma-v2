@@ -650,3 +650,11 @@ def append_turns(db, uid: str, session_id: str, new_turns: list[dict]) -> list[d
 
 def end_session(db, uid: str, session_id: str) -> None:
     _session_ref(db, uid, session_id).update({"ended_at": time.time()})
+
+
+def store_debrief(db, uid: str, session_id: str, debrief: dict) -> None:
+    """Cache a generated debrief on the session doc so a second consumer
+    (the voice-return greeting composed in ``main.bootstrap``, or the
+    debrief screen via ``POST /practice/debrief``) reuses it instead of
+    paying for a second generation over the same transcript."""
+    _session_ref(db, uid, session_id).update({"debrief": debrief})

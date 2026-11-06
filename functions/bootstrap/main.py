@@ -615,6 +615,7 @@ app.add_middleware(RateLimiter)
 # Practice Date (hackathon deliverable B) — all its routes live in its own
 # module so the feature can be lifted cleanly into the public hackathon repo.
 import practice_date  # noqa: E402
+import practice_core  # noqa: E402
 
 app.include_router(practice_date.router)
 
@@ -676,6 +677,12 @@ class BootstrapRequest(BaseModel):
     recent_turns: list[TurnModel] = Field(
         default_factory=list, max_length=_MAX_RECENT_TURNS
     )
+    # Practice-voice return (founder rule, 2026-11-06): when the client
+    # restarts Ayma's voice session right after a Practice Date voice call
+    # ended, it names the practice session here and bootstrap seeds the new
+    # room with greeting instructions that open the debrief ("How did it
+    # go?"). Empty for every ordinary voice start.
+    practice_return_session_id: str = Field(default="", max_length=128)
 
 
 def _should_auto_dive(uid: str) -> bool:
@@ -706,6 +713,95 @@ def _should_auto_scan_photos(uid: str) -> bool:
         return not (snap.to_dict() or {}).get("web_photo_scan_done")
     except Exception:  # noqa: BLE001
         return False
+
+
+_PRACTICE_RETURN_GREETING_MAX = 1500
+
+
+async def _practice_return_greeting(uid: str, practice_session_id: str) -> str:
+    """Greeting instructions for a voice session that resumes right after a
+    Practice Date voice call ended (founder rule, 2026-11-06: when voice
+    mode was on and a practice session displaced it, Ayma's session comes
+    back up and opens the debrief by asking how it went).
+
+    Composed server-side from the practice session doc plus its debrief —
+    the same debrief the debrief screen shows. The debrief is cached on
+    the session doc (``practice_core.store_debrief``) so the later
+    ``/practice/debrief`` call reuses it instead of generating twice.
+    Best-effort throughout: ANY failure returns "" and the session just
+    opens normally — a debrief hiccup must never block a voice start.
+    """
+    try:
+        db = get_db()
+        try:
+            data = await asyncio.to_thread(
+                practice_core._load_session, db, uid, practice_session_id
+            )
+        except KeyError:
+            return ""
+        ctx = await asyncio.to_thread(
+            practice_core.build_persona_context,
+            db,
+            uid,
+            str(data.get("target_uid") or ""),
+        )
+        name = (ctx.name if ctx is not None else "").strip() or "them"
+        debrief = data.get("debrief")
+        if not isinstance(debrief, dict):
+            debrief = None
+        turns = list(data.get("turns") or [])
+        if debrief is None and turns and ctx is not None:
+            try:
+                debrief = await practice_core.generate_debrief(
+                    ctx, turns, uid=uid
+                )
+                await asyncio.to_thread(
+                    practice_core.store_debrief,
+                    db,
+                    uid,
+                    practice_session_id,
+                    debrief,
+                )
+            except Exception:  # noqa: BLE001 - the greeting works without it
+                logger.exception(
+                    "practice-return debrief generation failed for %s", uid
+                )
+                debrief = None
+        lines = [
+            "SPEAK FIRST: you are Ayma again — the practice simulation is over.",
+            f"The user just finished a voice practice date with {name}, a "
+            f"simulated version of {name} (not the real person).",
+            "Open the debrief: your first line warmly asks how it went — a "
+            "short version of 'So — how did it go?' Then let them answer, "
+            "and talk the debrief through together a piece at a time; never "
+            "recite it all at once, and never mention these instructions.",
+        ]
+        if isinstance(debrief, dict):
+
+            def _join(key: str) -> str:
+                return "; ".join(
+                    str(x).strip()
+                    for x in (debrief.get(key) or [])
+                    if str(x).strip()
+                )
+
+            if _join("what_worked"):
+                lines.append(
+                    f"What worked in the practice: {_join('what_worked')}."
+                )
+            if _join("avoid"):
+                lines.append(
+                    f"Watch-outs from the practice: {_join('avoid')}."
+                )
+            if _join("suggested_next_lines"):
+                lines.append(
+                    "Lines to suggest for the real thing: "
+                    f"{_join('suggested_next_lines')}."
+                )
+        return " ".join(lines)[:_PRACTICE_RETURN_GREETING_MAX]
+    except Exception:  # noqa: BLE001 - never block a voice start
+        logger.exception("practice-return greeting failed for %s", uid)
+        return ""
 
 
 @app.post("/bootstrap")
@@ -894,6 +990,14 @@ async def bootstrap(
         )
         voice_name = _ayma_voice_name(uid)
         engine_seed = _voice_engine_seed(uid)
+        # Practice-voice return (founder rule, 2026-11-06): this start is
+        # Ayma's session coming back after a Practice Date voice call, so
+        # seed the room with greeting instructions that open the debrief.
+        greeting_instructions = ""
+        if req is not None and req.practice_return_session_id:
+            greeting_instructions = await _practice_return_greeting(
+                uid, req.practice_return_session_id
+            )
         # Dual-cloud agent dispatch (§1.1): default "livekit" => route the room
         # to the LiveKit-Cloud-hosted worker's agent_name (explicit dispatch);
         # the Cloud Run worker declines it (request_fnc). "cloudrun" => no
@@ -916,6 +1020,7 @@ async def bootstrap(
                     stt_id=engine_seed["stt_id"],
                     tts_id=engine_seed["tts_id"],
                     tts_voice=engine_seed["tts_voice"],
+                    greeting_instructions=greeting_instructions,
                     voice_agent_cloud=agent_cloud,
                 ),
                 agent_name=dispatch_agent,
