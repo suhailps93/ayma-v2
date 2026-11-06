@@ -2429,6 +2429,40 @@ def test_watch_for_idle_user_activity_keeps_call_alive():
 def test_watch_for_idle_disabled_when_timeout_is_zero():
     assert agent.watch_for_idle(_IdleCtx(), _FakeMuteSession(), "u1", None, 0) is None
 
+def test_watch_for_idle_deferred_start_fires_at_spec_after_live():
+    """Regression test for F1 (deltareview42 H1) at the wiring level: the
+    production paths construct the watchdog with start_now=False and call
+    start() only after session.start(). The fire must land timeout_seconds
+    after start(), not after construction — without the start() re-baseline
+    the 2s timeout fires 0.5s after start here (1.5s setup + 2s timeout)."""
+    import asyncio
+
+    async def _run():
+        ctx, flushed = _IdleCtx(), []
+
+        async def flush():
+            flushed.append(True)
+
+        watchdog = agent.watch_for_idle(
+            ctx, _FakeMuteSession(), "u1", flush,
+            timeout_seconds=2.0, start_now=False,
+        )
+        assert watchdog is not None
+        # Session setup between construction and start.
+        await asyncio.sleep(1.5)
+        watchdog.start()
+        # 0.6s after start: 2.1s after construction, but only 0.6s into the
+        # live window — must not have fired.
+        await asyncio.sleep(0.6)
+        assert flushed == []
+        # 2.1s after start: the live window has elapsed.
+        await asyncio.sleep(1.5)
+        assert flushed == [True]
+        return ctx
+
+    ctx = asyncio.run(_run())
+    assert ctx.shutdown_reason == "idle_timeout"
+
 
 def test_relay_token_usage_meters_inference_voice_with_provider(monkeypatch):
     """The Inference adapter emits the same RealtimeModelMetrics from
