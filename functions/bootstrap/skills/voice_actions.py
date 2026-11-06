@@ -14,6 +14,13 @@ rest of the app's structured calls use — with no Vertex branch and no
 provider fallback. No direct provider SDK calls, no new keys, no new
 endpoints.
 
+Emotion fold-in (founder directive 2026-11-06): the SAME pass also
+returns the user's emotional state (``emotion`` / ``emotion_intensity`` /
+``distress`` — see ``emotion.py``), which agent.py applies to the
+session's emotion state, the reply-context injection, and the Cartesia
+TTS delivery. No second model pass was added: the fields ride the one
+response this module already pays for.
+
 The verdict is executed by the EXISTING deterministic executors: agent.py
 maps it to the same ``(tool_name, kwargs)`` the shipped ``detect_voice_
 command`` net returns (``open_screen``, ``open_profile``,
@@ -31,11 +38,12 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
 import app_registry
+import emotion as emotion_mod
 import inference_llm
 import token_ledger
 import voice_catalog
@@ -156,6 +164,34 @@ RESPONSE_SCHEMA: dict = {
             "type": "string",
             "description": "clarify only: short note, e.g. 'who with?'.",
         },
+        # Emotion read (founder directive 2026-11-06): rides THIS pass —
+        # the same single gateway call now also returns the user's
+        # emotional state from the transcript, so emotion matching adds
+        # no call and no latency to the voice path. See emotion.py.
+        "emotion": {
+            "type": "string",
+            "enum": list(emotion_mod.LABELS) + [""],
+            "description": (
+                "Every answer: the user's emotional state in this "
+                "transcript — one label from the given set, judged from "
+                "word choice, punctuation and what they are saying (the "
+                "transcript carries no vocal prosody). Empty only when "
+                "there is genuinely no signal either way."
+            ),
+        },
+        "emotion_intensity": {
+            "type": "string",
+            "enum": list(emotion_mod.INTENSITIES) + [""],
+            "description": "Every answer: how strong that state reads.",
+        },
+        "distress": {
+            "type": "boolean",
+            "description": (
+                "Every answer: true when the transcript carries distress "
+                "or self-harm / crisis signals. This routes Ayma to care "
+                "behaviour, never to emotion matching."
+            ),
+        },
     },
     "required": ["action"],
     "additionalProperties": False,
@@ -197,6 +233,12 @@ class Verdict:
     voice_value: str = ""
     clarify_for: str = ""
     reason: str = ""
+    # The emotion read folded into this same pass (emotion.py). Defaults
+    # to a neutral read so a model answer without the fields — or a fake
+    # verdict in tests — behaves exactly as before.
+    emotion: emotion_mod.EmotionRead = field(
+        default_factory=emotion_mod.EmotionRead
+    )
 
 
 def _screen_lines() -> str:
@@ -253,6 +295,11 @@ def parse_verdict(raw: object) -> Verdict:
         voice_value=_text("voice_value"),
         clarify_for=_text("for"),
         reason=_text("reason"),
+        emotion=emotion_mod.normalize_read(
+            raw.get("emotion"),
+            raw.get("emotion_intensity"),
+            raw.get("distress", False),
+        ),
     )
 
 

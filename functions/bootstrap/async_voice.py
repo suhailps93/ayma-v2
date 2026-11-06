@@ -175,7 +175,7 @@ async def _compose_prompt(db, uid: str, mode: str, window: list[Turn]) -> str:
             db, uid,
             exclude_page_types=ai_assessment.EXCLUDED_FROM_CHAT_CONTEXT,
         )
-    return compose_system_prompt(
+    prompt_text = compose_system_prompt(
         recent_turns=prompt_turns,
         wiki_context=wiki_ctx,
         session_mode=mode,
@@ -186,7 +186,16 @@ async def _compose_prompt(db, uid: str, mode: str, window: list[Turn]) -> str:
         db=db,
         summary_context=summary_text,
         variant="voice",
-    ) + "\n\n" + prompt_module.voice_language_directive(
+    )
+    # Emotion matching (emotion.py): an async voice message is answered
+    # from its transcript — the same standing guidance as live voice, so
+    # the reply is written (and later spoken) already emotion-matched.
+    import emotion as emotion_mod
+
+    prompt_text = emotion_mod.apply_to_prompt(
+        prompt_text, enabled=main._emotion_matching_enabled(uid)  # noqa: SLF001 - shared helper
+    )
+    return prompt_text + "\n\n" + prompt_module.voice_language_directive(
         main._ayma_voice_language(uid)  # noqa: SLF001 - shared helper
     )
 

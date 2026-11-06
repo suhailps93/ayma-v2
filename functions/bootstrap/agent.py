@@ -68,6 +68,8 @@ from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.agents.types import NOT_GIVEN, NotGivenOr  # noqa: E402
 
 import context_opt  # noqa: E402
+import emotion as emotion_mod  # noqa: E402
+import feature_flags  # noqa: E402
 from agent_keepalive import CallKeepAlive, KeepAliveServer  # noqa: E402
 from idle_watchdog import IdleWatchdog  # noqa: E402
 import llm_routing  # noqa: E402
@@ -1692,6 +1694,7 @@ def relay_voice_commands(
     end_call: Callable[[], Awaitable[None]] | None = None,
     interpret: Callable | None = None,
     get_context: Callable[[], object] | None = None,
+    on_emotion: Callable | None = None,
     uid: str = "",
     session_id: str = "",
 ) -> None:
@@ -1717,7 +1720,11 @@ def relay_voice_commands(
     session tool) runs ``end_call`` — the call's own teardown — claimed the
     same way, exactly once per call: a duplicated finalized transcript must
     not tear the call down twice. Without ``interpret`` the relay runs the
-    deterministic net alone, exactly as before."""
+    deterministic net alone, exactly as before.
+
+    ``on_emotion`` (emotion matching, 2026-11-06) receives the emotion
+    read folded into the skill's verdict on every finalized turn — the
+    same single model pass, so emotion costs no extra gateway call."""
     tools_by_name = _tools_by_name(tools)
     # Ack-gated spoken claims: the gate observes every result the dedupe
     # wrapper settles (this dispatcher's executions and the model's own
@@ -1813,6 +1820,17 @@ def relay_voice_commands(
             verdict = await interpret(
                 transcript, context, uid=uid, session_id=session_id
             )
+            # Emotion fold-in (2026-11-06): the SAME verdict carries the
+            # turn's emotion read — hand it to the session's emotion
+            # wiring (state + Cartesia delivery). A failure here must
+            # never cost the command dispatch below.
+            if on_emotion is not None:
+                read = getattr(verdict, "emotion", None)
+                if read is not None:
+                    try:
+                        on_emotion(read)
+                    except Exception:  # noqa: BLE001 - emotion is additive
+                        logger.exception("emotion wiring failed")
             match = skills.voice_actions.verdict_to_command(verdict)
         except Exception:  # noqa: BLE001 - the net below is the fallback
             logger.exception(
@@ -3232,6 +3250,80 @@ async def _start_main_gemini_session(
     await _open_main_call(session, seed, window=window)
 
 
+# --- Emotion matching (founder directive, 2026-11-06; emotion.py) ----------
+
+
+def _emotion_matching_on(uid: str) -> bool:
+    """The ``emotion_matching`` flag for this call's user. Any failure
+    resolves OFF — emotion is additive and must never break a call."""
+    try:
+        value, _source = feature_flags.resolve("emotion_matching", uid=uid or None)
+        return bool(value)
+    except Exception:  # noqa: BLE001 - flags must never break a call
+        logger.warning("emotion_matching flag read failed", exc_info=True)
+        return False
+
+
+class _EmotionAgent(Agent):
+    """A cascade ``Agent`` that injects the session's current emotion
+    context into each turn's generation.
+
+    ``on_user_turn_completed`` receives a TEMPORARY copy of the chat
+    context for the current generation only (livekit-agents 1.8.9,
+    ``AgentActivity``), so the injected line colours this one reply and
+    is never persisted into the conversation history. The state it reads
+    is updated by the voice-actions pass running in parallel on the same
+    finalized transcript — so the line reflects the latest settled read
+    (usually the previous turn's; emotional state is sticky by design,
+    see ``emotion.EmotionState``). Realtime sessions never use this
+    class: their turn detection is server-side and the hook is
+    unreachable there (see the mute-control block comment above); the
+    realtime path gets the standing guidance through the session seed
+    instead, plus Gemini 3.8 Live's always-on native affective dialogue.
+    """
+
+    def __init__(
+        self, *, emotion_state: emotion_mod.EmotionState, **kwargs
+    ) -> None:
+        super().__init__(**kwargs)
+        self._emotion_state = emotion_state
+
+    async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # noqa: ANN001 - SDK hook signature
+        line = emotion_mod.context_line(self._emotion_state)
+        if line:
+            turn_ctx.add_message(role="system", content=line)
+
+
+def _apply_cartesia_emotion(session: AgentSession, state: emotion_mod.EmotionState) -> None:
+    """Push the state's Cartesia delivery (emotion + speed) onto the
+    session's TTS leg when that leg is the Cartesia plugin.
+
+    The plugin's ``update_options`` is the documented dynamic control:
+    replies synthesised afterwards use the new settings. Duck-typed so
+    every other TTS leg (LiveKit Inference TTS has no emotion control)
+    is a silent no-op — those legs get emotion only through the reply
+    text the brain shapes under the injected guidance. A ``(None, None)``
+    mapping (neutral) leaves the current settings untouched: Sonic's
+    own text-inferred delivery is the neutral behaviour."""
+    emo, speed = emotion_mod.cartesia_delivery(state)
+    if emo is None and speed is None:
+        return
+    tts_obj = getattr(session, "tts", None)
+    update = getattr(tts_obj, "update_options", None)
+    if not callable(update):
+        return
+    kwargs: dict[str, object] = {}
+    if emo is not None:
+        kwargs["emotion"] = [emo]
+    if speed is not None:
+        kwargs["speed"] = speed
+    try:
+        update(**kwargs)
+        logger.info("emotion: cartesia delivery set emotion=%s speed=%s", emo, speed)
+    except Exception:  # noqa: BLE001 - delivery is additive, never fatal
+        logger.exception("emotion: cartesia update_options failed")
+
+
 async def _start_main_cascade_session(
     ctx: JobContext,
     seed: RoomSeed,
@@ -3313,6 +3405,25 @@ async def _start_main_cascade_session(
     async def _goodbye() -> None:
         await end_call_goodbye(ctx, seed.uid, flush.run)
 
+    # Emotion matching (2026-11-06): a session-scoped state fed by the
+    # emotion read folded into the voice-actions verdict (on_emotion
+    # below). It drives the per-turn context injection (_EmotionAgent)
+    # and the Cartesia TTS delivery (_apply_cartesia_emotion). Flag-off:
+    # no state, no callback, no agent subclass — behaviour identical to
+    # before the feature.
+    emotion_on = _emotion_matching_on(seed.uid)
+    emotion_state = emotion_mod.EmotionState() if emotion_on else None
+
+    def _on_emotion(read: emotion_mod.EmotionRead) -> None:
+        if emotion_state is None:
+            return
+        emotion_state.update(read)
+        logger.info(
+            "emotion: read label=%s intensity=%s distress=%s session=%s",
+            read.label, read.intensity, read.distress, seed.session_id or "?",
+        )
+        _apply_cartesia_emotion(session, emotion_state)
+
     # Voice-actions skill first, deterministic net as the interim backstop: a
     # clear command in a finalized user turn executes through the session's
     # own tools, exactly as in the text lane.
@@ -3323,6 +3434,7 @@ async def _start_main_cascade_session(
         get_context=lambda: skills.voice_actions.read_call_context(
             get_db(), seed.uid, window
         ),
+        on_emotion=_on_emotion if emotion_on else None,
         uid=seed.uid,
         session_id=seed.session_id,
     )
@@ -3347,7 +3459,10 @@ async def _start_main_cascade_session(
     cascade_ctx = _cascade_seed_chat_ctx(seed.chat_ctx)
     if cascade_ctx is not None:
         agent_kwargs["chat_ctx"] = cascade_ctx
-    agent = Agent(**agent_kwargs)
+    if emotion_on and emotion_state is not None:
+        agent = _EmotionAgent(emotion_state=emotion_state, **agent_kwargs)
+    else:
+        agent = Agent(**agent_kwargs)
     await session.start(
         agent=agent,
         room=ctx.room,

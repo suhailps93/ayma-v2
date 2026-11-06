@@ -60,6 +60,7 @@ from auth import (  # noqa: E402
 )
 from config import CONFIG, PLAN_TIERS  # noqa: E402
 import agent_wake  # noqa: E402
+import emotion as emotion_mod  # noqa: E402
 import feature_flags  # noqa: E402
 import gemini  # noqa: E402
 from llm_provider import get_user_brain_provider  # noqa: E402
@@ -298,6 +299,19 @@ def _voice_agent_cloud(uid: str) -> str:
     :func:`livekit_token.resolve_voice_agent_cloud`, which Practice Date voice
     shares so every voice room resolves its target the same way."""
     return resolve_voice_agent_cloud(get_db(), uid)
+
+
+def _emotion_matching_enabled(uid: str) -> bool:
+    """The ``emotion_matching`` feature flag for this user (emotion.py).
+
+    A flag read must never break a chat or a call: any failure resolves
+    to OFF, which is byte-identical to pre-feature behaviour."""
+    try:
+        value, _source = feature_flags.resolve("emotion_matching", uid=uid)
+        return bool(value)
+    except Exception:  # noqa: BLE001 - flags must never break a request
+        logger.warning("emotion_matching flag read failed", exc_info=True)
+        return False
 
 
 def _server_ts():
@@ -840,7 +854,17 @@ async def bootstrap(
             # API re-bills every resident token per turn, so the seed drops
             # the persona rules that cannot fire in a voice session.
             variant="voice",
-        ) + "\n\n" + prompt_module.voice_language_directive(voice_language)
+        )
+        # Emotion matching (emotion.py): the guidance rides the session
+        # SEED, so it reaches both voice paths — and because the seed is
+        # built by THIS (staging) API, it can never leak into prod rooms
+        # seeded by the prod API, even on the shared hosted worker.
+        system_prompt = emotion_mod.apply_to_prompt(
+            system_prompt, enabled=_emotion_matching_enabled(uid)
+        )
+        system_prompt += (
+            "\n\n" + prompt_module.voice_language_directive(voice_language)
+        )
         # Phase 0 measurement (cost program 2026-09-26): what this voice
         # session's Live context is being seeded with, by component. The Live
         # API re-bills the accumulated session context every turn, so this
@@ -1474,6 +1498,14 @@ async def _prepare_chat(
         # Gemini's implicit prefix caching. Level 0 keeps the old order
         # byte-for-byte.
         stable_prefix=context_opt.stable_prefix_enabled(),
+    )
+    # Emotion matching (founder directive 2026-11-06, emotion.py): the
+    # standing guidance folds the emotion read into THIS reply-generating
+    # pass — the brain reads the user's latest message as part of
+    # composing its reply, so text chat gains emotion matching with no
+    # extra model call. Flag-off leaves the prompt byte-identical.
+    system_prompt = emotion_mod.apply_to_prompt(
+        system_prompt, enabled=_emotion_matching_enabled(uid)
     )
     # Phase 0 measurement (cost program 2026-09-26): per-component prompt-size
     # breakdown for this turn — logged always, persisted to `token_turns` when

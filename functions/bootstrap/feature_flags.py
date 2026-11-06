@@ -124,6 +124,16 @@ REGISTRY: dict[str, Flag] = {
              "the taste features degrade to the no-taste empty state. Flip with "
              "scripts/flags.py set qloo_enabled=false --yes (no redeploy).",
              default=True),
+        Flag("emotion_matching", "bool", None,
+             "Emotion-matched responses (founder directive 2026-11-06): Ayma "
+             "reads the user's emotional state from the transcript and "
+             "adjusts reply content/tone and Cartesia voice delivery. Text "
+             "chat folds the read into the reply pass itself (guidance block "
+             "in the system prompt); voice folds it into the voice-actions "
+             "pass (no extra gateway call). Session-scoped state only — "
+             "never written to the profile. Default OFF. See "
+             "docs/EMOTION_MATCHING.md.",
+             default=False),
     ]
 }
 
