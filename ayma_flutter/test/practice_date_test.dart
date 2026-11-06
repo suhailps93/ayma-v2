@@ -59,7 +59,7 @@ class _FakePracticeVoice extends VoiceSessionController {
       );
 
   @override
-  Future<void> start() async {
+  Future<void> start({bool forceRelayFirst = false}) async {
     _p = VoiceSessionPhase.connecting;
     notifyListeners();
     await Future<void>.delayed(Duration.zero);

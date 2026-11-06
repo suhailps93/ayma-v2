@@ -188,5 +188,13 @@
     "aliases": ["offline mode", "saved data", "showing saved data", "works offline", "no connection data", "cached data", "last known", "why can i see old data"],
     "operated_by_ayma": false,
     "reason": "Automatic client behavior (stale-while-revalidate caches); Ayma neither triggers nor configures it. If asked about it, explain what it means (the app shows the last content it saved on this phone and refreshes it when the connection allows) — never claim the saved content is current."
+  },
+  "voice_entry_degrade": {
+    "_doc": "Voice-entry degrade glue (Nov 2026, resilience chunk D): every live-voice entry point (chat mic, nav-bar orb, practice calls) consults the connection heartbeat before attempting a call. Offline: no attempt is made — the user gets a clear note and (in chat) the voice-message offer instead. Weak: the call starts on the forgiving TURN-relay route from the first attempt instead of spending it on the direct route. If one live session drops and re-establishes twice, the chat offers a one-tap switch of that conversation to a voice message. Behavior layered on the existing voice features with no route of its own, so — like connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
+    "key": "voice_entry_degrade",
+    "label": "Voice offline and weak-connection handling",
+    "aliases": ["voice offline", "call offline", "can't call offline", "weak connection call", "voice message instead of call", "switch to voice message", "call keeps dropping"],
+    "operated_by_ayma": false,
+    "reason": "Automatic client behavior driven by the connection heartbeat; Ayma neither triggers nor configures it. If asked about it, explain what it means (the phone's connection is too weak or absent for a live call, so the app protects the conversation by offering a voice message instead) — never claim to fix the user's connection."
   }
 }

@@ -239,6 +239,21 @@ void main() {
       }
     });
 
+    test('a hung connectivity read cannot wedge the probe: it times out '
+        'and the HTTP probe still classifies', () async {
+      final hb = ConnectionHeartbeat(
+        // The platform read never completes (the 2026-11-05 emulator
+        // wedge). Without the read bound, probeNow would never return
+        // and every later probe would no-op behind the in-flight flag.
+        checkConnectivity: () => Completer<List<ConnectivityResult>>().future,
+        httpClient: MockClient((_) async => http.Response('{}', 200)),
+      );
+      await hb.probeNow().timeout(const Duration(seconds: 10));
+      expect(hb.probeCount, 1);
+      expect(hb.lastProbeOutcome, ProbeOutcome.good);
+      expect(hb.state, ConnectionQuality.ok);
+    }, timeout: const Timeout(Duration(seconds: 15)));
+
     test('start/stop lifecycle arms and disarms without leaking', () async {
       final hb = ConnectionHeartbeat(
         probe: () async => ProbeOutcome.good,

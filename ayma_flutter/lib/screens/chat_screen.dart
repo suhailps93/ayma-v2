@@ -27,6 +27,7 @@ import '../services/report_cache.dart';
 import '../services/tour_anchors.dart';
 import '../services/transcript_store.dart';
 import '../services/thumbs_down_store.dart';
+import '../services/voice_entry_gate.dart';
 import '../services/voice_session_controller.dart';
 import '../services/voice_transport.dart';
 import '../theme.dart';
@@ -448,6 +449,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // app resume (the pre-existing trigger in [didChangeAppLifecycleState]).
       ConnectionHeartbeat.instance.listenable
           .addListener(_onConnectionRecovered);
+      _voice.addListener(_onVoiceDropsChanged);
       ChatInbox.instance.pending.addListener(_consumeKickoff);
       ChatInbox.instance.resultsLanded.addListener(_onResultsLanded);
       WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
@@ -899,6 +901,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     if (ConnectionHeartbeat.instance.state != ConnectionQuality.ok) return;
     if (_reconcile != null) unawaited(_reconcilePendingSend());
+  }
+
+  /// Whether the two-drops switch offer (chunk D) has already been shown
+  /// for the current voice session; re-arms when the session ends.
+  bool _asyncSwitchOffered = false;
+
+  /// Chunk D degrade: once ONE live session has dropped and started
+  /// re-establishing twice, the connection has shown it cannot hold a call
+  /// — offer the one-tap switch of this conversation to a voice message
+  /// (stop the call, open the recorder). Offered once per session.
+  void _onVoiceDropsChanged() {
+    if (!mounted) return;
+    if (!_voice.isActive) {
+      _asyncSwitchOffered = false;
+      return;
+    }
+    if (_asyncSwitchOffered || _voice.reconnectCount < 2) return;
+    _asyncSwitchOffered = true;
+    AymaToast.show(
+      context,
+      'This connection keeps dropping.',
+      kind: AymaToastKind.error,
+      action: _canQueue
+          ? AymaToastAction(
+              label: 'Voice message',
+              onPressed: () async {
+                await _voice.stop();
+                if (!mounted) return;
+                showAsyncVoiceSheet(
+                  context,
+                  controller: _voiceMessage,
+                  queue: _voiceQueue,
+                );
+              },
+            )
+          : null,
+    );
   }
 
   void _beginReconcile(_PendingSendReconcile rec) {
@@ -1494,6 +1533,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ChatInbox.instance.resultsLanded.removeListener(_onResultsLanded);
       ConnectionHeartbeat.instance.listenable
           .removeListener(_onConnectionRecovered);
+      _voice.removeListener(_onVoiceDropsChanged);
     }
     // This screen always owns [_pttVoice] (unlike [_voice], which is handed
     // down from the shared shell/orb sheet and must outlive this screen) —
@@ -1543,7 +1583,33 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // expand button in the chat header while a call is live (see the
       // header's `action` in [build]), or tapping the inline call bar
       // ([_Composer.onExpandTap]).
-      await _voice.start();
+      // Degrade glue (chunk D): the heartbeat's word decides whether a live
+      // call is even attempted. Offline -> no attempt (a connect is doomed
+      // and would only burn the retry): a clear note plus the voice-message
+      // offer — the same fallback a failed start gets below. Weak -> the
+      // forgiving relay route from the first attempt.
+      final decision =
+          voiceEntryDecision(ConnectionHeartbeat.instance.state);
+      if (decision == VoiceEntryDecision.denyOffline) {
+        AymaToast.show(
+          context,
+          "You're offline — a live call needs a connection.",
+          kind: AymaToastKind.error,
+          action: _canQueue
+              ? AymaToastAction(
+                  label: 'Voice message',
+                  onPressed: () => showAsyncVoiceSheet(
+                    context,
+                    controller: _voiceMessage,
+                    queue: _voiceQueue,
+                  ),
+                )
+              : null,
+        );
+        return;
+      }
+      await _voice.start(
+          forceRelayFirst: decision == VoiceEntryDecision.allowRelayFirst);
       if (!mounted) return;
       if (_voice.phase == VoiceSessionPhase.error &&
           _voice.errorMessage != null) {

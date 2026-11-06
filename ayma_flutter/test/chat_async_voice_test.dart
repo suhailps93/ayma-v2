@@ -40,7 +40,7 @@ class _FakeVoice extends VoiceSessionController {
   bool get isListening => _phase == VoiceSessionPhase.live;
 
   @override
-  Future<void> start() async {
+  Future<void> start({bool forceRelayFirst = false}) async {
     if (!failNextStart) return; // idle tap: stay idle (tap path untouched)
     _phase = VoiceSessionPhase.connecting;
     notifyListeners();

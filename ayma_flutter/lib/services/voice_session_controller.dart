@@ -343,6 +343,12 @@ class VoiceSessionController extends ChangeNotifier {
   bool _relayRetrying = false;
   bool get relayRetrying => _relayRetrying;
 
+  /// The current session's first-attempt route preference, set by [start]
+  /// (chunk D: the heartbeat said the link is weak). Held on the controller
+  /// — not just a start() local — because the no-join retry re-runs
+  /// [_attempt] and must keep the same first-route choice.
+  bool _forceRelayFirst = false;
+
   /// True while an established call's transport is re-establishing a
   /// dropped connection (a weak-network blip). The call is NOT over: the
   /// LiveKit SDK resumes the same session when the connection returns, so
@@ -351,6 +357,14 @@ class VoiceSessionController extends ChangeNotifier {
   /// does [VoiceTransport.closed] fire and the call end as dropped.
   bool _reconnecting = false;
   bool get reconnecting => _reconnecting;
+
+  /// How many times this session's transport has dropped and started
+  /// re-establishing (resilience chunk D): the chat watches this and, at
+  /// two drops in one session, offers a one-tap switch of the conversation
+  /// to async voice messages — the honest degrade for a connection that
+  /// demonstrably cannot hold a live call. Reset by every [start].
+  int _reconnectCount = 0;
+  int get reconnectCount => _reconnectCount;
 
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
@@ -441,7 +455,13 @@ class VoiceSessionController extends ChangeNotifier {
   /// [VoiceTransport.setMicrophoneEnabled] is called; a denied permission
   /// surfaces there as a thrown error and lands the session in
   /// [VoiceSessionPhase.error].
-  Future<void> start() async {
+  ///
+  /// [forceRelayFirst] (resilience chunk D): when the connection heartbeat
+  /// already knows the link is weak, the FIRST attempt takes the forgiving
+  /// TURN-relay route instead of spending it on the direct route that is
+  /// likeliest to fail; the single retry then uses the opposite route. The
+  /// default keeps chunk B's order (direct first, relay retry).
+  Future<void> start({bool forceRelayFirst = false}) async {
     // Single-flight: reject a re-entrant start the moment one is already
     // active OR in flight. `_starting` is set SYNCHRONOUSLY (before the first
     // await below), which closes the gap `isActive` leaves open — `isActive`
@@ -476,7 +496,9 @@ class VoiceSessionController extends ChangeNotifier {
       _cappedError = false;
       _backgroundPermissionDenied = false;
       _relayRetrying = false;
+      _forceRelayFirst = forceRelayFirst;
       _reconnecting = false;
+      _reconnectCount = 0;
       _agentSpeaking = false;
       _agentReadySeen = false;
       _agentRespondedOnce = false;
@@ -567,7 +589,8 @@ class VoiceSessionController extends ChangeNotifier {
       try {
         // Sets `_transport` internally; the mic is NOT published here (see the
         // comment below) so the return value is not needed.
-        await _connectTransport(url: url, token: token, forceRelay: false);
+        await _connectTransport(
+            url: url, token: token, forceRelay: _forceRelayFirst);
       } catch (e) {
         // ANY first-attempt connect failure gets one forgiving retry with
         // the ICE transport policy forced to TURN relay (LiveKit Cloud
@@ -583,12 +606,13 @@ class VoiceSessionController extends ChangeNotifier {
         debugPrint('[voice] connect attempt 1 failed: $e'
             '${isIceConnectivityFailure(e) ? ' (ICE connectivity)' : ''}');
         debugPrint(
-            '[voice] relay-retry: retrying once with TURN relay forced');
+            '[voice] relay-retry: retrying once with ${_forceRelayFirst ? 'the direct route' : 'TURN relay forced'}');
         await _teardown();
         _relayRetrying = true;
         notifyListeners(); // status line: "Connecting…" -> "Reconnecting…"
-        await _connectTransport(url: url, token: token, forceRelay: true);
-        debugPrint('[voice] relay-retry: relay connect succeeded');
+        await _connectTransport(
+            url: url, token: token, forceRelay: !_forceRelayFirst);
+        debugPrint('[voice] relay-retry: retry connect succeeded');
       }
 
       // The room is connected, but the mic is deliberately NOT published yet:
@@ -733,6 +757,7 @@ class VoiceSessionController extends ChangeNotifier {
       if (!identical(_transport, transport)) return;
       if (_reconnecting == reconnecting) return;
       _reconnecting = reconnecting;
+      if (reconnecting) _reconnectCount++;
       debugPrint('[voice] transport reconnecting: $reconnecting');
       notifyListeners();
     });

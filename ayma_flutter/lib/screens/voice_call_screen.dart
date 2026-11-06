@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/connection_heartbeat.dart';
+import '../services/voice_entry_gate.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
@@ -242,7 +244,20 @@ Future<void> toggleVoiceCall(
     return;
   }
   final toast = AymaToast.of(context);
-  await voice.start();
+  // Degrade glue (chunk D): the heartbeat's word decides whether a live
+  // call is even attempted — offline means no attempt and just the note;
+  // weak means the forgiving relay route from the first attempt.
+  final decision = voiceEntryDecision(ConnectionHeartbeat.instance.state);
+  if (decision == VoiceEntryDecision.denyOffline) {
+    toast.show(
+      "You're offline — a live call needs a connection. "
+      'Voice messages still work from the chat.',
+      kind: AymaToastKind.error,
+    );
+    return;
+  }
+  await voice.start(
+      forceRelayFirst: decision == VoiceEntryDecision.allowRelayFirst);
   if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
     if (!context.mounted) return;
     if (voice.cappedError) {

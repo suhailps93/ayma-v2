@@ -71,7 +71,7 @@ class _FakeAuth extends AuthService {
 class _FakeVoice extends VoiceSessionController {
   _FakeVoice() : super(transcriptStore: TranscriptStore());
   @override
-  Future<void> start() async {}
+  Future<void> start({bool forceRelayFirst = false}) async {}
   @override
   Future<void> stop() async {}
 }

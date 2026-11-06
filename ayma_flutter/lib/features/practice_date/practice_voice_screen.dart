@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../services/api_client.dart';
+import '../../services/connection_heartbeat.dart';
 import '../../services/transcript_store.dart';
+import '../../services/voice_entry_gate.dart';
 import '../../services/voice_session_controller.dart';
 import '../../theme.dart';
 import '../../widgets/ayma_orb.dart';
@@ -66,7 +68,25 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
     _voice.addListener(_onVoiceChange);
     if (!_voice.isActive) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_voice.isActive) _voice.start();
+        if (!mounted || _voice.isActive) return;
+        // Degrade glue (chunk D): the heartbeat's word decides whether the
+        // practice call is even attempted. Offline -> no attempt: the note
+        // shows on the caller's surface and this screen leaves, exactly
+        // like a failed start. Weak -> the forgiving relay route from the
+        // first attempt.
+        final decision =
+            voiceEntryDecision(ConnectionHeartbeat.instance.state);
+        if (decision == VoiceEntryDecision.denyOffline) {
+          final messenger = ScaffoldMessenger.maybeOf(context);
+          _leave(null);
+          messenger?.showSnackBar(const SnackBar(
+            content:
+                Text("You're offline — a practice call needs a connection."),
+          ));
+          return;
+        }
+        _voice.start(
+            forceRelayFirst: decision == VoiceEntryDecision.allowRelayFirst);
       });
     }
   }

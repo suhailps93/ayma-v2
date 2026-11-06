@@ -17,7 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _FakeVoice extends VoiceSessionController {
   _FakeVoice() : super(transcriptStore: TranscriptStore());
   @override
-  Future<void> start() async {}
+  Future<void> start({bool forceRelayFirst = false}) async {}
   @override
   Future<void> stop() async {}
 

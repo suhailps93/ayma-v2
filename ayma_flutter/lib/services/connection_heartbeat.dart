@@ -148,6 +148,11 @@ class ConnectionHeartbeat {
   /// A probe taking longer than this counts as [ProbeOutcome.failure].
   static const probeTimeout = Duration(seconds: 10);
 
+  /// Hard bound on the connectivity platform read inside a probe (see
+  /// [_readConnectivity]): short, because a hang here must never be
+  /// allowed to stall the probe cadence itself.
+  static const connectivityReadTimeout = Duration(seconds: 3);
+
   /// Whether [results] look like a metered connection.
   ///
   /// `connectivity_plus` exposes no metered flag, so cellular-only (and
@@ -306,11 +311,19 @@ class ConnectionHeartbeat {
   Future<List<ConnectivityResult>> _readConnectivity() async {
     final override = _checkConnectivityOverride;
     try {
-      if (override != null) return await override();
-      return await Connectivity().checkConnectivity();
+      // Bounded: on some hosts (observed on the Android emulator,
+      // 2026-11-05) the platform call never returns, which wedged
+      // [probeNow] behind its in-flight flag and silently killed every
+      // later probe — no weak verdict could ever be reached. The timeout
+      // falls through to the HTTP probe, which classifies honestly.
+      final read = override != null
+          ? override()
+          : Connectivity().checkConnectivity();
+      return await read.timeout(connectivityReadTimeout);
     } catch (_) {
-      // No plugin on this host (unit tests, exotic platforms): assume a
-      // usable link and let the probe itself decide.
+      // No plugin on this host (unit tests, exotic platforms), or the
+      // platform call outlived its bound: assume a usable link and let
+      // the probe itself decide.
       return const [ConnectivityResult.other];
     }
   }

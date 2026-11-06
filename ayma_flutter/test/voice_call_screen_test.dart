@@ -88,7 +88,7 @@ class _FakeVoice extends VoiceSessionController {
   /// (a real notifyListeners + rebuild for each), without ever touching the
   /// network.
   @override
-  Future<void> start() async {
+  Future<void> start({bool forceRelayFirst = false}) async {
     setPhase(VoiceSessionPhase.connecting);
     await Future<void>.delayed(Duration.zero);
     setPhase(VoiceSessionPhase.live);

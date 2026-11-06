@@ -54,7 +54,7 @@ class _FakeVoice extends VoiceSessionController {
   /// lands on the capped `error` phase — not a single static jump straight
   /// to the end state.
   @override
-  Future<void> start() async {
+  Future<void> start({bool forceRelayFirst = false}) async {
     _phase = VoiceSessionPhase.connecting;
     notifyListeners();
     await Future<void>.delayed(Duration.zero);

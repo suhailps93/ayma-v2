@@ -35,7 +35,7 @@ class _FakeVoice extends VoiceSessionController {
   @override
   bool get isListening => false;
   @override
-  Future<void> start() async => startCalls++;
+  Future<void> start({bool forceRelayFirst = false}) async => startCalls++;
   @override
   Future<void> stop() async => stopCalls++;
 }
