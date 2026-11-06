@@ -20,6 +20,7 @@ import 'profile_service.dart';
 import 'push_service.dart';
 import 'screen_capture.dart';
 import 'theme_controller.dart';
+import 'tour_anchors.dart';
 import 'tour_content.dart';
 import 'tour_controller.dart';
 import 'voice_session_controller.dart';
@@ -484,6 +485,10 @@ class AppCommandService {
         subtitle: say,
         anchorId: (anchor == null || anchor.isEmpty) ? null : anchor,
         tab: tab,
+        // The composer step is the text box the user is meant to type in; it
+        // must stay focusable for the whole step instead of advancing on every
+        // tap inside the spotlight (Scout note 118 leg 4).
+        typingAllowed: anchor == TourAnchors.homeComposer,
       ),
       index: index,
       total: total,

@@ -40,7 +40,12 @@ class TourHost extends StatelessWidget {
   /// already there (`go('/')` just stays; a `TabRequest` for the current tab is
   /// ignored by the shell).
   static void _prepareStep(TourFeature feature) {
-    FocusManager.instance.primaryFocus?.unfocus();
+    // A typing-allowed step (the composer) must never yank the keyboard away:
+    // the user may already be typing while the tour re-presents it, and this
+    // runs before every step.
+    if (!feature.typingAllowed) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
     try {
       var safety = 10;
       while (appRouter.canPop() && safety-- > 0) {

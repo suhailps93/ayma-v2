@@ -144,7 +144,7 @@ class CoachMarkOverlay extends StatefulWidget {
 }
 
 class _CoachMarkOverlayState extends State<CoachMarkOverlay>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   int _index = 0;
   Rect? _rect;
   bool _ready = false;
@@ -160,7 +160,35 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scheduleMeasure();
+  }
+
+  /// The composer's cutout must follow the composer when the keyboard opens and
+  /// pushes it up — otherwise the text field / Send move out of the stale hole
+  /// and the scrim swallows their taps. A typing-allowed step re-resolves its
+  /// anchor whenever view metrics change; every other step keeps the measured
+  /// rect it settled on.
+  @override
+  void didChangeMetrics() {
+    _syncTypingHole();
+  }
+
+  void _syncTypingHole() {
+    if (!mounted || !_ready) return;
+    final feature = widget.features[_index];
+    if (!feature.typingAllowed) return;
+    final anchorId = feature.anchorId;
+    if (anchorId == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final current = widget.features[_index];
+      if (!current.typingAllowed || current.anchorId != anchorId) return;
+      final rect = widget.resolveRect(anchorId);
+      if (rect != null && rect != _rect) {
+        setState(() => _rect = rect);
+      }
+    });
   }
 
   @override
@@ -178,6 +206,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulse.dispose();
     super.dispose();
   }
@@ -289,6 +318,14 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   Rect? get _holeRect =>
       _ready && _rect != null ? _rect!.inflate(_kHolePad) : null;
 
+  /// True when [position] lands on the composer's mic — the one control that
+  /// advances a typing-allowed step. Send / attach / text-field taps press
+  /// through but do not move the tour.
+  bool _isMicTap(Offset position) {
+    final mic = widget.resolveRect(TourAnchors.asyncVoiceMic);
+    return mic != null && mic.contains(position);
+  }
+
   Offset? _downInHole;
 
   /// A press-through tap begins: remember where, to tell a tap on the cutout
@@ -308,6 +345,12 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     if (down == null || _finishing) return;
     final hole = _holeRect;
     if (hole == null || !hole.contains(event.position)) return;
+    // Typing-allowed step (the composer): the user must be able to tap the text
+    // field, type and send without the tour stealing focus or advancing. Only
+    // the mic is an anchor tap here — Done / Skip still move the tour forward.
+    if (widget.features[_index].typingAllowed && !_isMicTap(event.position)) {
+      return;
+    }
     // Driven mode: the real control just acted; tell the driver so the backend
     // sends the next step — don't advance a local list.
     final onTapped = widget.onAnchorTapped;
