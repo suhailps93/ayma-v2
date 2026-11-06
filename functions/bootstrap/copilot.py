@@ -18,7 +18,18 @@ vision path — it resolves through the LiveKit Inference gateway routing
 makes NO direct call to any model provider of its own.
 
 Frames are never stored: the image arrives in the request body, is passed
-to the vision call in memory, and is gone when the request ends. Secure
+to the vision call in memory, and is gone when the request ends.
+
+Drafts (text fields): when the goal says what the user wants to enter,
+the pass also composes ``draft_text``. The draft is shown verbatim in the
+app under a "Copy Ayma's draft" button and is copied ONLY on the user's
+confirmation — never silently, never on the strength of this response
+alone. In the voice flow Ayma reads the draft aloud first (``draft_say``,
+built deterministically in :func:`normalize_locate_result`) and asks; a
+spoken yes lets her tap that same button through the app's ui_action
+surface, and the user then long-presses and pastes in the other app. The
+separate Ayma Keyboard is the heavier-duty path; this clipboard path is
+the zero-setup version inside a live walkthrough. Secure
 screens (FLAG_SECURE — banking / passwords) never reach here at all: the
 native capture pauses on black frames before any frame leaves the device.
 """
@@ -80,6 +91,7 @@ Rules:
 - Prefer the exact control matching the goal over a merely related one. If several match, pick the most prominent.
 - kind is "text_field" when the target is an editable text input, "button" for buttons, "link" for text links, "tab" for navigation tabs, otherwise "other".
 - When kind is "text_field" AND the goal tells you what the user wants to say or enter, write that text in draft_text, ready for the user to review and paste. Otherwise draft_text is empty. Never invent personal data (names, addresses, payment details) for draft_text.
+- When you write draft_text, this is a VOICE flow as much as a visual one: "say" must read the draft back word for word and then ask before anything is copied, e.g. "I drafted this: 'Thanks, see you at seven.' Want me to copy it so you can paste it?" Never say or imply the draft is already copied or pasted — copying happens only after the user confirms (they tap "Copy Ayma's draft", or say yes out loud and Ayma taps that button for them).
 - "say" is one short, friendly spoken sentence naming the highlighted element and what tapping it does, e.g. "Tap the blue Send button at the bottom right."
 - "label" is the element's visible text or a 2-4 word description.
 - confidence is your honest 0.0-1.0 certainty that this is the right element."""
@@ -102,6 +114,30 @@ _RESPONSE_SCHEMA: dict = {
 }
 
 _KINDS = {"button", "text_field", "link", "tab", "other"}
+
+# A draft is read aloud in the voice flow before copying; a spoken readback
+# longer than this stops being listenable, so the readback truncates (the
+# full exact text is still shown on screen and is what gets copied).
+MAX_SPOKEN_DRAFT_CHARS = 180
+
+
+def draft_say_for(draft: str) -> str:
+    """The voice-flow line for a draft: read it aloud, ask, never copy yet.
+
+    Deterministic on purpose — the read-aloud + confirmation ask is a
+    consent contract, not model prose, so it is built here rather than
+    trusted to the vision model's ``say``. The clipboard write itself only
+    happens in the app, after the user taps "Copy Ayma's draft" (or says
+    yes in a voice walkthrough and Ayma taps that same button via
+    ui_action).
+    """
+    spoken = draft
+    if len(spoken) > MAX_SPOKEN_DRAFT_CHARS:
+        spoken = spoken[:MAX_SPOKEN_DRAFT_CHARS].rstrip() + "…"
+    return (
+        f"I drafted this: '{spoken}' "
+        "Want me to copy it so you can paste it?"
+    )
 
 
 def _clamp01(value: object, default: float) -> float:
@@ -152,6 +188,11 @@ def normalize_locate_result(raw: object) -> dict[str, object]:
     draft = str(raw.get("draft_text") or "").strip()[:2000]
     if kind == "text_field" and draft:
         result["draft_text"] = draft
+        # Voice-flow contract: the draft is read aloud (draft_say) and the
+        # user confirms before ANY clipboard write; the app never copies
+        # silently and never copies on the strength of this response alone.
+        result["draft_say"] = draft_say_for(draft)
+        result["copy_requires_confirmation"] = True
     return result
 
 

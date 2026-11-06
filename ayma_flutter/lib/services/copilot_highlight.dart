@@ -51,6 +51,8 @@ class CopilotTarget {
     this.kind = CopilotTargetKind.other,
     this.confidence = 0,
     this.draftText,
+    this.draftSay = '',
+    this.copyRequiresConfirmation = false,
     this.say = '',
   });
 
@@ -70,6 +72,28 @@ class CopilotTarget {
   /// and paste. Never auto-inserted anywhere — the app puts it on the
   /// clipboard only after the user taps Copy.
   final String? draftText;
+
+  /// The voice-flow readback for [draftText], built deterministically
+  /// server-side: Ayma reads the draft aloud and asks before copying.
+  /// Empty when there is no draft.
+  final String draftSay;
+
+  /// True when a draft is present: the clipboard write is gated on the
+  /// user's explicit confirmation — tapping "Copy Ayma's draft", or a
+  /// spoken yes in a voice walkthrough (Ayma then taps that same button
+  /// via ui_action). A locate result alone never copies anything.
+  final bool copyRequiresConfirmation;
+
+  /// What Ayma says aloud about the draft in a voice walkthrough: the
+  /// server-built [draftSay], or the same shape built locally when an
+  /// older backend did not send one. Empty when there is no draft.
+  String get voiceDraftPrompt {
+    if (draftSay.isNotEmpty) return draftSay;
+    final draft = draftText;
+    if (draft == null) return '';
+    return "I drafted this: '$draft' "
+        'Want me to copy it so you can paste it?';
+  }
 
   /// One spoken-style sentence naming the element and what tapping does.
   final String say;
@@ -91,6 +115,8 @@ class CopilotTarget {
       kind: copilotKindFromWire(json['kind'] as String?),
       confidence: numOf('confidence'),
       draftText: (draft == null || draft.isEmpty) ? null : draft,
+      draftSay: (json['draft_say'] as String? ?? '').trim(),
+      copyRequiresConfirmation: json['copy_requires_confirmation'] == true,
       say: (json['say'] as String? ?? '').trim(),
     );
   }

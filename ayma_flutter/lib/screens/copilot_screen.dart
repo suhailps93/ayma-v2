@@ -118,6 +118,12 @@ class _CopilotScreenState extends State<CopilotScreen>
     }
   }
 
+  /// The ONLY clipboard write in the co-pilot, and it runs exclusively
+  /// from the user's tap on "Copy Ayma's draft" below — or from Ayma
+  /// tapping that same button via ui_action after the user said yes out
+  /// loud in a voice walkthrough (she reads the draft aloud and asks
+  /// first; see the backend's draft_say). Never call this from a locate
+  /// result directly: no silent clipboard writes, ever.
   Future<void> _copyDraft(String draft) async {
     await Clipboard.setData(ClipboardData(text: draft));
     if (mounted) setState(() => _copied = true);
@@ -369,18 +375,35 @@ class _CopilotScreenState extends State<CopilotScreen>
                     draft,
                     style: AymaType.sans(size: 14, color: ac.fg),
                   ),
+                  if (target.voiceDraftPrompt.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'In a voice walkthrough, Ayma reads it aloud and asks '
+                      'first: "${target.voiceDraftPrompt}"',
+                      style: AymaType.sans(
+                          size: 12, soft: true, color: ac.fgMute),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   FilledButton.icon(
                     key: const Key('copilot_copy_draft_button'),
                     onPressed: () => _copyDraft(draft),
                     icon: const Icon(Icons.copy_outlined),
-                    label: Text(_copied ? 'Copied' : 'Copy text'),
+                    label: Text(_copied ? 'Copied' : "Copy Ayma's draft"),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Nothing is copied until you tap this — or say yes when '
+                    'Ayma asks in a voice walkthrough.',
+                    style:
+                        AymaType.sans(size: 12, soft: true, color: ac.fgMute),
                   ),
                   if (_copied)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
-                        'Now tap the highlighted box in the other app and paste.',
+                        'Copied. Now tap the highlighted box in the other '
+                        'app, long-press, and paste.',
                         style: AymaType.sans(
                             size: 12, soft: true, color: ac.fgMute),
                       ),

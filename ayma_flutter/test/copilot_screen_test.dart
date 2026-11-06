@@ -104,6 +104,9 @@ void main() {
       'kind': 'text_field',
       'confidence': 0.9,
       'draft_text': 'Hi! Thanks for matching.',
+      'draft_say':
+          "I drafted this: 'Hi! Thanks for matching.' Want me to copy it so you can paste it?",
+      'copy_requires_confirmation': true,
       'say': 'Tap the reply box at the bottom.',
     });
     await tester.pumpWidget(_host(service, api));
@@ -146,11 +149,18 @@ void main() {
     await tester.ensureVisible(
         find.byKey(const Key('copilot_copy_draft_button')));
     await tester.pumpAndSettle();
+    // The visible action carries its exact label, the voice readback line
+    // is on the card, and NOTHING has been copied yet — no silent writes.
+    expect(find.text("Copy Ayma's draft"), findsOneWidget);
+    expect(find.textContaining('Want me to copy it'), findsWidgets);
+    expect(clipText, isNull);
     await tester.tap(find.byKey(const Key('copilot_copy_draft_button')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump();
-    expect(find.textContaining('paste'), findsOneWidget);
+    // Several card lines mention pasting (readback, hint, copied note);
+    // pin the post-copy instruction itself.
+    expect(find.textContaining('Copied. Now tap'), findsOneWidget);
     expect(clipText, 'Hi! Thanks for matching.');
     service.dispose();
   });

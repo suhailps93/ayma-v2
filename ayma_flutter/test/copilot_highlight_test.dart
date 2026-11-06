@@ -1,7 +1,24 @@
 import 'package:ayma_flutter/services/copilot_highlight.dart';
+import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('voice Ayma may operate the copy button once the user says yes',
+      () {
+    // The confirmation relay for the voice flow: the "Copy Ayma's draft"
+    // button must NOT be on the ui_action denylist (it is not a delete,
+    // purchase, or consent control), so Ayma can tap it via ui_action
+    // after the user confirms out loud — and only then.
+    expect(
+      uiDenial(
+        label: "Copy Ayma's draft",
+        type: 'button',
+        route: '/copilot',
+      ),
+      isNull,
+    );
+  });
+
   group('CopilotTarget.fromJson', () {
     test('parses a full hit', () {
       final t = CopilotTarget.fromJson({
@@ -26,10 +43,18 @@ void main() {
         'found': true,
         'kind': 'text_field',
         'draft_text': '  hello there  ',
+        'draft_say':
+            "I drafted this: 'hello there' Want me to copy it so you can paste it?",
+        'copy_requires_confirmation': true,
         'say': 'Tap the box.',
       });
       expect(t.kind, CopilotTargetKind.textField);
       expect(t.draftText, 'hello there');
+      // Voice flow contract rides the wire: readback + confirmation gate.
+      expect(t.draftSay, contains('hello there'));
+      expect(t.draftSay, contains('Want me to copy it'));
+      expect(t.copyRequiresConfirmation, isTrue);
+      expect(t.voiceDraftPrompt, t.draftSay);
       final empty = CopilotTarget.fromJson({
         'found': true,
         'kind': 'text_field',

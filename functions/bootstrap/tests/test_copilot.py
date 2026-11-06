@@ -99,6 +99,49 @@ def test_normalize_keeps_draft_only_for_text_fields():
     assert "draft_text" not in button
 
 
+def test_normalize_draft_carries_voice_readback_and_confirmation_gate():
+    hit = {
+        "found": True,
+        "x": 0.5,
+        "y": 0.8,
+        "label": "Message",
+        "kind": "text_field",
+        "confidence": 0.8,
+        "say": "Tap the message box.",
+        "draft_text": "Hi! Loved your profile.",
+    }
+    field = copilot.normalize_locate_result(hit)
+    # The voice flow: Ayma reads the exact draft aloud and asks first.
+    assert field["draft_say"] == (
+        "I drafted this: 'Hi! Loved your profile.' "
+        "Want me to copy it so you can paste it?"
+    )
+    assert field["copy_requires_confirmation"] is True
+    # No draft -> no readback, no gate fields at all.
+    button = copilot.normalize_locate_result({**hit, "kind": "button"})
+    assert "draft_say" not in button
+    assert "copy_requires_confirmation" not in button
+
+
+def test_draft_say_truncates_long_drafts_but_keeps_full_text():
+    long_draft = "x" * 500
+    out = copilot.normalize_locate_result(
+        {
+            "found": True,
+            "x": 0.5,
+            "y": 0.8,
+            "kind": "text_field",
+            "say": "Tap the box.",
+            "draft_text": long_draft,
+        }
+    )
+    # What gets copied is the full exact draft; only the readback shortens.
+    assert out["draft_text"] == long_draft
+    assert len(out["draft_say"]) < len(long_draft)
+    assert "…" in out["draft_say"]
+    assert out["draft_say"].endswith("Want me to copy it so you can paste it?")
+
+
 def test_normalize_unknown_kind_becomes_other():
     out = copilot.normalize_locate_result(
         {"found": True, "x": 0.5, "y": 0.5, "kind": "widget", "say": "Tap it."}
