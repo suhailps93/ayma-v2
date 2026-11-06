@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../routing/app_router.dart';
 import '../services/api_client.dart';
+import '../services/inbox_actions.dart';
 import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
@@ -38,6 +39,29 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
   late final NotificationService _svc = widget.service ?? NotificationService();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final String _myUid = _svc.currentUid;
+
+  /// The active centre filter — shared with Ayma's
+  /// `set_notification_filter` command via [NotificationFilterState]:
+  /// a filter she sets applies here live, and the chips below write the
+  /// same state she sets.
+  NotificationFilter _filter = NotificationFilterState.instance.current.value;
+
+  @override
+  void initState() {
+    super.initState();
+    NotificationFilterState.instance.current.addListener(_onFilterState);
+  }
+
+  @override
+  void dispose() {
+    NotificationFilterState.instance.current.removeListener(_onFilterState);
+    super.dispose();
+  }
+
+  void _onFilterState() {
+    if (!mounted) return;
+    setState(() => _filter = NotificationFilterState.instance.current.value);
+  }
 
   final Map<String, MiniProfile> _mini = {};
 
@@ -99,7 +123,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
       stream: _svc.watch(),
       builder: (context, snap) {
         final items = snap.data ?? const <AppNotification>[];
-        final entries = _entries(items);
+        final entries = _entries(filterNotifications(items, _filter));
         final grouped = _grouped(entries);
         WidgetsBinding.instance.addPostFrameCallback((_) => _ensureMini(
             entries.where((e) => e.isDmGroup).map((e) => e.actorUid).toSet()));
@@ -129,7 +153,11 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
               ),
             ],
           ),
-          body: Builder(builder: (context) {
+          body: Column(
+            children: [
+              if (items.isNotEmpty) _filterChips(ac),
+              Expanded(
+                child: Builder(builder: (context) {
             if (snap.hasError) {
               return CenteredScroll(
                 padding: const EdgeInsets.all(24),
@@ -145,7 +173,10 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
             }
             if (entries.isEmpty) {
               return Center(
-                child: Text('Nothing here yet.',
+                child: Text(
+                    items.isEmpty
+                        ? 'Nothing here yet.'
+                        : 'Nothing matches this filter.',
                     style: AymaType.sans(
                         size: 15, soft: true, color: ac.fgMute)),
               );
@@ -184,9 +215,37 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                 );
               },
             );
-          }),
+                }),
+              ),
+            ],
+          ),
         );
       },
+    );
+  }
+
+  /// The filter chips row (founder feedback item 11): one chip per
+  /// [NotificationFilter] bucket; tapping writes the shared
+  /// [NotificationFilterState] — the same state Ayma's
+  /// `set_notification_filter` command sets.
+  Widget _filterChips(AymaTokens ac) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+      child: Row(
+        children: [
+          for (final f in NotificationFilter.values)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                label: Text(f.label),
+                selected: _filter == f,
+                onSelected: (_) =>
+                    NotificationFilterState.instance.setFilter(f),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

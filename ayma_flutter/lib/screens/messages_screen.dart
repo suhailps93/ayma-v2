@@ -9,6 +9,7 @@ import '../services/match_service.dart';
 import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/freshness_indicator.dart';
@@ -166,12 +167,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
                 return Column(
                   children: [
-                    const AymaScreenHeader(
+                    AymaScreenHeader(
                       title: 'Messages',
                       // Back arrow when pushed standalone (deep link /
                       // `open_screen`) — invisible in the shell tab, where
                       // the route can't pop.
                       automaticallyImplyBack: true,
+                      // "Mark all read" for the conversations list
+                      // (founder feedback item 9's sibling ask): shown
+                      // only while a shown conversation is unread.
+                      action: _markAllReadAction([
+                        ...(threadFresh?.data ?? const <DmThread>[]),
+                        ..._archived,
+                      ]),
                     ),
                     if (freshness != null)
                       FreshnessIndicator.fromFresh(freshness),
@@ -200,6 +208,57 @@ class _MessagesScreenState extends State<MessagesScreen> {
         ),
       ),
     );
+  }
+
+  /// The header's "Mark all read" button, or null when no shown
+  /// conversation is unread (the button only exists when it can act).
+  Widget? _markAllReadAction(List<DmThread> threads) {
+    final unread = threads.where((t) => t.unread > 0).length;
+    if (unread == 0) return null;
+    return IconButton(
+      tooltip: 'Mark all read',
+      icon: const Icon(Icons.done_all),
+      onPressed: () => _confirmMarkAllRead(unread),
+    );
+  }
+
+  /// Confirms before marking everything read — the same bulk-action
+  /// check the Notifications page runs (§7.9 pattern).
+  Future<void> _confirmMarkAllRead(int unreadThreads) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        title: Text(
+          'Mark $unreadThreads conversation'
+          '${unreadThreads == 1 ? '' : 's'} as read?',
+        ),
+        content: const Text("They'll no longer show as unread."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Mark read')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _markAllRead();
+  }
+
+  /// Catches internally, so the toast's Retry can safely re-invoke it.
+  Future<void> _markAllRead() async {
+    try {
+      await _dm.markAllThreadsRead();
+    } catch (e) {
+      if (!mounted) return;
+      AymaToast.show(context, 'Could not mark read ($e).',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+              label: 'Retry', onPressed: () => _markAllRead()));
+    }
   }
 
   Widget _list(
