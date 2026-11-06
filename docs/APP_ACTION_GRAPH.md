@@ -52,6 +52,14 @@ entries and commands** — see "Keeping this graph alive" at the end.
 
 Ayma's context: the live screen capture (`current_screen` in voice, the
 `/chat` screen fields in text) lists the current screen's controls; the
+The client command actions `AppCommandService` dispatches (the wire
+form of the tools above) are: `navigate`, `search_explore`,
+`open_profile`, `open_dm_thread`, `open_notification`, `app_action`,
+`reconnect_voice`, `ui_action`, `tour_step`, `tour_end`,
+`play_voice_clip`. The `app_action` names it executes are `dark_mode`,
+`light_mode`, `system_theme`, `accent_color`, `pause_matching`,
+`resume_matching`, `wing_flutter`, `nav_bar_flutter`, `sign_out`.
+
 tool descriptions are generated from `app_registry.json`, so the registry
 — and now this graph — are what she knows.
 
@@ -490,3 +498,40 @@ each as `non_navigable` with its reason.
 5. Reviewers: a PR touching `ayma_flutter/lib/screens/` or
    `lib/widgets/` without touching this doc should be asked for the
    graph entry — the same discipline as the registry rule in (1).
+
+## Appendix — Ayma's full tool surface (the command names used above)
+
+Every tool Ayma can be given, grouped by family. The coverage test
+(`tests/test_app_action_graph.py`) checks this doc against the live
+registries: a tool that exists but is not named here fails, and a
+backticked name here that is neither a tool nor a listed registry /
+client identifier fails.
+
+* **App control** (`skills/app_control.py` — voice + text):
+  `current_screen`, `list_conversations`, `open_screen`,
+  `search_explore`, `open_profile`, `open_message_thread`,
+  `open_notification`, `open_match_report`, `open_date_sim`,
+  `open_practice_date`, `app_action`, `account_action`, `ui_action`,
+  `play_voice_clip`.
+* **Guided tour**: `start_guided_tour`, `advance_guided_tour`,
+  `back_guided_tour`, `stop_guided_tour`.
+* **Her own stack & voice**: `set_brain`, `set_voice_brain`,
+  `set_voice_mode`, `set_realtime_model`, `set_stt`, `set_tts`,
+  `reconnect_voice`, `set_voice_preference`.
+* **Profile & story**: `set_profile_field`, `list_profile_sections`,
+  `edit_profile_section`, `set_profile_section_visibility`,
+  `edit_story_entry`, `remove_story_entry`, `edit_passage`,
+  `remove_from_profile`, `set_passage_privacy`, `set_section_privacy`,
+  `edit_career_timeline_entry`, `delete_career_timeline_entry`,
+  `next_questions`, `record_answer`, `set_relationship_intent`,
+  `add_followup_question`, `remember`, `recall`, `set_user_steering`,
+  `find_fact_source`.
+* **Photos & reports**: `edit_photo`, `delete_photo`,
+  `update_photo_note`, `run_appearance_report`, `face_report`,
+  `body_report`, `analyze_physical_attributes`,
+  `correct_appearance_item`, `clear_appearance_item`, `deep_dive`,
+  `rerun_web_research`, `correct_deep_dive_item`,
+  `remove_deep_dive_item`.
+* **Messages**: `send_dm_message`, `read_dm_thread`.
+* **Feedback & misc**: `submit_feedback`, `record_feedback`,
+  `report_bug`, `generate_image`.

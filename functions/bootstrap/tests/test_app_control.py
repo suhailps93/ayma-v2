@@ -502,7 +502,7 @@ _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "list_conversations",
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
-    "ui_action", "go_back",
+    "ui_action", "go_back", "play_voice_clip",
 }
 
 
@@ -1276,7 +1276,10 @@ def test_account_action_voice_needs_time_for_the_spoken_yes(monkeypatch):
     assert db.store[_PENDING]["name"] == "sign_out"
 
 
-def test_account_action_wipe_memory_runs_server_side(monkeypatch):
+def test_account_action_wipe_memory_is_navigate_only(monkeypatch):
+    # ACTION PARITY exclusions (founder, 2026-11-06): clearing what Ayma
+    # has learned is user-only. Even a confirmed account_action never
+    # runs the wipe — it only opens Ayma's settings.
     import knowledge_wipe
 
     wiped = []
@@ -1284,11 +1287,13 @@ def test_account_action_wipe_memory_runs_server_side(monkeypatch):
         knowledge_wipe, "wipe_knowledge", lambda db, uid: wiped.append(uid)
     )
     monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
-    db = _Db()
+    db = _acking_db()
     act = app_control._bind_account_action(db, "me")
-    _run(act("wipe_memory"))
-    assert _run(act("wipe_memory", True)).startswith("Done:")
-    assert wiped == ["me"]
+    out = _run(act("wipe_memory"))
+    _navigated_only(db, out, "/settings/ayma")
+    out = _run(act("wipe_memory", True))
+    _navigated_only(db, out, "/settings/ayma")
+    assert wiped == []
 
 
 def _navigated_only(db, out, path):

@@ -63,6 +63,21 @@ def unavailable() -> list[dict]:
     return list(registry()["unavailable"])
 
 
+def exclusions() -> list[dict]:
+    """The ACTION PARITY exclusion config (founder, 2026-11-06): the
+    controls Ayma must never activate (delete account, any purchase,
+    clear memory). Enforcement lives in the command layer — the
+    ``ui_action_policy`` deny rules and the navigate-only handlers named
+    in each item's ``via`` — never in the system prompt. Returns the
+    ``items`` list (empty when the registry predates the block)."""
+    block = registry().get("exclusions") or {}
+    return list(block.get("items") or [])
+
+
+def exclusion_keys() -> set[str]:
+    return {str(e.get("key") or "") for e in exclusions()}
+
+
 def guided_tour() -> dict:
     """The Ayma-driven interactive tour config (ARCHITECTURE §11.2b): its
     metadata and the ordered ``steps`` Ayma narrates. Empty dict when the
