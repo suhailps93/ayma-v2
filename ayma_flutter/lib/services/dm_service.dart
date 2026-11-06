@@ -388,6 +388,40 @@ class DmService {
   Future<void> sendVoice(String threadId, String storagePath) =>
       _api.sendDmMessage(threadId, type: 'voice', body: storagePath);
 
+  /// Upload a recorded voice-note clip to
+  /// `uploads/{myUid}/dm/{threadId}/voice_{ts}.wav` (the path shape the
+  /// `/dm/{threadId}/messages` voice contract requires: the message body
+  /// must be a path under the sender's `uploads/`). Returns the attachment
+  /// descriptor; send it with [sendVoice] using its storage path.
+  Future<DmAttachment> uploadVoiceClip(
+    File file, {
+    required String threadId,
+  }) async {
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final name = 'voice_$ts.wav';
+    final path = 'uploads/$uid/dm/$threadId/$name';
+    final ref = _storage.ref(path);
+    await ref.putFile(file, SettableMetadata(contentType: 'audio/wav'));
+    return DmAttachment(
+      storagePath: path,
+      downloadUrl: await ref.getDownloadURL(),
+      contentType: 'audio/wav',
+      sizeBytes: await file.length(),
+      name: name,
+    );
+  }
+
+  /// A playable download URL for a stored voice note (its message body is
+  /// the storage path, not a URL). Null when it cannot be resolved right
+  /// now (transient failure) - the bubble stays a labelled placeholder.
+  Future<String?> voiceDownloadUrl(String storagePath) async {
+    try {
+      return await _storage.ref(storagePath).getDownloadURL();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Upload [file] to `uploads/{myUid}/dm/{threadId}/{ts}.{ext}` and return its
   /// storage path + download URL for [sendAttachment].
   Future<DmAttachment> uploadAttachment(

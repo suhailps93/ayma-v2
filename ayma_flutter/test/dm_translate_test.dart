@@ -248,6 +248,9 @@ void main() {
           findsNothing);
 
       await tester.enterText(find.byType(TextField), 'hello there');
+      // WhatsApp composer model: send appears only once text is typed -
+      // pump the mic-to-send swap before tapping it.
+      await tester.pump();
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pumpAndSettle();
 
@@ -301,6 +304,7 @@ void main() {
       expect(find.textContaining('Ayma will translate your message'),
           findsOneWidget);
       await tester.enterText(find.byType(TextField), 'see you tomorrow');
+      await tester.pump();
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pumpAndSettle();
 

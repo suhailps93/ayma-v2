@@ -13,6 +13,7 @@ import 'package:image_picker/image_picker.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/async_voice_controller.dart';
+import '../services/voice_note_controller.dart';
 import '../services/async_voice_player.dart';
 import '../services/async_voice_queue.dart';
 import '../services/call_permissions.dart';
@@ -211,6 +212,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       widget.asyncVoiceQueue ?? AsyncVoiceQueue.instance;
   late final AsyncVoiceController _voiceMessage =
       widget.asyncVoiceController ?? AsyncVoiceController(queue: _voiceQueue);
+
+  /// The WhatsApp voice-note state machine over [_voiceMessage] (founder,
+  /// 2026-11-06): hold the composer mic to record, slide left to cancel,
+  /// slide up to lock, release to send. The engine underneath is unchanged -
+  /// the clip still sends immediately as a playable bubble and Ayma
+  /// transcribes/understands in the background. A hold is refused while a
+  /// live voice call owns the mic (the old hold path's rule, kept).
+  late final VoiceNoteController _voiceNote = VoiceNoteController(
+    engine: _voiceMessage,
+    canStart: () => _canQueue && !_voice.isActive,
+    onStartRefused: () {
+      if (!mounted) return;
+      AymaToast.show(
+        context,
+        _voice.isActive
+            ? 'End the call first - then hold the mic to record.'
+            : 'Voice messages are not available here.',
+      );
+    },
+  );
   late final AsyncVoicePlayer _clipPlayer =
       widget.asyncVoicePlayer ?? JustAudioVoicePlayer();
 
@@ -1555,6 +1576,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // down, the same `late final` hazard the [_voice] guard documents.
     if (_canQueue) {
       _voiceMessage.removeListener(_onVoiceMessageChanged);
+      _voiceNote.dispose();
       if (widget.asyncVoiceController == null) _voiceMessage.dispose();
     }
     if (widget.asyncVoicePlayer == null) _clipPlayer.dispose();
@@ -1654,27 +1676,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (error != null && mounted) {
       AymaToast.show(context, error, kind: AymaToastKind.error);
     }
-  }
-
-  /// Composer mic held down: record an async voice message instead of
-  /// starting a live call. Refused while a call is live (the mic is
-  /// taken) — the toast says so rather than failing silently.
-  void _onMicHoldStart() {
-    if (!_canQueue) return;
-    if (_voice.isActive) {
-      AymaToast.show(
-        context,
-        'End the call first — then hold the mic to record.',
-      );
-      return;
-    }
-    unawaited(_voiceMessage.startRecording());
-  }
-
-  /// Composer mic released: stop the recorder and send what was said.
-  void _onMicHoldEnd() {
-    if (!_canQueue) return;
-    unawaited(_voiceMessage.stopAndSend());
   }
 
   int _seenCappedEvents = 0;
@@ -3021,7 +3022,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _VoiceRecordingBar(controller: _voiceMessage),
                       ListenableBuilder(
                         listenable: _voice,
                         builder: (context, _) => _capped(
@@ -3065,8 +3065,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             onExpandTap: _openVoiceScreen,
                             micLevel: _voice.micLevel,
                             aymaLevel: _voice.aymaLevel,
-                            onMicHoldStart: _canQueue ? _onMicHoldStart : null,
-                            onMicHoldEnd: _canQueue ? _onMicHoldEnd : null,
+                            voiceNoteController: _canQueue ? _voiceNote : null,
                           ),
                         ),
                       ),
@@ -3828,71 +3827,6 @@ class _PendingSendReconcile {
   final bool queueable;
 }
 
-/// The inline hold-to-record strip above the composer (Chunk A): visible only
-/// while the mic is hot, with a live timer and the honest "release to send"
-/// instruction. Zero-size otherwise, so the composer never jumps.
-class _VoiceRecordingBar extends StatelessWidget {
-  const _VoiceRecordingBar({required this.controller});
-
-  final AsyncVoiceController controller;
-
-  String _clock(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) {
-        if (controller.state != AsyncVoiceUiState.recording) {
-          return const SizedBox.shrink();
-        }
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-          child: Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AymaColors.error,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _clock(controller.elapsed),
-                style: AymaType.mono(size: 14, color: ac.fg),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Release to send',
-                style: AymaType.sans(size: 13, color: ac.fgMute),
-              ),
-              const Spacer(),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: controller.cancelRecording,
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Text(
-                    'Cancel',
-                    style: AymaType.sans(size: 13, color: ac.fgDim),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
 /// A message waiting in the [PendingChatQueue]: the user's bubble, dimmed, with
 /// why it hasn't gone and a way to cancel it.
 class _QueuedBubble extends StatelessWidget {
@@ -4356,19 +4290,17 @@ class _Composer extends StatelessWidget {
     required this.onExpandTap,
     required this.micLevel,
     required this.aymaLevel,
-    this.onMicHoldStart,
-    this.onMicHoldEnd,
+    this.voiceNoteController,
     this.micAnchorKey,
   });
 
   /// Feature-tour anchor for the whole composer; forwarded to [ChatComposer].
   final Key? anchorKey;
 
-  /// Hold-to-record on the text mode's mic button (async voice message) +
-  /// its feature-tour anchor; forwarded to [ChatComposer]. Null disables
-  /// the hold path (Ask-Ayma mode, tests that don't wire it).
-  final VoidCallback? onMicHoldStart;
-  final VoidCallback? onMicHoldEnd;
+  /// The WhatsApp voice-note state machine for the composer's mic/send
+  /// slot; forwarded to [ChatComposer]. Null disables voice notes
+  /// (Ask-Ayma mode, tests that don't wire it).
+  final VoiceNoteController? voiceNoteController;
   final Key? micAnchorKey;
 
   final TextEditingController controller;
@@ -4602,8 +4534,7 @@ class _Composer extends StatelessWidget {
               onSend: onSend,
               onAttach: onAttach,
               onMicPressed: () => onVoiceTap(),
-              onMicHoldStart: onMicHoldStart,
-              onMicHoldEnd: onMicHoldEnd,
+              voiceNoteController: voiceNoteController,
               micKey: micAnchorKey,
               onStopPressed: () => onVoiceTap(),
               onMuteTap: () => onMuteTap(),

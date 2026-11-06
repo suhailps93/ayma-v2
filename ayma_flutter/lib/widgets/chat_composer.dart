@@ -4,8 +4,10 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../services/voice_note_controller.dart';
 import '../theme.dart';
 import 'keyboard_dismiss.dart';
+import 'voice_note_composer.dart';
 
 /// Padding wrapping the composer bar at the bottom of a chat screen — shared
 /// by the Ayma chat (`ChatScreen`'s `_Composer`) and the user-to-user DM
@@ -65,6 +67,7 @@ class ChatComposer extends StatefulWidget {
     required this.onMicPressed,
     this.onMicHoldStart,
     this.onMicHoldEnd,
+    this.voiceNoteController,
     this.micKey,
     required this.onStopPressed,
     required this.onMuteTap,
@@ -99,6 +102,14 @@ class ChatComposer extends StatefulWidget {
   /// ([onMicPressed]) is unaffected either way.
   final VoidCallback? onMicHoldStart;
   final VoidCallback? onMicHoldEnd;
+
+  /// The WhatsApp voice-note state machine (founder, 2026-11-06). When
+  /// present, the send slot swaps between this controller's mic button
+  /// (input empty, nothing staged) and the send button (text typed or an
+  /// attachment staged - the caller's [canSend]), and while a note is
+  /// recording the text row is replaced by the recording bar. Supersedes
+  /// [onMicHoldStart]/[onMicHoldEnd] when both are given.
+  final VoiceNoteController? voiceNoteController;
 
   /// Key for the text mode's mic button (the feature-tour anchor) — the
   /// main shell's chat passes it, so it never collides with the Ask-Ayma
@@ -157,6 +168,17 @@ class _ChatComposerState extends State<ChatComposer>
   int _lastSampleMs = -_sampleIntervalMs;
 
   @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onComposerInputChanged);
+    widget.voiceNoteController?.addListener(_onComposerInputChanged);
+  }
+
+  void _onComposerInputChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final reduceMotion =
@@ -180,6 +202,14 @@ class _ChatComposerState extends State<ChatComposer>
   void didUpdateWidget(covariant ChatComposer old) {
     super.didUpdateWidget(old);
     if (old.mode != widget.mode) _syncTicker();
+    if (old.controller != widget.controller) {
+      old.controller.removeListener(_onComposerInputChanged);
+      widget.controller.addListener(_onComposerInputChanged);
+    }
+    if (old.voiceNoteController != widget.voiceNoteController) {
+      old.voiceNoteController?.removeListener(_onComposerInputChanged);
+      widget.voiceNoteController?.addListener(_onComposerInputChanged);
+    }
   }
 
   /// Starts the ticker the moment a voice mode needs the wave; leaves it
@@ -196,6 +226,8 @@ class _ChatComposerState extends State<ChatComposer>
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onComposerInputChanged);
+    widget.voiceNoteController?.removeListener(_onComposerInputChanged);
     _phase?.dispose();
     super.dispose();
   }
@@ -317,24 +349,16 @@ class _ChatComposerState extends State<ChatComposer>
   }
 
   Widget _textRow(AymaTokens ac) {
-    return Row(
+    final note = widget.voiceNoteController;
+    // WhatsApp swap (founder, 2026-11-06): the bottom-right slot is the
+    // MIC while the input is empty and nothing is staged, and the SEND
+    // button only while there is text or a staged attachment (the
+    // caller's [canSend] carries the attachment/staged state).
+    final hasText = widget.controller.text.trim().isNotEmpty;
+    final showSend = widget.canSend || hasText;
+    final row = Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // A quick tap falls through to the button's onTap (a live call);
-        // only a sustained hold takes the voice-message path.
-        _RoundIconButton(
-          key: widget.micKey,
-          icon: Icons.mic_none_rounded,
-          tooltip: 'Talk to Ayma',
-          background: ac.bgElev,
-          foreground: ac.fgDim,
-          onPressed: widget.onMicPressed,
-          onLongPress: widget.onMicHoldStart,
-          onLongPressUp: widget.onMicHoldEnd == null
-              ? null
-              : () => widget.onMicHoldEnd?.call(),
-        ),
-        const SizedBox(width: 4),
         Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 11),
@@ -369,13 +393,53 @@ class _ChatComposerState extends State<ChatComposer>
           onPressed: widget.onAttach,
         ),
         const SizedBox(width: 4),
-        _RoundIconButton(
-          icon: Icons.arrow_upward_rounded,
-          tooltip: 'Send',
-          background: widget.canSend ? ac.accent : ac.bgElev,
-          foreground: widget.canSend ? ac.onAccent : ac.fgMute,
-          onPressed: widget.canSend ? widget.onSend : null,
-        ),
+        if (showSend)
+          _RoundIconButton(
+            key: const ValueKey('composerSendButton'),
+            icon: Icons.arrow_upward_rounded,
+            tooltip: 'Send',
+            background: ac.accent,
+            foreground: ac.onAccent,
+            onPressed: widget.onSend,
+          )
+        else if (note != null)
+          VoiceNoteMicButton(
+            key: widget.micKey,
+            controller: note,
+            onTap: widget.onMicPressed,
+            background: ac.bgElev,
+            foreground: ac.fgDim,
+          )
+        else
+          // No voice-note controller (e.g. the Ask-Ayma popup): the legacy
+          // mic - a tap takes [onMicPressed]'s path, a sustained hold
+          // takes the [onMicHoldStart]/[onMicHoldEnd] path when wired.
+          _RoundIconButton(
+            key: widget.micKey,
+            icon: Icons.mic_none_rounded,
+            tooltip: 'Talk to Ayma',
+            background: ac.bgElev,
+            foreground: ac.fgDim,
+            onPressed: widget.onMicPressed,
+            onLongPress: widget.onMicHoldStart,
+            onLongPressUp: widget.onMicHoldEnd == null
+                ? null
+                : () => widget.onMicHoldEnd?.call(),
+          ),
+      ],
+    );
+    // While a voice note is recording, the recording bar covers the
+    // composer row (WhatsApp model). The row itself stays MOUNTED
+    // underneath: the held mic button's gesture recognizer lives there,
+    // and unmounting it mid-hold would kill the slide/release events the
+    // state machine runs on. The Stack is there from the start for the
+    // same reason - swapping the row's parent mid-hold would remount the
+    // mic subtree and destroy the in-flight recognizer.
+    return Stack(
+      children: [
+        row,
+        if (note != null && note.isActive)
+          Positioned.fill(child: VoiceNoteRecordingBar(controller: note)),
       ],
     );
   }

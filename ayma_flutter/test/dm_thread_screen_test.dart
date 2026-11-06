@@ -615,6 +615,9 @@ void main() {
 
       // Typing + sending still works with the note on screen.
       await tester.enterText(find.byType(TextField), 'I am not comfortable');
+      // WhatsApp composer model: the send button only exists once text
+      // is in the box (the slot shows the mic when empty) - pump the swap.
+      await tester.pump();
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pumpAndSettle();
       expect(dm.sent, contains('I am not comfortable'));
@@ -725,6 +728,9 @@ void main() {
     expect(find.text('📷 Photo'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'yo');
+    // WhatsApp composer model: the send button only exists once text
+    // is in the box (the slot shows the mic when empty) - pump the swap.
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
     expect(dm.sent, ['yo']);
@@ -753,6 +759,9 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 'yo');
+    // WhatsApp composer model: the send button only exists once text
+    // is in the box (the slot shows the mic when empty) - pump the swap.
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 

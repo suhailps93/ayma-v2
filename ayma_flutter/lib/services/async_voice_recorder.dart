@@ -90,6 +90,26 @@ class RecordPluginRecorder implements AsyncVoiceRecorder {
     }
   }
 
+  /// Pause the in-progress recording (the file keeps its place; [resume]
+  /// continues into the same clip). Best-effort — a recorder that was never
+  /// started simply ignores it.
+  Future<void> pause() async {
+    try {
+      await _recorder?.pause();
+    } catch (_) {
+      // Best-effort: there may be nothing to pause.
+    }
+  }
+
+  /// Resume a recording paused with [pause]. Best-effort.
+  Future<void> resume() async {
+    try {
+      await _recorder?.resume();
+    } catch (_) {
+      // Best-effort: there may be nothing to resume.
+    }
+  }
+
   @override
   Future<void> cancel() async {
     try {
