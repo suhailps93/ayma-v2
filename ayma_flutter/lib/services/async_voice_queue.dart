@@ -601,8 +601,19 @@ class AsyncVoiceQueue extends ChangeNotifier {
     if (i != -1) _items[i] = replacement;
   }
 
+  /// Removing a job drops ALL of its per-job state — the list entry, the
+  /// loader status the watcher set, and any watch-failed mark. The
+  /// controller idles exactly when the status map no longer holds the job
+  /// (see AsyncVoiceController._onQueueChanged), so a removal that left the
+  /// status behind stranded the controller in `working` forever: the
+  /// reconcile path in [_deliver] adopts a finished job and removes it
+  /// without ever hearing from the watcher that set the status, and every
+  /// later hold-to-record then hit the idle guard and did nothing
+  /// (Scout note 110, 2026-11-05).
   Future<void> _remove(QueuedVoiceMessage item) async {
     _items.removeWhere((m) => m.jobId == item.jobId);
+    _jobStatuses.remove(item.jobId);
+    _watchFailed.remove(item.jobId);
     if (!_disposed) notifyListeners();
     await _persist();
     await _deleteClip(item.jobId);

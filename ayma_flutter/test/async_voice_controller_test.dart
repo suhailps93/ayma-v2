@@ -1,15 +1,31 @@
+// The error-Firestore fake below implements the sealed DocumentReference
+// to make snapshots() fail on demand; there is no composable way to do
+// that in a unit test.
+// ignore_for_file: subtype_of_sealed_class
+import 'dart:async';
 import 'dart:io';
 
+import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/async_voice_controller.dart';
 import 'package:ayma_flutter/services/async_voice_queue.dart';
 import 'package:ayma_flutter/services/async_voice_recorder.dart';
+import 'package:ayma_flutter/services/connection_heartbeat.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeRecorder implements AsyncVoiceRecorder {
   bool allowed = true;
   bool throwOnStart = false;
   int sizeBytes = 2048;
   bool returnNullOnStop = false;
+
+  /// When true, start() writes a real clip file — needed when the test
+  /// drives the real queue, which moves the recorded file into its clips
+  /// directory on enqueue.
+  bool writeFile = false;
   String? startedPath;
   bool stopped = false;
   bool cancelled = false;
@@ -23,6 +39,7 @@ class _FakeRecorder implements AsyncVoiceRecorder {
   Future<void> start(String path) async {
     if (throwOnStart) throw StateError('mic busy');
     startedPath = path;
+    if (writeFile) await File(path).writeAsBytes(List.filled(2048, 0));
   }
 
   @override
@@ -181,4 +198,156 @@ void main() {
     controller.dispose();
     expect(recorder.disposed, isTrue);
   });
+
+  test(
+    'regression (note 110): a second send works after the first completes '
+    'through the reconcile path',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final dir = await Directory.systemTemp.createTemp('avc-110');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final store = TranscriptStore();
+      final api = _FakeApi();
+      final queue = AsyncVoiceQueue(
+        api: api,
+        store: store,
+        sessionId: 's-1',
+        currentUid: () => 'u1',
+        uploader: _FakeUploader(),
+        firestore: _ErrorFirestore(),
+        heartbeat: ConnectionHeartbeat(
+          probe: () async => ProbeOutcome.good,
+          connectivityChanges: const Stream.empty(),
+        ),
+        clipsDir: () async => dir,
+        watchRetryDelay: const Duration(milliseconds: 100),
+      );
+      addTearDown(queue.dispose);
+      await queue.activate();
+
+      final recorder = _FakeRecorder()..writeFile = true;
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      addTearDown(controller.dispose);
+
+      // Send #1: the submit is accepted, then the job watch dies
+      // (permission-denied) — the reconcile path must deliver it.
+      expect(await controller.startRecording(), isTrue);
+      final job1 = controller.activeJobId!;
+      await controller.stopAndSend();
+      expect(controller.state, AsyncVoiceUiState.working);
+      await _eventually(() => api.submits.contains(job1), 'the first submit');
+      // Let the watch error land and the reconcile timer arm.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      api.answer = (jobId) => VoiceAsyncSubmit(
+        jobId: jobId,
+        status: 'done',
+        transcript: 'A fine question.',
+        replyText: 'Here is my answer.',
+        replyAudioUrl: 'https://cdn.example/r.wav',
+      );
+      await _eventually(
+        () => controller.state == AsyncVoiceUiState.idle,
+        'the controller to idle after the reconcile',
+      );
+      expect(queue.jobStatuses, isEmpty);
+      expect(queue.isEmpty, isTrue);
+      expect(
+        store.turns.map((t) => t.text).toList(),
+        ['A fine question.', 'Here is my answer.'],
+      );
+
+      // Send #2 in the same session: before the fix, startRecording
+      // silently returned false here — the controller never left `working`
+      // because the reconcile removal left the job's status behind.
+      expect(await controller.startRecording(), isTrue);
+      final job2 = controller.activeJobId!;
+      expect(job2, isNot(job1));
+      api.answer = (jobId) => VoiceAsyncSubmit(
+        jobId: jobId,
+        status: 'done',
+        transcript: 'One more thing.',
+        replyText: 'Second answer.',
+        replyAudioUrl: 'https://cdn.example/r2.wav',
+      );
+      await controller.stopAndSend();
+      await _eventually(
+        () => controller.state == AsyncVoiceUiState.idle,
+        'the controller to idle after the second send',
+      );
+      expect(queue.jobStatuses, isEmpty);
+      expect(queue.isEmpty, isTrue);
+      expect(api.submits, contains(job2));
+      expect(
+        store.turns.map((t) => t.text).toList(),
+        [
+          'A fine question.',
+          'Here is my answer.',
+          'One more thing.',
+          'Second answer.',
+        ],
+      );
+    },
+  );
+}
+
+Future<void> _eventually(bool Function() cond, String what) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!cond()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting for $what');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+class _FakeUploader implements AsyncVoiceUploader {
+  final uploads = <String>[];
+
+  @override
+  Future<void> upload(String storagePath, File file) async {
+    uploads.add(storagePath);
+  }
+
+  @override
+  Future<String?> downloadUrl(String storagePath) async => null;
+}
+
+class _FakeApi extends ApiClient {
+  _FakeApi() : super(auth: MockFirebaseAuth(signedIn: true));
+
+  final submits = <String>[];
+  VoiceAsyncSubmit Function(String jobId) answer = (jobId) =>
+      VoiceAsyncSubmit(jobId: jobId, status: 'received');
+
+  @override
+  Future<VoiceAsyncSubmit> submitVoiceMessage({
+    required String jobId,
+    required String storagePath,
+    String sessionId = '',
+    List<Map<String, String>> recentTurns = const [],
+  }) async {
+    submits.add(jobId);
+    return answer(jobId);
+  }
+}
+
+/// A Firestore whose every doc watch errors immediately — the live
+/// failure behind Scout note 109 (the job-doc stream answered
+/// permission-denied, so the client never heard the job finish).
+class _ErrorDocRef extends Fake
+    implements DocumentReference<Map<String, dynamic>> {
+  @override
+  Stream<DocumentSnapshot<Map<String, dynamic>>> snapshots({
+    bool includeMetadataChanges = false,
+    ListenSource? source,
+  }) => Stream.error(
+    FirebaseException(plugin: 'firestore', code: 'permission-denied'),
+  );
+}
+
+class _ErrorFirestore extends Fake implements FirebaseFirestore {
+  @override
+  DocumentReference<Map<String, dynamic>> doc(String path) => _ErrorDocRef();
 }
