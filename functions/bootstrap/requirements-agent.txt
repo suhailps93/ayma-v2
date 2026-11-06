@@ -16,6 +16,13 @@ livekit-plugins-openai==1.8.9
 # falls back to the LiveKit Inference construction. Pinned to the agents stack
 # (1.8.9) like the other plugins — plugin 1.8.10 would force a stack bump.
 livekit-plugins-cartesia==1.8.9
+# Agent-side voice isolation (agent.py _voice_isolation_filter): Krisp VIVA
+# and ai-coustics QUAIL_VF_S, metered through LiveKit Cloud — covered by the
+# Scale plan's included voice-isolation minutes (verified 2026-11-06). These
+# two plugins version independently of the agents stack; the pins below are
+# the newest releases that resolve against livekit-agents 1.8.9.
+livekit-plugins-krisp==0.4.9
+livekit-plugins-ai-coustics==0.3.5
 python-dotenv==1.0.1
 # Session-end raw_turns persistence (§1.7 step 8) — the worker writes Firestore
 # directly via the Admin SDK on shutdown, as its own Cloud Run identity.
