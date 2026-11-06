@@ -25,6 +25,7 @@ import '../services/ids.dart';
 import '../services/pending_chat_queue.dart';
 import '../services/profile_service.dart';
 import '../services/report_cache.dart';
+import '../services/take_picture_intent.dart';
 import '../services/tour_anchors.dart';
 import '../services/transcript_store.dart';
 import '../services/thumbs_down_store.dart';
@@ -404,6 +405,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Timer? _highlightClearTimer;
 
   File? _pendingImage;
+
+  /// True while Ayma's "Front or back camera?" question (the take-a-picture
+  /// confirm step, founder feedback item 12) is outstanding: the next short
+  /// camera answer ("front", "back camera", …) is read as the choice
+  /// instead of being sent as a chat message. Set when the choice sheet is
+  /// shown; the sheet's own tap clears it through [_capturePicture]'s
+  /// caller, and a dismissed sheet leaves it set so a typed/spoken answer
+  /// still works.
+  bool _awaitingCameraChoice = false;
 
   /// A report/person attached to the chat as an un-sent draft (from an "Ask
   /// Ayma" button that opens the chat rather than auto-sending). Rendered as a
@@ -1971,6 +1981,87 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// The take-a-picture confirm step's tappable options: the same
+  /// "Front or back camera?" question Ayma just asked in the transcript,
+  /// as a sheet the user answers with one tap. Dismissing the sheet takes
+  /// no picture and leaves the question outstanding, so a typed or spoken
+  /// answer ("front" / "back camera") still works afterwards.
+  Future<void> _showCameraChoice() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(TakePictureIntent.confirmQuestion),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_front),
+              title: const Text('Front camera'),
+              onTap: () => Navigator.pop(ctx, 'front'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_rear),
+              title: const Text('Back camera'),
+              onTap: () => Navigator.pop(ctx, 'back'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    _awaitingCameraChoice = false;
+    await _capturePicture(choice);
+  }
+
+  /// Capture one photo with [camera] (`'front'`/`'back'`) through the
+  /// same picker plumbing as a manual attachment, then land it in the
+  /// conversation through the normal send path: the photo shows as a user
+  /// image turn, uploads as a chat image, and `/chat` receives its
+  /// `image_path` — so Ayma sees and reacts to it via the existing vision
+  /// path, exactly like a manually attached photo. A denied camera
+  /// permission (the picker throws) or a closed camera degrades to a
+  /// plain Ayma line, never a crash or a silent dead end.
+  Future<void> _capturePicture(String camera) async {
+    final XFile? picked;
+    try {
+      picked = await _picker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: TakePictureIntent.deviceFor(camera),
+        maxWidth: 1600,
+        imageQuality: 85,
+      );
+    } catch (_) {
+      if (mounted) {
+        _store.addTurn(
+          TurnRole.ayma,
+          "I couldn't open the camera — check that Ayma has camera "
+          'permission, then ask me again.',
+          TurnSource.text,
+        );
+      }
+      return;
+    }
+    if (picked == null) {
+      if (mounted) {
+        _store.addTurn(
+          TurnRole.ayma,
+          'No picture taken — the camera was closed.',
+          TurnSource.text,
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _pendingImage = File(picked!.path));
+    await _send();
+  }
+
   Future<void> _pickImage(ImageSource source) async {
     try {
       final picked = await _picker.pickImage(
@@ -2047,6 +2138,44 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final message = retry ?? _composerController.text.trim();
     final image = retry == null ? _pendingImage : null;
     if ((message.isEmpty && image == null) || _sending) return;
+
+    // "Take a picture" (founder feedback item 12): Ayma confirms front or
+    // back before any capture. Handled here, deterministically, so the
+    // choice can be a tap on the options in this chat as well as a typed
+    // or spoken answer, without depending on the model calling a tool.
+    // (The live-voice surface runs the same confirm-then-capture flow
+    // through the backend `take_picture` tool and an app command — see
+    // `services/take_picture_intent.dart`.)
+    if (retry == null && image == null) {
+      final cameraAnswer = _awaitingCameraChoice
+          ? TakePictureIntent.parseCameraAnswer(message)
+          : null;
+      if (cameraAnswer != null) {
+        _awaitingCameraChoice = false;
+        setState(() => _composerController.clear());
+        _store.addTurn(TurnRole.user, message, TurnSource.text);
+        await _capturePicture(cameraAnswer);
+        return;
+      }
+      if (TakePictureIntent.isRequest(message)) {
+        setState(() => _composerController.clear());
+        _store.addTurn(TurnRole.user, message, TurnSource.text);
+        final embedded = TakePictureIntent.cameraMentionedIn(message);
+        if (embedded != null) {
+          // The request already named the camera — that is the choice.
+          await _capturePicture(embedded);
+        } else {
+          _awaitingCameraChoice = true;
+          _store.addTurn(
+            TurnRole.ayma,
+            TakePictureIntent.confirmQuestion,
+            TurnSource.text,
+          );
+          await _showCameraChoice();
+        }
+        return;
+      }
+    }
 
     // Messages are already waiting for credits: this one joins the line (they
     // go out in the order they were written) instead of jumping it.

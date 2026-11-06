@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
+import 'package:image_picker/image_picker.dart';
 
 import '../routing/app_router.dart';
 import '../screens/explore_screen.dart';
@@ -12,6 +14,8 @@ import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
 import 'api_client.dart';
 import 'app_context.dart';
+import 'ayma_session.dart';
+import 'chat_service.dart';
 import 'guided_tour_controller.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
@@ -19,10 +23,12 @@ import 'pair_key.dart';
 import 'profile_service.dart';
 import 'push_service.dart';
 import 'screen_capture.dart';
+import 'take_picture_intent.dart';
 import 'theme_controller.dart';
 import 'tour_anchors.dart';
 import 'tour_content.dart';
 import 'tour_controller.dart';
+import 'transcript_store.dart';
 import 'voice_session_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
@@ -80,7 +86,15 @@ import 'voice_session_controller.dart';
 ///   call is live (`skills/set_model_stack`);
 /// * `ui_action` — operate one on-screen control through [ScreenCapture]
 ///   (which refuses the registry's denylist), acked with the outcome and
-///   what the screen shows afterwards.
+///   what the screen shows afterwards;
+/// * `take_picture` — capture a photo with the camera the user chose after
+///   being asked "Front or back camera?" (founder feedback item 12), using
+///   the same image-picker plumbing as the chat's "Take a photo"
+///   attachment; the capture is uploaded as a chat image, lands in the
+///   conversation as a visible photo turn, and is routed through the
+///   existing `/chat` vision path so Ayma can react to what it shows. Like
+///   `ui_action` it owns its ack, which carries the outcome plus, on
+///   success, the capture's `image_path` and the vision reaction text.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
@@ -100,7 +114,10 @@ class AppCommandService {
     Future<void> Function()? reconnectVoice,
     Future<void> Function(int index)? sendTourContinuation,
     Future<void> Function(int index)? sendTourStop,
-  })  : _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
+    Future<TakePictureOutcome> Function(Map<String, dynamic> cmd)?
+        takePicture,
+  })  : _takePicture = takePicture ?? _performTakePicture,
+        _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
         _sendTourStop = sendTourStop ?? _postTourStop,
         _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
         _hasActiveVoice = hasActiveVoice ??
@@ -154,6 +171,90 @@ class AppCommandService {
         op: (cmd['op'] as String? ?? '').trim(),
         value: cmd['value'] as String? ?? '',
       );
+
+  /// Execute one `take_picture` command (capture → upload → conversation →
+  /// vision reaction). Injectable for tests; the default is
+  /// [_performTakePicture].
+  final Future<TakePictureOutcome> Function(Map<String, dynamic> cmd)
+      _takePicture;
+
+  /// The production `take_picture` executor. Reuses the app's existing
+  /// camera plumbing — [ImagePicker] with the chosen
+  /// [TakePictureIntent.deviceFor] device, the same picker and limits the
+  /// chat's "Take a photo" attachment uses — and its existing chat-image
+  /// upload ([ChatService.uploadChatImage]); no second camera stack.
+  ///
+  /// The capture lands in the shared conversation ([AymaSession]) as a
+  /// user photo turn the user can see, then goes through the existing
+  /// `/chat` vision path (a `(shared a photo)` turn with `image_path`,
+  /// exactly what a manually attached photo sends) so Ayma's reaction is
+  /// grounded in the actual picture; that reaction is added to the
+  /// conversation and also returned in the outcome for the waiting tool.
+  /// The vision step is best-effort: if it fails, the capture still
+  /// succeeds, with an empty `result` the tool reports honestly.
+  ///
+  /// Mid-call note: the system camera UI presents over the app while the
+  /// LiveKit room stays connected (the picker never tears the session
+  /// down — the same way the app already opens the picker from other
+  /// screens during a call), so no disconnect/reconnect cycle is needed.
+  static Future<TakePictureOutcome> _performTakePicture(
+      Map<String, dynamic> cmd) async {
+    final camera = (cmd['camera'] as String? ?? '').trim().toLowerCase();
+    if (camera != 'front' && camera != 'back') {
+      // The backend tool confirms the choice before queueing, so a command
+      // without one is a programming error, never a guessed capture.
+      return const TakePictureOutcome.failed('camera_unavailable');
+    }
+    final XFile? picked;
+    try {
+      picked = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: TakePictureIntent.deviceFor(camera),
+        maxWidth: 1600,
+        imageQuality: 85,
+      );
+    } catch (_) {
+      // Permission denied, no camera, or the platform picker failed.
+      return const TakePictureOutcome.failed('camera_unavailable');
+    }
+    if (picked == null) {
+      return const TakePictureOutcome.failed('cancelled');
+    }
+    final file = File(picked.path);
+    final ChatImageUpload up;
+    try {
+      up = await ChatService().uploadChatImage(file);
+    } catch (_) {
+      return const TakePictureOutcome.failed('upload_failed');
+    }
+    final store = AymaSession.instance.store;
+    final turn = store.addTurn(
+      TurnRole.user,
+      '',
+      TurnSource.voice,
+      imageFile: file,
+    );
+    store.updateTurnImage(turn, up.downloadUrl);
+    var reaction = '';
+    try {
+      final res = await ApiClient().chat(
+        '(shared a photo)',
+        sessionId: AymaSession.instance.sessionId,
+        recentTurns: store.wireTurns(),
+        imagePath: up.storagePath,
+      );
+      reaction = res.reply.trim();
+      if (reaction.isNotEmpty) {
+        store.addTurn(TurnRole.ayma, reaction, TurnSource.text);
+      }
+    } catch (_) {
+      reaction = ''; // capture stands; the tool reports vision did not land
+    }
+    return TakePictureOutcome.captured(
+      imagePath: up.storagePath,
+      result: reaction,
+    );
+  }
 
   /// Whether a voice call is live right now (so `reconnect_voice` can ack
   /// honestly) and how to reconnect it. Injectable for tests; the defaults use
@@ -376,6 +477,13 @@ class AppCommandService {
       unawaited(_runUiAction(snap.reference, data, id));
       return;
     }
+    if (data['action'] == 'take_picture') {
+      // Capture is async end to end (system camera UI, upload, the vision
+      // reaction) and acks only once the photo is actually in the
+      // conversation — so it owns its ack, like ui_action.
+      unawaited(_runTakePicture(snap.reference, data, id));
+      return;
+    }
     if (data['action'] == 'tour_step') {
       // The Ayma-driven tour spotlights one step and acks it only once the
       // overlay reports it shown (or its anchor absent), then waits for the
@@ -528,6 +636,34 @@ class AppCommandService {
     } catch (e) {
       debugPrint('Ayma ui_action failed: $e');
       return const UiActionResult.refused('the app could not do that');
+    }
+  }
+
+  /// Capture the picture, then ack with the outcome: `ok`, plus the
+  /// capture's `image_path` and the vision reaction (`result`) on success,
+  /// or the failure `reason` (`cancelled` / `camera_unavailable` /
+  /// `upload_failed`) the backend tool turns into an honest line.
+  Future<void> _runTakePicture(DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd, String id) async {
+    final out = await runTakePicture(cmd);
+    await ref.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': out.ok,
+      if (out.ok) 'image_path': out.imagePath else 'reason': out.reason,
+      if (out.ok && out.result.isNotEmpty) 'result': out.result,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Runs one `take_picture` command; any failure is reported, never thrown.
+  @visibleForTesting
+  Future<TakePictureOutcome> runTakePicture(Map<String, dynamic> cmd) async {
+    try {
+      return await _takePicture(cmd);
+    } catch (e) {
+      debugPrint('Ayma take_picture failed: $e');
+      return const TakePictureOutcome.failed('camera_unavailable');
     }
   }
 
@@ -738,4 +874,25 @@ class AppCommandService {
     _afterAck = null;
     if (after != null) await after();
   }
+}
+
+/// The outcome of one `take_picture` command, acked back to the waiting
+/// backend tool: on success the captured photo's storage `imagePath` and,
+/// when the vision reaction landed, its text as `result`; on failure a
+/// machine `reason` (`cancelled`, `camera_unavailable`, `upload_failed`)
+/// the tool turns into an honest user-facing line.
+class TakePictureOutcome {
+  const TakePictureOutcome.captured({required this.imagePath, this.result = ''})
+      : ok = true,
+        reason = '';
+
+  const TakePictureOutcome.failed(this.reason)
+      : ok = false,
+        imagePath = '',
+        result = '';
+
+  final bool ok;
+  final String reason;
+  final String imagePath;
+  final String result;
 }

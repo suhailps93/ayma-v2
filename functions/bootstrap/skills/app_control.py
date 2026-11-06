@@ -11,7 +11,7 @@ doc whenever the app is foregrounded, not only during a call.
   ``users/{uid}/voice_context/current`` while a call is live, so Ayma knows
   what "them / this / here" refers to.
 * ``open_screen`` / ``search_explore`` / ``open_profile`` / ``open_message_thread``
-  / ``app_action`` — queue one UI command at ``users/{uid}/app_commands/pending``;
+  / ``app_action`` / ``take_picture`` — queue one UI command at ``users/{uid}/app_commands/pending``;
   the Flutter client (``AppCommandService``) watches that doc while the app is
   foregrounded (a live call or the chat page), performs the navigation/action, acks it at
   ``users/{uid}/app_commands/ack`` (``{id, ok}``), then deletes it.
@@ -160,6 +160,11 @@ from .app_control_ui import (
     _UI_ID_TYPES,
     _UI_OPS,
 )
+from .take_picture import (
+    _bind_take_picture,
+    _TAKE_PICTURE,
+    _TAKE_PICTURE_ACK_TIMEOUT_SECONDS,
+)
 
 # How long a command tool waits for the client's ack before reporting the
 # navigation as NOT having happened. The client acks the instant it executes
@@ -206,6 +211,7 @@ COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_APP_ACTION, bind=_bind_app_action),
     Skill(declaration=_ACCOUNT_ACTION, bind=_bind_account_action),
     Skill(declaration=_UI_ACTION, bind=_bind_ui_action),
+    Skill(declaration=_TAKE_PICTURE, bind=_bind_take_picture),
 ]
 
 VOICE_SKILLS: list[Skill] = [
