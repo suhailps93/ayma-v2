@@ -76,7 +76,8 @@ def test_bases_still_carry_the_other_critical_env():
         assert "GOOGLE_CLOUD_PROJECT=" in base
         assert "LIVEKIT_URL=" in base
     assert "STORAGE_BUCKET=" in api
-    assert "VOICE_AGENT_CLOUD_DEFAULT=cloudrun" in api
+    assert "VOICE_AGENT_CLOUD_DEFAULT=livekit" in api
+    assert "AGENT_NAME_LIVEKIT=ayma-lk-staging" in api
     assert "OPEN_WEIGHTS_BASE_URL=" in api
 
 

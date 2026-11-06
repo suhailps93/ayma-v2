@@ -425,10 +425,10 @@ def test_welcome_token_needs_no_auth_and_seeds_a_greeting(monkeypatch):
     body = resp.json()
     assert body["livekit"]["url"] == "wss://test.livekit.cloud"
     assert body["livekit"]["token"]
-    assert body["livekit"]["room"].startswith("welcome-")
+    assert body["livekit"]["room"].startswith(f"{CONFIG.livekit_room_prefix}welcome-")
 
     room, seed_json = seeds[-1]
-    assert room.startswith("welcome-")
+    assert room.startswith(f"{CONFIG.livekit_room_prefix}welcome-")
     assert "greeting_instructions" in seed_json
     assert "sign in" in seed_json
 
