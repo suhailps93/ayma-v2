@@ -10,6 +10,8 @@ import 'package:ayma_flutter/screens/biometric_info_screen.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/complete_profile_screen.dart';
 import 'package:ayma_flutter/screens/connect_agent_screen.dart';
+import 'package:ayma_flutter/screens/copilot_screen.dart';
+import 'package:ayma_flutter/services/copilot_service.dart';
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/screens/delete_account_screen.dart';
 import 'package:ayma_flutter/screens/admin_feedback_screen.dart';
@@ -262,6 +264,12 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
       ),
     ),
     AymaSettingsScreen.path: () => shell(AymaSettingsScreen(api: api)),
+    CopilotScreen.path: () => shell(
+      CopilotScreen(
+        api: api,
+        service: CopilotService(debugSupportedOverride: true),
+      ),
+    ),
     SkillsScreen.path: () =>
         shell(SkillsScreen(profileService: profiles, api: api)),
     BiometricConsentScreen.path: () => BiometricConsentScreen(api: api),

@@ -21,6 +21,7 @@ import '../screens/biometric_info_screen.dart';
 import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
 import '../screens/ayma_settings_screen.dart';
+import '../screens/copilot_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/complete_profile_screen.dart';
 import '../screens/deep_dive_report_screen.dart';
@@ -457,6 +458,11 @@ final appRouter = GoRouter(
       path: AymaSettingsScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: AymaSettingsScreen()),
+    ),
+    GoRoute(
+      path: CopilotScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: CopilotScreen()),
     ),
     GoRoute(
       path: SkillsScreen.path,

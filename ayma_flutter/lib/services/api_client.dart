@@ -12,6 +12,7 @@ import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
 import 'biometric_consent.dart';
+import 'copilot_highlight.dart';
 
 /// Target budget for interactive API and Firestore waits (PERF_PLAN Phase 1).
 const kInteractiveTimeout = Duration(seconds: 8);
@@ -63,6 +64,7 @@ class BudgetHttpClient extends http.BaseClient {
     '/verification/selfie', // POST: moderate+embed selfie, seeds the initial Appearance read
     '/taste/pair', // POST: Qloo cross-domain affinity (same resolution /match/ warm-returns in ~13–15s)
     '/chat', // POST: non-stream model turn (tool use / cold start); fallback for /chat/stream
+    '/copilot/locate', // POST: one vision pass over a shared-screen frame
   };
 
   // Matched by PREFIX (a whole family of long builds / reads under one root).
@@ -509,6 +511,37 @@ class ApiClient {
       livekitToken: livekit['token'] as String? ?? '',
       room: livekit['room'] as String? ?? '',
       voiceProvider: livekit['voice_provider'] as String? ?? '',
+    );
+  }
+
+  /// `POST /copilot/locate` — screen co-pilot vision pass: one frame from
+  /// the user's shared screen + their goal; returns the element to
+  /// highlight in normalized coordinates (see copilot_highlight.dart).
+  /// The frame is sent in this request only — never stored client- or
+  /// server-side. Vision runs through the backend's LiveKit-gateway
+  /// routing; there is no direct provider call from the app.
+  Future<CopilotTarget> copilotLocate({
+    required List<int> frameBytes,
+    required String goal,
+    String mime = 'image/jpeg',
+  }) async {
+    final response = await _post(
+      _uri('/copilot/locate'),
+      body: jsonEncode({
+        'image_base64': base64Encode(frameBytes),
+        'mime': mime,
+        'goal': goal,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Ayma could not see that screen just now.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    return CopilotTarget.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
 
