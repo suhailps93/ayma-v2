@@ -262,7 +262,7 @@ PF_AYMA_VOICE = "ayma_voice_name"
 # Voice STACK preference (§13.9, voice_catalog). "" = deploy-time default.
 PF_AYMA_VOICE_MODE = "ayma_voice_mode"        # "realtime" | "cascade"
 PF_AYMA_REALTIME_MODEL = "ayma_realtime_model"  # realtime-mode model id
-PF_AYMA_CASCADE_BRAIN = "ayma_cascade_brain"    # cascade LLM id
+PF_AYMA_CASCADE_BRAIN = "ayma_cascade_brain"    # cascade LLM id (synced from the ONE brain; see PF_AYMA_BRAIN_MODEL)
 PF_AYMA_CASCADE_STT = "ayma_cascade_stt"        # cascade STT model id
 PF_AYMA_CASCADE_TTS = "ayma_cascade_tts"        # cascade TTS model id
 # Chosen voice id for a non-Gemini-preset voice (cascade TTS voice, or OpenAI
@@ -274,8 +274,12 @@ PF_AYMA_TTS_VOICE = "ayma_tts_voice"
 # per-capability fallback to Gemini (web/vision always Gemini). ``gemini`` |
 # ``meta`` (vendor name, not a model id). "" / absent = fall back to the
 # per-surface ``LLM_PROVIDER_*`` env default (``config.brain_default`` is shown
-# pre-selected in the UI). This is the TEXT brain; the voice stack above is a
-# separate, unchanged preference. Read/written by ``/brain/preference``.
+# pre-selected in the UI). ONE BRAIN (founder, 2026-11-06): this selection
+# drives the text surfaces AND the voice cascade LLM (mapped to a cascade
+# brain id by ``voice_catalog.cascade_brain_for_unified`` and resolved at
+# read time by ``voice_catalog.resolved_cascade_brain``, which supersedes
+# any stored ``ayma_cascade_brain``). Read/written by ``/brain/preference``
+# and the Models screen's one save, ``/models/preference``.
 PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
 # Which cloud hosts the voice agent for THIS user's next call (dual-cloud agent,
 # ARCHITECTURE §1.1): "livekit" (LiveKit Cloud Agents — now the default, served

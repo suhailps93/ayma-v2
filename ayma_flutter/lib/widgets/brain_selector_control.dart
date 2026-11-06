@@ -18,9 +18,12 @@ import 'ayma_wing_loader.dart';
 /// feature; this control just states that in each brain's description.
 ///
 /// Saving calls `POST /brain/preference`; it takes effect on the next text
-/// turn. This sits ABOVE the voice stack control on the "Ayma's models" screen
-/// and is independent of it — the Voice section (mode / model / voice /
-/// language / accent) is unchanged.
+/// turn. This sits ABOVE the voice stack control on the "Ayma's models"
+/// screen. ONE BRAIN (founder, 2026-11-06): this same selection is also the
+/// voice cascade's LLM — the Voice section has no brain picker of its own.
+/// On the models screen the screen owns the single save button
+/// ([showSaveButton] false + a [BrainSelectorController]); standalone use
+/// keeps its own save button.
 class BrainSelectorControl extends StatefulWidget {
   const BrainSelectorControl({
     super.key,
@@ -28,10 +31,14 @@ class BrainSelectorControl extends StatefulWidget {
     this.onSaved,
     this.firestore,
     this.uid,
+    this.controller,
+    this.showSaveButton = true,
   });
 
   final ApiClient api;
   final VoidCallback? onSaved;
+  final BrainSelectorController? controller;
+  final bool showSaveButton;
 
   /// Test seams for the live-update listener; default to the app globals.
   final FirebaseFirestore? firestore;
@@ -39,6 +46,23 @@ class BrainSelectorControl extends StatefulWidget {
 
   @override
   State<BrainSelectorControl> createState() => _BrainSelectorControlState();
+}
+
+/// Lets a parent (the Models screen) read the current Brain selection and
+/// know when the control has loaded, so ONE screen-level save button can
+/// persist every section in a single action.
+class BrainSelectorController extends ChangeNotifier {
+  _BrainSelectorControlState? _state;
+
+  String? get selected => _state?._selected;
+  bool get ready => _state?._cat != null && _state?._selected != null;
+
+  void _attach(_BrainSelectorControlState s) => _state = s;
+  void _detach(_BrainSelectorControlState s) {
+    if (_state == s) _state = null;
+  }
+
+  void _changed() => notifyListeners();
 }
 
 class _BrainSelectorControlState extends State<BrainSelectorControl> {
@@ -62,12 +86,14 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
   @override
   void initState() {
     super.initState();
+    widget.controller?._attach(this);
     _load();
     _listenForSavedBrain();
   }
 
   @override
   void dispose() {
+    widget.controller?._detach(this);
     _profileSub?.cancel();
     super.dispose();
   }
@@ -115,6 +141,7 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
     final cat = _cat;
     if (cat == null || !cat.brains.any((b) => b.id == v)) return;
     setState(() => _selected = v);
+    widget.controller?._changed();
   }
 
   Future<void> _load() async {
@@ -142,6 +169,7 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
         _cat = cat;
         _selected = cat.effectiveId;
       });
+      widget.controller?._changed();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -227,7 +255,10 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
           ],
           onChanged: shown.isEmpty || _saving
               ? null
-              : (v) => setState(() => _selected = v),
+              : (v) {
+                  setState(() => _selected = v);
+                  widget.controller?._changed();
+                },
         ),
         if (current.isNotEmpty && current.first.description.isNotEmpty)
           Padding(
@@ -237,18 +268,20 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
               style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
             ),
           ),
-        const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            key: const ValueKey('brain-selector-save'),
-            onPressed: _saving ? null : _save,
-            // POST /brain/preference in flight — button slot, wings only.
-            child: _saving
-                ? const AymaWingLoader(size: 16, showLabel: false)
-                : const Text('Save brain'),
+        if (widget.showSaveButton) ...[
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              key: const ValueKey('brain-selector-save'),
+              onPressed: _saving ? null : _save,
+              // POST /brain/preference in flight — button slot, wings only.
+              child: _saving
+                  ? const AymaWingLoader(size: 16, showLabel: false)
+                  : const Text('Save brain'),
+            ),
           ),
-        ),
+        ],
       ],
     );
   }

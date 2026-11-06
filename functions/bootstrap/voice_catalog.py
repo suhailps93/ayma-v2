@@ -428,6 +428,86 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
     return models
 
 
+# --- One brain (founder, 2026-11-06) ---------------------------------------
+# The Models screen has ONE Brain picker: the unified text brain vendor
+# (``ayma_brain_model``: ``gemini`` | ``meta``, llm_provider.BRAINS). That one
+# selection also drives the voice cascade LLM. The cascade brain *id* is a
+# different namespace (a LiveKit Inference model string or the Meta special
+# id), so the mapping between the two lives here, in one place:
+#
+# * ``meta``   -> ``meta-muse-spark`` (the direct Meta API brain)
+# * ``gemini`` -> the first ``google/*`` cascade LLM in the config list
+#   (``google/gemini-3.8-flash`` today, via the LiveKit Inference gateway)
+#
+# Any stored per-user cascade brain (``ayma_cascade_brain``) is SUPERSEDED by
+# a saved unified brain at read time: every reader (``/voice/engines`` current,
+# ``main._voice_engine_seed`` -> the agent) resolves through
+# :func:`resolved_cascade_brain`, so a stale voice-brain value can never
+# silently serve a different brain from the one the user picked. The legacy
+# cascade value is honoured only when NO unified brain is saved (users who
+# set a voice brain - e.g. the open-weights voice option - before ever
+# picking a unified brain keep that voice behaviour until they save one).
+
+UNIFIED_BRAIN_VENDORS = (PROVIDER_GEMINI, PROVIDER_META)
+
+
+def cascade_brain_for_unified(vendor: str) -> str:
+    """The cascade brain id for a unified Brain vendor (``gemini``|``meta``).
+
+    Unknown vendors map to "" (no override) rather than a guessed model."""
+    v = (vendor or "").strip().lower()
+    if v == PROVIDER_META:
+        return BRAIN_META
+    if v == PROVIDER_GEMINI:
+        for mid in CONFIG.voice_cascade_llm_models:
+            if mid.startswith("google/"):
+                return mid
+        return "google/gemini-3.8-flash"
+    return ""
+
+
+def unified_vendor_for_cascade(brain_id: str) -> str:
+    """The unified Brain vendor a cascade brain id belongs to, or "" when it
+    has no unified equivalent (open-weights and other inference-only ids)."""
+    b = (brain_id or "").strip()
+    if b == BRAIN_META:
+        return PROVIDER_META
+    if b.startswith("google/"):
+        return PROVIDER_GEMINI
+    return ""
+
+
+def unified_brain_vendor(prof: dict) -> str:
+    """The user's ONE brain vendor from their profile doc: the saved unified
+    brain (``ayma_brain_model``) when it is a known vendor, else the vendor
+    implied by a legacy cascade brain, else ""."""
+    import schema
+
+    v = str(prof.get(schema.PF_AYMA_BRAIN_MODEL, "") or "").strip().lower()
+    if v in UNIFIED_BRAIN_VENDORS:
+        return v
+    return unified_vendor_for_cascade(
+        str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "") or "")
+    )
+
+
+def resolved_cascade_brain(prof: dict, default: str = "") -> str:
+    """The cascade brain id that must serve for ``prof`` - the ONE brain.
+
+    A saved unified brain wins over any stored cascade brain (superseded);
+    with no unified brain, the stored cascade brain is honoured; with
+    neither, ``default``."""
+    import schema
+
+    vendor = str(prof.get(schema.PF_AYMA_BRAIN_MODEL, "") or "").strip().lower()
+    if vendor in UNIFIED_BRAIN_VENDORS:
+        mapped = cascade_brain_for_unified(vendor)
+        if mapped:
+            return mapped
+    legacy = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "") or "").strip()
+    return legacy or default
+
+
 def brain_route(brain_id: str) -> tuple[str, str] | None:
     """``(route, model_id)`` for a cascade brain id, or ``None`` if unknown.
     The Meta brain is ``meta`` → ``CONFIG.meta_chat_model``; the open-weights

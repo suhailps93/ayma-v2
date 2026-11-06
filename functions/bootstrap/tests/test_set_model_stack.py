@@ -519,13 +519,16 @@ def test_detect_bare_brain_stays_main_brain():
 
 
 def test_set_voice_brain_meta_persists_cascade_brain_and_mode():
+    # ONE BRAIN (2026-11-06): a mappable voice-brain pick (Meta) IS the one
+    # brain pick - it updates the unified brain too, so text and voice can
+    # never diverge.
     db = _Db()
     msg = _run(set_model_stack._bind_set_voice_brain(db, "u1")("Muse"))
     prof = db.store[_PROFILE]
     assert prof[schema.PF_AYMA_CASCADE_BRAIN] == voice_catalog.BRAIN_META
     assert prof[schema.PF_AYMA_VOICE_MODE] == "cascade"
-    assert schema.PF_AYMA_BRAIN_MODEL not in prof  # main brain untouched
-    assert "voice brain" in msg and "main brain is unchanged" in msg
+    assert prof[schema.PF_AYMA_BRAIN_MODEL] == "meta"
+    assert "voice brain" in msg and "ONE brain" in msg
 
 
 def test_set_voice_brain_open_weights_persists_when_enabled():
@@ -567,6 +570,9 @@ def test_run_stack_command_voice_brain_end_to_end():
 
 
 def test_model_stack_context_carries_both_brains_with_current_values():
+    # ONE BRAIN (2026-11-06): the context presents a single brain. A stored
+    # divergent cascade brain is superseded by the unified brain (Gemini
+    # here), never presented as a second "voice brain".
     db = _Db()
     db.store[_PROFILE] = {
         schema.PF_AYMA_BRAIN_MODEL: "gemini",
@@ -574,8 +580,9 @@ def test_model_stack_context_carries_both_brains_with_current_values():
         schema.PF_AYMA_CASCADE_BRAIN: voice_catalog.BRAIN_META,
     }
     ctx = set_model_stack.model_stack_context(db, "u1")
-    assert "Main brain" in ctx and "Gemini" in ctx
-    assert "brain under Voice" in ctx and "Meta Muse Spark" in ctx
+    assert "ONE brain" in ctx and "Gemini" in ctx
+    assert "brain under Voice" not in ctx
+    assert "Meta Muse Spark" in ctx  # as a brain OPTION, not a second brain
     if voice_catalog.CONFIG.open_weights_api_base_url:
         assert "Llama 3.1 8B" in ctx  # enabled -> offered as a voice brain
 

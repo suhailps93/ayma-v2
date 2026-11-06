@@ -212,7 +212,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300)); // debounce window
     await tester.pumpAndSettle();
     expect(gets, greaterThanOrEqualTo(2)); // re-fetched on the change
-    expect(find.text('BRAIN (LLM)'), findsOneWidget); // cascade controls now shown
+    expect(find.text('SPEECH-TO-TEXT'), findsOneWidget); // cascade controls now (no brain picker: the one Brain is above) shown
   });
 
   testWidgets(
@@ -268,7 +268,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1)); // backoff elapses → retry
     await tester.pump(); // apply the successful re-fetch's setState
     expect(find.byKey(const ValueKey('voice-engine-error')), findsNothing);
-    expect(find.text('BRAIN (LLM)'), findsOneWidget); // cascade controls now
+    expect(find.text('SPEECH-TO-TEXT'), findsOneWidget); // cascade controls now (no brain picker: the one Brain is above)
     expect(api.calls, 3);
   });
 
