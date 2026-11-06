@@ -84,6 +84,16 @@ void main() {
     await _startLive(c, transport);
     expect(c.phase, VoiceSessionPhase.live);
 
+    // Ayma's first genuine response is the true live line — the clock starts
+    // there (Scout note 122), same as a real cold call's opening greeting.
+    transport.transcriptsController.add(const TranscriptSegment(
+      topic: 'agent_transcript',
+      text: 'Hi, how can I help?',
+      isFinal: true,
+    ));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(c.userIdleArmedAtForTest, isNotNull);
+
     // No user input occurs: after timeout expires, session ends on its own.
     await Future<void>.delayed(const Duration(milliseconds: 220));
 
@@ -315,5 +325,47 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 140));
     expect(c.phase, VoiceSessionPhase.idle);
     expect(c.disconnectReason, 'client_idle_timeout');
+  });
+
+  test('7. cold no-input clock starts at the first Ayma response (true live), not agent-ready', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      userIdleTimeout: const Duration(milliseconds: 200),
+    );
+
+    // The agent joins the room (F1's early "live" seed) but has NOT produced a
+    // response yet — the UI still reads "Connecting…".
+    await c.start();
+    transport.markAgentReady();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(c.phase, VoiceSessionPhase.live);
+    // Scout note 122: the user-idle clock must not be armed at agent-ready.
+    expect(c.userIdleArmedAtForTest, isNull);
+
+    // Ayma's first genuine response lands ~8s later in production (120ms here),
+    // i.e. the true live line where the UI says "Listening…".
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    expect(c.phase, VoiceSessionPhase.live);
+    transport.transcriptsController.add(const TranscriptSegment(
+      topic: 'agent_transcript',
+      text: "Hi, I'm Ayma",
+      isFinal: true,
+    ));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(c.userIdleArmedAtForTest, isNotNull);
+
+    // 200ms after agent-ready (but only ~80ms after the true live line) the old
+    // bug would already have ended the call at live+22s-shaped timing.
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(c.phase, VoiceSessionPhase.live);
+
+    // A full 200ms after the first response (the true live line), it ends.
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(c.phase, VoiceSessionPhase.idle);
+    expect(c.disconnectReason, 'client_idle_timeout');
+    expect(c.userIdleArmedAtForTest, isNull);
   });
 }
