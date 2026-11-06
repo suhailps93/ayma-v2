@@ -1070,15 +1070,18 @@ class Config:
     exception: it is hidden entirely (not shown disabled) until its grant key
     is wired — see ``voice_catalog.cartesia_enabled``.
 
-    Default = the founder's active LiveKit startup credits (``inworld``,
+    Default = the union verified live on staging 2026-11-06 (``inworld``,
     ``deepgram``, ``fishaudio``, ``assemblyai``, ``rime``, ``gradium``,
-    ``google``). ``VOICE_CREDITED_PROVIDERS`` (CSV, lowercase) overrides.
-    ``cartesia`` is deliberately NOT in the default: it is grant-funded via
-    its own plugin + ``CARTESIA_API_KEY`` (Route A), not LiveKit credits,
-    and is enabled per-deploy (staging adds it via
-    ``VOICE_CREDITED_PROVIDERS`` in ``scripts/deploy-staging.sh``, and the
-    catalog serves it once the key lands) — the committed default stays
-    untouched until promotion."""
+    ``google``, ``elevenlabs``, ``openai``, ``cartesia``) — the live
+    staging list plus the previously committed ``assemblyai``; no entries
+    dropped. The cascade providers ``inworld``/``fishaudio``/``rime``/
+    ``gradium`` were wrongly marked unavailable by the old static list
+    even though the founder had tested cascade with them successfully.
+    ``VOICE_CREDITED_PROVIDERS`` (CSV, lowercase) overrides, and
+    ``scripts/deploy-staging.sh`` pins the same union on staging.
+    ``cartesia`` is grant-funded via its own plugin + ``CARTESIA_API_KEY``
+    (Route A), not LiveKit credits, and the catalog still serves it only
+    once that key lands — the key, not this list, is its gate."""
 
     voice_accent_capable_providers: tuple[str, ...]
     """Provider segments whose voice honours a free-text ACCENT instruction
@@ -1442,7 +1445,7 @@ def _load() -> Config:
         voice_cascade_extra_brains=_csv("VOICE_CASCADE_EXTRA_BRAINS", ""),
         voice_credited_providers=_csv(
             "VOICE_CREDITED_PROVIDERS",
-            "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google",
+            "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,elevenlabs,openai,cartesia",
             lower=True,
         ),
         voice_accent_capable_providers=_csv(

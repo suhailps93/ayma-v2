@@ -255,16 +255,29 @@ def test_fallback_enables_cartesia_when_credited(monkeypatch):
     assert stt["cartesia/ink-whisper"]["available"] is True
 
 
-def test_fallback_omits_cartesia_stt_while_uncredited_by_default(monkeypatch):
-    # The committed default still lists ink-2 (primary) + ink-whisper
-    # (wide-language fallback) after the credited two, and cartesia stays out
-    # of the committed credited set — but the served catalog omits them while
-    # the key is missing (founder ruling 2026-11-05), so committed defaults
-    # are unchanged AND nothing inactive is offered.
+def test_default_credited_providers_are_the_union(monkeypatch):
+    # Union corrected 2026-11-06: the committed default must match the
+    # live staging list (deepgram, elevenlabs, openai, google, cartesia,
+    # inworld, fishaudio, rime, gradium) plus the previously committed
+    # assemblyai — no entries dropped, so a deploy with no env override
+    # cannot regress the cascade TTS providers to unavailable.
+    assert set(vc.CONFIG.voice_credited_providers) == {
+        "inworld", "deepgram", "fishaudio", "assemblyai", "rime",
+        "gradium", "google", "elevenlabs", "openai", "cartesia",
+    }
+
+
+def test_fallback_omits_cartesia_stt_while_keyless(monkeypatch):
+    # Cartesia IS in the committed credited set (union, 2026-11-06), and
+    # the committed default still lists ink-2 (primary) + ink-whisper
+    # (wide-language fallback) after the credited two — but the served
+    # catalog omits them while the key is missing (founder ruling
+    # 2026-11-05), so nothing inactive is offered. The key, not the
+    # credited list, is Cartesia's gate.
     monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
     monkeypatch.setattr(vc, "_fetch_livekit_models", lambda: None)
     vc.clear_cache()
-    assert "cartesia" not in vc.CONFIG.voice_credited_providers
+    assert "cartesia" in vc.CONFIG.voice_credited_providers
     assert vc.CONFIG.voice_cascade_stt_models[-2:] == (
         "cartesia/ink-2", "cartesia/ink-whisper",
     )
