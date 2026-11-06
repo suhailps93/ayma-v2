@@ -180,13 +180,6 @@ class StartupNodes {
       },
       critical: true,
       action: (ctx) async {
-        // N12's optimistic cached-route navigation must not leave the splash
-        // before its minimum dwell has elapsed since this mount (loader
-        // retest, Nov 2026: the wake line never surfaced otherwise).
-        ctx.put(
-          'first_frame_mount_at_ms',
-          DateTime.now().millisecondsSinceEpoch,
-        );
         runApp(app ?? const SizedBox.shrink());
       },
     );
@@ -240,6 +233,20 @@ class StartupNodes {
     );
   }
 
+  /// Completes once the cold-start splash has painted its first frame, so an
+  /// optimistic navigation issued after this can only ever replace a painted
+  /// splash, never pre-empt it. Already complete for a late-arriving caller,
+  /// which proceeds immediately. Bounded: a node driven with no pumped
+  /// splash (or a wedged frame pipeline) degrades to navigating without the
+  /// gate instead of stalling startup — and N14 behind it — forever.
+  static Future<void> _waitForSplashFirstPaint() async {
+    try {
+      await SplashFirstPaint.done.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // The splash never painted in time: proceed rather than hang startup.
+    }
+  }
+
   /// N12: Destination Route Resolution
   static StartupNode<void> createDestinationRoutingNode({GoRouter? router}) {
     return StartupNode<void>(
@@ -270,20 +277,20 @@ class StartupNodes {
             ? ctx.get<BootConfig?>('boot_config')
             : null;
         if (config != null && config.entryRoute.isNotEmpty) {
-          // Same minimum dwell as the splash's own optimistic navigation:
-          // without it this `go` can land pre-first-frame and the wake line
-          // never paints at all. Absent mount time (a node under test, never
-          // in production) means no wait.
-          final mountAtMs = ctx.getOrNull<int>('first_frame_mount_at_ms');
-          if (mountAtMs != null) {
-            final wait = SplashScreen.dwellRemaining(
-              shownAtMs: mountAtMs,
-              nowMs: DateTime.now().millisecondsSinceEpoch,
-            );
-            if (wait > Duration.zero) {
-              await Future<void>.delayed(wait);
-            }
-          }
+          // This `go` must NEVER land pre-first-frame: the splash (the
+          // router's initial route, with the "Waking up Ayma…" line) has to
+          // paint at least one frame first. Measuring the dwell from
+          // runApp-call time cannot guarantee that — auth-restore latency
+          // consumes the whole budget before the first frame rasterizes, so
+          // the navigation lands on a splash that never painted (Scout
+          // 2290+2291 retest: white native splash straight to chat-load,
+          // 3/3). Gate on the splash having painted its first frame, then
+          // hold the full dwell so the line is visible for real time — the
+          // same fixed hold the splash's own optimistic navigation uses.
+          // Still never waits on the bootstrap future (N14 runs it in the
+          // background afterwards).
+          await _waitForSplashFirstPaint();
+          await Future<void>.delayed(SplashScreen.minSplashDwell);
           effectiveRouter.go(config.entryRoute);
           DeepLinkQueue.instance.notifyNavigationSettled();
         }

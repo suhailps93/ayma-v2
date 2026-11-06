@@ -68,23 +68,47 @@ class SplashScreen extends StatefulWidget {
   /// wake line NEVER surfaced in 3 cold starts). Not faked work: the wake-ping
   /// has just fired and the background bootstrap is starting/running while
   /// this holds. Shared with the startup DAG's destination routing (N12),
-  /// which can otherwise navigate pre-first-frame down the same cached path.
+  /// which holds this AFTER the splash has painted its first frame —
+  /// measuring from runApp-call time lets the navigation land
+  /// pre-first-frame down the same cached path (loader fix round 2,
+  /// Nov 2026).
   static const minSplashDwell = Duration(milliseconds: 800);
-
-  /// How much of [minSplashDwell] is still unelapsed for a splash first
-  /// mounted at [shownAtMs] (epoch ms), as of [nowMs]. The startup DAG's
-  /// destination routing (N12) — which can reach its own optimistic
-  /// navigation long after mount — holds exactly this before navigating.
-  static Duration dwellRemaining({required int shownAtMs, required int nowMs}) {
-    final remaining = minSplashDwell.inMilliseconds - (nowMs - shownAtMs);
-    return remaining > 0 ? Duration(milliseconds: remaining) : Duration.zero;
-  }
 
   final ApiClient? apiClient;
   final FirebaseAuth? auth;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
+}
+
+/// Process-lifetime signal: the cold-start splash has painted its first
+/// frame. Marked once, from the splash's own first post-frame callback; the
+/// startup DAG's destination routing (N12) awaits [done] before its
+/// optimistic cached-route navigation so that navigation can only ever
+/// replace a painted splash, never pre-empt it (loader fix round 2: N12
+/// measuring its dwell from runApp-call time let the navigation land
+/// pre-first-frame while auth-restore latency consumed the whole budget).
+/// Sticky: a caller arriving after the paint gets an already-completed
+/// future and proceeds immediately.
+abstract final class SplashFirstPaint {
+  static Completer<void>? _painted;
+
+  /// Completes when the splash paints its first frame.
+  static Future<void> get done {
+    final completer = _painted ??= Completer<void>();
+    return completer.future;
+  }
+
+  /// Called once, from the splash's first post-frame callback. Idempotent.
+  static void markPainted() {
+    final completer = _painted ??= Completer<void>();
+    if (!completer.isCompleted) completer.complete();
+  }
+
+  @visibleForTesting
+  static void resetForTest() {
+    _painted = null;
+  }
 }
 
 class _SplashScreenState extends State<SplashScreen> {
@@ -122,7 +146,13 @@ class _SplashScreenState extends State<SplashScreen> {
       unawaited(widget.apiClient!.wakeUp());
       _watchConnectivity();
       _startWatchdog();
-      WidgetsBinding.instance.addPostFrameCallback((_) => _resolve());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // The first frame containing the splash was just drawn: the wake
+        // line is on screen, so N12's cached-route navigation may proceed
+        // (it must never land pre-first-frame — loader fix round 2).
+        SplashFirstPaint.markPainted();
+        _resolve();
+      });
     }
   }
 

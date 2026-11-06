@@ -42,32 +42,10 @@ class _Marker extends StatelessWidget {
 }
 
 void main() {
-  // The N12 (startup DAG destination routing) hold: a pure function of the
-  // mount timestamp, pinned here because the node itself never executes in
-  // widget tests — only its wiring is mirrored (see startup_nodes_test.dart).
-  test('dwellRemaining holds the full dwell when just mounted', () {
-    expect(
-      SplashScreen.dwellRemaining(shownAtMs: 1000, nowMs: 1000),
-      SplashScreen.minSplashDwell,
-    );
-  });
-
-  test('dwellRemaining subtracts elapsed time, floored at zero', () {
-    final dwell = SplashScreen.minSplashDwell.inMilliseconds;
-    expect(
-      SplashScreen.dwellRemaining(shownAtMs: 1000, nowMs: 1000 + 300),
-      Duration(milliseconds: dwell - 300),
-    );
-    expect(
-      SplashScreen.dwellRemaining(shownAtMs: 1000, nowMs: 1000 + dwell),
-      Duration.zero,
-    );
-    expect(
-      SplashScreen.dwellRemaining(shownAtMs: 1000, nowMs: 1000 + dwell + 1),
-      Duration.zero,
-    );
-  });
-
+  // The N12 (startup DAG destination routing) hold is covered by the
+  // real-path test in cold_start_first_frame_test.dart, which executes the
+  // actual node action against a pumped router — this file only pins the
+  // splash widget's own hold below.
   testWidgets(
       'cold start: the first frame shows the wake line and holds it for the '
       'minimum dwell before the cached route takes over', (tester) async {
