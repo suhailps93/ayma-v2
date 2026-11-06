@@ -5588,14 +5588,16 @@ async def set_models_preference(
     """The Models screen's ONE save (founder, 2026-11-06): persist the single
     Brain AND the whole voice stack in one action.
 
-    The brain is written first (``POST /brain/preference`` semantics, which
-    also syncs ``ayma_cascade_brain``), then the voice stack
-    (``POST /voice/preference`` semantics with the same brain carried
-    explicitly, so the cascade brain it stores is the mapped one Brain -
-    never a separate voice-brain pick, which no longer exists)."""
-    brain_resp = await set_brain_preference(
-        BrainPreferenceBody(brain=body.brain), uid=uid
-    )
+    The voice stack is written first (``POST /voice/preference`` semantics
+    with the brain carried explicitly, so the cascade brain it stores is
+    the mapped ONE Brain, never a separate voice-brain pick, which no
+    longer exists), then the brain (``POST /brain/preference`` semantics,
+    which also syncs ``ayma_cascade_brain``). Voice-first keeps the save
+    all-or-nothing: a voice validation 422 persists nothing."""
+    # Voice stack FIRST: its validation (mode/STT/TTS/voice fit) is the one
+    # that can 422 — if it fails, nothing has been persisted yet, so the
+    # one save stays all-or-nothing. The brain write that follows is a plain
+    # profile update against an already-listed brain id.
     voice_resp = await set_voice_preference_endpoint(
         VoicePreferenceBody(
             mode=body.mode,
@@ -5609,6 +5611,9 @@ async def set_models_preference(
         ),
         uid=uid,
         unified_brain=body.brain.strip().lower(),
+    )
+    brain_resp = await set_brain_preference(
+        BrainPreferenceBody(brain=body.brain), uid=uid
     )
     if body.reconnect:
         # Mark BEFORE the client tears down + re-bootstraps, so the new
