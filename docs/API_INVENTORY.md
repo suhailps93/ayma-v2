@@ -18,7 +18,7 @@ Auth helpers referenced in the tables (`functions/bootstrap/auth.py` unless note
 | `require_uid` | Verifies the Firebase Bearer ID token and returns the uid. |
 | `require_caller` | Like `require_uid`, also returns a `Caller` (`uid`, `is_anonymous`, `sign_in_provider`). |
 | `require_adult_uid` | `require_uid` + adult (birthdate on file) gate; defined in `main.py:343` and mirrored in `routes/profile.py:28`. |
-| `require_not_underage_uid` | `require_uid` + refuses minors, allows users without a birthdate; defined in `main.py:330` and `practice_date.py:101`. |
+| `require_not_underage_uid` | `require_uid` + refuses minors, allows users without a birthdate; defined in `main.py:350` and `practice_date.py:101`. |
 | `require_dev` | `require_uid` + dev-view allowlist (`403` otherwise). |
 | `require_uid_and_dev_flag` | `require_uid` and reports whether the caller is on the dev allowlist. |
 | `require_admin_password` | Requires the `X-Admin-Password` header. |
