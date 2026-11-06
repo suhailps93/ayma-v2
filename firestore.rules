@@ -203,6 +203,22 @@ service cloud.firestore {
       allow read: if true;
     }
 
+    // ---- beta_waitlist/{doc}: public website beta signups ----------------
+    // Create-only, from the justabot.info/get page (no account): the doc
+    // must carry exactly the four signup fields, a sane email string, a
+    // known platform, and the server timestamp. Signups are never readable,
+    // editable, or deletable from a client; the backend (Admin SDK) reads
+    // them when beta invites go out.
+    match /beta_waitlist/{doc} {
+      allow create: if request.resource.data.keys()
+            .hasOnly(['email', 'platform', 'ref', 'created_at'])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 320
+        && request.resource.data.platform in ['ios', 'android']
+        && request.resource.data.created_at == request.time;
+      allow read, update, delete: if false;
+    }
+
     // ---- deny everything else (blocks, deleted_accounts, …) -------------
     match /{document=**} {
       allow read, write: if false;
