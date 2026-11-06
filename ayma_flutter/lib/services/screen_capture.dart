@@ -123,8 +123,13 @@ const List<UiDenyRule> kUiDenyRules = [
   ),
   UiDenyRule(
     'account_action',
-    r'\b(sign out|log out|wipe)\b',
+    r'\b(sign out|log out)\b',
     'Use account_action for this; it asks the user to confirm first.',
+  ),
+  UiDenyRule(
+    'clear_memory',
+    r'\b(wipe what ayma has learned|clear (your |ayma )?memory|wipe (your )?memory|forget everything)\b',
+    "Clearing what Ayma has learned is something the user does themselves. Open Ayma's settings (open_screen ayma_settings) and tell them which button to tap.",
   ),
 ];
 
