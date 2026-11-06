@@ -59,6 +59,7 @@ NONSECRET_ENV=(
   # of the Cloud Run twin (scripts/deploy-agent.sh).
   "LLM_PROVIDER_VOICE=gemini"
   "LLM_PROVIDER_VOICE_MAIN=gemini"
+  "VOICE_CREDITED_PROVIDERS=inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,elevenlabs,openai,cartesia"
   # No TTS model/voice ids here (AGENTS.md): the default TTS (fishaudio/s2.1-pro,
   # voice Hannah) and the gender-matched voices (Hannah/Adrian) are the committed
   # config.py defaults — the single source of truth.
@@ -69,6 +70,7 @@ NONSECRET_ENV=(
 SECRET_MAP=(
   "GOOGLE_API_KEY=GOOGLE_API_KEY"
   "META_API_KEY=META_API_KEY"
+  "CARTESIA_API_KEY=CARTESIA_API_KEY"
   "SENTRY_DSN=SENTRY_DSN_AGENT"
   "LK_AGENT_FIRESTORE_SA=LK_AGENT_FIRESTORE_SA"
 )
