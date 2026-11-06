@@ -30,6 +30,13 @@ class _FakePlayer implements AsyncVoicePlayer {
     _playing.value = false;
   }
 
+  /// Simulates the clip ending on its own: a real player reports
+  /// `playing == false` once playback completes naturally (the
+  /// just_audio completed state), with no stop() call involved.
+  void simulateNaturalCompletion() {
+    _playing.value = false;
+  }
+
   @override
   void dispose() {}
 }
@@ -90,6 +97,44 @@ void main() {
     expect(nowPlaying.value, isNull);
     expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
   });
+
+  testWidgets(
+    'natural completion switches pause back to play, next tap replays',
+    (tester) async {
+      final player = _FakePlayer();
+      final nowPlaying = ValueNotifier<String?>(null);
+      await tester.pumpWidget(_wrap(_row(player, nowPlaying)));
+
+      await tester.tap(find.byKey(const ValueKey('voiceClipPlayButton')));
+      await tester.pump();
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+
+      // The clip ends on its own — no tap, no stop().
+      player.simulateNaturalCompletion();
+      await tester.pump();
+      expect(player.stopCalls, 0);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.pause_rounded), findsNothing);
+      final labels = tester
+          .widgetList<Semantics>(find.byType(Semantics))
+          .map((s) => s.properties.label)
+          .toList();
+      expect(labels, contains('Play voice message'));
+      expect(labels, isNot(contains('Pause voice message')));
+
+      // Tapping again replays the clip from the start instead of
+      // toggling a stale "playing" state off.
+      await tester.tap(find.byKey(const ValueKey('voiceClipPlayButton')));
+      await tester.pump();
+      expect(player.playedUrls, [
+        'https://example.com/clip.wav',
+        'https://example.com/clip.wav',
+      ]);
+      expect(player.stopCalls, 0);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+    },
+  );
 
   testWidgets('no clip renders nothing', (tester) async {
     final player = _FakePlayer();

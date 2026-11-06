@@ -10,6 +10,9 @@ import '../theme.dart';
 /// The button is a 44dp filled circle (founder, 2026-11-06: the original
 /// bare 22dp triangle was too small to hit at a glance). It shows pause
 /// while this clip is playing and toggles playback off when tapped again.
+/// When the clip finishes on its own, the player's `playing` goes false
+/// (JustAudioVoicePlayer maps just_audio's completed state to false), so
+/// the button falls back to the play icon with no tap needed.
 ///
 /// [clipKey] identifies this turn's clip in the shared [nowPlaying] — only
 /// one clip plays app-wide at a time. [audioUrl] wins; [audioFile] (a local
