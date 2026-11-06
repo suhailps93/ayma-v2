@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -22,6 +23,7 @@ import '../services/credits_balance.dart';
 import '../services/ids.dart';
 import '../services/pending_chat_queue.dart';
 import '../services/profile_service.dart';
+import '../services/report_cache.dart';
 import '../services/tour_anchors.dart';
 import '../services/transcript_store.dart';
 import '../services/thumbs_down_store.dart';
@@ -441,6 +443,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (mounted) setState(() {});
       }));
       _loadHistory();
+      // Send-on-reconnect: a send waiting out a dead connection retries the
+      // moment the heartbeat sees the link recover — not only on the next
+      // app resume (the pre-existing trigger in [didChangeAppLifecycleState]).
+      ConnectionHeartbeat.instance.listenable
+          .addListener(_onConnectionRecovered);
       ChatInbox.instance.pending.addListener(_consumeKickoff);
       ChatInbox.instance.resultsLanded.addListener(_onResultsLanded);
       WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
@@ -885,6 +892,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Park the failed send for reconciliation: the pending turn stays (in a
   /// "reconnecting" state instead of flashing an error), and reconciliation
   /// starts now — and again on every app resume while it stays unresolved.
+  /// When the connection heartbeat reports the link healthy again, a send
+  /// parked in the waiting state ([_reconcile]) retries immediately instead
+  /// of sitting until the next app resume.
+  void _onConnectionRecovered() {
+    if (!mounted) return;
+    if (ConnectionHeartbeat.instance.state != ConnectionQuality.ok) return;
+    if (_reconcile != null) unawaited(_reconcilePendingSend());
+  }
+
   void _beginReconcile(_PendingSendReconcile rec) {
     _reconcile = rec;
     _store.updatePendingText('Reconnecting…');
@@ -1158,6 +1174,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? null
           : DateTime.tryParse(widget.targetTimestamp);
 
+      // Offline-first: on a plain open, paint the last-known conversation
+      // from the on-device cache while the fetch below runs; the fetch
+      // re-seeds with the server's page when it lands. A history-jump
+      // target keeps the exact server-driven behavior.
+      if (target == null && _store.isEmpty) {
+        await _restoreCachedHistory();
+      }
+
       // Ride through a scale-to-zero cold start: the first page uses a
       // cold-start-tolerant timeout and auto-retries with exponential backoff
       // over a generous budget, staying on the loading spinner the whole time.
@@ -1170,6 +1194,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         },
       );
       var messages = page.messages;
+      // Refresh the last-known cache with the freshest page, so the next
+      // cold start paints this conversation instantly.
+      _persistHistoryPage(page.messages);
       // A target may sit further back than the most recent page — keep
       // paging older until it's covered or history runs out. This is a
       // one-time, user-initiated jump (tap a provenance source), so there's
@@ -1193,36 +1220,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _nextBefore = page.nextBefore;
       }
 
-      final turns = <TranscriptTurn>[];
-      for (final m in messages) {
-        // A server-resolved image_url (Ayma-generated image) wins; only a
-        // client-readable uploads/{uid} path is resolved here.
-        final url = await resolveHistoryImage(
-          imageUrl: m.imageUrl,
-          imagePath: m.imagePath,
-          resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
-        );
-        // Same pair for a voice turn: Ayma's reply URL is server-resolved,
-        // the user's clip path resolves here (best-effort — a dropped clip
-        // still renders its transcript).
-        final audio = await resolveHistoryImage(
-          imageUrl: m.audioUrl,
-          imagePath: m.audioPath,
-          resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
-        );
-        turns.add(
-          TranscriptTurn(
-            role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
-            text: m.text,
-            source: audio == null ? TurnSource.text : TurnSource.voice,
-            imageUrl: url,
-            audioUrl: audio,
-            tools: m.tools,
-            subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
-            createdAt: m.createdAt,
-          ),
-        );
-      }
+
+      final turns = await _historyTurns(messages);
       if (!mounted) return;
 
       // The first loaded turn at/after the target, found in the *full*
@@ -1272,13 +1271,95 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
     } catch (e) {
       // A load failure must not render the same as an empty history — record it
-      // so the view can offer a retry (see `_historyError`).
+      // so the view can offer a retry (see `_historyError`). When the
+      // last-known cache already painted the conversation, a failed refresh
+      // leaves it on screen instead (the connection banner explains why it
+      // may be stale); the error state is only for a truly empty screen.
       debugPrint('chat history load failed: $e');
-      if (mounted) _historyError = "Couldn't load your conversation history.";
+      if (mounted && _store.isEmpty) {
+        _historyError = "Couldn't load your conversation history.";
+      }
       _pendingTargetScroll = false;
     } finally {
       if (mounted) setState(() => _loadingHistory = false);
     }
+  }
+
+  /// Map server history rows to transcript turns, resolving each row's
+  /// image the same way for a fresh load and a cached restore.
+  Future<List<TranscriptTurn>> _historyTurns(List<ChatMessage> messages) async {
+    final turns = <TranscriptTurn>[];
+    for (final m in messages) {
+      // A server-resolved image_url (Ayma-generated image) wins; only a
+      // client-readable uploads/{uid} path is resolved here.
+      final url = await resolveHistoryImage(
+        imageUrl: m.imageUrl,
+        imagePath: m.imagePath,
+        resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
+      );
+      // Same pair for a voice turn: Ayma's reply URL is server-resolved,
+      // the user's clip path resolves here (best-effort — a dropped clip
+      // still renders its transcript).
+      final audio = await resolveHistoryImage(
+        imageUrl: m.audioUrl,
+        imagePath: m.audioPath,
+        resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
+      );
+      turns.add(
+        TranscriptTurn(
+          role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
+          text: m.text,
+          source: audio == null ? TurnSource.text : TurnSource.voice,
+          imageUrl: url,
+          audioUrl: audio,
+          tools: m.tools,
+          subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
+          createdAt: m.createdAt,
+        ),
+      );
+    }
+    return turns;
+  }
+
+  /// Paint the last-known conversation from the on-device cache
+  /// (offline-first) while the history fetch is in flight. Only fills an
+  /// empty store, so a live session already on screen is never disturbed.
+  /// Best-effort: any storage/parse problem leaves the normal load alone.
+  Future<void> _restoreCachedHistory() async {
+    final uid = _currentUid();
+    if (uid.isEmpty) return;
+    try {
+      final raw = await ReportCache.instance
+          .readReport(uid, 'last_known', 'chat_history');
+      if (raw == null || !mounted || !_store.isEmpty) return;
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final messages = ((decoded['messages'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ChatMessage.fromMap)
+          .toList();
+      if (messages.isEmpty) return;
+      final turns = await _historyTurns(messages);
+      if (!mounted || !_store.isEmpty) return;
+      _store.seed(turns);
+      // Cache-restored turns are history, not this session's sends — the
+      // dispose-time raw-turn post must skip them exactly like a server seed.
+      _seededCount = _store.turns.length;
+    } catch (_) {
+      // A corrupt / unreadable cache entry just means a normal load.
+    }
+  }
+
+  /// Persist the freshest history page as the last-known conversation, so
+  /// the next cold start paints instantly even with no connection.
+  void _persistHistoryPage(List<ChatMessage> messages) {
+    final uid = _currentUid();
+    if (uid.isEmpty) return;
+    unawaited(ReportCache.instance.writeReport(
+      uid,
+      'last_known',
+      'chat_history',
+      jsonEncode({'messages': [for (final m in messages) m.toMap()]}),
+    ));
   }
 
   /// Scroll listener: once the user nears the top of the loaded window, page
@@ -1411,6 +1492,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
       ChatInbox.instance.pending.removeListener(_consumeKickoff);
       ChatInbox.instance.resultsLanded.removeListener(_onResultsLanded);
+      ConnectionHeartbeat.instance.listenable
+          .removeListener(_onConnectionRecovered);
     }
     // This screen always owns [_pttVoice] (unlike [_voice], which is handed
     // down from the shared shell/orb sheet and must outlive this screen) —
@@ -2619,11 +2702,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           // shared store; expanding reveals them.
                           return const SizedBox.shrink();
                         }
-                        if (_loadingHistory) {
+                        if (_loadingHistory && _store.isEmpty) {
                           // GET /chat/history (+ its images): one operation,
                           // so the two lines are rephrasings, not stages —
                           // until a retry is scheduled, when the line must say
                           // so instead of holding the original indefinitely.
+                          // The loader only owns the screen when nothing is
+                          // painted yet: with last-known turns restored from
+                          // the cache, the conversation renders during the
+                          // load (offline-first).
                           return Center(
                             child: AymaWingLoader(
                               lines: _historyRetrying

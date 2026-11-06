@@ -7,10 +7,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/screens/plan_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
 import 'package:ayma_flutter/services/subscription_status.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -25,6 +27,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 const _uid = 'u1';
 const _exploreKey = 'report_cache:$_uid:last_known:explore_feed';
 const _planKey = 'report_cache:$_uid:last_known:plan';
+const _chatKey = 'report_cache:$_uid:last_known:chat_history';
+const _jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
 
 Map<String, dynamic> _cardJson(String uid, String name) => {
       'uid': uid,
@@ -80,6 +84,7 @@ Map<String, dynamic> _usageJson() => {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  tearDown(() => ChatInbox.instance.take());
 
   group('cache model round-trips', () {
     test('ExploreCard toMap/fromMap is lossless', () {
@@ -167,6 +172,28 @@ void main() {
       expect(back.plan, 'pro');
       expect(back.periodEnd, DateTime.utc(2026, 12, 1));
       expect(back.isTrial, isTrue);
+    });
+
+    test('ChatMessage toMap/fromMap is lossless', () {
+      final msg = ChatMessage(
+        role: 'ayma',
+        text: 'hello there',
+        imagePath: 'uploads/u1/a.jpg',
+        imageUrl: 'https://img/a',
+        tools: const ['Searched the web'],
+        subjectImage: 'https://img/subj',
+        createdAt: DateTime.utc(2026, 11, 2, 9, 30),
+        clientMsgId: 'cmid-1',
+      );
+      final back = ChatMessage.fromMap(msg.toMap());
+      expect(back.role, msg.role);
+      expect(back.text, msg.text);
+      expect(back.imagePath, msg.imagePath);
+      expect(back.imageUrl, msg.imageUrl);
+      expect(back.tools, msg.tools);
+      expect(back.subjectImage, msg.subjectImage);
+      expect(back.createdAt, msg.createdAt);
+      expect(back.clientMsgId, msg.clientMsgId);
     });
 
     test('SubscriptionStatus + PlanOption + TrialOffer round-trip', () {
@@ -332,5 +359,80 @@ void main() {
 
     expect(find.textContaining('FRESH_PRICE'), findsWidgets);
     expect(find.textContaining('CACHED_PRICE'), findsNothing);
+  });
+
+  testWidgets('Chat paints the cached conversation while history is in '
+      'flight, then the fresh page swaps in and is persisted',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    SharedPreferences.setMockInitialValues({
+      _chatKey: jsonEncode({
+        'messages': [
+          {
+            'role': 'user',
+            'text': 'cached hello from me',
+            'created_at': '2026-11-01T10:00:00.000Z',
+          },
+          {
+            'role': 'ayma',
+            'text': 'cached reply from Ayma',
+            'created_at': '2026-11-01T10:01:00.000Z',
+          },
+        ],
+      }),
+    });
+
+    final gate = Completer<void>();
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: _uid),
+    );
+    final api = ApiClient(
+      auth: auth,
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/chat/history') {
+          await gate.future;
+          return http.Response(
+            jsonEncode({
+              'messages': [
+                {
+                  'role': 'ayma',
+                  'text': 'fresh reply from Ayma',
+                  'created_at': '2026-11-02T10:01:00.000Z',
+                },
+              ],
+              'next_before': null,
+            }),
+            200,
+            headers: _jsonUtf8,
+          );
+        }
+        return http.Response('{}', 200, headers: _jsonUtf8);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ChatScreen(apiClient: api, auth: auth)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The cached conversation is on screen — not the full-screen loader —
+    // even though the history fetch has not answered yet.
+    expect(find.text('cached reply from Ayma'), findsOneWidget);
+    expect(find.text('cached hello from me'), findsOneWidget);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('fresh reply from Ayma'), findsOneWidget);
+    expect(find.text('cached reply from Ayma'), findsNothing);
+
+    // The fresh page replaced the cached one on disk.
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(_chatKey), contains('fresh reply from Ayma'));
   });
 }

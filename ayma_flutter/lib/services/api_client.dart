@@ -3561,6 +3561,21 @@ class ChatMessage {
     createdAt: DateTime.tryParse(m['created_at'] as String? ?? ''),
     clientMsgId: m['client_msg_id'] as String? ?? '',
   );
+
+  /// Wire-form map (the exact inverse of [fromMap]) for the chat's
+  /// last-known history cache (offline-first).
+  Map<String, dynamic> toMap() => {
+    'role': role,
+    'text': text,
+    'image_path': imagePath,
+    'image_url': imageUrl,
+    'audio_path': audioPath,
+    'audio_url': audioUrl,
+    'tools': tools,
+    'subject_image': subjectImage,
+    'created_at': createdAt?.toIso8601String(),
+    'client_msg_id': clientMsgId,
+  };
 }
 
 /// Result of `POST /media` (§8.4/§8.5). [published] is false when moderation
