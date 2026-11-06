@@ -264,3 +264,459 @@ def test_connected_agents_list_and_revoke(monkeypatch, fake_db):
     assert rev.status_code == 200 and rev.json()["ok"] is True
     mcp_oauth.clear_cache()
     assert mcp_oauth.resolve_token(fake_db, raw) is None
+
+
+# ---- OAuth revoke endpoint (RFC 7009) ------------------------------------ #
+
+
+def test_revoke_valid_token(monkeypatch, fake_db):
+    """RFC 7009 token revocation: valid token should return 200 and revoke."""
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post("/oauth/revoke", data={"token": raw})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    mcp_oauth.clear_cache()
+    assert mcp_oauth.resolve_token(fake_db, raw) is None
+
+
+def test_revoke_invalid_token_still_200(monkeypatch, fake_db):
+    """RFC 7009: invalid/unknown tokens still return 200 (client resilience)."""
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post("/oauth/revoke", data={"token": "garbage"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    r = client.post("/oauth/revoke", data={"token": ""})
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+
+def test_revoke_expired_token(monkeypatch, fake_db):
+    """Revoking an expired token should still succeed."""
+    from datetime import timedelta
+    from timefmt import utcnow
+    
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    # Manually expire the token in the DB
+    key = (mcp_oauth.TOKENS_COLLECTION, token_id)
+    fake_db.docs[key]["expires_at"] = utcnow() - timedelta(days=1)
+    mcp_oauth.clear_cache()
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post("/oauth/revoke", data={"token": raw})
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+
+# ---- .well-known OAuth discovery endpoints ------------------------------ #
+
+
+def test_oauth_authorization_server_metadata(fake_db):
+    """Test /.well-known/oauth-authorization-server metadata endpoint."""
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get("/.well-known/oauth-authorization-server")
+    assert r.status_code == 200
+    body = r.json()
+    
+    # Required fields per RFC 8414
+    assert body["issuer"].endswith("/mcp")
+    assert body["device_authorization_endpoint"].endswith("/mcp/oauth/device_authorization")
+    assert body["token_endpoint"].endswith("/mcp/oauth/token")
+    assert body["revocation_endpoint"].endswith("/mcp/oauth/revoke")
+    assert mcp_oauth.DEVICE_GRANT_TYPE in body["grant_types_supported"]
+    assert "none" in body["token_endpoint_auth_methods_supported"]
+    assert set(body["scopes_supported"]) == set(mcp_oauth.ALL_SCOPES)
+    
+    # Should be cacheable (no-store means non-cacheable but we serve it anyway)
+    assert "cache-control" in r.headers
+
+
+def test_oauth_protected_resource_metadata(fake_db):
+    """Test /.well-known/oauth-protected-resource metadata endpoint."""
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get("/.well-known/oauth-protected-resource")
+    assert r.status_code == 200
+    body = r.json()
+    
+    assert "resource" in body
+    assert body["resource"].endswith("/mcp")
+    assert body["authorization_servers"][0].endswith("/mcp")
+    assert set(body["scopes_supported"]) == set(mcp_oauth.ALL_SCOPES)
+    assert "header" in body["bearer_methods_supported"]
+
+
+def test_metadata_endpoints_include_all_scopes(fake_db):
+    """Both metadata endpoints should list all supported scopes."""
+    client = TestClient(mcp_server.asgi_app)
+    asm = client.get("/.well-known/oauth-authorization-server").json()
+    prm = client.get("/.well-known/oauth-protected-resource").json()
+    
+    expected = set(mcp_oauth.ALL_SCOPES)
+    assert set(asm["scopes_supported"]) == expected
+    assert set(prm["scopes_supported"]) == expected
+
+
+# ---- /connect/pending endpoint (approval flow) -------------------------- #
+
+
+def test_pending_unknown_code_returns_404(monkeypatch, fake_db):
+    """Pending details for a non-existent code should return 404."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get(
+        "/connect/pending?user_code=NOPE-NOPE",
+        headers={"authorization": "Bearer token"}
+    )
+    assert r.status_code == 404 and r.json()["error"] == "not_found"
+
+
+def test_pending_expired_code_returns_404(monkeypatch, fake_db):
+    """Pending details for an expired code should return 404."""
+    from datetime import timedelta
+    from timefmt import utcnow
+    
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    da = mcp_oauth.create_device_code(fake_db, "claude", "profile:read")
+    device_code = da["device_code"]
+    
+    # Manually expire the device code
+    key = (mcp_oauth.DEVICE_CODES_COLLECTION, device_code)
+    fake_db.docs[key]["expires_at"] = utcnow() - timedelta(seconds=1)
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get(
+        "/connect/pending?user_code=" + da["user_code"],
+        headers={"authorization": "Bearer token"}
+    )
+    assert r.status_code == 404
+
+
+def test_pending_returns_device_details(monkeypatch, fake_db):
+    """Pending endpoint should return client_id, scope, and expires_at."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    da = mcp_oauth.create_device_code(fake_db, "test-client", "profile:read dm:send")
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get(
+        "/connect/pending?user_code=" + da["user_code"],
+        headers={"authorization": "Bearer firebase-token"}
+    )
+    
+    assert r.status_code == 200
+    body = r.json()
+    assert body["client_id"] == "test-client"
+    assert set(body["scope"]) == {"profile:read", "dm:send"}
+    assert body["expires_at"] is not None
+
+
+def test_pending_requires_firebase_auth(fake_db):
+    """Pending endpoint requires a valid Firebase ID token."""
+    da = mcp_oauth.create_device_code(fake_db, "claude", "profile:read")
+    client = TestClient(mcp_server.asgi_app)
+    # No auth header
+    r = client.get("/connect/pending?user_code=" + da["user_code"])
+    assert r.status_code == 401
+
+
+# ---- /connect/approve endpoint (already partially tested above) --------- #
+
+
+def test_approve_with_scope_narrowing(monkeypatch, fake_db):
+    """Approve can narrow the requested scopes."""
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    da = mcp_oauth.create_device_code(
+        fake_db, "claude", "profile:read profile:write dm:send"
+    )
+    client = TestClient(mcp_server.asgi_app)
+    hdr = {"authorization": "Bearer firebase-id-token"}
+    
+    # Approve with narrowed scopes
+    r = client.post("/connect/approve", headers=hdr, json={
+        "user_code": da["user_code"],
+        "scopes": ["profile:read"]
+    })
+    assert r.status_code == 200
+    assert r.json()["approved"] is True
+    
+    # Token should only have the narrowed scope
+    tok = client.post("/oauth/token", data={
+        "grant_type": mcp_oauth.DEVICE_GRANT_TYPE,
+        "device_code": da["device_code"],
+        "client_id": "claude",
+    })
+    assert set(tok.json()["scope"].split()) == {"profile:read"}
+
+
+def test_approve_with_invalid_narrowing_uses_all(monkeypatch, fake_db):
+    """If approved scopes don't match requested, use all requested."""
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    da = mcp_oauth.create_device_code(fake_db, "claude", "profile:read dm:send")
+    client = TestClient(mcp_server.asgi_app)
+    hdr = {"authorization": "Bearer firebase-id-token"}
+    
+    # Try to approve with scopes not in the request
+    r = client.post("/connect/approve", headers=hdr, json={
+        "user_code": da["user_code"],
+        "scopes": ["persona:read"]  # not requested
+    })
+    assert r.status_code == 200
+    # Should fall back to original request
+    body = r.json()
+    assert "scope" in body
+
+
+def test_approve_fails_without_firebase_auth(monkeypatch, fake_db):
+    """Approve requires a valid Firebase ID token."""
+    _enable(monkeypatch)
+    
+    da = mcp_oauth.create_device_code(fake_db, "claude", "profile:read")
+    client = TestClient(mcp_server.asgi_app)
+    
+    # No auth
+    r = client.post("/connect/approve", json={"user_code": da["user_code"]})
+    assert r.status_code == 401
+    
+    # Bad token
+    r = client.post(
+        "/connect/approve",
+        headers={"authorization": "Bearer invalid"},
+        json={"user_code": da["user_code"]}
+    )
+    assert r.status_code == 401
+
+
+def test_approve_when_flag_disabled(fake_db):
+    """Approve returns 503 when flag is off."""
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post("/connect/approve", json={"user_code": "ABCD-1234"})
+    assert r.status_code == 503
+
+
+def test_deny_via_approve_endpoint(monkeypatch, fake_db):
+    """Posting with approve=false should deny the code."""
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    da = mcp_oauth.create_device_code(fake_db, "claude", "profile:read")
+    client = TestClient(mcp_server.asgi_app)
+    hdr = {"authorization": "Bearer firebase-id-token"}
+    
+    # Deny
+    r = client.post("/connect/approve", headers=hdr, json={
+        "user_code": da["user_code"],
+        "approve": False,
+    })
+    assert r.status_code == 200 and r.json()["approved"] is False
+    
+    # Polling should get access_denied
+    poll = client.post("/oauth/token", data={
+        "grant_type": mcp_oauth.DEVICE_GRANT_TYPE,
+        "device_code": da["device_code"],
+        "client_id": "claude",
+    })
+    assert poll.status_code == 400 and poll.json()["error"] == "access_denied"
+
+
+# ---- /connect/tokens endpoint (list connected agents) ------------------- #
+
+
+def test_tokens_requires_firebase_auth(fake_db):
+    """Tokens endpoint requires a valid Firebase ID token."""
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get("/connect/tokens")
+    assert r.status_code == 401
+
+
+def test_tokens_lists_user_connections(monkeypatch, fake_db):
+    """Tokens endpoint lists all non-revoked, non-expired tokens for the user."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    # Issue multiple tokens for the same user
+    raw1, id1 = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    raw2, id2 = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="cursor", scopes=["dm:read"], token_ttl_days=30
+    )
+    # Issue one for a different user (should not appear)
+    raw3, id3 = mcp_oauth.issue_token(
+        fake_db, uid="other-user", client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get("/connect/tokens", headers={"authorization": "Bearer token"})
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["connections"]) == 2
+    token_ids = [c["token_id"] for c in body["connections"]]
+    assert id1 in token_ids and id2 in token_ids
+    assert id3 not in token_ids
+
+
+def test_tokens_excludes_revoked(monkeypatch, fake_db):
+    """Tokens endpoint should not list revoked tokens."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    mcp_oauth.revoke_token(fake_db, UID, token_id)
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get("/connect/tokens", headers={"authorization": "Bearer token"})
+    assert r.status_code == 200
+    assert len(r.json()["connections"]) == 0
+
+
+def test_tokens_excludes_expired(monkeypatch, fake_db):
+    """Tokens endpoint should not list expired tokens."""
+    from datetime import timedelta
+    from timefmt import utcnow
+    
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    # Expire it
+    key = (mcp_oauth.TOKENS_COLLECTION, token_id)
+    fake_db.docs[key]["expires_at"] = utcnow() - timedelta(days=1)
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get("/connect/tokens", headers={"authorization": "Bearer token"})
+    assert r.status_code == 200
+    assert len(r.json()["connections"]) == 0
+
+
+def test_tokens_contains_metadata_not_secret(monkeypatch, fake_db):
+    """Tokens should never include raw token or secret values."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read", "dm:send"], token_ttl_days=30
+    )
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.get("/connect/tokens", headers={"authorization": "Bearer token"})
+    body = r.json()
+    
+    # Check structure
+    assert len(body["connections"]) == 1
+    conn = body["connections"][0]
+    assert conn["token_id"] == token_id
+    assert conn["client_id"] == "claude"
+    assert set(conn["scope"]) == {"profile:read", "dm:send"}
+    assert "created_at" in conn and conn["created_at"] is not None
+    assert "expires_at" in conn and conn["expires_at"] is not None
+    
+    # No raw token
+    assert raw not in str(body)
+    assert "access_token" not in conn
+
+
+# ---- /connect/tokens/revoke endpoint ------------------------------------ #
+
+
+def test_revoke_connection_requires_firebase_auth(fake_db):
+    """Token revoke endpoint requires Firebase auth."""
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post("/connect/tokens/revoke", json={"token_id": "nope"})
+    assert r.status_code == 401
+
+
+def test_revoke_connection_unknown_token(monkeypatch, fake_db):
+    """Revoking a non-existent token_id returns 404."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post(
+        "/connect/tokens/revoke",
+        headers={"authorization": "Bearer token"},
+        json={"token_id": "unknown-id"}
+    )
+    assert r.status_code == 404
+
+
+def test_revoke_connection_wrong_owner(monkeypatch, fake_db):
+    """User cannot revoke another user's token."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": "hacker"}
+    )
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post(
+        "/connect/tokens/revoke",
+        headers={"authorization": "Bearer token"},
+        json={"token_id": token_id}
+    )
+    assert r.status_code == 404
+
+
+def test_revoke_connection_succeeds_for_owner(monkeypatch, fake_db):
+    """User can revoke their own token."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    
+    client = TestClient(mcp_server.asgi_app)
+    r = client.post(
+        "/connect/tokens/revoke",
+        headers={"authorization": "Bearer token"},
+        json={"token_id": token_id}
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+    
+    # Token should no longer resolve
+    mcp_oauth.clear_cache()
+    assert mcp_oauth.resolve_token(fake_db, raw) is None
+
+
+def test_revoke_connection_idempotent(monkeypatch, fake_db):
+    """Revoking a token is idempotent: calling twice returns 200 both times."""
+    monkeypatch.setattr(
+        mcp_server.firebase_auth, "verify_id_token", lambda _t: {"uid": UID}
+    )
+    raw, token_id = mcp_oauth.issue_token(
+        fake_db, uid=UID, client_id="claude", scopes=["profile:read"], token_ttl_days=30
+    )
+    
+    client = TestClient(mcp_server.asgi_app)
+    # First revoke
+    r1 = client.post(
+        "/connect/tokens/revoke",
+        headers={"authorization": "Bearer token"},
+        json={"token_id": token_id}
+    )
+    assert r1.status_code == 200 and r1.json()["ok"] is True
+    
+    # Second revoke (already revoked) - still succeeds because the token doc exists
+    # and still belongs to the user (it just has revoked=True)
+    r2 = client.post(
+        "/connect/tokens/revoke",
+        headers={"authorization": "Bearer token"},
+        json={"token_id": token_id}
+    )
+    assert r2.status_code == 200 and r2.json()["ok"] is True
