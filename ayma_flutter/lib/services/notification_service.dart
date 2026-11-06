@@ -233,15 +233,28 @@ class NotificationService {
     await awaitServerAck(batch.commit());
   }
 
-  /// All four category flags, defaulting missing keys to `true` (§7.7).
-  Future<Map<String, bool>> readPrefs() async {
-    final snap = await _prefsDoc.get().timeout(kInteractiveTimeout);
-    final stored = snap.data() ?? const {};
+  /// All category flags, defaulting missing keys to `true` (§7.7).
+  static Map<String, bool> _parsePrefs(Map<String, dynamic>? stored) {
+    final data = stored ?? const {};
     return {
       for (final key in notificationCategories.keys)
-        key: stored[key] as bool? ?? true,
+        key: data[key] as bool? ?? true,
     };
   }
+
+  Future<Map<String, bool>> readPrefs() async {
+    final snap = await _prefsDoc.get().timeout(kInteractiveTimeout);
+    return _parsePrefs(snap.data());
+  }
+
+  /// Live category flags — the same doc [readPrefs] reads, as a stream.
+  /// Ayma's notification-preference commands write this doc server-side
+  /// (`users/{uid}/notification_prefs/main`), so a screen rendering these
+  /// switches must render from this stream to reflect her changes while
+  /// it is open (founder, 2026-11-06: Ayma-driven changes update the
+  /// visible UI in real time, everywhere she can drive a change).
+  Stream<Map<String, bool>> watchPrefs() =>
+      _prefsDoc.snapshots().map((s) => _parsePrefs(s.data()));
 
   Future<void> setPref(String category, bool enabled) => awaitServerAck(
       _prefsDoc.set({category: enabled}, SetOptions(merge: true)));
