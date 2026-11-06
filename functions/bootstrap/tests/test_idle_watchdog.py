@@ -100,18 +100,35 @@ def test_on_idle_failure_is_swallowed():
 
 
 def test_warm_call_second_idle_timeout_fires_at_spec():
-    """Regression test for F1: warm (repeat) voice calls should fire idle timeout
-    at exactly 30s, not early (17.8-22.9s). This test verifies that the watchdog
-    fires within a tight window around the 30s spec."""
-    wd, fired = _watchdog(time.monotonic, timeout=0.05)
-    
-    start = time.monotonic()
-    asyncio.run(asyncio.wait_for(wd.run(), timeout=2))
-    elapsed = time.monotonic() - start
-    
-    # Verify it fired
-    assert fired == [True]
-    # Verify timing: should be approximately 0.05s (50ms), with some tolerance
-    # for system variability. Should NOT be significantly early.
-    assert 0.04 < elapsed < 0.15, f"Watchdog fired in {elapsed:.3f}s, expected ~0.05s"
+    """Regression test for F1 (deltareview42 H1): a warm (repeat) voice call
+    constructs its watchdog before session setup and only starts it once the
+    session is live. The 30s window must be measured from start(), not from
+    construction — otherwise the fire lands ~19-23s after the session goes
+    live (seven on-device measurements on 2321).
 
+    Simulates the production sequence with a fake clock: construct, advance
+    10s (session setup), start, then check the window is baselined at start.
+    Without the start() re-baseline this fails: 20s after start the watchdog
+    already reads idle (30s after construction).
+    """
+    clock = _Clock()
+    wd, fired = _watchdog(clock, timeout=30)
+    clock.advance(10)  # session setup between construction and start
+
+    async def _scenario():
+        wd.start()
+        try:
+            # 20s after start: only 20s into the live window, must not be idle.
+            clock.advance(20)
+            assert not wd.is_idle()
+            assert wd.seconds_until_idle() == 10
+            assert fired == []
+            # 30s after start: the window has elapsed.
+            clock.advance(10)
+            assert wd.is_idle()
+            assert wd.seconds_until_idle() == 0
+        finally:
+            wd.stop()
+            await asyncio.sleep(0.01)
+
+    asyncio.run(_scenario())

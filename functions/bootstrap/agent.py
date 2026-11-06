@@ -3260,7 +3260,6 @@ async def _start_main_gemini_session(
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
-    import time
     session_live_ts = time.monotonic()
     logger.info("voice session LIVE: ts=%.3f uid=%s session=%s", 
                 session_live_ts, seed.uid, seed.session_id or "?")

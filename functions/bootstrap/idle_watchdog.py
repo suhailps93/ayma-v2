@@ -73,7 +73,12 @@ class IdleWatchdog:
 
     def start(self) -> None:
         if self._task is None:
-            arm_ts = self._clock()
+            # Re-baseline the window at start: the watchdog is constructed
+            # before session setup and started only once the session is live,
+            # so the construction-time stamp would fire the timer early (F1:
+            # 19-23s after live instead of the 30s spec).
+            self._last_activity = self._clock()
+            arm_ts = self._last_activity
             logger.info("idle watchdog ARM: ts=%.3f timeout=%.1fs", arm_ts, self._timeout)
             self._task = asyncio.create_task(self.run())
 
