@@ -17,6 +17,8 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/navigation_history.dart';
 import '../services/async_voice_controller.dart';
+import '../services/voice_clip_registry.dart';
+import '../services/voice_note_controller.dart';
 import '../services/async_voice_player.dart';
 import '../services/async_voice_queue.dart';
 import '../services/call_permissions.dart';
@@ -223,6 +225,60 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Which transcript clip is playing (`VoiceClipRow` keys), if any — one
   /// clip app-wide at a time.
   final ValueNotifier<String?> _nowPlaying = ValueNotifier<String?>(null);
+
+  /// Publish this chat's playable voice clips to [VoiceClipRegistry], so
+  /// Ayma's `play_voice_clip` command can play one on request (ACTION
+  /// PARITY pilot, founder 2026-11-06). Rebuilt on every store change;
+  /// the handles close over this screen's own player / now-playing
+  /// notifier, so Ayma-driven playback is the exact playback a tap on
+  /// the clip's play button performs. The clip key matches the one
+  /// `_TranscriptLine._clipRow` builds for the same turn.
+  void _syncVoiceClips() {
+    final turns = _store.turns;
+    final clips = <VoiceClipHandle>[];
+    for (var i = 0; i < turns.length; i++) {
+      final turn = turns[i];
+      final url = turn.audioUrl;
+      final file = turn.audioFile;
+      final hasUrl = url != null && url.isNotEmpty;
+      if (!hasUrl && file == null) continue;
+      final key =
+          '${turn.role.name}:${turn.text.hashCode}:${url ?? file?.path}';
+      final mine = turn.role == TurnRole.user;
+      final snippet = turn.text.trim();
+      final label = mine
+          ? 'your voice message'
+          : "Ayma's voice message";
+      clips.add(VoiceClipHandle(
+        key: key,
+        owner: mine ? 'user' : 'ayma',
+        label: snippet.isEmpty
+            ? label
+            : '$label ("${snippet.length > 60 ? '${snippet.substring(0, 60)}…' : snippet}")',
+        order: i,
+        start: () async {
+          _nowPlaying.value = key;
+          try {
+            if (hasUrl) {
+              await _clipPlayer.playUrl(url);
+            } else {
+              await _clipPlayer.playFile(file!.path);
+            }
+          } catch (_) {
+            if (_nowPlaying.value == key) _nowPlaying.value = null;
+            rethrow;
+          }
+        },
+        isPlaying: () =>
+            _nowPlaying.value == key && _clipPlayer.playing.value,
+        stop: () async {
+          if (_nowPlaying.value == key) _nowPlaying.value = null;
+          await _clipPlayer.stop();
+        },
+      ));
+    }
+    VoiceClipRegistry.instance.sync(this, clips);
+  }
 
   /// Whether an out-of-credits send is queued rather than left as a refusal.
   /// Only the plain Ayma conversation: a scoped Ask-Ayma correction, the
@@ -467,6 +523,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _store.addListener(_scrollToBottom);
     _store.addListener(_onStoreCapped);
     _store.addListener(_scanTurnsForBubble);
+    _store.addListener(_syncVoiceClips);
+    _syncVoiceClips();
     _scrollController.addListener(_maybeLoadOlderHistory);
     if (widget.askAymaContext == null) {
       // So Ayma's `current_screen` tool can answer "what page am I on?"
@@ -1534,6 +1592,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _store.removeListener(_syncVoiceClips);
+    VoiceClipRegistry.instance.clear(this);
     _store.removeListener(_onStoreCapped);
     WidgetsBinding.instance.removeObserver(this);
     _highlightClearTimer?.cancel();
