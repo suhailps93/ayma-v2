@@ -5,6 +5,8 @@ import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'icon_render_pose.dart';
+
 /// Offline generator for the Ayma Sol app-icon source image.
 ///
 /// Renders the voice-live frame straight out of [AymaOrbPainter] — the exact
@@ -40,27 +42,32 @@ void main() {
     canvas.save();
     canvas.translate(inset, inset);
     AymaOrbPainter(
-      // The live call's brightest, most-spread flutter frame: `speaking` is
-      // the only state with real wing flutter (flutterAmount 1.0) and the
-      // full white-hot connected glow, amplitude 1.0 is the loudest-syllable
-      // peak of the live mic/Ayma level, and t=9.9642 is the joint maximum
-      // of the two wings' opening angles over a full motion cycle (scanned
-      // offline against the painter's own angle math: both wings land within
-      // ~4% of their soft-open ceiling at once, versus the old single-wing
-      // flutter peak t=0.1068 where the left wing sits half-closed).
-      t: 9.9642,
-      fromState: AymaOrbState.speaking,
-      toState: AymaOrbState.speaking,
-      transitionT: 1,
-      amplitude: 1,
+      // The live call's speaking hero frame: `speaking` is the only state
+      // with real wing flutter (flutterAmount 1.0) and the full white-hot
+      // connected glow, and amplitude 1.0 is the loudest-syllable peak of
+      // the live mic/Ayma level. t=7.1915 is the flutter cycle's symmetric
+      // slightly-closed instant (both wings at -0.0916/+0.0915 rad, joint
+      // -0.0916, symmetric to ~2e-4 — scanned offline against the painter's
+      // own angle math): positive rotation opens a wing outward+down, so the
+      // old t=9.9642 joint-maximum-OPEN frame read as a wide flat U — the
+      // resting orb (Task 2, founder eye-check). This frame holds the raised
+      // bright heart/V of the live speaking orb (FOUNDER_TARGET.png). The
+      // pose lives in `tool/icon_render_pose.dart`, shared with
+      // `test/launcher_icon_pose_test.dart`, which fails if this frame ever
+      // drifts back to the flat/resting read.
+      t: IconRenderPose.t,
+      fromState: IconRenderPose.fromState,
+      toState: IconRenderPose.toState,
+      transitionT: IconRenderPose.transitionT,
+      amplitude: IconRenderPose.amplitude,
       // The launcher can't follow the user's runtime accent pick, so it uses
       // the default — same as every live call on a fresh install.
       accent: AymaColors.accent,
       reducedMotion: false,
       // The voice-live glow, on: exactly what VoiceCallScreen passes during
       // a live call (showGlow default true, voiceLive = isListening).
-      showGlow: true,
-      voiceLive: true,
+      showGlow: IconRenderPose.showGlow,
+      voiceLive: IconRenderPose.voiceLive,
       // staticDetail stays at its 1.0 default — the value every live call
       // site uses (the widget never passes it). The old 2.6 "held contrast"
       // boost was written for the retired amorphous blobs and diverged the
