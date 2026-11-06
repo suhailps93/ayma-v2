@@ -232,7 +232,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
   late final VoiceSessionController _voice =
       widget.voiceController ??
-      VoiceSessionController(transcriptStore: _store, sessionId: _sessionId);
+      VoiceSessionController(
+        transcriptStore: _store,
+        sessionId: _sessionId,
+        userIdleTimeout: VoiceSessionController.defaultUserIdleTimeout,
+      );
   final _composerController = TextEditingController();
   final _composerFocus = FocusNode();
   late final ScrollController _scrollController =

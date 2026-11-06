@@ -36,6 +36,10 @@ class VoiceStartError implements Exception {
 ///
 /// Sending the recent-turns window to `/bootstrap` is Step 17.
 class VoiceSessionController extends ChangeNotifier {
+  /// Default duration for the client-side user idle timeout (founder directive,
+  /// 2026-11-05: 30 seconds without proper user input ends the session).
+  static const defaultUserIdleTimeout = Duration(seconds: 30);
+
   VoiceSessionController({
     required TranscriptStore transcriptStore,
     this.sessionId = '',
@@ -50,10 +54,17 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? responseGuardTimeout,
     Duration? openWeightsResponseGuardTimeout,
     Duration? toolGuardTimeout,
+    Duration? userIdleTimeout,
     ErrorReporter? errorReporter,
   })  : _store = transcriptStore,
         _reporter = errorReporter ?? ErrorReporter.instance,
         _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
+        _userIdleTimeout = (userIdleTimeout == null ||
+                userIdleTimeout <= Duration.zero ||
+                welcome ||
+                practiceOtherUid != null)
+            ? null
+            : userIdleTimeout,
         _responseGuardTimeout =
             responseGuardTimeout ?? const Duration(seconds: 20),
         // Backstop for a tool "start" whose "end" never arrives (agent crash
@@ -142,6 +153,18 @@ class VoiceSessionController extends ChangeNotifier {
   final Duration _idleGuardTimeout;
   Timer? _idleGuard;
 
+  /// How long to wait in [VoiceSessionPhase.live] without proper user input
+  /// (finalized intelligible speech) before disconnecting on its own
+  /// (founder directive, 2026-11-05). Silence, background noise, and Ayma's own
+  /// speech do not reset it. Null or zero disables.
+  final Duration? _userIdleTimeout;
+  Timer? _userIdleTimer;
+  bool _userIdlePendingEnd = false;
+
+  /// Test-only view of [_userIdleTimeout].
+  @visibleForTesting
+  Duration? get userIdleTimeoutForTest => _userIdleTimeout;
+
   /// How long to wait, once the session reaches [VoiceSessionPhase.live] (the
   /// agent has joined the room and published its track, so the UI would say
   /// "Listening…"), for the agent to produce its FIRST genuine response —
@@ -212,6 +235,11 @@ class VoiceSessionController extends ChangeNotifier {
   /// Non-error note shown after a call ended on its own (idle timeout).
   String? _endNotice;
   String? get endNotice => _endNotice;
+
+  /// The reason for the most recent session termination, with client-origin
+  /// markers (e.g. 'client_idle_timeout', 'agent_idle_timeout', 'dropped', 'user_stop').
+  String? _disconnectReason;
+  String? get disconnectReason => _disconnectReason;
 
   /// Practice voice (hackathon B): the practice session id returned by
   /// `/practice/voice/start` — the client fetches the debrief with it once the
@@ -493,6 +521,8 @@ class VoiceSessionController extends ChangeNotifier {
       }
       _errorMessage = null;
       _endNotice = null;
+      _disconnectReason = null;
+      _userIdlePendingEnd = false;
       _cappedError = false;
       _backgroundPermissionDenied = false;
       _relayRetrying = false;
@@ -699,6 +729,19 @@ class VoiceSessionController extends ChangeNotifier {
       if (_agentSpeaking == speaking) return;
       _agentSpeaking = speaking;
       notifyListeners();
+      if (!speaking && _userIdlePendingEnd) {
+        if (_phase == VoiceSessionPhase.live) {
+          debugPrint(
+              '[voice] Ayma utterance completed after deferred idle timeout — disconnect reason: client_idle_timeout');
+          _userIdlePendingEnd = false;
+          unawaited(_endForIdle(
+            notice: 'Call ended after 30 seconds of silence',
+            disconnectReason: 'client_idle_timeout',
+          ));
+        } else {
+          _userIdlePendingEnd = false;
+        }
+      }
     });
     _readySub = transport.agentReady.listen((_) => _onAgentReady());
     _micLevelSub = transport.localAudioLevel.listen(
@@ -744,6 +787,7 @@ class VoiceSessionController extends ChangeNotifier {
       if (!identical(_transport, transport)) return;
       unawaited(_teardown());
       if (_cappedError) return;
+      _disconnectReason = 'dropped';
       _report(const VoiceStartError('voice connection dropped'), null,
           'dropped');
       _fail('The voice connection dropped.');
@@ -777,6 +821,7 @@ class VoiceSessionController extends ChangeNotifier {
     debugPrint('[voice] phase -> live (agent ready)');
     _setPhase(VoiceSessionPhase.live);
     _noteActivity();
+    _armUserIdleTimer();
     // The agent is in the room, but "joined" is not "can respond": if the
     // LiveKit inference gateway is down/429, the worker joins and the UI shows
     // "Listening…" yet no reply ever comes. Arm the bounded no-first-response
@@ -926,6 +971,41 @@ class VoiceSessionController extends ChangeNotifier {
     _noteActivity();
   }
 
+  void _armUserIdleTimer() {
+    if (_userIdleTimeout == null || _phase != VoiceSessionPhase.live) return;
+    _userIdlePendingEnd = false;
+    _userIdleTimer?.cancel();
+    _userIdleTimer = Timer(_userIdleTimeout, _onUserIdleTimeout);
+  }
+
+  /// Resets the user-idle timer on proper user input. Finalized speech resets;
+  /// interim speech bumps so a user speaking at ~29s is never cut mid-sentence.
+  /// Background noise producing no transcript, Ayma segments, tools, data,
+  /// and reconnects NEVER bump.
+  void _noteUserActivity() {
+    if (_userIdleTimeout == null || _phase != VoiceSessionPhase.live) return;
+    _userIdlePendingEnd = false;
+    _userIdleTimer?.cancel();
+    _userIdleTimer = Timer(_userIdleTimeout, _onUserIdleTimeout);
+  }
+
+  void _onUserIdleTimeout() {
+    _userIdleTimer = null;
+    if (_phase != VoiceSessionPhase.live) return;
+    if (_agentSpeaking) {
+      debugPrint(
+          '[voice] user idle timeout fired while Ayma speaking — deferring until turn complete');
+      _userIdlePendingEnd = true;
+      return;
+    }
+    debugPrint(
+        '[voice] client user idle timeout fired — disconnect reason: client_idle_timeout');
+    unawaited(_endForIdle(
+      notice: 'Call ended after 30 seconds of silence',
+      disconnectReason: 'client_idle_timeout',
+    ));
+  }
+
   void _onIdleGuardFired() {
     _idleGuard = null;
     if (_phase != VoiceSessionPhase.live) return;
@@ -934,19 +1014,28 @@ class VoiceSessionController extends ChangeNotifier {
       _noteActivity();
       return;
     }
-    debugPrint('[voice] client idle guard fired — ending call');
-    unawaited(_endForIdle());
+    debugPrint(
+        '[voice] client idle guard fired — disconnect reason: client_idle_guard');
+    unawaited(_endForIdle(
+      notice: 'Call ended after 30 seconds of silence',
+      disconnectReason: 'client_idle_guard',
+    ));
   }
 
-  /// Ends the call because of silence (agent-reported or client guard): back to
-  /// idle with a non-error [endNotice], never the error phase.
-  Future<void> _endForIdle() async {
+  /// Ends the call because of silence (agent-reported, client user idle timeout,
+  /// or client idle guard): back to idle with a non-error [endNotice], never the
+  /// error phase.
+  Future<void> _endForIdle({
+    String? notice,
+    String disconnectReason = 'client_idle_timeout',
+  }) async {
     if (active == this) active = null;
     _disposeSessionLifecycle();
     await _teardown();
     _agentSpeaking = false;
     _muted = false;
-    _endNotice = 'Call ended after 3 minutes of silence';
+    _disconnectReason = disconnectReason;
+    _endNotice = notice ?? 'Call ended after 30 seconds of silence';
     _setPhase(VoiceSessionPhase.idle);
   }
 
@@ -988,6 +1077,9 @@ class VoiceSessionController extends ChangeNotifier {
     _noteActivity();
     final role = seg.topic == 'agent_transcript' ? TurnRole.ayma : TurnRole.user;
     if (role == TurnRole.ayma) _noteAgentResponse();
+    if (role == TurnRole.user) {
+      _noteUserActivity();
+    }
     if (role == TurnRole.user && seg.isFinal) {
       // A new user turn starts a new "what did Ayma do to answer it" window
       // — drop any stray labels left over from a tool call that never
@@ -1047,11 +1139,16 @@ class VoiceSessionController extends ChangeNotifier {
   /// above already uses, rather than a new one-off path.
   void _onCallEnding(String reason) {
     if (reason == 'idle_timeout') {
-      unawaited(_endForIdle());
+      debugPrint('[voice] disconnect reason: agent_idle_timeout');
+      unawaited(_endForIdle(
+        notice: 'Call ended after 3 minutes of silence',
+        disconnectReason: 'agent_idle_timeout',
+      ));
       return;
     }
     if (reason != 'out_of_credits') return;
     _cappedError = true;
+    _disconnectReason = 'out_of_credits';
     _fail('Out of credits — Ayma had to end the call. Upgrade to '
         'keep going.');
   }
@@ -1068,6 +1165,7 @@ class VoiceSessionController extends ChangeNotifier {
 
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
+    _disconnectReason ??= 'user_stop';
     if (active == this) active = null;
     _disposeSessionLifecycle();
     await _teardown();
@@ -1269,6 +1367,7 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _fail(String message) {
     _errorMessage = message;
+    _disconnectReason ??= 'error';
     // Guarantee the mic is released and the session fully torn down on EVERY
     // failure path (idempotent — callers that already tore down hit a no-op).
     // Closes paths that previously reached `error` with a still-held mic, e.g.
@@ -1288,6 +1387,9 @@ class VoiceSessionController extends ChangeNotifier {
     _responseGuard = null;
     _toolGuard?.cancel();
     _toolGuard = null;
+    _userIdleTimer?.cancel();
+    _userIdleTimer = null;
+    _userIdlePendingEnd = false;
 
     // Snapshot every session-scoped handle (subscriptions + transport) and
     // null the instance fields *synchronously*, before the first `await`
@@ -1496,6 +1598,9 @@ class VoiceSessionController extends ChangeNotifier {
     _reconnectingSub?.cancel();
     _micLevelSub?.cancel();
     _aymaLevelSub?.cancel();
+    _userIdleTimer?.cancel();
+    _userIdleTimer = null;
+    _userIdlePendingEnd = false;
     unawaited(_teardown());
     super.dispose();
   }
