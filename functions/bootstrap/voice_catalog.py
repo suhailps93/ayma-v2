@@ -14,35 +14,35 @@ Two **modes**, chosen per user in developer settings:
   combination: **BRAIN** (LLM), **STT**, **TTS**. The voice list comes from the
   chosen TTS.
 
-Sourcing. The cascade's model lists are fetched **live** from the LiveKit
-Inference catalog: the gateway (``get_default_inference_url`` →
-``agent-gateway.livekit.cloud/v1``) is OpenAI-compatible and serves
-``GET /v1/models``, where each model carries a TYPE (STT / TTS / LLM / realtime /
-TD / INT). :func:`_sources` fetches and categorizes it with the project's
-``LIVEKIT_API_KEY``/``SECRET`` (no LLM request, so it costs nothing), cached for
-``_CATALOG_TTL_SECONDS``, so when the catalog is populated whatever the project's
-credits activate shows up in the dropdowns with no code change.
+Sourcing. The cascade's model lists come from the config FALLBACK lists
+(``CONFIG.voice_cascade_*_models``, ``source="fallback"``) — the permanent
+catalog source until LiveKit ships a real catalog API. Those lists enumerate
+the providers the project has LiveKit startup credits for, with canonical
+model ids from the LiveKit docs (docs.livekit.io/agents/models). Availability
+is marked TRUTHFULLY (:func:`_availability`): a provider in
+``CONFIG.voice_credited_providers`` is enabled; any other is shown disabled
+with a "needs LiveKit credits" note rather than a silently-failing pick.
+``cartesia`` is the exception: it rides its own grant-funded plugin, so it is
+an ENABLEMENT gate, not an availability marking —
+:func:`cartesia_enabled` (``CARTESIA_API_KEY`` wired) decides whether its ids
+appear in the served lists at all, and while the key is missing they are
+absent entirely (founder ruling 2026-11-05), never shown disabled. Merged in
+on top: the direct Meta Muse brain (not a LiveKit model — via the Meta API)
+and the two realtime models (Gemini Live, the LOCKED model; OpenAI Realtime,
+flag-gated).
 
-**Known gap (verified 2026-10-27).** For THIS project ``GET /v1/models`` returns
-HTTP 200 with an empty body ``{}`` (an InferenceGrants JWT authenticates fine —
-it is simply not populated for our plan; no ``?task=`` filter changes it). So
-the live path yields nothing and :func:`_sources` uses the config FALLBACK lists
-(``CONFIG.voice_cascade_*_models``, ``source="fallback"``) — the active path in
-production today. Those lists enumerate the providers the project has LiveKit
-startup credits for, with canonical model ids from the LiveKit docs
-(docs.livekit.io/agents/models). On the fallback path availability is marked
-TRUTHFULLY (:func:`_availability`): a provider in ``CONFIG.voice_credited_providers``
-is enabled; any other is shown disabled with a "needs LiveKit credits" note
-rather than a silently-failing pick. ``cartesia`` is the exception: it rides
-its own grant-funded plugin, so it is an ENABLEMENT gate, not an availability
-marking — :func:`cartesia_enabled` (``CARTESIA_API_KEY`` wired) decides whether
-its ids appear in the served lists at all, and while the key is missing they
-are absent entirely (founder ruling 2026-11-05), never shown disabled.
-If LiveKit later populates
-``/v1/models``, the live path takes over automatically and everything it returns
-is enabled. Merged in on top either way: the direct Meta Muse brain (not a
-LiveKit model — via the Meta API) and the two realtime models (Gemini Live, the
-LOCKED model; OpenAI Realtime, flag-gated).
+**There is no live catalog to fetch (root cause verified 2026-11-06).**
+``GET /v1/models`` on the inference gateway (``agent-gateway.livekit.cloud``)
+is a STUB route: it returns ``{}`` to every caller — staging key, prod key,
+and no auth at all. With the same InferenceGrants JWT, ``POST
+/v1/chat/completions`` returned a real completion carrying the project's
+Scale quotas (RPM 1000 / TPM 6,000,000, cost $0.0), so the project is fully
+provisioned on the gateway; the route simply is not a catalog API. In
+livekit-agents 1.8.9 (our pin) that ``/models`` call exists only as the
+inference LLM's prewarm ping and its result is discarded — it never returns
+data for anyone. (This supersedes the 2026-10-27 "simply not populated for
+our plan" reading.) The old live-fetch path was therefore deleted: it could
+only ever return ``None`` and cost an HTTP round-trip per cache expiry.
 
 Per-TTS *voice* lists are a separate concern — ``/v1/models`` lists models, not
 each model's voices — so they come from :func:`_livekit_tts_voices` (the live
@@ -50,13 +50,12 @@ extension point, empty today) else the **documented** fallback in
 :data:`_TTS_FALLBACK_VOICES` (the LiveKit docs' per-provider sample voices;
 overridable by ``VOICE_TTS_VOICES_<PROVIDER>``).
 
-Model ids all live in ``config.py``/the live catalog per ``AGENTS.md``; this
+Model ids all live in ``config.py`` per ``AGENTS.md``; this
 module holds only voice *ids*/labels and catalog metadata (routes, availability).
 """
 
 from __future__ import annotations
 
-import datetime
 import logging
 import os
 import re
@@ -293,114 +292,13 @@ def _tts_voices(model: str) -> list[Voice]:
     )
 
 
-# --- LIVE LiveKit inference catalog -----------------------------------------
+# --- Catalog sources (config fallback — the permanent source) --------------
 #
-# The inference gateway (``get_default_inference_url`` → agent-gateway) is
-# OpenAI-compatible and serves ``GET /v1/models`` (the installed SDK calls
-# ``client.models.list()`` for prewarm). LiveKit tags each model with a TYPE
-# (STT / TTS / LLM / realtime / TD / INT). We fetch that live so the dropdowns
-# reflect exactly what the project's credits have activated — new providers
-# (Fish Audio, AssemblyAI, Rime, Gradium…) appear with no code change. The call
-# needs only the project's ``LIVEKIT_API_KEY``/``SECRET`` (already used to mint
-# room tokens) and makes NO LLM request, so it costs nothing. On any failure the
-# config fallback lists are used, clearly marked ``source="fallback"``.
-
-_TYPE_ALIASES = {
-    "stt": "stt", "speech_to_text": "stt", "speech-to-text": "stt",
-    "transcription": "stt", "asr": "stt",
-    "tts": "tts", "text_to_speech": "tts", "text-to-speech": "tts",
-    "speech": "tts",
-    "llm": "llm", "chat": "llm", "language": "llm",
-    "realtime": "realtime", "rt": "realtime", "duplex": "realtime",
-    "speech_to_speech": "realtime", "realtime_model": "realtime",
-}
-
-
-def _inference_base_url() -> str:
-    try:
-        from livekit.agents.inference._utils import get_default_inference_url
-
-        return get_default_inference_url().rstrip("/")
-    except Exception:  # noqa: BLE001 - SDK layout drift / not installed
-        return os.getenv(
-            "LIVEKIT_INFERENCE_URL", "https://agent-gateway.livekit.cloud/v1"
-        ).rstrip("/")
-
-
-def _inference_jwt() -> str | None:
-    key = os.getenv("LIVEKIT_INFERENCE_API_KEY", os.getenv("LIVEKIT_API_KEY", ""))
-    secret = os.getenv(
-        "LIVEKIT_INFERENCE_API_SECRET", os.getenv("LIVEKIT_API_SECRET", "")
-    )
-    if not key or not secret:
-        return None
-    try:
-        from livekit import api
-
-        grant = api.access_token.InferenceGrants(perform=True)
-        return (
-            api.AccessToken(key, secret)
-            .with_identity("ayma-voice-catalog")
-            .with_inference_grants(grant)
-            .with_ttl(datetime.timedelta(seconds=120))
-            .to_jwt()
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("could not mint a LiveKit inference token: %s", exc)
-        return None
-
-
-def _fetch_livekit_models() -> list[dict] | None:
-    """Raw ``GET /v1/models`` items from the LiveKit inference gateway, or
-    ``None`` when unavailable (no creds, network/SDK error). Best-effort."""
-    jwt = _inference_jwt()
-    if not jwt:
-        return None
-    url = _inference_base_url() + "/models"
-    try:
-        import httpx
-
-        resp = httpx.get(
-            url, headers={"Authorization": f"Bearer {jwt}"}, timeout=4.0
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:  # noqa: BLE001 - never let a fetch fail the endpoint
-        logger.warning("LiveKit inference catalog fetch failed (%s)", exc)
-        return None
-    items = data.get("data") if isinstance(data, dict) else data
-    return items if isinstance(items, list) else None
-
-
-def _model_type(item: dict) -> str:
-    raw = (
-        item.get("type")
-        or item.get("model_type")
-        or item.get("kind")
-        or (item.get("metadata") or {}).get("type")
-        or ""
-    )
-    return _TYPE_ALIASES.get(str(raw).strip().lower(), "")
-
-
-def _categorize_live(items: list[dict]) -> dict[str, list[str]] | None:
-    """Group live model ids by our four categories. ``None`` when not one item
-    carries a recognizable TYPE (unknown shape) so we fall back rather than
-    misclassify."""
-    buckets: dict[str, list[str]] = {"llm": [], "stt": [], "tts": [], "realtime": []}
-    saw_type = False
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        mid = str(item.get("id") or item.get("model") or "").strip()
-        if not mid:
-            continue
-        kind = _model_type(item)
-        if kind:
-            saw_type = True
-        if kind in buckets:
-            buckets[kind].append(mid)
-    return buckets if saw_type else None
+# There is no live catalog fetch: ``GET /v1/models`` on the inference
+# gateway is a stub returning ``{}`` to every caller (root cause verified
+# 2026-11-06 — see the module docstring), so the config fallback lists are
+# the catalog. If LiveKit ever ships a real catalog API, feed its ids in
+# here as the ``_raw_sources`` buckets.
 
 
 def _with_configured(ids: list[str], configured: str) -> list[str]:
@@ -412,11 +310,12 @@ def _with_configured(ids: list[str], configured: str) -> list[str]:
 
 
 def _sources() -> dict[str, object]:
-    """Resolved component model ids by category: the live LiveKit catalog when
-    reachable, else the config fallback. Shared by the catalog + validators.
-    The configured Meta-cascade STT/TTS are always included. Cartesia ids are
-    withheld from every bucket while Cartesia is inactive
-    (:func:`cartesia_enabled`) — the one gate every served list inherits."""
+    """Resolved component model ids by category: the config fallback lists
+    (the permanent catalog source — see the module docstring). Shared by the
+    catalog + validators. The configured Meta-cascade STT/TTS are always
+    included. Cartesia ids are withheld from every bucket while Cartesia is
+    inactive (:func:`cartesia_enabled`) — the one gate every served list
+    inherits."""
     src = _raw_sources()
     src["stt"] = _with_configured(src["stt"], CONFIG.meta_cascade_stt_model)  # type: ignore[arg-type]
     src["tts"] = _with_configured(src["tts"], CONFIG.meta_cascade_tts_model)  # type: ignore[arg-type]
@@ -427,16 +326,6 @@ def _sources() -> dict[str, object]:
 
 
 def _raw_sources() -> dict[str, object]:
-    items = _fetch_livekit_models()
-    live = _categorize_live(items) if items else None
-    if live and (live["llm"] or live["stt"] or live["tts"]):
-        return {
-            "source": "livekit",
-            "llm": live["llm"] or list(CONFIG.voice_cascade_llm_models),
-            "stt": live["stt"] or list(CONFIG.voice_cascade_stt_models),
-            "tts": live["tts"] or list(CONFIG.voice_cascade_tts_models),
-            "realtime": live["realtime"],
-        }
     return {
         "source": "fallback",
         "llm": list(CONFIG.voice_cascade_llm_models),
@@ -446,22 +335,19 @@ def _raw_sources() -> dict[str, object]:
     }
 
 
-def _availability(provider: str, source: str) -> tuple[bool, str]:
+def _availability(provider: str) -> tuple[bool, str]:
     """``(available, requires)`` for a cascade option, marked TRUTHFULLY.
 
-    A LIVE LiveKit catalog lists exactly what the project's credits have
-    enabled, so anything it returns is available. On the config FALLBACK path
-    (``/v1/models`` is empty for this project — see the module docstring) we
-    cannot query the project, so we trust only the providers known to carry
-    LiveKit Inference credits (``CONFIG.voice_credited_providers``). Any other
-    fallback option is returned ``available=False`` with a short note, so the UI
-    shows it disabled ("needs LiveKit credits") instead of offering a pick that
-    would silently fail mid-call. A bare id with no provider segment is left
-    available (nothing to check it against). Cartesia never reaches this
-    marked-disabled: while its key is missing its ids are withheld upstream in
-    :func:`_sources` (see :func:`cartesia_enabled`)."""
-    if source == "livekit":
-        return True, ""
+    The catalog is built from the config fallback lists (there is no live
+    catalog to query — ``GET /v1/models`` is a stub; see the module
+    docstring), so we trust only the providers known to carry LiveKit
+    Inference credits (``CONFIG.voice_credited_providers``). Any other
+    option is returned ``available=False`` with a short note, so the UI
+    shows it disabled ("needs LiveKit credits") instead of offering a pick
+    that would silently fail mid-call. A bare id with no provider segment
+    is left available (nothing to check it against). Cartesia never
+    reaches this marked-disabled: while its key is missing its ids are
+    withheld upstream in :func:`_sources` (see :func:`cartesia_enabled`)."""
     if not provider or provider in CONFIG.voice_credited_providers:
         return True, ""
     return False, "LiveKit credits"
@@ -520,8 +406,9 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
                 "languages": langs,
             }
         )
-    # Any other realtime-type model LiveKit exposes (google/openai realtime are
-    # already represented by the two canonical options above).
+    # Any other realtime-type model a future real catalog API exposes
+    # (google/openai realtime are already represented by the two canonical
+    # options above). The fallback source carries none, so this is empty today.
     for mid in sources.get("realtime", []):  # type: ignore[union-attr]
         prov = _provider_of(mid)
         if prov in ("google", "openai"):
@@ -564,8 +451,8 @@ def brain_route(brain_id: str) -> tuple[str, str] | None:
 
 
 def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
-    # Meta Muse Spark is a direct-API brain (not in LiveKit's catalog); the rest
-    # are LiveKit Inference LLMs, so new ones appear automatically.
+    # Meta Muse Spark is a direct-API brain; the rest are LiveKit Inference
+    # LLMs from the config fallback lists.
     out: list[dict[str, object]] = [
         {
             "id": BRAIN_META,
@@ -590,10 +477,9 @@ def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
                 "requires_secret": "",
             }
         )
-    src = str(sources["source"])
     for mid in sources["llm"]:  # type: ignore[index]
         provider = _provider_of(mid)
-        available, requires = _availability(provider, src)
+        available, requires = _availability(provider)
         out.append(
             {
                 "id": mid,
@@ -615,11 +501,10 @@ def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _stt(sources: dict[str, object]) -> list[dict[str, object]]:
-    src = str(sources["source"])
     out: list[dict[str, object]] = []
     for m in sources["stt"]:  # type: ignore[index]
         provider = _provider_of(m)
-        available, requires = _availability(provider, src)
+        available, requires = _availability(provider)
         out.append({
             "id": m, "label": m, "provider": provider,
             "available": available, "requires_secret": requires,
@@ -629,11 +514,10 @@ def _stt(sources: dict[str, object]) -> list[dict[str, object]]:
 
 def _tts(sources: dict[str, object]) -> list[dict[str, object]]:
     langs = _languages()
-    src = str(sources["source"])
     out: list[dict[str, object]] = []
     for m in sources["tts"]:  # type: ignore[index]
         provider = _provider_of(m)
-        available, requires = _availability(provider, src)
+        available, requires = _availability(provider)
         out.append({
             "id": m,
             "label": m,
@@ -665,7 +549,7 @@ _cache: dict[str, object] = {}
 
 def catalog() -> dict[str, object]:
     """The assembled catalog, cached for :data:`_CATALOG_TTL_SECONDS` (so the
-    live LiveKit fetch happens at most once per TTL, never per request)."""
+    fallback assembly happens at most once per TTL, never per request)."""
     now = time.monotonic()
     built = _cache.get("catalog")
     at = float(_cache.get("at", 0.0))  # type: ignore[arg-type]
