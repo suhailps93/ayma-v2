@@ -4021,6 +4021,8 @@ def _skill_stub(verdict):
     # Text-lane order: a stack match wins over navigation on one turn.
     ("switch my brain to gemini and open the models page", "set_brain", ["brain"]),
     ("start the guided tour", "start_guided_tour", []),
+    ("go back", "go_back", []),
+    ("take me back", "go_back", []),
     ("open the guided tour", "start_guided_tour", []),
 ])
 def test_detect_voice_command_routes_each_family(phrase, tool, keys):
@@ -4042,6 +4044,11 @@ def test_detect_voice_command_passes_text_lane_values_through():
     assert agent.detect_voice_command("start the guided tour") == (
         "start_guided_tour", {},
     )
+    assert agent.detect_voice_command("go back") == ("go_back", {})
+    # A destination tail is a page open, not a history back.
+    assert agent.detect_voice_command("go back to Explore") == (
+        "open_screen", {"screen": "explore"},
+    )
 
 
 @pytest.mark.parametrize("phrase", [
@@ -4058,6 +4065,9 @@ def test_detect_voice_command_passes_text_lane_values_through():
     "open up about yourself",
     "show me what you got",
     "switch topics for a second",
+    # Back near-misses: narrative "back" is never a navigation.
+    "call me back when you can",
+    "back in the day we talked",
     # Tour near-misses: stop / next / questions never start anything.
     "stop the tour",
     "what's next on the tour",
