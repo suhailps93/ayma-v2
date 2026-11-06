@@ -40,10 +40,17 @@ class TourHost extends StatelessWidget {
   /// already there (`go('/')` just stays; a `TabRequest` for the current tab is
   /// ignored by the shell).
   static void _prepareStep(TourFeature feature) {
-    final path = appRouter.routeInformationProvider.value.uri.path;
-    if (path != MainShellScreen.path) {
-      appRouter.go(MainShellScreen.path);
-    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    try {
+      var safety = 10;
+      while (appRouter.canPop() && safety-- > 0) {
+        appRouter.pop();
+      }
+      final path = appRouter.routeInformationProvider.value.uri.path;
+      if (path != MainShellScreen.path) {
+        appRouter.go(MainShellScreen.path);
+      }
+    } catch (_) {}
     final tab = feature.tab;
     if (tab != null) TabRequest.instance.request(tab);
   }
@@ -99,18 +106,17 @@ class TourHost extends StatelessWidget {
     );
   }
 
-  /// The Ayma-driven tour's single spotlighted step (§11.2b): the same
-  /// [CoachMarkOverlay] engine in CHROMELESS mode — ONLY the spotlight
-  /// highlight, no callout card (the instruction is Ayma's own chat/voice
-  /// line), and no local advancing: the user taps the real control to move on.
-  /// The overlay reports shown / absent / tapped / stop back to
-  /// [GuidedTourController] (wired by `AppCommandService`). Keyed by the step's
-  /// token so each pushed step gets a fresh measure.
+  /// The Ayma-driven tour's single spotlighted step (§11.2b): rendered through
+  /// [CoachMarkOverlay] with callout card (headline, say text, counter, Skip
+  /// tour and Next CTAs). Keyed by the step's token so each pushed step gets a
+  /// fresh measure.
   Widget _drivenOverlay(GuidedTourStep step) {
     return CoachMarkOverlay(
       key: ValueKey('guided-tour-${step.token}'),
       features: [step.feature],
-      chromeless: true,
+      stepIndex: step.index,
+      stepTotal: step.total,
+      chromeless: false,
       onPrepareStep: _prepareStep,
       onFinish: GuidedTourController.instance.endSession,
       onAnchorShown: step.onShown,

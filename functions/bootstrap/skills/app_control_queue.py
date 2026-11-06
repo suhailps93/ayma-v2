@@ -102,6 +102,15 @@ async def _await_ack(
         if data and str(data.get("id") or "") == cmd_id:
             return data
         if time.monotonic() >= deadline:
+            # One final read before giving up, so an ack arriving on the boundary
+            # is never lost to a race.
+            try:
+                snap = await asyncio.to_thread(_ack_doc(db, uid).get)
+                data = snap.to_dict() if getattr(snap, "exists", False) else None
+                if data and str(data.get("id") or "") == cmd_id:
+                    return data
+            except Exception:  # noqa: BLE001
+                pass
             return None
         await asyncio.sleep(app_control._ACK_POLL_SECONDS)
 

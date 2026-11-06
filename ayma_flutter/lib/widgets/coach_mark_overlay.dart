@@ -59,6 +59,8 @@ class CoachMarkOverlay extends StatefulWidget {
     this.onStopPressed,
     this.hideNextButton = false,
     this.chromeless = false,
+    this.stepIndex,
+    this.stepTotal,
   });
 
   /// The ordered steps to walk through.
@@ -127,6 +129,15 @@ class CoachMarkOverlay extends StatefulWidget {
   /// 2026-11-03: "I don't want the feature dialogues"). A single tiny,
   /// unobtrusive "Skip tour" affordance remains when [onStopPressed] is set.
   final bool chromeless;
+
+  /// Override the 0-based step index displayed in the callout card counter
+  /// ("N of M"). Used in driven mode where [features] only contains the single
+  /// active step.
+  final int? stepIndex;
+
+  /// Override the total step count displayed in the callout card counter.
+  /// Used in driven mode where [features] only contains the single active step.
+  final int? stepTotal;
 
   @override
   State<CoachMarkOverlay> createState() => _CoachMarkOverlayState();
@@ -398,14 +409,22 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   }
 
   Widget _buildCallout(AymaTokens ac, TourFeature feature, bool isLast) {
+    final effectiveIndex = widget.stepIndex ?? _index;
+    final effectiveTotal = widget.stepTotal ?? widget.features.length;
+    final effectiveIsLast = isLast || effectiveIndex >= effectiveTotal - 1;
     final card = _CalloutCard(
       feature: feature,
       spotlight: widget.spotlight,
-      index: _index,
-      total: widget.features.length,
-      isLast: isLast,
+      index: effectiveIndex,
+      total: effectiveTotal,
+      isLast: effectiveIsLast,
       finishing: _finishing,
-      onNext: _advance,
+      onNext: widget.onAnchorTapped != null
+          ? () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              widget.onAnchorTapped!();
+            }
+          : _advance,
       // Driven mode: "Skip tour" ends the whole guided tour via the driver;
       // otherwise it finishes the local tour (writing seen-state) as before.
       onSkip: widget.onStopPressed ?? _finish,

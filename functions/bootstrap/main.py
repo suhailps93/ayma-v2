@@ -1311,6 +1311,18 @@ async def _prepare_chat(
             None,
         )
 
+    # F2: Ensure server consumes any pending tour stop event in text path
+    await skills.guided_tour.consume_stop_if_pending(get_db(), uid)
+    tour_state = skills.guided_tour._read_state(get_db(), uid)
+    tour_active = bool(
+        tour_state.get("active")
+        and not skills.guided_tour._state_expired(tour_state)
+    )
+
+    if req.tour_continuation and "Skip tour" in req.message:
+        await skills.guided_tour._end(get_db(), uid)
+        return ({"reply": "Ended the guided tour."}, None)
+
     # Deterministic model-stack switch (§13.9/§13.10): a clear "change my brain /
     # voice mode / realtime model to X" is executed BEFORE the model, so it works
     # regardless of which brain is active. Needed because when the active Brain is
@@ -1322,41 +1334,43 @@ async def _prepare_chat(
     # image/photo turns (which skip this block) and crashing the
     # ``compose_system_prompt`` call below (regression from 7f9e0374).
     if not req.image_path.strip() and not req.photo_url.strip():
-        stack_cmd = set_model_stack.detect_stack_command(req.message)
-        if stack_cmd is not None:
-            reply = await set_model_stack.run_stack_command(
-                get_db(), uid, *stack_cmd
-            )
-            return ({"reply": reply}, None)
+        # F3: Mid-tour questions must not trigger navigation that hijacks the tour
+        if not tour_active:
+            stack_cmd = set_model_stack.detect_stack_command(req.message)
+            if stack_cmd is not None:
+                reply = await set_model_stack.run_stack_command(
+                    get_db(), uid, *stack_cmd
+                )
+                return ({"reply": reply}, None)
 
-        # Deterministic named-profile (§13.9): a profile ask that NAMES a
-        # member ("open Sofia's profile") is open_profile, not the You tab —
-        # detect_app_command below maps the bare word "profile" to the
-        # user's own profile and drops the name (Scout retest 2026-11-03).
-        # Runs through the same bound open_profile the model calls; an
-        # unresolvable name answers with its couldn't-find clarification
-        # instead of silently landing on the user's own profile.
-        profile_name = app_control_mod.detect_profile_command(req.message)
-        if profile_name is not None:
-            reply = await app_control_mod.run_profile_command(
-                get_db(), uid, profile_name
-            )
-            return ({"reply": reply}, None)
+            # Deterministic named-profile (§13.9): a profile ask that NAMES a
+            # member ("open Sofia's profile") is open_profile, not the You tab —
+            # detect_app_command below maps the bare word "profile" to the
+            # user's own profile and drops the name (Scout retest 2026-11-03).
+            # Runs through the same bound open_profile the model calls; an
+            # unresolvable name answers with its couldn't-find clarification
+            # instead of silently landing on the user's own profile.
+            profile_name = app_control_mod.detect_profile_command(req.message)
+            if profile_name is not None:
+                reply = await app_control_mod.run_profile_command(
+                    get_db(), uid, profile_name
+                )
+                return ({"reply": reply}, None)
 
-        # Deterministic navigation (§13.9): a clear "open / go to <known page>"
-        # is executed BEFORE the model, so it works regardless of which brain is
-        # active. The open-weights brain (Llama-3.1-8B) is weak at tool-calling
-        # and otherwise leaks the raw tool name ("open_model_page") as the reply
-        # instead of navigating (founder bug 2026-11-03); the capable brains
-        # (Gemini / Meta gateway) reach the same navigation a hair sooner. Strict
-        # (nav verb + a registry-resolvable destination), so ordinary chat is
-        # never intercepted. Mirrors the model-stack determinism just above.
-        app_dest = app_control_mod.detect_app_command(req.message)
-        if app_dest is not None:
-            reply = await app_control_mod.run_app_command(
-                get_db(), uid, app_dest
-            )
-            return ({"reply": reply}, None)
+            # Deterministic navigation (§13.9): a clear "open / go to <known page>"
+            # is executed BEFORE the model, so it works regardless of which brain is
+            # active. The open-weights brain (Llama-3.1-8B) is weak at tool-calling
+            # and otherwise leaks the raw tool name ("open_model_page") as the reply
+            # instead of navigating (founder bug 2026-11-03); the capable brains
+            # (Gemini / Meta gateway) reach the same navigation a hair sooner. Strict
+            # (nav verb + a registry-resolvable destination), so ordinary chat is
+            # never intercepted. Mirrors the model-stack determinism just above.
+            app_dest = app_control_mod.detect_app_command(req.message)
+            if app_dest is not None:
+                reply = await app_control_mod.run_app_command(
+                    get_db(), uid, app_dest
+                )
+                return ({"reply": reply}, None)
 
     image_path = req.image_path.strip()
     image: tuple[bytes, str] | None = None
@@ -1507,6 +1521,18 @@ async def _prepare_chat(
     system_prompt = emotion_mod.apply_to_prompt(
         system_prompt, enabled=_emotion_matching_enabled(uid)
     )
+    if tour_active and not req.tour_continuation:
+        current = skills.guided_tour._index_of(tour_state)
+        steps = skills.guided_tour._steps()
+        step_info = f" (step {current + 1} of {len(steps)})" if 0 <= current < len(steps) else ""
+        system_prompt += (
+            f"\n\n[GUIDED TOUR ACTIVE{step_info}]\n"
+            "The user is in the middle of a guided tour. "
+            "If they ask a question, answer their question inline warmly and concisely. "
+            "Do NOT navigate away or open other screens. "
+            "Remind them that they can continue the tour by tapping the highlighted control "
+            "(or Next on the card), or say stop to end it."
+        )
     # Phase 0 measurement (cost program 2026-09-26): per-component prompt-size
     # breakdown for this turn — logged always, persisted to `token_turns` when
     # CONTEXT_OPT_MEASURE is on. `system` is everything in the prompt that

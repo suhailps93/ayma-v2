@@ -256,6 +256,14 @@ def _story_edit_redirect(action: dict) -> str:
 
 def _bind_open_screen(db, uid: str) -> Callable[..., str]:
     async def open_screen(screen: str = "") -> str:
+        # F3: A mid-tour question must not hijack the tour with screen navigation
+        from . import guided_tour
+        tour_state = guided_tour._read_state(db, uid)
+        if tour_state.get("active") and not guided_tour._state_expired(tour_state):
+            return (
+                "The guided tour is currently active — answer the user's question "
+                "inline without navigating away or opening other screens."
+            )
         asked = screen.strip()
         # A "change / fix / reword / remove / delete … my story" request edits
         # the story in place via edit_story_entry / remove_story_entry — it must

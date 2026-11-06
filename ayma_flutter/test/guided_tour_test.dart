@@ -126,6 +126,62 @@ void main() {
       expect(stop, 0);
     });
 
+    testWidgets('render callout card (F5): headline, say text, counter, Skip and Next CTAs',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      var shown = 0, absent = 0, tapped = 0, stop = 0;
+      await tester.pumpWidget(MaterialApp(
+        theme: AymaTheme.dark,
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned(
+                left: 24,
+                bottom: 24,
+                child: SizedBox(
+                  key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                  width: 64,
+                  height: 64,
+                ),
+              ),
+              Positioned.fill(
+                child: CoachMarkOverlay(
+                  onFinish: () {},
+                  chromeless: false,
+                  stepIndex: 3,
+                  stepTotal: 9,
+                  maxMeasureAttempts: 3,
+                  onAnchorShown: () => shown++,
+                  onAnchorAbsent: () => absent++,
+                  onAnchorTapped: () => tapped++,
+                  onStopPressed: () => stop++,
+                  features: const [
+                    TourFeature(
+                      featureId: 'guided_tour_step_3',
+                      headline: 'Profile Tab',
+                      subtitle: 'Tap Profile to customize your story.',
+                      anchorId: TourAnchors.homeOrb,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ));
+      await settle(tester);
+
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+      expect(find.text('Profile Tab'), findsOneWidget);
+      expect(find.text('Tap Profile to customize your story.'), findsOneWidget);
+      expect(find.text('4 of 9'), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-next')), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
+      expect(shown, 1);
+    });
+
     testWidgets('a missing anchor reports absent (never hangs)', (tester) async {
       var shown = 0, absent = 0, tapped = 0;
       await tester.pumpWidget(drivenHost(
@@ -267,7 +323,9 @@ void main() {
                       child: CoachMarkOverlay(
                         key: ValueKey('guided-tour-${step.token}'),
                         features: [step.feature],
-                        chromeless: true,
+                        stepIndex: step.index,
+                        stepTotal: step.total,
+                        chromeless: false,
                         maxMeasureAttempts: 3,
                         onFinish: GuidedTourController.instance.endSession,
                         onAnchorShown: step.onShown,
@@ -288,18 +346,21 @@ void main() {
     late AppCommandService svc;
     late DocumentReference<Map<String, dynamic>> pending;
     late List<int> tourPings;
+    late List<int> stopPings;
 
     setUp(() async {
       GuidedTourController.instance.endSession();
       VoiceSessionController.active = null; // no live call → text bridge path
       fake = FakeFirebaseFirestore();
       tourPings = <int>[];
+      stopPings = <int>[];
       svc = AppCommandService(
         firestore: fake,
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
         // The TEXT tap bridge: on a tap with no live voice call, the service
         // fires a /chat continuation that makes the model advance the tour.
         sendTourContinuation: (index) async => tourPings.add(index),
+        sendTourStop: (index) async => stopPings.add(index),
       );
       pending = fake.doc('users/u1/app_commands/pending');
     });
@@ -324,10 +385,15 @@ void main() {
       svc.runTourStep(pending, cmd, id: 'c1');
       await settle(tester);
 
-      // The spotlight is up (chromeless — no card text) and the step was acked
+      // The spotlight is up and the callout card renders (F5) with headline,
+      // say text, step counter, skip tour and next button. The step was acked
       // as shown. The session is active.
       expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
-      expect(find.text('Explore'), findsNothing);
+      expect(find.text('Explore'), findsOneWidget);
+      expect(find.text('Now tap Explore to meet people.'), findsOneWidget);
+      expect(find.text('1 of 9'), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-next')), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
       expect(GuidedTourController.instance.sessionActive, isTrue);
       final ack = (await fake.doc('users/u1/app_commands/ack').get()).data();
       expect(ack, isNotNull);
@@ -399,6 +465,35 @@ void main() {
       expect(ev!['index'], 2);
       expect(ev['event'], 'stop');
       expect(GuidedTourController.instance.active, isFalse);
+      expect(stopPings, [2]);
+    });
+
+    testWidgets('tapping Next on callout card advances guided tour (triggers onAnchorTapped)',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(controllerHost());
+      final cmd = <String, dynamic>{
+        'action': 'tour_step',
+        'id': 'c4',
+        'index': 1,
+        'total': 9,
+        'anchor': TourAnchors.homeOrb,
+        'headline': 'Next Step',
+        'say': 'Advance via card button.',
+      };
+      await pending.set(cmd);
+      svc.runTourStep(pending, cmd, id: 'c4');
+      await settle(tester);
+
+      // Tap Next button on callout card
+      await tester.tap(find.byKey(const ValueKey('coach-next')));
+      await settle(tester);
+      final ev = (await fake.doc('users/u1/app_commands/tour_event').get()).data();
+      expect(ev!['index'], 1);
+      expect(ev['event'], 'tapped');
+      expect(tourPings, [1]);
     });
 
     testWidgets('tour_end dismisses the overlay and acks ok', (tester) async {

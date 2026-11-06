@@ -57,7 +57,7 @@ logger = logging.getLogger("ayma.guided_tour")
 # anchor is absent (ok=false). A step can switch tab + pop a pushed sub-page +
 # scroll the anchor into view before it lays out, so this rides out more than a
 # plain navigate; still bounded, so a dead client never hangs the turn.
-_SPOTLIGHT_ACK_TIMEOUT_SECONDS = 8.0
+_SPOTLIGHT_ACK_TIMEOUT_SECONDS = 10.0
 
 # How long one ``advance`` waits for the user to tap the spotlighted control
 # before returning a gentle "still waiting" (the tap event persists, so the
@@ -245,13 +245,15 @@ def _step_payload(index: int, total: int, step: dict) -> dict:
     }
 
 
-async def _spotlight(db, uid: str, index: int, total: int, step: dict) -> bool:
+async def _spotlight(db, uid: str, index: int, total: int, step: dict) -> bool | None:
     """Queue one ``tour_step`` command and wait for the client to confirm the
-    spotlight is up (``True``) or report the anchor absent / no ack
-    (``False`` → caller skips the step honestly)."""
+    spotlight is up (``True``) or report the anchor absent (``False``).
+    Returns ``None`` when the client never acked (timeout)."""
     cmd_id = _queue_command(db, uid, _step_payload(index, total, step))
     ack = await _await_ack(db, uid, cmd_id, timeout=_SPOTLIGHT_ACK_TIMEOUT_SECONDS)
-    return bool(ack and ack.get("ok"))
+    if ack is None:
+        return None
+    return bool(ack.get("ok"))
 
 
 def _skip_in_voice(step: dict, voice: bool) -> bool:
@@ -271,8 +273,10 @@ async def _present_from(
     """Spotlight the first presentable step at or after ``start`` — skipping any
     whose anchor the client reports absent, and any that can't be done in the
     current mode (``skip_in_voice`` during a voice session). Returns
-    ``(index, step)`` on success, or ``(-1, None)`` when no further step can be
-    shown. Clears the tap event and records the shown index on the state doc."""
+    ``(index, step)`` on success, ``(-2, None)`` when an attempted step timed out
+    un-acked (so caller does not advance without ack), or ``(-1, None)`` when no
+    further step can be shown. Clears the tap event and records the shown index
+    on the state doc."""
     steps = _steps()
     total = len(steps)
     i = start
@@ -288,10 +292,17 @@ async def _present_from(
         # wrongly rejects a real tap (founder/Scout, 2026-11-03). On an absent
         # anchor the next iteration overwrites this with the step actually shown.
         await asyncio.to_thread(_write_state, db, uid, i, True)
-        if await _spotlight(db, uid, i, total, steps[i]):
+        res = await _spotlight(db, uid, i, total, steps[i])
+        if res is True:
             return i, steps[i]
-        logger.info("guided tour: step %d anchor absent — skipping", i)
-        i += 1
+        elif res is False:
+            logger.info("guided tour: step %d anchor absent — skipping", i)
+            i += 1
+            continue
+        else:
+            # Client never acked: F1 — a step must NOT advance without its ack!
+            logger.warning("guided tour: step %d spotlight un-acked — not advancing", i)
+            return -2, None
     return -1, None
 
 
@@ -302,19 +313,35 @@ async def _end(db, uid: str) -> None:
     await asyncio.to_thread(_clear_event, db, uid)
 
 
+async def consume_stop_if_pending(db, uid: str) -> bool:
+    """Consume an unconsumed 'stop' tour_event in text chat if present (F2).
+    If the client wrote a stop event while a tour was active, end the tour
+    server-side so tour_state doesn't linger active:true. Returns True if
+    a stop event was consumed."""
+    try:
+        snap = await asyncio.to_thread(_event_doc(db, uid).get)
+        data = snap.to_dict() if getattr(snap, "exists", False) else None
+        if data and str(data.get("event")) == "stop":
+            await _end(db, uid)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def _say_directive(index: int, total: int, step: dict) -> str:
     """The tool result handed back to the model: the script line to speak (in
     her own voice) plus what to do next. Operational directive, not script copy
     — the copy itself comes from the registry (``step['say']``)."""
     return (
-        f"Guided tour — step {index + 1} of {total} is now spotlighted. "
+        f"Guided tour — step {index + 1} of {total} is now spotlighted with its callout card. "
         f"Say ONLY this to the user, warmly and in your own voice, about THIS "
         f"highlighted control (don't mention any other feature yet): "
         f"\"{step['say']}\" Then call advance_guided_tour — it waits until they "
-        "actually TAP the highlighted control and moves on ONLY then. Do NOT "
-        "advance on a spoken 'next' / 'what's next' / 'okay' — those do not move "
-        "the tour; if they say that, gently tell them to tap the highlighted "
-        "control. Only call stop_guided_tour if they ask to stop or quit."
+        "actually TAP the highlighted control (or Next on the card) and moves on ONLY then. "
+        "If they say 'next' or 'continue', continue the tour from this step. "
+        "If they say 'back' or 'previous', call back_guided_tour to return to the previous step. "
+        "Only call stop_guided_tour if they ask to stop or quit."
     )
 
 
@@ -344,8 +371,22 @@ def _bind_start_guided_tour(db, uid: str, voice: bool = False) -> Callable[..., 
         steps = _steps()
         if not steps:
             return _NO_STEPS
+        state = await asyncio.to_thread(_read_state, db, uid)
+        # F4: If a tour is already active, "next" / calling start continues from
+        # the current step rather than restarting at step 0.
+        if state.get("active") and not _state_expired(state):
+            current = _index_of(state)
+            if 0 <= current < len(steps):
+                index, step = await _present_from(db, uid, current, voice)
+                if index == -2:
+                    return (
+                        f"Still on step {current + 1} — waiting for the app to show the highlight. "
+                        "Gently tell the user to continue or say stop to end the tour."
+                    )
+                if step is not None:
+                    return _say_directive(index, len(steps), step)
         index, step = await _present_from(db, uid, 0, voice)
-        if step is None:
+        if index == -2 or step is None:
             await _end(db, uid)
             return _NOT_SHOWN
         return _say_directive(index, len(steps), step)
@@ -361,14 +402,10 @@ def _bind_advance_guided_tour(
 ) -> Callable[..., object]:
     async def advance_guided_tour() -> str:
         # Advancement is gated STRICTLY on the user's real tap of the currently
-        # spotlighted control — never on a spoken/typed "next" and never on the
-        # model's own choice to call this tool (founder, 2026-11-03: "it is
-        # moving to the next step even without the user acknowledging that he
-        # did that"). There is deliberately no skip parameter: this tool returns
-        # the next step ONLY after the client reports the tap event for the
-        # current step; otherwise it returns an honest "still waiting" and the
-        # tour stays put. ``tap_timeout`` is a surface bind knob (the text
-        # surface passes the short sync bound), never a model parameter.
+        # spotlighted control (or tapping Next on the card) — never on the
+        # model's own choice to call this tool. There is deliberately no skip
+        # parameter: this tool returns the next step ONLY after the client reports
+        # the tap event for the current step; otherwise it returns an honest "still waiting".
         steps = _steps()
         total = len(steps)
         state = await asyncio.to_thread(_read_state, db, uid)
@@ -391,8 +428,8 @@ def _bind_advance_guided_tour(
             return (
                 f"Still on step {current + 1} — the user has NOT tapped "
                 f"{control!r} yet, so the tour has NOT moved. Gently tell them to "
-                "tap the highlighted control to continue (a spoken 'next' does not "
-                "advance it), or that they can say stop to end the tour. Do not "
+                "tap the highlighted control (or Next on the card) to continue, "
+                "or that they can say stop to end the tour. Do not "
                 "claim they moved on."
             )
         if str(event.get("event")) == "stop":
@@ -402,6 +439,16 @@ def _bind_advance_guided_tour(
                 "them know they can ask for it again anytime."
             )
         index, step = await _present_from(db, uid, current + 1, voice)
+        if index == -2:
+            # F1: Step was un-acked — do NOT advance! Stay on current step and re-prompt.
+            await asyncio.to_thread(_write_state, db, uid, current, True)
+            cur_step = steps[current] if 0 <= current < total else {}
+            control = str(cur_step.get("headline") or "the highlighted control")
+            return (
+                f"Still on step {current + 1} — waiting for {control!r}. "
+                "Gently tell them to tap the highlighted control to continue, "
+                "or say stop to end the tour."
+            )
         if step is None:
             await _end(db, uid)
             return (
@@ -411,6 +458,37 @@ def _bind_advance_guided_tour(
         return _say_directive(index, total, step)
 
     return advance_guided_tour
+
+
+# --- back ---------------------------------------------------------------------
+
+
+def _bind_back_guided_tour(
+    db, uid: str, voice: bool = False
+) -> Callable[..., object]:
+    async def back_guided_tour() -> str:
+        steps = _steps()
+        total = len(steps)
+        state = await asyncio.to_thread(_read_state, db, uid)
+        if not state.get("active"):
+            return _NO_TOUR
+        if _state_expired(state):
+            await _end(db, uid)
+            return _EXPIRED
+        current = _index_of(state)
+        if current < 0:
+            return _NO_TOUR
+        prev_index = max(0, current - 1)
+        index, step = await _present_from(db, uid, prev_index, voice)
+        if index == -2 or step is None:
+            await asyncio.to_thread(_write_state, db, uid, current, True)
+            return (
+                f"Still on step {current + 1} — could not move to the previous step. "
+                "Gently tell the user to continue from the current step."
+            )
+        return _say_directive(index, total, step)
+
+    return back_guided_tour
 
 
 # --- stop ---------------------------------------------------------------------
@@ -430,20 +508,8 @@ def _bind_stop_guided_tour(db, uid: str) -> Callable[..., object]:
     return stop_guided_tour
 
 
-# --- deterministic pre-model tour-start intent (voice backstop) ------------------
-#
-# Mirrors set_model_stack.detect_stack_command and
-# app_control_navigation.detect_app_command: a clear "start the guided tour" is
-# executed BEFORE the model, so it fires even when the realtime model would
-# otherwise refuse it from the call (founder, prod 2284). The voice lane runs
-# this matcher on each finalized user turn (agent.py); the text lane is
-# untouched — its model already emits start_guided_tour reliably.
-#
-# Kept strict: a start/open verb AND a tour reference that resolves in the
-# registry (app_registry.find_guided_tour — the single source of truth), so
-# ordinary chat is never intercepted. A stop/quit/end is deliberately excluded
-# here so it still reaches stop_guided_tour, and a spoken "next"/"continue" is
-# excluded so it can never drive the tour (advance is tap-gated by design).
+# --- deterministic pre-model tour command matching ---------------------------
+
 _TOUR_START_VERB = re.compile(
     r"\b(?:"
     r"start|begin|launch|restart|redo|kick\s+off|give\s+me|"
@@ -493,10 +559,19 @@ ADVANCE_GUIDED_TOUR = Skill(
         "name": "advance_guided_tour",
         "description": _prompt("advance_guided_tour"),
         # No parameters by design: there is no "skip" — the tour advances ONLY
-        # when the user taps the spotlighted control.
+        # when the user taps the spotlighted control or Next on the card.
         "parameters": {"type": "object", "properties": {}},
     },
     bind=_bind_advance_guided_tour,
+)
+
+BACK_GUIDED_TOUR = Skill(
+    declaration={
+        "name": "back_guided_tour",
+        "description": _prompt("back_guided_tour"),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    bind=_bind_back_guided_tour,
 )
 
 STOP_GUIDED_TOUR = Skill(
@@ -508,4 +583,9 @@ STOP_GUIDED_TOUR = Skill(
     bind=_bind_stop_guided_tour,
 )
 
-SKILLS: list[Skill] = [START_GUIDED_TOUR, ADVANCE_GUIDED_TOUR, STOP_GUIDED_TOUR]
+SKILLS: list[Skill] = [
+    START_GUIDED_TOUR,
+    ADVANCE_GUIDED_TOUR,
+    BACK_GUIDED_TOUR,
+    STOP_GUIDED_TOUR,
+]
