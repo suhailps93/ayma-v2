@@ -37,7 +37,15 @@ def audit_branches(clones_dir: str = '~/workspace/ayma-fleet-clones', shared_rep
 
         print(f"{branch}, {present_in_clones}, {present_in_shared}, {status}")
 
-    if any(status in ['UNPUSHED', 'ORPHANED'] for branch, present_in_clones, present_in_shared, status in zip(sorted(shared_branches.union(*clone_branches.values())), [present_in_clones] * len(shared_branches.union(*clone_branches.values())), [present_in_shared] * len(shared_branches.union(*clone_branches.values())), [status] * len(shared_branches.union(*clone_branches.values()))):
+    if any(
+        status in ['UNPUSHED', 'ORPHANED']
+        for branch, present_in_clones, present_in_shared, status in zip(
+            sorted(shared_branches.union(*clone_branches.values())),
+            [present_in_clones] * len(shared_branches.union(*clone_branches.values())),
+            [present_in_shared] * len(shared_branches.union(*clone_branches.values())),
+            [status] * len(shared_branches.union(*clone_branches.values()))
+        )
+    ):
         exit(1)
     else:
         exit(0)
