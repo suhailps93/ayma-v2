@@ -364,9 +364,12 @@ class AsyncVoiceQueue extends ChangeNotifier {
     _adoptUserTurnImmediate(item, target);
     notifyListeners();
     await _persist();
-    // Queue transition: reconcile any earlier submitted-but-unresolved job.
+    // Queue transition: reconcile any earlier submitted-but-unresolved job
+    // that lacks an active watcher (e.g. restored offline or watch dropped).
     for (final m in _items) {
-      if (m.jobId != item.jobId && m.submitted) {
+      if (m.jobId != item.jobId &&
+          m.submitted &&
+          !_watchers.containsKey(m.jobId)) {
         _watchFailed.add(m.jobId);
         unawaited(_stopWatching(m.jobId));
       }

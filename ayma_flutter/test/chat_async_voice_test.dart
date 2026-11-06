@@ -309,6 +309,93 @@ void main() {
     expect(player.playedUrls, ['https://cdn.example/r.wav']);
   });
 
+  testWidgets(
+    'regression (note 113): second mic hold during an in-flight job starts recording '
+    'and both jobs complete as separate bubbles',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = TranscriptStore();
+      final voice = _FakeVoice();
+      final queue = _FakeQueue(store);
+      final controller = AsyncVoiceController(
+        recorder: _FakeRecorder(),
+        queue: queue,
+      );
+      final player = _FakePlayer();
+      addTearDown(controller.dispose);
+      addTearDown(queue.dispose);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: ChatScreen(
+            apiClient: await _api(),
+            voiceController: voice,
+            transcriptStore: store,
+            asyncVoiceController: controller,
+            asyncVoiceQueue: queue,
+            asyncVoicePlayer: player,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // First mic hold: start recording message 1
+      final mic = find.byIcon(Icons.mic_none_rounded);
+      expect(mic, findsOneWidget);
+      final gesture1 = await tester.startGesture(tester.getCenter(mic));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(controller.state, AsyncVoiceUiState.recording);
+      expect(find.text('Release to send'), findsOneWidget);
+
+      // Release message 1: sent locally as first bubble; job is now in-flight
+      await gesture1.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(queue.delivered, hasLength(1));
+      expect(find.text('Voice message'), findsOneWidget);
+      final job1 = queue.delivered.first;
+
+      // Second mic hold while job 1 is in flight: MUST start recording immediately
+      final gesture2 = await tester.startGesture(tester.getCenter(mic));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(controller.state, AsyncVoiceUiState.recording);
+      expect(find.text('Release to send'), findsOneWidget);
+
+      // Release message 2: sent locally as second bubble
+      await gesture2.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(queue.delivered, hasLength(2));
+      expect(find.text('Voice message'), findsNWidgets(2));
+      final job2 = queue.delivered[1];
+      expect(job2, isNot(job1));
+
+      // Both jobs complete server-side and land as separate bubbles
+      queue.complete(
+        job1,
+        transcript: 'first question',
+        reply: 'first reply',
+        replyAudioUrl: 'https://cdn.example/r1.wav',
+      );
+      await tester.pump();
+      expect(find.text('first question'), findsOneWidget);
+      expect(find.text('first reply'), findsOneWidget);
+
+      queue.complete(
+        job2,
+        transcript: 'second question',
+        reply: 'second reply',
+        replyAudioUrl: 'https://cdn.example/r2.wav',
+      );
+      await tester.pump();
+      expect(find.text('second question'), findsOneWidget);
+      expect(find.text('second reply'), findsOneWidget);
+      expect(find.text('Voice message'), findsNWidgets(4));
+    },
+  );
+
   testWidgets('a call that cannot connect offers the voice-message fallback', (
     tester,
   ) async {
