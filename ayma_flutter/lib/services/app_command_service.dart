@@ -7,6 +7,7 @@ import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
 import '../screens/explore_screen.dart';
+import '../screens/notification_center_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
@@ -14,6 +15,7 @@ import 'api_client.dart';
 import 'app_context.dart';
 import 'guided_tour_controller.dart';
 import 'navigation_history.dart';
+import 'inbox_actions.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
 import 'pair_key.dart';
@@ -98,6 +100,12 @@ import 'voice_session_controller.dart';
 ///   playback has started, reporting whether a live voice session was
 ///   disconnected to play the clip (the session reconnects, with
 ///   context, when the clip finishes).
+/// * the inbox actions — `mark_all_notifications_read`,
+///   `clear_all_notifications` and `mark_all_conversations_read`
+///   ([InboxActions]; founder feedback
+///   items 9–11, 2026-11-06: the buttons existed on the Notifications
+///   page but Ayma had no commands for them). They own their acks like
+///   `play_voice_clip`: the ack carries the count that actually moved.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
@@ -123,7 +131,9 @@ class AppCommandService {
     Future<void> Function(int index)? sendTourStop,
     VoiceClipRegistry? clipRegistry,
     VoiceClipPlayback? clipPlayback,
-  })  : _clipRegistry = clipRegistry ?? VoiceClipRegistry.instance,
+    InboxActions? inboxActions,
+  })  : _inboxActions = inboxActions ?? InboxActions(),
+        _clipRegistry = clipRegistry ?? VoiceClipRegistry.instance,
         _clipPlayback = clipPlayback ?? VoiceClipPlayback(),
         _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
         _sendTourStop = sendTourStop ?? _postTourStop,
@@ -454,6 +464,14 @@ class AppCommandService {
       unawaited(_runPlayVoiceClipCommand(snap.reference, data, id));
       return;
     }
+    if (data['action'] == 'mark_all_notifications_read' ||
+        data['action'] == 'clear_all_notifications' ||
+        data['action'] == 'mark_all_conversations_read') {
+      // Inbox actions own their acks (like play_voice_clip): the ack
+      // reports the count that actually moved, not a bare ok.
+      unawaited(_runInboxCommand(snap.reference, data, id));
+      return;
+    }
     if (data['action'] == 'tour_step') {
       // The Ayma-driven tour spotlights one step and acks it only once the
       // overlay reports it shown (or its anchor absent), then waits for the
@@ -555,6 +573,63 @@ class AppCommandService {
     } catch (e) {
       debugPrint('Ayma play_voice_clip failed: $e');
       return const PlaybackStart.failed('The clip could not be played.');
+    }
+  }
+
+  /// The bulk inbox actions `mark_all_notifications_read` and friends
+  /// run through. Injectable for tests; the default performs the same
+  /// NotificationService / DmService writes the on-screen buttons run.
+  final InboxActions _inboxActions;
+
+  /// Run one inbox command, then ack with the outcome: `ok`, plus what
+  /// actually happened (`result`) or why nothing did (`reason`).
+  Future<void> _runInboxCommand(
+      DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd,
+      String id) async {
+    final out = await runInboxCommand(cmd);
+    await ref.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': out.ok,
+      if (out.ok) 'result': out.message else 'reason': out.message,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Execute one inbox command; any failure is reported, never thrown.
+  @visibleForTesting
+  Future<InboxActionResult> runInboxCommand(Map<String, dynamic> cmd) async {
+    final action = (cmd['action'] as String? ?? '').trim();
+    try {
+      switch (action) {
+        case 'mark_all_notifications_read':
+          final n = await _inboxActions.markAllNotificationsRead();
+          return InboxActionResult(
+              true,
+              n == 0
+                  ? 'No unread notifications.'
+                  : 'Marked $n notification${n == 1 ? '' : 's'} as read.');
+        case 'clear_all_notifications':
+          final n = await _inboxActions.clearAllNotifications();
+          return InboxActionResult(
+              true,
+              n == 0
+                  ? 'No notifications to clear.'
+                  : 'Cleared $n notification${n == 1 ? '' : 's'}.');
+        case 'mark_all_conversations_read':
+          final n = await _inboxActions.markAllConversationsRead();
+          return InboxActionResult(
+              true,
+              n == 0
+                  ? 'No unread conversations.'
+                  : 'Marked $n conversation${n == 1 ? '' : 's'} as read.');
+        default:
+          return InboxActionResult(false, 'Unknown inbox action: $action');
+      }
+    } catch (e) {
+      debugPrint('Ayma inbox action $action failed: $e');
+      return const InboxActionResult(false, 'That inbox action failed.');
     }
   }
 
