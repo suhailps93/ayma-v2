@@ -76,8 +76,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             final orbState = switch (phase) {
               VoiceSessionPhase.connecting ||
               VoiceSessionPhase.waking => AymaOrbState.thinking,
-              VoiceSessionPhase.live =>
-                speaking ? AymaOrbState.speaking : AymaOrbState.listening,
+              VoiceSessionPhase.live => voice.reconnecting
+                  ? AymaOrbState.thinking
+                  : (speaking
+                        ? AymaOrbState.speaking
+                        : AymaOrbState.listening),
               _ => AymaOrbState.idle,
             };
             final label = switch (phase) {
@@ -88,13 +91,15 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               VoiceSessionPhase.waking => 'Waking Ayma…',
               VoiceSessionPhase.live => voice.muted
                   ? 'Muted'
-                  : (speaking
-                        ? 'Ayma is speaking…'
-                        : (voice.activeToolLabel ??
-                              voice.warmingNotice ??
-                              (voice.awaitingFirstResponse
-                                  ? 'Connecting…'
-                                  : 'Listening…'))),
+                  : (voice.reconnecting
+                        ? 'Reconnecting…'
+                        : (speaking
+                              ? 'Ayma is speaking…'
+                              : (voice.activeToolLabel ??
+                                    voice.warmingNotice ??
+                                    (voice.awaitingFirstResponse
+                                        ? 'Connecting…'
+                                        : 'Listening…')))),
               _ => '',
             };
             return Stack(
@@ -123,7 +128,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         // with no connected glow, then switches at the live
                         // state — it must not read as an active call before
                         // Ayma can actually hear the caller.
-                        voiceLive: voice.isListening,
+                        voiceLive: voice.isListening && !voice.reconnecting,
                       ),
                       const SizedBox(height: 32),
                       Text(

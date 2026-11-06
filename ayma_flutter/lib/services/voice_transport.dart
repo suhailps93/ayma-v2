@@ -126,14 +126,22 @@ abstract class VoiceTransport {
   /// instead of only advancing if a blocking tool call happened to be mid-wait.
   Future<void> sendTourTapped({required int index});
 
+  /// Mid-call connection state: emits `true` when an established call's
+  /// connection drops and the SDK starts re-establishing it, `false` when it
+  /// has reconnected (the same session resumes — no new room, the agent
+  /// never left). The initial connect is covered by [connect] itself; this
+  /// is only for drops after a successful connect. If reconnection
+  /// ultimately fails, [closed] fires instead of a final `false`.
+  Stream<bool> get reconnecting;
+
   /// Emits once if the transport drops unexpectedly (network / server close).
   Stream<Object> get closed;
 
   /// [forceRelay] forces the WebRTC ICE transport policy to TURN relay —
   /// LiveKit Cloud serves TURN over TLS/443, which survives UDP-blocking
-  /// networks. Used only by the controller's one-shot ice-relay-retry after
-  /// a first attempt dies with an ICE-connectivity timeout
-  /// ([isIceConnectivityFailure]).
+  /// networks. Used only by the controller's one-shot relay retry after a
+  /// first connect attempt fails (the classic case is an ICE-connectivity
+  /// timeout, [isIceConnectivityFailure]).
   Future<void> connect({
     required String url,
     required String token,
@@ -149,10 +157,11 @@ abstract class VoiceTransport {
 
 /// True when [error] is LiveKit's "the PeerConnection never reached
 /// connected" failure — client ↔ LiveKit Cloud ICE connectivity, typically a
-/// UDP-blocking network. This is the (and the only) failure worth one
-/// automatic retry with `forceRelay: true`; a bad token / unreachable server
-/// ([ConnectException]) would fail identically over relay. Lives here so
-/// [VoiceSessionController] never has to import `livekit_client` itself.
+/// UDP-blocking network. Lives here so [VoiceSessionController] never has to
+/// import `livekit_client` itself. The controller retries any first-attempt
+/// connect failure once with `forceRelay: true`; this classifier remains
+/// for logging/reporting, to tell the classic ICE timeout apart from other
+/// connect failures.
 bool isIceConnectivityFailure(Object error) => error is MediaConnectException;
 
 /// Real transport backed by a LiveKit [Room].
@@ -170,6 +179,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _agentMute = StreamController<bool>.broadcast();
   final _practiceCoach = StreamController<String>.broadcast();
   final _voiceStatus = StreamController<String>.broadcast();
+  final _reconnecting = StreamController<bool>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
   final _agentLevel = StreamController<double>.broadcast();
@@ -235,6 +245,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Stream<String> get voiceStatus => _voiceStatus.stream;
 
   @override
+  Stream<bool> get reconnecting => _reconnecting.stream;
+
+  @override
   Stream<Object> get closed => _closed.stream;
 
   @override
@@ -266,10 +279,21 @@ class LiveKitVoiceTransport implements VoiceTransport {
           _markAgentReady('remote audio from ${e.participant.identity}');
         }
       })
-      ..on<RoomReconnectingEvent>(
-          (_) => debugPrint('[voice] reconnecting'))
+      ..on<RoomReconnectingEvent>((_) {
+        // A mid-call blip: the SDK is re-establishing the connection and
+        // will resume this same session if it succeeds. Surface it so the
+        // UI can say "Reconnecting…" instead of sitting on a stale
+        // "Listening…" over dead air.
+        debugPrint('[voice] reconnecting');
+        if (!_reconnecting.isClosed) _reconnecting.add(true);
+      })
+      ..on<RoomReconnectedEvent>((_) {
+        debugPrint('[voice] reconnected');
+        if (!_reconnecting.isClosed) _reconnecting.add(false);
+      })
       ..on<RoomDisconnectedEvent>((e) {
         debugPrint('[voice] RoomDisconnected: ${e.reason}');
+        if (!_reconnecting.isClosed) _reconnecting.add(false);
         if (!_closed.isClosed) {
           _closed.add(e.reason ?? 'disconnected');
         }
@@ -437,6 +461,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_agentMute.isClosed) await _agentMute.close();
     if (!_practiceCoach.isClosed) await _practiceCoach.close();
     if (!_voiceStatus.isClosed) await _voiceStatus.close();
+    if (!_reconnecting.isClosed) await _reconnecting.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();
     if (!_agentLevel.isClosed) await _agentLevel.close();

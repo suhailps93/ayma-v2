@@ -527,7 +527,7 @@ void main() {
     expect(c.phase, VoiceSessionPhase.error);
   });
 
-  // --- ice-relay-retry: one automatic TURN-relay retry on an ICE timeout ---
+  // --- relay retry: one automatic TURN-relay retry on a connect failure ---
 
   test(
       'an ICE timeout on the first connect retries once with relay forced '
@@ -600,13 +600,15 @@ void main() {
     expect(transports[1].disposeCalls, 1);
   });
 
-  test('a non-ICE connect failure does not trigger the relay retry', () async {
+  test('a non-ICE connect failure also retries once with relay forced',
+      () async {
     final transports = <FakeVoiceTransport>[];
     final c = VoiceSessionController(
       transcriptStore: TranscriptStore(),
       apiClient: _api(),
       transportFactory: () {
-        final t = FakeVoiceTransport()..failConnect = true;
+        final t = FakeVoiceTransport();
+        if (transports.isEmpty) t.failConnect = true;
         transports.add(t);
         return t;
       },
@@ -614,10 +616,17 @@ void main() {
 
     await c.start();
 
-    expect(transports, hasLength(1));
-    expect(transports.single.connectCalls, [false]);
-    expect(c.relayRetrying, isFalse);
-    expect(c.phase, VoiceSessionPhase.error);
+    // Attempt 1 died with a plain (non-ICE) error — on a lossy handset
+    // connection the signaling leg can fail before ICE even starts, so the
+    // forgiving route still applies: one relay-forced retry, which
+    // connected.
+    expect(transports, hasLength(2));
+    expect(transports[0].connectCalls, [false]);
+    expect(transports[1].connectCalls, [true]);
+    expect(c.relayRetrying, isTrue);
+    expect(c.phase, VoiceSessionPhase.waking);
+
+    await c.stop();
   });
 
   test('a fresh start() clears relayRetrying from a previous session',
@@ -646,6 +655,41 @@ void main() {
     expect(transports.last.connectCalls, [false]);
 
     await c.stop();
+  });
+
+  // --- mid-call reconnect: a blip surfaces, then resumes, never ends ---
+
+  test('a mid-call reconnect surfaces and clears without ending the call',
+      () async {
+    final t = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => t,
+    );
+
+    await c.start();
+    t.markAgentReady();
+    await Future<void>.delayed(Duration.zero);
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(c.reconnecting, isFalse);
+
+    // The connection drops mid-call; the SDK starts re-establishing it.
+    t.emitReconnecting(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.reconnecting, isTrue);
+    // The call is NOT over — no error, still live.
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(c.errorMessage, isNull);
+
+    // The SDK resumes the same session.
+    t.emitReconnecting(false);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.reconnecting, isFalse);
+    expect(c.phase, VoiceSessionPhase.live);
+
+    await c.stop();
+    expect(c.reconnecting, isFalse);
   });
 
   test('agentSpeaking reflects transport events while live', () async {

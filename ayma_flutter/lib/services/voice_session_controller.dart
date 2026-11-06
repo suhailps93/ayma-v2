@@ -239,6 +239,7 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<String>? _coachSub;
   StreamSubscription<String>? _voiceStatusSub;
   StreamSubscription<Object>? _closedSub;
+  StreamSubscription<bool>? _reconnectingSub;
   StreamSubscription<double>? _micLevelSub;
   StreamSubscription<double>? _aymaLevelSub;
   Timer? _wakingTimer;
@@ -333,14 +334,23 @@ class VoiceSessionController extends ChangeNotifier {
   bool get aymaQuiet => _aymaQuiet;
 
   /// True from the moment a one-shot retry kicks in for the current
-  /// `start()`: either the first connect attempt died with an
-  /// ICE-connectivity timeout ([isIceConnectivityFailure]) and we're retrying
-  /// once with the ICE transport policy forced to TURN relay, or the agent
-  /// never joined and we're starting over in a fresh room
+  /// `start()`: either the first connect attempt failed (classically an
+  /// ICE-connectivity timeout, [isIceConnectivityFailure]) and we're
+  /// retrying once with the ICE transport policy forced to TURN relay, or
+  /// the agent never joined and we're starting over in a fresh room
   /// ([_onWakingTimeout]). The existing connecting status line reads
   /// "Reconnecting…" instead of "Connecting…" while this is set; no other UI.
   bool _relayRetrying = false;
   bool get relayRetrying => _relayRetrying;
+
+  /// True while an established call's transport is re-establishing a
+  /// dropped connection (a weak-network blip). The call is NOT over: the
+  /// LiveKit SDK resumes the same session when the connection returns, so
+  /// the phase stays `live` and the voice surfaces read "Reconnecting…"
+  /// until the transport reports the reconnect. Only if the SDK gives up
+  /// does [VoiceTransport.closed] fire and the call end as dropped.
+  bool _reconnecting = false;
+  bool get reconnecting => _reconnecting;
 
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
@@ -466,6 +476,7 @@ class VoiceSessionController extends ChangeNotifier {
       _cappedError = false;
       _backgroundPermissionDenied = false;
       _relayRetrying = false;
+      _reconnecting = false;
       _agentSpeaking = false;
       _agentReadySeen = false;
       _agentRespondedOnce = false;
@@ -558,20 +569,26 @@ class VoiceSessionController extends ChangeNotifier {
         // comment below) so the return value is not needed.
         await _connectTransport(url: url, token: token, forceRelay: false);
       } catch (e) {
-        if (!isIceConnectivityFailure(e)) rethrow;
-        // The PeerConnection never reached connected — ICE connectivity
-        // between this client and LiveKit Cloud, typically a UDP-blocking
-        // network. Retry ONCE with the ICE transport policy forced to TURN
-        // relay (LiveKit Cloud serves TURN over TLS/443). A second failure
-        // propagates to the generic catch below — the existing error surface.
-        debugPrint('[voice] connect attempt 1 failed with ICE timeout: $e');
+        // ANY first-attempt connect failure gets one forgiving retry with
+        // the ICE transport policy forced to TURN relay (LiveKit Cloud
+        // serves TURN over TLS/443). The classic case is the
+        // ICE-connectivity timeout ([isIceConnectivityFailure] — the
+        // PeerConnection never reached connected on a UDP-blocking
+        // network), but on a lossy handset connection the signaling leg can
+        // die first and present differently at this layer; the forgiving
+        // route is the same either way. A genuinely unrecoverable failure
+        // (bad token, server down) simply fails again on the retry and
+        // propagates to the generic catch below — the existing error
+        // surface, one attempt later.
+        debugPrint('[voice] connect attempt 1 failed: $e'
+            '${isIceConnectivityFailure(e) ? ' (ICE connectivity)' : ''}');
         debugPrint(
-            '[voice] ice-relay-retry: retrying once with TURN relay forced');
+            '[voice] relay-retry: retrying once with TURN relay forced');
         await _teardown();
         _relayRetrying = true;
         notifyListeners(); // status line: "Connecting…" -> "Reconnecting…"
         await _connectTransport(url: url, token: token, forceRelay: true);
-        debugPrint('[voice] ice-relay-retry: relay connect succeeded');
+        debugPrint('[voice] relay-retry: relay connect succeeded');
       }
 
       // The room is connected, but the mic is deliberately NOT published yet:
@@ -630,7 +647,7 @@ class VoiceSessionController extends ChangeNotifier {
 
   /// Build a fresh transport, wire every stream listener, and connect —
   /// one attempt of `start()`'s connect step (attempt 2 is the one-shot
-  /// ice-relay-retry with [forceRelay] set). On a thrown connect the caller
+  /// relay retry with [forceRelay] set). On a thrown connect the caller
   /// owns cleanup via [_teardown]; the field assignments here all happen
   /// synchronously before the single `await`, so `_teardown()`'s
   /// snapshot-and-null discipline holds.
@@ -706,6 +723,18 @@ class VoiceSessionController extends ChangeNotifier {
       _report(const VoiceStartError('voice connection dropped'), null,
           'dropped');
       _fail('The voice connection dropped.');
+    });
+    _reconnectingSub = transport.reconnecting.listen((reconnecting) {
+      // Same stale-transport guard as `closed`: an event queued by a
+      // transport this controller has already torn down must not touch the
+      // newer session. A mid-call blip only flips the honest status line —
+      // the phase stays live and the call is never failed from here; if
+      // the SDK cannot recover it fires `closed`, handled above.
+      if (!identical(_transport, transport)) return;
+      if (_reconnecting == reconnecting) return;
+      _reconnecting = reconnecting;
+      debugPrint('[voice] transport reconnecting: $reconnecting');
+      notifyListeners();
     });
 
     await transport.connect(url: url, token: token, forceRelay: forceRelay);
@@ -1271,6 +1300,7 @@ class VoiceSessionController extends ChangeNotifier {
     final coachSub = _coachSub;
     final voiceStatusSub = _voiceStatusSub;
     final closedSub = _closedSub;
+    final reconnectingSub = _reconnectingSub;
     final micLevelSub = _micLevelSub;
     final aymaLevelSub = _aymaLevelSub;
     final transport = _transport;
@@ -1286,6 +1316,8 @@ class VoiceSessionController extends ChangeNotifier {
     _voiceTrouble = false;
     _aymaQuiet = false;
     _closedSub = null;
+    _reconnectingSub = null;
+    _reconnecting = false;
     _micLevelSub = null;
     _aymaLevelSub = null;
     _micCaptured = false;
@@ -1312,6 +1344,7 @@ class VoiceSessionController extends ChangeNotifier {
       await coachSub?.cancel();
       await voiceStatusSub?.cancel();
       await closedSub?.cancel();
+      await reconnectingSub?.cancel();
       await micLevelSub?.cancel();
       await aymaLevelSub?.cancel();
       micLevel.value = 0;
@@ -1435,6 +1468,7 @@ class VoiceSessionController extends ChangeNotifier {
     _toolEventsSub?.cancel();
     _coachSub?.cancel();
     _closedSub?.cancel();
+    _reconnectingSub?.cancel();
     _micLevelSub?.cancel();
     _aymaLevelSub?.cancel();
     unawaited(_teardown());

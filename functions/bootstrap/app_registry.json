@@ -170,5 +170,14 @@
     "aliases": ["voice message", "voice messages", "voice note", "voice notes", "send a voice message", "leave a voice message", "record a voice message", "async voice", "voice memo", "talk to ayma offline", "voice message mode"],
     "operated_by_ayma": false,
     "reason": "A client recording + upload flow Ayma neither opens nor changes: hold the chat mic to record, release to send — the clip queues on the phone when offline and Ayma's spoken reply lands in the thread. If asked about it, explain how to send one; never claim to record, play, or re-send it yourself."
+  },
+
+  "voice_call_resilience": {
+    "_doc": "Forgiving voice-call route (Nov 2026): if a voice call's first connect attempt fails, the app retries once with WebRTC forced onto LiveKit Cloud TURN relay (TLS/443), which survives UDP-blocking and weak networks; the status line reads 'Reconnecting…' during the retry. If an established call's connection drops mid-call, the LiveKit SDK re-establishes it and resumes the same session — the voice status reads 'Reconnecting…' while that lasts and the call only ends if the reconnect ultimately fails. Behavior inside the existing voice-call feature with no route of its own, so — like connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
+    "key": "voice_call_resilience",
+    "label": "Voice call reconnecting",
+    "aliases": ["reconnecting", "call reconnecting", "voice reconnecting", "call keeps reconnecting", "call dropped", "voice call dropped", "why does my call keep reconnecting", "turn relay", "call connection"],
+    "operated_by_ayma": false,
+    "reason": "Automatic client behavior in the voice transport/controller; Ayma neither triggers nor configures it. If asked about it, explain what it means (the phone's connection dropped and the call is re-establishing itself over a more forgiving route) — never claim to fix the user's connection."
   }
 }

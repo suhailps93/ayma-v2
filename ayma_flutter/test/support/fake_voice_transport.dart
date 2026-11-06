@@ -12,6 +12,7 @@ class FakeVoiceTransport implements VoiceTransport {
   final agentMuteController = StreamController<bool>.broadcast();
   final practiceCoachController = StreamController<String>.broadcast();
   final voiceStatusController = StreamController<String>.broadcast();
+  final reconnectingController = StreamController<bool>.broadcast();
   final closedController = StreamController<Object>.broadcast();
   final localLevelController = StreamController<double>.broadcast();
   final agentLevelController = StreamController<double>.broadcast();
@@ -144,6 +145,18 @@ class FakeVoiceTransport implements VoiceTransport {
   }
 
   @override
+  Stream<bool> get reconnecting => reconnectingController.stream;
+
+  /// Emit a mid-call transport reconnect state change (test helper) — the
+  /// SDK re-establishing a dropped connection (`true`), then resuming the
+  /// same session (`false`).
+  void emitReconnecting(bool reconnecting) {
+    if (!reconnectingController.isClosed) {
+      reconnectingController.add(reconnecting);
+    }
+  }
+
+  @override
   Stream<Object> get closed => closedController.stream;
 
   @override
@@ -185,6 +198,9 @@ class FakeVoiceTransport implements VoiceTransport {
       await practiceCoachController.close();
     }
     if (!voiceStatusController.isClosed) await voiceStatusController.close();
+    if (!reconnectingController.isClosed) {
+      await reconnectingController.close();
+    }
     if (!closedController.isClosed) await closedController.close();
     if (!localLevelController.isClosed) await localLevelController.close();
     if (!agentLevelController.isClosed) await agentLevelController.close();

@@ -1646,13 +1646,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _ =>
           _pttVoice.muted
               ? 'Muted'
-              : (_pttVoice.agentSpeaking
-                    ? 'Ayma is speaking…'
-                    // A cascade TTS error is recovering the voice — say so
-                    // honestly instead of a silent "Listening…".
-                    : (_pttVoice.voiceTrouble
-                          ? 'Reconnecting the voice…'
-                          : (_pttVoice.activeToolLabel ?? 'Listening…'))),
+              : (_pttVoice.reconnecting
+                    ? 'Reconnecting…'
+                    : (_pttVoice.agentSpeaking
+                          ? 'Ayma is speaking…'
+                          // A cascade TTS error is recovering the voice — say
+                          // so honestly instead of a silent "Listening…".
+                          : (_pttVoice.voiceTrouble
+                                ? 'Reconnecting the voice…'
+                                : (_pttVoice.activeToolLabel ?? 'Listening…')))),
       };
     }
     return SafeArea(
@@ -2896,6 +2898,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             onClearPageContext: _clearPageContext,
                             voicePhase: _voice.phase,
                             relayRetrying: _voice.relayRetrying,
+                            reconnecting: _voice.reconnecting,
                             muted: _voice.muted,
                             aymaQuiet: _voice.aymaQuiet,
                             agentSpeaking: _voice.agentSpeaking,
@@ -4265,6 +4268,7 @@ class _Composer extends StatelessWidget {
     required this.onClearPageContext,
     required this.voicePhase,
     this.relayRetrying = false,
+    this.reconnecting = false,
     required this.muted,
     this.aymaQuiet = false,
     required this.agentSpeaking,
@@ -4308,9 +4312,14 @@ class _Composer extends StatelessWidget {
   final VoidCallback onClearPageContext;
   final VoiceSessionPhase voicePhase;
 
-  /// True while the one-shot ice-relay-retry connect attempt is in flight —
+  /// True while the one-shot relay-retry connect attempt is in flight —
   /// the connecting status line reads "Reconnecting…" instead.
   final bool relayRetrying;
+
+  /// True while an established call's transport is re-establishing a
+  /// dropped connection — the live status line reads "Reconnecting…"
+  /// instead of claiming she's listening over dead air.
+  final bool reconnecting;
   final bool muted;
 
   /// Ayma was told to "shut up" and is deliberately silent.
@@ -4373,13 +4382,15 @@ class _Composer extends StatelessWidget {
         _ =>
           muted
               ? 'Muted'
-              : (agentSpeaking
-                    ? 'Ayma is speaking…'
-                    : (activeToolLabel ??
-                          warmingNotice ??
-                          (awaitingFirstResponse
-                              ? 'Connecting…'
-                              : 'Listening…'))),
+              : (reconnecting
+                    ? 'Reconnecting…'
+                    : (agentSpeaking
+                          ? 'Ayma is speaking…'
+                          : (activeToolLabel ??
+                                warmingNotice ??
+                                (awaitingFirstResponse
+                                    ? 'Connecting…'
+                                    : 'Listening…')))),
       };
     }
 

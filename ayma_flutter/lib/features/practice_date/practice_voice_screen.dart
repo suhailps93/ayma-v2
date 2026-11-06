@@ -140,17 +140,22 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
               VoiceSessionPhase.connecting ||
               VoiceSessionPhase.waking =>
                 AymaOrbState.thinking,
-              VoiceSessionPhase.live =>
-                speaking ? AymaOrbState.speaking : AymaOrbState.listening,
+              VoiceSessionPhase.live => _voice.reconnecting
+                  ? AymaOrbState.thinking
+                  : (speaking
+                        ? AymaOrbState.speaking
+                        : AymaOrbState.listening),
               _ => AymaOrbState.idle,
             };
             final status = switch (phase) {
               VoiceSessionPhase.connecting =>
                 _voice.relayRetrying ? 'Reconnecting…' : 'Connecting…',
               VoiceSessionPhase.waking => 'Setting up the simulation…',
-              VoiceSessionPhase.live => speaking
-                  ? '$_personaName is speaking…'
-                  : (_voice.muted ? 'Muted' : 'Your turn — speak'),
+              VoiceSessionPhase.live => _voice.reconnecting
+                  ? 'Reconnecting…'
+                  : (speaking
+                        ? '$_personaName is speaking…'
+                        : (_voice.muted ? 'Muted' : 'Your turn — speak')),
               _ => '',
             };
             final amplitude =
@@ -169,7 +174,7 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                     // "Connected" glow only once the simulation is genuinely
                     // live (listening), never during connecting/waking —
                     // same single source of truth as everywhere else.
-                    voiceLive: _voice.isListening,
+                    voiceLive: _voice.isListening && !_voice.reconnecting,
                   )
                 : SizedBox(
                     width: 200,
@@ -204,7 +209,7 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                               amplitudeListenable: amplitude,
                               // See the full-size orb above — glow gates on the
                               // live (listening) state, not connecting/waking.
-                              voiceLive: _voice.isListening,
+                              voiceLive: _voice.isListening && !_voice.reconnecting,
                             ),
                           ),
                         ),
