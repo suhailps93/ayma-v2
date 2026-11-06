@@ -436,10 +436,19 @@ class _ChatComposerState extends State<ChatComposer>
     // same reason - swapping the row's parent mid-hold would remount the
     // mic subtree and destroy the in-flight recognizer.
     return Stack(
+      // The recording bar is bottom-anchored, not fill: it is taller than
+      // the composer row (the lock bubble rides in it) and grows UP over
+      // the transcript instead of being squeezed into the row's height.
+      clipBehavior: Clip.none,
       children: [
         row,
         if (note != null && note.isActive)
-          Positioned.fill(child: VoiceNoteRecordingBar(controller: note)),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: VoiceNoteRecordingBar(controller: note),
+          ),
       ],
     );
   }
