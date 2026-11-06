@@ -1064,6 +1064,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                 // the held mic button and killed its gesture recognizer,
                 // so the release that sends the clip never fired.
                 builder: (context, _) => Stack(
+                  clipBehavior: Clip.none,
                   children: [
                     Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -1154,7 +1155,10 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                 ],
               ),
                     if (_voiceNote.isActive)
-                      Positioned.fill(
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
                         child: VoiceNoteRecordingBar(
                           controller: _voiceNote,
                         ),

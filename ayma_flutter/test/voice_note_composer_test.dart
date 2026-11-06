@@ -345,6 +345,96 @@ void main() {
       expect(note.phase, VoiceNotePhase.idle);
     });
 
+    testWidgets(
+        'while holding, the lock bubble and slide-up hint are visible',
+        (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      expect(find.byKey(const ValueKey('voiceNoteLockBubble')),
+          findsOneWidget);
+      expect(find.text('Slide up to lock'), findsOneWidget);
+      final bubble = tester.widget<VoiceNoteLockBubble>(
+        find.byType(VoiceNoteLockBubble),
+      );
+      expect(bubble.progress, 0);
+      await gesture.up();
+      await tester.pump();
+    });
+
+    testWidgets(
+        'sliding up partway fills the lock bubble without locking; '
+        'release still sends', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      await gesture.moveBy(const Offset(0, -35));
+      await tester.pump();
+      expect(note.phase, VoiceNotePhase.holding);
+      expect(note.lockProgress, closeTo(0.5, 0.02));
+      final bubble = tester.widget<VoiceNoteLockBubble>(
+        find.byType(VoiceNoteLockBubble),
+      );
+      expect(bubble.progress, closeTo(0.5, 0.02));
+      await gesture.up();
+      await tester.pump();
+      expect(engine.sends, 1);
+      expect(note.phase, VoiceNotePhase.idle);
+      expect(note.lockProgress, 0);
+    });
+
+    testWidgets(
+        'sliding up to the threshold hands the bubble off to the locked '
+        'bar', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      await gesture.moveBy(const Offset(0, -80));
+      await tester.pump();
+      expect(note.phase, VoiceNotePhase.locked);
+      expect(find.byKey(const ValueKey('voiceNoteLockBubble')),
+          findsNothing);
+      expect(find.byKey(const ValueKey('voiceNoteSendButton')),
+          findsOneWidget);
+      expect(find.byKey(const ValueKey('voiceNoteDeleteButton')),
+          findsOneWidget);
+      expect(find.byKey(const ValueKey('voiceNotePauseButton')),
+          findsOneWidget);
+      await gesture.up();
+      await tester.pump();
+    });
+
+    testWidgets(
+        'sliding left fills cancel progress before arming cancel',
+        (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      await gesture.moveBy(const Offset(-35, 0));
+      await tester.pump();
+      expect(note.cancelProgress, closeTo(0.5, 0.02));
+      expect(note.cancelArmed, isFalse);
+      await gesture.moveBy(const Offset(-45, 0));
+      await tester.pump();
+      expect(note.cancelArmed, isTrue);
+      await gesture.up();
+      await tester.pump();
+      expect(engine.cancels, 1);
+      expect(engine.sends, 0);
+    });
+
     testWidgets('locked delete discards, nothing sent', (tester) async {
       final engine = _FakeEngine();
       final note = VoiceNoteController(engine: engine);
