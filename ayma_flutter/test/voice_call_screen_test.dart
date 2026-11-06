@@ -109,6 +109,53 @@ class _FakeVoice extends VoiceSessionController {
     _fakeMuted = !_fakeMuted;
     notifyListeners();
   }
+
+  // Vision toggles (feedback item 13): the same fake treatment — state
+  // flips + notify, gated on live + visionSupported like the real ones.
+  bool _fakeVisionSupported = false;
+  bool _fakeVideoOn = false;
+  bool _fakeScreenShareOn = false;
+  String? _fakeVisionNotice;
+  int toggleVideoCalls = 0;
+  int toggleScreenShareCalls = 0;
+
+  @override
+  bool get visionSupported => _fakeVisionSupported;
+
+  @override
+  bool get videoOn => _fakeVideoOn;
+
+  @override
+  bool get screenShareOn => _fakeScreenShareOn;
+
+  @override
+  String? get visionNotice => _fakeVisionNotice;
+
+  void setVisionSupported(bool supported) {
+    _fakeVisionSupported = supported;
+    notifyListeners();
+  }
+
+  void setVisionNotice(String? notice) {
+    _fakeVisionNotice = notice;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> toggleVideo() async {
+    toggleVideoCalls += 1;
+    if (_fakePhase != VoiceSessionPhase.live || !_fakeVisionSupported) return;
+    _fakeVideoOn = !_fakeVideoOn;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> toggleScreenShare() async {
+    toggleScreenShareCalls += 1;
+    if (_fakePhase != VoiceSessionPhase.live || !_fakeVisionSupported) return;
+    _fakeScreenShareOn = !_fakeScreenShareOn;
+    notifyListeners();
+  }
 }
 
 Future<ApiClient> _historyOnlyApi() async {
@@ -617,6 +664,95 @@ void main() {
 
       expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
       expect(voice.phase, VoiceSessionPhase.live);
+    });
+  });
+
+  group('VoiceCallScreen vision toggles (feedback item 13)', () {
+    final videoButton = find.byKey(const Key('voiceCallVideoButton'));
+    final screenButton = find.byKey(const Key('voiceCallScreenShareButton'));
+
+    testWidgets(
+      'hidden while the serving stack has not declared video perception',
+      (tester) async {
+        final voice = _FakeVoice()
+          ..setPhase(VoiceSessionPhase.live)
+          ..setResponded();
+
+        await tester.pumpWidget(
+          MaterialApp(home: VoiceCallScreen(voice: voice)),
+        );
+        await tester.pump();
+
+        expect(videoButton, findsNothing);
+        expect(screenButton, findsNothing);
+        // The mute toggle — the pre-existing control — is unaffected.
+        expect(find.byKey(const Key('voiceCallMuteButton')), findsOneWidget);
+
+        voice.setVisionSupported(true);
+        await tester.pump();
+
+        expect(videoButton, findsOneWidget);
+        expect(screenButton, findsOneWidget);
+      },
+    );
+
+    testWidgets('hidden until the call is live, even when supported', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.connecting);
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+
+      expect(videoButton, findsNothing);
+      expect(screenButton, findsNothing);
+    });
+
+    testWidgets('tapping each toggle calls through and reflects its state', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+
+      await tester.tap(videoButton);
+      await tester.pump();
+      expect(voice.toggleVideoCalls, 1);
+      expect(voice.videoOn, isTrue);
+      expect(find.byIcon(Icons.videocam_rounded), findsOneWidget);
+
+      await tester.tap(screenButton);
+      await tester.pump();
+      expect(voice.toggleScreenShareCalls, 1);
+      expect(voice.screenShareOn, isTrue);
+      expect(find.byIcon(Icons.screen_share_rounded), findsOneWidget);
+    });
+
+    testWidgets('the vision notice line renders while one is set', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+      expect(find.byKey(const Key('voiceCallVisionNotice')), findsNothing);
+
+      voice.setVisionNotice("Ayma can't see protected content on this screen.");
+      await tester.pump();
+      expect(find.byKey(const Key('voiceCallVisionNotice')), findsOneWidget);
+      expect(
+        find.text("Ayma can't see protected content on this screen."),
+        findsOneWidget,
+      );
     });
   });
 }

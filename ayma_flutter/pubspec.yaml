@@ -55,6 +55,11 @@ dependencies:
   # directly so the splash can import it — no new download/weight.
   connectivity_plus: ^7.3.1
   livekit_client: ^2.6.4
+  # Direct dep for Helper.requestCapturePermission (the Android
+  # MediaProjection consent behind in-call screen share, feedback item
+  # 13). Already in the tree transitively via livekit_client; declared
+  # directly so the screen-share platform seam can import it.
+  flutter_webrtc: ^1.6.0
   geolocator: ^14.0.2
   geocoding: ^5.0.0
   firebase_messaging: ^16.6.0

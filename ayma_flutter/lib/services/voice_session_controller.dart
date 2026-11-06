@@ -9,6 +9,7 @@ import 'app_command_service.dart';
 import 'app_context.dart';
 import 'screen_capture.dart';
 import 'call_permissions.dart';
+import 'screen_share_platform.dart';
 import 'error_reporting.dart';
 import 'transcript_store.dart';
 import 'voice_transport.dart';
@@ -50,6 +51,7 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? wakingTimeout,
     AppCommandService? appCommandService,
     CallPermissions? callPermissions,
+    ScreenSharePlatform? screenSharePlatform,
     Duration? idleGuardTimeout,
     Duration? responseGuardTimeout,
     Duration? openWeightsResponseGuardTimeout,
@@ -83,7 +85,8 @@ class VoiceSessionController extends ChangeNotifier {
        _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
        _transportFactory = transportFactory ?? (() => LiveKitVoiceTransport()),
        _commands = appCommandService ?? AppCommandService.shared,
-       _permissions = callPermissions ?? CallPermissions();
+       _permissions = callPermissions ?? CallPermissions(),
+       _screenShare = screenSharePlatform ?? const LiveKitScreenSharePlatform();
 
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`
   /// (no account) instead of `POST /bootstrap`.
@@ -122,6 +125,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// for the background call notification — F4/item 3), rather than
   /// discovering a missing permission only once the app is backgrounded.
   final CallPermissions _permissions;
+
+  /// The MediaProjection consent + foreground-service seam for in-call
+  /// screen share (feedback item 13) — see [toggleScreenShare].
+  final ScreenSharePlatform _screenShare;
 
   /// Where failed starts / dropped calls are reported (Sentry + Crashlytics).
   final ErrorReporter _reporter;
@@ -363,6 +370,45 @@ class VoiceSessionController extends ChangeNotifier {
   bool _muted = false;
   bool get muted => _muted;
 
+  /// The `voice_status` states by which the agent declares whether the
+  /// stack serving THIS call can actually perceive video (feedback item
+  /// 13, founder rule: only models that support video perception expose
+  /// the controls). Realtime stacks (Gemini Live) publish
+  /// [_kVisionSupported] on session start; cascade stacks — whose frames
+  /// the LiveKit agent pipeline cannot consume in this SDK — publish
+  /// [_kVisionUnsupported]. Until either arrives the controls stay hidden:
+  /// never offer a camera/screen button Ayma cannot see through.
+  static const _kVisionSupported = 'vision_supported';
+  static const _kVisionUnsupported = 'vision_unsupported';
+
+  bool _visionSupported = false;
+
+  /// Whether Ayma can perceive video on this call (see [_kVisionSupported]).
+  /// Gates the voice-call screen's Video / Screen share toggles and
+  /// [toggleVideo] / [toggleScreenShare] themselves.
+  bool get visionSupported => _visionSupported;
+
+  /// True while the user's camera track is published into the room
+  /// ([toggleVideo]). Dies with the session — reset in [start] and
+  /// unpublished in `_teardown`.
+  bool _videoOn = false;
+  bool get videoOn => _videoOn;
+
+  /// True while the user's screen-share track is published into the room
+  /// ([toggleScreenShare]). Same session lifetime as [_videoOn].
+  bool _screenShareOn = false;
+  bool get screenShareOn => _screenShareOn;
+
+  /// A short, honest, user-facing note about the vision state — a denied
+  /// camera permission, a failed screen share, or the agent reporting the
+  /// shared frames are FLAG_SECURE black ("Ayma can't see protected
+  /// content"). Shown under the call controls; never an error phase: a
+  /// vision failure never touches the voice call itself.
+  String? _visionNotice;
+  String? get visionNotice => _visionNotice;
+
+  StreamSubscription<String>? _visionStateSub;
+
   /// True while the agent has been told to "shut up" and is deliberately
   /// silent (server-side `MuteState`, authoritative: the agent re-publishes
   /// it on every change and whenever the app (re)joins the room); cleared
@@ -561,6 +607,10 @@ class VoiceSessionController extends ChangeNotifier {
       _activeToolLabel = null;
       _noJoinRetried = false;
       _micCaptured = false;
+      _visionSupported = false;
+      _videoOn = false;
+      _screenShareOn = false;
+      _visionNotice = null;
       _provider = '';
       _coachHint = '';
       active = this;
@@ -827,6 +877,10 @@ class VoiceSessionController extends ChangeNotifier {
       if (!identical(_transport, transport)) return;
       _onVoiceStatus(state);
     });
+    _visionStateSub = transport.visionState.listen((state) {
+      if (!identical(_transport, transport)) return;
+      _onVisionState(state);
+    });
     _closedSub = transport.closed.listen((_) {
       // A close event queued by a transport this controller has already torn
       // down (e.g. ice-relay-retry attempt 1's Room emitting RoomDisconnected
@@ -909,6 +963,16 @@ class VoiceSessionController extends ChangeNotifier {
   /// status line says so (not a silent "Listening…") and extend the
   /// no-first-response guard past the cold start so it doesn't fire early.
   void _onVoiceStatus(String state) {
+    // Vision capability declaration (feedback item 13): the serving stack
+    // states whether Ayma can perceive video on this call, which is what
+    // exposes (or keeps hidden) the Video / Screen share toggles.
+    if (state == _kVisionSupported || state == _kVisionUnsupported) {
+      final supported = state == _kVisionSupported;
+      if (_visionSupported == supported) return;
+      _visionSupported = supported;
+      notifyListeners();
+      return;
+    }
     if (state == _kTtsError) {
       if (_voiceTrouble) return;
       _voiceTrouble = true;
@@ -925,6 +989,27 @@ class VoiceSessionController extends ChangeNotifier {
       _responseGuard = Timer(_firstResponseBudget, _onResponseGuardFired);
     }
     notifyListeners();
+  }
+
+  /// The agent's vision state for a live video/screen share (topic
+  /// `vision_state`). FLAG_SECURE surfaces (banking, password screens)
+  /// arrive at the agent as pure-black frames: surface the honest notice
+  /// so the UI — and Ayma herself, whose instructions carry the same rule
+  /// — say she cannot see protected content instead of guessing at it.
+  /// Real frames resuming clears the notice. Ignored when nothing is
+  /// being shared (a stale signal must never invent a notice).
+  void _onVisionState(String state) {
+    if (!_videoOn && !_screenShareOn) return;
+    if (state == visionStateSecureContent) {
+      const notice = "Ayma can't see protected content on this screen.";
+      if (_visionNotice == notice) return;
+      _visionNotice = notice;
+      notifyListeners();
+    } else if (state == visionStateFramesFlowing) {
+      if (_visionNotice == null) return;
+      _visionNotice = null;
+      notifyListeners();
+    }
   }
 
   /// The agent produced a genuine response (speech / transcript / tool call) —
@@ -1337,6 +1422,129 @@ class VoiceSessionController extends ChangeNotifier {
     }
   }
 
+  /// Action-parity names for the voice-call screen's vision toggles
+  /// (APP_ACTION_GRAPH §3): the exact `source` values [toggleVideo] and
+  /// [toggleScreenShare] report on the `vision_control` data topic, so the
+  /// agent's command surface and the user's buttons are one vocabulary.
+  static const visionSourceCamera = 'camera';
+  static const visionSourceScreen = 'screen';
+
+  /// The user tapped Video on the voice-call screen (feedback item 13):
+  /// publish the camera track into THIS session's LiveKit room so Ayma
+  /// can see the user, or unpublish it immediately on the second tap.
+  /// Frames reach Ayma through the room's existing LiveKit vision input
+  /// (the agent enables `video_input` on its session — LiveKit-only
+  /// inference, no new provider route).
+  ///
+  /// Gates mirror [toggleMute] plus the vision rules: only a genuinely
+  /// ready call (nothing is captured during connecting/waking/warming),
+  /// only when the serving stack declared it can perceive video
+  /// ([visionSupported]), and never on a practice call (the persona is
+  /// not Ayma and gets no view of the user). A denied camera permission —
+  /// the OS prompt is raised by the WebRTC layer at first enable — leaves
+  /// [_videoOn] false and the voice call completely untouched, with an
+  /// honest [visionNotice] instead of an error phase.
+  Future<void> toggleVideo() async {
+    final transport = _transport;
+    if (!isConversationReady || !_visionSupported || isPractice) return;
+    if (transport == null) return;
+    if (_videoOn) {
+      _videoOn = false;
+      if (!_screenShareOn) _visionNotice = null;
+      notifyListeners();
+      try {
+        await transport.setCameraEnabled(false);
+      } catch (e) {
+        debugPrint('[voice] camera unpublish failed: $e');
+      }
+      unawaited(_sendVisionControl(transport, visionSourceCamera, false));
+      return;
+    }
+    try {
+      await transport.setCameraEnabled(true);
+    } catch (e) {
+      debugPrint('[voice] camera publish failed: $e');
+      _visionNotice = 'Ayma needs camera access to see you.';
+      notifyListeners();
+      return;
+    }
+    _videoOn = true;
+    _visionNotice = null;
+    notifyListeners();
+    unawaited(_sendVisionControl(transport, visionSourceCamera, true));
+  }
+
+  /// The user tapped Screen share on the voice-call screen (feedback item
+  /// 13): share the screen into THIS session's LiveKit room so Ayma can
+  /// see it, through Android MediaProjection. Same gates as [toggleVideo],
+  /// plus the platform must support it (Android — iOS needs a ReplayKit
+  /// broadcast extension this build does not ship, so the toggle refuses
+  /// quietly there and on the web).
+  ///
+  /// Turning on runs, in order: the standard per-session MediaProjection
+  /// consent dialog (a denial returns silently — voice untouched), the
+  /// media-projection foreground service Android 14 requires, then the
+  /// track publish. Turning off unpublishes the track and downgrades the
+  /// foreground service. A system revoke mid-share surfaces as the room
+  /// dropping the track, which [_teardown] and the session lifecycle
+  /// already treat as an ordinary state change; both tracks also die
+  /// with the voice session (see `_teardown`).
+  Future<void> toggleScreenShare() async {
+    final transport = _transport;
+    if (!isConversationReady || !_visionSupported || isPractice) return;
+    if (transport == null) return;
+    if (_screenShareOn) {
+      _screenShareOn = false;
+      if (!_videoOn) _visionNotice = null;
+      notifyListeners();
+      try {
+        await transport.setScreenShareEnabled(false);
+      } catch (e) {
+        debugPrint('[voice] screen-share unpublish failed: $e');
+      }
+      await _screenShare.stopProjectionService();
+      unawaited(_sendVisionControl(transport, visionSourceScreen, false));
+      return;
+    }
+    if (!_screenShare.isSupported) return;
+    final granted = await _screenShare.requestConsent();
+    // The user declined the system consent dialog (or the platform
+    // refused): nothing was captured, the call runs on untouched.
+    if (!granted) return;
+    // A stop() while the consent dialog was up ends the share before it
+    // starts — never publish into a session that is already gone.
+    if (!identical(_transport, transport) || !isConversationReady) return;
+    await _screenShare.startProjectionService();
+    try {
+      await transport.setScreenShareEnabled(true);
+    } catch (e) {
+      debugPrint('[voice] screen-share publish failed: $e');
+      await _screenShare.stopProjectionService();
+      _visionNotice = 'Screen share could not start.';
+      notifyListeners();
+      return;
+    }
+    _screenShareOn = true;
+    _visionNotice = null;
+    notifyListeners();
+    unawaited(_sendVisionControl(transport, visionSourceScreen, true));
+  }
+
+  /// Best-effort `vision_control` send (see [toggleVideo]): the agent's
+  /// own track subscription is the authoritative signal, so a dropped
+  /// control message never changes what the user sees locally.
+  Future<void> _sendVisionControl(
+    VoiceTransport transport,
+    String source,
+    bool active,
+  ) async {
+    try {
+      await transport.sendVisionControl(source: source, active: active);
+    } catch (e) {
+      debugPrint('[voice] vision-control send failed: $e');
+    }
+  }
+
   /// The user tapped Unmute (the quiet chip, the nav-bar orb, or the call
   /// notification's "Unmute Ayma" action): ask the agent to talk again.
   /// [aymaQuiet] is not flipped here — it follows the agent's own
@@ -1548,6 +1756,9 @@ class VoiceSessionController extends ChangeNotifier {
     final agentMuteSub = _agentMuteSub;
     final coachSub = _coachSub;
     final voiceStatusSub = _voiceStatusSub;
+    final visionStateSub = _visionStateSub;
+    final videoWasOn = _videoOn;
+    final screenShareWasOn = _screenShareOn;
     final closedSub = _closedSub;
     final reconnectingSub = _reconnectingSub;
     final micLevelSub = _micLevelSub;
@@ -1561,6 +1772,14 @@ class VoiceSessionController extends ChangeNotifier {
     _agentMuteSub = null;
     _coachSub = null;
     _voiceStatusSub = null;
+    _visionStateSub = null;
+    // Both vision tracks die with the voice session (feedback item 13):
+    // the flags drop synchronously here; the explicit unpublishes run in
+    // the try block below, ahead of the room disconnect.
+    _videoOn = false;
+    _screenShareOn = false;
+    _visionSupported = false;
+    _visionNotice = null;
     _openWeightsWarming = false;
     _voiceTrouble = false;
     _aymaQuiet = false;
@@ -1595,6 +1814,26 @@ class VoiceSessionController extends ChangeNotifier {
       await agentMuteSub?.cancel();
       await coachSub?.cancel();
       await voiceStatusSub?.cancel();
+      await visionStateSub?.cancel();
+      // Unpublish the vision tracks explicitly, ahead of the disconnect in
+      // the finally block — a stopped session must leave no camera or
+      // screen capture running behind it (feedback item 13). Failures here
+      // are non-fatal: the disconnect right after removes every track.
+      if (transport != null && videoWasOn) {
+        try {
+          await transport.setCameraEnabled(false);
+        } catch (e) {
+          debugPrint('[voice] teardown camera unpublish failed: $e');
+        }
+      }
+      if (transport != null && screenShareWasOn) {
+        try {
+          await transport.setScreenShareEnabled(false);
+        } catch (e) {
+          debugPrint('[voice] teardown screen-share unpublish failed: $e');
+        }
+        await _screenShare.stopProjectionService();
+      }
       await closedSub?.cancel();
       await reconnectingSub?.cancel();
       await micLevelSub?.cancel();
@@ -1726,6 +1965,7 @@ class VoiceSessionController extends ChangeNotifier {
     _coachSub?.cancel();
     _closedSub?.cancel();
     _reconnectingSub?.cancel();
+    _visionStateSub?.cancel();
     _micLevelSub?.cancel();
     _aymaLevelSub?.cancel();
     _userIdleTimer?.cancel();

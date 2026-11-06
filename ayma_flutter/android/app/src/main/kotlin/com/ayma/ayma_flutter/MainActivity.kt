@@ -139,6 +139,29 @@ class MainActivity : FlutterActivity() {
                     )
                     result.success(null)
                 }
+                // In-call screen share (feedback item 13): Dart calls these
+                // around the LiveKit screen-track publish — start AFTER the
+                // MediaProjection consent grant (the service gains the
+                // mediaProjection FGS type Android 14 requires before the
+                // projection runs), stop when the share ends so the type is
+                // dropped again. The service keeps its current status/mute
+                // extras when these payloads omit them.
+                "startMediaProjectionFgs" -> {
+                    startCallService(
+                        Intent(this, CallForegroundService::class.java).apply {
+                            putExtra(CallForegroundService.EXTRA_SCREEN_SHARING, true)
+                        }
+                    )
+                    result.success(null)
+                }
+                "stopMediaProjectionFgs" -> {
+                    startCallService(
+                        Intent(this, CallForegroundService::class.java).apply {
+                            putExtra(CallForegroundService.EXTRA_SCREEN_SHARING, false)
+                        }
+                    )
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }

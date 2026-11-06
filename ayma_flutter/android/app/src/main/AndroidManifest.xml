@@ -12,6 +12,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- In-call video + screen share (feedback item 13): the camera track
+         Ayma sees when the user taps Video in a live call, and the
+         media-projection foreground-service type Android 14 requires
+         before a MediaProjection screen share can run. The projection
+         itself is per-session consented at toggle time; no permission
+         prompt exists for it beyond that system dialog. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+
     <!-- Location auto-detect during preboarding (Step 35). -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
@@ -127,7 +136,7 @@
         <service
             android:name=".CallForegroundService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|mediaProjection" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

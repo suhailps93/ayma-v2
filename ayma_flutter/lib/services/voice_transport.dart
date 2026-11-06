@@ -47,6 +47,18 @@ const _voiceAccentControlTopic = 'voice_accent_control';
 const _tourTappedControlTopic = 'tour_tapped';
 const _practiceCoachTopic = 'practice_coach';
 const _voiceStatusTopic = 'voice_status';
+const _visionStateTopic = 'vision_state';
+const _visionControlTopic = 'vision_control';
+
+/// Vision states the agent reports on the `vision_state` topic while the
+/// user is sharing video or their screen with Ayma (feedback item 13).
+/// [visionStateSecureContent] means the frames arriving are black because
+/// the shared surface is FLAG_SECURE protected content — Ayma cannot see
+/// it and must say so rather than guess. [visionStateFramesFlowing] means
+/// real frames are arriving again (or the share stopped), clearing that
+/// notice.
+const visionStateSecureContent = 'secure_content';
+const visionStateFramesFlowing = 'frames_flowing';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -150,6 +162,39 @@ abstract class VoiceTransport {
 
   Future<void> setMicrophoneEnabled(bool enabled);
 
+  /// Publishes (`true`) or unpublishes (`false`) the user's camera track
+  /// into the SAME LiveKit room as the voice session (feedback item 13:
+  /// user↔Ayma video). Frames reach the agent through the room's existing
+  /// LiveKit vision input — no separate upload or provider route. On first
+  /// enable the OS camera permission prompt is raised by the WebRTC layer;
+  /// a denial throws, and the caller leaves the voice call untouched.
+  Future<void> setCameraEnabled(bool enabled);
+
+  /// Publishes (`true`) or unpublishes (`false`) the user's screen-share
+  /// track into the same room. On Android this drives MediaProjection
+  /// (the per-session system consent is requested by the caller through
+  /// `ScreenSharePlatform` BEFORE enabling, and the media-projection
+  /// foreground service must already be running — Android 14). Unpublishing
+  /// removes the track outright, so a stopped share leaves nothing behind.
+  Future<void> setScreenShareEnabled(bool enabled);
+
+  /// Emits the agent's vision state while a video/screen share is live
+  /// (topic `vision_state`, payload `{"state"}`): [visionStateSecureContent]
+  /// when the shared frames are FLAG_SECURE black, [visionStateFramesFlowing]
+  /// when real frames resume. Never emits for a plain audio call.
+  Stream<String> get visionState;
+
+  /// Tells the live agent the user turned a vision source on or off (topic
+  /// `vision_control`, payload `{"source": "camera"|"screen", "active":
+  /// bool}` — the action-parity command names for the voice-call screen's
+  /// Video / Screen share toggles, see `VoiceSessionController.toggleVideo`
+  /// / `toggleScreenShare`). The agent uses it to know she may reference
+  /// what she sees, and to clear any secure-content state when a share ends.
+  Future<void> sendVisionControl({
+    required String source,
+    required bool active,
+  });
+
   Future<void> disconnect();
 
   Future<void> dispose();
@@ -179,6 +224,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _agentMute = StreamController<bool>.broadcast();
   final _practiceCoach = StreamController<String>.broadcast();
   final _voiceStatus = StreamController<String>.broadcast();
+  final _visionState = StreamController<String>.broadcast();
   final _reconnecting = StreamController<bool>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
@@ -243,6 +289,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Stream<String> get voiceStatus => _voiceStatus.stream;
+
+  @override
+  Stream<String> get visionState => _visionState.stream;
 
   @override
   Stream<bool> get reconnecting => _reconnecting.stream;
@@ -379,6 +428,10 @@ class LiveKitVoiceTransport implements VoiceTransport {
         if (_voiceStatus.isClosed) return;
         final state = decoded['state'] as String? ?? '';
         if (state.isNotEmpty) _voiceStatus.add(state);
+      } else if (topic == _visionStateTopic) {
+        if (_visionState.isClosed) return;
+        final state = decoded['state'] as String? ?? '';
+        if (state.isNotEmpty) _visionState.add(state);
       } else if (topic == _agentStateTopic) {
         // Fallback readiness signal: the first agent_state message means the
         // agent's session is live even if its audio track hasn't subscribed yet.
@@ -438,6 +491,22 @@ class LiveKitVoiceTransport implements VoiceTransport {
   }
 
   @override
+  Future<void> sendVisionControl({
+    required String source,
+    required bool active,
+  }) async {
+    final participant = _room?.localParticipant;
+    if (participant == null) {
+      throw StateError('not connected to a voice room');
+    }
+    await participant.publishData(
+      utf8.encode(jsonEncode({'source': source, 'active': active})),
+      reliable: true,
+      topic: _visionControlTopic,
+    );
+  }
+
+  @override
   Future<void> setMicrophoneEnabled(bool enabled) async {
     debugPrint('[voice] setMicrophoneEnabled($enabled)');
     try {
@@ -445,6 +514,30 @@ class LiveKitVoiceTransport implements VoiceTransport {
       debugPrint('[voice] mic set ok');
     } catch (e, st) {
       debugPrint('[voice] setMicrophoneEnabled THREW: $e\n$st');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setCameraEnabled(bool enabled) async {
+    debugPrint('[voice] setCameraEnabled($enabled)');
+    try {
+      await _room?.localParticipant?.setCameraEnabled(enabled);
+      debugPrint('[voice] camera set ok');
+    } catch (e, st) {
+      debugPrint('[voice] setCameraEnabled THREW: $e\n$st');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setScreenShareEnabled(bool enabled) async {
+    debugPrint('[voice] setScreenShareEnabled($enabled)');
+    try {
+      await _room?.localParticipant?.setScreenShareEnabled(enabled);
+      debugPrint('[voice] screen share set ok');
+    } catch (e, st) {
+      debugPrint('[voice] setScreenShareEnabled THREW: $e\n$st');
       rethrow;
     }
   }
@@ -472,6 +565,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_agentMute.isClosed) await _agentMute.close();
     if (!_practiceCoach.isClosed) await _practiceCoach.close();
     if (!_voiceStatus.isClosed) await _voiceStatus.close();
+    if (!_visionState.isClosed) await _visionState.close();
     if (!_reconnecting.isClosed) await _reconnecting.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();
