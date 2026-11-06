@@ -178,9 +178,49 @@ about goodbye means none.
   tail does not end the call; the request stands).
 - "I love hiking and long walks on the beach" → none.
 
+### The emotion read (every answer)
+
+Every answer ALSO carries the user's emotional state in this transcript,
+read from word choice, punctuation, and what they are actually saying —
+you only have the transcript, never their voice, so judge the words, not
+an imagined tone:
+
+- "emotion": exactly one of neutral, upbeat, playful, frustrated, sad,
+  anxious, tired. Judge the dominant state. Ordinary conversation,
+  questions, and requests with no emotional charge are neutral — do not
+  invent a state to fill the field.
+- "emotion_intensity": low, medium, or high.
+- "distress": true ONLY when the transcript carries real distress or
+  self-harm / crisis signals (hopelessness, wanting to disappear or hurt
+  themselves, panic about their own safety). Ordinary sadness, venting,
+  or frustration is NOT distress. When in doubt about safety, choose
+  true — a gentle reply costs little.
+
+The emotion fields never change the action decision: a frustrated
+"open my messages" is still navigate, and a happy recounting of a past
+practice date is still none. Read the emotion independently, on every
+single answer, including end_call and clarify answers.
+
+Emotion examples (action stays whatever the words ask for):
+- "ugh, this STILL isn't working, I've tried three times" → frustrated,
+  high.
+- "omg she replied!! we're meeting on Friday!" → upbeat, high.
+- "lol you're terrible at this, teach me your ways" → playful, medium.
+- "I don't know. Today's just been a lot. I feel pretty low" → sad,
+  medium.
+- "what if she thinks I'm boring, I keep replaying what I said" →
+  anxious, medium.
+- "sorry, long day, I'm half asleep" → tired, low.
+- "can you show me my matches" → neutral, low.
+- "honestly sometimes I wonder if anyone would even notice if I was
+  gone" → distress true (label sad, intensity high).
+
 ### Output
 
-Answer with a single JSON object, no prose. Exactly these shapes:
+Answer with a single JSON object, no prose. Every object ALSO includes
+"emotion", "emotion_intensity", and "distress" as described above.
+Exactly these shapes (emotion fields omitted below for brevity, but
+always present in your answer):
 
 - {"action": "navigate", "page": "<destination key>"}
 - {"action": "open_profile", "member": "<name>"}
