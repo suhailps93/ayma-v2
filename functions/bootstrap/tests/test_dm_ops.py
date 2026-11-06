@@ -87,6 +87,61 @@ def test_shared_profile_message():
     assert db.docs[("dm_threads", "a__b", "messages", mid)]["body"] == "c"
 
 
+def test_post_message_voice_is_delivered_with_transcript_pending():
+    """Delivery is the message write itself: playable path + duration are
+    present immediately, while the transcript starts empty/pending."""
+    db = FakeDb()
+    path = "uploads/a/dm/a__b/voice-1.wav"
+    mid = dm_ops.post_message(
+        db,
+        "a",
+        "b",
+        "voice",
+        path,
+        {
+            "attachment_url": "",
+            "attachment_path": path,
+            "mime": "audio/wav",
+            "file_name": "voice-1.wav",
+            "size": 32000,
+            "duration_ms": 4200,
+        },
+    )
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert msg["type"] == "voice"
+    assert msg["body"] == path
+    assert msg["audio_path"] == path
+    assert msg["attachment_path"] == path
+    assert msg["mime"] == "audio/wav"
+    assert msg["duration_ms"] == 4200
+    assert msg["transcript"] == ""
+    assert msg["transcript_status"] == "pending"
+
+
+def test_attach_transcript_updates_the_delivered_voice_message():
+    db = FakeDb()
+    path = "uploads/a/dm/a__b/voice-1.wav"
+    mid = dm_ops.post_message(db, "a", "b", "voice", path)
+    dm_ops.attach_transcript(db, "a__b", mid, "hello there", "done")
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert msg["body"] == path  # delivery payload is never rewritten
+    assert msg["audio_path"] == path
+    assert msg["transcript"] == "hello there"
+    assert msg["transcript_status"] == "done"
+    assert "transcript_updated_at" in msg
+
+
+def test_voice_message_audio_path_requires_sender_owned_path():
+    db = FakeDb()
+    path = "uploads/a/dm/a__b/voice-1.wav"
+    mid = dm_ops.post_message(db, "a", "b", "voice", path)
+    assert dm_ops.voice_message_audio_path(db, "a__b", mid) == ("a", path)
+
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    msg["audio_path"] = "uploads/b/dm/a__b/not-the-senders.wav"
+    assert dm_ops.voice_message_audio_path(db, "a__b", mid) is None
+
+
 def test_blocked_pairs_cannot_message():
     db = FakeDb()
     db.docs[("blocks", "b_a")] = {}
@@ -333,6 +388,74 @@ def test_dm_send_image_passes_attachment(monkeypatch):
         "file_name": "x.jpg",
         "size": 4096,
     }
+
+
+def test_dm_send_voice_passes_playback_metadata_without_transcribing(
+    monkeypatch,
+):
+    """The send response is delivery only: it forwards the clip path and
+    duration to the message write and never calls transcription inline."""
+    seen = {}
+    monkeypatch.setattr(
+        main.dm_ops, "post_message",
+        lambda db, s, o, t, b, att=None, mod=None, rs=None: seen.update(
+            s=s, o=o, t=t, b=b, att=att, mod=mod, rs=rs
+        )
+        or "mv1",
+    )
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    path = "uploads/aaa/dm/aaa__bbb/voice-1.wav"
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={
+            "type": "voice",
+            "body": path,
+            "mime": "audio/wav",
+            "file_name": "voice-1.wav",
+            "size": 32000,
+            "duration_ms": 4200,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["message_id"] == "mv1"
+    assert seen["t"] == "voice"
+    assert seen["b"] == path
+    assert seen["att"] == {
+        "attachment_url": "",
+        "attachment_path": path,
+        "mime": "audio/wav",
+        "file_name": "voice-1.wav",
+        "size": 32000,
+        "duration_ms": 4200,
+    }
+
+
+def test_dm_voice_audio_url_is_participant_only(monkeypatch):
+    db = FakeDb()
+    path = "uploads/aaa/dm/aaa__bbb/voice-1.wav"
+    mid = dm_ops.post_message(db, "aaa", "bbb", "voice", path)
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    import public_profile
+
+    monkeypatch.setattr(
+        public_profile, "_photo_url", lambda p: f"https://example.com{p}"
+    )
+    ok = _client.get(
+        f"/dm/aaa__bbb/messages/{mid}/audio-url",
+        headers=_authed(monkeypatch, "bbb"),
+    )
+    assert ok.status_code == 200
+    assert ok.json() == {
+        "message_id": mid,
+        "audio_url": f"https://example.com{path}",
+    }
+
+    forbidden = _client.get(
+        f"/dm/aaa__bbb/messages/{mid}/audio-url",
+        headers=_authed(monkeypatch, "stranger"),
+    )
+    assert forbidden.status_code == 403
 
 
 def test_dm_send_image_rejects_foreign_attachment_path(monkeypatch):

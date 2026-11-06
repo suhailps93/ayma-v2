@@ -3676,6 +3676,10 @@ class DmMessageRequest(BaseModel):
     mime: str = Field(default="", max_length=255)
     file_name: str = Field(default="", max_length=255)
     size: int = Field(default=0, ge=0)
+    # voice only: the recorded clip's duration, when the client knows it.
+    # Playback and delivery never wait for transcription; this is display
+    # metadata carried with the already-delivered message.
+    duration_ms: int = Field(default=0, ge=0, le=86_400_000)
     # shared_report only: the ``POST /share`` token; title/summary/card are
     # read from the stored snapshot, never trusted from the client.
     share_token: str = Field(default="", max_length=128)
@@ -3723,6 +3727,24 @@ async def dm_send(
             "mime": req.mime,
             "file_name": req.file_name,
             "size": req.size,
+        }
+    elif req.type == "voice":
+        # ``body`` is the canonical, already-validated Storage path. Mirror
+        # it into the attachment-shaped fields new clients use for playback
+        # metadata, without making voice an attachment message type (its
+        # body/path contract predates attachments and stays unchanged).
+        if req.attachment_path and req.attachment_path != req.body:
+            raise HTTPException(
+                status_code=400,
+                detail="voice attachment_path must match the clip path.",
+            )
+        attachment = {
+            "attachment_url": "",
+            "attachment_path": req.body,
+            "mime": req.mime or "audio/wav",
+            "file_name": req.file_name,
+            "size": req.size,
+            "duration_ms": req.duration_ms,
         }
 
     report_share: dict[str, str] | None = None
@@ -3782,6 +3804,42 @@ async def dm_send(
         req.attachment_path,
     )
     return {"ok": True, "message_id": msg_id, "thread_id": thread_id}
+
+
+@app.get("/dm/{thread_id}/messages/{message_id}/audio-url")
+async def dm_voice_audio_url(
+    thread_id: str,
+    message_id: str,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """A playback URL for one DM voice message, for a participant only.
+
+    Storage rules make ``uploads/{sender}/…`` owner-only, so the recipient
+    cannot resolve the stored path with the client SDK. This endpoint first
+    proves the caller is one of the pair and that the stored path belongs to
+    the message sender, then mints the URL on demand. The URL is returned
+    only to that participant and is not written onto the message doc.
+    """
+    from pair_key import uids_from_pair_key
+    from public_profile import _photo_url
+
+    try:
+        a, b = uids_from_pair_key(thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if uid not in (a, b):
+        raise HTTPException(status_code=403, detail="Not your thread.")
+
+    found = await asyncio.to_thread(
+        dm_ops.voice_message_audio_path, get_db(), thread_id, message_id
+    )
+    if found is None:
+        raise HTTPException(status_code=404, detail="Voice message not found.")
+    _sender_uid, audio_path = found
+    url = await asyncio.to_thread(_photo_url, audio_path)
+    if not url:
+        raise HTTPException(status_code=404, detail="Voice message not found.")
+    return {"message_id": message_id, "audio_url": url}
 
 
 async def _notify_new_dm(

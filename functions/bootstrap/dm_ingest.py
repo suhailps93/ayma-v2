@@ -13,6 +13,8 @@ import logging
 
 import backfill_ops
 import deep_dive_images
+import dm_ops
+import dm_schema
 import gemini
 import media_embed
 import photo_pipeline
@@ -76,7 +78,7 @@ def _photo_match_verdict(db, sender_uid: str, result: dict) -> tuple[str, str]:
     return shot_type, match
 
 
-async def _message_text(
+async def _message_text_with_status(
     db,
     sender_uid: str,
     msg_type: str,
@@ -84,9 +86,16 @@ async def _message_text(
     attachment_path: str = "",
     *,
     pipeline_result: dict | None = None,
-) -> str:
+) -> tuple[str, str | None]:
+    """The ingestible text for a message, plus a voice transcript status.
+
+    The status is only meaningful for ``voice`` messages: ``done`` when a
+    transcript was produced, ``empty`` when the clip yielded no words, and
+    ``error`` when the clip could not be fetched/transcribed. All other
+    message types return ``None``.
+    """
     if msg_type == "text":
-        return body.strip()
+        return body.strip(), None
     if msg_type in ("photo", "image"):
         # ``photo`` carries the path in ``body``; ``image`` carries it in
         # ``attachment_path`` and keeps ``body`` for an optional caption.
@@ -105,32 +114,64 @@ async def _message_text(
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("DM photo pipeline failed for %s", path)
-                return caption
+                return caption, None
         if not result.get("published"):
-            return caption
+            return caption, None
         vision = result.get("caption", "")
         if not vision:
-            return caption
+            return caption, None
         shot_type, match = _photo_match_verdict(db, sender_uid, result)
         note = photo_pipeline.caption_turn_text(
             vision, shot_type=shot_type, match=match
         )
         if caption:
-            return f"Shared an image (caption: {caption}). {note}"
-        return note
+            return f"Shared an image (caption: {caption}). {note}", None
+        return note, None
     if msg_type == "voice":
         try:
             data, mime = await _to_thread(media_embed.download_bytes, body)
         except Exception:  # noqa: BLE001
             logger.exception("could not fetch DM voice %s", body)
-            return ""
-        return await _voice_transcript(data, mime, sender_uid)
+            return "", dm_schema.TRANSCRIPT_ERROR
+        try:
+            transcript = await _voice_transcript(data, mime, sender_uid)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not transcribe DM voice %s", body)
+            return "", dm_schema.TRANSCRIPT_ERROR
+        return transcript, (
+            dm_schema.TRANSCRIPT_DONE
+            if transcript
+            else dm_schema.TRANSCRIPT_EMPTY
+        )
     if msg_type == "file":
         # No content extraction for arbitrary files — keep the caption plus a
         # note that a file was shared, so Ayma at least knows it happened.
         caption = body.strip()
-        return f"Shared a file (caption: {caption})." if caption else ""
-    return ""  # shared_profile etc. — nothing to ingest
+        return (
+            f"Shared a file (caption: {caption})." if caption else ""
+        ), None
+    return "", None  # shared_profile etc. — nothing to ingest
+
+
+async def _message_text(
+    db,
+    sender_uid: str,
+    msg_type: str,
+    body: str,
+    attachment_path: str = "",
+    *,
+    pipeline_result: dict | None = None,
+) -> str:
+    """Back-compatible text-only wrapper for ``_message_text_with_status``."""
+    text, _status = await _message_text_with_status(
+        db,
+        sender_uid,
+        msg_type,
+        body,
+        attachment_path,
+        pipeline_result=pipeline_result,
+    )
+    return text
 
 
 async def _to_thread(fn, *args):
@@ -182,10 +223,29 @@ async def ingest_dm_message(
         except Exception:  # noqa: BLE001
             logger.exception("DM auto-analysis failed for %s", sender_uid)
 
-    text = await _message_text(
+    text, transcript_status = await _message_text_with_status(
         db, sender_uid, msg_type, body, attachment_path,
         pipeline_result=pipeline_result,
     )
+    if msg_type == "voice" and transcript_status is not None:
+        # The message was delivered before this background task started.
+        # Attaching the transcript is a metadata update only: a failure here
+        # (or an empty/error transcript below) never recalls or blocks the
+        # playable message the recipient already has.
+        try:
+            dm_ops.attach_transcript(
+                db,
+                thread_id,
+                message_id,
+                text if transcript_status == dm_schema.TRANSCRIPT_DONE else "",
+                transcript_status,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "DM voice transcript attach failed for %s/%s",
+                thread_id,
+                message_id,
+            )
     if not text:
         return
 

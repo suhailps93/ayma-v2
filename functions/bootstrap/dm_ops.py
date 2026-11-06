@@ -12,6 +12,11 @@ from dm_schema import (
     DM_MESSAGES_COLLECTION,
     DM_THREADS_COLLECTION,
     MESSAGE_TYPES,
+    MESSAGE_VOICE,
+    TRANSCRIPT_DONE,
+    TRANSCRIPT_EMPTY,
+    TRANSCRIPT_ERROR,
+    TRANSCRIPT_PENDING,
     thread_id,
 )
 from matching_schema import block_id
@@ -83,6 +88,19 @@ def post_message(
         "body": body,
         "created_at": firestore.SERVER_TIMESTAMP,
     }
+    if msg_type == MESSAGE_VOICE:
+        # The message is complete and playable from this write. ``body`` is
+        # the canonical Storage path for backwards compatibility;
+        # ``audio_path`` names it explicitly for new clients. Transcription
+        # starts as ``pending`` and is filled in later by ``dm_ingest`` — it
+        # never gates this delivery write.
+        doc.update(
+            {
+                "audio_path": body,
+                "transcript": "",
+                "transcript_status": TRANSCRIPT_PENDING,
+            }
+        )
     if attachment:
         doc.update(
             {
@@ -93,6 +111,10 @@ def post_message(
                 "size": int(attachment.get("size", 0) or 0),
             }
         )
+        if "duration_ms" in attachment:
+            doc["duration_ms"] = max(
+                0, int(attachment.get("duration_ms", 0) or 0)
+            )
     if report_share:
         doc["report_share"] = {
             k: str(report_share.get(k, ""))
@@ -161,3 +183,58 @@ def mark_moderated(db, thread_id: str, msg_id: str, moderation: dict) -> None:
         },
         merge=True,
     )
+
+
+def attach_transcript(
+    db, thread_id: str, msg_id: str, transcript: str, status: str
+) -> None:
+    """Attach a background transcription result to a delivered voice message.
+
+    This runs after the message has already been delivered. Only terminal
+    states may be attached here; ``pending`` is written by ``post_message``
+    at delivery time.
+    """
+    if status not in (TRANSCRIPT_DONE, TRANSCRIPT_EMPTY, TRANSCRIPT_ERROR):
+        raise ValueError(f"bad transcript status: {status}")
+    msg_ref = (
+        db.collection(DM_THREADS_COLLECTION)
+        .document(thread_id)
+        .collection(DM_MESSAGES_COLLECTION)
+        .document(msg_id)
+    )
+    msg_ref.set(
+        {
+            "transcript": str(transcript or ""),
+            "transcript_status": status,
+            "transcript_updated_at": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
+
+
+def voice_message_audio_path(
+    db, thread_id: str, msg_id: str
+) -> tuple[str, str] | None:
+    """``(sender_uid, audio_path)`` for a voice message, else ``None``.
+
+    Used by the participant-checked playback-url endpoint. The stored path
+    must belong to the message sender's own ``uploads/`` tree; anything else
+    is treated as not playable rather than resolved.
+    """
+    snap = (
+        db.collection(DM_THREADS_COLLECTION)
+        .document(thread_id)
+        .collection(DM_MESSAGES_COLLECTION)
+        .document(msg_id)
+        .get()
+    )
+    if not getattr(snap, "exists", False):
+        return None
+    doc = snap.to_dict() or {}
+    if doc.get("type") != MESSAGE_VOICE:
+        return None
+    sender_uid = str(doc.get("sender_uid", "") or "")
+    audio_path = str(doc.get("audio_path") or doc.get("body") or "")
+    if not sender_uid or not audio_path.startswith(f"uploads/{sender_uid}/"):
+        return None
+    return sender_uid, audio_path

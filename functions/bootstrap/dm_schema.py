@@ -27,6 +27,21 @@ MESSAGE_GIF = "gif"
 # A shared report snapshot (``POST /share``): the doc carries a ``report_share``
 # map ({token, title, summary, card_url}) the app renders as an in-app card.
 MESSAGE_SHARED_REPORT = "shared_report"
+
+# Voice-message transcription lifecycle. Delivery is independent of this
+# state: a voice message is readable/playable as soon as its message doc is
+# written, while transcription runs afterwards in the background.
+TRANSCRIPT_PENDING = "pending"
+TRANSCRIPT_DONE = "done"
+TRANSCRIPT_EMPTY = "empty"
+TRANSCRIPT_ERROR = "error"
+TRANSCRIPT_STATUSES = (
+    TRANSCRIPT_PENDING,
+    TRANSCRIPT_DONE,
+    TRANSCRIPT_EMPTY,
+    TRANSCRIPT_ERROR,
+)
+
 MESSAGE_TYPES = (
     MESSAGE_TEXT,
     MESSAGE_PHOTO,

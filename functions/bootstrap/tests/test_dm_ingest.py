@@ -289,6 +289,111 @@ def test_shared_profile_message_is_not_ingested(monkeypatch):
     assert called == []
 
 
+def test_voice_message_transcribes_in_background_and_ingests_like_text(
+    monkeypatch,
+):
+    attached, persisted, ingested = [], [], []
+    monkeypatch.setattr(
+        dm_ingest.media_embed, "download_bytes",
+        lambda _path: (b"RIFF", "audio/wav"),
+    )
+
+    async def _transcribe(_data, _mime, _uid=None):
+        return "hello from a voice note"
+
+    monkeypatch.setattr(dm_ingest, "_voice_transcript", _transcribe)
+    monkeypatch.setattr(
+        dm_ingest.dm_ops, "attach_transcript",
+        lambda db, tid, mid, text, status: attached.append(
+            (tid, mid, text, status)
+        ),
+    )
+    monkeypatch.setattr(
+        dm_ingest, "persist_raw_turns",
+        lambda db, uid, sid, turns: persisted.append(
+            (uid, sid, turns[0].text)
+        ),
+    )
+
+    async def _wiki(db, uid, sid, turns, force_visibility=None):
+        ingested.append((uid, force_visibility, turns[0].text))
+        return 1
+
+    monkeypatch.setattr(dm_ingest, "wiki_ingest", _wiki)
+
+    _run(dm_ingest.ingest_dm_message(
+        object(), "a__b", "mv1", "a", "b", "voice",
+        "uploads/a/dm/a__b/voice-1.wav",
+    ))
+
+    assert attached == [
+        ("a__b", "mv1", "hello from a voice note", "done")
+    ]
+    assert {c[0] for c in persisted} == {"a", "b"}
+    assert ingested == [
+        ("a", "ai_only", "hello from a voice note"),
+        ("b", "ai_only", "hello from a voice note"),
+    ]
+
+
+def test_voice_message_empty_transcript_marks_empty_and_ingests_nothing(
+    monkeypatch,
+):
+    attached, called = [], []
+    monkeypatch.setattr(
+        dm_ingest.media_embed, "download_bytes",
+        lambda _path: (b"RIFF", "audio/wav"),
+    )
+
+    async def _transcribe(_data, _mime, _uid=None):
+        return ""
+
+    monkeypatch.setattr(dm_ingest, "_voice_transcript", _transcribe)
+    monkeypatch.setattr(
+        dm_ingest.dm_ops, "attach_transcript",
+        lambda db, tid, mid, text, status: attached.append(
+            (tid, mid, text, status)
+        ),
+    )
+    monkeypatch.setattr(
+        dm_ingest, "persist_raw_turns", lambda *a: called.append(1)
+    )
+
+    _run(dm_ingest.ingest_dm_message(
+        object(), "a__b", "mv2", "a", "b", "voice",
+        "uploads/a/dm/a__b/voice-2.wav",
+    ))
+    assert attached == [("a__b", "mv2", "", "empty")]
+    assert called == []
+
+
+def test_voice_message_fetch_failure_marks_error_and_ingests_nothing(
+    monkeypatch,
+):
+    attached, called = [], []
+
+    def _boom(_path):
+        raise RuntimeError("missing clip")
+
+    monkeypatch.setattr(dm_ingest.media_embed, "download_bytes", _boom)
+    monkeypatch.setattr(
+        dm_ingest.dm_ops, "attach_transcript",
+        lambda db, tid, mid, text, status: attached.append(
+            (tid, mid, text, status)
+        ),
+    )
+    monkeypatch.setattr(
+        dm_ingest, "persist_raw_turns", lambda *a: called.append(1)
+    )
+
+    _run(dm_ingest.ingest_dm_message(
+        object(), "a__b", "mv3", "a", "b", "voice",
+        "uploads/a/dm/a__b/voice-3.wav",
+    ))
+    assert attached == [("a__b", "mv3", "", "error")]
+    assert called == []
+
+
 def _async(fn):
     async def _inner(*args, **kwargs):
         return fn(*args, **kwargs)
