@@ -134,6 +134,14 @@ class AppContext {
   /// consumes it once on build and clears it.
   String? pendingExploreQuery;
 
+  /// The live twin of [pendingExploreQuery] (founder, 2026-11-06): every
+  /// `search_explore` command also publishes its query here, and an
+  /// ExploreScreen that is already built (kept alive in the tab shell)
+  /// listens and runs the new search on the visible screen at once —
+  /// the one-shot slot above only ever reached a screen built afterwards.
+  final ValueNotifier<String?> liveExploreQuery =
+      ValueNotifier<String?>(null);
+
   /// Published by ExploreScreen each time a feed load finishes, so
   /// [AppCommandService] can hand the loaded results back to Ayma's
   /// `search_explore` tool. Each assignment is a new [ExploreReport], so every

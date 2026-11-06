@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -15,6 +17,16 @@ import '../widgets/partner_preferences_fields.dart';
 ///
 /// Same six fields as preboarding minus the photo (photo management is Step 60).
 /// Writes only the structured `users/{uid}/profile/main` doc — never the wiki.
+///
+/// Live updates (founder, 2026-11-06): after the initial load this screen
+/// subscribes to the same profile doc, so a change Ayma makes while the
+/// screen is open — partner age range, distance, gender, interested-in, or
+/// any other structured field, all written to that doc by her tools
+/// (`save_partner_preferences`, `set_profile_field`) — shows on the visible
+/// controls in the same moment, with no navigate-away-and-back. A field the
+/// user has edited locally since the last load/save keeps the user's value
+/// (their unsaved edit wins, the same rule preboarding's autofill and the
+/// Models screen's live update follow); untouched fields track the doc.
 class ProfileSettingsScreen extends StatefulWidget {
   const ProfileSettingsScreen(
       {super.key, this.profileService, this.apiClient});
@@ -52,6 +64,19 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   String _distance = defaultDistancePref;
   String? _savedDistance;
 
+  /// Live profile-doc subscription (see the class doc) and the per-field
+  /// "user edited this locally" flags that gate it.
+  StreamSubscription<ProfileData?>? _profileSub;
+  bool _dirtyFirstName = false;
+  bool _dirtyLastName = false;
+  bool _dirtyPhone = false;
+  bool _dirtyLocation = false;
+  bool _dirtyBirthdate = false;
+  bool _dirtyGender = false;
+  bool _dirtyInterestedIn = false;
+  bool _dirtyAgeRange = false;
+  bool _dirtyDistance = false;
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +85,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
 
   @override
   void dispose() {
+    _profileSub?.cancel();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _phoneController.dispose();
@@ -106,6 +132,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         }
         _loading = false;
       });
+      _startLiveUpdates();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -113,6 +140,76 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         _loading = false;
       });
     }
+  }
+
+  /// Subscribe to the profile doc the initial load just read, so Ayma's
+  /// writes to it land on the visible controls live (class doc). Started
+  /// only after [_load] so the first snapshot's baseline is the loaded
+  /// state, never a race against it. Best-effort: with no Firestore (e.g.
+  /// a widget test that injects a read-only fake) the screen simply keeps
+  /// its loaded values, exactly as before.
+  void _startLiveUpdates() {
+    if (_profileSub != null) return;
+    try {
+      _profileSub = _profiles.watchProfile().listen(
+        _applyLive,
+        onError: (_) {},
+      );
+    } catch (_) {
+      // No live updates in this environment; the loaded form still works.
+    }
+  }
+
+  /// Fold one live profile-doc snapshot into the form. Only fields the
+  /// user has not edited locally move — their unsaved edit always wins —
+  /// and the partner-preference baselines ([_savedAgeRange]/[_savedDistance])
+  /// move with the applied values, so a later Save does not write Ayma's
+  /// change back as if it were the user's, nor miss that it is saved.
+  void _applyLive(ProfileData? data) {
+    if (data == null || !mounted || _loading || _saving) return;
+    setState(() {
+      if (!_dirtyFirstName && _firstNameController.text != data.firstName) {
+        _firstNameController.text = data.firstName;
+      }
+      if (!_dirtyLastName && _lastNameController.text != data.lastName) {
+        _lastNameController.text = data.lastName;
+      }
+      if (!_dirtyPhone &&
+          data.phone.isNotEmpty &&
+          _phoneController.text != data.phone) {
+        _phoneController.text = data.phone;
+      }
+      if (!_dirtyLocation && _locationController.text != data.location) {
+        _locationController.text = data.location;
+      }
+      if (!_dirtyBirthdate && data.birthdate != null) {
+        _birthdate = data.birthdate;
+      }
+      if (!_dirtyGender &&
+          data.gender.isNotEmpty &&
+          _genders.contains(data.gender)) {
+        _gender = data.gender;
+      }
+      if (!_dirtyInterestedIn) {
+        _interestedIn
+          ..clear()
+          ..addAll(data.interestedIn);
+      }
+      final lo = data.partnerAgeMin;
+      final hi = data.partnerAgeMax;
+      if (!_dirtyAgeRange && lo != null && hi != null) {
+        _ageRange = RangeValues(
+          lo.clamp(partnerAgeFloor, partnerAgeCeiling).toDouble(),
+          hi.clamp(partnerAgeFloor, partnerAgeCeiling).toDouble(),
+        );
+        _savedAgeRange = _ageRange;
+      }
+      final dist = data.distancePreference;
+      if (!_dirtyDistance && distancePrefOptions.containsKey(dist)) {
+        _distance = dist;
+        _savedDistance = dist;
+      }
+    });
   }
 
   bool get _canSave =>
@@ -136,7 +233,12 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       firstDate: DateTime(now.year - 100),
       lastDate: latest,
     );
-    if (picked != null) setState(() => _birthdate = picked);
+    if (picked != null) {
+      setState(() {
+        _birthdate = picked;
+        _dirtyBirthdate = true;
+      });
+    }
   }
 
   Future<void> _save() async {
@@ -166,6 +268,17 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         _savedAgeRange = _ageRange;
         _savedDistance = _distance;
       }
+      // The local edits are now the saved baseline: live doc updates apply
+      // to every field again from here.
+      _dirtyFirstName = false;
+      _dirtyLastName = false;
+      _dirtyPhone = false;
+      _dirtyLocation = false;
+      _dirtyBirthdate = false;
+      _dirtyGender = false;
+      _dirtyInterestedIn = false;
+      _dirtyAgeRange = false;
+      _dirtyDistance = false;
       if (!mounted) return;
       AymaToast.show(context, 'Profile saved', kind: AymaToastKind.success);
     } catch (e) {
@@ -208,7 +321,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     TextField(
                       controller: _firstNameController,
                       textCapitalization: TextCapitalization.words,
-                      onChanged: (_) => setState(() {}),
+                      onChanged: (_) => setState(() => _dirtyFirstName = true),
                       decoration:
                           const InputDecoration(hintText: 'Given name'),
                     ),
@@ -217,7 +330,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     TextField(
                       controller: _lastNameController,
                       textCapitalization: TextCapitalization.words,
-                      onChanged: (_) => setState(() {}),
+                      onChanged: (_) => setState(() => _dirtyLastName = true),
                       decoration:
                           const InputDecoration(hintText: 'Family name'),
                     ),
@@ -226,7 +339,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     TextField(
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
-                      onChanged: (_) => setState(() {}),
+                      onChanged: (_) => setState(() => _dirtyPhone = true),
                       decoration: const InputDecoration(
                           hintText: '+1 555 123 4567'),
                     ),
@@ -254,7 +367,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                           ChoiceChip(
                             label: Text(g),
                             selected: _gender == g,
-                            onSelected: (_) => setState(() => _gender = g),
+                            onSelected: (_) => setState(() {
+                              _gender = g;
+                              _dirtyGender = true;
+                            }),
                           ),
                       ],
                     ),
@@ -268,6 +384,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                             label: Text(opt),
                             selected: _interestedIn.contains(opt),
                             onSelected: (on) => setState(() {
+                              _dirtyInterestedIn = true;
                               on
                                   ? _interestedIn.add(opt)
                                   : _interestedIn.remove(opt);
@@ -279,7 +396,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     _label('Location', ac),
                     TextField(
                       controller: _locationController,
-                      onChanged: (_) => setState(() {}),
+                      onChanged: (_) => setState(() => _dirtyLocation = true),
                       decoration:
                           const InputDecoration(hintText: 'City, country'),
                     ),
@@ -287,9 +404,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     PartnerPreferencesFields(
                       ages: _ageRange,
                       distance: _distance,
-                      onAgesChanged: (v) => setState(() => _ageRange = v),
-                      onDistanceChanged: (v) =>
-                          setState(() => _distance = v),
+                      onAgesChanged: (v) => setState(() {
+                            _ageRange = v;
+                            _dirtyAgeRange = true;
+                          }),
+                      onDistanceChanged: (v) => setState(() {
+                            _distance = v;
+                            _dirtyDistance = true;
+                          }),
                     ),
                     const SizedBox(height: 32),
                     FilledButton(
