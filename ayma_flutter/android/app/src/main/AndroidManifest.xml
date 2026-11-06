@@ -124,6 +124,21 @@
              notification. android:foregroundServiceType is required from
              Android 14 (API 34) for any service calling startForeground()
              with FOREGROUND_SERVICE_MICROPHONE. -->
+        <!-- Ayma Keyboard V1: the user enables this IME in system
+             keyboard settings and switches to it explicitly. BIND_INPUT_METHOD
+             is the system-only permission every keyboard declares. -->
+        <service
+            android:name=".AymaKeyboardService"
+            android:label="Ayma Keyboard"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/ayma_keyboard_method" />
+        </service>
         <service
             android:name=".CallForegroundService"
             android:exported="false"

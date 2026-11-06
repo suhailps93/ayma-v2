@@ -4,6 +4,7 @@ import 'package:ayma_flutter/routing/app_router.dart';
 import 'package:ayma_flutter/screens/accent_color_screen.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/screens/ayma_settings_screen.dart';
+import 'package:ayma_flutter/screens/ayma_keyboard_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
 import 'package:ayma_flutter/screens/biometric_info_screen.dart';
@@ -262,6 +263,7 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
       ),
     ),
     AymaSettingsScreen.path: () => shell(AymaSettingsScreen(api: api)),
+    AymaKeyboardScreen.path: () => shell(const AymaKeyboardScreen()),
     SkillsScreen.path: () =>
         shell(SkillsScreen(profileService: profiles, api: api)),
     BiometricConsentScreen.path: () => BiometricConsentScreen(api: api),
