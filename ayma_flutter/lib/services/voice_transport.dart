@@ -256,8 +256,10 @@ class LiveKitVoiceTransport implements VoiceTransport {
     required String token,
     bool forceRelay = false,
   }) async {
-    debugPrint('[voice] connect -> $url (token ${token.length} chars)'
-        '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}');
+    debugPrint(
+      '[voice] connect -> $url (token ${token.length} chars)'
+      '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}',
+    );
     final room = Room(
       roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
     );
@@ -267,13 +269,15 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
     listener
       ..on<DataReceivedEvent>(_onData)
-      ..on<RoomConnectedEvent>(
-          (_) => debugPrint('[voice] RoomConnected'))
-      ..on<ParticipantConnectedEvent>((e) => debugPrint(
-          '[voice] participant joined: ${e.participant.identity}'))
+      ..on<RoomConnectedEvent>((_) => debugPrint('[voice] RoomConnected'))
+      ..on<ParticipantConnectedEvent>(
+        (e) =>
+            debugPrint('[voice] participant joined: ${e.participant.identity}'),
+      )
       ..on<TrackSubscribedEvent>((e) {
         debugPrint(
-            '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}');
+          '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}',
+        );
         // First remote audio track = the agent is in the room and audible.
         if (e.track.kind == TrackType.AUDIO) {
           _markAgentReady('remote audio from ${e.participant.identity}');
@@ -314,11 +318,14 @@ class LiveKitVoiceTransport implements VoiceTransport {
               )
             : null,
       );
-      debugPrint('[voice] room.connect returned ok'
-          '${forceRelay ? ' (ice-relay-retry path)' : ''}');
+      debugPrint(
+        '[voice] room.connect returned ok'
+        '${forceRelay ? ' (ice-relay-retry path)' : ''}',
+      );
     } catch (e, st) {
       debugPrint(
-          '[voice] room.connect (forceRelay=$forceRelay) THREW: $e\n$st');
+        '[voice] room.connect (forceRelay=$forceRelay) THREW: $e\n$st',
+      );
       rethrow;
     }
 
@@ -340,18 +347,22 @@ class LiveKitVoiceTransport implements VoiceTransport {
       final decoded = jsonDecode(utf8.decode(e.data)) as Map<String, dynamic>;
       if (topic == _userTranscriptTopic || topic == _agentTranscriptTopic) {
         if (_transcripts.isClosed) return;
-        _transcripts.add(TranscriptSegment(
-          topic: topic!,
-          text: decoded['text'] as String? ?? '',
-          isFinal: decoded['is_final'] as bool? ?? true,
-        ));
+        _transcripts.add(
+          TranscriptSegment(
+            topic: topic!,
+            text: decoded['text'] as String? ?? '',
+            isFinal: decoded['is_final'] as bool? ?? true,
+          ),
+        );
       } else if (topic == _toolUsedTopic) {
         if (_toolEvents.isClosed) return;
-        _toolEvents.add(ToolUsedEvent(
-          name: decoded['name'] as String? ?? '',
-          label: decoded['label'] as String? ?? '',
-          phase: decoded['phase'] as String? ?? '',
-        ));
+        _toolEvents.add(
+          ToolUsedEvent(
+            name: decoded['name'] as String? ?? '',
+            label: decoded['label'] as String? ?? '',
+            phase: decoded['phase'] as String? ?? '',
+          ),
+        );
       } else if (topic == _callEndingTopic) {
         if (_callEnding.isClosed) return;
         final reason = decoded['reason'] as String? ?? '';

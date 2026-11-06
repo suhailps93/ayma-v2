@@ -56,34 +56,34 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? toolGuardTimeout,
     Duration? userIdleTimeout,
     ErrorReporter? errorReporter,
-  })  : _store = transcriptStore,
-        _reporter = errorReporter ?? ErrorReporter.instance,
-        _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
-        _userIdleTimeout = (userIdleTimeout == null ||
-                userIdleTimeout <= Duration.zero ||
-                welcome ||
-                practiceOtherUid != null)
-            ? null
-            : userIdleTimeout,
-        _responseGuardTimeout =
-            responseGuardTimeout ?? const Duration(seconds: 20),
-        // Backstop for a tool "start" whose "end" never arrives (agent crash
-        // mid-tool, dropped data message, orphaned/superseded turn): without it
-        // `activeToolLabel` stays set forever, the status line shows a frozen
-        // "Working…"/tool label, and BOTH other guards are neutralized (the
-        // response guard is cancelled on tool start; the idle guard refuses to
-        // fire while a tool label is set) — a silent hang (AGENTS.md: voice must
-        // recover, never spin). Must sit ABOVE the longest legitimate tool wait,
-        // the guided tour's bounded tap-wait (~110s, skills/guided_tour.py), so
-        // a normal tour step never trips it.
-        _toolGuardTimeout = toolGuardTimeout ?? const Duration(seconds: 180),
-        _openWeightsResponseBudget =
-            openWeightsResponseGuardTimeout ?? const Duration(seconds: 150),
-        _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
-        _transportFactory =
-            transportFactory ?? (() => LiveKitVoiceTransport()),
-        _commands = appCommandService ?? AppCommandService.shared,
-        _permissions = callPermissions ?? CallPermissions();
+  }) : _store = transcriptStore,
+       _reporter = errorReporter ?? ErrorReporter.instance,
+       _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
+       _userIdleTimeout =
+           (userIdleTimeout == null ||
+               userIdleTimeout <= Duration.zero ||
+               welcome ||
+               practiceOtherUid != null)
+           ? null
+           : userIdleTimeout,
+       _responseGuardTimeout =
+           responseGuardTimeout ?? const Duration(seconds: 20),
+       // Backstop for a tool "start" whose "end" never arrives (agent crash
+       // mid-tool, dropped data message, orphaned/superseded turn): without it
+       // `activeToolLabel` stays set forever, the status line shows a frozen
+       // "Working…"/tool label, and BOTH other guards are neutralized (the
+       // response guard is cancelled on tool start; the idle guard refuses to
+       // fire while a tool label is set) — a silent hang (AGENTS.md: voice must
+       // recover, never spin). Must sit ABOVE the longest legitimate tool wait,
+       // the guided tour's bounded tap-wait (~110s, skills/guided_tour.py), so
+       // a normal tour step never trips it.
+       _toolGuardTimeout = toolGuardTimeout ?? const Duration(seconds: 180),
+       _openWeightsResponseBudget =
+           openWeightsResponseGuardTimeout ?? const Duration(seconds: 150),
+       _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
+       _transportFactory = transportFactory ?? (() => LiveKitVoiceTransport()),
+       _commands = appCommandService ?? AppCommandService.shared,
+       _permissions = callPermissions ?? CallPermissions();
 
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`
   /// (no account) instead of `POST /bootstrap`.
@@ -445,9 +445,9 @@ class VoiceSessionController extends ChangeNotifier {
   /// back to its normal "Listening…".
   String? get warmingNotice =>
       (_openWeightsWarming && !_agentRespondedOnce && isListening)
-          ? 'Warming up the open-weights model — first reply can take a minute '
-              'or two'
-          : null;
+      ? 'Warming up the open-weights model — first reply can take a minute '
+            'or two'
+      : null;
 
   /// True while the call is live but the agent's FIRST genuine response
   /// (speech, transcript, or tool call) hasn't landed yet — the opener is
@@ -633,8 +633,11 @@ class VoiceSessionController extends ChangeNotifier {
       }
       debugPrint('[voice] token ok: url=$url tokenLen=${token.length}');
       if (token.isEmpty || url.isEmpty) {
-        _report(const VoiceStartError('no voice credentials in response'),
-            null, 'no_credentials');
+        _report(
+          const VoiceStartError('no voice credentials in response'),
+          null,
+          'no_credentials',
+        );
         _fail('The server did not return voice credentials.');
         return;
       }
@@ -643,7 +646,10 @@ class VoiceSessionController extends ChangeNotifier {
         // Sets `_transport` internally; the mic is NOT published here (see the
         // comment below) so the return value is not needed.
         await _connectTransport(
-            url: url, token: token, forceRelay: _forceRelayFirst);
+          url: url,
+          token: token,
+          forceRelay: _forceRelayFirst,
+        );
       } catch (e) {
         // ANY first-attempt connect failure gets one forgiving retry with
         // the ICE transport policy forced to TURN relay (LiveKit Cloud
@@ -656,15 +662,21 @@ class VoiceSessionController extends ChangeNotifier {
         // (bad token, server down) simply fails again on the retry and
         // propagates to the generic catch below — the existing error
         // surface, one attempt later.
-        debugPrint('[voice] connect attempt 1 failed: $e'
-            '${isIceConnectivityFailure(e) ? ' (ICE connectivity)' : ''}');
         debugPrint(
-            '[voice] relay-retry: retrying once with ${_forceRelayFirst ? 'the direct route' : 'TURN relay forced'}');
+          '[voice] connect attempt 1 failed: $e'
+          '${isIceConnectivityFailure(e) ? ' (ICE connectivity)' : ''}',
+        );
+        debugPrint(
+          '[voice] relay-retry: retrying once with ${_forceRelayFirst ? 'the direct route' : 'TURN relay forced'}',
+        );
         await _teardown();
         _relayRetrying = true;
         notifyListeners(); // status line: "Connecting…" -> "Reconnecting…"
         await _connectTransport(
-            url: url, token: token, forceRelay: !_forceRelayFirst);
+          url: url,
+          token: token,
+          forceRelay: !_forceRelayFirst,
+        );
         debugPrint('[voice] relay-retry: retry connect succeeded');
       }
 
@@ -686,8 +698,12 @@ class VoiceSessionController extends ChangeNotifier {
       }
     } on ApiException catch (e, st) {
       debugPrint('[voice] ApiException: ${e.message}');
-      _report(e, st, 'token_fetch',
-          extra: {'http_status': '${e.statusCode ?? 'none'}'});
+      _report(
+        e,
+        st,
+        'token_fetch',
+        extra: {'http_status': '${e.statusCode ?? 'none'}'},
+      );
       await _teardown();
       _fail(e.message);
     } catch (e, st) {
@@ -708,18 +724,25 @@ class VoiceSessionController extends ChangeNotifier {
     Map<String, String> extra = const {},
   }) {
     final screen = AppContext.instance.current.value.screen;
-    unawaited(_reporter.report(error, stack, reason: 'voice_$stage', tags: {
-      'feature': 'voice',
-      'voice_stage': stage,
-      'voice_phase': _phase.name,
-      'session_id': sessionId.isEmpty ? 'none' : sessionId,
-      'provider': _provider.isEmpty ? 'unknown' : _provider,
-      'route': screen.isEmpty ? 'unknown' : screen,
-      'welcome': '$welcome',
-      'attempt': _noJoinRetried ? '2' : '1',
-      'relay': '$_relayRetrying',
-      ...extra,
-    }));
+    unawaited(
+      _reporter.report(
+        error,
+        stack,
+        reason: 'voice_$stage',
+        tags: {
+          'feature': 'voice',
+          'voice_stage': stage,
+          'voice_phase': _phase.name,
+          'session_id': sessionId.isEmpty ? 'none' : sessionId,
+          'provider': _provider.isEmpty ? 'unknown' : _provider,
+          'route': screen.isEmpty ? 'unknown' : screen,
+          'welcome': '$welcome',
+          'attempt': _noJoinRetried ? '2' : '1',
+          'relay': '$_relayRetrying',
+          ...extra,
+        },
+      ),
+    );
   }
 
   /// Build a fresh transport, wire every stream listener, and connect —
@@ -755,12 +778,15 @@ class VoiceSessionController extends ChangeNotifier {
       if (!speaking && _userIdlePendingEnd) {
         if (_phase == VoiceSessionPhase.live) {
           debugPrint(
-              '[voice] Ayma utterance completed after deferred idle timeout — disconnect reason: client_idle_timeout');
+            '[voice] Ayma utterance completed after deferred idle timeout — disconnect reason: client_idle_timeout',
+          );
           _userIdlePendingEnd = false;
-          unawaited(_endForIdle(
-            notice: 'Call ended after 30 seconds of silence',
-            disconnectReason: 'client_idle_timeout',
-          ));
+          unawaited(
+            _endForIdle(
+              notice: 'Call ended after 30 seconds of silence',
+              disconnectReason: 'client_idle_timeout',
+            ),
+          );
         } else {
           _userIdlePendingEnd = false;
         }
@@ -811,8 +837,11 @@ class VoiceSessionController extends ChangeNotifier {
       unawaited(_teardown());
       if (_cappedError) return;
       _disconnectReason = 'dropped';
-      _report(const VoiceStartError('voice connection dropped'), null,
-          'dropped');
+      _report(
+        const VoiceStartError('voice connection dropped'),
+        null,
+        'dropped',
+      );
       _fail('The voice connection dropped.');
     });
     _reconnectingSub = transport.reconnecting.listen((reconnecting) {
@@ -966,8 +995,10 @@ class VoiceSessionController extends ChangeNotifier {
     final budget = _firstResponseBudget;
     debugPrint('[voice] no first response — brain unreachable');
     _report(
-      VoiceStartError('no agent response within ${budget.inSeconds}s of live'
-          '${warming ? ' (open-weights)' : ''}'),
+      VoiceStartError(
+        'no agent response within ${budget.inSeconds}s of live'
+        '${warming ? ' (open-weights)' : ''}',
+      ),
       null,
       warming ? 'open_weights_no_response' : 'no_response',
     );
@@ -975,10 +1006,12 @@ class VoiceSessionController extends ChangeNotifier {
     // Honest, brain-specific copy: the open-weights (Modal) model never came up
     // in time, so say exactly that and offer the real options — instead of the
     // generic "Couldn't reach the voice service" (founder ask, 2026-11-02).
-    _fail(warming
-        ? 'The open-weights model is unavailable right now — try again or '
-            'switch models.'
-        : "Couldn't reach the voice service — tap the mic to try again.");
+    _fail(
+      warming
+          ? 'The open-weights model is unavailable right now — try again or '
+                'switch models.'
+          : "Couldn't reach the voice service — tap the mic to try again.",
+    );
   }
 
   /// Restarts the client idle guard (see [_idleGuardTimeout]) — only while
@@ -1011,9 +1044,11 @@ class VoiceSessionController extends ChangeNotifier {
     _userIdlePendingEnd = false;
     _userIdleTimer?.cancel();
     _userIdleArmedAt = DateTime.now();
-    debugPrint('[voice] user idle timer armed at '
-        '${_userIdleArmedAt!.toIso8601String()} '
-        '(+${_userIdleTimeout.inMilliseconds}ms)');
+    debugPrint(
+      '[voice] user idle timer armed at '
+      '${_userIdleArmedAt!.toIso8601String()} '
+      '(+${_userIdleTimeout.inMilliseconds}ms)',
+    );
     _userIdleTimer = Timer(_userIdleTimeout, _onUserIdleTimeout);
   }
 
@@ -1035,16 +1070,20 @@ class VoiceSessionController extends ChangeNotifier {
     if (_phase != VoiceSessionPhase.live) return;
     if (_agentSpeaking) {
       debugPrint(
-          '[voice] user idle timeout fired while Ayma speaking — deferring until turn complete');
+        '[voice] user idle timeout fired while Ayma speaking — deferring until turn complete',
+      );
       _userIdlePendingEnd = true;
       return;
     }
     debugPrint(
-        '[voice] client user idle timeout fired — disconnect reason: client_idle_timeout');
-    unawaited(_endForIdle(
-      notice: 'Call ended after 30 seconds of silence',
-      disconnectReason: 'client_idle_timeout',
-    ));
+      '[voice] client user idle timeout fired — disconnect reason: client_idle_timeout',
+    );
+    unawaited(
+      _endForIdle(
+        notice: 'Call ended after 30 seconds of silence',
+        disconnectReason: 'client_idle_timeout',
+      ),
+    );
   }
 
   void _onIdleGuardFired() {
@@ -1056,11 +1095,14 @@ class VoiceSessionController extends ChangeNotifier {
       return;
     }
     debugPrint(
-        '[voice] client idle guard fired — disconnect reason: client_idle_guard');
-    unawaited(_endForIdle(
-      notice: 'Call ended after 30 seconds of silence',
-      disconnectReason: 'client_idle_guard',
-    ));
+      '[voice] client idle guard fired — disconnect reason: client_idle_guard',
+    );
+    unawaited(
+      _endForIdle(
+        notice: 'Call ended after 30 seconds of silence',
+        disconnectReason: 'client_idle_guard',
+      ),
+    );
   }
 
   /// Ends the call because of silence (agent-reported, client user idle timeout,
@@ -1070,7 +1112,10 @@ class VoiceSessionController extends ChangeNotifier {
     String? notice,
     String disconnectReason = 'client_idle_timeout',
   }) async {
-    if (active == this) { active = null; _syncActiveNotifier(); }
+    if (active == this) {
+      active = null;
+      _syncActiveNotifier();
+    }
     _disposeSessionLifecycle();
     await _teardown();
     _agentSpeaking = false;
@@ -1116,7 +1161,9 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _onTranscriptSegment(TranscriptSegment seg) {
     _noteActivity();
-    final role = seg.topic == 'agent_transcript' ? TurnRole.ayma : TurnRole.user;
+    final role = seg.topic == 'agent_transcript'
+        ? TurnRole.ayma
+        : TurnRole.user;
     if (role == TurnRole.ayma) _noteAgentResponse();
     if (role == TurnRole.user) {
       _noteUserActivity();
@@ -1140,7 +1187,12 @@ class VoiceSessionController extends ChangeNotifier {
     final tools = (role == TurnRole.ayma && seg.isFinal)
         ? _flushPendingToolLabels()
         : const <String>[];
-    _store.applyVoiceSegment(role, seg.text, isFinal: seg.isFinal, tools: tools);
+    _store.applyVoiceSegment(
+      role,
+      seg.text,
+      isFinal: seg.isFinal,
+      tools: tools,
+    );
   }
 
   /// A tool call starting or finishing mid-call (§1.7 step 3) — mirrors text
@@ -1181,17 +1233,21 @@ class VoiceSessionController extends ChangeNotifier {
   void _onCallEnding(String reason) {
     if (reason == 'idle_timeout') {
       debugPrint('[voice] disconnect reason: agent_idle_timeout');
-      unawaited(_endForIdle(
-        notice: 'Call ended after 3 minutes of silence',
-        disconnectReason: 'agent_idle_timeout',
-      ));
+      unawaited(
+        _endForIdle(
+          notice: 'Call ended after 3 minutes of silence',
+          disconnectReason: 'agent_idle_timeout',
+        ),
+      );
       return;
     }
     if (reason != 'out_of_credits') return;
     _cappedError = true;
     _disconnectReason = 'out_of_credits';
-    _fail('Out of credits — Ayma had to end the call. Upgrade to '
-        'keep going.');
+    _fail(
+      'Out of credits — Ayma had to end the call. Upgrade to '
+      'keep going.',
+    );
   }
 
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent
@@ -1207,7 +1263,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
     _disconnectReason ??= 'user_stop';
-    if (active == this) { active = null; _syncActiveNotifier(); }
+    if (active == this) {
+      active = null;
+      _syncActiveNotifier();
+    }
     _disposeSessionLifecycle();
     await _teardown();
     _persistSession();
@@ -1257,8 +1316,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// deep-link instead of leaving the user with only "the call ended".
   void reportBackgroundBlocked() {
     _backgroundPermissionDenied = true;
-    _fail("Ayma needs notification access to keep a call going in the "
-        'background — turn it on in Settings, then try again.');
+    _fail(
+      "Ayma needs notification access to keep a call going in the "
+      'background — turn it on in Settings, then try again.',
+    );
   }
 
   Future<void> toggleMute() async {
@@ -1346,8 +1407,11 @@ class VoiceSessionController extends ChangeNotifier {
     // itself is still live. Covers connecting/waking/live; _teardown() always
     // disables it again on every exit path.
     if (isActive) {
-      unawaited(WakelockPlus.enable().catchError(
-          (e) => debugPrint('[voice] wakelock enable failed: $e')));
+      unawaited(
+        WakelockPlus.enable().catchError(
+          (e) => debugPrint('[voice] wakelock enable failed: $e'),
+        ),
+      );
     }
     notifyListeners();
   }
@@ -1377,8 +1441,10 @@ class VoiceSessionController extends ChangeNotifier {
       _ctxDebounce = Timer(const Duration(milliseconds: 500), _pushContext);
     };
     AppContext.instance.current.addListener(_ctxListener!);
-    _ctxHeartbeat =
-        Timer.periodic(_ctxHeartbeatInterval, (_) => _pushContext());
+    _ctxHeartbeat = Timer.periodic(
+      _ctxHeartbeatInterval,
+      (_) => _pushContext(),
+    );
     // Returning from the background can leave the doc stale — re-push at once.
     try {
       _lifecycle = AppLifecycleListener(
@@ -1393,8 +1459,9 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   void _pushContext() {
-    _api.setVoiceContext(AppContext.instance.current.value.toJson()).catchError(
-        (e) => debugPrint('[voice] setVoiceContext failed: $e'));
+    _api
+        .setVoiceContext(AppContext.instance.current.value.toJson())
+        .catchError((e) => debugPrint('[voice] setVoiceContext failed: $e'));
   }
 
   Future<void> _stopScreenAwareness() async {
@@ -1415,7 +1482,8 @@ class VoiceSessionController extends ChangeNotifier {
     }
     await _commands.stop();
     _api.clearVoiceContext().catchError(
-        (e) => debugPrint('[voice] clearVoiceContext failed: $e'));
+      (e) => debugPrint('[voice] clearVoiceContext failed: $e'),
+    );
   }
 
   void _fail(String message) {
@@ -1513,8 +1581,11 @@ class VoiceSessionController extends ChangeNotifier {
     // 2026-11-03). Idempotent: a concurrent/second call sees null fields and
     // does nothing.
     try {
-      unawaited(WakelockPlus.disable().catchError(
-          (e) => debugPrint('[voice] wakelock disable failed: $e')));
+      unawaited(
+        WakelockPlus.disable().catchError(
+          (e) => debugPrint('[voice] wakelock disable failed: $e'),
+        ),
+      );
       await _stopScreenAwareness();
       await speakingSub?.cancel();
       await readySub?.cancel();
@@ -1535,8 +1606,10 @@ class VoiceSessionController extends ChangeNotifier {
       _pendingToolLabels.clear();
       _activeToolLabel = null;
     } catch (e, st) {
-      debugPrint('[voice] teardown cleanup error (continuing to release '
-          'the mic): $e\n$st');
+      debugPrint(
+        '[voice] teardown cleanup error (continuing to release '
+        'the mic): $e\n$st',
+      );
     } finally {
       if (transport != null) {
         try {
@@ -1625,7 +1698,10 @@ class VoiceSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
-    if (active == this) { active = null; _syncActiveNotifier(); }
+    if (active == this) {
+      active = null;
+      _syncActiveNotifier();
+    }
     _disposeSessionLifecycle();
     // Cancel every listener subscription synchronously — i.e. the `.cancel()`
     // calls themselves, not their returned futures — *before* `super.dispose()`

@@ -189,7 +189,8 @@ class FakeVoiceTransport implements VoiceTransport {
   Future<void> dispose() async {
     disposeCalls++;
     if (!agentReadyController.isClosed) await agentReadyController.close();
-    if (!agentSpeakingController.isClosed) await agentSpeakingController.close();
+    if (!agentSpeakingController.isClosed)
+      await agentSpeakingController.close();
     if (!transcriptsController.isClosed) await transcriptsController.close();
     if (!toolEventsController.isClosed) await toolEventsController.close();
     if (!callEndingController.isClosed) await callEndingController.close();

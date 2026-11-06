@@ -78,11 +78,12 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             final orbState = switch (phase) {
               VoiceSessionPhase.connecting ||
               VoiceSessionPhase.waking => AymaOrbState.thinking,
-              VoiceSessionPhase.live => voice.reconnecting
-                  ? AymaOrbState.thinking
-                  : (speaking
-                        ? AymaOrbState.speaking
-                        : AymaOrbState.listening),
+              VoiceSessionPhase.live =>
+                voice.reconnecting
+                    ? AymaOrbState.thinking
+                    : (speaking
+                          ? AymaOrbState.speaking
+                          : AymaOrbState.listening),
               _ => AymaOrbState.idle,
             };
             final label = switch (phase) {
@@ -91,17 +92,18 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               VoiceSessionPhase.connecting =>
                 voice.relayRetrying ? 'Reconnecting…' : 'Connecting…',
               VoiceSessionPhase.waking => 'Waking Ayma…',
-              VoiceSessionPhase.live => voice.muted
-                  ? 'Muted'
-                  : (voice.reconnecting
-                        ? 'Reconnecting…'
-                        : (speaking
-                              ? 'Ayma is speaking…'
-                              : (voice.activeToolLabel ??
-                                    voice.warmingNotice ??
-                                    (voice.awaitingFirstResponse
-                                        ? 'Connecting…'
-                                        : 'Listening…')))),
+              VoiceSessionPhase.live =>
+                voice.muted
+                    ? 'Muted'
+                    : (voice.reconnecting
+                          ? 'Reconnecting…'
+                          : (speaking
+                                ? 'Ayma is speaking…'
+                                : (voice.activeToolLabel ??
+                                      voice.warmingNotice ??
+                                      (voice.awaitingFirstResponse
+                                          ? 'Connecting…'
+                                          : 'Listening…')))),
               _ => '',
             };
             return Stack(
@@ -135,8 +137,10 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                       const SizedBox(height: 32),
                       Text(
                         label,
-                        style: AymaType.mono(size: 12, color: ac.fgMute)
-                            .copyWith(letterSpacing: 2),
+                        style: AymaType.mono(
+                          size: 12,
+                          color: ac.fgMute,
+                        ).copyWith(letterSpacing: 2),
                       ),
                       if (voice.aymaQuiet && phase == VoiceSessionPhase.live)
                         Padding(
@@ -207,10 +211,7 @@ class _MuteButton extends StatelessWidget {
         key: const Key('voiceCallMuteButton'),
         color: muted ? ac.error : ac.bgElev,
         shape: CircleBorder(
-          side: BorderSide(
-            color: muted ? ac.error : ac.lineSoft,
-            width: 1,
-          ),
+          side: BorderSide(color: muted ? ac.error : ac.lineSoft, width: 1),
         ),
         child: InkWell(
           customBorder: const CircleBorder(),
@@ -257,7 +258,8 @@ Future<void> toggleVoiceCall(
     return;
   }
   await voice.start(
-      forceRelayFirst: decision == VoiceEntryDecision.allowRelayFirst);
+    forceRelayFirst: decision == VoiceEntryDecision.allowRelayFirst,
+  );
   if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
     if (!context.mounted) return;
     if (voice.cappedError) {
