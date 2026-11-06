@@ -302,6 +302,8 @@ class _FakeApi extends ApiClient {
     String screenRoute = '',
     String screenDetail = '',
     String screenVisible = '',
+    String screenPreviousRoute = '',
+    String screenPreviousLabel = '',
     String clientMsgId = '',
   }) async* {
     chatCalls.add({
@@ -338,6 +340,8 @@ class _FakeApi extends ApiClient {
     String screenRoute = '',
     String screenDetail = '',
     String screenVisible = '',
+    String screenPreviousRoute = '',
+    String screenPreviousLabel = '',
     String clientMsgId = '',
     bool tourContinuation = false,
   }) async {

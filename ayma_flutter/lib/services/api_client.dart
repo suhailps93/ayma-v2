@@ -2499,6 +2499,8 @@ class ApiClient {
     String screenRoute = '',
     String screenDetail = '',
     String screenVisible = '',
+    String screenPreviousRoute = '',
+    String screenPreviousLabel = '',
     String clientMsgId = '',
     bool tourContinuation = false,
   }) async {
@@ -2532,6 +2534,8 @@ class ApiClient {
           'screen_route': screenRoute,
           'screen_detail': screenDetail,
           'screen_visible': screenVisible,
+        'screen_previous_route': screenPreviousRoute,
+        'screen_previous_label': screenPreviousLabel,
         }),
       );
     } on http.ClientException catch (e) {
@@ -2577,6 +2581,8 @@ class ApiClient {
     String screenRoute = '',
     String screenDetail = '',
     String screenVisible = '',
+    String screenPreviousRoute = '',
+    String screenPreviousLabel = '',
     String clientMsgId = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
@@ -2605,6 +2611,8 @@ class ApiClient {
         'screen_route': screenRoute,
         'screen_detail': screenDetail,
         'screen_visible': screenVisible,
+        'screen_previous_route': screenPreviousRoute,
+        'screen_previous_label': screenPreviousLabel,
       });
 
     final http.StreamedResponse res;

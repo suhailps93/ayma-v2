@@ -13,6 +13,7 @@ import 'accent_color_controller.dart';
 import 'api_client.dart';
 import 'app_context.dart';
 import 'guided_tour_controller.dart';
+import 'navigation_history.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
 import 'pair_key.dart';
@@ -80,7 +81,14 @@ import 'voice_session_controller.dart';
 ///   call is live (`skills/set_model_stack`);
 /// * `ui_action` — operate one on-screen control through [ScreenCapture]
 ///   (which refuses the registry's denylist), acked with the outcome and
-///   what the screen shows afterwards.
+///   what the screen shows afterwards;
+/// * `go_back` — return to the previous page of the session navigation
+///   history ([NavigationHistory], founder feedback item 15): one step per
+///   request, a modal/sheet is dismissed first (as the user's own back
+///   would), an active tour is never fought, and at the root the ack
+///   carries a sayable reason instead of a silent failure. Like
+///   `ui_action` it owns its ack (see [_runGoBackCommand]) because it may
+///   have to await the modal dismissal first.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
@@ -98,27 +106,41 @@ class AppCommandService {
     String Function()? currentPath,
     bool Function()? hasActiveVoice,
     Future<void> Function()? reconnectVoice,
+    NavigationHistory? navigationHistory,
+    bool Function()? popupOpen,
+    Future<bool> Function()? dismissPopup,
+    bool Function()? tourActive,
     Future<void> Function(int index)? sendTourContinuation,
     Future<void> Function(int index)? sendTourStop,
-  })  : _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
-        _sendTourStop = sendTourStop ?? _postTourStop,
-        _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
-        _hasActiveVoice = hasActiveVoice ??
-            (() => VoiceSessionController.active?.isActive ?? false),
-        _reconnectVoice = reconnectVoice ?? _reconnectActiveVoice,
-        _closeChatPopup =
-            closeChatPopup ?? ScreenCapture.instance.closeAymaPopup,
-        _currentPath = currentPath ?? _routerPath,
-        _accentOverride = accentController,
-        _uiAction = uiAction ?? _performUiAction,
-        _fsOverride = firestore,
-        _authOverride = auth,
-        _navigate = navigate ?? ((p) => navigateToRoute(p)),
-        _go = go ?? appRouter.go,
-        _theme = themeController ?? themeControllerGlobal,
-        _orbAnim = orbAnimationSettings ?? orbAnimationSettingsGlobal,
-        _clearPushTokenOverride = clearPushToken,
-        _profilesOverride = profileService;
+  }) : _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
+       _sendTourStop = sendTourStop ?? _postTourStop,
+       _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
+       _hasActiveVoice =
+           hasActiveVoice ??
+           (() => VoiceSessionController.active?.isActive ?? false),
+       _reconnectVoice = reconnectVoice ?? _reconnectActiveVoice,
+       _closeChatPopup =
+           closeChatPopup ?? ScreenCapture.instance.closeAymaPopup,
+       _history = navigationHistory ?? NavigationHistory.instance,
+       _popupOpen = popupOpen ?? _defaultPopupOpen,
+       _dismissPopup = dismissPopup ?? _defaultDismissPopup,
+       _tourActive =
+           tourActive ??
+           (() =>
+               TourController.instance.active ||
+               GuidedTourController.instance.active ||
+               GuidedTourController.instance.sessionActive),
+       _currentPath = currentPath ?? _routerPath,
+       _accentOverride = accentController,
+       _uiAction = uiAction ?? _performUiAction,
+       _fsOverride = firestore,
+       _authOverride = auth,
+       _navigate = navigate ?? ((p) => navigateToRoute(p)),
+       _go = go ?? appRouter.go,
+       _theme = themeController ?? themeControllerGlobal,
+       _orbAnim = orbAnimationSettings ?? orbAnimationSettingsGlobal,
+       _clearPushTokenOverride = clearPushToken,
+       _profilesOverride = profileService;
 
   final FirebaseFirestore? _fsOverride;
   final FirebaseAuth? _authOverride;
@@ -142,6 +164,32 @@ class AppCommandService {
       return '';
     }
   }
+
+  /// The session navigation history every navigation through this
+  /// service is recorded into (and `go_back` unwinds). Injectable for
+  /// tests; production shares [NavigationHistory.instance], which the
+  /// router listener and the tab shell also feed, so user-driven and
+  /// Ayma-driven navigation land in the ONE stack.
+  final NavigationHistory _history;
+  NavigationHistory get history => _history;
+
+  /// Whether any modal/sheet (or Ayma's own chat popup) is on top right
+  /// now, and how to dismiss the top one — a `go_back` with a modal up
+  /// dismisses it first, exactly like the user's own back press.
+  final bool Function() _popupOpen;
+  final Future<bool> Function() _dismissPopup;
+
+  static bool _defaultPopupOpen() =>
+      screenPopupTracker.popupOpen || isAymaSheetOpen;
+
+  static Future<bool> _defaultDismissPopup() async =>
+      await screenPopupTracker.navigator?.maybePop() ?? false;
+
+  /// Whether a tour overlay (the passive coach-mark tour or an
+  /// Ayma-driven guided-tour step) is currently showing. `go_back` never
+  /// fights a tour: it reports the tour instead of navigating under it.
+  final bool Function() _tourActive;
+
   final ThemeController _theme;
   final OrbAnimationSettings _orbAnim;
   final Future<void> Function()? _clearPushTokenOverride;
@@ -338,7 +386,10 @@ class AppCommandService {
     try {
       final uid = _auth.currentUser?.uid;
       if (uid == null) return;
-      _sub = _db.doc('users/$uid/app_commands/pending').snapshots().listen(
+      _sub = _db
+          .doc('users/$uid/app_commands/pending')
+          .snapshots()
+          .listen(
             _onDoc,
             // A snapshot-stream error or unexpected close is terminal for
             // the subscription — without this, one hiccup mid-call silently
@@ -376,6 +427,13 @@ class AppCommandService {
       unawaited(_runUiAction(snap.reference, data, id));
       return;
     }
+    if (data['action'] == 'go_back') {
+      // Owns its ack like ui_action/tour_step: it may await a modal
+      // dismissal, and its ack carries the outcome kind + where the user
+      // ended up, so the backend tool can say it honestly.
+      unawaited(_runGoBackCommand(snap.reference, id));
+      return;
+    }
     if (data['action'] == 'tour_step') {
       // The Ayma-driven tour spotlights one step and acks it only once the
       // overlay reports it shown (or its anchor absent), then waits for the
@@ -392,11 +450,14 @@ class AppCommandService {
     }
     // Ack first (the backend tool is polling for this id right now), then
     // clear the pending doc.
-    final acked = snap.reference.parent.doc('ack').set(<String, dynamic>{
-      'id': id,
-      'ok': ok,
-      'ts': FieldValue.serverTimestamp(),
-    }).catchError((_) {});
+    final acked = snap.reference.parent
+        .doc('ack')
+        .set(<String, dynamic>{
+          'id': id,
+          'ok': ok,
+          'ts': FieldValue.serverTimestamp(),
+        })
+        .catchError((_) {});
     if (ok && id.isNotEmpty && data['action'] == 'search_explore') {
       _awaitingExploreId = id;
       _awaitingExploreQuery = (data['query'] as String? ?? '').trim();
@@ -412,15 +473,21 @@ class AppCommandService {
 
   /// Operate the control, then ack with the outcome: `ok`, plus what the
   /// screen shows now (`result`) or why it was refused (`reason`).
-  Future<void> _runUiAction(DocumentReference<Map<String, dynamic>> ref,
-      Map<String, dynamic> cmd, String id) async {
+  Future<void> _runUiAction(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> cmd,
+    String id,
+  ) async {
     final out = await runUiAction(cmd);
-    await ref.parent.doc('ack').set(<String, dynamic>{
-      'id': id,
-      'ok': out.ok,
-      if (out.ok) 'result': out.result else 'reason': out.reason,
-      'ts': FieldValue.serverTimestamp(),
-    }).catchError((_) {});
+    await ref.parent
+        .doc('ack')
+        .set(<String, dynamic>{
+          'id': id,
+          'ok': out.ok,
+          if (out.ok) 'result': out.result else 'reason': out.reason,
+          'ts': FieldValue.serverTimestamp(),
+        })
+        .catchError((_) {});
     await _deleteIfStillCommand(ref, id);
   }
 
@@ -430,13 +497,18 @@ class AppCommandService {
   /// `tour_event` write the backend's `advance_guided_tour` is polling for.
   @visibleForTesting
   void runTourStep(
-      DocumentReference<Map<String, dynamic>> ref, Map<String, dynamic> cmd,
-      {required String id}) {
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> cmd, {
+    required String id,
+  }) {
     _runTourStep(ref, cmd, id);
   }
 
-  void _runTourStep(DocumentReference<Map<String, dynamic>> ref,
-      Map<String, dynamic> cmd, String id) {
+  void _runTourStep(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> cmd,
+    String id,
+  ) {
     final index = (cmd['index'] as num?)?.toInt() ?? 0;
     final total = (cmd['total'] as num?)?.toInt() ?? 0;
     final anchor = (cmd['anchor'] as String?)?.trim();
@@ -448,12 +520,14 @@ class AppCommandService {
     final eventRef = commands.doc('tour_event');
 
     Future<void> ack(bool ok) async {
-      await ackRef.set(<String, dynamic>{
-        'id': id,
-        'ok': ok,
-        if (!ok) 'reason': 'anchor_absent',
-        'ts': FieldValue.serverTimestamp(),
-      }).catchError((_) {});
+      await ackRef
+          .set(<String, dynamic>{
+            'id': id,
+            'ok': ok,
+            if (!ok) 'reason': 'anchor_absent',
+            'ts': FieldValue.serverTimestamp(),
+          })
+          .catchError((_) {});
       await _deleteIfStillCommand(ref, id);
     }
 
@@ -463,13 +537,17 @@ class AppCommandService {
       // the tour with no trace (founder/Scout, 2026-11-03). The tour degrades
       // honestly (advance_guided_tour times out), but the log makes the cause
       // obvious instead of invisible.
-      eventRef.set(<String, dynamic>{
-        'index': index,
-        'event': name,
-        'ts': FieldValue.serverTimestamp(),
-      }).catchError((Object e) {
-        debugPrint('Ayma tour_event "$name" (step $index) write failed: $e');
-      });
+      eventRef
+          .set(<String, dynamic>{
+            'index': index,
+            'event': name,
+            'ts': FieldValue.serverTimestamp(),
+          })
+          .catchError((Object e) {
+            debugPrint(
+              'Ayma tour_event "$name" (step $index) write failed: $e',
+            );
+          });
     }
 
     // Starting a driven tour takes over the screen — close any passive
@@ -477,47 +555,114 @@ class AppCommandService {
     // the two never fight over the overlay.
     TourController.instance.finish();
     final guided = GuidedTourController.instance;
-    guided.show(GuidedTourStep(
-      token: id,
-      feature: TourFeature(
-        featureId: 'guided_tour_step_$index',
-        headline: headline,
-        subtitle: say,
-        anchorId: (anchor == null || anchor.isEmpty) ? null : anchor,
-        tab: tab,
-        // The composer step is the text box the user is meant to type in; it
-        // must stay focusable for the whole step instead of advancing on every
-        // tap inside the spotlight (Scout note 118 leg 4).
-        typingAllowed: anchor == TourAnchors.homeComposer,
+    guided.show(
+      GuidedTourStep(
+        token: id,
+        feature: TourFeature(
+          featureId: 'guided_tour_step_$index',
+          headline: headline,
+          subtitle: say,
+          anchorId: (anchor == null || anchor.isEmpty) ? null : anchor,
+          tab: tab,
+          // The composer step is the text box the user is meant to type in; it
+          // must stay focusable for the whole step instead of advancing on every
+          // tap inside the spotlight (Scout note 118 leg 4).
+          typingAllowed: anchor == TourAnchors.homeComposer,
+        ),
+        index: index,
+        total: total,
+        onShown: () => unawaited(ack(true)),
+        // Anchor not present: ack so the backend skips the step, and clear the
+        // spotlight — but keep the SESSION active (the backend sends the next
+        // step), so the passive tour can't slip in during the gap.
+        onAbsent: () {
+          guided.clearStep();
+          unawaited(ack(false));
+        },
+        // The ONLY thing that advances a step: the user's real tap on the
+        // spotlighted control (the press-through). It writes the tap event the
+        // backend's advance_guided_tour consumes, clears this step's spotlight
+        // (session stays active until tour_end), and KICKS a model turn so the
+        // tour advances even if no blocking advance_guided_tour happened to be
+        // mid-wait at tap time (founder/Scout live failure, 2026-11-03).
+        onTapped: () {
+          event('tapped');
+          guided.clearStep();
+          _kickTourAdvance(index);
+        },
+        // The "Skip tour" affordance ends the whole session.
+        onStop: () {
+          event('stop');
+          guided.endSession();
+          _kickTourStop(index);
+        },
       ),
-      index: index,
-      total: total,
-      onShown: () => unawaited(ack(true)),
-      // Anchor not present: ack so the backend skips the step, and clear the
-      // spotlight — but keep the SESSION active (the backend sends the next
-      // step), so the passive tour can't slip in during the gap.
-      onAbsent: () {
-        guided.clearStep();
-        unawaited(ack(false));
-      },
-      // The ONLY thing that advances a step: the user's real tap on the
-      // spotlighted control (the press-through). It writes the tap event the
-      // backend's advance_guided_tour consumes, clears this step's spotlight
-      // (session stays active until tour_end), and KICKS a model turn so the
-      // tour advances even if no blocking advance_guided_tour happened to be
-      // mid-wait at tap time (founder/Scout live failure, 2026-11-03).
-      onTapped: () {
-        event('tapped');
-        guided.clearStep();
-        _kickTourAdvance(index);
-      },
-      // The "Skip tour" affordance ends the whole session.
-      onStop: () {
-        event('stop');
-        guided.endSession();
-        _kickTourStop(index);
-      },
-    ));
+    );
+  }
+
+  /// Execute one `go_back` command and ack it with the outcome: `ok`,
+  /// the outcome `kind`, the sayable line (`result` when it worked,
+  /// `reason` when it honestly didn't), and the current/previous page
+  /// labels after the step — the backend's `go_back` tool relays exactly
+  /// this, so Ayma never claims a back that didn't happen.
+  Future<void> _runGoBackCommand(
+    DocumentReference<Map<String, dynamic>> ref,
+    String id,
+  ) async {
+    final out = await runGoBack();
+    await ref.parent
+        .doc('ack')
+        .set(<String, dynamic>{
+          'id': id,
+          'ok': out.ok,
+          'kind': out.kind.name,
+          if (out.ok) 'result': out.message else 'reason': out.message,
+          'current': _history.current?.label ?? '',
+          'previous': _history.previous?.label ?? '',
+          'ts': FieldValue.serverTimestamp(),
+        })
+        .catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// One "go back" step (founder feedback item 15), in the order a user's
+  /// own back press would resolve it:
+  /// 1. a tour overlay is up — do NOT navigate or dismiss anything; the
+  ///    tour owns the screen until it finishes or is skipped;
+  /// 2. a modal/sheet is up — dismiss it and stay on the page (the
+  ///    history is untouched; the NEXT go-back leaves the page);
+  /// 3. otherwise unwind one history step and navigate to the page that
+  ///    surfaces — whether the user got there themselves or Ayma took
+  ///    them there, both are recorded in the one stack;
+  /// 4. at the root there is nowhere to go: a graceful, sayable outcome,
+  ///    never a silent failure and never an app exit.
+  @visibleForTesting
+  Future<GoBackOutcome> runGoBack() async {
+    if (_tourActive()) {
+      return GoBackOutcome.tourActive();
+    }
+    if (_popupOpen()) {
+      var dismissed = false;
+      try {
+        dismissed = await _dismissPopup();
+      } catch (_) {
+        dismissed = false;
+      }
+      if (dismissed) {
+        return GoBackOutcome.dismissedModal(
+          currentLabel: _history.current?.label,
+        );
+      }
+    }
+    final target = _history.takeBackTarget();
+    if (target == null) {
+      return GoBackOutcome.atRoot(currentLabel: _history.current?.label);
+    }
+    // The history already sits on the target (takeBackTarget popped to
+    // it), so this navigates WITHOUT recording a new visit — the router
+    // listener's own record of the landing dedupes/unwinds consistently.
+    if (_currentPath() != target.path) _navigate(target.path);
+    return GoBackOutcome.navigated(target);
   }
 
   /// Runs one `ui_action` command; any failure is reported, never thrown.
@@ -535,8 +680,7 @@ class AppCommandService {
   /// summary to the ack doc (same id) so `search_explore` can return what the
   /// user actually sees. Needs no extra Firestore rule: `ack` is already
   /// client-writable.
-  void _listenForExploreReport(
-      DocumentReference<Map<String, dynamic>> ackRef) {
+  void _listenForExploreReport(DocumentReference<Map<String, dynamic>> ackRef) {
     if (_reportListening) return;
     _reportListening = true;
     AppContext.instance.exploreReport.addListener(() {
@@ -545,8 +689,12 @@ class AppCommandService {
       if (report.query != _awaitingExploreQuery) return;
       final id = _awaitingExploreId;
       _awaitingExploreId = '';
-      ackRef.set(<String, dynamic>{'id': id, 'result': report.summary},
-          SetOptions(merge: true)).catchError((_) {});
+      ackRef
+          .set(<String, dynamic>{
+            'id': id,
+            'result': report.summary,
+          }, SetOptions(merge: true))
+          .catchError((_) {});
     });
   }
 
@@ -562,11 +710,15 @@ class AppCommandService {
   /// handled — a blind delete could swallow a newer command that landed
   /// between our snapshot and the delete.
   Future<void> _deleteIfStillCommand(
-      DocumentReference<Map<String, dynamic>> ref, String id) {
-    return _db.runTransaction((tx) async {
-      final cur = await tx.get(ref);
-      if (((cur.data()?['id'] as String?) ?? '') == id) tx.delete(ref);
-    }).catchError((_) {});
+    DocumentReference<Map<String, dynamic>> ref,
+    String id,
+  ) {
+    return _db
+        .runTransaction((tx) async {
+          final cur = await tx.get(ref);
+          if (((cur.data()?['id'] as String?) ?? '') == id) tx.delete(ref);
+        })
+        .catchError((_) {});
   }
 
   /// Route one command; true when it actually executed a navigation/action
@@ -587,18 +739,22 @@ class AppCommandService {
         AppContext.instance.pendingExploreQuery =
             (cmd['query'] as String? ?? '').trim();
         _navigate(ExploreScreen.path);
+        _history.visit(ExploreScreen.path);
         return true;
       case 'open_profile':
         final uid = (cmd['uid'] as String? ?? '').trim();
         if (uid.isEmpty) return false;
         _navigate('/profile/user/$uid');
+        _history.visit('/profile/user/$uid');
         return true;
       case 'open_dm_thread':
         final uid = (cmd['uid'] as String? ?? '').trim();
         if (uid.isEmpty) return false;
         final me = _auth.currentUser?.uid;
         if (me == null || me.isEmpty) return false;
-        _navigate('/dm/${sortedPairKey(me, uid)}');
+        final threadPath = '/dm/${sortedPairKey(me, uid)}';
+        _navigate(threadPath);
+        _history.visit(threadPath);
         return true;
       case 'open_notification':
         // The backend already picked the latest unread notification and hands
@@ -639,8 +795,12 @@ class AppCommandService {
         _lastReconnectAt = DateTime.now();
         _afterAck = _reconnectVoice;
         return true;
+      case 'go_back':
+        // Async-owned (see _onDoc / _runGoBackCommand): the sync
+        // dispatcher cannot await a modal dismissal, so it refuses here
+        // rather than half-running the step.
+        return false;
       case 'tour_end':
-        // The Ayma-driven tour finished or was stopped — end the session
         // (clears the spotlight and lets the passive tour resume its normal
         // gating). Always acks ok (there's nothing that can fail).
         GuidedTourController.instance.endSession();
@@ -656,13 +816,23 @@ class AppCommandService {
     if (_currentPath() == path) return;
     if (!_chatPopupOpen()) {
       _navigate(path);
+      _history.visit(path);
       return;
     }
-    unawaited(_closeChatPopup().then((_) {
-      if (_currentPath() != path) _navigate(path);
-    }).catchError((Object e) {
-      debugPrint('Ayma navigation after closing the chat popup failed: $e');
-    }));
+    unawaited(
+      _closeChatPopup()
+          .then((_) {
+            if (_currentPath() != path) {
+              _navigate(path);
+              _history.visit(path);
+            }
+          })
+          .catchError((Object e) {
+            debugPrint(
+              'Ayma navigation after closing the chat popup failed: $e',
+            );
+          }),
+    );
   }
 
   /// The registry's client-held settings and the confirmed sign out
@@ -714,16 +884,17 @@ class AppCommandService {
   }
 
   static bool? _onOff(String value) => switch (value) {
-        'on' => true,
-        'off' => false,
-        _ => null,
-      };
+    'on' => true,
+    'off' => false,
+    _ => null,
+  };
 
   /// The same steps as the You tab's "Sign out" row.
   Future<void> _signOut() async {
     try {
       await (_clearPushTokenOverride ?? PushService().clearToken)();
       await _auth.signOut();
+      _history.clear(); // session-scoped: the next session starts fresh
       _go(SignInScreen.path);
     } catch (e) {
       debugPrint('Ayma-requested sign-out failed: $e');
@@ -738,4 +909,46 @@ class AppCommandService {
     _afterAck = null;
     if (after != null) await after();
   }
+}
+
+/// How one `go_back` step resolved (see [AppCommandService.runGoBack]).
+enum GoBackKind { navigated, dismissedModal, atRoot, tourActive }
+
+/// The outcome of one `go_back` step: whether it did anything ([ok]),
+/// which way it resolved ([kind]) and the sayable line Ayma relays
+/// ([message]). At the root and during a tour, [ok] is false but the
+/// message is the graceful answer itself — never a silent failure.
+class GoBackOutcome {
+  const GoBackOutcome._(this.kind, this.message);
+
+  factory GoBackOutcome.navigated(NavPageEntry target) =>
+      GoBackOutcome._(GoBackKind.navigated, 'Went back to ${target.label}.');
+
+  factory GoBackOutcome.dismissedModal({String? currentLabel}) =>
+      GoBackOutcome._(
+        GoBackKind.dismissedModal,
+        currentLabel == null
+            ? 'Closed that first.'
+            : 'Closed that first — you are still on $currentLabel.',
+      );
+
+  factory GoBackOutcome.atRoot({String? currentLabel}) => GoBackOutcome._(
+    GoBackKind.atRoot,
+    currentLabel == null
+        ? "There's nowhere to go back to."
+        : "There's nowhere to go back to — you're on $currentLabel, "
+              "and that's the first page of this session.",
+  );
+
+  factory GoBackOutcome.tourActive() => const GoBackOutcome._(
+    GoBackKind.tourActive,
+    "A tour is showing right now, so I didn't go back — finish or "
+    'skip the tour first, then ask me again.',
+  );
+
+  final GoBackKind kind;
+  final String message;
+
+  bool get ok =>
+      kind == GoBackKind.navigated || kind == GoBackKind.dismissedModal;
 }

@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/app_context.dart';
+import '../services/navigation_history.dart';
 import '../services/feature_tour_store.dart';
 import '../services/guided_tour_controller.dart';
 import '../services/screen_capture.dart';
@@ -126,6 +127,12 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
 
+  /// The route path each shell tab stands for in the session navigation
+  /// history ([NavigationHistory]) - the same paths `open_screen` uses
+  /// for these pages, so a tab the user tapped and a page Ayma opened
+  /// are the same history entries.
+  static const _tabPaths = ['/', '/explore', '/messages', '/profile'];
+
   /// [AymaTabBar]'s `onSelected` here — the orb tap runs a progression
   /// ([_onOrbTap]); the other three tabs go straight through to [_selectTab]
   /// (closing the Ayma sheet first if one is open, so the switch is
@@ -229,6 +236,9 @@ class _MainShellScreenState extends State<MainShellScreen>
       _index = i;
     });
     AppContext.instance.set(screen: _tabScreens[i]);
+    // A tab switch is a page visit like any other (feedback item 15):
+    // record it so a spoken go back can return here.
+    NavigationHistory.instance.visit(_tabPaths[i]);
     if (i == 1 && alreadyBuilt) _exploreKey.currentState?.reload();
     // `_index` is already 0 above, so `ChatInbox`'s own `_toAymaTab` listener
     // (below) won't re-enter `_selectTab` when this kickoff lands — it only
@@ -251,6 +261,9 @@ class _MainShellScreenState extends State<MainShellScreen>
     if (_tabHistory.length <= 1) return false;
     _tabHistory.removeLast();
     final target = _tabHistory.last;
+    // The session history unwinds to the same tab (it may sit deeper
+    // than one step when pushed routes interleaved).
+    NavigationHistory.instance.markCurrent(_tabPaths[target]);
     setState(() => _index = target);
     if (target == 1) _exploreKey.currentState?.reload();
     return true;

@@ -52,6 +52,8 @@ class _FakeChatApi extends ApiClient {
     String screenRoute = '',
     String screenDetail = '',
     String screenVisible = '',
+    String screenPreviousRoute = '',
+    String screenPreviousLabel = '',
     String clientMsgId = '',
   }) async* {
     // The sheet always tries the stream first — fail it so every call
@@ -83,6 +85,8 @@ class _FakeChatApi extends ApiClient {
     String screenRoute = '',
     String screenDetail = '',
     String screenVisible = '',
+    String screenPreviousRoute = '',
+    String screenPreviousLabel = '',
     String clientMsgId = '',
     bool tourContinuation = false,
   }) async {

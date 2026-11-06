@@ -20,6 +20,7 @@ import '../../services/accent_color_controller.dart';
 import '../../services/api_client.dart';
 import '../../services/app_command_host.dart';
 import '../../services/app_command_service.dart';
+import '../../services/navigation_history.dart';
 import '../../services/auth_service.dart';
 import '../../services/biometric_consent.dart';
 import '../../services/deep_link_queue.dart';
@@ -390,6 +391,7 @@ class StartupNodes {
         WidgetsBinding.instance.addObserver(DevPanelSession.instance);
         AppCommandHost(AppCommandService.shared).attach();
         final effectiveRouter = router ?? appRouter;
+        NavigationHistory.instance.attachToRouter(effectiveRouter);
         ScreenCapture.instance.attach(effectiveRouter, beforeAct: () async {
           if (!isAymaSheetOpen) return;
           screenPopupTracker.navigator?.pop();
