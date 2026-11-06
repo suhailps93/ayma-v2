@@ -159,11 +159,21 @@ class VoiceSessionController extends ChangeNotifier {
   /// speech do not reset it. Null or zero disables.
   final Duration? _userIdleTimeout;
   Timer? _userIdleTimer;
+
+  /// When the user-idle timer was last armed (diagnostics + regression tests,
+  /// Scout note 122 F1: the arm must be the true live line, not agent-ready).
+  DateTime? _userIdleArmedAt;
   bool _userIdlePendingEnd = false;
 
   /// Test-only view of [_userIdleTimeout].
   @visibleForTesting
   Duration? get userIdleTimeoutForTest => _userIdleTimeout;
+
+  /// Test-only view of when the user-idle timer was last armed (null when it
+  /// is not armed). Lets a regression test prove the clock starts at the first
+  /// genuine agent response, not at the earlier `agentReady` room/track setup.
+  @visibleForTesting
+  DateTime? get userIdleArmedAtForTest => _userIdleArmedAt;
 
   /// How long to wait, once the session reaches [VoiceSessionPhase.live] (the
   /// agent has joined the room and published its track, so the UI would say
@@ -534,6 +544,7 @@ class VoiceSessionController extends ChangeNotifier {
       _endNotice = null;
       _disconnectReason = null;
       _userIdlePendingEnd = false;
+      _userIdleArmedAt = null;
       _cappedError = false;
       _backgroundPermissionDenied = false;
       _relayRetrying = false;
@@ -833,7 +844,14 @@ class VoiceSessionController extends ChangeNotifier {
     debugPrint('[voice] phase -> live (agent ready)');
     _setPhase(VoiceSessionPhase.live);
     _noteActivity();
-    _armUserIdleTimer();
+    // F1 (Scout note 122): the user-idle clock does NOT start at agent-ready.
+    // The agent joins the room ~8s before it produces its first genuine
+    // response, which is when the UI actually says "Listening…" and the mic
+    // opens ([_noteAgentResponse] / [isConversationReady]). Arming here made a
+    // cold no-input call end at live+22s. Arm only if that true live moment
+    // already happened before this promotion (a warm-worker race); otherwise
+    // [_noteAgentResponse] arms it.
+    if (_agentRespondedOnce) _armUserIdleTimer();
     // The agent is in the room, but "joined" is not "can respond": if the
     // LiveKit inference gateway is down/429, the worker joins and the UI shows
     // "Listening…" yet no reply ever comes. Arm the bounded no-first-response
@@ -887,6 +905,11 @@ class VoiceSessionController extends ChangeNotifier {
     _agentRespondedOnce = true;
     _responseGuard?.cancel();
     _responseGuard = null;
+    // F1 (Scout note 122): this is the true live line — the agent has actually
+    // produced a response, the UI reads "Listening…" and the mic opens. The
+    // 30s user-idle clock must start HERE, not at the earlier agent-ready room
+    // setup (which fired it ~8s early, at live+22s on a cold no-input call).
+    _armUserIdleTimer();
     // Ayma's first genuine response is the moment the call is truly live and
     // ready for the user to speak: publish the mic now, and let the OS call
     // surface come up (it gates on [isConversationReady] too) — never during
@@ -987,6 +1010,10 @@ class VoiceSessionController extends ChangeNotifier {
     if (_userIdleTimeout == null || _phase != VoiceSessionPhase.live) return;
     _userIdlePendingEnd = false;
     _userIdleTimer?.cancel();
+    _userIdleArmedAt = DateTime.now();
+    debugPrint('[voice] user idle timer armed at '
+        '${_userIdleArmedAt!.toIso8601String()} '
+        '(+${_userIdleTimeout.inMilliseconds}ms)');
     _userIdleTimer = Timer(_userIdleTimeout, _onUserIdleTimeout);
   }
 
@@ -998,11 +1025,13 @@ class VoiceSessionController extends ChangeNotifier {
     if (_userIdleTimeout == null || _phase != VoiceSessionPhase.live) return;
     _userIdlePendingEnd = false;
     _userIdleTimer?.cancel();
+    _userIdleArmedAt = DateTime.now();
     _userIdleTimer = Timer(_userIdleTimeout, _onUserIdleTimeout);
   }
 
   void _onUserIdleTimeout() {
     _userIdleTimer = null;
+    _userIdleArmedAt = null;
     if (_phase != VoiceSessionPhase.live) return;
     if (_agentSpeaking) {
       debugPrint(
@@ -1413,6 +1442,7 @@ class VoiceSessionController extends ChangeNotifier {
     _toolGuard = null;
     _userIdleTimer?.cancel();
     _userIdleTimer = null;
+    _userIdleArmedAt = null;
     _userIdlePendingEnd = false;
 
     // Snapshot every session-scoped handle (subscriptions + transport) and
@@ -1624,6 +1654,7 @@ class VoiceSessionController extends ChangeNotifier {
     _aymaLevelSub?.cancel();
     _userIdleTimer?.cancel();
     _userIdleTimer = null;
+    _userIdleArmedAt = null;
     _userIdlePendingEnd = false;
     unawaited(_teardown());
     super.dispose();
