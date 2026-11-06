@@ -948,3 +948,325 @@ def test_dev_test_upgrade_can_switch_tiers(db, monkeypatch):
     # Switching tier refreshes the pool to the new plan (not additive).
     j = c.post("/dev/test-upgrade", json={"plan": "max"}, headers=headers).json()
     assert j["plan"] == "max" and j["credits"]["remaining"] == 8000
+
+
+# --- fetch_active_entitlement error handling & edge cases -----
+
+class _RcErrorResp:
+    def __init__(self, status=500, error_msg="Internal Server Error"):
+        self._status = status
+        self._msg = error_msg
+
+    def raise_for_status(self):
+        exc = RuntimeError(f"HTTP {self._status}: {self._msg}")
+        exc.status_code = self._status
+        raise exc
+
+    def json(self):
+        raise RuntimeError("json() called on error response")
+
+
+def test_fetch_active_entitlement_http_error_propagates(monkeypatch):
+    """Network/HTTP errors from RevenueCat API should propagate to caller."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    import requests
+
+    def _get_500(url, headers=None, timeout=None):
+        return _RcErrorResp(500)
+
+    monkeypatch.setattr(requests, "get", _get_500)
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        billing.fetch_active_entitlement("u1", cfg, now=T0)
+
+
+def test_fetch_active_entitlement_timeout_propagates(monkeypatch):
+    """Timeout errors should propagate."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    import requests
+
+    def _timeout(url, headers=None, timeout=None):
+        raise requests.Timeout("connection timed out")
+
+    monkeypatch.setattr(requests, "get", _timeout)
+    with pytest.raises(Exception, match="timed out"):
+        billing.fetch_active_entitlement("u1", cfg, now=T0)
+
+
+def test_fetch_active_entitlement_connection_error_propagates(monkeypatch):
+    """Connection errors should propagate."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    import requests
+
+    def _conn_err(url, headers=None, timeout=None):
+        raise requests.ConnectionError("unable to connect")
+
+    monkeypatch.setattr(requests, "get", _conn_err)
+    with pytest.raises(Exception, match="unable to connect"):
+        billing.fetch_active_entitlement("u1", cfg, now=T0)
+
+
+def test_fetch_active_entitlement_malformed_json_response(monkeypatch):
+    """If response.json() fails, the error propagates."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    import requests
+
+    class _BadJsonResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            raise ValueError("invalid json")
+
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: _BadJsonResp())
+    with pytest.raises(ValueError, match="invalid json"):
+        billing.fetch_active_entitlement("u1", cfg, now=T0)
+
+
+def test_fetch_active_entitlement_empty_subscriber_returns_none(monkeypatch):
+    """Empty or missing subscriber data returns None."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    _fake_rc(monkeypatch, {})  # no subscriber key
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+    
+    _fake_rc(monkeypatch, {"subscriber": None})  # null subscriber
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+    
+    _fake_rc(monkeypatch, {"subscriber": {}})  # empty subscriber
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+
+
+def test_fetch_active_entitlement_no_entitlements_returns_none(monkeypatch):
+    """When subscriber has no entitlements, returns None."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    _fake_rc(monkeypatch, {"subscriber": {"entitlements": None}})
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+    
+    _fake_rc(monkeypatch, {"subscriber": {"entitlements": {}}})
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+
+
+def test_fetch_active_entitlement_empty_entitlements_returns_none(monkeypatch):
+    """Empty entitlements dict returns None."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    payload = {"subscriber": {
+        "entitlements": {},
+        "subscriptions": {},
+    }}
+    _fake_rc(monkeypatch, payload)
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+
+
+def test_fetch_active_entitlement_skips_unmapped_products(monkeypatch):
+    """Products that don't map to a known plan are skipped."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    exp = (T0 + timedelta(days=30)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {
+            "unknown": {"product_identifier": "unknown_product", "expires_date": exp},
+        },
+        "subscriptions": {},
+    }}
+    _fake_rc(monkeypatch, payload)
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+
+
+def test_fetch_active_entitlement_skips_expired_with_grace(monkeypatch):
+    """Entitlements past grace period should be skipped."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test",
+                             billing_expiry_grace_seconds=3600)  # 1 hour grace
+    # Past grace boundary: expired + grace + 1 second
+    exp = (T0 - timedelta(hours=1, seconds=1)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {
+            "pro": {"product_identifier": "ayma_pro_monthly", "expires_date": exp},
+        },
+        "subscriptions": {},
+    }}
+    _fake_rc(monkeypatch, payload)
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+
+
+def test_fetch_active_entitlement_includes_just_within_grace(monkeypatch):
+    """Entitlements just within grace period should be included."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test",
+                             billing_expiry_grace_seconds=3600)  # 1 hour grace
+    # Just within grace: now + grace - 1 second
+    exp = (T0 + timedelta(hours=1, seconds=-1)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {
+            "pro": {"product_identifier": "ayma_pro_monthly", "expires_date": exp},
+        },
+        "subscriptions": {},
+    }}
+    _fake_rc(monkeypatch, payload)
+    ent = billing.fetch_active_entitlement("u1", cfg, now=T0)
+    assert ent is not None and ent["product_id"] == "ayma_pro_monthly"
+
+
+def test_fetch_active_entitlement_picks_latest_expiry_when_multiple(monkeypatch):
+    """When multiple entitlements exist, returns the one with latest expiry."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    soon = (T0 + timedelta(days=10)).isoformat()
+    later = (T0 + timedelta(days=40)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {
+            "plus": {"product_identifier": "ayma_plus_monthly", "expires_date": soon},
+            "pro": {"product_identifier": "ayma_pro_monthly", "expires_date": later},
+            "max": {"product_identifier": "ayma_max_monthly", "expires_date": soon},
+        },
+        "subscriptions": {"ayma_pro_monthly": {"period_type": "normal"}},
+    }}
+    _fake_rc(monkeypatch, payload)
+    ent = billing.fetch_active_entitlement("u1", cfg, now=T0)
+    assert ent["product_id"] == "ayma_pro_monthly"
+
+
+def test_fetch_active_entitlement_invalid_iso_date_skips_entitlement(monkeypatch):
+    """Entitlements with invalid expiry dates are skipped."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    valid = (T0 + timedelta(days=30)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {
+            "bad": {"product_identifier": "ayma_plus_monthly", "expires_date": "not-a-date"},
+            "good": {"product_identifier": "ayma_pro_monthly", "expires_date": valid},
+        },
+        "subscriptions": {"ayma_pro_monthly": {"period_type": "normal"}},
+    }}
+    _fake_rc(monkeypatch, payload)
+    ent = billing.fetch_active_entitlement("u1", cfg, now=T0)
+    # The bad one is skipped; the good one is returned
+    assert ent["product_id"] == "ayma_pro_monthly"
+
+
+def test_fetch_active_entitlement_missing_expiry_skips_entitlement(monkeypatch):
+    """Entitlements without expiry_date are skipped."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    valid = (T0 + timedelta(days=30)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {
+            "no_exp": {"product_identifier": "ayma_plus_monthly"},  # no expires_date
+            "good": {"product_identifier": "ayma_pro_monthly", "expires_date": valid},
+        },
+        "subscriptions": {"ayma_pro_monthly": {"period_type": "normal"}},
+    }}
+    _fake_rc(monkeypatch, payload)
+    ent = billing.fetch_active_entitlement("u1", cfg, now=T0)
+    assert ent["product_id"] == "ayma_pro_monthly"
+
+
+def test_fetch_active_entitlement_trial_detection_case_insensitive(monkeypatch):
+    """Trial detection should be case-insensitive."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    exp = (T0 + timedelta(days=30)).isoformat()
+    for period_type in ["TRIAL", "Trial", "trial", "TriAL"]:
+        payload = {"subscriber": {
+            "entitlements": {
+                "pro": {"product_identifier": "ayma_pro_monthly", "expires_date": exp},
+            },
+            "subscriptions": {"ayma_pro_monthly": {"period_type": period_type}},
+        }}
+        _fake_rc(monkeypatch, payload)
+        ent = billing.fetch_active_entitlement("u1", cfg, now=T0)
+        assert ent["is_trial"] is True, f"Failed for period_type={period_type}"
+
+
+def test_fetch_active_entitlement_with_empty_uid_returns_none(db):
+    """Empty or None uid should return None without API call."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    assert billing.fetch_active_entitlement("", cfg, now=T0) is None
+    assert billing.fetch_active_entitlement(None, cfg, now=T0) is None
+
+
+def test_fetch_active_entitlement_uses_correct_timeout(monkeypatch):
+    """The fetch should use a timeout parameter."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"subscriber": {"entitlements": {}, "subscriptions": {}}}
+
+    def _get(url, headers=None, timeout=None):
+        captured["timeout"] = timeout
+        return _Resp()
+
+    import requests
+    monkeypatch.setattr(requests, "get", _get)
+    billing.fetch_active_entitlement("u1", cfg, now=T0)
+    assert captured.get("timeout") == 10
+
+
+# --- subscription status mapping edge cases -----
+
+def test_authorize_header_comparison_is_constant_time(db):
+    """The HMAC comparison should use constant-time comparison."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_webhook_secret="secret123")
+    # Both wrong and right tokens should take same time (no early exit)
+    assert billing.authorized("secret123", cfg) is True
+    assert billing.authorized("secret124", cfg) is False
+    assert billing.authorized("x" * 10, cfg) is False
+    assert billing.authorized("", cfg) is False
+
+
+def test_authorize_bearer_token_strips_whitespace(db):
+    """Bearer token should be case-insensitive and whitespace-tolerant."""
+    cfg = dataclasses.replace(CONFIG, revenuecat_webhook_secret="mytoken")
+    assert billing.authorized("Bearer mytoken", cfg) is True
+    assert billing.authorized("bearer mytoken", cfg) is True
+    assert billing.authorized("  Bearer   mytoken  ", cfg) is True
+    assert billing.authorized("BEARER mytoken", cfg) is True
+
+
+def test_ms_conversion_handles_edge_cases():
+    """_ms should handle various timestamp edge cases."""
+    # Valid timestamp
+    ts = T0.timestamp() * 1000
+    result = billing._ms(ts)
+    assert result is not None
+    assert result.timestamp() == pytest.approx(T0.timestamp())
+    
+    # Invalid types
+    assert billing._ms(None) is None
+    assert billing._ms("not a number") is None
+    assert billing._ms([]) is None
+    
+    # Extreme values
+    assert billing._ms(0) is not None  # Unix epoch
+    assert billing._ms(-1000) is not None  # negative (pre-epoch)
+
+
+def test_plan_for_handles_product_suffixes():
+    """_plan_for should handle product IDs with suffixes."""
+    assert billing._plan_for("ayma_plus_monthly") == "plus"
+    assert billing._plan_for("ayma_plus_monthly:base") == "plus"
+    assert billing._plan_for("ayma_plus_monthly:extras") == "plus"
+    assert billing._plan_for("ayma_pro_monthly:anything") == "pro"
+    assert billing._plan_for("unknown_product") is None
+    assert billing._plan_for("") is None
+    assert billing._plan_for(None) is None
+
+
+def test_credits_for_rounding():
+    """credits_for should round up correctly."""
+    cfg = CONFIG  # 100 credits per USD
+    assert billing.credits_for(0.0, cfg) == 0
+    assert billing.credits_for(0.001, cfg) == 1  # rounds up
+    assert billing.credits_for(0.005, cfg) == 1  # rounds up  
+    assert billing.credits_for(0.01, cfg) == 1
+    assert billing.credits_for(1.0, cfg) == 100
+    assert billing.credits_for(1.001, cfg) == 101  # rounds up
+
+
+def test_dev_plan_entitlement_unknown_plan_raises():
+    """dev_plan_entitlement should raise for unknown plans."""
+    with pytest.raises(ValueError, match="unknown plan"):
+        billing.dev_plan_entitlement("free", now=T0)
+    
+    with pytest.raises(ValueError, match="unknown plan"):
+        billing.dev_plan_entitlement("enterprise", now=T0)
+    
+    with pytest.raises(ValueError, match="unknown plan"):
+        billing.dev_plan_entitlement("", now=T0)
