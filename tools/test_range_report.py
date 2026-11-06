@@ -12,11 +12,27 @@ def test_group_files_empty():
     assert group_files(paths) == expected
 
 def test_group_files_client():
-    paths = ['lib/file1.py', 'lib/file2.dart']
+    paths = ['ayma_flutter/lib/main.dart', 'ayma_flutter/lib/screens/chat.dart', 'lib/file1.py']
     expected = {
-        'client': ['lib/file1.py', 'lib/file2.dart'],
+        'client': ['ayma_flutter/lib/main.dart', 'ayma_flutter/lib/screens/chat.dart', 'lib/file1.py'],
         'backend': [],
         'infra': []
+    }
+    assert group_files(paths) == expected
+
+def test_group_files_real_repo_paths():
+    paths = [
+        'ayma_flutter/lib/main.dart',
+        'ayma_flutter/lib/screens/chat.dart',
+        'functions/bootstrap/main.py',
+        'functions/bootstrap/routes/profile.py',
+        'scripts/build-apk.sh',
+        'docs/API_INVENTORY.md',
+    ]
+    expected = {
+        'client': ['ayma_flutter/lib/main.dart', 'ayma_flutter/lib/screens/chat.dart'],
+        'backend': ['functions/bootstrap/main.py', 'functions/bootstrap/routes/profile.py'],
+        'infra': ['scripts/build-apk.sh', 'docs/API_INVENTORY.md']
     }
     assert group_files(paths) == expected
 

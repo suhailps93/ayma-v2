@@ -5,16 +5,16 @@ Generated from docs/API_INVENTORY.md
 
 ## Summary
 
-**Overall Coverage: 172/199 (86.4%)**
+**Overall Coverage: 182/199 (91.5%)**
 
 
 | Router | Tested | Total | Coverage | Status |
 |--------|--------|-------|----------|--------|
-| practice_date.py | 1 | 4 | 25.0% | ❌ Low |
-| mcp_server.py | 4 | 11 | 36.4% | ❌ Low |
 | date_sim.py | 2 | 5 | 40.0% | ❌ Low |
 | main.py | 111 | 125 | 88.8% | ⚠️  Partial |
 | taste_match.py | 3 | 3 | 100.0% | ✅ Complete |
+| practice_date.py | 4 | 4 | 100.0% | ✅ Complete |
+| mcp_server.py | 11 | 11 | 100.0% | ✅ Complete |
 | routes/appearance.py | 7 | 7 | 100.0% | ✅ Complete |
 | routes/cron.py | 14 | 14 | 100.0% | ✅ Complete |
 | routes/media.py | 8 | 8 | 100.0% | ✅ Complete |
@@ -161,15 +161,15 @@ Generated from docs/API_INVENTORY.md
 
 ## practice_date.py
 
-**Coverage: 1/4 (25.0%)**
+**Coverage: 4/4 (100.0%)**
 
 
 | Method | Path | Handler | Tested | Test Files |
 |--------|------|---------|--------|------------|
-| POST | `/practice/start` | `practice_start` | ❌ | - |
-| POST | `/practice/chat` | `practice_chat` | ❌ | - |
-| POST | `/practice/debrief` | `practice_debrief` | ❌ | - |
-| POST | `/practice/voice/start` | `practice_voice_start` | ✅ | test_voice_dispatch_fallback.py |
+| POST | `/practice/start` | `practice_start` | ✅ | test_practice_date_endpoints.py |
+| POST | `/practice/chat` | `practice_chat` | ✅ | test_practice_date_endpoints.py |
+| POST | `/practice/debrief` | `practice_debrief` | ✅ | test_practice_date_endpoints.py |
+| POST | `/practice/voice/start` | `practice_voice_start` | ✅ | test_practice_date_endpoints.py, test_voice_dispatch_fallback.py |
 
 
 ## date_sim.py
@@ -296,19 +296,19 @@ Generated from docs/API_INVENTORY.md
 
 ## mcp_server.py
 
-**Coverage: 4/11 (36.4%)**
+**Coverage: 11/11 (100.0%)**
 
 
 | Method | Path | Handler | Tested | Test Files |
 |--------|------|---------|--------|------------|
 | POST | `/mcp/oauth/device_authorization` | `device_authorization` | ✅ | test_mcp_server.py |
 | POST | `/mcp/oauth/token` | `token_endpoint` | ✅ | test_mcp_server.py |
-| POST | `/mcp/oauth/revoke` | `revoke_endpoint` | ❌ | - |
-| GET | `/mcp/.well-known/oauth-authorization-server` | `as_metadata` | ❌ | - |
-| GET | `/mcp/.well-known/oauth-protected-resource` | `prm_metadata` | ❌ | - |
+| POST | `/mcp/oauth/revoke` | `revoke_endpoint` | ✅ | test_mcp_server.py |
+| GET | `/mcp/.well-known/oauth-authorization-server` | `as_metadata` | ✅ | test_mcp_server.py |
+| GET | `/mcp/.well-known/oauth-protected-resource` | `prm_metadata` | ✅ | test_mcp_server.py |
 | GET | `/mcp/connect` | `connect_page` | ✅ | test_mcp_server.py |
-| POST | `/mcp/connect/approve` | `approve_endpoint` | ❌ | - |
-| GET | `/mcp/connect/pending` | `pending_endpoint` | ❌ | - |
-| GET | `/mcp/connect/tokens` | `tokens_endpoint` | ❌ | - |
-| POST | `/mcp/connect/tokens/revoke` | `revoke_connection_endpoint` | ❌ | - |
+| POST | `/mcp/connect/approve` | `approve_endpoint` | ✅ | test_mcp_server.py |
+| GET | `/mcp/connect/pending` | `pending_endpoint` | ✅ | test_mcp_server.py |
+| GET | `/mcp/connect/tokens` | `tokens_endpoint` | ✅ | test_mcp_server.py |
+| POST | `/mcp/connect/tokens/revoke` | `revoke_connection_endpoint` | ✅ | test_mcp_server.py |
 | * | `/mcp` | `catch-all` | ✅ | test_mcp_server.py |

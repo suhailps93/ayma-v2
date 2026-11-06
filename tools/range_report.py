@@ -9,7 +9,7 @@ def group_files(paths):
     }
     
     for path in paths:
-        if path.startswith('lib/'):
+        if 'lib' in path.split('/'):
             groups['client'].append(path)
         elif path.startswith('backend/') or path.startswith('functions/'):
             groups['backend'].append(path)

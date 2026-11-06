@@ -8,8 +8,8 @@ Complete inventory of the HTTP surface of the Python FastAPI backend, extracted 
 
 All routes are registered on one FastAPI `app` (`main.py`), either directly or through the routers below. Two gates apply app-wide and are therefore not repeated in every row:
 
-- `require_biometric_consent` — app-level FastAPI dependency (`main.py:584`). Any request carrying a valid Firebase ID token is refused with `403 biometric_consent_required` until the caller has a biometric-consent record. Exempt paths: `/health`, `/bootstrap`, `/age-gate/declare`, `/biometric-consent`, `/biometric-consent/withdraw`, `/account/delete`, `/account/recover`, `/welcome/token`, `/instagram/signin-auth-url`, `/instagram/signin`, `/auth/email-exists`, `/notifications/token`, `/notifications/token/remove`. Public/unauthenticated routes and requests without a valid token pass through to their own auth logic.
-- `RateLimiter` middleware (`main.py:593`) — per-endpoint fixed-window rate limiting.
+- `require_biometric_consent` — app-level FastAPI dependency (`main.py:529`). Any request carrying a valid Firebase ID token is refused with `403 biometric_consent_required` until the caller has a biometric-consent record. Exempt paths: `/health`, `/bootstrap`, `/age-gate/declare`, `/biometric-consent`, `/biometric-consent/withdraw`, `/account/delete`, `/account/recover`, `/welcome/token`, `/instagram/signin-auth-url`, `/instagram/signin`, `/auth/email-exists`, `/notifications/token`, `/notifications/token/remove`. Public/unauthenticated routes and requests without a valid token pass through to their own auth logic.
+- `RateLimiter` middleware (`main.py:613`) — per-endpoint fixed-window rate limiting.
 
 Auth helpers referenced in the tables (`functions/bootstrap/auth.py` unless noted):
 
@@ -17,7 +17,7 @@ Auth helpers referenced in the tables (`functions/bootstrap/auth.py` unless note
 | --- | --- |
 | `require_uid` | Verifies the Firebase Bearer ID token and returns the uid. |
 | `require_caller` | Like `require_uid`, also returns a `Caller` (`uid`, `is_anonymous`, `sign_in_provider`). |
-| `require_adult_uid` | `require_uid` + adult (birthdate on file) gate; defined in `main.py:323` and mirrored in `routes/profile.py:28`. |
+| `require_adult_uid` | `require_uid` + adult (birthdate on file) gate; defined in `main.py:343` and mirrored in `routes/profile.py:28`. |
 | `require_not_underage_uid` | `require_uid` + refuses minors, allows users without a birthdate; defined in `main.py:330` and `practice_date.py:101`. |
 | `require_dev` | `require_uid` + dev-view allowlist (`403` otherwise). |
 | `require_uid_and_dev_flag` | `require_uid` and reports whether the caller is on the dev allowlist. |
@@ -295,7 +295,7 @@ _13 routes._
 
 ## MCP sub-app — `mcp_server.py` (Starlette, mounted at `/mcp`)
 
-`main.py` mounts this Starlette sub-app at `/mcp` (`main.py:641`). It is part of the HTTP surface but is not a FastAPI `APIRouter`. Every route is additionally dark behind the `mcp_server` feature flag; when the flag is off the OAuth/approval handlers return `503`.
+`main.py` mounts this Starlette sub-app at `/mcp` (`main.py:661`). It is part of the HTTP surface but is not a FastAPI `APIRouter`. Every route is additionally dark behind the `mcp_server` feature flag; when the flag is off the OAuth/approval handlers return `503`.
 
 _10 routes plus one catch-all mount._
 
