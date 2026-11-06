@@ -291,6 +291,259 @@ void main() {
     expect(find.text('Alpha'), findsOneWidget); // did not advance
   });
 
+  // Scout note 118 leg 4: on the composer step the tour must let the user tap
+  // the text field and type (or press Send) without stealing focus or advancing.
+  // Only the mic is an anchor tap; Done / Skip still move the tour forward.
+  const typingFeatures = <TourFeature>[
+    TourFeature(
+      featureId: 'typing',
+      headline: 'Type here',
+      subtitle: 'say hi to Ayma',
+      anchorId: TourAnchors.homeComposer,
+      typingAllowed: true,
+    ),
+    TourFeature(
+      featureId: 'after_typing',
+      headline: 'Next step',
+      subtitle: 'moved on',
+    ),
+  ];
+
+  Widget typingHost({
+    required FeatureTourStore store,
+    required FocusNode focusNode,
+    required VoidCallback onAnchorTap,
+    required VoidCallback onSendTap,
+    required VoidCallback onAttachTap,
+    bool driven = true,
+  }) {
+    return MaterialApp(
+      theme: AymaTheme.dark,
+      home: Scaffold(
+        body: Stack(
+          children: [
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: Column(
+                key: TourAnchors.keyFor(TourAnchors.homeComposer),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    key: const ValueKey('composer-field'),
+                    focusNode: focusNode,
+                  ),
+                  Row(
+                    children: [
+                      GestureDetector(
+                        key: TourAnchors.keyFor(TourAnchors.asyncVoiceMic),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {},
+                        child: const SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: Icon(Icons.mic),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        key: const ValueKey('composer-send'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onSendTap,
+                        child: const SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: Icon(Icons.send),
+                        ),
+                      ),
+                      GestureDetector(
+                        key: const ValueKey('composer-attach'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onAttachTap,
+                        child: const SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: Icon(Icons.add_photo_alternate_outlined),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Positioned.fill(
+              child: CoachMarkOverlay(
+                store: store,
+                onFinish: () {},
+                features: typingFeatures,
+                maxMeasureAttempts: 3,
+                onAnchorTapped: driven ? onAnchorTap : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  testWidgets('typing-allowed step: tapping the text field keeps focus and '
+      'does not fire onTapped', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    var anchorTaps = 0;
+    await tester.pumpWidget(typingHost(
+      store: _FakeTourStore(),
+      focusNode: focus,
+      onAnchorTap: () => anchorTaps++,
+      onSendTap: () {},
+      onAttachTap: () {},
+    ));
+    await settle(tester);
+    expect(find.text('Type here'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('composer-field')));
+    await tester.pump();
+
+    expect(focus.hasFocus, isTrue);
+    expect(anchorTaps, 0);
+    expect(find.text('Type here'), findsOneWidget);
+    expect(find.text('Next step'), findsNothing);
+    await tester.enterText(
+      find.byKey(const ValueKey('composer-field')),
+      'hello Ayma',
+    );
+    await tester.pump();
+    expect(anchorTaps, 0);
+    expect(find.text('Type here'), findsOneWidget);
+  });
+
+  testWidgets('typing-allowed step: Send and Attach press through but do not '
+      'advance the tour', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    var anchorTaps = 0;
+    var sends = 0;
+    var attaches = 0;
+    await tester.pumpWidget(typingHost(
+      store: _FakeTourStore(),
+      focusNode: focus,
+      onAnchorTap: () => anchorTaps++,
+      onSendTap: () => sends++,
+      onAttachTap: () => attaches++,
+    ));
+    await settle(tester);
+
+    // Send is press-through — it acts on the real composer — but it is not an
+    // anchor tap, so the tour stays on the composer step.
+    await tester.tap(find.byKey(const ValueKey('composer-send')));
+    await settle(tester);
+    expect(sends, 1);
+    expect(anchorTaps, 0);
+    expect(find.text('Type here'), findsOneWidget);
+
+    // Same for Attach.
+    await tester.tap(find.byKey(const ValueKey('composer-attach')));
+    await settle(tester);
+    expect(attaches, 1);
+    expect(anchorTaps, 0);
+    expect(find.text('Type here'), findsOneWidget);
+  });
+
+  testWidgets('typing-allowed step: tapping the mic fires onTapped', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    var anchorTaps = 0;
+    await tester.pumpWidget(typingHost(
+      store: _FakeTourStore(),
+      focusNode: focus,
+      onAnchorTap: () => anchorTaps++,
+      onSendTap: () {},
+      onAttachTap: () {},
+    ));
+    await settle(tester);
+
+    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)));
+    await tester.pump();
+
+    expect(anchorTaps, 1);
+  });
+
+  testWidgets('typing-allowed step: the mic advances the passive tour', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(typingHost(
+      store: _FakeTourStore(),
+      focusNode: focus,
+      onAnchorTap: () {},
+      onSendTap: () {},
+      onAttachTap: () {},
+      driven: false,
+    ));
+    await settle(tester);
+    expect(find.text('Type here'), findsOneWidget);
+
+    // A text-field tap leaves the tour where it is...
+    await tester.tap(find.byKey(const ValueKey('composer-field')));
+    await settle(tester);
+    expect(find.text('Type here'), findsOneWidget);
+
+    // ...the mic moves it on.
+    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)));
+    await settle(tester);
+    expect(find.text('Next step'), findsOneWidget);
+  });
+
+  testWidgets('typing-allowed step: the spotlight follows the composer when '
+      'the keyboard opens', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    var anchorTaps = 0;
+    await tester.pumpWidget(typingHost(
+      store: _FakeTourStore(),
+      focusNode: focus,
+      onAnchorTap: () => anchorTaps++,
+      onSendTap: () {},
+      onAttachTap: () {},
+    ));
+    await settle(tester);
+
+    final before = TourAnchors.rectFor(TourAnchors.asyncVoiceMic);
+    expect(before, isNotNull);
+
+    // Keyboard opens: the Scaffold shrinks and lifts the composer. The stale
+    // cutout would leave the mic outside the press-through hole.
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    await settle(tester);
+
+    final after = TourAnchors.rectFor(TourAnchors.asyncVoiceMic);
+    expect(after, isNotNull);
+    expect(after!.top, lessThan(before!.top));
+
+    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)));
+    await tester.pump();
+    expect(anchorTaps, 1);
+  });
+
   testWidgets('reduced motion renders without crashing', (tester) async {
     await tester.pumpWidget(
       host(store: _FakeTourStore(), onFinish: () {}, reducedMotion: true),

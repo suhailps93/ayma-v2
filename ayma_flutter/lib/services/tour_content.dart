@@ -34,6 +34,7 @@ class TourFeature {
     this.icon,
     this.anchorId,
     this.tab,
+    this.typingAllowed = false,
   });
 
   /// Stable key persisted in `seen_tour_features`. Never reuse or rename.
@@ -58,6 +59,14 @@ class TourFeature {
   /// anchors that live in the always-visible nav bar (orb, tabs, bell) or for
   /// centered steps. The engine switches to this tab before spotlighting.
   final int? tab;
+
+  /// Lets the user interact with a text-entry anchor (the chat composer)
+  /// without the tour reacting to every tap inside the spotlight hole. While
+  /// this is true, a tap on the text field keeps focus and does NOT count as an
+  /// anchor tap (no `onTapped`, no advance); only the composer's mic advances
+  /// the tour. Done / Skip still move it forward. Used for the "type right
+  /// here" step so the user can actually type and send while the tour is open.
+  final bool typingAllowed;
 }
 
 /// The ordered tour. Order here is the order elements are spotlighted in the
@@ -87,6 +96,7 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     icon: Icons.edit_outlined,
     anchorId: TourAnchors.homeComposer,
     tab: 0,
+    typingAllowed: true,
   ),
   TourFeature(
     featureId: 'async_voice',
