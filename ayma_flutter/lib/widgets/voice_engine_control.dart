@@ -14,19 +14,26 @@ import 'ayma_wing_loader.dart';
 /// The voice STACK picker (ARCHITECTURE §13.9). Reads `GET /voice/engines` and
 /// lets the user choose:
 ///
-/// * a MODE — **Realtime** (one native-audio model) or **Cascade** (independent
-///   brain / STT / TTS);
+/// * a MODE — **Realtime** (one native-audio model) or **Cascade** (STT +
+///   the one Brain + TTS);
 /// * in realtime: the realtime model, then its voices + accent/language;
-/// * in cascade: brain, STT, TTS, then the TTS's voices + accent/language.
+/// * in cascade: STT, TTS, then the TTS's voices + accent/language.
+///
+/// ONE BRAIN (founder, 2026-11-06): there is NO brain picker in this
+/// section any more — the Models screen's single Brain (see
+/// `BrainSelectorControl`) is the voice LLM too, resolved server-side from
+/// the one saved brain selection.
 ///
 /// Dropdown contents are pulled from the cloud catalog (LiveKit Inference, live),
 /// so new providers appear without a client change. Saving calls
 /// `POST /voice/preference`; a changed language (any model) or a changed accent
 /// (accent-capable models only) also hot-swaps the live call when one is active
-/// (§13.9); everything else takes effect on the next voice call.
+/// (§13.9); everything else takes effect on the next voice call. On the Models
+/// screen the screen owns the single save button ([showSaveButton] false +
+/// a [VoiceEngineController]) and saves through `POST /models/preference`.
 ///
 /// This is the user-facing "Ayma's voice" control (ARCHITECTURE §13.9): it shows
-/// the whole stack — mode, brain, STT, TTS, voice and language — so a normal user
+/// the voice stack — mode, STT, TTS, voice and language — so a normal user
 /// gets full control from Ayma settings. Unavailable components (e.g. OpenAI
 /// Realtime with no key) stay labelled and non-selectable via the catalog's
 /// `available`/`requires_secret` contract.
@@ -37,10 +44,14 @@ class VoiceEngineControl extends StatefulWidget {
     this.onSaved,
     this.firestore,
     this.uid,
+    this.controller,
+    this.showSaveButton = true,
   });
 
   final ApiClient api;
   final VoidCallback? onSaved;
+  final VoiceEngineController? controller;
+  final bool showSaveButton;
 
   /// Test seams for the live-update listener; default to the app globals.
   final FirebaseFirestore? firestore;
@@ -48,6 +59,27 @@ class VoiceEngineControl extends StatefulWidget {
 
   @override
   State<VoiceEngineControl> createState() => _VoiceEngineControlState();
+}
+
+/// Lets a parent (the Models screen) read the current voice selection and
+/// know when the control has loaded, so ONE screen-level save button can
+/// persist every section in a single action.
+class VoiceEngineController extends ChangeNotifier {
+  _VoiceEngineControlState? _state;
+
+  VoiceSelection? get selection => _state?._sel;
+  bool get ready => _state?._cat != null && _state?._sel != null;
+
+  /// After a successful combined save, advance the last-saved
+  /// accent/language bookkeeping to the just-saved selection.
+  void markSaved() => _state?._markSaved();
+
+  void _attach(_VoiceEngineControlState s) => _state = s;
+  void _detach(_VoiceEngineControlState s) {
+    if (_state == s) _state = null;
+  }
+
+  void _changed() => notifyListeners();
 }
 
 class _VoiceEngineControlState extends State<VoiceEngineControl> {
@@ -97,16 +129,25 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   @override
   void initState() {
     super.initState();
+    widget.controller?._attach(this);
     _load();
     _listenForSavedStack();
   }
 
   @override
   void dispose() {
+    widget.controller?._detach(this);
     _reloadDebounce?.cancel();
     _profileSub?.cancel();
     _accentCtrl.dispose();
     super.dispose();
+  }
+
+  void _markSaved() {
+    final sel = _sel;
+    if (sel == null) return;
+    _savedAccent = sel.accent;
+    _savedLanguageCode = sel.languageCode;
   }
 
   DocumentReference<Map<String, dynamic>>? _profileRef() {
@@ -188,6 +229,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         _savedAccent = _sel!.accent;
         _savedLanguageCode = _sel!.languageCode;
       });
+      widget.controller?._changed();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -382,18 +424,20 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           ..._cascadeControls(ac, cat, sel),
         const SizedBox(height: 8),
         _voiceAndLanguage(ac, cat, sel),
-        const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            key: const ValueKey('voice-engine-save'),
-            onPressed: _saving ? null : _save,
-            // POST /voice/preference in flight — button slot, wings only.
-            child: _saving
-                ? const AymaWingLoader(size: 16, showLabel: false)
-                : const Text('Save voice'),
+        if (widget.showSaveButton) ...[
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              key: const ValueKey('voice-engine-save'),
+              onPressed: _saving ? null : _save,
+              // POST /voice/preference in flight — button slot, wings only.
+              child: _saving
+                  ? const AymaWingLoader(size: 16, showLabel: false)
+                  : const Text('Save voice'),
+            ),
           ),
-        ),
+        ],
         Padding(
           padding: const EdgeInsets.only(top: 10),
           child: Text(
@@ -444,11 +488,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
 
   List<Widget> _cascadeControls(
       AymaTokens ac, VoiceCatalog cat, VoiceSelection sel) {
+    // No BRAIN (LLM) dropdown: the one Brain above is the cascade LLM too.
     return [
-      _label(ac, 'BRAIN (LLM)'),
-      _componentDropdown(ac, cat.brains, sel.brainId,
-          (v) => setState(() => _sel = sel.copyWith(brainId: v))),
-      const SizedBox(height: 12),
       _label(ac, 'SPEECH-TO-TEXT'),
       _componentDropdown(ac, cat.stt, sel.sttId,
           (v) => setState(() => _sel = sel.copyWith(sttId: v))),

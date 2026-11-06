@@ -282,7 +282,12 @@ def _voice_engine_seed(uid: str) -> dict[str, str]:
         return out
     out["voice_mode"] = mode
     out["realtime_model_id"] = str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
-    out["brain_id"] = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "")).strip()
+    # ONE BRAIN (founder, 2026-11-06): the voice cascade LLM is the user's
+    # single Brain selection. A saved unified brain (ayma_brain_model)
+    # supersedes any stored cascade brain at read time, so the agent can
+    # never serve a different brain from the one the user picked.
+    import voice_catalog as _vc_seed
+    out["brain_id"] = _vc_seed.resolved_cascade_brain(prof)
     out["stt_id"] = str(prof.get(schema.PF_AYMA_CASCADE_STT, "")).strip()
     out["tts_id"] = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip()
     out["tts_voice"] = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip()
@@ -5283,7 +5288,10 @@ async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
         str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
         or default["realtime_model_id"]
     )
-    brain_id = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "")).strip() or default["brain_id"]
+    # ONE BRAIN: current.brain_id is the cascade id of the user's single
+    # Brain selection (a saved unified brain supersedes a stored cascade
+    # brain); the catalog default only when nothing is saved.
+    brain_id = voice_catalog.resolved_cascade_brain(prof, default["brain_id"])
     stt_id = str(prof.get(schema.PF_AYMA_CASCADE_STT, "")).strip() or default["stt_id"]
     tts_id = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip() or default["tts_id"]
     # The chosen voice: a Gemini preset lives in ayma_voice_name; every other
@@ -5336,7 +5344,8 @@ class VoicePreferenceBody(BaseModel):
 
 @app.post("/voice/preference")
 async def set_voice_preference_endpoint(
-    body: VoicePreferenceBody, uid: str = Depends(require_uid)
+    body: VoicePreferenceBody, uid: str = Depends(require_uid),
+    *, unified_brain: str = "",
 ) -> dict[str, object]:
     """Persist the per-user MAIN-voice stack on ``users/{uid}/profile/main``
     (§13.9): ``{mode, realtime_model_id?, brain_id?, stt_id?, tts_id?, voice_id,
@@ -5366,6 +5375,15 @@ async def set_voice_preference_endpoint(
         _voices.PF_AYMA_VOICE_ACCENT: body.accent.strip()[:200],
         "updated_at": firestore.SERVER_TIMESTAMP,
     }
+    # The profile doc this save is about to merge onto, for one-brain
+    # resolution (a previously saved unified brain supersedes a submitted
+    # cascade brain; the combined /models/preference save passes its brain
+    # explicitly via ``unified_brain``).
+    _existing_prof: dict = {}
+    try:
+        _existing_prof = schema.profile_doc(get_db(), uid).get().to_dict() or {}
+    except Exception:  # noqa: BLE001 - a read hiccup must not block a save
+        _existing_prof = {}
     if mode == voice_catalog.MODE_REALTIME:
         rid = body.realtime_model_id.strip()
         if not voice_catalog.is_valid_realtime_model(rid):
@@ -5382,7 +5400,22 @@ async def set_voice_preference_endpoint(
         else:
             payload[schema.PF_AYMA_TTS_VOICE] = voice_id
     else:  # cascade
-        brain_id = body.brain_id.strip()
+        # ONE BRAIN: the cascade LLM is not a separate pick any more. The
+        # effective brain is (in order) the brain this save carries
+        # (combined /models/preference), the user's saved unified brain,
+        # or - only when no unified brain was ever saved - the submitted
+        # legacy cascade brain id.
+        _unified = (unified_brain or "").strip().lower()
+        if _unified:
+            brain_id = voice_catalog.cascade_brain_for_unified(_unified)
+            if not brain_id:
+                raise HTTPException(status_code=422, detail="Unknown brain.")
+        elif voice_catalog.unified_brain_vendor(_existing_prof) and str(
+            _existing_prof.get(schema.PF_AYMA_BRAIN_MODEL, "") or ""
+        ).strip().lower() in voice_catalog.UNIFIED_BRAIN_VENDORS:
+            brain_id = voice_catalog.resolved_cascade_brain(_existing_prof)
+        else:
+            brain_id = body.brain_id.strip()
         stt_id = body.stt_id.strip()
         tts_id = body.tts_id.strip()
         if not voice_catalog.is_valid_brain(brain_id):
@@ -5398,6 +5431,12 @@ async def set_voice_preference_endpoint(
         payload[schema.PF_AYMA_CASCADE_TTS] = tts_id
         payload[schema.PF_AYMA_TTS_VOICE] = voice_id
 
+    if (unified_brain or "").strip():
+        # Keep the stored cascade brain in sync with the one Brain even in
+        # realtime mode, so switching modes never resurrects a stale brain.
+        _mapped = voice_catalog.cascade_brain_for_unified(unified_brain.strip().lower())
+        if _mapped:
+            payload[schema.PF_AYMA_CASCADE_BRAIN] = _mapped
     try:
         schema.profile_doc(get_db(), uid).set(payload, merge=True)
     except Exception as exc:  # noqa: BLE001
@@ -5408,7 +5447,7 @@ async def set_voice_preference_endpoint(
         "current": {
             "mode": mode,
             "realtime_model_id": body.realtime_model_id.strip(),
-            "brain_id": body.brain_id.strip(),
+            "brain_id": payload.get(schema.PF_AYMA_CASCADE_BRAIN, body.brain_id.strip()),
             "stt_id": body.stt_id.strip(),
             "tts_id": body.tts_id.strip(),
             "voice_id": voice_id,
@@ -5507,17 +5546,80 @@ async def set_brain_preference(
     if brain not in llm_provider.BRAINS:
         raise HTTPException(status_code=422, detail="Unknown brain.")
     try:
-        schema.profile_doc(get_db(), uid).set(
-            {
-                schema.PF_AYMA_BRAIN_MODEL: brain,
-                "updated_at": firestore.SERVER_TIMESTAMP,
-            },
-            merge=True,
-        )
+        import voice_catalog as _vc_brain
+        _payload: dict[str, object] = {
+            schema.PF_AYMA_BRAIN_MODEL: brain,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        # ONE BRAIN (founder, 2026-11-06): keep the stored cascade brain in
+        # sync with the one Brain, so the voice path serves the same brain
+        # even through any legacy reader of ayma_cascade_brain.
+        _mapped = _vc_brain.cascade_brain_for_unified(brain)
+        if _mapped:
+            _payload[schema.PF_AYMA_CASCADE_BRAIN] = _mapped
+        schema.profile_doc(get_db(), uid).set(_payload, merge=True)
     except Exception as exc:  # noqa: BLE001
         logger.exception("could not save ayma_brain_model for %s", uid)
         raise HTTPException(status_code=502, detail="Could not save preference.") from exc
     return {"ok": True, "current": brain}
+
+
+class ModelsPreferenceBody(BaseModel):
+    brain: str = Field(min_length=1, max_length=32)
+    mode: str = Field(min_length=1, max_length=32)
+    realtime_model_id: str = Field(default="", max_length=64)
+    stt_id: str = Field(default="", max_length=128)
+    tts_id: str = Field(default="", max_length=128)
+    voice_id: str = Field(default="", max_length=128)
+    language_code: str = Field(default="", max_length=32)
+    accent: str = Field(default="", max_length=200)
+    # True when the user tapped "Save and reconnect" during a live voice
+    # call: the save marks the one-shot reconnect announcement so the NEW
+    # session (which the client starts right after this returns) says the
+    # settled "I'm back, reconnected with the new model" line, while the
+    # reconnect itself stays silent.
+    reconnect: bool = False
+
+
+@app.post("/models/preference")
+async def set_models_preference(
+    body: ModelsPreferenceBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The Models screen's ONE save (founder, 2026-11-06): persist the single
+    Brain AND the whole voice stack in one action.
+
+    The brain is written first (``POST /brain/preference`` semantics, which
+    also syncs ``ayma_cascade_brain``), then the voice stack
+    (``POST /voice/preference`` semantics with the same brain carried
+    explicitly, so the cascade brain it stores is the mapped one Brain -
+    never a separate voice-brain pick, which no longer exists)."""
+    brain_resp = await set_brain_preference(
+        BrainPreferenceBody(brain=body.brain), uid=uid
+    )
+    voice_resp = await set_voice_preference_endpoint(
+        VoicePreferenceBody(
+            mode=body.mode,
+            realtime_model_id=body.realtime_model_id,
+            brain_id="",
+            stt_id=body.stt_id,
+            tts_id=body.tts_id,
+            voice_id=body.voice_id,
+            language_code=body.language_code,
+            accent=body.accent,
+        ),
+        uid=uid,
+        unified_brain=body.brain.strip().lower(),
+    )
+    if body.reconnect:
+        # Mark BEFORE the client tears down + re-bootstraps, so the new
+        # session claims the one-shot announcement (agent._open_main_call).
+        await asyncio.to_thread(set_model_stack._mark_reconnected, get_db(), uid)
+    return {
+        "ok": True,
+        "brain": brain_resp["current"],
+        "current": voice_resp["current"],
+        "reconnect": body.reconnect,
+    }
 
 
 @app.get("/voice/preview/{voice_name}")
