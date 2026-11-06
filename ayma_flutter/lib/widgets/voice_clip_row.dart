@@ -74,7 +74,7 @@ class VoiceClipRow extends StatelessWidget {
         // white triangle contrasts with its green button: dark ink on a
         // light fill, white on a dark/saturated fill.
         final glyphColor = iconColor.computeLuminance() > 0.4
-            ? const Color(0xFF1A1714)
+            ? AymaColors.lightFg
             : Colors.white;
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
