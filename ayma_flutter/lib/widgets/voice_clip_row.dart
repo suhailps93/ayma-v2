@@ -3,8 +3,13 @@ import 'package:flutter/material.dart';
 import '../services/async_voice_player.dart';
 import '../theme.dart';
 
-/// The play row on a voice-message transcript turn (Chunk A): a play/stop
-/// toggle plus a "Voice message" caption, tinted for the bubble it sits in.
+/// The play row on a voice-message transcript turn (Chunk A): a large
+/// WhatsApp-style circular play/pause button plus a "Voice message" caption,
+/// tinted for the bubble it sits in.
+///
+/// The button is a 44dp filled circle (founder, 2026-11-06: the original
+/// bare 22dp triangle was too small to hit at a glance). It shows pause
+/// while this clip is playing and toggles playback off when tapped again.
 ///
 /// [clipKey] identifies this turn's clip in the shared [nowPlaying] — only
 /// one clip plays app-wide at a time. [audioUrl] wins; [audioFile] (a local
@@ -54,6 +59,10 @@ class VoiceClipRow extends StatelessWidget {
     }
   }
 
+  /// Diameter of the circular play/pause button — a full-size hit target
+  /// in the WhatsApp voice-memo range (40–48dp).
+  static const double buttonSize = 44;
+
   @override
   Widget build(BuildContext context) {
     if (!_hasClip) return const SizedBox.shrink();
@@ -61,18 +70,37 @@ class VoiceClipRow extends StatelessWidget {
       listenable: Listenable.merge([player.playing, nowPlaying]),
       builder: (context, _) {
         final mine = nowPlaying.value == clipKey && player.playing.value;
+        // The glyph contrasts with the filled circle the way WhatsApp's
+        // white triangle contrasts with its green button: dark ink on a
+        // light fill, white on a dark/saturated fill.
+        final glyphColor = iconColor.computeLuminance() > 0.4
+            ? const Color(0xFF1A1714)
+            : Colors.white;
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _toggle,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                mine ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                size: 22,
-                color: iconColor,
+              Semantics(
+                button: true,
+                label: mine ? 'Pause voice message' : 'Play voice message',
+                child: Container(
+                  key: const ValueKey('voiceClipPlayButton'),
+                  width: buttonSize,
+                  height: buttonSize,
+                  decoration: BoxDecoration(
+                    color: iconColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    mine ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    size: 26,
+                    color: glyphColor,
+                  ),
+                ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: 8),
               Text(
                 'Voice message',
                 style: AymaType.sans(size: 12, color: captionColor),
