@@ -2047,6 +2047,36 @@ class ApiClient {
   Future<void> saveVoicePreference(VoiceSelection sel) =>
       _postJsonOk('/voice/preference', sel.toMap());
 
+  /// `POST /voice/async` — submit one async voice message (Chunk A). The clip
+  /// must already be uploaded to `uploads/{uid}/…` ([storagePath]); the cloud
+  /// transcribes + thinks + speaks the reply and the client watches the job
+  /// doc for it. Idempotent per [jobId]: a retry of a finished job is
+  /// answered from the stored outcome, a retry of a running one joins it.
+  Future<VoiceAsyncSubmit> submitVoiceMessage({
+    required String jobId,
+    required String storagePath,
+    String sessionId = '',
+    List<Map<String, String>> recentTurns = const [],
+  }) async {
+    final r = await _post(
+      _uri('/voice/async'),
+      body: jsonEncode({
+        'job_id': jobId,
+        'storage_path': storagePath,
+        'session_id': sessionId,
+        'recent_turns': recentTurns,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'Voice message submit failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return VoiceAsyncSubmit.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   /// `GET /brain/preference` — the unified **Brain** catalog + the user's
   /// current choice (§13.10): the ONE LLM that drives every text surface, with
   /// web/vision always on Gemini.
@@ -3306,6 +3336,45 @@ class PublicProfile {
 /// A `/chat` turn's outcome. [capped] means the turn was refused by the
 /// marketing/interview cap and [reply] is Ayma's nudge; [fallbackForm] means
 /// the client should switch to the plain manual profile form (§3.3).
+/// The answer to `POST /voice/async`: the job id plus either the accepted
+/// status (the client watches the job doc from here) or the full terminal
+/// payload when this exact job already finished.
+class VoiceAsyncSubmit {
+  const VoiceAsyncSubmit({
+    required this.jobId,
+    required this.status,
+    this.joined = false,
+    this.transcript = '',
+    this.replyText = '',
+    this.replyAudioUrl = '',
+    this.tools = const [],
+    this.imageUrl = '',
+  });
+
+  factory VoiceAsyncSubmit.fromMap(Map<String, dynamic> m) => VoiceAsyncSubmit(
+    jobId: m['job_id'] as String? ?? '',
+    status: m['status'] as String? ?? '',
+    joined: m['joined'] == true,
+    transcript: m['transcript'] as String? ?? '',
+    replyText: m['reply_text'] as String? ?? '',
+    replyAudioUrl: m['reply_audio_url'] as String? ?? '',
+    tools: ((m['tools'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .toList(),
+    imageUrl: m['image_url'] as String? ?? '',
+  );
+
+  final String jobId;
+  final String status;
+  final bool joined;
+  final String transcript;
+  final String replyText;
+  final String replyAudioUrl;
+  final List<String> tools;
+  final String imageUrl;
+}
+
 class ChatResult {
   const ChatResult({
     required this.reply,
@@ -3461,6 +3530,8 @@ class ChatMessage {
     required this.text,
     this.imagePath = '',
     this.imageUrl = '',
+    this.audioPath = '',
+    this.audioUrl = '',
     this.tools = const [],
     this.subjectImage = '',
     this.createdAt,
@@ -3474,6 +3545,14 @@ class ChatMessage {
   /// Durable download URL for this turn's image, already resolved server-side
   /// (empty when the client should resolve [imagePath] itself, or no image).
   final String imageUrl;
+
+  /// Async voice-message audio (Chunk A): the user's recorded clip as an
+  /// `uploads/{uid}/…` [audioPath] the client SDK resolves itself, and
+  /// Ayma's spoken reply as a durable server-resolved [audioUrl] (its
+  /// `ayma_generated/{uid}/…` path is not client-resolvable). Both empty on
+  /// a text turn.
+  final String audioPath;
+  final String audioUrl;
 
   /// User-facing labels for what Ayma did on this turn ("Searched the web",
   /// "Researched Jane Doe online") — the kicker above the reply.
@@ -3497,6 +3576,8 @@ class ChatMessage {
     text: m['text'] as String? ?? '',
     imagePath: m['image_path'] as String? ?? '',
     imageUrl: m['image_url'] as String? ?? '',
+    audioPath: m['audio_path'] as String? ?? '',
+    audioUrl: m['audio_url'] as String? ?? '',
     tools: ((m['tools'] as List?) ?? const [])
         .map((e) => e.toString())
         .where((s) => s.isNotEmpty)
@@ -5515,7 +5596,9 @@ class BrainCatalog {
   /// The id the dropdown should show: the saved choice if any, else the default,
   /// else the first available brain (never null when the list is non-empty).
   String get effectiveId {
-    if (current.isNotEmpty && brains.any((b) => b.id == current)) return current;
+    if (current.isNotEmpty && brains.any((b) => b.id == current)) {
+      return current;
+    }
     if (defaultBrain.isNotEmpty && brains.any((b) => b.id == defaultBrain)) {
       return defaultBrain;
     }

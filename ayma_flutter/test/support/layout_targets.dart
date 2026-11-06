@@ -73,6 +73,7 @@ import 'package:ayma_flutter/services/tab_request.dart';
 import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
+import 'package:ayma_flutter/widgets/async_voice_sheet.dart';
 import 'package:ayma_flutter/widgets/ayma_chat_modal.dart';
 import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:ayma_flutter/widgets/nav_bar_shell.dart';
@@ -182,14 +183,14 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     PublicProfileScreen.path: () => PublicProfileScreen(uid: 'her', api: api),
     PracticeScreen.path: () =>
         PracticeScreen(uid: 'her', name: 'Dana', api: api),
-    PracticeDebriefScreen.path: () =>
-        PracticeDebriefScreen(uid: 'her', sessionId: 'p1', name: 'Dana', api: api),
-    DateSimScreen.path: () => DateSimScreen(
+    PracticeDebriefScreen.path: () => PracticeDebriefScreen(
       uid: 'her',
+      sessionId: 'p1',
       name: 'Dana',
       api: api,
-      profiles: profiles,
     ),
+    DateSimScreen.path: () =>
+        DateSimScreen(uid: 'her', name: 'Dana', api: api, profiles: profiles),
     ExploreScreen.path: () => shell(
       ExploreScreen(apiClient: api, initialQuery: 'climbers in Denver'),
     ),
@@ -334,6 +335,9 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
     ),
     'out-of-credits sheet': (context) =>
         showOutOfCreditsSheet(context, service: LayoutFakeRc()),
+    // The voice-message fallback sheet (Chunk A): hold-to-record button +
+    // explainer + status area, idle (no interaction in the matrix).
+    'async voice message sheet': (context) => showAsyncVoiceSheet(context),
     'share report sheet': (context) => showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,

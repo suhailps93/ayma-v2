@@ -126,6 +126,10 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // ---- async voice-message jobs (§ async voice): the client watches its
+      //      own job doc for the transcribed thought + spoken reply; the
+      //      backend (Admin SDK) is the only writer.
+      match /async_voice_jobs/{id} { allow read: if isOwner(uid); }
       // ---- everything else backend-authored: owner may read, not write --
       match /raw_turns/{id}        { allow read: if isOwner(uid); }
       match /user_media/{id}       { allow read: if isOwner(uid); }

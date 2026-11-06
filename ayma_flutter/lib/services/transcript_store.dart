@@ -17,6 +17,8 @@ class TranscriptTurn {
     this.isFinal = true,
     this.imageUrl,
     this.imageFile,
+    this.audioUrl,
+    this.audioFile,
     this.tools = const [],
     this.subjectImage,
     this.capped = false,
@@ -55,6 +57,15 @@ class TranscriptTurn {
   /// [imageUrl] lands (see [TranscriptStore.updateTurnImage]); null for any
   /// turn loaded from history, which only ever has a remote URL.
   final File? imageFile;
+
+  /// A playable voice clip for this turn (async voice messages, Chunk A):
+  /// the user's recorded clip or Ayma's spoken reply. [audioUrl] is the
+  /// remote URL (durable for Ayma's reply, SDK-resolved for the user's
+  /// clip); [audioFile] is the just-recorded local file, shown while the
+  /// clip is still uploading — cleared once [audioUrl] lands (see
+  /// [TranscriptStore.updateTurnAudio]). Null on a text turn.
+  final String? audioUrl;
+  final File? audioFile;
 
   /// User-facing labels for the tools Ayma used to produce this reply
   /// ("Searched the web", "Updated your profile"). Shown as a caption above
@@ -122,7 +133,11 @@ class TranscriptStore extends ChangeNotifier {
   List<Map<String, String>> wireTurns({int skip = 0}) => [
         for (final t in _turns.skip(skip))
           if (t.isFinal &&
-              (t.text.isNotEmpty || t.imageUrl != null || t.imageFile != null))
+          (t.text.isNotEmpty ||
+              t.imageUrl != null ||
+              t.imageFile != null ||
+              t.audioUrl != null ||
+              t.audioFile != null))
             {
               'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
               'text': () {
@@ -139,13 +154,19 @@ class TranscriptStore extends ChangeNotifier {
   /// the turn added, so a caller with a still-uploading [imageFile] can later
   /// swap in the real [imageUrl] (see [updateTurnImage]) or drop the turn
   /// entirely if the upload fails (see [removeTurn]).
-  TranscriptTurn addTurn(TurnRole role, String text, TurnSource source,
-      {String? imageUrl,
+  TranscriptTurn addTurn(
+    TurnRole role,
+    String text,
+    TurnSource source, {
+    String? imageUrl,
       File? imageFile,
+    String? audioUrl,
+    File? audioFile,
       List<String> tools = const [],
       String? subjectImage,
       bool capped = false,
-      DateTime? createdAt}) {
+    DateTime? createdAt,
+  }) {
     final trimmed = text.trim();
     final turn = TranscriptTurn(
         role: role,
@@ -153,11 +174,20 @@ class TranscriptStore extends ChangeNotifier {
         source: source,
         imageUrl: imageUrl,
         imageFile: imageFile,
+      audioUrl: audioUrl,
+      audioFile: audioFile,
         tools: tools,
         subjectImage: subjectImage,
         capped: capped,
-        createdAt: createdAt);
-    if (trimmed.isEmpty && imageUrl == null && imageFile == null) return turn;
+      createdAt: createdAt,
+    );
+    if (trimmed.isEmpty &&
+        imageUrl == null &&
+        imageFile == null &&
+        audioUrl == null &&
+        audioFile == null) {
+      return turn;
+    }
     _turns.add(turn);
     _trim();
     notifyListeners();
@@ -177,6 +207,36 @@ class TranscriptStore extends ChangeNotifier {
       source: turn.source,
       isFinal: turn.isFinal,
       imageUrl: imageUrl,
+      audioUrl: turn.audioUrl,
+      audioFile: turn.audioFile,
+      tools: turn.tools,
+      subjectImage: turn.subjectImage,
+      capped: turn.capped,
+      reportKind: turn.reportKind,
+      reportId: turn.reportId,
+      sharedKind: turn.sharedKind,
+      sharedUid: turn.sharedUid,
+      sharedName: turn.sharedName,
+      sharedPhoto: turn.sharedPhoto,
+      sharedRefId: turn.sharedRefId,
+    );
+    notifyListeners();
+  }
+
+  /// Swap in the remote playable URL for a turn that was shown immediately
+  /// with a local [TranscriptTurn.audioFile] (async voice message whose clip
+  /// was still uploading). No-op if [turn] is no longer in the window.
+  void updateTurnAudio(TranscriptTurn turn, String audioUrl) {
+    final i = _turns.indexOf(turn);
+    if (i == -1) return;
+    _turns[i] = TranscriptTurn(
+      role: turn.role,
+      text: turn.text,
+      source: turn.source,
+      isFinal: turn.isFinal,
+      imageUrl: turn.imageUrl,
+      imageFile: turn.imageFile,
+      audioUrl: audioUrl,
       tools: turn.tools,
       subjectImage: turn.subjectImage,
       capped: turn.capped,
@@ -272,6 +332,7 @@ class TranscriptStore extends ChangeNotifier {
     String reportKind = '',
     String reportId = '',
     String? imageUrl,
+    String? audioUrl,
     String feedbackKind = '',
     String feedbackTitle = '',
     String feedbackBody = '',
@@ -289,13 +350,16 @@ class TranscriptStore extends ChangeNotifier {
     _turns[_turns.length - 1] = TranscriptTurn(
       role: TurnRole.ayma,
       text: text.trim(),
-      source: TurnSource.text,
+      source: audioUrl == null || audioUrl.isEmpty
+          ? TurnSource.text
+          : TurnSource.voice,
       tools: tools,
       subjectImage: subjectImage,
       capped: capped,
       reportKind: reportKind,
       reportId: reportId,
       imageUrl: (imageUrl == null || imageUrl.isEmpty) ? null : imageUrl,
+      audioUrl: (audioUrl == null || audioUrl.isEmpty) ? null : audioUrl,
       feedbackKind: feedbackKind,
       feedbackTitle: feedbackTitle,
       feedbackBody: feedbackBody,

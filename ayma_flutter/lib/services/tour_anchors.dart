@@ -48,6 +48,10 @@ class TourAnchors {
   /// The notification bell in the nav bar.
   static const notificationsBell = 'notifications_bell';
 
+  /// The chat composer's mic button — tap starts a live call, hold records
+  /// an async voice message.
+  static const asyncVoiceMic = 'async_voice_mic';
+
   static final Map<String, GlobalKey> _keys = <String, GlobalKey>{};
 
   /// The stable [GlobalKey] for [id] — the same instance on every call, so a

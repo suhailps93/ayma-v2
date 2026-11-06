@@ -11,13 +11,18 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/async_voice_controller.dart';
+import '../services/async_voice_player.dart';
+import '../services/async_voice_queue.dart';
 import '../services/call_permissions.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
+import '../services/connection_heartbeat.dart';
 import '../services/credits_balance.dart';
 import '../services/ids.dart';
 import '../services/pending_chat_queue.dart';
 import '../services/profile_service.dart';
+import '../services/tour_anchors.dart';
 import '../services/transcript_store.dart';
 import '../services/thumbs_down_store.dart';
 import '../services/voice_session_controller.dart';
@@ -25,8 +30,10 @@ import '../services/voice_transport.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import '../widgets/ask_ayma_context.dart';
+import '../widgets/async_voice_sheet.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_wing_loader.dart';
+import '../widgets/voice_clip_row.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
@@ -72,6 +79,9 @@ class ChatScreen extends StatefulWidget {
     this.voiceApiClient,
     this.voiceTransportFactory,
     this.pendingQueue,
+    this.asyncVoiceQueue,
+    this.asyncVoiceController,
+    this.asyncVoicePlayer,
     this.composerAnchorKey,
     this.auth,
   });
@@ -178,6 +188,13 @@ class ChatScreen extends StatefulWidget {
   /// uses it (see `_canQueue`).
   final PendingChatQueue? pendingQueue;
 
+  /// Async voice-message seams (Chunk A). Default to the app-wide queue, a
+  /// controller on that queue, and a shared just_audio clip player; only the
+  /// plain Ayma conversation uses them (see `_canQueue`).
+  final AsyncVoiceQueue? asyncVoiceQueue;
+  final AsyncVoiceController? asyncVoiceController;
+  final AsyncVoicePlayer? asyncVoicePlayer;
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -187,6 +204,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final PendingChatQueue _queue =
       widget.pendingQueue ?? PendingChatQueue.instance;
+  late final AsyncVoiceQueue _voiceQueue =
+      widget.asyncVoiceQueue ?? AsyncVoiceQueue.instance;
+  late final AsyncVoiceController _voiceMessage =
+      widget.asyncVoiceController ?? AsyncVoiceController(queue: _voiceQueue);
+  late final AsyncVoicePlayer _clipPlayer =
+      widget.asyncVoicePlayer ?? JustAudioVoicePlayer();
+
+  /// Which transcript clip is playing (`VoiceClipRow` keys), if any — one
+  /// clip app-wide at a time.
+  final ValueNotifier<String?> _nowPlaying = ValueNotifier<String?>(null);
 
   /// Whether an out-of-credits send is queued rather than left as a refusal.
   /// Only the plain Ayma conversation: a scoped Ask-Ayma correction, the
@@ -417,7 +444,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ChatInbox.instance.pending.addListener(_consumeKickoff);
       ChatInbox.instance.resultsLanded.addListener(_onResultsLanded);
       WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
-      if (_canQueue) unawaited(_queue.activate());
+      if (_canQueue) {
+        unawaited(_queue.activate());
+        unawaited(_voiceQueue.activate());
+        _voiceMessage.addListener(_onVoiceMessageChanged);
+      }
     } else {
       _loadingHistory = false;
       _pttVoice!.addListener(_onPttVoiceChanged);
@@ -1169,15 +1200,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final url = await resolveHistoryImage(
           imageUrl: m.imageUrl,
           imagePath: m.imagePath,
-          resolvePath: (p) =>
-              FirebaseStorage.instance.ref(p).getDownloadURL(),
+          resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
+        );
+        // Same pair for a voice turn: Ayma's reply URL is server-resolved,
+        // the user's clip path resolves here (best-effort — a dropped clip
+        // still renders its transcript).
+        final audio = await resolveHistoryImage(
+          imageUrl: m.audioUrl,
+          imagePath: m.audioPath,
+          resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
         );
         turns.add(
           TranscriptTurn(
             role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
             text: m.text,
-            source: TurnSource.text,
+            source: audio == null ? TurnSource.text : TurnSource.voice,
             imageUrl: url,
+            audioUrl: audio,
             tools: m.tools,
             subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
             createdAt: m.createdAt,
@@ -1289,15 +1328,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final url = await resolveHistoryImage(
           imageUrl: m.imageUrl,
           imagePath: m.imagePath,
-          resolvePath: (p) =>
-              FirebaseStorage.instance.ref(p).getDownloadURL(),
+          resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
+        );
+        final audio = await resolveHistoryImage(
+          imageUrl: m.audioUrl,
+          imagePath: m.audioPath,
+          resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
         );
         olderTurns.add(
           TranscriptTurn(
             role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
             text: m.text,
-            source: TurnSource.text,
+            source: audio == null ? TurnSource.text : TurnSource.voice,
             imageUrl: url,
+            audioUrl: audio,
             tools: m.tools,
             subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
             createdAt: m.createdAt,
@@ -1378,6 +1422,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _pttStore?.removeListener(_onPttTranscriptChanged);
     _pttVoice?.dispose();
     _pttStore?.dispose();
+    // The async voice controller is only ever touched in the plain
+    // conversation (see initState's `_canQueue` gate) — the guard below
+    // keeps dispose from constructing it from scratch just to tear it
+    // down, the same `late final` hazard the [_voice] guard documents.
+    if (_canQueue) {
+      _voiceMessage.removeListener(_onVoiceMessageChanged);
+      if (widget.asyncVoiceController == null) _voiceMessage.dispose();
+    }
+    if (widget.asyncVoicePlayer == null) _clipPlayer.dispose();
+    _nowPlaying.dispose();
     _store.removeListener(_scrollToBottom);
     _composerController.dispose();
     _composerFocus.dispose();
@@ -1416,11 +1470,58 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // Reload action, not just a mention of the word in plain text.
           showOutOfCreditsSheet(context);
         } else {
-          AymaToast.show(context, _voice.errorMessage!,
-              kind: AymaToastKind.error);
+          // The call couldn't connect — offer the async fallback instead
+          // of a dead end: a voice message sends whenever the connection
+          // allows, and Ayma answers out loud in this same thread.
+          final message = _voice.errorMessage!;
+          AymaToast.show(
+            context,
+            message,
+            kind: AymaToastKind.error,
+            action: _canQueue
+                ? AymaToastAction(
+                    label: 'Voice message',
+                    onPressed: () => showAsyncVoiceSheet(
+                      context,
+                      controller: _voiceMessage,
+                      queue: _voiceQueue,
+                    ),
+                  )
+                : null,
+          );
         }
       }
     }
+  }
+
+  /// Surface a recording failure (mic denied, couldn't start) once, as a
+  /// toast — the controller already stayed idle, so there is no stuck UI.
+  void _onVoiceMessageChanged() {
+    final error = _voiceMessage.takeError();
+    if (error != null && mounted) {
+      AymaToast.show(context, error, kind: AymaToastKind.error);
+    }
+  }
+
+  /// Composer mic held down: record an async voice message instead of
+  /// starting a live call. Refused while a call is live (the mic is
+  /// taken) — the toast says so rather than failing silently.
+  void _onMicHoldStart() {
+    if (!_canQueue) return;
+    if (_voice.isActive) {
+      AymaToast.show(
+        context,
+        'End the call first — then hold the mic to record.',
+      );
+      return;
+    }
+    unawaited(_voiceMessage.startRecording());
+  }
+
+  /// Composer mic released: stop the recorder and send what was said.
+  void _onMicHoldEnd() {
+    if (!_canQueue) return;
+    unawaited(_voiceMessage.stopAndSend());
   }
 
   int _seenCappedEvents = 0;
@@ -2374,7 +2475,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 // would otherwise construct the unused full-duplex [_voice] from
                 // scratch just to read `.phase` off it.
                 if (askAyma == null)
-                  _capped(h * 0.15, ListenableBuilder(
+                  _capped(
+                    h * 0.15,
+                    ListenableBuilder(
                     listenable: _voice,
                     builder: (context, _) {
                       if (_voice.phase != VoiceSessionPhase.error) {
@@ -2386,8 +2489,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             notice.toUpperCase(),
                             key: const ValueKey('voice-end-notice'),
                             textAlign: TextAlign.center,
-                            style: AymaType.mono(size: 9, color: context.ac.fgDim)
-                                .copyWith(letterSpacing: 1.8),
+                              style: AymaType.mono(
+                                size: 9,
+                                color: context.ac.fgDim,
+                              ).copyWith(letterSpacing: 1.8),
                           ),
                         );
                       }
@@ -2397,7 +2502,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         // specifically-actionable case.
                         return Padding(
                           padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
-                          child: OutOfCreditsBanner(message: _voice.errorMessage),
+                            child: OutOfCreditsBanner(
+                              message: _voice.errorMessage,
+                            ),
                         );
                       }
                       return Padding(
@@ -2411,7 +2518,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 Container(
                                   width: 5,
                                   height: 5,
-                                  margin: const EdgeInsets.only(right: 8, top: 3),
+                                    margin: const EdgeInsets.only(
+                                      right: 8,
+                                      top: 3,
+                                    ),
                                   decoration: const BoxDecoration(
                                     shape: BoxShape.circle,
                                     color: AymaColors.error,
@@ -2440,7 +2550,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               Padding(
                                 padding: const EdgeInsets.only(top: 4),
                                 child: GestureDetector(
-                                  onTap: () => CallPermissions().openSettings(),
+                                    onTap: () =>
+                                        CallPermissions().openSettings(),
                                   child: Text(
                                     'OPEN SETTINGS',
                                     style:
@@ -2449,7 +2560,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           color: AymaColors.error,
                                         ).copyWith(
                                           letterSpacing: 1.8,
-                                          decoration: TextDecoration.underline,
+                                            decoration:
+                                                TextDecoration.underline,
                                         ),
                                   ),
                                 ),
@@ -2458,16 +2570,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ),
                       );
                     },
-                  )),
+                    ),
+                  ),
                 Expanded(
                   child: ListenableBuilder(
-                    listenable: Listenable.merge([_store, _queue]),
+                    listenable: Listenable.merge([_store, _queue, _voiceQueue]),
                     builder: (context, _) {
                       final turns = _store.turns;
                       final waiting = _canQueue
                           ? _queue.waiting
                           : const <QueuedChatMessage>[];
-                      if ((turns.isEmpty && waiting.isEmpty) || partialSheet) {
+                      final voiceWaiting = _canQueue
+                          ? _voiceQueue.waiting
+                          : const <QueuedVoiceMessage>[];
+                      if ((turns.isEmpty &&
+                              waiting.isEmpty &&
+                              voiceWaiting.isEmpty) ||
+                          partialSheet) {
                         if (askAyma != null) {
                           // The quick-suggestion chips show here, as the body:
                           // for a brand-new conversation with no history yet,
@@ -2567,7 +2686,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               kChatListBottomInset, // 12 — shared w/ DM
                             ),
                             itemCount:
-                                turns.length + waiting.length + 1 + loaderRow,
+                                turns.length +
+                                waiting.length +
+                                voiceWaiting.length +
+                                1 +
+                                loaderRow,
                             itemBuilder: (context, i) {
                               // Stable keys on the loader and divider rows:
                               // without them these unkeyed rows reconcile by
@@ -2602,6 +2725,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 );
                               }
                               final idx = i - 1 - loaderRow;
+                              if (idx >= turns.length + waiting.length) {
+                                final queued =
+                                    voiceWaiting[idx -
+                                        turns.length -
+                                        waiting.length];
+                                return _QueuedVoiceBubble(
+                                  key: ValueKey(queued.jobId),
+                                  message: queued,
+                                  queue: _voiceQueue,
+                                );
+                              }
                               if (idx >= turns.length) {
                                 final queued = waiting[idx - turns.length];
                                 return _QueuedBubble(
@@ -2625,7 +2759,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 turn: t,
                                 latest: idx == turns.length - 1,
                                 api: _api,
-                                initiallyFlagged: ThumbsDownStore.instance.isFlagged(t.text),
+                                clipPlayer: _clipPlayer,
+                                nowPlaying: _nowPlaying,
+                                initiallyFlagged: ThumbsDownStore.instance
+                                    .isFlagged(t.text),
                                 onThumbsDown:
                                     (t.role == TurnRole.ayma &&
                                         t.isFinal &&
@@ -2724,38 +2861,59 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   )
                 else
-                  ListenableBuilder(
-                    listenable: _voice,
-                    builder: (context, _) => _capped(h * 0.5, reverse: true, _Composer(
-                      anchorKey: widget.composerAnchorKey,
-                      controller: _composerController,
-                      focusNode: _composerFocus,
-                      canSend: (_canSend || _pendingImage != null) && !_sending,
-                      onSend: _send,
-                      onAttach: _attachImage,
-                      pendingImage: _pendingImage,
-                      onClearImage: () => setState(() => _pendingImage = null),
-                      pendingShared: _pendingShared,
-                      onClearShared: () => setState(() => _pendingShared = null),
-                      pageContextLabel: (_activePageContext?.screen ?? '').isNotEmpty
-                          ? _activePageContext!.label
-                          : null,
-                      onClearPageContext: _clearPageContext,
-                      voicePhase: _voice.phase,
-                      relayRetrying: _voice.relayRetrying,
-                      muted: _voice.muted,
-                      aymaQuiet: _voice.aymaQuiet,
-                      agentSpeaking: _voice.agentSpeaking,
-                      activeToolLabel: _voice.activeToolLabel,
-                      warmingNotice: _voice.warmingNotice,
-                      awaitingFirstResponse: _voice.awaitingFirstResponse,
-                      onVoiceTap: _toggleVoice,
-                      onMuteTap: _voice.toggleMute,
-                      onUnmuteAyma: _voice.unmuteAyma,
-                      onExpandTap: _openVoiceScreen,
-                      micLevel: _voice.micLevel,
-                      aymaLevel: _voice.aymaLevel,
-                    )),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _VoiceRecordingBar(controller: _voiceMessage),
+                      ListenableBuilder(
+                        listenable: _voice,
+                        builder: (context, _) => _capped(
+                          h * 0.5,
+                          reverse: true,
+                          _Composer(
+                            anchorKey: widget.composerAnchorKey,
+                            micAnchorKey: widget.composerAnchorKey != null
+                                ? TourAnchors.keyFor(TourAnchors.asyncVoiceMic)
+                                : null,
+                            controller: _composerController,
+                            focusNode: _composerFocus,
+                            canSend:
+                                (_canSend || _pendingImage != null) &&
+                                !_sending,
+                            onSend: _send,
+                            onAttach: _attachImage,
+                            pendingImage: _pendingImage,
+                            onClearImage: () =>
+                                setState(() => _pendingImage = null),
+                            pendingShared: _pendingShared,
+                            onClearShared: () =>
+                                setState(() => _pendingShared = null),
+                            pageContextLabel:
+                                (_activePageContext?.screen ?? '').isNotEmpty
+                                ? _activePageContext!.label
+                                : null,
+                            onClearPageContext: _clearPageContext,
+                            voicePhase: _voice.phase,
+                            relayRetrying: _voice.relayRetrying,
+                            muted: _voice.muted,
+                            aymaQuiet: _voice.aymaQuiet,
+                            agentSpeaking: _voice.agentSpeaking,
+                            activeToolLabel: _voice.activeToolLabel,
+                            warmingNotice: _voice.warmingNotice,
+                            awaitingFirstResponse: _voice.awaitingFirstResponse,
+                            onVoiceTap: _toggleVoice,
+                            onMuteTap: _voice.toggleMute,
+                            onUnmuteAyma: _voice.unmuteAyma,
+                            onExpandTap: _openVoiceScreen,
+                            micLevel: _voice.micLevel,
+                            aymaLevel: _voice.aymaLevel,
+                            onMicHoldStart: _canQueue ? _onMicHoldStart : null,
+                            onMicHoldEnd: _canQueue ? _onMicHoldEnd : null,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -3059,6 +3217,8 @@ class _TranscriptLine extends StatefulWidget {
     this.api,
     this.initiallyFlagged = false,
     this.onThumbsDown,
+    this.clipPlayer,
+    this.nowPlaying,
   });
 
   final TranscriptTurn turn;
@@ -3067,6 +3227,11 @@ class _TranscriptLine extends StatefulWidget {
   /// Used to fetch a stored report when the turn carries a `[*_report:id]`
   /// marker. Null in tests that don't exercise that path.
   final ApiClient? api;
+
+  /// The shared voice-clip player + now-playing key for voice-message turns.
+  /// Null in tests that don't exercise clip playback (the play row hides).
+  final AsyncVoicePlayer? clipPlayer;
+  final ValueNotifier<String?>? nowPlaying;
 
   /// Whether this turn was already flagged with thumbs-down feedback (persisted across relaunch).
   final bool initiallyFlagged;
@@ -3142,6 +3307,30 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     );
   }
 
+  /// The play row for a voice-message turn, or null when this turn has no
+  /// clip (or the test didn't wire a player).
+  Widget? _clipRow(Color iconColor, Color captionColor) {
+    final turn = widget.turn;
+    final player = widget.clipPlayer;
+    final nowPlaying = widget.nowPlaying;
+    if (player == null ||
+        nowPlaying == null ||
+        (turn.audioUrl == null || turn.audioUrl!.isEmpty) &&
+            turn.audioFile == null) {
+      return null;
+    }
+    return VoiceClipRow(
+      audioUrl: turn.audioUrl,
+      audioFile: turn.audioFile?.path,
+      player: player,
+      nowPlaying: nowPlaying,
+      clipKey:
+          '${turn.role.name}:${turn.text.hashCode}:${turn.audioUrl ?? turn.audioFile?.path}',
+      iconColor: iconColor,
+      captionColor: captionColor,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -3155,6 +3344,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
 
     if (!isAyma) {
       // You — a right-aligned rounded bubble (Gemini style).
+      final userClip = turn.text.isNotEmpty
+          ? _clipRow(ac.onAccent, ac.onAccent.withValues(alpha: 0.85))
+          : null;
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Align(
@@ -3198,6 +3390,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                          if (userClip != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: userClip,
+                            ),
                         Text(
                           turn.text,
                           style: AymaType.message(color: ac.onAccent),
@@ -3252,6 +3449,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     if (reportKind != null) {
       displayText = displayText.replaceAll(RegExp(r'\s*\[\d+\]'), '').trim();
     }
+    // A pending ("Thinking…") turn never carries a clip — only resolve the
+    // row for a finished turn.
+    final aymaClip = turn.isFinal ? _clipRow(ac.accent, ac.fgMute) : null;
 
     return Opacity(
       opacity: widget.latest || !turn.isFinal ? 1 : 0.62,
@@ -3313,6 +3513,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: _photo(context, rounded: false),
+              ),
+            if (aymaClip != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: aymaClip,
               ),
             if (!turn.isFinal)
               Row(
@@ -3464,6 +3669,71 @@ class _PendingSendReconcile {
   final bool queueable;
 }
 
+/// The inline hold-to-record strip above the composer (Chunk A): visible only
+/// while the mic is hot, with a live timer and the honest "release to send"
+/// instruction. Zero-size otherwise, so the composer never jumps.
+class _VoiceRecordingBar extends StatelessWidget {
+  const _VoiceRecordingBar({required this.controller});
+
+  final AsyncVoiceController controller;
+
+  String _clock(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        if (controller.state != AsyncVoiceUiState.recording) {
+          return const SizedBox.shrink();
+        }
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AymaColors.error,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _clock(controller.elapsed),
+                style: AymaType.mono(size: 14, color: ac.fg),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Release to send',
+                style: AymaType.sans(size: 13, color: ac.fgMute),
+              ),
+              const Spacer(),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: controller.cancelRecording,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(
+                    'Cancel',
+                    style: AymaType.sans(size: 13, color: ac.fgDim),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// A message waiting in the [PendingChatQueue]: the user's bubble, dimmed, with
 /// why it hasn't gone and a way to cancel it.
 class _QueuedBubble extends StatelessWidget {
@@ -3554,6 +3824,122 @@ class _QueuedBubble extends StatelessWidget {
                     child: const Text('Cancel'),
                   ),
                 ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A voice message waiting in the [AsyncVoiceQueue]: the user's bubble,
+/// dimmed, with the live delivery stage beneath it (the same wing-loader
+/// lines the sheet shows) and a way to cancel it.
+class _QueuedVoiceBubble extends StatelessWidget {
+  const _QueuedVoiceBubble({
+    super.key,
+    required this.message,
+    required this.queue,
+  });
+
+  final QueuedVoiceMessage message;
+  final AsyncVoiceQueue queue;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final width = MediaQuery.of(context).size.width;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: width * 0.82),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Opacity(
+                opacity: 0.6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ac.accent,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                      bottomLeft: Radius.circular(16),
+                      bottomRight: Radius.circular(4),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.mic_rounded, size: 18, color: ac.onAccent),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Voice message',
+                        style: AymaType.sans(
+                          size: 15,
+                          color: ac.onAccent,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              ListenableBuilder(
+                listenable: Listenable.merge([
+                  queue,
+                  ConnectionHeartbeat.instance.listenable,
+                ]),
+                builder: (context, _) {
+                  final offline =
+                      ConnectionHeartbeat.instance.state ==
+                      ConnectionQuality.offline;
+                  final line = offline
+                      ? "Queued — sends when you're back online"
+                      : AymaLoaderLines.asyncVoice[queue.stageFor(
+                          message.jobId,
+                        )];
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!offline)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 6),
+                          child: AymaWingLoader(size: 14, showLabel: false),
+                        )
+                      else
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Icon(
+                            Icons.schedule_rounded,
+                            size: 14,
+                            color: ac.fgMute,
+                          ),
+                        ),
+                      Flexible(
+                        child: Text(
+                          line,
+                          style: AymaType.sans(size: 12, color: ac.fgMute),
+                        ),
+                      ),
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(44, 44),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        onPressed: () => queue.cancel(message.jobId),
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -3891,10 +4277,20 @@ class _Composer extends StatelessWidget {
     required this.onExpandTap,
     required this.micLevel,
     required this.aymaLevel,
+    this.onMicHoldStart,
+    this.onMicHoldEnd,
+    this.micAnchorKey,
   });
 
   /// Feature-tour anchor for the whole composer; forwarded to [ChatComposer].
   final Key? anchorKey;
+
+  /// Hold-to-record on the text mode's mic button (async voice message) +
+  /// its feature-tour anchor; forwarded to [ChatComposer]. Null disables
+  /// the hold path (Ask-Ayma mode, tests that don't wire it).
+  final VoidCallback? onMicHoldStart;
+  final VoidCallback? onMicHoldEnd;
+  final Key? micAnchorKey;
 
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -4120,6 +4516,9 @@ class _Composer extends StatelessWidget {
               onSend: onSend,
               onAttach: onAttach,
               onMicPressed: () => onVoiceTap(),
+              onMicHoldStart: onMicHoldStart,
+              onMicHoldEnd: onMicHoldEnd,
+              micKey: micAnchorKey,
               onStopPressed: () => onVoiceTap(),
               onMuteTap: () => onMuteTap(),
               onExpandTap: () => onExpandTap(),

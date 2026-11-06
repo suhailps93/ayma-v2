@@ -873,6 +873,28 @@ class Config:
     ``livekit.agents.inference.VAD`` — runs locally in the worker, no extra
     credential. Override with ``META_CASCADE_VAD_MODEL``."""
 
+    async_voice_tts_model: str
+    """TTS model for async voice-message replies (``async_voice.py``), in
+    LiveKit Inference ``provider/model`` form — the same gateway the live
+    voice cascade's TTS leg uses (``inference_tts.synthesize`` speaks the
+    gateway's ``/tts`` websocket protocol, mirroring ``inference.TTS``).
+    Defaults to the founder-selected cascade voice (Fish Audio ``s2.1-pro``).
+    Override with ``ASYNC_VOICE_TTS_MODEL``."""
+
+    async_voice_tts_voice: str
+    """Voice preset for ``async_voice_tts_model`` (empty = the vendor default
+    voice). Fish Audio voices are addressed by id, so the default is
+    ``Hannah``'s documented voice id (the founder's selected default voice),
+    the same default the Meta cascade uses. Override with
+    ``ASYNC_VOICE_TTS_VOICE``."""
+
+    async_voice_max_clip_bytes: int
+    """Largest accepted async voice-message clip in bytes (``POST
+    /voice/async``). A 16kHz mono wav (what the client records) runs ~32KB/s,
+    so the default 8MB covers a ~4-minute message; larger clips are refused
+    honestly rather than billed as giant audio-token turns. Override with
+    ``ASYNC_VOICE_MAX_CLIP_BYTES``."""
+
     meta_reasoning_effort: str
     """Reasoning budget for Muse Spark chat calls. Every Muse Spark variant is a
     reasoning model (there is no non-reasoning Meta chat model); the API floor is
@@ -1306,6 +1328,19 @@ def _load() -> Config:
             "META_CASCADE_TTS_VOICE_MALE", "bf322df2096a46f18c579d0baa36f41d"
         ),
         meta_cascade_vad_model=os.getenv("META_CASCADE_VAD_MODEL", "silero"),
+        async_voice_tts_model=os.getenv(
+            "ASYNC_VOICE_TTS_MODEL", "fishaudio/s2.1-pro"
+        ),
+        # Fish Audio "Hannah" (a conversational specialist, feminine) — the
+        # founder's selected default voice, same default as the Meta cascade
+        # (``meta_cascade_tts_voice``); documented id from
+        # ``voice_catalog._TTS_FALLBACK_VOICES["fishaudio"]``.
+        async_voice_tts_voice=os.getenv(
+            "ASYNC_VOICE_TTS_VOICE", "9a9cf47702da476aa4629e2506d4a857"
+        ),
+        async_voice_max_clip_bytes=int(
+            os.getenv("ASYNC_VOICE_MAX_CLIP_BYTES", "8388608")
+        ),
         meta_reasoning_effort=os.getenv("META_REASONING_EFFORT", "minimal"),
         open_weights_api_base_url=os.getenv(
             "OPEN_WEIGHTS_BASE_URL", ""

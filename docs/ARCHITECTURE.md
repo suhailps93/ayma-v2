@@ -729,6 +729,34 @@ The in-app "a call is live" visuals turn on once Ayma is **listening** (`VoiceSe
 
 **Guaranteed release on close / failure (privacy).** The mic and the OS surface must never outlive a live, foregrounded call. `VoiceSessionController` enforces this three ways: (1) `_teardown()` is wrapped so the privacy-critical `transport.disconnect()` (which releases the OS mic) runs in a `finally` — a throw in any earlier cleanup step can no longer skip it — and is idempotent; (2) every failure path funnels through `_fail()`, which now itself runs `_teardown()` (closing the `out_of_credits` path that previously relied on a later `closed` event that might never arrive); (3) a whole-session `AppLifecycleListener` (installed in `start()`, disposed on every terminal path) ends the call on `onDetach` (app/engine destroyed) and, on `onPause`, ends any session that is **not** yet conversation-ready — a genuinely live call survives backgrounding (the intended ChatGPT-style background call kept alive by the FGS/CallKit surface), but a connecting/waking/warming one is torn down so nothing is held while the user isn't looking.
 
+### 1.6c Async voice messages (press, speak, release — Chunk A, staging Nov 2026)
+
+Voice-message mode for Ayma conversations, and the offered fallback when a live call cannot connect: hold the chat mic (tap still starts a live call), speak, release. The clip uploads whenever the connection allows — queued durably on the phone, retried — the cloud transcribes + thinks + replies with an audio clip + transcript, delivered into the same conversation thread like a message. LiveKit-only inference (founder rule, permanent): the STT/LLM/TTS legs all route through the LiveKit Inference gateway exactly like live voice — no direct provider calls, no exceptions; `tests/test_async_voice.py` grep-gates the path for direct Google/Vertex calls.
+
+```mermaid
+sequenceDiagram
+  participant U as User (Flutter)
+  participant Q as AsyncVoiceQueue
+  participant CR as Cloud Run (/voice/async)
+  participant LI as LiveKit Inference
+  participant T as Thread (chat_messages)
+
+  U->>U: hold mic, speak, release (wav 16kHz mono)
+  U->>Q: enqueue clip (phone-local, survives restart)
+  Q->>CR: upload clip to uploads/{uid}/… (when online)
+  Q->>CR: POST /voice/async {job_id, storage_path} (idempotent)
+  CR->>LI: STT: chat/completions + input_audio
+  CR->>LI: LLM: gemini.generate_reply (voice-variant prompt + tools)
+  CR->>LI: TTS: wss /tts (same leg as live cascade)
+  CR->>T: append user turn (transcript + clip) + Ayma turn (reply + audio)
+  CR-->>Q: job doc users/{uid}/async_voice_jobs/{job_id} → done
+  Q-->>U: turns land in thread, playable
+```
+
+- **Client** (`services/async_voice_controller.dart` + `async_voice_queue.dart`): the controller owns press-speak-release (120s cap, too-short taps dropped, mic-denied explained); the queue owns durable delivery — clips in the app documents dir, metadata in `SharedPreferences` per account, upload → submit → watch-the-job-doc in order, flushed on enqueue/activate/reconnect (anything but `offline`). The finished turn is adopted into `TranscriptStore` exactly as persisted (transcript + job id) so a later history reload dedups; a failed job lands as an honest Ayma error turn (usage-capped → the reload card), never a silent hang. One clip plays app-wide at a time (`AsyncVoicePlayer`, just_audio).
+- **Entries**: the chat composer mic (hold; the hold rides the button's own `InkWell` long-press because an ancestor detector always loses the gesture arena to the button's `Tooltip`) and the call-failure toast's "Voice message" action, which opens `AsyncVoiceSheet` (same controller, wing-loader stages from the job status: "Sending your voice…" / "Hearing you out…" / "Ayma is thinking…" / "Ayma is answering…").
+- **Backend** (`async_voice.py`, `inference_tts.py`): `POST /voice/async` answers immediately and runs the job in a shielded task (a disconnect never aborts it); the job doc carries the live stage + terminal payload. Turn caps enforced like `/chat`; the LLM leg deliberately uses `gemini.generate_reply` (Inference-only), never the user's Brain provider; TTS failure still delivers the transcript reply, just without a playable clip. Reply voice: the async-voice config default (Fish Audio, same default voice as the cascade) — not the user's Gemini preset, which the gateway cannot speak.
+
 ### 1.7 Implementation steps
 
 1. **Client config** — `lib/env.dart` holds only LiveKit/bootstrap config; single voice provider (Gemini Live via LiveKit), no provider-switch surface. `lib/config/audio_config.dart` holds only constants actually consumed — no VAD thresholds, PCM framing, or manual reconnect backoff, LiveKit's SDK owns that.

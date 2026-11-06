@@ -144,6 +144,17 @@ abstract final class AymaLoaderLines {
 
   /// Markdown image placeholders: the image download in flight.
   static const image = ['Loading this image…'];
+
+  /// Async voice message ([AsyncVoiceSheet], the chat recording bar): the
+  /// successive stages of one send, driven by the job's real status —
+  /// `0` while the clip uploads, `1` while the cloud transcribes it,
+  /// `2` while Ayma thinks, `3` while she speaks the reply.
+  static const asyncVoice = [
+    'Sending your voice…',
+    'Hearing you out…',
+    'Ayma is thinking…',
+    'Ayma is answering…',
+  ];
 }
 
 /// The one shared loading indicator: the two wing lobes of the Ayma emblem,

@@ -89,6 +89,16 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     tab: 0,
   ),
   TourFeature(
+    featureId: 'async_voice',
+    headline: 'Voice messages',
+    subtitle:
+        'Hold the mic, speak, release — your message sends when the '
+        'connection allows, and Ayma answers out loud in the thread.',
+    icon: Icons.mic_outlined,
+    anchorId: TourAnchors.asyncVoiceMic,
+    tab: 0,
+  ),
+  TourFeature(
     featureId: 'ayma_guided_tour',
     headline: 'Let Ayma show you around',
     subtitle: 'Say "walk me through the app" and Ayma gives you a live, guided '

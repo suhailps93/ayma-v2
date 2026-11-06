@@ -77,6 +77,7 @@ from livekit_token import (  # noqa: E402
 )
 import account_ops  # noqa: E402
 import age_gate  # noqa: E402
+import async_voice  # noqa: E402
 import account_purge  # noqa: E402
 import auto_analysis  # noqa: E402
 import deep_dive  # noqa: E402
@@ -2458,6 +2459,72 @@ async def clear_voice_context(
 ) -> dict[str, object]:
     await asyncio.to_thread(_voice_context_doc(uid).delete)
     return {"ok": True, "cleared": True}
+
+
+class VoiceAsyncRequest(BaseModel):
+    job_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    storage_path: str = Field(min_length=1, max_length=500)
+    session_id: str = _SESSION_ID
+    recent_turns: list[TurnModel] = Field(default_factory=list)
+
+
+@app.post("/voice/async", dependencies=[Depends(require_not_underage_uid)])
+async def voice_async(
+    req: VoiceAsyncRequest,
+    caller: Caller = Depends(require_caller),
+) -> dict[str, object]:
+    """Submit one async voice message (Chunk A): the client already uploaded
+    the wav clip to ``uploads/{uid}/…``; the cloud transcribes + thinks +
+    speaks the reply through LiveKit Inference (``async_voice.run_job``) and
+    delivers it into the same thread.
+
+    Returns immediately with the job id + status — the client watches the
+    job doc for the terminal payload. Idempotent per ``job_id``: a retry of
+    a finished job is answered from the stored outcome; one whose first
+    attempt is still running joins that run. The job itself runs in a
+    shielded task (:func:`_spawn_turn`) so a client disconnect mid-request
+    never aborts it.
+    """
+    uid = caller.uid
+    job_id = req.job_id.strip()
+    existing = await asyncio.to_thread(async_voice.fetch_job, get_db(), uid, job_id)
+    if existing is not None:
+        status = str(existing.get("status", ""))
+        if status == async_voice.STATUS_DONE:
+            return {
+                "job_id": job_id,
+                "status": status,
+                "transcript": str(existing.get("transcript", "")),
+                "reply_text": str(existing.get("reply_text", "")),
+                "reply_audio_url": str(existing.get("reply_audio_url", "")),
+                "tools": list(existing.get("tools") or []),
+                "image_url": str(existing.get("image_url", "")),
+            }
+        if status not in async_voice.TERMINAL_STATUSES:
+            joined = _INFLIGHT_TURNS.get((uid, job_id))
+            if joined is not None:
+                return {"job_id": job_id, "status": status, "joined": True}
+            # In-flight on paper but no task holds it (a restart orphaned
+            # it) — fall through and run it again under the same id.
+        # A terminal error (or an orphaned in-flight) re-runs on retry: the
+        # same id keeps the thread dedup while giving the turn a fresh run.
+    await asyncio.to_thread(
+        async_voice.create_job,
+        get_db(), uid, job_id, req.storage_path.strip(), req.session_id,
+    )
+    window = _to_turns(req.recent_turns[-_MAX_RECENT_TURNS:])
+    _spawn_turn(
+        async_voice.run_job(
+            get_db(), uid,
+            job_id=job_id,
+            storage_path=req.storage_path.strip(),
+            session_id=req.session_id,
+            recent_turns=window,
+            is_anonymous=caller.is_anonymous,
+        ),
+        key=(uid, job_id),
+    )
+    return {"job_id": job_id, "status": async_voice.STATUS_RECEIVED}
 
 
 from routes.media import MediaRequest, register_media  # noqa: E402

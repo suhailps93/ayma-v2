@@ -60,6 +60,8 @@ def append(
     *,
     image_path: str | None = None,
     image_url: str | None = None,
+    audio_path: str | None = None,
+    audio_url: str | None = None,
     tools: list[str] | None = None,
     subject_image: str | None = None,
     client_msg_id: str | None = None,
@@ -70,11 +72,16 @@ def append(
     ``image_url`` is the durable token download URL for an image the client
     can't resolve itself — an Ayma-generated ``ayma_generated/{uid}/…`` path,
     which Storage rules hide from the client SDK. Persist it alongside
-    ``image_path`` so the image survives a reload. ``tools`` are the
-    user-facing labels for what Ayma did on this turn ("Searched the web",
-    "Researched Jane Doe online") — persisted so the kicker survives a
-    reload. ``subject_image`` is a resolved photo URL for the person a skill
-    was run on (Explore deep-dive) so the history row can show their face.
+    ``image_path`` so the image survives a reload. ``audio_path`` /
+    ``audio_url`` are the same pair for an async voice-message turn
+    (``async_voice.py``): the user's recorded clip (an ``uploads/{uid}/…``
+    path the client SDK resolves itself) and Ayma's spoken reply (an
+    ``ayma_generated/{uid}/…`` path that needs the durable token URL).
+    ``tools`` are the user-facing labels for what Ayma did on this turn
+    ("Searched the web", "Researched Jane Doe online") — persisted so the
+    kicker survives a reload. ``subject_image`` is a resolved photo URL for
+    the person a skill was run on (Explore deep-dive) so the history row can
+    show their face.
     ``client_msg_id`` is the client-generated id of the *user send* this row
     belongs to — stamped on BOTH the user turn and its reply so a client that
     lost its connection mid-request can later find the finished turn in
@@ -96,6 +103,8 @@ def append(
         "text": text[:_MAX_TEXT],
         "image_path": image_path or "",
         "image_url": image_url or "",
+        "audio_path": audio_path or "",
+        "audio_url": audio_url or "",
         "created_at": firestore.SERVER_TIMESTAMP,
     }
     labels = [str(t).strip() for t in (tools or []) if str(t).strip()]
@@ -240,6 +249,8 @@ def _collect(db, uid: str) -> list[dict]:
             "text": text[:_MAX_TEXT],
             "image_path": image_path,
             "image_url": image_url,
+            "audio_path": str(d.get("audio_path", "")),
+            "audio_url": str(d.get("audio_url", "")),
             "tools": [str(t) for t in (d.get("tools") or []) if str(t).strip()],
             "subject_image": str(d.get("subject_image", "")),
             "client_msg_id": str(d.get("client_msg_id", "")),
@@ -347,6 +358,8 @@ def recent(
             "text": m["text"],
             "image_path": m["image_path"],
             "image_url": m.get("image_url") or "",
+            "audio_path": m.get("audio_path") or "",
+            "audio_url": m.get("audio_url") or "",
             "created_at": m["ts"].isoformat() if m["ts"] else None,
             "tools": m.get("tools") or [],
             "subject_image": m.get("subject_image") or "",

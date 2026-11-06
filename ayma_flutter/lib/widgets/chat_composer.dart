@@ -63,6 +63,9 @@ class ChatComposer extends StatefulWidget {
     required this.onSend,
     required this.onAttach,
     required this.onMicPressed,
+    this.onMicHoldStart,
+    this.onMicHoldEnd,
+    this.micKey,
     required this.onStopPressed,
     required this.onMuteTap,
     this.onExpandTap,
@@ -89,6 +92,18 @@ class ChatComposer extends StatefulWidget {
 
   /// Text mode's mic button — starts a voice session.
   final VoidCallback onMicPressed;
+
+  /// Text mode's mic button, held down — records an async voice message
+  /// instead of starting a live call (press [onMicHoldStart], speak,
+  /// release [onMicHoldEnd]). Null disables hold-to-record; the tap path
+  /// ([onMicPressed]) is unaffected either way.
+  final VoidCallback? onMicHoldStart;
+  final VoidCallback? onMicHoldEnd;
+
+  /// Key for the text mode's mic button (the feature-tour anchor) — the
+  /// main shell's chat passes it, so it never collides with the Ask-Ayma
+  /// popup's second composer.
+  final Key? micKey;
 
   /// Voice modes' stop button — ends the live voice session.
   final VoidCallback onStopPressed;
@@ -305,12 +320,19 @@ class _ChatComposerState extends State<ChatComposer>
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
+        // A quick tap falls through to the button's onTap (a live call);
+        // only a sustained hold takes the voice-message path.
         _RoundIconButton(
+          key: widget.micKey,
           icon: Icons.mic_none_rounded,
           tooltip: 'Talk to Ayma',
           background: ac.bgElev,
           foreground: ac.fgDim,
           onPressed: widget.onMicPressed,
+          onLongPress: widget.onMicHoldStart,
+          onLongPressUp: widget.onMicHoldEnd == null
+              ? null
+              : () => widget.onMicHoldEnd?.call(),
         ),
         const SizedBox(width: 4),
         Expanded(
@@ -413,11 +435,14 @@ class _ChatComposerState extends State<ChatComposer>
 /// visible circle reads smaller in the composer's compact row.
 class _RoundIconButton extends StatelessWidget {
   const _RoundIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.background,
     required this.foreground,
     required this.onPressed,
+    this.onLongPress,
+    this.onLongPressUp,
   });
 
   final IconData icon;
@@ -425,6 +450,16 @@ class _RoundIconButton extends StatelessWidget {
   final Color background;
   final Color foreground;
   final VoidCallback? onPressed;
+
+  /// Hold-to-record on the mic button (async voice message): [onLongPress]
+  /// fires once the hold passes the long-press timeout, [onLongPressUp] on
+  /// the release after it (never on a quick tap). Wired on the [InkWell]
+  /// itself — not on an ancestor detector — so the hold beats the button's
+  /// own [Tooltip] (same 500ms long-press timeout, but deeper in the tree,
+  /// so an outer detector would always lose the arena to it) while the tap
+  /// path keeps working untouched.
+  final GestureLongPressCallback? onLongPress;
+  final GestureLongPressUpCallback? onLongPressUp;
 
   @override
   Widget build(BuildContext context) {
@@ -436,6 +471,8 @@ class _RoundIconButton extends StatelessWidget {
         child: InkWell(
           customBorder: const CircleBorder(),
           onTap: onPressed,
+          onLongPress: onLongPress,
+          onLongPressUp: onLongPressUp,
           child: SizedBox(
             width: 44,
             height: 44,

@@ -13,6 +13,14 @@ String newSessionId() => _randomId('s-');
 /// dropped connection (app backgrounded mid-send).
 String newClientMsgId() => _randomId('m-');
 
+/// A URL-safe random id for ONE async voice message, stable across retries
+/// of that same send. Threaded through `POST /voice/async` as `job_id` so
+/// the server answers a retry from the already-finished job (or joins the
+/// still-running one) instead of transcribing — and billing — the clip
+/// again, and so the client can watch the finished job by exact id after a
+/// dropped connection.
+String newVoiceJobId() => _randomId('v-');
+
 String _randomId(String prefix) {
   const alphabet =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
