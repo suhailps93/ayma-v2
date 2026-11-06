@@ -201,6 +201,16 @@ def _merge_links(
     return merged
 
 
+class StoreDivePriorReadError(RuntimeError):
+    """The prior dive could not be read, so the write was refused.
+
+    Raised by :func:`store_dive` when the existing stored report cannot be
+    fetched: merging against an empty prior would silently degrade KEEP AND
+    MERGE into a replace, dropping stored links and dispute audits. Callers
+    (``deep_dive.run`` via ``deep_dive_delivery.run_job``) let this propagate
+    so the run record lands ``failed`` instead of a false ``done``."""
+
+
 def store_dive(
     db, uid: str, digest: dict, *, target_uid: str = "", name: str = ""
 ) -> None:
@@ -222,6 +232,12 @@ def store_dive(
     (existing order preserved) are kept, newly found links not already present
     are appended, and duplicates are removed by URL (founder decision Nov 3
     2026). Disputed links are excluded.
+
+    Raises :class:`StoreDivePriorReadError` when the prior dive cannot be
+    read: merging against an empty prior would silently degrade KEEP AND
+    MERGE into a replace, dropping stored links and dispute audits, so the
+    write is refused instead. The caller lets this propagate so the run
+    record lands ``failed`` rather than a false ``done``.
     """
     key = _cache_key(target_uid, name)
     if not db or not uid or not key or not isinstance(digest, dict):
@@ -230,13 +246,21 @@ def store_dive(
         from firebase_admin import firestore
 
         ref = _cache_ref(db, uid, key)
-        prior = {}
         try:
             snap = ref.get()
             if getattr(snap, "exists", False):
                 prior = snap.to_dict() or {}
-        except Exception:  # noqa: BLE001
-            prior = {}
+            else:
+                prior = {}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "deep-dive prior read failed for %s/%s — refusing the write "
+                "rather than merge against an empty prior and drop audits",
+                uid, key,
+            )
+            raise StoreDivePriorReadError(
+                f"prior dive for {uid}/{key} could not be read; write refused"
+            ) from exc
 
         # Never let an empty sweep destroy a richer stored report. A re-run
         # (self dives always re-search; the web legitimately varies run to
@@ -319,6 +343,8 @@ def store_dive(
         if prior.get("corrections"):
             payload["corrections"] = prior["corrections"]
         ref.set(payload)
+    except StoreDivePriorReadError:
+        raise
     except Exception:  # noqa: BLE001
         logger.exception("deep-dive cache write failed for %s/%s", uid, key)
 

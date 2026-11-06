@@ -1957,6 +1957,46 @@ def test_store_dive_keeps_created_at_across_runs():
     assert db.data[("users", "u1", "deep_dives", key)]["created_at"] == "day-one"
 
 
+def test_store_dive_prior_read_failure_fails_loudly_without_writing(monkeypatch):
+    """A transient prior-read failure must FAIL the write, never silently
+    degrade KEEP AND MERGE into a replace: no raised error + a write with an
+    empty prior would drop the stored links and dispute audits."""
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    prior = {
+        "digest": {
+            "name": "Dana Reis",
+            "facts": [{"claim": "Works at the Lisbon Oceanarium"}],
+            "links": [{"url": "https://oceanario.pt/team", "title": "Team"}],
+        },
+        "disputed_links": [{"url": "https://example.com/bad", "title": "Bad"}],
+        "created_at": "day-one",
+    }
+    db.seed(("users", "u1", "deep_dives", key), prior)
+
+    writes: list = []
+
+    class _ExplodingRef:
+        def get(self):
+            raise RuntimeError("transient read blip")
+
+        def set(self, payload, merge=False):
+            writes.append(payload)
+
+    monkeypatch.setattr(
+        deep_dive, "_cache_ref", lambda db_, uid_, key_: _ExplodingRef()
+    )
+    with pytest.raises(deep_dive.StoreDivePriorReadError):
+        deep_dive.store_dive(
+            db, "u1",
+            {"name": "Dana Reis", "facts": [],
+             "links": [{"url": "https://example.com/new", "title": "New"}]},
+            name="Dana Reis",
+        )
+    assert writes == []
+    assert db.data[("users", "u1", "deep_dives", key)] == prior
+
+
 # --- merge_confirmed_photo ---------------------------------------------------
 
 
