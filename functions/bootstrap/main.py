@@ -93,6 +93,7 @@ import share  # noqa: E402
 import share_page  # noqa: E402
 import referral_page  # noqa: E402
 import skills.app_control as app_control_mod  # noqa: E402
+import skills.guided_tour  # noqa: E402,F401 - binds the `skills` package name: _chat_context references skills.guided_tour.* by qualified name (tour fix F2); without this plain import every /chat raised NameError (staging, found 2026-11-06 during the one-brain proof)
 import matching  # noqa: E402
 import matching_cron  # noqa: E402
 import matching_skill  # noqa: E402
