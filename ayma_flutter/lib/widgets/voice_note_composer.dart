@@ -55,12 +55,93 @@ class VoiceNoteMicButton extends StatelessWidget {
   }
 }
 
+/// The WhatsApp-style lock bubble shown while holding to record
+/// (founder, 2026-11-06: "slide up to lock is not clear — make it more
+/// interactive"). A vertical pill at the right end of the recording bar:
+/// as the finger slides up it RISES and FILLS with accent, its chevron
+/// and lock glyph light up, and at full progress the lock engages (the
+/// bar snaps to the locked controls). [progress] is 0 at rest and 1 at
+/// the lock threshold.
+class VoiceNoteLockBubble extends StatelessWidget {
+  const VoiceNoteLockBubble({super.key, required this.progress});
+
+  /// Upward slide progress toward locking, 0..1.
+  final double progress;
+
+  static const double _width = 38;
+  static const double _height = 56;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final p = progress.clamp(0.0, 1.0);
+    final fillColor = Color.lerp(ac.bgElev, ac.accent, p * 0.85)!;
+    final borderColor = Color.lerp(ac.fgMute, ac.accent, p)!;
+    final iconColor = Color.lerp(ac.fgMute, ac.accent, p)!;
+    return Transform.translate(
+      // The bubble lifts toward the finger as the slide progresses.
+      offset: Offset(0, -12 * p),
+      child: Container(
+        key: const ValueKey('voiceNoteLockBubble'),
+        width: _width,
+        height: _height,
+        decoration: BoxDecoration(
+          color: ac.bgElev,
+          borderRadius: BorderRadius.circular(_width / 2),
+          border: Border.all(color: borderColor, width: 1.5),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(_width / 2),
+          child: Stack(
+            children: [
+              // Accent fill rising from the bottom with drag progress.
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: Container(
+                  width: _width,
+                  height: _height * p,
+                  color: fillColor.withValues(alpha: 0.35 + 0.45 * p),
+                ),
+              ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Icon(
+                    Icons.keyboard_arrow_up_rounded,
+                    size: 17,
+                    color: iconColor,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Transform.scale(
+                      scale: 1 + 0.3 * p,
+                      child: Icon(
+                        // Filled lock once the slide is most of the way.
+                        p >= 0.6
+                            ? Icons.lock_rounded
+                            : Icons.lock_open_rounded,
+                        size: 17,
+                        color: iconColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// The recording bar that replaces the composer row while a voice note is
 /// being recorded (WhatsApp model, founder 2026-11-06):
 ///
 /// - holding: red dot, live timer, "Release to send", a "Slide to cancel"
-///   affordance that lights up (with "Release to cancel") once the finger
-///   is in the cancel zone, and a lock hint;
+///   affordance that leans in and lights up (with "Release to cancel")
+///   as the finger slides left, a "Slide up to lock" hint, and the
+///   [VoiceNoteLockBubble] that rises and fills as the finger slides up;
 /// - locked: lock icon, live timer, DELETE (discard), PAUSE/RESUME and
 ///   SEND controls.
 ///
@@ -85,7 +166,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
         final ac = context.ac;
         final elapsed = clock(controller.engine.elapsed);
         if (controller.phase == VoiceNotePhase.locked) {
-          return _lockedBar(context, ac, elapsed);
+          return _LockedBar(controller: controller, elapsed: elapsed);
         }
         return _holdingBar(context, ac, elapsed);
       },
@@ -94,52 +175,124 @@ class VoiceNoteRecordingBar extends StatelessWidget {
 
   Widget _holdingBar(BuildContext context, AymaTokens ac, String elapsed) {
     final cancelArmed = controller.cancelArmed;
+    final lockProgress = controller.lockProgress;
+    final cancelProgress = controller.cancelProgress;
     return Container(
       key: const ValueKey('voiceNoteRecordingBar'),
       color: ac.bg,
-      constraints: const BoxConstraints(minHeight: 44),
+      constraints: const BoxConstraints(minHeight: 68),
       child: Row(
         children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: AymaColors.error,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
-          const SizedBox(width: 10),
-          Text(
-            cancelArmed ? 'Release to cancel' : 'Release to send',
-            style: AymaType.sans(
-              size: 13,
-              color: cancelArmed ? AymaColors.error : ac.fgMute,
-            ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AymaColors.error,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
+                  const SizedBox(width: 10),
+                  Text(
+                    cancelArmed ? 'Release to cancel' : 'Release to send',
+                    style: AymaType.sans(
+                      size: 13,
+                      color: cancelArmed ? AymaColors.error : ac.fgMute,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.keyboard_arrow_up_rounded,
+                    size: 15,
+                    color: Color.lerp(ac.fgMute, ac.accent, lockProgress),
+                  ),
+                  Text(
+                    'Slide up to lock',
+                    style: AymaType.sans(
+                      size: 12,
+                      color: Color.lerp(ac.fgMute, ac.accent, lockProgress),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
           const Spacer(),
-          Icon(
-            Icons.chevron_left_rounded,
-            size: 18,
-            color: cancelArmed ? AymaColors.error : ac.fgMute,
-          ),
-          Text(
-            'Slide to cancel',
-            style: AymaType.sans(
-              size: 13,
-              color: cancelArmed ? AymaColors.error : ac.fgMute,
+          Transform.translate(
+            // The cancel label leans toward the finger as it slides left.
+            offset: Offset(-10 * cancelProgress, 0),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.chevron_left_rounded,
+                  size: 18,
+                  color: cancelArmed ? AymaColors.error : ac.fgMute,
+                ),
+                Text(
+                  'Slide to cancel',
+                  style: AymaType.sans(
+                    size: 13,
+                    color: cancelArmed ? AymaColors.error : ac.fgMute,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 12),
-          Icon(Icons.lock_outline_rounded, size: 16, color: ac.fgMute),
-          const SizedBox(width: 4),
+          const SizedBox(width: 10),
+          VoiceNoteLockBubble(progress: lockProgress),
+          const SizedBox(width: 2),
         ],
       ),
     );
   }
+}
 
-  Widget _lockedBar(BuildContext context, AymaTokens ac, String elapsed) {
+/// The locked recording bar: timer, DELETE, PAUSE/RESUME, SEND. Mounts
+/// the moment a slide-up lock engages, so its lock icon plays a one-shot
+/// snap (scale punch) as the hands-free state takes over.
+class _LockedBar extends StatefulWidget {
+  const _LockedBar({required this.controller, required this.elapsed});
+
+  final VoiceNoteController controller;
+  final String elapsed;
+
+  @override
+  State<_LockedBar> createState() => _LockedBarState();
+}
+
+class _LockedBarState extends State<_LockedBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _snap = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  )..forward();
+  late final Animation<double> _scale = Tween<double>(begin: 1.6, end: 1.0)
+      .animate(CurvedAnimation(parent: _snap, curve: Curves.easeOutBack));
+
+  @override
+  void dispose() {
+    _snap.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final controller = widget.controller;
     final paused = controller.engine.isPaused;
     return Container(
       key: const ValueKey('voiceNoteRecordingBar'),
@@ -147,7 +300,10 @@ class VoiceNoteRecordingBar extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 44),
       child: Row(
         children: [
-          Icon(Icons.lock_rounded, size: 16, color: ac.accent),
+          ScaleTransition(
+            scale: _scale,
+            child: Icon(Icons.lock_rounded, size: 18, color: ac.accent),
+          ),
           const SizedBox(width: 8),
           if (!paused)
             Container(
@@ -159,7 +315,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
               ),
             ),
           if (!paused) const SizedBox(width: 8),
-          Text(elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
+          Text(widget.elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
           const SizedBox(width: 10),
           Text(
             paused ? 'Paused' : 'Recording',
@@ -190,5 +346,5 @@ class VoiceNoteRecordingBar extends StatelessWidget {
         ],
       ),
     );
-  }
+}
 }

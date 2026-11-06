@@ -112,6 +112,22 @@ class VoiceNoteController extends ChangeNotifier {
   /// lock itself engages the moment this arms — see [handleDragUpdate]).
   bool get lockArmed => _lockArmed;
 
+  Offset _dragOffset = Offset.zero;
+
+  /// The held finger's cumulative offset from the hold start, while
+  /// holding (zero otherwise). Drives the interactive affordances: the
+  /// lock bubble rises and fills with [lockProgress], the cancel label
+  /// leans in with [cancelProgress].
+  Offset get dragOffset => _dragOffset;
+
+  /// Upward slide progress toward locking, 0..1 (1 = the lock engages).
+  double get lockProgress =>
+      (-_dragOffset.dy / lockSlideDistance).clamp(0.0, 1.0);
+
+  /// Leftward slide progress toward arming cancel, 0..1 (1 = armed).
+  double get cancelProgress =>
+      (-_dragOffset.dx / cancelSlideDistance).clamp(0.0, 1.0);
+
   bool _disposed = false;
 
   void _onEngineChanged() {
@@ -122,6 +138,7 @@ class VoiceNoteController extends ChangeNotifier {
       _phase = VoiceNotePhase.idle;
       _cancelArmed = false;
       _lockArmed = false;
+      _dragOffset = Offset.zero;
     }
     notifyListeners();
   }
@@ -139,6 +156,7 @@ class VoiceNoteController extends ChangeNotifier {
       _phase = VoiceNotePhase.holding;
       _cancelArmed = false;
       _lockArmed = false;
+      _dragOffset = Offset.zero;
       notifyListeners();
     }
   }
@@ -147,17 +165,17 @@ class VoiceNoteController extends ChangeNotifier {
   /// left/up are negative). Updates the cancel arm and engages the lock.
   void handleDragUpdate(Offset offsetFromStart) {
     if (_phase != VoiceNotePhase.holding) return;
+    _dragOffset = offsetFromStart;
     final armed = offsetFromStart.dx <= -cancelSlideDistance;
-    if (armed != _cancelArmed) {
-      _cancelArmed = armed;
-      notifyListeners();
-    }
+    _cancelArmed = armed;
     if (offsetFromStart.dy <= -lockSlideDistance && !_lockArmed) {
       _lockArmed = true;
       _phase = VoiceNotePhase.locked;
       _cancelArmed = false;
-      notifyListeners();
+      _dragOffset = Offset.zero;
     }
+    // Notify on every move: the lock bubble tracks the finger live.
+    notifyListeners();
   }
 
   /// The held finger was released. In [VoiceNotePhase.holding] this sends
@@ -170,6 +188,7 @@ class VoiceNoteController extends ChangeNotifier {
     _phase = VoiceNotePhase.idle;
     _cancelArmed = false;
     _lockArmed = false;
+    _dragOffset = Offset.zero;
     notifyListeners();
     if (cancel) {
       await engine.cancelRecording();
@@ -186,6 +205,7 @@ class VoiceNoteController extends ChangeNotifier {
     _phase = VoiceNotePhase.idle;
     _cancelArmed = false;
     _lockArmed = false;
+    _dragOffset = Offset.zero;
     notifyListeners();
     await engine.cancelRecording();
   }
