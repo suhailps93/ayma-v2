@@ -1,8 +1,12 @@
-// The center Ayma orb's TAP progression (founder ask): on another page a tap
-// opens the half "Ask Ayma" sheet with that page's context; a second tap grows
-// that sheet to the full-screen main chat and drops the context chip; a tap on
-// the full-screen main chat activates voice. The 1-second HOLD is unchanged —
-// it activates voice directly from every page. Each rung is exercised on the
+// The center Ayma orb's TAP progression (founder asks): on another page a
+// tap opens the half "Ask Ayma" sheet with that page's context; a SECOND tap
+// closes that sheet and lands on the REAL main chat screen (the shell's Ayma
+// tab — founder report 2026-11-06: growing the sheet into a full-screen
+// overlay dialog hid every page Ayma navigated to behind it); a tap on the
+// full-screen main chat itself activates voice. Expanding the sheet to full
+// screen still exists via its header expand button, and an orb tap on that
+// expanded sheet activates voice. The 1-second HOLD is unchanged — it
+// activates voice directly from every page. Each rung is exercised on the
 // real `MainShellScreen` with a fake voice controller asserting `start()`.
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
@@ -109,8 +113,9 @@ void main() {
   );
 
   testWidgets(
-    '(ii) a second orb tap grows the half sheet to the full-screen main chat '
-    'and drops the context chip (voice not started)',
+    '(ii) a second orb tap closes the half sheet and lands on the REAL '
+    'main chat screen — the shell Ayma tab itself, not the sheet grown '
+    'full screen (voice not started)',
     (tester) async {
       phone(tester);
       final voice = _FakeVoice();
@@ -120,23 +125,35 @@ void main() {
       await goToExplore(tester);
       await tapShellOrb(tester);
       expect(find.text(_chip), findsOneWidget);
+      expect(find.byKey(_sheetBox), findsOneWidget);
 
       await tapPopupOrb(tester);
 
-      expect(aymaSheet.isExpanded, isTrue);
-      expect(tester.getRect(find.byKey(_sheetBox)).top, 0);
-      expect(find.text(_chip), findsNothing);
-      // Still the same popup over Explore, not a tab switch or a new surface.
+      // The sheet is GONE (no handle, no sheet box, not expanded) and the
+      // shell has switched to tab 0, whose body is the real main
+      // ChatScreen — route/screen identity, not just a full-size surface.
+      expect(find.byKey(_modalHandle), findsNothing);
+      expect(find.byKey(_sheetBox), findsNothing);
+      expect(find.byKey(_popupBar), findsNothing);
+      expect(isAymaSheetOpen, isFalse);
+      expect(aymaSheet.isExpanded, isFalse);
+      // The one chip still shown is the MAIN chat's own page-context
+      // kickoff for the page the user left — the same chip a normal
+      // Explore -> Ayma tab switch posts (MainShellScreen._selectTab) —
+      // not the sheet's chip: the sheet itself is gone above.
+      expect(find.text(_chip), findsOneWidget);
       expect(
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
-        1,
+        MainShellScreen.aymaTabIndex,
       );
       expect(voice.startCalls, 0);
     },
   );
 
   testWidgets(
-    '(iii) once the chat is full screen, the next orb tap activates voice',
+    '(iii) once the sheet is expanded to full screen via its header '
+    'expand button (an entry point that is unchanged), the next orb tap '
+    'activates voice',
     (tester) async {
       phone(tester);
       final voice = _FakeVoice();
@@ -145,8 +162,11 @@ void main() {
 
       await goToExplore(tester);
       await tapShellOrb(tester); // half
-      await tapPopupOrb(tester); // full
+      // Expand through the header button, not the orb.
+      await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
+      await tester.pumpAndSettle();
       expect(aymaSheet.isExpanded, isTrue);
+      expect(tester.getRect(find.byKey(_sheetBox)).top, 0);
       expect(voice.startCalls, 0);
 
       await tapPopupOrb(tester); // voice
