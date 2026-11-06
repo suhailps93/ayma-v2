@@ -154,5 +154,13 @@
       {"anchor": "notifications_bell", "headline": "The bell", "say": "Tap the bell. This is where I nudge you when there's something worth your time."},
       {"anchor": "home_orb", "headline": "Always here", "say": "And this orb is always me, one tap away. That's the tour — ask me anything whenever you like."}
     ]
+  },
+  "connection_banner": {
+    "_doc": "App-wide connection banner + client heartbeat (Nov 2026): the phone probes GET /health every 15s while foregrounded and every page shows 'Offline — showing saved data' / 'Weak connection — showing saved data' when the connection is gone or weak. Overlay-only chrome with no route, so — like guided_tour — deliberately not a destination/non_navigable entry (both are validated against the router).",
+    "key": "connection_banner",
+    "label": "Connection banner",
+    "aliases": ["offline banner", "weak connection banner", "connection banner", "no connection banner", "offline strip", "showing saved data", "weak connection", "am i offline", "is my connection down"],
+    "operated_by_ayma": false,
+    "reason": "Ambient status chrome driven by the client heartbeat; Ayma neither opens nor changes it. If asked about it, explain what it means (the phone cannot reach, or barely reaches, the Ayma API) — never claim to fix the user's connection."
   }
 }

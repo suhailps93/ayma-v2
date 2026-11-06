@@ -7,6 +7,7 @@ import '../features/date_sim/date_sim_screen.dart';
 import '../features/practice_date/practice_debrief_screen.dart';
 import '../features/practice_date/practice_screen.dart';
 import '../services/api_client.dart';
+import '../services/connection_heartbeat.dart';
 import '../services/deep_link_queue.dart';
 import '../services/meta_integrations.dart';
 import '../services/app_context.dart';
@@ -123,7 +124,7 @@ void setupAuthDeepLinkDrain([FirebaseAuth? auth]) {
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   // Lets screens re-assert their voice screen-context when a child route pops.
-  observers: [screenRouteObserver, screenPopupTracker],
+  observers: [screenRouteObserver, screenPopupTracker, heartbeatRouteObserver],
   // Sign-in gate (§3.3): unauthenticated users can only reach the sign-in,
   // splash, terms and recovery screens; everything else bounces to sign-in.
   redirect: (context, state) {

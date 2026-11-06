@@ -21,6 +21,7 @@ import 'services/revenuecat_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
 import 'widgets/ayma_toast.dart';
+import 'widgets/connection_banner.dart';
 import 'widgets/keyboard_dismiss.dart';
 import 'widgets/tour_host.dart';
 
@@ -164,8 +165,14 @@ class AymaApp extends StatelessWidget {
         // idle, adding nothing, until the shell's gate starts a tour).
         builder: (context, child) => TourHost(
           child: AymaToastHost(
-            child:
-                KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+            // [ConnectionBanner] renders the offline/weak strip above every
+            // routed page (and passes the child through untouched when ok).
+            // It also owns the heartbeat's app lifetime (start on mount,
+            // pause while backgrounded, probe on resume).
+            child: ConnectionBanner(
+              child:
+                  KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+            ),
           ),
         ),
         // The persistent bottom nav bar is wired per-route in

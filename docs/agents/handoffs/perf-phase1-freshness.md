@@ -134,3 +134,36 @@ Phase 1 per `docs/agents/PERF_PLAN.md` is complete on this branch. Left open:
    - After wrapping services with `awaitServerAck`, grep every caller: any
      un-awaited call (`onChanged: (v) => svc.set(v)`, `onTap: () => _open(e)`,
      sync command handlers) needs awaiting or an explicit `.catchError`.
+
+---
+
+## 5. App-wide connection heartbeat + shell banner (2026-11-05, staging)
+
+Founder directive: when the connection is gone or weak, the offline banner
+must show on ALL pages (not just the 3 screens with a per-screen
+`FreshnessIndicator`), and the phone client must constantly check the
+connection.
+
+- `services/connection_heartbeat.dart` — `ConnectionHeartbeat` singleton
+  probes `GET /health` (cheapest endpoint: unauthenticated, no DB, no
+  payload) every 15s while foregrounded, plus on app resume and on every
+  route change (`heartbeatRouteObserver` on `appRouter`); paused while
+  backgrounded. `ConnectionClassifier` maps outcomes to ok/weak/offline
+  with 2-consecutive hysteresis both ways (offline = 2 straight failures;
+  weak = 2 straight slow probes over the 4s budget, or intermittent
+  failures; recovery = 2 straight good probes). Metered proxy: no
+  wifi/ethernet in the OS results stretches the interval to 60s
+  (`connectivity_plus` exposes no metered flag); OS `none` records a
+  failure without touching the radio. State exposed as a `ValueListenable`.
+- `widgets/connection_banner.dart` — mounted in `MaterialApp.router`'s
+  builder above all pages. Offline reuses the stale `FreshnessIndicator`
+  strip verbatim; weak is the same treatment ("Weak connection — showing
+  saved data"); ok passes the child through untouched. Also owns the
+  heartbeat's app lifetime (start/pause/resume-probe).
+- Registry: `connection_banner` section in `app_registry.json`
+  (overlay-only, no route — like `guided_tour`, deliberately not a
+  destination/non-navigable entry; both are validated against the router).
+- Tests: `connection_heartbeat_test.dart` (classifier sequences both ways,
+  interval selection, probe path incl. in-flight skip + no-HTTP-on-none) +
+  `connection_banner_test.dart` (shell banner renders over Explore when
+  offline/weak, nothing when ok, recovery clears it).
