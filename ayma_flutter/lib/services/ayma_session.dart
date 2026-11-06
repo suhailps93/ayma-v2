@@ -24,5 +24,6 @@ class AymaSession {
   late final VoiceSessionController voice = VoiceSessionController(
     transcriptStore: store,
     sessionId: sessionId,
+    userIdleTimeout: VoiceSessionController.defaultUserIdleTimeout,
   );
 }
