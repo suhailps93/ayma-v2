@@ -43,7 +43,11 @@ are navigate-only (founder rules, 2026-10-25 and the ACTION PARITY
 exclusions config, 2026-11-06): the tool opens the page and the user acts
 there themselves; no tool path here can delete the account, withdraw
 consent, buy anything or clear her memory. ``play_voice_clip`` plays a
-voice clip in the open chat (``app_control_playback``).
+voice clip in the open chat (``app_control_playback``). The inbox
+actions (``app_control_inbox``) run the bulk buttons on the
+Notifications page and the Messages list: mark all notifications read,
+clear all notifications, set the notification filter, mark all
+conversations read.
 """
 
 from __future__ import annotations
@@ -160,6 +164,14 @@ from .app_control_settings import (
     _resolve_accent,
     _setting_line,
 )
+from .app_control_inbox import (
+    _bind_clear_all_notifications,
+    _bind_mark_all_conversations_read,
+    _bind_mark_all_notifications_read,
+    _CLEAR_ALL_NOTIFICATIONS,
+    _MARK_ALL_CONVERSATIONS_READ,
+    _MARK_ALL_NOTIFICATIONS_READ,
+)
 from .app_control_playback import _bind_play_voice_clip, _PLAY_VOICE_CLIP
 from .app_control_ui import (
     _bind_ui_action,
@@ -197,6 +209,11 @@ _SCROLL_ACK_TIMEOUT_SECONDS = 30.0
 # than a navigation's. Still bounded, so the turn never hangs.
 _PLAYBACK_ACK_TIMEOUT_SECONDS = 15.0
 
+# Inbox actions ack only once the bulk writes land (a batch per
+# notification, a write per conversation), so they get a longer bounded
+# wait than a navigation's 6s.
+_INBOX_ACK_TIMEOUT_SECONDS = 20.0
+
 # After a search_explore is acked, how long to wait for the client to report
 # the loaded results (the feed is a network call after navigation).
 _RESULT_TIMEOUT_SECONDS = 6.0
@@ -222,6 +239,12 @@ COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_UI_ACTION, bind=_bind_ui_action),
     Skill(declaration=_GO_BACK, bind=_bind_go_back),
     Skill(declaration=_PLAY_VOICE_CLIP, bind=_bind_play_voice_clip),
+    Skill(declaration=_MARK_ALL_NOTIFICATIONS_READ,
+          bind=_bind_mark_all_notifications_read),
+    Skill(declaration=_CLEAR_ALL_NOTIFICATIONS,
+          bind=_bind_clear_all_notifications),
+    Skill(declaration=_MARK_ALL_CONVERSATIONS_READ,
+          bind=_bind_mark_all_conversations_read),
 ]
 
 VOICE_SKILLS: list[Skill] = [

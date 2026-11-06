@@ -94,8 +94,12 @@ or payment details.
 confirmation (not wired as exclusions yet):** "Delete everywhere" for a
 photo (irreversible delete; "Remove from public" is reversible and stays
 operable), Block & report in a DM thread (affects another person),
-"Clear all notifications", and "Dismiss all" profile suggestions
-(bulk-destructive). Until confirmed, these remain `UI`-operable.
+and "Dismiss all" profile suggestions (bulk-destructive). Until
+confirmed, these remain `UI`-operable. ("Clear all notifications" was
+on this list until the founder ruled on 2026-11-06 that it is a
+priority gap to CLOSE, not an exclusion — it is COVERED below via
+`clear_all_notifications`, with Ayma confirming in conversation first
+because it cannot be undone.)
 
 ---
 
@@ -160,6 +164,7 @@ operable), Block & report in a DM thread (affects another person),
 | Match row (tap) | Open the match report | COVERED `open_match_report` |
 | Match request: Accept / Pass | Accept or pass a match request | `UI` |
 | "New from Ayma" section rows | Open the suggested match | `UI` / `open_match_report` |
+| Mark all read (header button, + confirm) — **added with the priority-gaps work** | Mark every conversation read | **COVERED `mark_all_conversations_read`** — founder feedback item 9's sibling ask on this list; the button appears only while a shown conversation is unread |
 
 ## 6. DM thread (`/dm/:threadId`) — `dm_thread_screen.dart`
 
@@ -369,8 +374,10 @@ and also `UI`:
 | Control | Does | Ayma |
 |---|---|---|
 | Notification row (tap) | Open its destination | COVERED `open_notification` (latest unread) / `UI` per row |
-| Mark read (per row / Mark all) | Mark read | `UI` |
-| Clear all (+ confirm) | Delete all notifications | `UI` — **proposed exclusion** (bulk-destructive) |
+| Mark read (per row) | Mark that notification read | `UI` |
+| Mark all read (app-bar button, + confirm) | Mark every notification read | **COVERED `mark_all_notifications_read`** — priority gap, founder feedback item 9 |
+| Clear all (app-bar button, + confirm) | Remove every notification from the list | **COVERED `clear_all_notifications`** — founder feedback item 10. Destructive and not undoable: Ayma confirms with the user in conversation before calling it (her tool description carries the rule), the same check the button's dialog performs |
+| Filter chips (All / Unread / Matches / Ayma / Reports / Suggestions) | Show only that kind of notification | **COVERED `set_notification_filter`** — founder feedback item 11. The chips and Ayma's command write the same shared filter state (`NotificationFilterState`); the buckets cover the types the centre lists (DM notifications never appear here — they live on the Messages tab) |
 | Preference switches (per category) | Toggle notification categories | COVERED `app_action` notification_pref settings |
 | "Manage in system settings" | Open OS settings | `UI` (leaves the app; OS side is the user's) |
 
@@ -471,6 +478,8 @@ each as `non_navigable` with its reason.
 | GAP-4 | Policy: approving an MCP agent connection via Ayma | XS | Decide user-only vs confirmed-action; today it is `UI`-operable, which grants a third party access — proposed user-only. |
 | GAP-5 | Carousel/photo-swipe gestures generally | S | `ui_action` has no horizontal-swipe op; carousels are reachable only where they expose tappable arrows/dots. Add a `swipe` op to `ScreenCapture.perform` + `ui_action` if the founder wants full parity here. |
 | GAP-6 | OS-level surfaces (share sheet target choice, system pickers, store pages) | — | Not closable from inside the app; Ayma can open the entry point only. Listed for honesty, not scheduled. |
+| GAP-7 | Notifications bulk controls + filters (feedback items 9, 10, 11) | S | **WIRED in this branch** (`mark_all_notifications_read`, `clear_all_notifications`, `set_notification_filter`). Inventory found Mark all read and Clear all already existed as app-bar buttons; the filter buttons did NOT exist — a chips row was added to the page, and the chips and Ayma's command share one filter state. Clear all moved OFF the proposed-exclusions list by founder ruling (see Exclusions). |
+| GAP-8 | Conversations-list mark-all-read (feedback item 9, sibling ask) | S | **WIRED in this branch** (`mark_all_conversations_read`). The control did NOT exist on the Messages list — a header button was added (shown only while a shown conversation is unread, confirm dialog like the Notifications page); `DmService.markAllThreadsRead` pages past the live top tier so below-fold threads count too. |
 
 ## Keeping this graph alive
 
@@ -512,7 +521,9 @@ client identifier fails.
   `search_explore`, `open_profile`, `open_message_thread`,
   `open_notification`, `open_match_report`, `open_date_sim`,
   `open_practice_date`, `app_action`, `account_action`, `ui_action`,
-  `play_voice_clip`.
+  `play_voice_clip`, `mark_all_notifications_read`,
+  `clear_all_notifications`, `set_notification_filter`,
+  `mark_all_conversations_read`.
 * **Guided tour**: `start_guided_tour`, `advance_guided_tour`,
   `back_guided_tour`, `stop_guided_tour`.
 * **Her own stack & voice**: `set_brain`, `set_voice_brain`,

@@ -190,6 +190,15 @@
     "command": "play_voice_clip",
     "client_action": "play_voice_clip"
   },
+  "inbox_actions": {
+    "_doc": "Inbox bulk actions (ACTION PARITY priority gaps, founder feedback items 9-11, 2026-11-06): the bulk buttons on the Notifications page and the Messages list are Ayma-operable — the tools in skills/app_control_inbox.py queue the client commands below and AppCommandService + InboxActions run the same NotificationService / DmService writes as the buttons, acking with the count that moved. The set_notification_filter tool lands via the self-check staging port (fleet/self-check-staging) and adds itself to this commands list; the filter values it accepts are listed below. Clear all is destructive: Ayma confirms with the user in conversation before calling it (her tool description carries that rule), the same check the button's dialog performs. No route of their own, so — like voice_clip_playback — deliberately not destinations.",
+    "key": "inbox_actions",
+    "label": "Inbox bulk actions (notifications and messages)",
+    "aliases": ["mark all read", "mark all as read", "clear all notifications", "notification filters", "mark all messages read", "mark all conversations read"],
+    "operated_by_ayma": true,
+    "commands": ["mark_all_notifications_read", "clear_all_notifications", "mark_all_conversations_read"],
+    "notification_filters": ["all", "unread", "matches", "ayma", "reports", "suggestions"]
+  },
   "voice_call_resilience": {
     "_doc": "Forgiving voice-call route (Nov 2026): if a voice call's first connect attempt fails, the app retries once with WebRTC forced onto LiveKit Cloud TURN relay (TLS/443), which survives UDP-blocking and weak networks; the status line reads 'Reconnecting…' during the retry. If an established call's connection drops mid-call, the LiveKit SDK re-establishes it and resumes the same session — the voice status reads 'Reconnecting…' while that lasts and the call only ends if the reconnect ultimately fails. Behavior inside the existing voice-call feature with no route of its own, so — like connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
     "key": "voice_call_resilience",

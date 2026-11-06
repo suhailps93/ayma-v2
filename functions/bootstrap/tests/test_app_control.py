@@ -503,6 +503,8 @@ _COMMAND_TOOLS = {
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
     "ui_action", "go_back", "play_voice_clip",
+    "mark_all_notifications_read", "clear_all_notifications",
+    "mark_all_conversations_read",
 }
 
 
