@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -5,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/credits_balance.dart';
 import '../services/dev_panel_session.dart';
 import '../services/fresh_data.dart';
+import '../services/report_cache.dart';
 import '../services/revenuecat_service.dart';
 import '../services/subscription_status.dart';
 import '../theme.dart';
@@ -118,6 +123,7 @@ class PlanScreen extends StatefulWidget {
     this.api,
     this.openUrl,
     this.showContinueFree = false,
+    this.cacheUid,
   });
 
   static const path = '/profile/plan';
@@ -125,6 +131,10 @@ class PlanScreen extends StatefulWidget {
   final RevenueCatService? service;
   final ApiClient? api;
   final UrlOpener? openUrl;
+
+  /// Test seam for the last-known plan cache's uid scope; production reads
+  /// the signed-in user from FirebaseAuth instead.
+  final String? cacheUid;
 
   /// Onboarding: adds a "Continue with free plan" action that pops `true`.
   final bool showContinueFree;
@@ -142,6 +152,87 @@ class _PlanScreenState extends State<PlanScreen> {
   _PlanData? _lastOk;
   String? _selected; // productId of the plan shown in the detail card
   bool _busy = false;
+
+  /// The signed-in uid scoping the last-known plan cache (own data only).
+  /// Empty when signed out or when no Firebase app is configured (unit
+  /// tests), which disables caching gracefully.
+  String get _cacheUid {
+    final injected = widget.cacheUid;
+    if (injected != null) return injected;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreCachedPlan();
+  }
+
+  /// Paint the last-known plan instantly on a cold start (offline-first):
+  /// fills [_lastOk]/[_fresh] from the disk cache as prior (stale) data
+  /// while the [_load] already in flight refreshes behind it. Only fills
+  /// when nothing has loaded yet, so a fast load is never clobbered.
+  Future<void> _restoreCachedPlan() async {
+    final uid = _cacheUid;
+    if (uid.isEmpty) return;
+    try {
+      final raw =
+          await ReportCache.instance.readReport(uid, 'last_known', 'plan');
+      if (raw == null || !mounted || _lastOk != null) return;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final plans = ((m['plans'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(PlanOption.fromMap)
+          .toList();
+      final restored = _PlanData(
+        status: SubscriptionStatus.fromMap(
+            (m['status'] as Map?)?.cast<String, dynamic>() ?? const {}),
+        plans: plans,
+        usage: m['usage'] is Map
+            ? UsageSummary.fromMap((m['usage'] as Map).cast<String, dynamic>())
+            : null,
+        trial: m['trial'] is Map
+            ? TrialOffer.fromMap(
+                (m['trial'] as Map).cast<String, dynamic>(), plans)
+            : null,
+      );
+      if (!mounted || _lastOk != null) return;
+      setState(() {
+        _lastOk = restored;
+        _fresh = FreshData.fromApi(
+          data: restored,
+          refreshing: true,
+          fromPrior: true,
+        );
+      });
+    } catch (_) {
+      // A corrupt / unreadable cache entry just means a normal load.
+    }
+  }
+
+  /// Persist a freshly loaded plan as the last-known snapshot, so the next
+  /// cold start paints instantly even with no connection. Restored plan
+  /// options are display-only (their store packages rebind on the next
+  /// successful load).
+  void _persistPlan(_PlanData loaded) {
+    final uid = _cacheUid;
+    if (uid.isEmpty) return;
+    unawaited(ReportCache.instance.writeReport(
+      uid,
+      'last_known',
+      'plan',
+      jsonEncode({
+        'status': loaded.status.toMap(),
+        'plans': [for (final p in loaded.plans) p.toMap()],
+        'usage': loaded.usage?.toMap(),
+        'trial': loaded.trial?.toMap(),
+      }),
+    ));
+  }
 
   Future<UsageSummary?> _usage() async {
     try {
@@ -207,6 +298,7 @@ class _PlanScreenState extends State<PlanScreen> {
           _fresh = FreshData.fromApi(data: loaded);
         });
       }
+      _persistPlan(loaded);
       return loaded;
     } catch (e) {
       if (mounted) {

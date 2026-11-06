@@ -42,6 +42,30 @@ class SubscriptionStatus {
 
   bool get isSubscribed => planName != 'Free';
 
+  /// Plain-map form for the Plan page's last-known cache (offline-first):
+  /// every field is display state, restored verbatim so a cold start can
+  /// paint the page before the store/backend answers land.
+  Map<String, dynamic> toMap() => {
+        'plan_name': planName,
+        'product_id': productId,
+        'expires_at': expiresAt?.toIso8601String(),
+        'will_renew': willRenew,
+        'management_url': managementUrl,
+        'is_trial': isTrial,
+        'from_store': fromStore,
+      };
+
+  factory SubscriptionStatus.fromMap(Map<String, dynamic> m) =>
+      SubscriptionStatus(
+        planName: m['plan_name'] as String? ?? 'Free',
+        productId: m['product_id'] as String?,
+        expiresAt: DateTime.tryParse(m['expires_at'] as String? ?? ''),
+        willRenew: m['will_renew'] as bool? ?? true,
+        managementUrl: m['management_url'] as String?,
+        isTrial: m['is_trial'] as bool? ?? false,
+        fromStore: m['from_store'] as bool? ?? false,
+      );
+
   static Future<SubscriptionStatus> load(
     RevenueCatService rc,
     ApiClient api,

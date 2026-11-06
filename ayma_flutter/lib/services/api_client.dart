@@ -1531,50 +1531,7 @@ class ApiClient {
     return 'Upgrade your plan to keep going.';
   }
 
-  UsageSummary _usageFrom(Map<String, dynamic> m) {
-    final credits = (m['credits'] as Map?) ?? const {};
-    final grant = (credits['grant'] as num?)?.toInt() ?? 0;
-    final added = (credits['added'] as num?)?.toInt() ?? 0;
-    final used = (credits['used'] as num?)?.toInt() ?? 0;
-    return UsageSummary(
-      total: (m['total'] as num?)?.toInt() ?? 0,
-      features: ((m['features'] as Map?) ?? {}).map(
-        (k, v) => MapEntry(k.toString(), (v as num).toInt()),
-      ),
-      creditGrant: grant,
-      creditsAdded: added,
-      creditsUsed: used,
-      creditsRemaining:
-          (credits['remaining'] as num?)?.toInt() ??
-          (grant + added - used).clamp(0, grant + added),
-      tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
-      isDev: m['is_dev'] == true,
-      plan: (m['plan'] as String?) ?? 'free',
-      periodEnd: DateTime.tryParse(m['period_end'] as String? ?? ''),
-      isTrial: m['is_trial'] == true,
-      costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
-      // Since-reset first; the legacy key (which the server keeps equal to
-      // since-reset) covers responses that predate the all-time/reset split.
-      realMoneyUsd:
-          (m['real_money_since_reset_usd'] as num?)?.toDouble() ??
-          (m['real_money_usd'] as num?)?.toDouble() ??
-          0,
-      realMoneyAllTimeUsd:
-          (m['real_money_all_time_usd'] as num?)?.toDouble() ??
-          (m['real_money_usd'] as num?)?.toDouble() ??
-          0,
-      realMoneyResetAt: DateTime.tryParse(
-        m['real_money_reset_at'] as String? ?? '',
-      ),
-      spendGroups: ((m['spend_groups'] as List?) ?? const [])
-          .whereType<Map>()
-          .map(SpendGroup.fromMap)
-          .toList(),
-      periodUsage: m['period_usage'] is Map
-          ? PeriodUsage.fromMap(m['period_usage'] as Map)
-          : null,
-    );
-  }
+  UsageSummary _usageFrom(Map<String, dynamic> m) => UsageSummary.fromMap(m);
 
   /// `POST /check-compatibility` — the on-demand pairwise match-score check
   /// (§5.3). Token-intensive: the client shows its credit cost on the button.
@@ -3130,6 +3087,24 @@ class ExploreCard {
     isSelf: m['self'] == true,
     paused: m['paused'] == true,
   );
+
+  /// Wire-form map (the exact inverse of [fromMap]) for the Explore feed's
+  /// last-known cache (offline-first): page 1 persists locally so a cold
+  /// start paints instantly and refreshes behind.
+  Map<String, dynamic> toMap() => {
+    'uid': uid,
+    'name': name,
+    'age': age,
+    'location': location,
+    'photo_path': photoPath,
+    'photo_url': photoUrl,
+    'photo_url_thumb': photoUrlThumb,
+    'score': score,
+    'liked': liked,
+    'mutual': mutual,
+    'self': isSelf,
+    'paused': paused,
+  };
 }
 
 /// One section of another user's public profile — a wiki page rendered as
@@ -3744,6 +3719,77 @@ class UsageSummary {
   int creditsForFeature(int tokens) => tokensPerCredit <= 0
       ? 0
       : (tokens + tokensPerCredit - 1) ~/ tokensPerCredit;
+
+  /// Parse a `GET /usage` payload. Also the read side of the Plan page's
+  /// last-known cache (offline-first) — [toMap] is its exact inverse.
+  factory UsageSummary.fromMap(Map<String, dynamic> m) {
+    final credits = (m['credits'] as Map?) ?? const {};
+    final grant = (credits['grant'] as num?)?.toInt() ?? 0;
+    final added = (credits['added'] as num?)?.toInt() ?? 0;
+    final used = (credits['used'] as num?)?.toInt() ?? 0;
+    return UsageSummary(
+      total: (m['total'] as num?)?.toInt() ?? 0,
+      features: ((m['features'] as Map?) ?? {}).map(
+        (k, v) => MapEntry(k.toString(), (v as num).toInt()),
+      ),
+      creditGrant: grant,
+      creditsAdded: added,
+      creditsUsed: used,
+      creditsRemaining:
+          (credits['remaining'] as num?)?.toInt() ??
+          (grant + added - used).clamp(0, grant + added),
+      tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
+      isDev: m['is_dev'] == true,
+      plan: (m['plan'] as String?) ?? 'free',
+      periodEnd: DateTime.tryParse(m['period_end'] as String? ?? ''),
+      isTrial: m['is_trial'] == true,
+      costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
+      // Since-reset first; the legacy key (which the server keeps equal to
+      // since-reset) covers responses that predate the all-time/reset split.
+      realMoneyUsd:
+          (m['real_money_since_reset_usd'] as num?)?.toDouble() ??
+          (m['real_money_usd'] as num?)?.toDouble() ??
+          0,
+      realMoneyAllTimeUsd:
+          (m['real_money_all_time_usd'] as num?)?.toDouble() ??
+          (m['real_money_usd'] as num?)?.toDouble() ??
+          0,
+      realMoneyResetAt: DateTime.tryParse(
+        m['real_money_reset_at'] as String? ?? '',
+      ),
+      spendGroups: ((m['spend_groups'] as List?) ?? const [])
+          .whereType<Map>()
+          .map(SpendGroup.fromMap)
+          .toList(),
+      periodUsage: m['period_usage'] is Map
+          ? PeriodUsage.fromMap(m['period_usage'] as Map)
+          : null,
+    );
+  }
+
+  /// Wire-form map (the exact inverse of [UsageSummary.fromMap]) for the
+  /// Plan page's last-known cache.
+  Map<String, dynamic> toMap() => {
+    'total': total,
+    'features': features,
+    'credits': {
+      'grant': creditGrant,
+      'added': creditsAdded,
+      'used': creditsUsed,
+      'remaining': creditsRemaining,
+    },
+    'tokens_per_credit': tokensPerCredit,
+    'is_dev': isDev,
+    'plan': plan,
+    'period_end': periodEnd?.toIso8601String(),
+    'is_trial': isTrial,
+    'cost_usd': costUsd,
+    'real_money_since_reset_usd': realMoneyUsd,
+    'real_money_all_time_usd': realMoneyAllTimeUsd,
+    'real_money_reset_at': realMoneyResetAt?.toIso8601String(),
+    'spend_groups': spendGroups.map((g) => g.toMap()).toList(),
+    'period_usage': periodUsage?.toMap(),
+  };
 }
 
 /// Credits spent per feature over one period, from `GET /usage?period=…`.
@@ -3784,6 +3830,17 @@ class PeriodUsage {
   /// Highest spend first, with the user-facing label from the server.
   final List<PeriodFeature> features;
   final int totalCredits;
+
+  /// Wire-form map (the inverse of [PeriodUsage.fromMap]) for the Plan
+  /// page's last-known cache (offline-first).
+  Map<String, dynamic> toMap() => {
+    'period': period,
+    'since': since?.toIso8601String(),
+    'features': [
+      for (final f in features) {'label': f.label, 'credits': f.credits},
+    ],
+    'total_credits': totalCredits,
+  };
 }
 
 class PeriodFeature {
@@ -3841,6 +3898,19 @@ class SpendGroup {
       (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
     ),
   );
+
+  /// Wire-form map (the inverse of [fromMap]) for the Plan page's
+  /// last-known cache (offline-first).
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'kind': kind,
+    'session_id': sessionId,
+    'day': day,
+    'last_ts': lastTs?.toIso8601String(),
+    'events': events,
+    'cost_usd': costUsd,
+    'features': features,
+  };
 }
 
 /// `POST /check-compatibility` result.

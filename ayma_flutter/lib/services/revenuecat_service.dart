@@ -32,6 +32,25 @@ class PlanOption {
 
   /// The purchasable package; null when the offering is unavailable.
   final Package? package;
+
+  /// Plain-map form for the Plan page's last-known cache (offline-first).
+  /// [package] is a live store object and is NOT persisted — a restored
+  /// option is display-only until the next successful load rebinds it.
+  Map<String, dynamic> toMap() => {
+        'name': name,
+        'product_id': productId,
+        'price': price,
+        'blurb': blurb,
+        'credits': credits,
+      };
+
+  factory PlanOption.fromMap(Map<String, dynamic> m) => PlanOption(
+        name: m['name'] as String? ?? '',
+        productId: m['product_id'] as String? ?? '',
+        price: m['price'] as String? ?? '',
+        blurb: m['blurb'] as String? ?? '',
+        credits: (m['credits'] as num?)?.toInt() ?? 0,
+      );
 }
 
 /// The subscriber's active plan as RevenueCat reports it.
@@ -71,6 +90,28 @@ class TrialOffer {
   final PlanOption plan;
   final PeriodUnit unit;
   final int value;
+
+  /// Plain-map form for the Plan page's last-known cache (offline-first):
+  /// the [plan] is stored by product id and rebound to the restored plans
+  /// list on read.
+  Map<String, dynamic> toMap() => {
+        'product_id': plan.productId,
+        'unit': unit.name,
+        'value': value,
+      };
+
+  static TrialOffer? fromMap(Map<String, dynamic> m, List<PlanOption> plans) {
+    final plan = plans
+        .where((p) => p.productId == (m['product_id'] as String? ?? ''))
+        .firstOrNull;
+    if (plan == null) return null;
+    return TrialOffer(
+      plan: plan,
+      unit: PeriodUnit.values.asNameMap()[m['unit'] as String?] ??
+          PeriodUnit.unknown,
+      value: (m['value'] as num?)?.toInt() ?? 0,
+    );
+  }
 
   /// The day the trial ends if it starts on [start] (calendar arithmetic;
   /// a month-end start clamps to the last day of the target month).

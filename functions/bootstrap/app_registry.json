@@ -179,5 +179,14 @@
     "aliases": ["reconnecting", "call reconnecting", "voice reconnecting", "call keeps reconnecting", "call dropped", "voice call dropped", "why does my call keep reconnecting", "turn relay", "call connection"],
     "operated_by_ayma": false,
     "reason": "Automatic client behavior in the voice transport/controller; Ayma neither triggers nor configures it. If asked about it, explain what it means (the phone's connection dropped and the call is re-establishing itself over a more forgiving route) — never claim to fix the user's connection."
+  },
+
+  "offline_first": {
+    "_doc": "Offline-first rendering (Nov 2026): the main screens paint their last-known content from the on-device cache the moment they open, then refresh from the network behind it — no full-screen loading spinner when any saved content exists. The Explore feed's first page and the Plan page snapshot persist per-account in the report cache (wiped on sign-out); Firestore-backed surfaces (messages, DMs, notifications, profile) read their on-device Firestore cache first by construction. Behavior inside existing screens with no route of its own, so — like connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
+    "key": "offline_first",
+    "label": "Offline-first / saved content",
+    "aliases": ["offline mode", "saved data", "showing saved data", "works offline", "no connection data", "cached data", "last known", "why can i see old data"],
+    "operated_by_ayma": false,
+    "reason": "Automatic client behavior (stale-while-revalidate caches); Ayma neither triggers nor configures it. If asked about it, explain what it means (the app shows the last content it saved on this phone and refreshes it when the connection allows) — never claim the saved content is current."
   }
 }

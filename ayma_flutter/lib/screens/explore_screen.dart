@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -7,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/paged_fresh_data.dart';
+import '../services/report_cache.dart';
 import '../services/tab_prefetch_coordinator.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
@@ -23,11 +26,20 @@ import 'main_shell_screen.dart';
 /// Laid out as the design's two-column card grid: a photo (or a seeded gradient
 /// when there's none), a serif name, and the location in mono.
 class ExploreScreen extends StatefulWidget {
-  const ExploreScreen({super.key, this.apiClient, this.initialQuery = ''});
+  const ExploreScreen({
+    super.key,
+    this.apiClient,
+    this.initialQuery = '',
+    this.cacheUid,
+  });
 
   static const path = '/explore';
 
   final ApiClient? apiClient;
+
+  /// Test seam for the last-known feed cache's uid scope; production reads
+  /// the signed-in user from FirebaseAuth instead.
+  final String? cacheUid;
 
   /// Pre-fill the search box and run it once — used when Ayma opens Explore
   /// with a query in a voice call (`?q=…`), or via [AppContext.pendingExploreQuery].
@@ -52,10 +64,24 @@ class ExploreScreenState extends State<ExploreScreen> {
   Timer? _debounce;
 
   /// Paged feed state (Phase 2 pagination design §5.1): page-1 items plus
-  /// the appended-page states. No disk cache layer exists yet, so page 1
-  /// always comes from the network (`isFromCache` stays false).
+  /// the appended-page states. Page 1 of the default feed persists in the
+  /// last-known cache ([ReportCache]) so a cold start paints instantly
+  /// (`isFromCache`) while the fetch revalidates behind it.
   PagedFreshData<ExploreCard> _feed = const PagedFreshData();
   _Filter _filter = _Filter.all;
+
+  /// The signed-in uid scoping the last-known feed cache (own data only).
+  /// Empty when signed out or when no Firebase app is configured (unit
+  /// tests), which disables caching gracefully.
+  String get _cacheUid {
+    final injected = widget.cacheUid;
+    if (injected != null) return injected;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
 
   /// Uids already in [_feed], so a profile edited mid-browse can't appear
   /// twice across a page boundary (design §6.2 dedup invariant).
@@ -172,6 +198,13 @@ class ExploreScreenState extends State<ExploreScreen> {
         _prefetchVisiblePhotos(warm.cards);
       }
     }
+    // Last-known disk cache (offline-first): when neither this session's
+    // warm-up nor an earlier load has data, paint the previous session's
+    // page 1 instantly — marked from-cache (stale) — while the fetch below
+    // revalidates. Default (unsearched) feed only, like the warm-up.
+    if (!_feed.hasData && _searchController.text.trim().isEmpty) {
+      await _restoreCachedFeed();
+    }
     setState(() {
       _feed = _feed.copyWith(refreshing: true, clearError: true);
       _initialRetrying = false;
@@ -192,12 +225,14 @@ class ExploreScreenState extends State<ExploreScreen> {
         },
       );
       if (!mounted) return;
+      if (_searchController.text.trim().isEmpty) _persistFeedPage(page);
       _seenUids
         ..clear()
         ..addAll(page.cards.map((c) => c.uid));
       setState(() {
         _feed = _feed.copyWith(
           items: List.of(page.cards),
+          isFromCache: false,
           refreshing: false,
           clearError: true,
           clearNextPageError: true,
@@ -223,6 +258,58 @@ class ExploreScreenState extends State<ExploreScreen> {
         _feed = _feed.copyWith(refreshing: false, error: e);
       });
     }
+  }
+
+  /// Paint the last-known page 1 from the disk cache (see [ReportCache]),
+  /// marked from-cache so the freshness strip reads stale while the fetch
+  /// in [_loadInitial] revalidates. Best-effort: any storage/parse problem
+  /// just leaves the normal network load to proceed.
+  Future<void> _restoreCachedFeed() async {
+    final uid = _cacheUid;
+    if (uid.isEmpty) return;
+    try {
+      final raw = await ReportCache.instance
+          .readReport(uid, 'last_known', 'explore_feed');
+      if (raw == null || !mounted || _feed.hasData) return;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final cards = ((m['cards'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ExploreCard.fromMap)
+          .toList();
+      if (cards.isEmpty) return;
+      _seenUids
+        ..clear()
+        ..addAll(cards.map((c) => c.uid));
+      setState(() {
+        _feed = PagedFreshData<ExploreCard>(
+          items: cards,
+          isFromCache: true,
+          nextCursor: m['next_cursor'] as String?,
+          hasMore: m['has_more'] as bool? ?? false,
+        );
+      });
+      _syncContext();
+      _prefetchVisiblePhotos(cards);
+    } catch (_) {
+      // A corrupt / unreadable cache entry just means a normal load.
+    }
+  }
+
+  /// Persist a freshly fetched page 1 as the last-known feed, so the next
+  /// cold start paints instantly even with no connection.
+  void _persistFeedPage(ExplorePage page) {
+    final uid = _cacheUid;
+    if (uid.isEmpty) return;
+    unawaited(ReportCache.instance.writeReport(
+      uid,
+      'last_known',
+      'explore_feed',
+      jsonEncode({
+        'cards': [for (final c in page.cards) c.toMap()],
+        'next_cursor': page.nextCursor,
+        'has_more': page.hasMore,
+      }),
+    ));
   }
 
   /// Append the next page in place (design §3.1.4). Guarded against
