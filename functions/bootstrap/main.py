@@ -2533,13 +2533,24 @@ async def voice_async(
                 "image_url": str(existing.get("image_url", "")),
             }
         if status not in async_voice.TERMINAL_STATUSES:
-            joined = _INFLIGHT_TURNS.get((uid, job_id))
-            if joined is not None:
-                return {"job_id": job_id, "status": status, "joined": True}
-            # In-flight on paper but no task holds it (a restart orphaned
-            # it) — fall through and run it again under the same id.
-        # A terminal error (or an orphaned in-flight) re-runs on retry: the
-        # same id keeps the thread dedup while giving the turn a fresh run.
+            res: dict[str, object] = {
+                "job_id": job_id,
+                "status": status,
+                "joined": True,
+            }
+            if existing.get("transcript"):
+                res["transcript"] = str(existing["transcript"])
+            if existing.get("reply_text"):
+                res["reply_text"] = str(existing["reply_text"])
+            if existing.get("reply_audio_url"):
+                res["reply_audio_url"] = str(existing["reply_audio_url"])
+            if existing.get("tools"):
+                res["tools"] = list(existing["tools"])
+            if existing.get("image_url"):
+                res["image_url"] = str(existing["image_url"])
+            return res
+        # A terminal error re-runs on retry: the same id keeps the thread
+        # dedup while giving the turn a fresh run.
     await asyncio.to_thread(
         async_voice.create_job,
         get_db(), uid, job_id, req.storage_path.strip(), req.session_id,

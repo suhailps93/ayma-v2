@@ -423,6 +423,124 @@ void main() {
       expect(controller.activeJobId, isNot('v-offline'));
     },
   );
+
+  test(
+    'regression (note 113): second mic hold during an in-flight job starts a second job',
+    () async {
+      final recorder = _FakeRecorder();
+      final queue = _FakeQueue();
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      addTearDown(controller.dispose);
+
+      expect(await controller.startRecording(), isTrue);
+      expect(controller.state, AsyncVoiceUiState.recording);
+      final job1 = controller.activeJobId!;
+
+      await controller.stopAndSend();
+      expect(controller.state, AsyncVoiceUiState.working);
+      expect(queue.delivered, [job1]);
+
+      // While job 1 is in-flight (working), second mic hold starts immediately.
+      expect(await controller.startRecording(), isTrue);
+      expect(controller.state, AsyncVoiceUiState.recording);
+      final job2 = controller.activeJobId!;
+      expect(job2, isNot(job1));
+
+      await controller.stopAndSend();
+      expect(queue.delivered, [job1, job2]);
+      expect(controller.state, AsyncVoiceUiState.working);
+      expect(controller.activeJobId, job2);
+
+      // Finish first job: controller stays working because job 2 is still in queue.
+      queue.finish(job1);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state, AsyncVoiceUiState.working);
+
+      // Finish second job: controller idles.
+      queue.finish(job2);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state, AsyncVoiceUiState.idle);
+      expect(controller.activeJobId, isNull);
+    },
+  );
+
+  test(
+    'regression (note 113): a job that already completed is not re-processed',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final dir = await Directory.systemTemp.createTemp('avc-113-noreprocess');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final store = TranscriptStore();
+      final api = _FakeApi();
+      final queue = AsyncVoiceQueue(
+        api: api,
+        store: store,
+        sessionId: 's-1',
+        currentUid: () => 'u1',
+        uploader: _FakeUploader(),
+        firestore: _ErrorFirestore(),
+        heartbeat: ConnectionHeartbeat(
+          probe: () async => ProbeOutcome.good,
+          connectivityChanges: const Stream.empty(),
+        ),
+        clipsDir: () async => dir,
+        watchRetryDelay: const Duration(milliseconds: 50),
+      );
+      addTearDown(queue.dispose);
+      await queue.activate();
+
+      final recorder = _FakeRecorder()..writeFile = true;
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      addTearDown(controller.dispose);
+
+      // Send job 1
+      expect(await controller.startRecording(), isTrue);
+      final job1 = controller.activeJobId!;
+      api.answer = (jobId) => VoiceAsyncSubmit(
+        jobId: jobId,
+        status: 'done',
+        transcript: 'First message.',
+        replyText: 'First reply.',
+      );
+      await controller.stopAndSend();
+
+      await _eventually(
+        () => controller.state == AsyncVoiceUiState.idle,
+        'the controller to idle after job 1 completes',
+      );
+      expect(api.submits, [job1]);
+      expect(queue.isEmpty, isTrue);
+
+      // Trigger a queue flush / reconcile pass
+      await queue.flush();
+      expect(api.submits, [job1]); // Not re-submitted
+
+      // Send job 2
+      expect(await controller.startRecording(), isTrue);
+      final job2 = controller.activeJobId!;
+      api.answer = (jobId) => VoiceAsyncSubmit(
+        jobId: jobId,
+        status: 'done',
+        transcript: 'Second message.',
+        replyText: 'Second reply.',
+      );
+      await controller.stopAndSend();
+
+      await _eventually(
+        () => controller.state == AsyncVoiceUiState.idle,
+        'the controller to idle after job 2 completes',
+      );
+      expect(api.submits, [job1, job2]); // Each job submitted exactly once
+      expect(store.turns.map((t) => t.text).toList(), [
+        'First message.',
+        'First reply.',
+        'Second message.',
+        'Second reply.',
+      ]);
+    },
+  );
 }
 
 class _FailOnceFirestore extends Fake implements FirebaseFirestore {

@@ -435,6 +435,33 @@ def test_route_joins_an_inflight_job(monkeypatch):
     }
 
 
+def test_route_does_not_rerun_inflight_speaking_job(monkeypatch):
+    headers = _auth(monkeypatch)
+    monkeypatch.setattr(
+        async_voice, "fetch_job", lambda *_a: {
+            "status": "speaking",
+            "reply_text": "hello again",
+            "transcript": "hi there",
+        }
+    )
+    ran = []
+    created = []
+    monkeypatch.setattr(
+        async_voice, "create_job", lambda *_a: created.append(True)
+    )
+    monkeypatch.setattr(
+        async_voice, "run_job", lambda *_a, **_k: ran.append(True) or _async({"status": "done"}),
+    )
+    resp = client.post("/voice/async", headers=headers, json={
+        "job_id": "v-speaking", "storage_path": "uploads/u1/x.wav",
+    })
+    assert resp.json()["status"] == "speaking"
+    assert resp.json()["reply_text"] == "hello again"
+    assert resp.json()["transcript"] == "hi there"
+    assert ran == []
+    assert created == []
+
+
 def test_route_reruns_an_errored_job(monkeypatch):
     headers = _auth(monkeypatch)
     monkeypatch.setattr(

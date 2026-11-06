@@ -66,8 +66,12 @@ class AsyncVoiceController extends ChangeNotifier {
 
   /// Press: take the mic and start recording. Returns false when recording
   /// cannot start ([takeError] says why) — the UI stays idle.
+  ///
+  /// A new mic hold while a previous job is in flight starts recording
+  /// immediately (the recorder is idle; delivery runs concurrently in the
+  /// queue).
   Future<bool> startRecording() async {
-    if (_state != AsyncVoiceUiState.idle) return false;
+    if (_state == AsyncVoiceUiState.recording) return false;
     _error = null;
     bool allowed;
     try {
@@ -89,6 +93,7 @@ class AsyncVoiceController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+    _queue.removeListener(_onQueueChanged);
     _jobId = jobId;
     _tempPath = tempPath;
     _startedAt = DateTime.now();
@@ -126,22 +131,44 @@ class AsyncVoiceController extends ChangeNotifier {
       clip = null;
     }
     if (jobId == null || clip == null) {
-      _resetToIdle();
+      if (_queue.items.isNotEmpty) {
+        _jobId = _queue.items.last.jobId;
+        _queue.removeListener(_onQueueChanged);
+        _queue.addListener(_onQueueChanged);
+        notifyListeners();
+      } else {
+        _resetToIdle();
+      }
       return;
     }
     try {
       if (clip.sizeBytes < _minClipBytes) {
         await _recorder.discard(clip.path);
-        _resetToIdle();
+        if (_queue.items.isNotEmpty) {
+          _jobId = _queue.items.last.jobId;
+          _queue.removeListener(_onQueueChanged);
+          _queue.addListener(_onQueueChanged);
+          notifyListeners();
+        } else {
+          _resetToIdle();
+        }
         return;
       }
       await _queue.enqueue(jobId, File(clip.path));
     } catch (_) {
       _error = "Couldn't queue that recording. Please try again.";
-      _resetToIdle();
+      if (_queue.items.isNotEmpty) {
+        _jobId = _queue.items.last.jobId;
+        _queue.removeListener(_onQueueChanged);
+        _queue.addListener(_onQueueChanged);
+        notifyListeners();
+      } else {
+        _resetToIdle();
+      }
       return;
     }
     // Working until the queue finishes this job (or drops it).
+    _queue.removeListener(_onQueueChanged);
     _queue.addListener(_onQueueChanged);
     _onQueueChanged();
   }
@@ -155,7 +182,15 @@ class AsyncVoiceController extends ChangeNotifier {
       await _recorder.cancel();
     } catch (_) {}
     await _deleteTemp();
-    _resetToIdle();
+    if (_queue.items.isNotEmpty) {
+      _jobId = _queue.items.last.jobId;
+      _state = AsyncVoiceUiState.working;
+      _queue.removeListener(_onQueueChanged);
+      _queue.addListener(_onQueueChanged);
+      notifyListeners();
+    } else {
+      _resetToIdle();
+    }
   }
 
   void _onQueueChanged() {
@@ -166,8 +201,13 @@ class AsyncVoiceController extends ChangeNotifier {
         _queue.jobStatuses[jobId] == null &&
         !_queue.items.any((m) => m.jobId == jobId);
     if (gone) {
-      _queue.removeListener(_onQueueChanged);
-      _resetToIdle();
+      if (_queue.items.isNotEmpty) {
+        _jobId = _queue.items.last.jobId;
+        notifyListeners();
+      } else {
+        _queue.removeListener(_onQueueChanged);
+        _resetToIdle();
+      }
     } else {
       notifyListeners(); // stage advanced — the loader follows
     }
