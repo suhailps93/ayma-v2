@@ -3061,6 +3061,7 @@ class ExploreCard {
     this.score,
     this.liked = false,
     this.mutual = false,
+    this.likedMe = false,
     this.isSelf = false,
     this.paused = false,
   });
@@ -3090,6 +3091,10 @@ class ExploreCard {
   final bool liked;
   final bool mutual;
 
+  /// They liked you (a received like, whether or not you liked them
+  /// back) — for the Explore "Liked me" filter chip.
+  final bool likedMe;
+
   /// The caller's own card — Explore now includes it (no Like/Pass).
   final bool isSelf;
 
@@ -3107,6 +3112,7 @@ class ExploreCard {
     score: (m['score'] as num?)?.toDouble(),
     liked: m['liked'] == true,
     mutual: m['mutual'] == true,
+    likedMe: m['liked_me'] == true,
     isSelf: m['self'] == true,
     paused: m['paused'] == true,
   );
@@ -3125,6 +3131,7 @@ class ExploreCard {
     'score': score,
     'liked': liked,
     'mutual': mutual,
+    'liked_me': likedMe,
     'self': isSelf,
     'paused': paused,
   };

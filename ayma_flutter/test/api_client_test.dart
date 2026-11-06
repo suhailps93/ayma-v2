@@ -1255,6 +1255,29 @@ void main() {
       expect(card.gridPhotoUrl, 'https://x/full__thumb_400.jpg');
     });
 
+    test('ExploreCard parses liked_me and round-trips it through toMap',
+        () {
+      final liker = ExploreCard.fromMap({
+        'uid': 'a',
+        'name': 'Ash',
+        'age': 29,
+        'location': 'X',
+        'liked_me': true,
+      });
+      expect(liker.likedMe, isTrue);
+      expect(liker.toMap()['liked_me'], isTrue);
+
+      // Older responses without the field default to false.
+      final plain = ExploreCard.fromMap({
+        'uid': 'b',
+        'name': 'Bo',
+        'age': 30,
+        'location': 'Y',
+      });
+      expect(plain.likedMe, isFalse);
+      expect(plain.toMap()['liked_me'], isFalse);
+    });
+
     test('ExploreCard grid falls back to the original without a thumb', () {
       final missing = ExploreCard.fromMap({
         'uid': 'a',

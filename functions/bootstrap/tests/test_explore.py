@@ -297,6 +297,35 @@ def test_explore_lists_everyone_including_self_no_gates():
     assert ids2 == ["match"]
 
 
+def test_explore_cards_carry_liked_me_from_the_received_like():
+    """``liked_me`` reuses the received-like doc the feed already reads
+    (``users/{other}/likes/{me}``, the ``like_in`` side of the batched
+    hydration): true for a one-way liker and for a mutual pair, false
+    for someone only you liked, a stranger, and your own card."""
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "liker", location="X", birthdate="1993-01-01")
+    _u(db, "mutual", location="X", birthdate="1993-01-01")
+    _u(db, "your-like", location="X", birthdate="1993-01-01")
+    _u(db, "plain", location="X", birthdate="1993-01-01")
+    db.docs[("users", "liker", "likes", "me")] = {"liked_at": 1}
+    db.docs[("users", "mutual", "likes", "me")] = {"liked_at": 1}
+    db.docs[("users", "me", "likes", "mutual")] = {"liked_at": 1}
+    db.docs[("users", "me", "likes", "your-like")] = {"liked_at": 1}
+
+    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    assert cards["liker"]["liked_me"] is True
+    assert cards["liker"]["liked"] is False
+    assert cards["liker"]["mutual"] is False
+    assert cards["mutual"]["liked_me"] is True
+    assert cards["mutual"]["liked"] is True
+    assert cards["mutual"]["mutual"] is True
+    assert cards["your-like"]["liked_me"] is False
+    assert cards["your-like"]["liked"] is True
+    assert cards["plain"]["liked_me"] is False
+    assert cards["me"]["liked_me"] is False
+
+
 def test_explore_search_excludes_private_physical_attributes_end_to_end():
     """Full round trip against `physical_attributes.public_fields` (not
     mocked) via `explore()` itself: a candidate whose real `hair_color` is

@@ -258,6 +258,91 @@ void main() {
     expect(find.text('Bo'), findsNothing);
   });
 
+  testWidgets('the Liked me chip renders in the filter row, narrows the '
+      'feed to people who liked you, and switching back restores it',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _api((_) => [
+          // Liked you, you have not liked them back.
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X',
+           'liked_me': true},
+          // You liked them, they did not like you.
+          {'uid': 'b', 'name': 'Bo', 'age': 30, 'location': 'Y',
+           'liked': true},
+          // Mutual: liked you and you liked them back.
+          {'uid': 'c', 'name': 'Cy', 'age': 31, 'location': 'Z',
+           'liked': true, 'mutual': true, 'liked_me': true},
+          // Neither direction.
+          {'uid': 'd', 'name': 'Dee', 'age': 32, 'location': 'W'},
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    ChoiceChip chipFor(String label) => tester.widget<ChoiceChip>(
+        find.ancestor(
+            of: find.text(label), matching: find.byType(ChoiceChip)));
+
+    // The chip renders in the filter row, between Your likes and Mutual.
+    expect(find.text('Liked me'), findsOneWidget);
+    expect(chipFor('Liked me').selected, isFalse);
+    final yourLikesX = tester.getTopLeft(find.text('Your likes')).dx;
+    final likedMeX = tester.getTopLeft(find.text('Liked me')).dx;
+    final mutualX = tester.getTopLeft(find.text('Mutual')).dx;
+    expect(yourLikesX < likedMeX && likedMeX < mutualX, isTrue);
+
+    // Full feed before selecting.
+    for (final name in ['Ash', 'Bo', 'Cy', 'Dee']) {
+      expect(find.text(name), findsOneWidget);
+    }
+
+    // Selecting it shows ONLY the profiles that liked the current user:
+    // the one-way liker and the mutual liker; your own like and the
+    // unrelated profile drop out.
+    await tester.tap(find.text('Liked me'));
+    await tester.pumpAndSettle();
+    expect(chipFor('Liked me').selected, isTrue);
+    expect(chipFor('Everyone').selected, isFalse);
+    expect(find.text('Ash'), findsOneWidget);
+    expect(find.text('Cy'), findsOneWidget);
+    expect(find.text('Bo'), findsNothing);
+    expect(find.text('Dee'), findsNothing);
+
+    // Tapping it again deselects back to Everyone and restores the feed
+    // (same toggle semantics as the other chips).
+    await tester.tap(find.text('Liked me'));
+    await tester.pumpAndSettle();
+    expect(chipFor('Liked me').selected, isFalse);
+    expect(chipFor('Everyone').selected, isTrue);
+    for (final name in ['Ash', 'Bo', 'Cy', 'Dee']) {
+      expect(find.text(name), findsOneWidget);
+    }
+  });
+
+  testWidgets('Liked me with no received likes yet shows the filter '
+      'empty state', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _api((_) => [
+          {'uid': 'b', 'name': 'Bo', 'age': 30, 'location': 'Y',
+           'liked': true},
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+    expect(find.text('Bo'), findsOneWidget);
+
+    await tester.tap(find.text('Liked me'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bo'), findsNothing);
+    // Same empty-state copy the other non-Everyone filters use.
+    expect(find.text('Nothing here for this filter.'), findsOneWidget);
+  });
+
   testWidgets(
       'tapping a selected filter chip again deselects it back to Everyone',
       (tester) async {
