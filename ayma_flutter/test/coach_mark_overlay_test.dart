@@ -315,6 +315,7 @@ void main() {
     required VoidCallback onAnchorTap,
     required VoidCallback onSendTap,
     required VoidCallback onAttachTap,
+    VoidCallback? onMicTap,
     bool driven = true,
   }) {
     return MaterialApp(
@@ -339,7 +340,7 @@ void main() {
                       GestureDetector(
                         key: TourAnchors.keyFor(TourAnchors.asyncVoiceMic),
                         behavior: HitTestBehavior.opaque,
-                        onTap: () {},
+                        onTap: onMicTap,
                         child: const SizedBox(
                           width: 48,
                           height: 48,
@@ -456,7 +457,11 @@ void main() {
     expect(find.text('Type here'), findsOneWidget);
   });
 
-  testWidgets('typing-allowed step: tapping the mic fires onTapped', (
+  // Scout note 123, F2: the mic tap advances the tour (onTapped fires)
+  // but must be CONSUMED — the mic's own tap action (in the real app,
+  // starting a live voice call) must never fire during the tour.
+  testWidgets('typing-allowed step: tapping the mic fires onTapped but is '
+      'consumed — the mic action never runs', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 600);
@@ -465,22 +470,28 @@ void main() {
     final focus = FocusNode();
     addTearDown(focus.dispose);
     var anchorTaps = 0;
+    var micTaps = 0;
     await tester.pumpWidget(typingHost(
       store: _FakeTourStore(),
       focusNode: focus,
       onAnchorTap: () => anchorTaps++,
       onSendTap: () {},
       onAttachTap: () {},
+      onMicTap: () => micTaps++,
     ));
     await settle(tester);
 
-    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)));
+    // warnIfMissed is off for every mic tap in this file on purpose: F2
+    // consumes the tap in the overlay, so the mic widget is never hit.
+    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)), warnIfMissed: false);
     await tester.pump();
 
     expect(anchorTaps, 1);
+    expect(micTaps, 0);
   });
 
-  testWidgets('typing-allowed step: the mic advances the passive tour', (
+  testWidgets('typing-allowed step: the mic advances the passive tour '
+      'without its own action firing', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 600);
@@ -488,12 +499,14 @@ void main() {
     addTearDown(tester.view.reset);
     final focus = FocusNode();
     addTearDown(focus.dispose);
+    var micTaps = 0;
     await tester.pumpWidget(typingHost(
       store: _FakeTourStore(),
       focusNode: focus,
       onAnchorTap: () {},
       onSendTap: () {},
       onAttachTap: () {},
+      onMicTap: () => micTaps++,
       driven: false,
     ));
     await settle(tester);
@@ -504,10 +517,75 @@ void main() {
     await settle(tester);
     expect(find.text('Type here'), findsOneWidget);
 
-    // ...the mic moves it on.
-    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)));
+    // ...the mic moves it on, and the mic itself never acts (F2).
+    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)), warnIfMissed: false);
     await settle(tester);
     expect(find.text('Next step'), findsOneWidget);
+    expect(micTaps, 0);
+  });
+
+  // Scout note 123, F2 on the mic step itself (anchor = the mic, not a
+  // typing-allowed composer): the tap advances the tour and is consumed,
+  // so the mic's tap action — a live voice call in the real app — never
+  // starts mid-tour.
+  testWidgets('mic step: tapping the mic advances the tour but does not '
+      'invoke the mic action', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    var micTaps = 0;
+    const micFeatures = <TourFeature>[
+      TourFeature(
+        featureId: 'mic_step',
+        headline: 'Mic step',
+        subtitle: 'tap the mic',
+        anchorId: TourAnchors.asyncVoiceMic,
+      ),
+      TourFeature(
+        featureId: 'after_mic',
+        headline: 'After mic',
+        subtitle: 'moved on',
+      ),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: Scaffold(
+        body: Stack(
+          children: [
+            Positioned(
+              left: 16,
+              bottom: 16,
+              child: GestureDetector(
+                key: TourAnchors.keyFor(TourAnchors.asyncVoiceMic),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => micTaps++,
+                child: const SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Icon(Icons.mic),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: CoachMarkOverlay(
+                store: _FakeTourStore(),
+                onFinish: () {},
+                features: micFeatures,
+                maxMeasureAttempts: 3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ));
+    await settle(tester);
+    expect(find.text('Mic step'), findsOneWidget);
+
+    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)), warnIfMissed: false);
+    await settle(tester);
+
+    expect(find.text('After mic'), findsOneWidget);
+    expect(micTaps, 0);
   });
 
   testWidgets('typing-allowed step: the spotlight follows the composer when '
@@ -539,7 +617,7 @@ void main() {
     expect(after, isNotNull);
     expect(after!.top, lessThan(before!.top));
 
-    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)));
+    await tester.tap(find.byKey(TourAnchors.keyFor(TourAnchors.asyncVoiceMic)), warnIfMissed: false);
     await tester.pump();
     expect(anchorTaps, 1);
   });

@@ -29,6 +29,10 @@ const double _kHolePad = 8.0;
 /// around the cutout absorbs taps. An off-screen anchor (a Profile row below the
 /// fold) is scrolled into view before it's spotlighted.
 ///
+/// ONE exception (Scout note 123, F2): the composer mic. Its tap starts a
+/// live voice call, so during the tour a mic tap is consumed by the gate —
+/// the tour still advances on it, but the call never starts.
+///
 /// Navigation-aware: before measuring each step the engine asks the host to
 /// put the app where that step's anchor lives ([onPrepareStep]) — the root host
 /// pops any pushed sub-page back to the shell and switches to the step's
@@ -326,6 +330,27 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     return mic != null && mic.contains(position);
   }
 
+  /// The rect whose taps the overlay CONSUMES instead of pressing through
+  /// (Scout note 123, F2): the composer's mic. A mic tap during the tour is
+  /// an advance signal only — it must never reach the mic button behind the
+  /// overlay, whose tap starts a live voice call (and whose hold starts a
+  /// voice note). Two steps put the mic in play:
+  /// - the typing-allowed composer step: the hole is the whole composer
+  ///   (text field / Send / attach still press through), but the mic rect
+  ///   inside it is consumed;
+  /// - the mic step itself (anchor = the mic): the whole hole is consumed.
+  /// The [Listener] around the gate still observes the tap, so the tour
+  /// advances exactly as it did for a press-through tap.
+  Rect? get _micConsumeRect {
+    if (!_ready || _rect == null) return null;
+    final feature = widget.features[_index];
+    if (feature.anchorId == TourAnchors.asyncVoiceMic) return _holeRect;
+    if (feature.typingAllowed) {
+      return widget.resolveRect(TourAnchors.asyncVoiceMic);
+    }
+    return null;
+  }
+
   Offset? _downInHole;
 
   /// A press-through tap begins: remember where, to tell a tap on the cutout
@@ -394,6 +419,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
                 onPointerUp: _onPointerUp,
                 child: _HoleGate(
                   hole: _holeRect,
+                  consume: _micConsumeRect,
                   child: AnimatedBuilder(
                     animation: _pulse,
                     builder: (context, _) => CustomPaint(
@@ -507,33 +533,57 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
 
 /// A hit-test gate that blocks pointers over the dimmed scrim but lets them
 /// fall through the spotlight [hole] to the real widget behind the overlay, so
-/// the highlighted anchor stays tappable (§11.2a). Its child is paint-only
-/// (the scrim), so it never contributes its own hits.
+/// the highlighted anchor stays tappable (§11.2a). The [consume] rect is the
+/// one exception inside the hole: hits there are absorbed by the gate (so the
+/// widget behind never sees them) while the observing [Listener] ancestor
+/// still receives the tap — used for the composer mic, whose real tap action
+/// (starting a live voice call) must not fire during the tour. Its child is
+/// paint-only (the scrim), so it never contributes its own hits.
 class _HoleGate extends SingleChildRenderObjectWidget {
-  const _HoleGate({required this.hole, super.child});
+  const _HoleGate({required this.hole, this.consume, super.child});
 
   final Rect? hole;
 
+  /// Sub-rect of [hole] whose taps are absorbed, not pressed through.
+  final Rect? consume;
+
   @override
   _RenderHoleGate createRenderObject(BuildContext context) =>
-      _RenderHoleGate(hole);
+      _RenderHoleGate(hole, consume);
 
   @override
   void updateRenderObject(BuildContext context, _RenderHoleGate renderObject) {
     renderObject.hole = hole;
+    renderObject.consume = consume;
   }
 }
 
 class _RenderHoleGate extends RenderProxyBox {
-  _RenderHoleGate(this._hole);
+  _RenderHoleGate(this._hole, this._consume);
 
   Rect? _hole;
   set hole(Rect? value) {
     if (value != _hole) _hole = value;
   }
 
+  Rect? _consume;
+  set consume(Rect? value) {
+    if (value != _consume) _consume = value;
+  }
+
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    // Inside the consume rect: absorb the tap — the widget behind (the
+    // composer mic) must not act — but the hit still puts the observing
+    // Listener on the hit path, so the tour can advance on the same tap.
+    final consume = _consume;
+    if (consume != null && consume.contains(position)) {
+      if (size.contains(position)) {
+        result.add(BoxHitTestEntry(this, position));
+        return true;
+      }
+      return false;
+    }
     final hole = _hole;
     // Inside the cutout: report no hit so the tap reaches the app behind.
     if (hole != null && hole.contains(position)) return false;
