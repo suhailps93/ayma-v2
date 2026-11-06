@@ -1083,13 +1083,18 @@ def watch_for_idle(
     uid: str,
     flush: Callable[[], Awaitable[None]],
     timeout_seconds: float | None = None,
+    start_now: bool = True,
 ) -> IdleWatchdog | None:
     """Start the inactivity watchdog for this session (see
     :class:`idle_watchdog.IdleWatchdog`). Activity = user speech (any
     transcript or speaking state), the agent speaking or thinking, a tool call
     (via the returned watchdog's ``touch``), or a data message from the user.
     "Shut up" muting is not activity, so a muted forgotten call still times
-    out. Returns None when the timeout is disabled."""
+    out. Returns None when the timeout is disabled.
+    
+    ``start_now=False`` registers handlers but defers starting the timer until
+    you call ``watchdog.start()`` later (used to avoid measurement lag where
+    the timer counts down during session setup)."""
     timeout = (
         CONFIG.voice_idle_timeout_seconds
         if timeout_seconds is None
@@ -1117,7 +1122,10 @@ def watch_for_idle(
         watchdog.stop()
 
     ctx.add_shutdown_callback(_stop)
-    watchdog.start()
+    
+    if start_now:
+        watchdog.start()
+    
     return watchdog
 
 
@@ -3150,7 +3158,12 @@ async def _start_main_gemini_session(
             ctx, session, seed.uid, flush.run
         ),
     )
-    watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
+    # Create idle watchdog but don't start timer yet (to avoid measurement lag
+    # during session setup — bugfix for F1 warm-call early fires).
+    # Timer will be started after session.start() completes.
+    watchdog = watch_for_idle(
+        ctx, session, seed.uid, flush.run, start_now=False
+    )
     # Stack-aware voice vocabulary (§13.9): ``llm is None`` is the Gemini Live
     # realtime path (also the cascade build/runtime fallback — which is why the
     # vocabulary correctly reflects Gemini then); any other ``llm`` is a
@@ -3247,6 +3260,17 @@ async def _start_main_gemini_session(
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+    import time
+    session_live_ts = time.monotonic()
+    logger.info("voice session LIVE: ts=%.3f uid=%s session=%s", 
+                session_live_ts, seed.uid, seed.session_id or "?")
+    
+    # Start idle timer NOW that session is truly live (handlers were already
+    # registered before session.start, so no events are lost)
+    if watchdog:
+        watchdog.start()
+        logger.info("idle watchdog ARMED post-live for session %s", seed.session_id or "?")
+    
     await _open_main_call(session, seed, window=window)
 
 
@@ -3363,7 +3387,8 @@ async def _start_main_cascade_session(
             ctx, session, seed.uid, flush.run
         ),
     )
-    watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
+    # Create idle watchdog but don't start timer yet (same fix as Gemini path)
+    watchdog = watch_for_idle(ctx, session, seed.uid, flush.run, start_now=False)
     # Stack-aware voice vocabulary (§13.9): the active TTS provider's voices and
     # the real current voice, resolved exactly as ``build_cascade_session``
     # picked them (``seed.tts_voice`` else the configured default). This is what
@@ -3468,6 +3493,11 @@ async def _start_main_cascade_session(
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+    
+    # Start idle timer NOW that session is truly live (cascade path, same fix)
+    if watchdog:
+        watchdog.start()
+    
     # Honest open-weights status (§13.9): the open-weights brain's LLM leg is a
     # scale-to-zero Modal endpoint whose first reply can take ~100s on a cold
     # start. Tell the client NOW (the room is joined) so it shows "warming up —

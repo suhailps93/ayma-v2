@@ -117,16 +117,20 @@ def _bind_set_brain(db, uid: str) -> Callable[..., object]:
             return reason
         label = _brain_catalog()[brain_id]
         try:
-            await asyncio.to_thread(
-                _write, db, uid, schema.PF_AYMA_BRAIN_MODEL, brain_id
-            )
+            # ONE BRAIN (2026-11-06): the same selection drives text AND the
+            # voice cascade, so keep the stored cascade brain in sync.
+            _fields = {schema.PF_AYMA_BRAIN_MODEL: brain_id}
+            _cascade = voice_catalog.cascade_brain_for_unified(brain_id)
+            if _cascade:
+                _fields[schema.PF_AYMA_CASCADE_BRAIN] = _cascade
+            await asyncio.to_thread(_write_many, db, uid, _fields)
         except Exception:  # noqa: BLE001 - never crash the tool loop
             logger.exception("set_brain write failed for %s", uid)
             return "The app did NOT save that brain — tell the user it didn't work."
         return (
             f"brain → {label} — saved as your default. I'll think with it on our "
-            "text chats from now; on a voice call it applies when you're in "
-            "cascade mode (say 'reconnect' to apply a change to this call). Web "
+            "text chats and on voice calls (cascade mode) from now (say "
+            "'reconnect' to apply a change to this call). Web "
             "search and reading images always use Gemini."
         )
 
@@ -219,19 +223,32 @@ def _persist_voice_brain(db, uid: str, text: str) -> str:
     if brain_id is None:
         return reason
     label = _available_voice_brains()[brain_id]
+    # ONE BRAIN (2026-11-06): a voice-brain pick that maps to a unified brain
+    # vendor (Meta Muse Spark, a google/* Gemini) IS the one brain pick - it
+    # updates the unified brain too, so text and voice can never diverge.
+    # The open-weights voice brain has no unified equivalent and stays a
+    # voice-only option (it writes no unified brain field).
+    _vendor = voice_catalog.unified_vendor_for_cascade(brain_id)
     try:
-        _write_many(
-            db, uid,
-            {
-                schema.PF_AYMA_CASCADE_BRAIN: brain_id,
-                # The voice brain only applies in cascade mode; set it too,
-                # like the STT/TTS setters, so the choice takes effect.
-                schema.PF_AYMA_VOICE_MODE: voice_catalog.MODE_CASCADE,
-            },
-        )
+        _fields = {
+            schema.PF_AYMA_CASCADE_BRAIN: brain_id,
+            # The voice brain only applies in cascade mode; set it too,
+            # like the STT/TTS setters, so the choice takes effect.
+            schema.PF_AYMA_VOICE_MODE: voice_catalog.MODE_CASCADE,
+        }
+        if _vendor:
+            _fields[schema.PF_AYMA_BRAIN_MODEL] = _vendor
+        _write_many(db, uid, _fields)
     except Exception:  # noqa: BLE001
         logger.exception("set_voice_brain write failed for %s", uid)
         return "The app did NOT save that voice brain \u2014 tell the user it didn't work."
+    if _vendor:
+        return (
+            f"voice brain \u2192 {label} \u2014 that's the ONE brain Ayma uses "
+            "everywhere (text and voice, cascade mode), saved as your "
+            "default. It takes effect on your next voice call, or say "
+            "'reconnect' to apply it to this call."
+        )
     return (
         f"voice brain \u2192 {label} \u2014 that's the brain under Voice (cascade "
         "mode), saved as your default; your main brain is unchanged. It "
@@ -734,13 +751,16 @@ async def run_stack_command(db, uid: str, name: str, value: str) -> str:
 
 
 def model_stack_context(db, uid: str) -> str:
-    """The two-brain context block for Ayma's system prompt: her MAIN brain
-    and the brain UNDER VOICE as separate, labeled facts \u2014 current values
-    from the user's saved profile (else the catalog defaults), option lists
-    from the SAME catalogs the models screen serves, so she never conflates
-    the two brains and never denies an option that is actually enabled (open
-    weights appears exactly when ``OPEN_WEIGHTS_BASE_URL`` is set). Tolerant:
-    a failed profile read just falls back to the defaults. Never raises."""
+    """The model-stack context block for Ayma's system prompt (ONE BRAIN,
+    founder 2026-11-06): there is a single Brain selection and it drives
+    BOTH her text replies and the LLM on a cascade voice call - there is no
+    separate voice brain to conflate it with. Current values come from the
+    user's saved profile (the unified brain wins over any stored cascade
+    brain; the catalog default only when nothing is saved), option lists
+    from the SAME catalogs the models screen serves. The open-weights
+    cascade option is a voice-only extra, offered exactly when
+    ``OPEN_WEIGHTS_BASE_URL`` is set. Tolerant: a failed profile read just
+    falls back to the defaults. Never raises."""
     prof: dict = {}
     try:
         snap = schema.profile_doc(db, uid).get()
@@ -748,33 +768,36 @@ def model_stack_context(db, uid: str) -> str:
     except Exception:  # noqa: BLE001 - context must never break a turn
         logger.exception("model_stack_context profile read failed for %s", uid)
     main_labels = _brain_catalog()
-    main_id = str(prof.get(schema.PF_AYMA_BRAIN_MODEL) or "").strip()
-    if main_id not in main_labels:
-        main_id = PROVIDER_GEMINI
+    # The resolved ONE brain vendor (unified field wins; a legacy cascade
+    # brain implies its vendor; otherwise the Gemini default label).
+    vendor = voice_catalog.unified_brain_vendor(prof)
+    main_id = vendor if vendor in main_labels else PROVIDER_GEMINI
     default = voice_catalog.default_selection()
     mode = (
         str(prof.get(schema.PF_AYMA_VOICE_MODE) or "").strip()
         or str(default["mode"])
     )
+    lines = [
+        "Your model stack - you have ONE brain; it drives your text replies "
+        "and your voice calls (cascade mode) alike:",
+        f"- Brain: {main_labels[main_id]}. "
+        f"Brain options: {', '.join(main_labels.values())}.",
+        f"- Voice mode: {mode}. On a cascade voice call you think with the "
+        f"same brain ({main_labels[main_id]}); in realtime mode the "
+        "realtime model itself is the voice model.",
+    ]
+    # The open-weights voice-only extra, when genuinely enabled.
     voice_labels = _available_voice_brains()
-    voice_id = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN) or "").strip()
-    if voice_id not in voice_labels:
-        voice_id = (
-            str(default["brain_id"])
-            if str(default["brain_id"]) in voice_labels
-            else next(iter(voice_labels), "")
+    ow_label = voice_labels.get(voice_catalog.BRAIN_OPEN_WEIGHTS)
+    if ow_label:
+        lines.append(
+            f"- Voice-only extra: {ow_label} can be picked as the cascade "
+            "voice brain (set_voice_brain); it is not a main-brain option."
         )
-    return "\n".join([
-        "Your model stack \u2014 you have TWO different brains; never mix them up:",
-        f"- Main brain (your text replies and reasoning): {main_labels[main_id]}. "
-        f"Main-brain options: {', '.join(main_labels.values())}.",
-        f"- Voice mode: {mode}. The brain under Voice (what you think with on a "
-        f"cascade voice call): {voice_labels.get(voice_id, voice_id)}. "
-        f"Voice-brain options: {', '.join(voice_labels.values())}.",
-        "\"The brain\" with no qualifier means your main brain; only an "
-        "\"under Voice\" ask is about the voice brain. Every option listed "
-        "here IS available \u2014 never say you don't have it.",
-    ])
+    lines.append(
+        "Every option listed here IS available - never say you don't have it."
+    )
+    return "\n".join(lines)
 
 
 def _voice_brains_fill() -> str:

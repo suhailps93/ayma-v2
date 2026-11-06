@@ -2050,6 +2050,29 @@ class ApiClient {
   Future<void> saveBrainPreference(String brain) =>
       _postJsonOk('/brain/preference', {'brain': brain});
 
+  /// `POST /models/preference` — the Models screen's ONE save (founder,
+  /// 2026-11-06): persist the single Brain AND the whole voice stack in one
+  /// action. [reconnect] is true when a voice call is active (the button
+  /// said "Save and reconnect"): the server marks the one-shot reconnect
+  /// announcement, and the caller then reconnects the live session so the
+  /// new stack serves this call.
+  Future<void> saveModelsPreference({
+    required String brain,
+    required VoiceSelection selection,
+    bool reconnect = false,
+  }) =>
+      _postJsonOk('/models/preference', {
+        'brain': brain,
+        'mode': selection.mode,
+        'realtime_model_id': selection.realtimeModelId,
+        'stt_id': selection.sttId,
+        'tts_id': selection.ttsId,
+        'voice_id': selection.voiceId,
+        'language_code': selection.languageCode,
+        'accent': selection.accent,
+        'reconnect': reconnect,
+      });
+
   /// `GET /media/photos` — the current profile-photo grid (§8.3). Returns the
   /// list of `{media_id, order}` maps, order ascending.
   Future<List<Map<String, dynamic>>> listPhotos() async {

@@ -477,6 +477,17 @@ class VoiceSessionController extends ChangeNotifier {
   /// start until the next start clears it).
   static VoiceSessionController? active;
 
+  /// Notifier mirror of [active], so a screen (the Models screen's
+  /// save-button label) can rebuild when the active session appears or
+  /// goes away, and when its phase changes it also hears the controller's
+  /// own notifications.
+  static final ValueNotifier<VoiceSessionController?> activeNotifier =
+      ValueNotifier<VoiceSessionController?>(null);
+
+  static void _syncActiveNotifier() {
+    if (activeNotifier.value != active) activeNotifier.value = active;
+  }
+
   /// Begin a voice session. Safe to call when already active (no-op).
   ///
   /// The OS microphone prompt is raised by the WebRTC layer the first time
@@ -542,6 +553,7 @@ class VoiceSessionController extends ChangeNotifier {
       _provider = '';
       _coachHint = '';
       active = this;
+      _syncActiveNotifier();
       _setPhase(VoiceSessionPhase.connecting);
       // Guarantee the mic + OS call surface are released when the app closes,
       // for the WHOLE session (connecting/waking/warming included), not just a
@@ -1029,7 +1041,7 @@ class VoiceSessionController extends ChangeNotifier {
     String? notice,
     String disconnectReason = 'client_idle_timeout',
   }) async {
-    if (active == this) active = null;
+    if (active == this) { active = null; _syncActiveNotifier(); }
     _disposeSessionLifecycle();
     await _teardown();
     _agentSpeaking = false;
@@ -1166,7 +1178,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
     _disconnectReason ??= 'user_stop';
-    if (active == this) active = null;
+    if (active == this) { active = null; _syncActiveNotifier(); }
     _disposeSessionLifecycle();
     await _teardown();
     _persistSession();
@@ -1177,6 +1189,18 @@ class VoiceSessionController extends ChangeNotifier {
     } else {
       notifyListeners();
     }
+  }
+
+  /// Reconnect the live session on the CURRENT saved stack: stop this room
+  /// and start a fresh one, which re-runs `/bootstrap` and re-reads the
+  /// saved model stack. Used by the Models screen's "Save and reconnect":
+  /// the save already persisted (and marked the server-side reconnect
+  /// announcement), so this teardown itself stays silent and the NEW
+  /// session speaks the settled "I'm back" line. No-op when not active.
+  Future<void> reconnect() async {
+    if (!isActive) return;
+    await stop();
+    await start();
   }
 
   /// Clears a stale out-of-credits error left over from a previous failed
@@ -1571,7 +1595,7 @@ class VoiceSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
-    if (active == this) active = null;
+    if (active == this) { active = null; _syncActiveNotifier(); }
     _disposeSessionLifecycle();
     // Cancel every listener subscription synchronously — i.e. the `.cancel()`
     // calls themselves, not their returned futures — *before* `super.dispose()`
