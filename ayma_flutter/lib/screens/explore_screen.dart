@@ -134,6 +134,24 @@ class ExploreScreenState extends State<ExploreScreen> {
     _scrollController.addListener(_onScroll);
     _syncContext();
     _loadInitial();
+    // Live Ayma searches (founder, 2026-11-06): this screen is kept alive
+    // in the tab shell, so a `search_explore` command that lands while it
+    // is already built must run on the visible screen — the one-shot
+    // pending-query slot above is only consumed here, once, at build.
+    AppContext.instance.liveExploreQuery.addListener(_onLiveExploreQuery);
+  }
+
+  /// Ayma ran `search_explore` while this screen already exists: put her
+  /// query in the search box and run it now, exactly as if the user had
+  /// typed it and submitted — no navigation away and back.
+  void _onLiveExploreQuery() {
+    final q = (AppContext.instance.liveExploreQuery.value ?? '').trim();
+    if (!mounted || q.isEmpty) return;
+    if (q == _searchController.text.trim()) return;
+    _searchController.text = q;
+    AppContext.instance.pendingExploreQuery = null;
+    _syncContext();
+    _loadInitial();
   }
 
   static const _filterLabels = {
@@ -162,6 +180,8 @@ class ExploreScreenState extends State<ExploreScreen> {
 
   @override
   void dispose() {
+    AppContext.instance.liveExploreQuery
+        .removeListener(_onLiveExploreQuery);
     _debounce?.cancel();
     _scrollController
       ..removeListener(_onScroll)

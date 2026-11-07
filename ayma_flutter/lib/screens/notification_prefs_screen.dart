@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../services/notification_service.dart';
@@ -13,6 +15,13 @@ import '../widgets/overflow_guards.dart';
 /// per-category notification toggles (§7.7, §7.9 step 9). A muted category
 /// stops both the push and the notification-centre entry — the backend checks
 /// `notification_prefs` before writing either.
+///
+/// Live updates (founder, 2026-11-06): the category switches render from
+/// the prefs doc Ayma's notification commands also write (server-side), via
+/// [NotificationService.watchPrefs] — when she turns a category off while
+/// this screen is open, the switch moves in the same moment, with no
+/// navigate-away-and-back. A category whose own toggle write is still in
+/// flight keeps the user's value until that write lands.
 class NotificationPrefsScreen extends StatefulWidget {
   const NotificationPrefsScreen({
     super.key,
@@ -44,18 +53,52 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
   String? _error;
   PushPermissionState? _osState;
 
+  /// Live prefs subscription (see the class doc) and the categories whose
+  /// own toggle write is in flight (their local value wins until it lands).
+  StreamSubscription<Map<String, bool>>? _prefsSub;
+  final Set<String> _pendingToggles = {};
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _load();
+    _watchPrefs();
     _refreshOs();
   }
 
   @override
   void dispose() {
+    _prefsSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// Reflect prefs-doc changes made elsewhere (Ayma's server-side
+  /// notification commands) on the visible switches, live. Best-effort:
+  /// with no Firestore (e.g. a fake service in a widget test) the screen
+  /// keeps its one-shot [_load] behaviour.
+  void _watchPrefs() {
+    try {
+      _prefsSub = _svc.watchPrefs().listen(
+        (prefs) {
+          if (!mounted) return;
+          setState(() {
+            final local = _prefs;
+            _prefs = {
+              for (final e in prefs.entries)
+                e.key: (_pendingToggles.contains(e.key) && local != null)
+                    ? (local[e.key] ?? e.value)
+                    : e.value,
+            };
+            _error = null;
+          });
+        },
+        onError: (_) {},
+      );
+    } catch (_) {
+      // No live updates in this environment; _load still rendered.
+    }
   }
 
   @override
@@ -96,6 +139,7 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
   }
 
   Future<void> _toggle(String category, bool value) async {
+    _pendingToggles.add(category);
     setState(() => _prefs = {...?_prefs, category: value});
     try {
       await _svc.setPref(category, value);
@@ -104,6 +148,8 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
       setState(() => _prefs = {...?_prefs, category: !value});
       AymaToast.show(context, 'Could not save ($e).',
           kind: AymaToastKind.error);
+    } finally {
+      _pendingToggles.remove(category);
     }
   }
 
