@@ -156,6 +156,16 @@ class FakeVoiceTransport implements VoiceTransport {
     visionControlCalls.add((source: source, active: active));
   }
 
+  /// Every [requestVisionState] call, counted.
+  int visionQueryCalls = 0;
+  bool failVisionQuery = false;
+
+  @override
+  Future<void> requestVisionState() async {
+    if (failVisionQuery) throw StateError('data channel closed');
+    visionQueryCalls++;
+  }
+
   /// The track [localCameraTrack] hands back — null by default (widget
   /// tests cannot build a real LiveKit VideoTrack; the self-view simply
   /// stays hidden, which the screen treats as "no preview yet").

@@ -126,6 +126,11 @@ class _FakeVoice extends VoiceSessionController {
   @override
   bool get visionUnsupported => _fakeVisionUnsupported;
 
+  // Mirrors the real getter (live main call): the fake is never practice
+  // or welcome, so phase alone decides.
+  @override
+  bool get showVisionControls => _fakePhase == VoiceSessionPhase.live;
+
   @override
   bool get videoOn => _fakeVideoOn;
 
@@ -681,8 +686,11 @@ void main() {
     final screenButton = find.byKey(const Key('voiceCallScreenShareButton'));
 
     testWidgets(
-      'hidden while the serving stack has not declared video perception',
+      'visible but disabled while nothing has declared video perception',
       (tester) async {
+        // The staging-2327 defect state: live call, no declaration and no
+        // expectation — the toggles must still render (disabled, with the
+        // reason), never silently absent.
         final voice = _FakeVoice()
           ..setPhase(VoiceSessionPhase.live)
           ..setResponded();
@@ -692,8 +700,12 @@ void main() {
         );
         await tester.pump();
 
-        expect(videoButton, findsNothing);
-        expect(screenButton, findsNothing);
+        expect(videoButton, findsOneWidget);
+        expect(screenButton, findsOneWidget);
+        expect(
+          find.byKey(const Key('voiceCallVisionUnsupportedNote')),
+          findsOneWidget,
+        );
         // The mute toggle — the pre-existing control — is unaffected.
         expect(find.byKey(const Key('voiceCallMuteButton')), findsOneWidget);
 
@@ -702,6 +714,10 @@ void main() {
 
         expect(videoButton, findsOneWidget);
         expect(screenButton, findsOneWidget);
+        expect(
+          find.byKey(const Key('voiceCallVisionUnsupportedNote')),
+          findsNothing,
+        );
       },
     );
 
@@ -765,10 +781,7 @@ void main() {
       await tester.pump();
       expect(voice.screenShareOn, isTrue);
       expect(find.byKey(const Key('voiceCallSharingPill')), findsOneWidget);
-      expect(
-        find.text('Sharing your screen — tap to stop'),
-        findsOneWidget,
-      );
+      expect(find.text('Sharing your screen — tap to stop'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('voiceCallSharingPill')));
       await tester.pump();

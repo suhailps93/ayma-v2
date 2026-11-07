@@ -85,6 +85,55 @@ def test_video_capability_matrix_is_catalog_driven():
     )
 
 
+def test_vision_query_republishes_the_session_declaration():
+    # The client's self-heal (founder defect 2026-11-06: a missed one-shot
+    # declaration hid the toggles for the whole call): a `vision_query`
+    # on the vision-control topic gets this session's declaration
+    # re-published on the voice-status topic.
+    import asyncio
+    import json
+    import types
+
+    class _Participant:
+        def __init__(self):
+            self.published = []
+
+        async def publish_data(self, payload, reliable=True, topic=None):
+            self.published.append((topic, json.loads(payload.decode())))
+
+    class _Room:
+        def __init__(self):
+            self.local_participant = _Participant()
+            self.handlers = {}
+
+        def on(self, event, handler):
+            self.handlers[event] = handler
+
+    def _run_query(vision_supported):
+        room = _Room()
+        ctx = types.SimpleNamespace(room=room)
+        agent.watch_vision_tracks(ctx, vision_supported=vision_supported)
+        packet = types.SimpleNamespace(
+            topic=agent.TOPIC_VISION_CONTROL,
+            data=json.dumps({"type": "vision_query"}).encode(),
+        )
+
+        async def _fire():
+            room.handlers["data_received"](packet)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        asyncio.run(_fire())
+        return room.local_participant.published
+
+    assert _run_query(True) == [
+        (agent.TOPIC_VOICE_STATUS, {"state": "vision_supported"})
+    ]
+    assert _run_query(False) == [
+        (agent.TOPIC_VOICE_STATUS, {"state": "vision_unsupported"})
+    ]
+
+
 def test_vision_instructions_carry_the_secure_content_rule():
     text = agent.VISION_INSTRUCTIONS
     assert "cannot see protected content" in text

@@ -200,6 +200,15 @@ abstract class VoiceTransport {
     required bool active,
   });
 
+  /// Asks the live agent to re-publish its vision capability declaration
+  /// (topic `vision_control`, payload `{"type": "vision_query"}`). The
+  /// declaration is otherwise a one-shot at session start; if it raced
+  /// the client's listener registration the toggles would sit in their
+  /// fallback state for the whole call — this makes the state
+  /// self-healing (feedback item 13). Agents that predate the query
+  /// simply ignore it.
+  Future<void> requestVisionState();
+
   /// The local camera track currently published in the room, or null when
   /// video is off / not yet published. The call screen renders it as the
   /// user's self-view — Gemini Live puts the camera feed on the call's main
@@ -513,6 +522,17 @@ class LiveKitVoiceTransport implements VoiceTransport {
     }
     await participant.publishData(
       utf8.encode(jsonEncode({'source': source, 'active': active})),
+      reliable: true,
+      topic: _visionControlTopic,
+    );
+  }
+
+  @override
+  Future<void> requestVisionState() async {
+    final participant = _room?.localParticipant;
+    if (participant == null) return;
+    await participant.publishData(
+      utf8.encode(jsonEncode({'type': 'vision_query'})),
       reliable: true,
       topic: _visionControlTopic,
     );

@@ -78,12 +78,14 @@ Future<VoiceSessionController> _readyCall(
   FakeVoiceTransport transport, {
   _FakeScreenSharePlatform? platform,
   bool visionSupported = true,
+  Future<VoiceCatalog?> Function()? voiceCatalogFetcher,
 }) async {
   final c = VoiceSessionController(
     transcriptStore: TranscriptStore(),
     apiClient: _api(),
     transportFactory: () => transport,
     screenSharePlatform: platform ?? _FakeScreenSharePlatform(),
+    voiceCatalogFetcher: voiceCatalogFetcher,
   );
   await c.start();
   transport.markAgentReady();
@@ -179,6 +181,113 @@ void main() {
       await c.stop();
     },
   );
+
+  // The staging-2327 defect (founder, 2026-11-06): the hosted worker
+  // predated the merged agent, NO declaration ever arrived, and the
+  // toggles never rendered. The client's own catalog expectation now
+  // stands in until the declaration lands.
+  group('catalog expectation stands in for a silent agent', () {
+    VoiceCatalog catalog({required String mode, bool video = true}) {
+      return VoiceCatalog(
+        current: VoiceSelection(mode: mode, realtimeModelId: 'gemini-live'),
+        defaultSelection: const VoiceSelection(mode: 'realtime'),
+        realtimeModels: [
+          RealtimeModel(
+            id: 'gemini-live',
+            label: 'Gemini Live',
+            supportsVideo: video,
+          ),
+        ],
+      );
+    }
+
+    test(
+      'a realtime expectation enables the toggles with no declaration',
+      () async {
+        final transport = FakeVoiceTransport();
+        final c = await _readyCall(
+          transport,
+          visionSupported: false,
+          voiceCatalogFetcher: () async => catalog(mode: 'realtime'),
+        );
+        await _settle();
+        expect(c.visionSupported, isTrue);
+        expect(c.visionUnsupported, isFalse);
+        expect(c.showVisionControls, isTrue);
+
+        await c.toggleVideo();
+        expect(c.videoOn, isTrue);
+        expect(transport.cameraCalls, [true]);
+
+        await c.stop();
+      },
+    );
+
+    test(
+      'a cascade expectation shows the toggles disabled, toggles refuse',
+      () async {
+        final transport = FakeVoiceTransport();
+        final c = await _readyCall(
+          transport,
+          visionSupported: false,
+          voiceCatalogFetcher: () async => catalog(mode: 'cascade'),
+        );
+        await _settle();
+        expect(c.visionSupported, isFalse);
+        expect(c.visionUnsupported, isTrue);
+        expect(c.showVisionControls, isTrue);
+
+        await c.toggleVideo();
+        await c.toggleScreenShare();
+        expect(transport.cameraCalls, isEmpty);
+        expect(transport.screenShareCalls, isEmpty);
+
+        await c.stop();
+      },
+    );
+
+    test('the agent declaration overrides the catalog expectation', () async {
+      // Expectation says cascade (unsupported); the agent actually
+      // serving declares supported (e.g. a fallback landed on realtime)
+      // — the declaration wins.
+      final transport = FakeVoiceTransport();
+      final c = await _readyCall(
+        transport,
+        visionSupported: false,
+        voiceCatalogFetcher: () async => catalog(mode: 'cascade'),
+      );
+      await _settle();
+      expect(c.visionSupported, isFalse);
+      transport.emitVoiceStatus('vision_supported');
+      await _settle();
+      expect(c.visionSupported, isTrue);
+      expect(c.visionUnsupported, isFalse);
+      await c.stop();
+
+      // And the reverse: expectation realtime, declaration unsupported.
+      final transport2 = FakeVoiceTransport();
+      final c2 = await _readyCall(
+        transport2,
+        visionSupported: false,
+        voiceCatalogFetcher: () async => catalog(mode: 'realtime'),
+      );
+      await _settle();
+      expect(c2.visionSupported, isTrue);
+      transport2.emitVoiceStatus('vision_unsupported');
+      await _settle();
+      expect(c2.visionSupported, isFalse);
+      expect(c2.visionUnsupported, isTrue);
+      await c2.stop();
+    });
+
+    test('agent-ready asks the agent to restate its declaration', () async {
+      final transport = FakeVoiceTransport();
+      final c = await _readyCall(transport, visionSupported: false);
+      await _settle();
+      expect(transport.visionQueryCalls, 1);
+      await c.stop();
+    });
+  });
 
   test('a denied camera permission leaves the voice call untouched', () async {
     final transport = FakeVoiceTransport()..failCamera = true;

@@ -47,6 +47,7 @@ class VoiceSessionController extends ChangeNotifier {
     this.welcome = false,
     this.practiceOtherUid,
     this._apiClient,
+    this._voiceCatalogFetcher,
     VoiceTransport Function()? transportFactory,
     Duration? wakingTimeout,
     AppCommandService? appCommandService,
@@ -108,6 +109,10 @@ class VoiceSessionController extends ChangeNotifier {
   final String sessionId;
   final TranscriptStore _store;
   final ApiClient? _apiClient;
+
+  /// Test seam for the vision-expectation read (see [_visionExpected]):
+  /// when set, replaces the `GET /voice/engines` fetch.
+  final Future<VoiceCatalog?> Function()? _voiceCatalogFetcher;
 
   /// The live transcript this session writes its voice segments to (§1.7 step
   /// 12). Exposed so a surface that only has the controller — e.g. the
@@ -395,27 +400,52 @@ class VoiceSessionController extends ChangeNotifier {
   /// a video-capable provider (Gemini Live, OpenAI Realtime) publish
   /// [_kVisionSupported]; cascade stacks — whose frames the LiveKit agent
   /// pipeline cannot consume in this SDK — publish [_kVisionUnsupported].
-  /// Until either arrives the controls stay hidden; on
-  /// [_kVisionUnsupported] they show DISABLED with the reason, and
-  /// [toggleVideo] / [toggleScreenShare] refuse: never publish video into
-  /// a session whose model cannot perceive it.
+  ///
+  /// VISIBILITY NEVER WAITS ON THE DECLARATION (founder defect 2026-11-06:
+  /// on staging 2327 the expanded voice view showed no toggles at all,
+  /// because the hosted worker predated the merged agent and no
+  /// declaration ever arrived). The toggles render on every live main
+  /// call ([showVisionControls]); their ENABLED state resolves as
+  /// declaration-first, then the client's own expectation read from the
+  /// SAME catalog (`GET /voice/engines` — [VoiceCatalog.currentSupportsVideo]
+  /// at session start), so a stale or silent agent can no longer hide the
+  /// feature: the worst case is the disabled-with-reason rendering.
+  /// [toggleVideo] / [toggleScreenShare] refuse unless [visionSupported]:
+  /// never publish video into a session whose model cannot perceive it.
   static const _kVisionSupported = 'vision_supported';
   static const _kVisionUnsupported = 'vision_unsupported';
 
-  bool _visionSupported = false;
+  /// The serving agent's own declaration for THIS session (null until one
+  /// arrives). Authoritative when present — it reflects the stack actually
+  /// serving, including a fallback the client did not predict.
+  bool? _visionDeclared;
 
-  /// Whether Ayma can perceive video on this call (see [_kVisionSupported]).
-  /// Gates the voice-call screen's Video / Screen share toggles and
+  /// What the client's catalog read expects for the selected stack (null
+  /// when the read failed or the model is unknown). Only a stand-in until
+  /// the declaration lands; refreshed at every connect attempt.
+  bool? _visionExpected;
+
+  /// Whether Ayma can perceive video on this call: the agent's
+  /// declaration when it has spoken, else the catalog expectation, else
+  /// false. Gates the voice-call screen's Video / Screen share toggles and
   /// [toggleVideo] / [toggleScreenShare] themselves.
-  bool get visionSupported => _visionSupported;
+  bool get visionSupported => _visionDeclared ?? _visionExpected ?? false;
 
-  bool _visionUnsupported = false;
+  /// Whether video perception is known NOT to be available on this call
+  /// (declared unsupported, or expected unsupported with no declaration
+  /// yet). The call screen shows the toggles disabled, with the plain
+  /// reason, while this is true — the capability gap is visible, never a
+  /// silent absence.
+  bool get visionUnsupported =>
+      _visionDeclared == false ||
+      (_visionDeclared == null && _visionExpected == false);
 
-  /// Whether the serving stack has declared it CANNOT perceive video on
-  /// this call (see [_kVisionUnsupported]). The call screen shows the
-  /// Video / Screen share toggles disabled, with the plain reason, while
-  /// this is true — the capability gap is visible, never a silent absence.
-  bool get visionUnsupported => _visionUnsupported;
+  /// Whether the Video / Screen share toggles render at all: every live
+  /// main call, from the moment the call is live (the toggles' own
+  /// handlers keep the stricter conversation-ready gate) — never a
+  /// practice call (no Ayma vision there) and never the pre-sign-in
+  /// welcome greeting.
+  bool get showVisionControls => isListening && !isPractice && !welcome;
 
   /// The local camera track while [videoOn] (the self-view the call
   /// screen puts on its main stage, Gemini Live-style); null whenever the
@@ -678,8 +708,8 @@ class VoiceSessionController extends ChangeNotifier {
       _activeToolLabel = null;
       _noJoinRetried = false;
       _micCaptured = false;
-      _visionSupported = false;
-      _visionUnsupported = false;
+      _visionDeclared = null;
+      _visionExpected = null;
       _videoOn = false;
       _screenShareOn = false;
       _visionNotice = null;
@@ -714,6 +744,11 @@ class VoiceSessionController extends ChangeNotifier {
   /// `waking` until the agent joins. Every failure tears down, is reported
   /// (with tags) and lands in [VoiceSessionPhase.error] with a clear message.
   Future<void> _attempt() async {
+    // Refresh the vision expectation for this attempt (main calls only) —
+    // fire-and-forget alongside the credential fetch, so the toggles know
+    // their expected state by the time the call is live even if the
+    // agent's declaration is late or never comes (see [_visionExpected]).
+    if (!welcome && !isPractice) unawaited(_resolveExpectedVision());
     try {
       final String url;
       final String token;
@@ -1006,6 +1041,12 @@ class VoiceSessionController extends ChangeNotifier {
     debugPrint('[voice] phase -> live (agent ready)');
     _setPhase(VoiceSessionPhase.live);
     _noteActivity();
+    // Ask the agent to (re)state its vision capability for this session:
+    // the one-shot declaration at session start can race the client's
+    // listener registration, and a missed one must not hide the toggles
+    // for the whole call (feedback item 13). Best-effort — the catalog
+    // expectation already covers the state meanwhile.
+    unawaited(_askVisionState());
     // F1 (Scout note 122): the user-idle clock does NOT start at agent-ready.
     // The agent joins the room ~8s before it produces its first genuine
     // response, which is when the UI actually says "Listening…" and the mic
@@ -1036,6 +1077,37 @@ class VoiceSessionController extends ChangeNotifier {
   @visibleForTesting
   Duration get firstResponseBudgetForTest => _firstResponseBudget;
 
+  /// Read the catalog expectation for the vision toggles (feedback item
+  /// 13): what the user's SELECTED stack can do, from the same
+  /// `GET /voice/engines` data the Models screen renders. Best-effort —
+  /// any failure leaves the previous expectation (or none) in place and
+  /// the agent's declaration still rules when it arrives.
+  Future<void> _resolveExpectedVision() async {
+    try {
+      final catalog = _voiceCatalogFetcher != null
+          ? await _voiceCatalogFetcher()
+          : await _api.voiceEngines();
+      final expected = catalog?.currentSupportsVideo;
+      if (expected == null || _visionExpected == expected) return;
+      _visionExpected = expected;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[voice] vision expectation read failed: $e');
+    }
+  }
+
+  /// Ask the serving agent to re-publish its vision declaration on the
+  /// `vision_control` topic (see [VoiceTransport.requestVisionState]).
+  Future<void> _askVisionState() async {
+    final transport = _transport;
+    if (transport == null || welcome || isPractice) return;
+    try {
+      await transport.requestVisionState();
+    } catch (e) {
+      debugPrint('[voice] vision state query failed: $e');
+    }
+  }
+
   /// The agent's honest voice-stack status (data topic `voice_status`). So far
   /// only the open-weights cold start: `open_weights_warming` means the Modal
   /// LLM is spinning up and the first reply can take ~100s. Latch it so the
@@ -1047,11 +1119,8 @@ class VoiceSessionController extends ChangeNotifier {
     // exposes (or keeps hidden) the Video / Screen share toggles.
     if (state == _kVisionSupported || state == _kVisionUnsupported) {
       final supported = state == _kVisionSupported;
-      if (_visionSupported == supported && _visionUnsupported == !supported) {
-        return;
-      }
-      _visionSupported = supported;
-      _visionUnsupported = !supported;
+      if (_visionDeclared == supported) return;
+      _visionDeclared = supported;
       notifyListeners();
       return;
     }
@@ -1552,7 +1621,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// honest [visionNotice] instead of an error phase.
   Future<void> toggleVideo() async {
     final transport = _transport;
-    if (!isConversationReady || !_visionSupported || isPractice) return;
+    if (!isConversationReady || !visionSupported || isPractice) return;
     if (transport == null) return;
     if (_videoOn) {
       _videoOn = false;
@@ -1597,7 +1666,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// with the voice session (see `_teardown`).
   Future<void> toggleScreenShare() async {
     final transport = _transport;
-    if (!isConversationReady || !_visionSupported || isPractice) return;
+    if (!isConversationReady || !visionSupported || isPractice) return;
     if (transport == null) return;
     if (_screenShareOn) {
       _screenShareOn = false;
@@ -1907,8 +1976,8 @@ class VoiceSessionController extends ChangeNotifier {
     // the try block below, ahead of the room disconnect.
     _videoOn = false;
     _screenShareOn = false;
-    _visionSupported = false;
-    _visionUnsupported = false;
+    _visionDeclared = null;
+    _visionExpected = null;
     _visionNotice = null;
     _openWeightsWarming = false;
     _voiceTrouble = false;
