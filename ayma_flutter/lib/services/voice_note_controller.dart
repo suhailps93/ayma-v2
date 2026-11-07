@@ -147,6 +147,20 @@ class VoiceNoteController extends ChangeNotifier {
 
   bool _disposed = false;
 
+  /// An engine start is in flight (the mic fired the hold, the recorder
+  /// is still spinning up). Drag offsets that arrive in this window are
+  /// stashed in [_pendingOffset] and applied the moment the phase flips
+  /// to holding — a fast human slide can cover the whole cancel distance
+  /// inside it, and dropping those moves left the finger parked in the
+  /// cancel zone with nothing armed (founder defect, 2026-11-06).
+  bool _startPending = false;
+  Offset? _pendingOffset;
+
+  /// The finger was released while the engine was still starting: run
+  /// the release (send, or discard when the stashed offset arms cancel)
+  /// as soon as the start lands.
+  bool _endAfterStart = false;
+
   void _onEngineChanged() {
     if (_disposed) return;
     if (!engine.isRecording && _phase != VoiceNotePhase.idle) {
@@ -169,12 +183,14 @@ class VoiceNoteController extends ChangeNotifier {
 
   /// The mic hold registered: start recording unless gated or busy.
   Future<void> handleHoldStart() async {
-    if (_phase != VoiceNotePhase.idle) return;
+    if (_phase != VoiceNotePhase.idle || _startPending) return;
     if (canStart != null && !canStart!()) {
       onStartRefused?.call();
       return;
     }
+    _startPending = true;
     final started = await engine.startRecording();
+    _startPending = false;
     if (_disposed) return;
     if (started) {
       _phase = VoiceNotePhase.holding;
@@ -182,13 +198,29 @@ class VoiceNoteController extends ChangeNotifier {
       _lockArmed = false;
       _dragOffset = Offset.zero;
       notifyListeners();
+      // Moves that landed while the recorder was starting count too.
+      final pending = _pendingOffset;
+      _pendingOffset = null;
+      if (pending != null) handleDragUpdate(pending);
+      if (_endAfterStart) {
+        _endAfterStart = false;
+        await handleHoldEnd();
+      }
+    } else {
+      _pendingOffset = null;
+      _endAfterStart = false;
     }
   }
 
   /// The held finger moved by [offsetFromStart] (cumulative, logical px;
   /// left/up are negative). Updates the cancel arm and engages the lock.
   void handleDragUpdate(Offset offsetFromStart) {
-    if (_phase != VoiceNotePhase.holding) return;
+    if (_phase != VoiceNotePhase.holding) {
+      // Still starting the recorder: keep the latest offset so the
+      // position is known the moment recording begins.
+      if (_startPending) _pendingOffset = offsetFromStart;
+      return;
+    }
     _dragOffset = offsetFromStart;
     final armed = offsetFromStart.dx <= -cancelSlideDistance;
     _cancelArmed = armed;
@@ -210,7 +242,12 @@ class VoiceNoteController extends ChangeNotifier {
   /// is a no-op: recording continues hands-free.
   Future<void> handleHoldEnd() async {
     if (_phase == VoiceNotePhase.locked) return;
-    if (_phase != VoiceNotePhase.holding) return;
+    if (_phase != VoiceNotePhase.holding) {
+      // Released while the recorder was still starting: remember it and
+      // run the release when the start lands (see [handleHoldStart]).
+      if (_startPending) _endAfterStart = true;
+      return;
+    }
     final cancel = _cancelArmed;
     _phase = VoiceNotePhase.idle;
     _cancelArmed = false;
@@ -228,7 +265,15 @@ class VoiceNoteController extends ChangeNotifier {
   /// cancelled, widget unmounted mid-hold). While still holding, that is a
   /// discard — the user never chose to send. Once locked it is a no-op.
   Future<void> handleHoldCancel() async {
-    if (_phase != VoiceNotePhase.holding) return;
+    if (_phase != VoiceNotePhase.holding) {
+      // Pointer cancelled mid-start: treat the pending release as a
+      // discard — force the cancel arm for when the start lands.
+      if (_startPending) {
+        _endAfterStart = true;
+        _pendingOffset = const Offset(-cancelSlideDistance, 0);
+      }
+      return;
+    }
     _phase = VoiceNotePhase.idle;
     _cancelArmed = false;
     _lockArmed = false;

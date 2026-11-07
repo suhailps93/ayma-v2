@@ -12,10 +12,17 @@ import '../theme.dart';
 /// chat shows a hold hint). A press-and-hold drives [controller]: hold to
 /// record, slide left to arm cancel, slide up to lock, release to send.
 ///
-/// Deliberately NOT wrapped in a [Tooltip] and NOT an [InkWell]: both run
-/// their own long-press recognizers that would win the gesture arena over
-/// the slide-tracking detector and the hold would never be seen whole.
-class VoiceNoteMicButton extends StatelessWidget {
+/// Pointer handling is RAW ([Listener] + a dwell timer), not a
+/// [GestureDetector] long-press (founder defect, 2026-11-06 ~19:43 PT:
+/// on his phone the long-press recognizer delivered no usable move
+/// updates once the recording bar was up — sliding left never armed
+/// cancel and the bar rendered static, while the bench's synthetic
+/// dwell-then-slide passed). A raw listener hears every move of the
+/// pointer that went down on this button, measured from the pointer-down
+/// point, independent of the gesture arena and of anything the recording
+/// bar paints above the row. Deliberately NOT a [Tooltip]/[InkWell]
+/// either: their recognizers compete for the same pointer.
+class VoiceNoteMicButton extends StatefulWidget {
   const VoiceNoteMicButton({
     super.key,
     required this.controller,
@@ -32,23 +39,135 @@ class VoiceNoteMicButton extends StatelessWidget {
   final double size;
 
   @override
+  State<VoiceNoteMicButton> createState() => _VoiceNoteMicButtonState();
+}
+
+class _VoiceNoteMicButtonState extends State<VoiceNoteMicButton> {
+  /// Dwell before a press becomes a hold — the same 500 ms the
+  /// long-press recognizer used, so tap vs hold feels unchanged.
+  static const Duration _holdDelay = Duration(milliseconds: 500);
+
+  /// Drift allowed during the dwell before the press stops being a
+  /// hold/tap candidate (a finger swiping through is neither).
+  static const double _dwellSlop = 24;
+
+  int? _pointer;
+  Offset? _downPosition;
+  Timer? _holdTimer;
+  bool _holding = false;
+  bool _tapEligible = true;
+
+  void _onPointerDown(PointerDownEvent event) {
+    if (_pointer != null) return; // first finger only
+    // A voice note is already recording (this is a fresh touch, e.g. a
+    // tap while locked): the mic is inert until the note resolves.
+    if (widget.controller.isActive) return;
+    _pointer = event.pointer;
+    _downPosition = event.position;
+    _holding = false;
+    _tapEligible = true;
+    _holdTimer?.cancel();
+    _holdTimer = Timer(_holdDelay, _fireHold);
+  }
+
+  void _fireHold() {
+    if (_pointer == null || _holding) return;
+    _holding = true;
+    unawaited(widget.controller.handleHoldStart());
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    if (event.pointer != _pointer || _downPosition == null) return;
+    final offset = event.position - _downPosition!;
+    if (!_holding) {
+      if (offset.distance > _dwellSlop) {
+        // Moving away during the dwell: not a hold, and no longer a tap
+        // either — the recognizer pair this replaces rejected both too.
+        _holdTimer?.cancel();
+        _tapEligible = false;
+      }
+      return;
+    }
+    widget.controller.handleDragUpdate(offset);
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    if (event.pointer != _pointer) return;
+    final wasHolding = _holding;
+    final tap = _tapEligible && !_holding;
+    _resetPointer();
+    if (wasHolding) {
+      unawaited(widget.controller.handleHoldEnd());
+    } else if (tap) {
+      widget.onTap?.call();
+    }
+  }
+
+  void _onPointerCancel(PointerCancelEvent event) {
+    if (event.pointer != _pointer) return;
+    final wasHolding = _holding;
+    _resetPointer();
+    if (wasHolding) {
+      unawaited(widget.controller.handleHoldCancel());
+    }
+  }
+
+  void _resetPointer() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    _pointer = null;
+    _downPosition = null;
+    _holding = false;
+    _tapEligible = true;
+  }
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
       label: 'Voice message. Hold to record.',
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        onLongPressStart: (_) => unawaited(controller.handleHoldStart()),
-        onLongPressMoveUpdate: (details) =>
-            controller.handleDragUpdate(details.offsetFromOrigin),
-        onLongPressEnd: (_) => unawaited(controller.handleHoldEnd()),
-        onLongPressCancel: () => unawaited(controller.handleHoldCancel()),
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(shape: BoxShape.circle, color: background),
-          child: Icon(Icons.mic_none_rounded, size: 20, color: foreground),
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        onPointerCancel: _onPointerCancel,
+        child: ListenableBuilder(
+          listenable: widget.controller,
+          builder: (context, _) {
+            // Bubble-up (founder, 2026-11-06): while this mic's note is
+            // recording, the button itself swells and lights accent -
+            // visible proof the hold registered, before any slide. The
+            // composers leave the mic slot uncovered by the recording
+            // bar so this stays on screen for the whole hold.
+            final active = widget.controller.isActive;
+            final ac = context.ac;
+            return AnimatedScale(
+              scale: active ? 1.22 : 1.0,
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                width: widget.size,
+                height: widget.size,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: active ? ac.accent : widget.background,
+                ),
+                child: Icon(
+                  active ? Icons.mic_rounded : Icons.mic_none_rounded,
+                  size: 20,
+                  color: active ? ac.onAccent : widget.foreground,
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -68,27 +187,29 @@ class VoiceNoteLockBubble extends StatelessWidget {
   /// Upward slide progress toward locking, 0..1.
   final double progress;
 
-  static const double _width = 38;
-  static const double _height = 56;
+  static const double _width = 30;
+  static const double _height = 52;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final p = progress.clamp(0.0, 1.0);
     final fillColor = Color.lerp(ac.bgElev, ac.accent, p * 0.85)!;
-    final borderColor = Color.lerp(ac.fgMute, ac.accent, p)!;
-    final iconColor = Color.lerp(ac.fgMute, ac.accent, p)!;
+    final borderColor = Color.lerp(ac.fgDim, ac.accent, p)!;
+    final iconColor = Color.lerp(ac.fgDim, ac.accent, p)!;
     return Transform.translate(
       // The bubble lifts toward the finger as the slide progresses.
-      offset: Offset(0, -12 * p),
+      offset: Offset(0, -10 * p),
       child: Container(
         key: const ValueKey('voiceNoteLockBubble'),
         width: _width,
         height: _height,
         decoration: BoxDecoration(
-          color: ac.bgElev,
+          // Solid at rest - a small filled pill riding the bar's right
+          // end, never a big hollow oval (founder, 2026-11-06 ~19:51).
+          color: ac.bgCard,
           borderRadius: BorderRadius.circular(_width / 2),
-          border: Border.all(color: borderColor, width: 1.5),
+          border: Border.all(color: borderColor, width: 1.2),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(_width / 2),
@@ -100,7 +221,7 @@ class VoiceNoteLockBubble extends StatelessWidget {
                 child: Container(
                   width: _width,
                   height: _height * p,
-                  color: fillColor.withValues(alpha: 0.35 + 0.45 * p),
+                  color: fillColor.withValues(alpha: 0.45 + 0.5 * p),
                 ),
               ),
               Column(
@@ -108,11 +229,11 @@ class VoiceNoteLockBubble extends StatelessWidget {
                 children: [
                   Icon(
                     Icons.keyboard_arrow_up_rounded,
-                    size: 17,
+                    size: 15,
                     color: iconColor,
                   ),
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.only(bottom: 5),
                     child: Transform.scale(
                       scale: 1 + 0.3 * p,
                       child: Icon(
@@ -120,7 +241,7 @@ class VoiceNoteLockBubble extends StatelessWidget {
                         p >= 0.6
                             ? Icons.lock_rounded
                             : Icons.lock_open_rounded,
-                        size: 17,
+                        size: 14,
                         color: iconColor,
                       ),
                     ),
@@ -129,6 +250,44 @@ class VoiceNoteLockBubble extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The recording dot in the holding bar: pulses while the mic is live so
+/// the hold state never renders as a static strip (founder, 2026-11-06).
+class _PulsingDot extends StatefulWidget {
+  const _PulsingDot();
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 850),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.3, end: 1).animate(_pulse),
+      child: Container(
+        width: 10,
+        height: 10,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: AymaColors.error,
         ),
       ),
     );
@@ -177,35 +336,40 @@ class VoiceNoteRecordingBar extends StatelessWidget {
     final cancelArmed = controller.cancelArmed;
     final lockProgress = controller.lockProgress;
     final cancelProgress = controller.cancelProgress;
+    // WhatsApp tracking: the whole bar content leans left with the
+    // finger as it slides toward cancel (capped), so the slide is felt
+    // in the bar itself, not just in a label.
+    final lean = (controller.dragOffset.dx < 0 ? controller.dragOffset.dx : 0.0)
+        * 0.35;
     return Container(
       key: const ValueKey('voiceNoteRecordingBar'),
       color: ac.bg,
-      constraints: const BoxConstraints(minHeight: 68),
-      child: Row(
+      constraints: const BoxConstraints(minHeight: 64),
+      child: Transform.translate(
+        offset: Offset(lean < -48 ? -48 : lean, 0),
+        child: Row(
         children: [
-          Column(
+          Expanded(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AymaColors.error,
-                    ),
-                  ),
+                  const _PulsingDot(),
                   const SizedBox(width: 8),
                   Text(elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
                   const SizedBox(width: 10),
-                  Text(
-                    cancelArmed ? 'Release to cancel' : 'Release to send',
-                    style: AymaType.sans(
-                      size: 13,
-                      color: cancelArmed ? AymaColors.error : ac.fgMute,
+                  Flexible(
+                    child: Text(
+                      cancelArmed ? 'Release to cancel' : 'Release to send',
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                      style: AymaType.sans(
+                        size: 13,
+                        color: cancelArmed ? AymaColors.error : ac.fgMute,
+                      ),
                     ),
                   ),
                 ],
@@ -229,14 +393,27 @@ class VoiceNoteRecordingBar extends StatelessWidget {
                 ],
               ),
             ],
+            ),
           ),
-          const Spacer(),
           Transform.translate(
-            // The cancel label leans toward the finger as it slides left.
-            offset: Offset(-10 * cancelProgress, 0),
+            // The cancel cluster leans toward the finger as it slides
+            // left, and a trash glyph grows in as cancel nears.
+            offset: Offset(-24 * cancelProgress, 0),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Opacity(
+                  opacity: cancelProgress,
+                  child: Transform.scale(
+                    scale: 0.6 + 0.4 * cancelProgress,
+                    child: Icon(
+                      Icons.delete_outline_rounded,
+                      size: 19,
+                      color: cancelArmed ? AymaColors.error : ac.fgDim,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 2),
                 Icon(
                   Icons.chevron_left_rounded,
                   size: 18,
@@ -256,6 +433,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
           VoiceNoteLockBubble(progress: lockProgress),
           const SizedBox(width: 2),
         ],
+        ),
       ),
     );
   }

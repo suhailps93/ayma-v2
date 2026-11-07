@@ -1157,7 +1157,9 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                     if (_voiceNote.isActive)
                       Positioned(
                         left: 0,
-                        right: 0,
+                        // Stop short of the mic slot (see ChatComposer):
+                        // the held mic stays visible for the whole hold.
+                        right: 56,
                         bottom: 0,
                         child: VoiceNoteRecordingBar(
                           controller: _voiceNote,

@@ -120,6 +120,18 @@ class _FakeEngine extends VoiceNoteEngine {
   }
 }
 
+/// An engine whose start is gated, so tests can slide during the
+/// recorder's spin-up window.
+class _SlowStartEngine extends _FakeEngine {
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<bool> startRecording() async {
+    await gate.future;
+    return super.startRecording();
+  }
+}
+
 class _FakeRecorder implements AsyncVoiceRecorder {
   bool allowed = true;
   String? lastPath;
@@ -446,6 +458,89 @@ void main() {
       await tester.pump();
     });
 
+testWidgets(
+        'realistic human-speed slide: many small moves arm cancel '
+        'continuously, release discards (founder defect regression)',
+        (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      expect(note.phase, VoiceNotePhase.holding);
+      // A human slide: ~16 ms frames, small steps, no teleporting.
+      for (var i = 0; i < 5; i++) {
+        await gesture.moveBy(const Offset(-9, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      // Halfway there: progress is live, cancel not yet armed.
+      expect(note.cancelProgress, closeTo(45 / 70, 0.05));
+      expect(note.cancelArmed, isFalse);
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(-9, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(note.cancelArmed, isTrue);
+      await gesture.up();
+      await tester.pump();
+      expect(engine.cancels, 1);
+      expect(engine.sends, 0);
+      expect(note.phase, VoiceNotePhase.idle);
+    });
+
+    testWidgets(
+        'a slide completed while the recorder is still starting still '
+        'cancels (start-window moves are not dropped)', (tester) async {
+      final engine = _SlowStartEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      // The engine start is still gated; the whole slide happens now.
+      expect(note.phase, VoiceNotePhase.idle);
+      await gesture.moveBy(const Offset(-100, 0));
+      await tester.pump();
+      engine.gate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(note.phase, VoiceNotePhase.holding);
+      expect(note.cancelArmed, isTrue);
+      await gesture.up();
+      await tester.pump();
+      expect(engine.cancels, 1);
+      expect(engine.sends, 0);
+    });
+
+    testWidgets(
+        'while holding, the mic bubbles up (scale + filled mic) and the '
+        'lock pill is compact', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      expect(
+        tester.widget<AnimatedScale>(find.byType(AnimatedScale)).scale,
+        1.0,
+      );
+      final gesture = await holdMic(tester);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        tester.widget<AnimatedScale>(find.byType(AnimatedScale)).scale,
+        1.22,
+      );
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('voiceNoteLockBubble')))
+            .width,
+        30,
+      );
+      await gesture.up();
+      await tester.pump();
+    });
+
     testWidgets(
         'sliding left fills cancel progress before arming cancel',
         (tester) async {
@@ -762,6 +857,12 @@ void main() {
           find.byKey(const ValueKey('voiceNoteRecordingBar')),
           findsOneWidget,
         );
+        // The bar stops short of the mic slot: the held mic (now the
+        // filled, bubbled-up mic) stays visible for the whole hold.
+        final barRect =
+            tester.getRect(find.byKey(const ValueKey('voiceNoteRecordingBar')));
+        final micRect = tester.getRect(find.byIcon(Icons.mic_rounded));
+        expect(barRect.right, lessThanOrEqualTo(micRect.left + 1));
         await gesture.up();
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
