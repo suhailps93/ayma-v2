@@ -1868,7 +1868,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: kComposerBarPadding,
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
         child: ChatComposer(
           mode: composerMode,
           controller: _composerController,
@@ -4637,7 +4637,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(bottom: 8, left: 2),
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                     decoration: BoxDecoration(
@@ -4678,7 +4678,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(bottom: 8, left: 2),
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                     decoration: BoxDecoration(
@@ -4715,7 +4715,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(bottom: 8, left: 4),
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
