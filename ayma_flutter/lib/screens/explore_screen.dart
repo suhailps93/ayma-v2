@@ -49,7 +49,7 @@ class ExploreScreen extends StatefulWidget {
   State<ExploreScreen> createState() => ExploreScreenState();
 }
 
-enum _Filter { all, liked, mutual, scored }
+enum _Filter { all, liked, likedMe, mutual, scored }
 
 /// Public so [MainShellScreen] — which keeps this screen alive across tab
 /// switches in an `IndexedStack` rather than rebuilding it — can reach in and
@@ -115,6 +115,7 @@ class ExploreScreenState extends State<ExploreScreen> {
       if (c.isSelf) return true; // your card always shows
       return switch (_filter) {
         _Filter.liked => c.liked,
+        _Filter.likedMe => c.likedMe,
         _Filter.mutual => c.mutual,
         _Filter.scored => c.score != null,
         _Filter.all => true,
@@ -138,6 +139,7 @@ class ExploreScreenState extends State<ExploreScreen> {
   static const _filterLabels = {
     _Filter.all: 'Everyone',
     _Filter.liked: 'Your likes',
+    _Filter.likedMe: 'Liked me',
     _Filter.mutual: 'Mutual',
     _Filter.scored: 'Match run',
   };
@@ -452,6 +454,7 @@ class ExploreScreenState extends State<ExploreScreen> {
                         label: Text(switch (f) {
                           _Filter.all => 'Everyone',
                           _Filter.liked => 'Your likes',
+                          _Filter.likedMe => 'Liked me',
                           _Filter.mutual => 'Mutual',
                           _Filter.scored => 'Match run',
                         }),
@@ -637,7 +640,12 @@ String exploreSummary({
       if (c.age != null) '${c.age}',
       if (c.location.isNotEmpty) c.location,
       if (c.score != null) '${(c.score! * 100).round()}% match',
-      if (c.mutual) 'mutual like' else if (c.liked) 'you liked',
+      if (c.mutual)
+        'mutual like'
+      else if (c.liked)
+        'you liked'
+      else if (c.likedMe)
+        'liked you',
     ];
     parts.add(bits.join(', '));
   }
