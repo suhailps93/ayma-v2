@@ -147,3 +147,22 @@ def test_voice_clip_playback_registry_block_matches_the_command():
     assert block["command"] == "play_voice_clip"
     assert block["client_action"] == "play_voice_clip"
     assert "play_voice_clip" in {s.name for s in app_control.COMMAND_SKILLS}
+
+
+def test_user_only_actions_block_is_in_both_persona_variants():
+    """Belt and suspenders (founder strengthening, 2026-11-06): on top of
+    the config enforcement, the base system prompt itself prohibits the
+    three exclusions — and because persona.md is one source rendered
+    into text and voice variants, the block must survive into BOTH."""
+    import prompt
+
+    raw = prompt._PERSONA_PATH.read_text(encoding="utf-8")
+    assert "[Begin: user-only actions" in raw
+    assert "[End: user-only actions]" in raw
+    for variant in ("text", "voice"):
+        text = prompt.load_persona(variant)
+        assert "Actions that are never yours to take" in text, variant
+        assert "Deleting their account" in text, variant
+        assert "Paying for anything" in text, variant
+        assert "Clearing your memory of them" in text, variant
+        assert "theirs to do themselves" in text, variant
