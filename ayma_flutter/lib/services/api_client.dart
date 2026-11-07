@@ -390,6 +390,7 @@ class ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String practiceReturnSessionId = '',
   }) async {
+    final isPracticeReturn = practiceReturnSessionId.isNotEmpty;
     // Refresh the ID token under a deadline. A hang here (flaky DNS reaching
     // Firebase) or a network-level Firebase failure is transient, so it
     // surfaces as a connection-class ApiException (no statusCode) the splash
@@ -425,6 +426,20 @@ class ApiClient {
       throw AuthSessionException('Auth token unreadable: $e');
     }
 
+    // A practice-return bootstrap makes the server seed the new room with
+    // the debrief: it reads the finished practice session and builds the
+    // greeting instructions — server work in the same class as the other
+    // long-budget builds, deterministically past the 8 s interactive
+    // budget. On that budget the client aborted at 8 s with a 408 while
+    // the server finished behind it (NOTE 134: the return fired but its
+    // token fetch "timed out" twice, identically; a retry cannot heal a
+    // deterministic latency — see BudgetHttpClient's long-budget note),
+    // so a return takes the long budget, here (the wire client's
+    // per-request timeout) and on the outer timeout below.
+    if (isPracticeReturn) {
+      headers['X-Request-Timeout'] = '${longTimeout.inMilliseconds}';
+    }
+
     final http.Response response;
     try {
       response = await _http
@@ -438,7 +453,7 @@ class ApiClient {
                 'practice_return_session_id': practiceReturnSessionId,
             }),
           )
-          .timeout(_bootstrapPostTimeout);
+          .timeout(isPracticeReturn ? longTimeout : _bootstrapPostTimeout);
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
     } on TimeoutException {
