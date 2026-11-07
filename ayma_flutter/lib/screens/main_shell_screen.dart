@@ -129,7 +129,7 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// [AymaTabBar]'s `onSelected` here — the orb tap runs a progression
   /// ([_onOrbTap]); the other three tabs go straight through to [_selectTab]
   /// (closing the Ayma sheet first if one is open, so the switch is
-  /// actually visible — an expanded sheet covers the whole page).
+  /// actually visible — a sheet covers the page underneath it).
   void _onTabTap(int i) {
     if (i == 0) {
       _onOrbTap();
@@ -139,33 +139,52 @@ class _MainShellScreenState extends State<MainShellScreen>
     _selectTab(i);
   }
 
-  /// The center orb's tap progression (founder ask): half sheet -> full main
-  /// chat -> voice. The 1-second hold ([_navBar]'s `onOrbLongPress`) still
-  /// activates voice directly from anywhere, unchanged and independent of
-  /// this.
+  /// The center orb's tap progression (founder asks): half sheet -> real
+  /// main chat -> voice. The 1-second hold ([_navBar]'s `onOrbLongPress`)
+  /// still activates voice directly from anywhere, unchanged and
+  /// independent of this.
   ///
-  /// - Sheet open and expanded to full screen (the plain main chat) -> voice.
-  /// - Sheet open but still docked (half, with the page-context chip) -> grow
-  ///   it to full screen; the chip drops itself at full size
-  ///   (`ChatScreen._activePageContext`).
+  /// - Sheet open and expanded to full screen (via the header expand
+  ///   button or a drag — the orb no longer expands it) -> voice.
+  /// - Sheet open but still docked (half, with the page-context chip) ->
+  ///   the SECOND tap: close the sheet and select the real Ayma tab
+  ///   (the actual main chat screen in this shell), rather than growing
+  ///   the overlay over the current tab (founder report, 2026-11-06).
   /// - A scoped Ask-Ayma correction sheet takes the expand rung at any size
-  ///   but never the voice rung (see [orbTapOnOpenSheet]).
+  ///   but never the voice or main-chat rungs (see [orbTapOnOpenSheet]).
   /// - No sheet, already on the Ayma tab (the full-screen main chat) -> voice.
   /// - No sheet, on another tab -> open the half popup scoped to that page.
   ///
   /// Reuses the debounced [_startVoiceFromOrb] (a `toggleVoiceCall` wrapper;
   /// the hold uses `toggleVoiceCall` bare), and the same [orbTapOnOpenSheet]
-  /// / `showPageContextAymaPopup` the UI already uses — nothing here
-  /// reimplements voice start or the expand.
+  /// / `showPageContextAymaPopup` the UI already uses.
   void _onOrbTap() {
     if (isAymaSheetOpen) {
-      orbTapOnOpenSheet(onVoice: _startVoiceFromOrb);
+      orbTapOnOpenSheet(
+        onVoice: _startVoiceFromOrb,
+        onGoToMainChat: () {
+          _closeSheetAndShowMainChat();
+        },
+      );
       return;
     }
     if (_index == 0) {
       _startVoiceFromOrb();
     } else {
       showPageContextAymaPopup(context, navBarBuilder: _navBar);
+    }
+  }
+
+  /// Second orb tap on the docked page-context sheet: dismiss the sheet
+  /// (a dismissal, not a navigation — no tab-history entry is made for
+  /// it), then select the Ayma tab, which IS the real main chat screen.
+  /// The tab selection is the navigation, and it runs only after the
+  /// sheet has finished dismissing so the main chat is what is visible.
+  Future<void> _closeSheetAndShowMainChat() async {
+    await dismissOpenAymaSheet(context);
+    if (!mounted) return;
+    if (_index != MainShellScreen.aymaTabIndex) {
+      _selectTab(MainShellScreen.aymaTabIndex);
     }
   }
 
@@ -195,9 +214,9 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
   /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
   /// renders behaves identically to this shell's own `bottomNavigationBar`,
-  /// including a tap on it expanding the popup rather than opening a second
-  /// one. That copy highlights the orb while the popup is expanded to full
-  /// screen.
+  /// including a second tap on it closing the popup and landing on the
+  /// real Ayma tab rather than opening a second popup. That copy
+  /// highlights the orb while the popup is expanded to full screen.
   Widget _navBar(BuildContext context, {bool anchored = false}) {
     final expanded =
         AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;

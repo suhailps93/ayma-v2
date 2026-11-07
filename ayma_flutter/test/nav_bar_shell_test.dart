@@ -109,8 +109,8 @@ void main() {
   );
 
   testWidgets(
-    'tapping Ayma again while the popup is already open expands that same '
-    'sheet to full screen in place (no second popup, no navigation)',
+    'tapping Ayma again while the popup is open closes it and navigates '
+    'to the real main chat screen (the shell route, Ayma tab requested)',
     (tester) async {
       // A real phone-sized viewport, not flutter_test's tiny ~800x600
       // default — the popup here embeds a real `ChatScreen`, and reserving
@@ -145,12 +145,18 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // The sheet is closed (not grown), and the router is on the real
+      // shell route '/' with the Ayma (main chat) tab requested — screen
+      // identity, not a full-screen overlay over 'screen:other'.
       expect(
         find.byKey(const ValueKey('aymaChatModalHandle')),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(aymaSheet.isExpanded, isTrue);
-      expect(find.text('screen:shell'), findsNothing);
+      expect(isAymaSheetOpen, isFalse);
+      expect(aymaSheet.isExpanded, isFalse);
+      expect(find.text('screen:shell'), findsOneWidget);
+      expect(find.text('screen:other'), findsNothing);
+      expect(TabRequest.instance.consume(), 0);
     },
   );
 

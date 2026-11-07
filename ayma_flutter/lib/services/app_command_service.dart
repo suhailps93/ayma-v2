@@ -126,8 +126,10 @@ class AppCommandService {
   final void Function(String path) _go;
 
   /// Ayma's page-context chat popup: open?, and close it (waits for its
-  /// dismiss transition). A navigation command closes it first so the opened
-  /// page is not left underneath the popup.
+  /// dismiss transition). EVERY navigation command closes it first — as
+  /// part of the navigation, not as a navigation of its own — so the
+  /// destination page is actually visible, not left underneath the popup
+  /// (partial or expanded).
   final bool Function() _chatPopupOpen;
   final Future<void> Function() _closeChatPopup;
 
@@ -588,14 +590,14 @@ class AppCommandService {
         AppContext.instance.pendingExploreQuery = query;
         // Also publish live: an Explore screen already built/visible must
         // run this search now, not only on its next build (founder,
-        // 2026-11-06 — Ayma-driven changes update the visible UI live).
+        // 2026-11-06 - Ayma-driven changes update the visible UI live).
         AppContext.instance.liveExploreQuery.value = query;
-        _navigate(ExploreScreen.path);
+        _open(ExploreScreen.path);
         return true;
       case 'open_profile':
         final uid = (cmd['uid'] as String? ?? '').trim();
         if (uid.isEmpty) return false;
-        _navigate('/profile/user/$uid');
+        _open('/profile/user/$uid');
         return true;
       case 'open_dm_thread':
         final uid = (cmd['uid'] as String? ?? '').trim();
@@ -663,9 +665,24 @@ class AppCommandService {
 
   /// Push [path] unless the user is already there, closing Ayma's chat
   /// popup first when it is open (e.g. the DM thread opened after Ayma sent
-  /// a message from the popup chat).
+  /// a message from the popup chat). Every Ayma page-navigation command
+  /// goes through here (`navigate`, `open_notification`, `search_explore`,
+  /// `open_profile`, `open_dm_thread`), so no command can land its page
+  /// invisibly underneath a still-open sheet, partial or expanded. When
+  /// the user is already on [path] there is no navigation to make, but an
+  /// open sheet is still dismissed — the destination being visible is the
+  /// point — and that dismissal is not itself a page navigation (it
+  /// records no route or go-back entry).
   void _open(String path) {
-    if (_currentPath() == path) return;
+    if (_currentPath() == path) {
+      if (_chatPopupOpen()) {
+        unawaited(_closeChatPopup().catchError((Object e) {
+          debugPrint('Ayma sheet dismissal on a same-page navigation '
+              'failed: $e');
+        }));
+      }
+      return;
+    }
     if (!_chatPopupOpen()) {
       _navigate(path);
       return;

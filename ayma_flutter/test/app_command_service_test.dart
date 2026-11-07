@@ -95,6 +95,63 @@ void main() {
     expect(events, ['close', 'push /dm/a__b']);
   });
 
+  test(
+      'open_profile / open_dm_thread / search_explore also close the chat '
+      'popup first, then navigate — the destination is visible, never '
+      'left underneath the sheet', () async {
+    for (final entry in <String, Map<String, dynamic>>{
+      'push /profile/user/u-9': {'action': 'open_profile', 'uid': 'u-9'},
+      'push /dm/me__u-jordan': {
+        'action': 'open_dm_thread',
+        'uid': 'u-jordan'
+      },
+      'push /explore': {'action': 'search_explore', 'query': 'hiking'},
+    }.entries) {
+      final events = <String>[];
+      var popupOpen = true;
+      final auth =
+          MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+      final svc = AppCommandService(
+        navigate: (p) => events.add('push $p'),
+        auth: auth,
+        currentPath: () => '/matches',
+        chatPopupOpen: () => popupOpen,
+        closeChatPopup: () async {
+          events.add('close');
+          popupOpen = false;
+        },
+      );
+      expect(svc.handleCommand(entry.value), isTrue, reason: entry.key);
+      await Future<void>.delayed(Duration.zero);
+      expect(events, ['close', entry.key], reason: entry.key);
+      expect(popupOpen, isFalse, reason: entry.key);
+    }
+  });
+
+  test(
+      'a navigation to the page the user is already on still dismisses '
+      'an open sheet (no navigation, no push — just visibility)',
+      () async {
+    final events = <String>[];
+    var popupOpen = true;
+    final svc = AppCommandService(
+      navigate: (p) => events.add('push $p'),
+      currentPath: () => '/dm/a__b',
+      chatPopupOpen: () => popupOpen,
+      closeChatPopup: () async {
+        events.add('close');
+        popupOpen = false;
+      },
+    );
+    expect(
+        svc.handleCommand(
+            {'action': 'navigate', 'screen': 'dm', 'path': '/dm/a__b'}),
+        isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(events, ['close']);
+    expect(popupOpen, isFalse);
+  });
+
   test('navigate pushes the path the backend resolved from the registry; '
       'a command without a route path is refused', () {
     final nav = <String>[];

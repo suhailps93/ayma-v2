@@ -24,13 +24,14 @@ import 'ayma_tab_bar.dart';
 /// doc). None of the four tabs is ever "current" from out here, so the bar
 /// always renders with nothing highlighted.
 ///
-/// The Ayma orb is the one exception to that navigate-back-to-the-shell rule
-/// (see [_onTabTap]): since none of these wrapped screens IS the Ayma tab,
-/// tapping it here always opens the scoped page-context popup
-/// (`showPageContextAymaPopup`) instead of a [TabRequest] navigation —
-/// founder ask: from a DM thread, the Story editor, a report screen, etc.,
-/// the orb should behave "like the story edit" popup, not jump away to the
-/// main chat tab.
+/// The Ayma orb is the one partial exception to that
+/// navigate-back-to-the-shell rule (see [_onTabTap]): since none of these
+/// wrapped screens IS the Ayma tab, a first tap here opens the scoped
+/// page-context popup (`showPageContextAymaPopup`) instead of a
+/// [TabRequest] navigation — founder ask: from a DM thread, the Story
+/// editor, a report screen, etc., the orb should behave "like the story
+/// edit" popup, not jump away to the main chat tab. A second tap, while
+/// that popup is open, is exactly that navigation (see [_onTabTap]).
 ///
 /// Deliberately wraps [child] *inside* the routed page (each call site is a
 /// `GoRoute.builder` return value), not as a global overlay sibling of the
@@ -62,15 +63,17 @@ class NavBarShell extends StatelessWidget {
   /// [AymaTabBar]'s `onSelected` here. None of the four tabs is ever
   /// "current" from out here (see the class doc), so unlike
   /// [MainShellScreen]'s own copy of this dispatch the orb has no "already
-  /// there" case to check for — every screen wrapped by this shell gets the
-  /// scoped page-context popup (founder ask: "like the story edit", not a
-  /// navigation back to the main tab) instead of [_goTab]. A second orb tap
-  /// while that sheet is already open (its own on-top copy of this same bar,
-  /// wired to this same method — see [_navBar]) grows the sheet to full
-  /// screen in place instead of stacking a second one; a third tap, once it's
-  /// full screen, activates voice (the same `toggleVoiceCall` the hold uses)
-  /// — except from a scoped Ask-Ayma correction sheet, which never takes
-  /// the voice rung (see [orbTapOnOpenSheet]).
+  /// there" case to check for — a first tap on every screen wrapped by this
+  /// shell gets the scoped page-context popup (founder ask: "like the story
+  /// edit", not a navigation back to the main tab) instead of [_goTab]. A
+  /// second orb tap while that sheet is still docked (its own on-top copy
+  /// of this same bar, wired to this same method — see [_navBar]) closes
+  /// the sheet and navigates to the real main chat screen instead of
+  /// growing the overlay or stacking a second sheet; a tap once the sheet
+  /// is full screen (via its header expand button or a drag) activates
+  /// voice (the same `toggleVoiceCall` the hold uses) — except from a
+  /// scoped Ask-Ayma correction sheet, which never takes the voice or
+  /// main-chat rungs (see [orbTapOnOpenSheet]).
   ///
   /// Any other tab while the sheet is open closes it first: `_goTab`'s
   /// `context.go` replaces this route but would leave the imperatively-pushed
@@ -79,16 +82,18 @@ class NavBarShell extends StatelessWidget {
   /// mid-flight.
   Future<void> _onTabTap(BuildContext context, int i) async {
     if (i == 0) {
-      // Orb tap progression (founder ask): no sheet -> open the half sheet
-      // scoped to this page; docked half sheet -> grow it to the full-screen
-      // main chat (the context chip drops itself at full size); already full
-      // screen -> activate voice (the same `toggleVoiceCall` the 1s hold
-      // uses). From out here the user is never on the Ayma tab itself, so the
-      // expanded sheet is the only "full-screen main chat" rung.
+      // Orb tap progression (founder asks): no sheet -> open the half sheet
+      // scoped to this page; docked half sheet -> SECOND tap closes it and
+      // navigates to the real main chat screen (the shell on its Ayma tab);
+      // already full screen (header expand / drag only) -> activate voice
+      // (the same `toggleVoiceCall` the 1s hold uses).
       if (isAymaSheetOpen) {
         orbTapOnOpenSheet(
           onVoice: () =>
               toggleVoiceCall(context, AymaSession.instance.voice),
+          onGoToMainChat: () {
+            _closeSheetAndGoToMainChat(context);
+          },
         );
       } else {
         showPageContextAymaPopup(context, navBarBuilder: _navBar);
@@ -103,6 +108,21 @@ class NavBarShell extends StatelessWidget {
     _goTab(context, i);
   }
 
+  /// Second orb tap on the docked page-context sheet: dismiss the sheet,
+  /// then navigate to the real main chat screen — the same hand-off
+  /// [_goTab] makes, i.e. `MainShellScreen.path` plus a [TabRequest] for
+  /// [MainShellScreen.aymaTabIndex]. The router is captured BEFORE the
+  /// dismissal: this call can come from the sheet's own on-top bar copy,
+  /// whose context is unmounted by the pop, so nothing after the await may
+  /// touch it. The dismissal itself is not a navigation and records no
+  /// go-back entry (see [dismissOpenAymaSheet]).
+  Future<void> _closeSheetAndGoToMainChat(BuildContext context) async {
+    final router = GoRouter.of(context);
+    await dismissOpenAymaSheet(context);
+    TabRequest.instance.request(MainShellScreen.aymaTabIndex);
+    router.go(MainShellScreen.path);
+  }
+
   /// The bar itself (unlike [child], which always builds its own `Scaffold`)
   /// has no `Material` ancestor of its own here — it's a sibling of [child]
   /// in this Column, not a descendant of its Scaffold — and `AymaTabBar`'s
@@ -112,9 +132,10 @@ class NavBarShell extends StatelessWidget {
   ///
   /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
   /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
-  /// renders behaves identically to this one, including a tap on it
-  /// expanding the popup rather than opening a second one. That copy
-  /// highlights the orb while the popup is expanded to full screen.
+  /// renders behaves identically to this one, including a second tap on it
+  /// closing the popup and navigating to the real main chat rather than
+  /// opening a second popup. That copy highlights the orb while the popup
+  /// is expanded to full screen.
   Widget _navBar(BuildContext context) {
     final expanded =
         AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;

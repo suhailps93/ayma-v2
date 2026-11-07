@@ -279,29 +279,32 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   /// [AymaTabBar]'s `onSelected` here (see [_goToTab]'s doc for why this
   /// screen carries its own copy of the bar rather than `NavBarShell`'s).
   /// The orb gets the same treatment `NavBarShell` gives it everywhere else:
-  /// this screen is never the Ayma tab, so tapping it opens the scoped
+  /// this screen is never the Ayma tab, so a first tap opens the scoped
   /// page-context popup instead of navigating back to the shell (founder
   /// ask: "like the story edit"). A second orb tap while that sheet is
-  /// already open (its own on-top copy of this same bar, wired to this same
-  /// method — see [_navBar]) grows the sheet to full screen in place instead
-  /// of stacking a second one; a third tap, once it's full screen, activates
-  /// voice (the same `toggleVoiceCall` the hold uses) — except from a scoped
-  /// Ask-Ayma correction sheet, which never takes the voice rung (see
-  /// [orbTapOnOpenSheet]).
+  /// still docked (its own on-top copy of this same bar, wired to this same
+  /// method — see [_navBar]) closes the sheet and navigates to the real
+  /// main chat screen instead of growing the overlay or stacking a second
+  /// sheet; a tap once it is full screen (header expand / drag only)
+  /// activates voice (the same `toggleVoiceCall` the hold uses) — except
+  /// from a scoped Ask-Ayma correction sheet, which never takes the voice
+  /// or main-chat rungs (see [orbTapOnOpenSheet]).
   /// Any other tab while the sheet is open closes it first (same reason as
   /// `NavBarShell._onTabTap`: a declarative `context.go` would strand it).
   Future<void> _onTabTap(int i) async {
     if (i == 0) {
-      // Orb tap progression (founder ask): no sheet -> open the half sheet
-      // scoped to this page; docked half sheet -> grow it to the full-screen
-      // main chat (the context chip drops itself at full size); already full
-      // screen -> activate voice (the same `toggleVoiceCall` the 1s hold
-      // uses). This screen is never the Ayma tab, so the expanded sheet is the
-      // only "full-screen main chat" rung.
+      // Orb tap progression (founder asks): no sheet -> open the half sheet
+      // scoped to this page; docked half sheet -> SECOND tap closes it and
+      // navigates to the real main chat screen (the shell on its Ayma tab);
+      // already full screen (header expand / drag only) -> activate voice
+      // (the same `toggleVoiceCall` the 1s hold uses).
       if (isAymaSheetOpen) {
         orbTapOnOpenSheet(
           onVoice: () =>
               toggleVoiceCall(context, AymaSession.instance.voice),
+          onGoToMainChat: () {
+            _closeSheetAndGoToMainChat();
+          },
         );
       } else {
         showPageContextAymaPopup(context, navBarBuilder: _navBar);
@@ -316,11 +319,21 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     _goToTab(i);
   }
 
+  /// Second orb tap on the docked page-context sheet: dismiss the sheet
+  /// (a dismissal, not a navigation — see [dismissOpenAymaSheet]), then
+  /// go to the real main chat screen via [_goToTab] with the Ayma tab.
+  Future<void> _closeSheetAndGoToMainChat() async {
+    await dismissOpenAymaSheet(context);
+    if (!mounted) return;
+    _goToTab(MainShellScreen.aymaTabIndex);
+  }
+
   /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
   /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
-  /// renders behaves identically to this screen's own bar, including a tap
-  /// on it expanding the popup rather than opening a second one. That copy
-  /// highlights the orb while the popup is expanded to full screen.
+  /// renders behaves identically to this screen's own bar, including a
+  /// second tap on it closing the popup and navigating to the real main
+  /// chat rather than opening a second popup. That copy highlights the
+  /// orb while the popup is expanded to full screen.
   Widget _navBar(BuildContext context) {
     final expanded =
         AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;
