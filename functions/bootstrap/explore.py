@@ -855,11 +855,15 @@ def _build_card(
             photo_url_thumb = ""
 
     if other == uid:
-        liked, mutual, score = False, False, None
+        liked, mutual, liked_me, score = False, False, False, None
     else:
         you = docs.get((other, "like_out")) is not None
         liked = you
-        mutual = you and docs.get((other, "like_in")) is not None
+        # They liked you: the received-like doc the batched hydration
+        # already fetched (users/{other}/likes/{uid}) — powers the
+        # Explore "Liked me" chip, no extra read.
+        liked_me = docs.get((other, "like_in")) is not None
+        mutual = you and liked_me
         match = docs.get((other, "match"))
         if match is not None:
             score = match.get("score")
@@ -876,6 +880,7 @@ def _build_card(
         "score": score,
         "liked": liked,
         "mutual": mutual,
+        "liked_me": liked_me,
         "self": other == uid,
         "paused": other == uid and prof.get("paused") is True,
     }
