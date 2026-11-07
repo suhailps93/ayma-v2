@@ -19,6 +19,19 @@ void main() {
     );
   });
 
+  group('copilotInstallIsSideloaded', () {
+    test('Play installs are not sideloaded; everything else is', () {
+      expect(copilotInstallIsSideloaded('com.android.vending'), isFalse);
+      expect(copilotInstallIsSideloaded('com.android.chrome'), isTrue);
+      expect(copilotInstallIsSideloaded('com.google.android.packageinstaller'),
+          isTrue);
+      // adb / unknown installer reads as sideloaded — those installs hit
+      // the Restricted Settings lock too.
+      expect(copilotInstallIsSideloaded(null), isTrue);
+      expect(copilotInstallIsSideloaded(''), isTrue);
+    });
+  });
+
   group('CopilotTarget.fromJson', () {
     test('parses a full hit', () {
       final t = CopilotTarget.fromJson({

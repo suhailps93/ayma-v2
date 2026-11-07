@@ -15,8 +15,10 @@ class _FakeCopilotService extends CopilotService {
   _FakeCopilotService() : super(debugSupportedOverride: true);
 
   bool overlay = true;
+  bool sideloaded = false;
   int highlightCalls = 0;
   int openSettingsCalls = 0;
+  int openAppInfoCalls = 0;
   CopilotTarget? lastShown;
 
   @override
@@ -25,6 +27,14 @@ class _FakeCopilotService extends CopilotService {
   @override
   Future<void> openOverlaySettings() async {
     openSettingsCalls++;
+  }
+
+  @override
+  Future<bool> wasSideloaded() async => sideloaded;
+
+  @override
+  Future<void> openAppInfo() async {
+    openAppInfoCalls++;
   }
 
   @override
@@ -178,6 +188,43 @@ void main() {
     await tester.pump();
     expect(service.openSettingsCalls, 1);
     expect(find.byKey(const Key('copilot_start_button')), findsOneWidget);
+    service.dispose();
+  });
+
+  testWidgets('sideloaded install sees the restricted-settings fix',
+      (tester) async {
+    final service = _FakeCopilotService()
+      ..overlay = false
+      ..sideloaded = true;
+    final api = _apiReturning({'found': false, 'say': 'x'});
+    await tester.pumpWidget(_host(service, api));
+    await tester.pump();
+    await tester.pump();
+
+    // The recovery card is up front for sideloaded installs, with the
+    // exact App info → three-dot → Allow restricted settings steps.
+    expect(find.byKey(const Key('copilot_restricted_help')), findsOneWidget);
+    expect(find.textContaining('Allow restricted settings'), findsWidgets);
+    expect(find.textContaining('three dots'), findsWidgets);
+    await tester.ensureVisible(
+        find.byKey(const Key('copilot_open_app_info_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('copilot_open_app_info_button')));
+    await tester.pump();
+    expect(service.openAppInfoCalls, 1);
+    service.dispose();
+  });
+
+  testWidgets('Play install without a blocked return sees no lock card',
+      (tester) async {
+    final service = _FakeCopilotService()
+      ..overlay = false
+      ..sideloaded = false;
+    final api = _apiReturning({'found': false, 'say': 'x'});
+    await tester.pumpWidget(_host(service, api));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('copilot_restricted_help')), findsNothing);
     service.dispose();
   });
 

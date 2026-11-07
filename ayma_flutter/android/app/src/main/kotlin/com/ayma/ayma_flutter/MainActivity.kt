@@ -310,6 +310,36 @@ class MainActivity : FlutterActivity() {
                     startActivity(intent)
                     result.success(null)
                 }
+                "openAppInfo" -> {
+                    // The Restricted Settings recovery route: App info is
+                    // where the three-dot menu -> "Allow restricted
+                    // settings" lives for sideloaded installs.
+                    val intent = Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    result.success(null)
+                }
+                "installerPackage" -> {
+                    // Who installed Ayma (Play = com.android.vending);
+                    // anything else (or unknown) means sideloaded, which is
+                    // what triggers Android's Restricted Settings lock on
+                    // the overlay permission.
+                    val installer = try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            packageManager
+                                .getInstallSourceInfo(packageName)
+                                .installingPackageName
+                        } else {
+                            @Suppress("DEPRECATION")
+                            packageManager.getInstallerPackageName(packageName)
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                    result.success(installer)
+                }
                 "requestCapture" -> {
                     if (copilotCaptureResult != null) {
                         result.error("BUSY", "a capture request is already pending", null)

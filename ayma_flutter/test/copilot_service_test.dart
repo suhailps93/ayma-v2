@@ -10,11 +10,14 @@ void main() {
   const channel = MethodChannel('ayma/copilot');
   final calls = <MethodCall>[];
 
+  String? installerValue;
+
   CopilotService makeService() =>
       CopilotService(channel: channel, debugSupportedOverride: true);
 
   setUp(() {
     calls.clear();
+    installerValue = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
@@ -25,6 +28,8 @@ void main() {
           return true;
         case 'isSharing':
           return true;
+        case 'installerPackage':
+          return installerValue;
         default:
           return null;
       }
@@ -44,6 +49,24 @@ void main() {
         'displayHeight': 2400,
         'meanLuminance': luminance,
       });
+
+  test('wasSideloaded reads the installer package', () async {
+    final s = makeService();
+    installerValue = 'com.android.vending';
+    expect(await s.wasSideloaded(), isFalse);
+    installerValue = 'com.android.chrome';
+    expect(await s.wasSideloaded(), isTrue);
+    installerValue = null;
+    expect(await s.wasSideloaded(), isTrue);
+    s.dispose();
+  });
+
+  test('openAppInfo goes through the channel', () async {
+    final s = makeService();
+    await s.openAppInfo();
+    expect(calls.map((c) => c.method), contains('openAppInfo'));
+    s.dispose();
+  });
 
   test('requestCaptureAndStart flips sharing on consent', () async {
     final s = makeService();
