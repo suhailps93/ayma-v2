@@ -1298,6 +1298,24 @@ def test_account_action_wipe_memory_is_navigate_only(monkeypatch):
     assert wiped == []
 
 
+def test_exclusions_config_guard_wins_over_the_handler(monkeypatch):
+    # The exclusions CONFIG is load-bearing: listing an action there
+    # makes the layer refuse it even though its handler would run it.
+    # sign_out is the one executable account action; pretend the config
+    # excludes it and the confirmed call must be refused, not run.
+    import app_registry
+
+    monkeypatch.setattr(
+        app_registry, "excluded_account_action_keys", lambda: {"sign_out"}
+    )
+    monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
+    db = _acking_db()
+    act = app_control._bind_account_action(db, "me")
+    out = _run(act("sign_out", True))
+    assert out.startswith("Not done: that action is on the exclusions config"), out
+    assert _PENDING not in db.store
+
+
 def _navigated_only(db, out, path):
     """The tool refused to act and only queued a navigate to ``path``."""
     assert out.startswith("Not done, by design"), out

@@ -74,6 +74,28 @@ def exclusions() -> list[dict]:
     return list(block.get("items") or [])
 
 
+def excluded_account_action_keys() -> set[str]:
+    """Account-action keys the exclusions config refuses outright.
+
+    Derived from each exclusion item's ``account_actions`` list, so the
+    config is load-bearing: listing an account action there makes the
+    command layer refuse it (see ``skills/app_control_account.py``),
+    whatever its handler field says.
+    """
+    out: set[str] = set()
+    for item in exclusions():
+        out.update(item.get("account_actions") or [])
+    return out
+
+
+def excluded_deny_keys() -> set[str]:
+    """ui_action deny-rule keys the exclusions config relies on."""
+    out: set[str] = set()
+    for item in exclusions():
+        out.update(item.get("deny_keys") or [])
+    return out
+
+
 def exclusion_keys() -> set[str]:
     return {str(e.get("key") or "") for e in exclusions()}
 

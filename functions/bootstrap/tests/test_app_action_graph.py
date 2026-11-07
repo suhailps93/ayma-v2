@@ -36,6 +36,8 @@ _NON_TOOL_NAMES = {
     # registry structure / blocks
     "destinations", "parameterized", "non_navigable", "unavailable",
     "exclusions", "async_voice", "connection_banner",
+    # exclusions config field names
+    "account_actions", "deny_keys", "excluded_account_action_keys",
     # destination keys named as open_screen arguments
     "ayma_settings", "complete_profile", "credits", "feedback",
     "invite_friends", "my_appearance", "my_public_profile",
@@ -149,20 +151,37 @@ def test_voice_clip_playback_registry_block_matches_the_command():
     assert "play_voice_clip" in {s.name for s in app_control.COMMAND_SKILLS}
 
 
-def test_user_only_actions_block_is_in_both_persona_variants():
-    """Belt and suspenders (founder strengthening, 2026-11-06): on top of
-    the config enforcement, the base system prompt itself prohibits the
-    three exclusions — and because persona.md is one source rendered
-    into text and voice variants, the block must survive into BOTH."""
+def test_persona_never_enumerates_the_exclusions():
+    """Founder ruling, final form (2026-11-06): the forbidden buttons
+    live in the config, NOT in Ayma's system instructions. The base
+    prompt (both rendered variants) names none of them; it carries
+    only the generic permitted-action-set line."""
     import prompt
 
     raw = prompt._PERSONA_PATH.read_text(encoding="utf-8")
-    assert "[Begin: user-only actions" in raw
-    assert "[End: user-only actions]" in raw
+    assert "user-only actions" not in raw
+    assert "Actions that are never yours to take" not in raw
     for variant in ("text", "voice"):
         text = prompt.load_persona(variant)
-        assert "Actions that are never yours to take" in text, variant
-        assert "Deleting their account" in text, variant
-        assert "Paying for anything" in text, variant
-        assert "Clearing your memory of them" in text, variant
-        assert "theirs to do themselves" in text, variant
+        assert "permitted action set" in text, variant
+        assert "Deleting their account" not in text, variant
+        assert "Clearing your memory of them" not in text, variant
+        assert "Paying for anything" not in text, variant
+
+
+def test_exclusion_config_names_its_enforcement_surfaces():
+    """The config is load-bearing: each item lists the account actions
+    and deny rules it blocks, and the derived sets match the registry
+    data they guard."""
+    import app_registry as reg
+
+    assert reg.excluded_account_action_keys() == {
+        "delete_account", "wipe_memory"}
+    assert reg.excluded_deny_keys() == {
+        "delete", "purchase", "clear_memory"}
+    deny_keys = {
+        r["key"] for r in reg.registry()["ui_action_policy"]["deny"]}
+    assert reg.excluded_deny_keys() <= deny_keys
+    acts = {a["key"]: a for a in reg.account_actions()}
+    for key in reg.excluded_account_action_keys():
+        assert acts[key]["handler"] == "navigate_only", key

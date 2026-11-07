@@ -72,6 +72,19 @@ def _bind_account_action(
                 + ", ".join(a["key"] for a in app_registry.account_actions())
                 + "."
             )
+        if act["key"] in app_registry.excluded_account_action_keys():
+            # The exclusions config wins over the handler field: even if
+            # a future edit flipped this action's handler, a listed
+            # action is refused by the layer itself — the page is opened
+            # for the user and they tap it themselves, never run here.
+            if act.get("destination") and act.get("say"):
+                return await _navigate_only(
+                    db, uid, act["destination"], act["say"])
+            return (
+                "Not done: that action is on the exclusions config — it "
+                "is the user's own to do. Tell them plainly and offer to "
+                "open the page where they can do it."
+            )
         if act["handler"] == "navigate_only":
             return await _navigate_only(db, uid, act["destination"], act["say"])
         quote_now = last_user_quote(turns)
