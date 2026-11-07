@@ -494,7 +494,7 @@ class _SignInScreenState extends State<SignInScreen> {
               // the native escape hatch.
               keyboardDismissBehavior:
                   ScrollViewKeyboardDismissBehavior.onDrag,
-              padding: const EdgeInsets.fromLTRB(28, 40, 28, 32),
+              padding: const EdgeInsets.fromLTRB(20, 40, 20, 32),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
                 child: Column(
@@ -527,7 +527,7 @@ class _SignInScreenState extends State<SignInScreen> {
                             ),
                           ),
                           child: Padding(
-                            padding: const EdgeInsets.all(30),
+                            padding: const EdgeInsets.all(32),
                             child: AymaOrb(
                               size: 76,
                               active: _voice.isActive,
@@ -560,7 +560,7 @@ class _SignInScreenState extends State<SignInScreen> {
                     // so a user who doesn't want to be spoken to can silence
                     // her. Tapping it (or the orb) stops the voice session.
                     if (_voice.isActive) ...[
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: () => _voice.stop(),
@@ -580,13 +580,13 @@ class _SignInScreenState extends State<SignInScreen> {
                         color: ac.fgMute,
                       ).copyWith(letterSpacing: 6),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     Text(
                       'Your AI matchmaker',
                       textAlign: TextAlign.center,
                       style: AymaType.serif(size: 26, color: ac.fg),
                     ),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
                     _ConsentBoxes(
                       termsAccepted: _termsAccepted,
                       biometricAccepted: _biometricAccepted,
@@ -597,7 +597,7 @@ class _SignInScreenState extends State<SignInScreen> {
                     if (_stage == _Stage.pick) ..._pick(ac),
                     if (_stage == _Stage.email) ..._emailForm(ac),
                     if (_stage == _Stage.phone) ..._phoneForm(ac),
-                    const SizedBox(height: 22),
+                    const SizedBox(height: 24),
                     if (_busy)
                       Center(
                         child: AymaWingLoader(size: 56, lines: _busyLines),
@@ -671,7 +671,7 @@ class _SignInScreenState extends State<SignInScreen> {
       autocorrect: false,
       decoration: const InputDecoration(labelText: 'Email'),
     ),
-    const SizedBox(height: 10),
+    const SizedBox(height: 12),
     TextField(
       controller: _password,
       obscureText: _obscurePassword,
@@ -688,7 +688,7 @@ class _SignInScreenState extends State<SignInScreen> {
       ),
     ),
     if (_createMode) ...[
-      const SizedBox(height: 10),
+      const SizedBox(height: 12),
       TextField(
         controller: _confirmPassword,
         focusNode: _confirmFocus,
@@ -713,7 +713,7 @@ class _SignInScreenState extends State<SignInScreen> {
           style: AymaType.sans(size: 12.5, color: ac.fgMute),
         ),
       ],
-      const SizedBox(height: 10),
+      const SizedBox(height: 12),
       // Unobtrusive and optional — only in sign-up mode. A friend's invite
       // link (…/r/CODE) shows this same code; pasting the whole link works
       // too (the server normalises it).
@@ -752,7 +752,7 @@ class _SignInScreenState extends State<SignInScreen> {
       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
       child: Text(_createMode ? 'Create account' : 'Sign in'),
     ),
-    const SizedBox(height: 6),
+    const SizedBox(height: 8),
     // The explicit mode switch — one clear line, whole thing tappable.
     TextButton(
       onPressed: () => setState(() {
@@ -852,7 +852,7 @@ class _CompactBtn extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 20),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(label, style: AymaType.sans(size: 12.5, color: ac.fg)),
         ],
       ),

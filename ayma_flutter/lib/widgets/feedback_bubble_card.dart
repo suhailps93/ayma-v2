@@ -210,10 +210,10 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
     if (_sent) {
       return Container(
         key: const ValueKey('feedback-bubble-sent'),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: ac.bgElev,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(color: ac.lineSoft, width: 0.5),
         ),
         child: Row(
@@ -231,10 +231,10 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
       );
     }
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: ac.bgElev,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: Column(
@@ -243,7 +243,7 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
           Row(
             children: [
               Icon(Icons.feedback_outlined, size: 16, color: ac.accent),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               Text(
                 'Feedback',
                 style: AymaType.sans(size: 12, color: ac.accent)
@@ -256,7 +256,7 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
             _prompt,
             style: AymaType.sans(size: 14, color: ac.fg, height: 1.35),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           SegmentedButton<String>(
             segments: const [
               ButtonSegment(value: 'feature', label: Text('Feature')),
@@ -266,7 +266,7 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
             onSelectionChanged:
                 _sending ? null : (s) => setState(() => _kind = s.first),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           TextField(
             key: const ValueKey('feedback-bubble-field'),
             controller: _body,
@@ -279,11 +279,11 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
             ),
           ),
           if (_shotFile != null) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Row(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   child: Image.file(_shotFile!,
                       key: const ValueKey('feedback-bubble-shot'),
                       width: 56,
@@ -312,14 +312,14 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
               ],
             ),
           ] else if (widget.screenshotFailed) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Text(
               key: const ValueKey('feedback-bubble-shot-failed'),
               "Screenshot couldn't be captured — you can still submit.",
               style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
             ),
           ],
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,

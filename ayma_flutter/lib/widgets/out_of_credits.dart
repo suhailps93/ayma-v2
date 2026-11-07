@@ -119,7 +119,7 @@ class _OutOfCreditsSheet extends StatelessWidget {
     return SafeArea(
       // Scrolls in a short window or at large text instead of overflowing.
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 4, 24, 20),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -171,7 +171,7 @@ class _OutOfCreditsSheet extends StatelessWidget {
                       width: double.infinity,
                       child: FilledButton(
                         style: FilledButton.styleFrom(
-                          minimumSize: const Size(0, 48),
+                          minimumSize: const Size(0, 52),
                         ),
                         onPressed: onUpgrade,
                         child: Text(
@@ -183,7 +183,7 @@ class _OutOfCreditsSheet extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               child: TextButton(
@@ -213,10 +213,10 @@ class OutOfCreditsBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: ac.bgElev,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: Row(
@@ -233,7 +233,7 @@ class OutOfCreditsBanner extends StatelessWidget {
           FilledButton.tonal(
             style: FilledButton.styleFrom(
               minimumSize: const Size(0, 44),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               textStyle: AymaType.sans(size: 13, weight: FontWeight.w600),
             ),
             onPressed: onReload ?? () => showOutOfCreditsSheet(context),

@@ -460,14 +460,14 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
       child: SafeArea(
         child: Center(
           child: Padding(
-            padding: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.only(bottom: 8),
             child: TextButton(
               key: const ValueKey('coach-skip'),
               onPressed: _finishing ? null : widget.onStopPressed,
               style: TextButton.styleFrom(
                 foregroundColor: ac.fgMute,
                 textStyle: AymaType.sans(size: 12, weight: FontWeight.w500),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               ),
               child: const Text('Skip tour'),
             ),
@@ -629,7 +629,7 @@ class _CalloutCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       decoration: BoxDecoration(
         color: ac.bgCard,
         borderRadius: BorderRadius.circular(22),
@@ -641,12 +641,12 @@ class _CalloutCard extends StatelessWidget {
         children: [
           if (spotlight)
             Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: 12),
               child: Text('NEW', style: AymaType.mono(size: 11, color: ac.accent)),
             )
           else
             Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: 12),
               child: Text(
                 '${index + 1} of $total',
                 style: AymaType.mono(size: 11, color: ac.fgMute),
@@ -666,7 +666,7 @@ class _CalloutCard extends StatelessWidget {
                   ),
                   child: Icon(feature.icon, size: 22, color: ac.accent),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 16),
               ],
               Expanded(
                 child: Text(
@@ -676,12 +676,12 @@ class _CalloutCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Text(
             feature.subtitle,
             style: AymaType.sans(size: 15, height: 1.4, color: ac.fgDim),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           Row(
             children: [
               Flexible(
@@ -713,7 +713,7 @@ class _CalloutCard extends StatelessWidget {
                         backgroundColor: ac.accent,
                         foregroundColor: ac.onAccent,
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 22, vertical: 12),
+                            horizontal: 24, vertical: 12),
                         shape: const StadiumBorder(),
                         textStyle: AymaType.sans(size: 15, weight: FontWeight.w600),
                       ),
