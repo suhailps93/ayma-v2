@@ -117,14 +117,22 @@ Future<void> showAskAymaOverlay(
 /// through the exact same tap-handling as the real bar — including its
 /// "already open" branch (see [isAymaSheetOpen]).
 ///
-/// The header's expand button (or a drag up) grows this same sheet to
-/// full screen in place ([aymaSheet]); see [showAymaChatModal] for the
-/// transition and why nothing is re-mounted. A second orb tap does NOT
-/// grow it — it closes the sheet and navigates to the real main chat
-/// screen instead (see [orbTapOnOpenSheet]).
+/// This sheet NEVER grows to full screen in place (founder order,
+/// 2026-11-07). Its expanded state was a second full-screen history
+/// view whose message list mounted at the oldest turn — the previous
+/// night's conversation under the "Your conversation" divider — while
+/// the real main chat showed the live conversation, so the grown sheet
+/// read as a stale duplicate page. That destination is deleted:
+/// [showAymaChatModal] is told not to allow the full-screen size at
+/// all, and the header's expand button instead runs [onGoToMainChat],
+/// closing the sheet and navigating to the real main chat screen —
+/// exactly like a second orb tap (see [orbTapOnOpenSheet]). On the
+/// main chat, the current conversation is already there, resting at
+/// its live tail.
 Future<void> showPageContextAymaPopup(
   BuildContext context, {
   required WidgetBuilder navBarBuilder,
+  VoidCallback? onGoToMainChat,
 }) async {
   // Fresh capture of the page under the popup (its route, text, controls).
   ScreenCapture.instance.refreshNow();
@@ -144,10 +152,12 @@ Future<void> showPageContextAymaPopup(
     persistentBottomBar: navBarBuilder,
     persistentBottomBarHeight: AymaTabBar.heightFor,
     controller: aymaSheet,
+    allowExpand: false,
     builder: (_) => ChatScreen(
       transcriptStore: AymaSession.instance.store,
       voiceController: AymaSession.instance.voice,
       pageContext: prior,
+      onGoToMainChat: onGoToMainChat,
     ),
   );
   pendingAymaSheet = future;
@@ -213,8 +223,9 @@ Future<void>? pendingAymaSheet;
 ///   navigated to behind it). Callers without a main-chat destination
 ///   (tests, synthetic hosts) omit it and keep the old expand behaviour.
 /// * expanded PLAIN sheet -> [onVoice]: the tap progression's third rung.
-///   Full screen here is only reachable now via the header expand button
-///   or a drag — those entry points are unchanged.
+///   Unreachable from the real page-context popup since 2026-11-07 (the
+///   popup can no longer expand — see [showPageContextAymaPopup]); only
+///   a synthetic host that still lets its sheet grow can land here.
 /// * a scoped correction turn ([isAymaSheetScoped]) never takes the voice
 ///   rung and never navigates away, at any size: it grows to full screen
 ///   in place instead. The voice agent doesn't bind its correction tools,

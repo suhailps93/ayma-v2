@@ -72,6 +72,19 @@ import '../theme.dart';
 /// underneath it) expand or collapse it; content inside reaches the same
 /// controller through [AymaChatSheetController.maybeOf].
 ///
+/// [allowExpand] gates the full-screen size entirely: with it false the
+/// snap sizes stop at the docked size, so no drag, handle pull or
+/// [AymaChatSheetController.expand] call can grow the sheet past docked
+/// and the hosted content's expanded presentation is unreachable. The
+/// nav-bar orb's page-context popup passes false (founder order,
+/// 2026-11-07): its grown state was a full-screen history view that
+/// mounted its message list at the oldest turn — last night's
+/// conversation — while the real main chat showed the live one, so it
+/// read as a stale duplicate page; that destination is deleted, and the
+/// popup's expand affordance goes to the real main chat instead.
+/// Scoped Ask-Ayma correction sheets keep the default: their full
+/// screen is the correction conversation itself, not a duplicate.
+///
 /// `useSafeArea` is off so the expanded sheet can reach the very top of the
 /// screen; the caller's status-bar inset is captured here instead and given
 /// back to the content only as far as the sheet actually grows into it.
@@ -81,6 +94,7 @@ Future<void> showAymaChatModal(
   WidgetBuilder? persistentBottomBar,
   double Function(BuildContext context)? persistentBottomBarHeight,
   AymaChatSheetController? controller,
+  bool allowExpand = true,
 }) {
   final topInset = MediaQuery.paddingOf(context).top;
   return showModalBottomSheet<void>(
@@ -95,6 +109,7 @@ Future<void> showAymaChatModal(
       persistentBottomBarHeight: persistentBottomBarHeight,
       controller: controller,
       topInset: topInset,
+      allowExpand: allowExpand,
     ),
   );
 }
@@ -151,6 +166,7 @@ class _AymaChatModalSheet extends StatefulWidget {
     this.persistentBottomBar,
     this.persistentBottomBarHeight,
     this.controller,
+    this.allowExpand = true,
   });
 
   final WidgetBuilder builder;
@@ -158,10 +174,12 @@ class _AymaChatModalSheet extends StatefulWidget {
   final double Function(BuildContext context)? persistentBottomBarHeight;
   final AymaChatSheetController? controller;
   final double topInset;
+  final bool allowExpand;
 
+  static const minSize = 0.42;
   static const dockedSize = 0.62;
   static const fullSize = 1.0;
-  static const _sizes = [0.42, dockedSize, fullSize];
+  static const _sizes = [minSize, dockedSize, fullSize];
 
   /// [AymaChatSheetController.isExpanded] flips here, halfway between the
   /// docked and full sizes.
@@ -178,6 +196,14 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet>
   final _sheetController = DraggableScrollableController();
   late final AymaChatSheetController _controller =
       widget.controller ?? AymaChatSheetController();
+
+  /// The sizes this sheet may settle at — without [widget.allowExpand]
+  /// the full-screen size is not among them, so no gesture or
+  /// [AymaChatSheetController.expand] call can grow the sheet past
+  /// docked.
+  List<double> get _snapSizes => widget.allowExpand
+      ? _AymaChatModalSheet._sizes
+      : const [_AymaChatModalSheet.minSize, _AymaChatModalSheet.dockedSize];
 
   /// The sheet's live size (fraction of [_available]), fed by the sheet's
   /// own `DraggableScrollableNotification`s so only the chrome that depends
@@ -227,6 +253,9 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet>
 
   void _settleTo(double size) {
     if (!_sheetController.isAttached) return;
+    // A sheet that may not expand settles at its largest allowed size
+    // instead — expand() on it is a no-op, never an error.
+    size = size.clamp(_snapSizes.first, _snapSizes.last);
     if (MediaQuery.disableAnimationsOf(context)) {
       _sheetController.jumpTo(size);
       _fade.forward(from: 0);
@@ -277,7 +306,7 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet>
       final wasBridging = _bridging;
       _bridging = false;
       if (wasBridging && _sheetController.isAttached) {
-        final nearest = _AymaChatModalSheet._sizes.reduce(
+        final nearest = _snapSizes.reduce(
           (a, b) =>
               (a - _sheetController.size).abs() <=
                   (b - _sheetController.size).abs()
@@ -321,7 +350,7 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet>
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final sizes = _AymaChatModalSheet._sizes;
+    final sizes = _snapSizes;
     // `showModalBottomSheet` never insets its content for the keyboard on its
     // own (there's no `viewInsets` handling anywhere in the framework's
     // `_ModalBottomSheetRoute` — confirmed against the SDK source) — every

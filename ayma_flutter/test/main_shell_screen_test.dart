@@ -216,7 +216,7 @@ void main() {
   );
 
   testWidgets(
-    'with the popup expanded, tapping another tab in its bar closes it '
+    'with the popup open, tapping another tab in its bar closes it '
     'and switches to that tab',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
@@ -238,24 +238,20 @@ void main() {
         findsOneWidget,
       );
 
-      // Expand first: in the popup bar copy the current tab (Explore) is
-      // the selected one and a tap on a selected tab is inert by design;
-      // once expanded the bar highlights the orb instead, so Explore is
-      // tappable — the arrangement the original combined test used.
-      await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
-      await tester.pumpAndSettle();
-      expect(aymaSheet.isExpanded, isTrue);
-
+      // Profile is not the current tab, so its tap in the popup bar
+      // copy fires: the sheet closes first, then the tab switches.
+      // (Messages would do as well, but its screen needs a live
+      // Firebase app to build; Profile's does not.)
       final popupBar = find.byKey(const ValueKey('aymaChatModalNavBar'));
       await tester.tap(
-        find.descendant(of: popupBar, matching: find.byTooltip('Explore')),
+        find.descendant(of: popupBar, matching: find.byTooltip('Profile')),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
       expect(isAymaSheetOpen, isFalse);
       expect(
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
-        1,
+        3,
       );
     },
   );
