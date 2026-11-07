@@ -63,13 +63,13 @@ form of the tools above) are: `navigate`, `search_explore`,
 tool descriptions are generated from `app_registry.json`, so the registry
 — and now this graph — are what she knows.
 
-## Exclusions (config-driven, founder 2026-11-06)
+## Exclusions (config-driven, founder 2026-11-06, final form)
 
 Ayma must **NEVER** activate these, no matter how she is asked.
-Enforcement is belt and suspenders (founder strengthening, later on
-2026-11-06 — this supersedes the earlier same-day config-only
-correction): maintained config + the command layer, AND an explicit
-prohibition in her base system prompt:
+Enforcement lives in a maintained CONFIG + the command layer that
+enforces it — never in her system prompt, which must not enumerate
+the forbidden buttons (founder ruling, final form 2026-11-06,
+superseding a brief same-day belt-and-suspenders prompt version):
 
 * Config: `exclusions` in `functions/bootstrap/app_registry.json`
   (keys: `delete_account`, `purchase`, `clear_memory`), mirrored by the
@@ -77,18 +77,19 @@ prohibition in her base system prompt:
   `kUiDenyRules` / `kUiDenyRoutes` in
   `ayma_flutter/lib/services/screen_capture.dart` (a test fails when the
   two drift).
-* Command layer: `ui_action` refuses on both sides (backend
-  `app_registry.ui_denial` and client `uiDenial`); `account_action` treats
-  all three as navigate-only — it opens the page and hands the user the
-  exact button to tap themselves.
-* System prompt: the delimited "user-only actions" block in
-  `functions/bootstrap/persona.md` — the base prompt both chat and
-  voice load (`prompt.load_persona`, unmarked so it lands in both
-  variants) — states plainly that she must never perform or attempt
-  the three, and that if asked she declines and explains the user does
-  it themselves in Settings. Reserved for founder-ruled exclusions;
-  config-only stays the default for anything new (see keep-alive
-  rule 4).
+* Command layer: the config is load-bearing. Each item names the
+  surfaces it blocks (`account_actions`, `deny_keys`); `account_action`
+  checks `excluded_account_action_keys()` BEFORE dispatch and refuses
+  a listed action however its handler field reads (opening the page
+  and handing the user the exact button instead); `ui_action` refuses
+  via the deny rules on both sides (backend `app_registry.ui_denial`
+  and client `uiDenial`); purchase asks land on the navigate-only
+  unavailable entry. A refusal always declines WITH an explanation
+  (the entry's say line), never a silent failure.
+* System prompt: `persona.md` ("Driving the app") carries only a
+  generic line — Ayma acts only within her permitted action set, and
+  a refused action is handed to the user with the page opened. The
+  forbidden buttons are never named there.
 
 | Excluded control | Where it lives | Ayma may |
 |---|---|---|
@@ -511,11 +512,11 @@ each as `non_navigable` with its reason.
    command in the surface is named in this doc, so drift fails CI on
    both sides.
 4. **A new exclusion** is added to `exclusions` in
-   `functions/bootstrap/app_registry.json`, to `ui_action_policy.deny`
+   `functions/bootstrap/app_registry.json` (with its `account_actions`
+   / `deny_keys` enforcement refs), to `ui_action_policy.deny`
    (same file), and to `kUiDenyRules` in `screen_capture.dart` — never
-   as a one-off check in a single tool. The persona.md "user-only
-   actions" block is extended only when the founder rules the new
-   exclusion belongs in the prompt layer too.
+   to the system prompt, and never as a one-off check in a single
+   tool.
 5. Reviewers: a PR touching `ayma_flutter/lib/screens/` or
    `lib/widgets/` without touching this doc should be asked for the
    graph entry — the same discipline as the registry rule in (1).
