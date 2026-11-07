@@ -261,14 +261,16 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                 // same state rule ([VoiceSessionController.videoOn] /
                 // `screenShareOn` / `toggleVideo()` / `toggleScreenShare()`,
                 // publishing the camera/screen track into the same LiveKit
-                // room). Visibility follows the stack's catalog-driven
-                // declaration (founder rule, feedback item 13): while the
-                // call is live and the stack declared it CAN perceive video
-                // (`visionSupported`) the toggles are enabled; when it
-                // declared it CANNOT (`visionUnsupported`) they stay
-                // VISIBLE but disabled, with the plain reason spelled out
-                // under the row; before any declaration (and on practice
-                // calls, which never declare) the row stays mute-only.
+                // room). Visibility follows the founder rule (feedback
+                // item 13): on every live main call the toggles render —
+                // enabled when the serving stack can perceive video
+                // (`visionSupported`: the agent's declaration, or the
+                // client's catalog expectation while no declaration has
+                // arrived), VISIBLE but disabled with the plain reason
+                // spelled out under the row whenever it cannot. They are
+                // never silently absent (the staging-2327 defect: a stale
+                // hosted worker sent no declaration and the row never
+                // rendered at all).
                 Positioned(
                   left: 0,
                   right: 0,
@@ -283,15 +285,13 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         key: const Key('voiceCallControlsRow'),
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (phase == VoiceSessionPhase.live &&
-                              (voice.visionSupported ||
-                                  voice.visionUnsupported)) ...[
+                          if (voice.showVisionControls) ...[
                             _MediaToggleButton(
                               buttonKey: const Key('voiceCallVideoButton'),
                               active: voice.videoOn,
                               icon: Icons.videocam_rounded,
                               offIcon: Icons.videocam_off_rounded,
-                              tooltip: voice.visionUnsupported
+                              tooltip: !voice.visionSupported
                                   ? 'Video needs a realtime model'
                                   : (voice.videoOn
                                         ? 'Turn camera off'
@@ -306,9 +306,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                             muted: voice.muted,
                             onTap: voice.toggleMute,
                           ),
-                          if (phase == VoiceSessionPhase.live &&
-                              (voice.visionSupported ||
-                                  voice.visionUnsupported)) ...[
+                          if (voice.showVisionControls) ...[
                             const SizedBox(width: 20),
                             _MediaToggleButton(
                               buttonKey: const Key(
@@ -317,7 +315,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                               active: voice.screenShareOn,
                               icon: Icons.screen_share_rounded,
                               offIcon: Icons.stop_screen_share_rounded,
-                              tooltip: voice.visionUnsupported
+                              tooltip: !voice.visionSupported
                                   ? 'Screen share needs a realtime model'
                                   : (voice.screenShareOn
                                         ? 'Stop sharing screen'
@@ -329,8 +327,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                           ],
                         ],
                       ),
-                      if (phase == VoiceSessionPhase.live &&
-                          voice.visionUnsupported)
+                      if (voice.showVisionControls && !voice.visionSupported)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(32, 12, 32, 0),
                           child: Text(

@@ -5540,6 +5540,7 @@ class RealtimeModel {
     this.available = true,
     this.requiresSecret = '',
     this.supportsAccent = false,
+    this.supportsVideo = false,
     this.voices = const [],
     this.languages = const [],
   });
@@ -5551,6 +5552,11 @@ class RealtimeModel {
 
   /// Whether this model honours a free-text accent (§13.9).
   final bool supportsAccent;
+
+  /// Whether this model can perceive video input (feedback item 13) —
+  /// the catalog flag that gates the voice-call screen's Video / Screen
+  /// share toggles (`voice_catalog.provider_supports_video` server-side).
+  final bool supportsVideo;
   final List<CatalogVoice> voices;
   final List<CatalogLanguage> languages;
 
@@ -5561,6 +5567,7 @@ class RealtimeModel {
         available: m['available'] as bool? ?? true,
         requiresSecret: m['requires_secret'] as String? ?? '',
         supportsAccent: m['supports_accent'] as bool? ?? false,
+        supportsVideo: m['supports_video'] as bool? ?? false,
         voices: ((m['voices'] as List?) ?? const [])
             .map((e) => CatalogVoice.fromMap(e as Map))
             .toList(),
@@ -5727,6 +5734,20 @@ class VoiceCatalog {
       if (r.id == id) return r;
     }
     return null;
+  }
+
+  /// Whether the CURRENT selection can perceive video (feedback item
+  /// 13): a cascade selection never can — the agent pipeline drops
+  /// frames in this SDK whatever brain/STT/TTS is picked — a realtime
+  /// selection defers to the selected model's own catalog flag, and an
+  /// unknown model yields null (undecided; the agent's live declaration
+  /// settles it). Read by the voice session at call start so the Video /
+  /// Screen share toggles render in their expected state even before —
+  /// or entirely without — the agent's one-shot declaration.
+  bool? get currentSupportsVideo {
+    if (current.mode == 'cascade') return false;
+    if (current.mode != 'realtime') return null;
+    return realtimeById(current.realtimeModelId)?.supportsVideo;
   }
 
   VoiceComponent? ttsById(String id) {

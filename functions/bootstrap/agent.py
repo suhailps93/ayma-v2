@@ -994,7 +994,7 @@ def vision_frame_is_black(rgb: bytes) -> bool:
     return (sum(rgb) / len(rgb)) <= VISION_BLACK_LUMINANCE_MAX
 
 
-def watch_vision_tracks(ctx: JobContext) -> None:
+def watch_vision_tracks(ctx: JobContext, *, vision_supported: bool) -> None:
     """Sample the user's published video tracks during a main Ayma call and
     report FLAG_SECURE black frames to the client (feedback item 13).
 
@@ -1006,6 +1006,13 @@ def watch_vision_tracks(ctx: JobContext) -> None:
     to say she cannot see protected content rather than guess); the first
     real frame after that flips it back to `frames_flowing`. Nothing is
     recorded or persisted — frames are inspected in memory and dropped.
+
+    The watcher also answers the client's `vision_query` on the vision-
+    control topic by re-publishing this session's capability declaration
+    ([vision_supported] — the same verdict the starter published at
+    session start): the one-shot publish can race the client's listener
+    registration, and a missed declaration must not leave the toggles in
+    their fallback state for the whole call.
     """
     from livekit import rtc
 
@@ -1069,6 +1076,16 @@ def watch_vision_tracks(ctx: JobContext) -> None:
         except Exception:  # noqa: BLE001 - a malformed control is dropped
             return
         if not isinstance(payload, dict):
+            return
+        if payload.get("type") == "vision_query":
+            asyncio.create_task(
+                _publish_voice_status(
+                    ctx,
+                    VOICE_STATUS_VISION_SUPPORTED
+                    if vision_supported
+                    else VOICE_STATUS_VISION_UNSUPPORTED,
+                )
+            )
             return
         logger.info(
             "vision_control: source=%s active=%s",
@@ -3508,7 +3525,7 @@ async def _start_main_gemini_session(
         if _vision_ok
         else VOICE_STATUS_VISION_UNSUPPORTED,
     )
-    watch_vision_tracks(ctx)
+    watch_vision_tracks(ctx, vision_supported=_vision_ok)
     session_live_ts = time.monotonic()
     logger.info("voice session LIVE: ts=%.3f uid=%s session=%s", 
                 session_live_ts, seed.uid, seed.session_id or "?")
@@ -3761,7 +3778,7 @@ async def _start_main_cascade_session(
         if _vision_ok
         else VOICE_STATUS_VISION_UNSUPPORTED,
     )
-    watch_vision_tracks(ctx)
+    watch_vision_tracks(ctx, vision_supported=_vision_ok)
 
     # Start idle timer NOW that session is truly live (cascade path, same fix)
     if watchdog:
