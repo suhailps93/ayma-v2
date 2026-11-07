@@ -13,9 +13,10 @@ class TermsScreen extends StatelessWidget {
 
   /// Canonical hosted Terms of Service — the single source of truth, also used
   /// by the App Store / Play listing. Served from `docs/TERMS.md` →
-  /// `public/terms.html` on Firebase Hosting (project `ayma-ai`);
-  /// `firebase.json` rewrites `/terms` → `/terms.html`.
-  static const url = 'https://ayma-ai.web.app/terms';
+  /// `public/terms.html` on Firebase Hosting (project `ayma-ai`).
+  /// Link directly to `/terms.html`: the bare `/terms` path 404s on the
+  /// live Firebase Hosting deploy (verified 2026-11-07 by page content).
+  static const url = 'https://ayma-ai.web.app/terms.html';
 
   @override
   Widget build(BuildContext context) =>

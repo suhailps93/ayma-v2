@@ -23,7 +23,7 @@ void main() {
   });
 
   test('points at the canonical hosted Terms URL', () {
-    expect(TermsScreen.url, 'https://ayma-ai.web.app/terms');
+    expect(TermsScreen.url, 'https://ayma-ai.web.app/terms.html');
   });
 
   test('key points state the risky clauses plainly and in bold', () {
