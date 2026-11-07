@@ -49,8 +49,10 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(
-        find.byKey(const Key('ayma_settings_default_assistant')));
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('ayma_settings_default_assistant')),
+      200,
+    );
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('ayma_settings_assistant')), findsOneWidget);
@@ -85,8 +87,10 @@ void main() {
         MaterialApp.router(theme: AymaTheme.light, routerConfig: router));
     await tester.pumpAndSettle();
 
-    await tester
-        .ensureVisible(find.byKey(const Key('ayma_settings_assistant')));
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('ayma_settings_assistant')),
+      200,
+    );
     await tester.pumpAndSettle();
     expect(find.textContaining('Ayma is your default assistant'),
         findsOneWidget);
