@@ -873,6 +873,16 @@ class Config:
     ``livekit.agents.inference.VAD`` — runs locally in the worker, no extra
     credential. Override with ``META_CASCADE_VAD_MODEL``."""
 
+    voice_isolation: str
+    """Agent-side voice isolation for voice sessions (``VOICE_ISOLATION``):
+    ``krisp`` (Krisp VIVA, the default), ``aicoustics`` (ai-coustics
+    QUAIL_VF_S), or ``off``. The filter runs in the agent on the user's
+    inbound audio before VAD/STT/turn detection, metered through LiveKit
+    Cloud — covered by the Scale plan's included voice-isolation minutes
+    (verified 2026-11-06). Founder rule (2026-11-06): on by default wherever
+    the stack supports it and the plan covers it; it never restricts which
+    model the user can pick."""
+
     async_voice_tts_model: str
     """TTS model for async voice-message replies (``async_voice.py``), in
     LiveKit Inference ``provider/model`` form — the same gateway the live
@@ -1116,6 +1126,7 @@ def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
 
 _LLM_ROUTES = ("vertex", "inference")
 _VOICE_PROVIDERS = ("google", "inference")
+_VOICE_ISOLATION_PROVIDERS = ("off", "krisp", "aicoustics")
 
 
 def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
@@ -1330,6 +1341,9 @@ def _load() -> Config:
             "META_CASCADE_TTS_VOICE_MALE", "bf322df2096a46f18c579d0baa36f41d"
         ),
         meta_cascade_vad_model=os.getenv("META_CASCADE_VAD_MODEL", "silero"),
+        voice_isolation=_choice(
+            "VOICE_ISOLATION", "krisp", _VOICE_ISOLATION_PROVIDERS
+        ),
         async_voice_tts_model=os.getenv(
             "ASYNC_VOICE_TTS_MODEL", "fishaudio/s2.1-pro"
         ),
