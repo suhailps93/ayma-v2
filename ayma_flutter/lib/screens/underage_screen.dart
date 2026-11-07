@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/age_gate.dart';
+import '../services/legal_links.dart';
 import '../theme.dart';
 import 'sign_in_screen.dart';
-import 'terms_screen.dart';
 
 /// Hard stop for anyone under 18 (Ayma is strictly 18+). Shown when a
 /// birthdate under 18 is entered, or when the server reports the account is
@@ -47,7 +47,7 @@ class UnderageScreen extends StatelessWidget {
                   const SizedBox(height: 28),
                   OutlinedButton(
                     key: const Key('underage_terms'),
-                    onPressed: () => context.push(TermsScreen.path),
+                    onPressed: () => LegalLinks.openTerms(context),
                     child: const Text('Read the Terms'),
                   ),
                   const SizedBox(height: 8),

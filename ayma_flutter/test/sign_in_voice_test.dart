@@ -1,8 +1,7 @@
 import 'package:ayma_flutter/screens/biometric_info_screen.dart';
-import 'package:ayma_flutter/screens/privacy_screen.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
-import 'package:ayma_flutter/screens/terms_screen.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
+import 'package:ayma_flutter/services/legal_links.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -42,11 +41,9 @@ Future<_FakeVoice> _pumpSignIn(WidgetTester tester) async {
           voiceController: voice,
         ),
       ),
-      GoRoute(
-          path: TermsScreen.path, builder: (_, __) => const TermsScreen()),
-      GoRoute(
-          path: PrivacyScreen.path,
-          builder: (_, __) => const PrivacyScreen()),
+      // No Terms / Privacy routes on purpose: a voice ask for either must
+      // open the hosted page directly in the browser (recorded in
+      // [_launched]), never navigate to a screen.
       GoRoute(
           path: BiometricInfoScreen.path,
           builder: (_, __) => const BiometricInfoScreen()),
@@ -58,23 +55,36 @@ Future<_FakeVoice> _pumpSignIn(WidgetTester tester) async {
   return voice;
 }
 
-void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+/// Every legal page the sign-in voice flow tried to open in the browser.
+final _launched = <Uri>[];
 
-  testWidgets('"open the terms" navigates to the Terms screen',
-      (tester) async {
+void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    _launched.clear();
+    LegalLinks.setLauncherForTesting((url) async {
+      _launched.add(url);
+      return true;
+    });
+  });
+  tearDown(() => LegalLinks.setLauncherForTesting(null));
+
+  testWidgets('"open the terms" opens the hosted Terms in the browser, '
+      'with no navigation', (tester) async {
     final voice = await _pumpSignIn(tester);
     voice.userSaid('open the terms and conditions');
     await tester.pumpAndSettle();
-    expect(find.byType(TermsScreen), findsOneWidget);
+    expect(_launched, [Uri.parse(LegalLinks.termsUrl)]);
+    expect(find.byType(SignInScreen), findsOneWidget);
   });
 
-  testWidgets('"open the privacy policy" navigates to the Privacy screen',
-      (tester) async {
+  testWidgets('"open the privacy policy" opens the hosted policy in the '
+      'browser, with no navigation', (tester) async {
     final voice = await _pumpSignIn(tester);
     voice.userSaid('can you open the privacy policy');
     await tester.pumpAndSettle();
-    expect(find.byType(PrivacyScreen), findsOneWidget);
+    expect(_launched, [Uri.parse(LegalLinks.privacyUrl)]);
+    expect(find.byType(SignInScreen), findsOneWidget);
   });
 
   testWidgets('"open biometric information" navigates to the Biometric screen',
@@ -110,8 +120,7 @@ void main() {
     voice.userSaid('hey, sounds great, thanks');
     await tester.pumpAndSettle();
 
-    expect(find.byType(TermsScreen), findsNothing);
-    expect(find.byType(PrivacyScreen), findsNothing);
+    expect(_launched, isEmpty);
     expect(find.byType(BiometricInfoScreen), findsNothing);
     expect(find.text('Before you sign in'), findsNothing);
     expect(find.byType(SignInScreen), findsOneWidget);
@@ -122,7 +131,7 @@ void main() {
     voice.transcript
         .applyVoiceSegment(TurnRole.user, 'open the terms', isFinal: false);
     await tester.pumpAndSettle();
-    expect(find.byType(TermsScreen), findsNothing);
+    expect(_launched, isEmpty);
     expect(find.byType(SignInScreen), findsOneWidget);
   });
 }

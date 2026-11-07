@@ -1,27 +1,29 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/legal_link_view.dart';
+import '../services/legal_links.dart';
+import '../widgets/legal_redirect.dart';
 
-/// Privacy Policy viewer. Opens the canonical hosted policy — the single
-/// source of truth shared with the App Store / Play listing — in the device
-/// browser; the app no longer bundles or renders the policy body. Linked from
-/// the sign-in screen and the Profile tab, alongside the Terms. Route:
-/// `/privacy`.
+/// Legacy `/privacy` route — no longer a screen.
 ///
-/// The in-app biometric (BIPA) consent text is separate and stays in-app (see
-/// `biometric_info_screen.dart`); this screen is only the full-policy viewer.
+/// Tapping Privacy Policy anywhere in the app opens the canonical hosted
+/// policy directly in the browser from the screen the user is already on
+/// (see [LegalLinks.openPrivacy]); nothing navigates here. The route
+/// stays registered for paths that arrive from outside a tap (Ayma
+/// opening the page through the app registry, a queued deep link), and
+/// arriving here opens the browser and goes straight back — see
+/// [LegalRedirect]. There is no Privacy Policy page in the app any more.
+///
+/// The in-app biometric (BIPA) consent text is separate and stays in-app
+/// (see `biometric_info_screen.dart`).
 class PrivacyScreen extends StatelessWidget {
   const PrivacyScreen({super.key});
 
   static const path = '/privacy';
 
-  /// Canonical hosted Privacy Policy — the single source of truth, also used
-  /// by the App Store / Play listing. Served from `docs/PRIVACY.md` →
-  /// `public/privacy.html` on Firebase Hosting (project `ayma-ai`);
-  /// `firebase.json` rewrites `/privacy-policy` → `/privacy.html`.
-  static const url = 'https://ayma-ai.web.app/privacy-policy';
+  /// Canonical hosted Privacy Policy — see [LegalLinks.privacyUrl].
+  static const url = LegalLinks.privacyUrl;
 
   @override
   Widget build(BuildContext context) =>
-      const LegalLinkView(title: 'Privacy Policy', url: url);
+      const LegalRedirect(title: LegalLinks.privacyTitle, url: url);
 }

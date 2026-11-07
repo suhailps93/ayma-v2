@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/legal_link_view.dart';
+import '../services/legal_links.dart';
+import '../widgets/legal_redirect.dart';
 
-/// Terms of Service viewer. Opens the canonical hosted Terms — the single
-/// source of truth shared with the App Store / Play listing — in the device
-/// browser; the app no longer bundles or renders the Terms body. Linked from
-/// the sign-in screen and the Profile tab. Route: `/terms`.
+/// Legacy `/terms` route — no longer a screen.
+///
+/// Tapping Terms of Service anywhere in the app opens the canonical
+/// hosted Terms directly in the browser from the screen the user is
+/// already on (see [LegalLinks.openTerms]); nothing navigates here.
+/// The route stays registered for paths that arrive from outside a tap
+/// (Ayma opening the page through the app registry, a queued deep link),
+/// and arriving here opens the browser and goes straight back — see
+/// [LegalRedirect]. There is no Terms page in the app any more.
 class TermsScreen extends StatelessWidget {
   const TermsScreen({super.key});
 
   static const path = '/terms';
 
-  /// Canonical hosted Terms of Service — the single source of truth, also used
-  /// by the App Store / Play listing. Served from `docs/TERMS.md` →
-  /// `public/terms.html` on Firebase Hosting (project `ayma-ai`).
-  /// Link directly to `/terms.html`: the bare `/terms` path 404s on the
-  /// live Firebase Hosting deploy (verified 2026-11-07 by page content).
-  static const url = 'https://ayma-ai.web.app/terms.html';
+  /// Canonical hosted Terms of Service — see [LegalLinks.termsUrl].
+  static const url = LegalLinks.termsUrl;
 
   @override
   Widget build(BuildContext context) =>
-      const LegalLinkView(title: 'Terms of Service', url: url);
+      const LegalRedirect(title: LegalLinks.termsTitle, url: url);
 }
