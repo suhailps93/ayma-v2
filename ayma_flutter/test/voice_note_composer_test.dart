@@ -183,7 +183,6 @@ void main() {
     Widget harness({
       required TextEditingController controller,
       required bool canSend,
-      VoiceNoteController? note,
     }) {
       final level = ValueNotifier<double>(0);
       return MaterialApp(
@@ -204,7 +203,6 @@ void main() {
               muted: false,
               userAmplitude: level,
               aiAmplitude: level,
-              voiceNoteController: note,
             ),
           ),
         ),
@@ -212,13 +210,9 @@ void main() {
     }
 
     testWidgets('empty input shows the mic, no send button', (tester) async {
-      final engine = _FakeEngine();
-      final note = VoiceNoteController(engine: engine);
-      addTearDown(note.dispose);
-      addTearDown(engine.dispose);
       final controller = TextEditingController();
       await tester.pumpWidget(
-        harness(controller: controller, canSend: false, note: note),
+        harness(controller: controller, canSend: false),
       );
       await tester.pump();
       expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
@@ -228,13 +222,9 @@ void main() {
     testWidgets('typing swaps mic to send; clearing swaps back', (
       tester,
     ) async {
-      final engine = _FakeEngine();
-      final note = VoiceNoteController(engine: engine);
-      addTearDown(note.dispose);
-      addTearDown(engine.dispose);
       final controller = TextEditingController();
       await tester.pumpWidget(
-        harness(controller: controller, canSend: false, note: note),
+        harness(controller: controller, canSend: false),
       );
       await tester.pump();
       await tester.enterText(find.byType(TextField), 'hello');
@@ -251,13 +241,9 @@ void main() {
     testWidgets('a staged attachment (canSend) shows send with empty text', (
       tester,
     ) async {
-      final engine = _FakeEngine();
-      final note = VoiceNoteController(engine: engine);
-      addTearDown(note.dispose);
-      addTearDown(engine.dispose);
       final controller = TextEditingController();
       await tester.pumpWidget(
-        harness(controller: controller, canSend: true, note: note),
+        harness(controller: controller, canSend: true),
       );
       await tester.pump();
       expect(find.byKey(const ValueKey('composerSendButton')), findsOneWidget);
@@ -444,6 +430,28 @@ void main() {
           findsOneWidget);
       await gesture.up();
       await tester.pump();
+    });
+
+    testWidgets('an engine that refuses to start stays idle and reports it',
+        (tester) async {
+      final engine = _FakeEngine()..allowStart = false;
+      var refused = false;
+      final note = VoiceNoteController(
+        engine: engine,
+        onStartRefused: () => refused = true,
+      );
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      await tester.pump();
+      expect(note.phase, VoiceNotePhase.idle);
+      expect(engine.starts, 1);
+      expect(refused, isTrue);
+      await gesture.up();
+      await tester.pump();
+      expect(engine.sends, 0);
+      expect(engine.cancels, 0);
     });
 
     testWidgets(

@@ -182,6 +182,11 @@ class VoiceNoteController extends ChangeNotifier {
       _lockArmed = false;
       _dragOffset = Offset.zero;
       notifyListeners();
+    } else {
+      // The engine refused (mic denied, couldn't start): tell the caller
+      // the same way the canStart gate does, so a wired explanation shows
+      // instead of a silent no-op.
+      onStartRefused?.call();
     }
   }
 
