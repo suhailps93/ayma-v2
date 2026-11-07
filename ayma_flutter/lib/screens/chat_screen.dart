@@ -44,6 +44,7 @@ import '../widgets/ayma_toast.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/feedback_draft_card.dart';
+import '../widgets/send_to_keyboard_button.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/markdown_text.dart';
@@ -4525,6 +4526,21 @@ class _Composer extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: AymaQuietChip(onUnmute: () => onUnmuteAyma()),
               ),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller,
+              builder: (context, value, _) {
+                if (value.text.trim().isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                return Align(
+                  alignment: Alignment.centerLeft,
+                  child: SendToKeyboardButton(
+                    text: () => controller.text,
+                    source: 'ayma_chat_composer',
+                  ),
+                );
+              },
+            ),
             ChatComposer(
               rootKey: anchorKey,
               mode: mode,
