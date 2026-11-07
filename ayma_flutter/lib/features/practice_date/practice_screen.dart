@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_client.dart';
+import '../../services/voice_session_controller.dart';
 import '../../theme.dart';
 import '../../widgets/ayma_wing_loader.dart';
 import '../../widgets/chat_bubble.dart';
@@ -160,6 +161,12 @@ class _PracticeScreenState extends State<PracticeScreen> {
   /// LiveKit pipeline seeded with the same persona prompt). It pops the practice
   /// session id when the call ends, and we open the debrief for it.
   Future<void> _startVoice() async {
+    // Arm the debrief return + suspend Ayma's idle timer NOW, before the
+    // voice screen even opens (Scout note 125): the practice worker can
+    // take ~33 s to connect on a cold start — longer than Ayma's 30 s idle
+    // window — so waiting for the practice controller's start() lets her
+    // idle-fire first and the return never arms.
+    VoiceSessionController.preparePracticeReturn();
     final sid = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (_) => PracticeVoiceScreen(

@@ -496,6 +496,68 @@ class VoiceSessionController extends ChangeNotifier {
   /// manually first (the user took voice back themselves).
   static VoiceSessionController? _pendingReturnTarget;
 
+  /// True while this session's user-idle timer is suspended for a practice
+  /// call that has been initiated but has not yet displaced this session
+  /// (Scout note 125, Nov 6 2026): the practice worker can take ~33 s to
+  /// connect on a cold start — longer than the 30 s idle window — so without
+  /// this the live Ayma session idle-fires (client_idle_timeout) before the
+  /// practice call connects and the debrief return can never arm. While set,
+  /// [_armUserIdleTimer] / [_noteUserActivity] do not (re-)arm the timer.
+  /// Cleared when the practice call displaces this session ([_teardown]),
+  /// when the session is manually restarted ([start]), or when a practice
+  /// call that never went live is torn down — which resumes the timer
+  /// ([_resumeUserIdleTimer]) so a still-live session never sits without
+  /// its idle timeout.
+  bool _userIdleSuspendedForPractice = false;
+
+  /// The moment a practice voice call is initiated (the tap, before the
+  /// practice screen even opens): arm the debrief return for the live Ayma
+  /// session and suspend its user-idle timer while the practice call is
+  /// pending. [start]'s exclusion still stops Ayma the moment the practice
+  /// controller actually starts — this only covers the gap before that,
+  /// when a slow first frame or a cold worker would otherwise let her idle
+  /// window fire first (Scout note 125: practice took 33 s to connect vs
+  /// the 30 s window, Ayma idle-fired, no return armed). Idempotent: a
+  /// second call while already armed is a no-op. No-op when no Ayma
+  /// session is live (voice off), when the live session is itself a
+  /// practice call, or when it is the welcome room.
+  static void preparePracticeReturn() {
+    final existing = active;
+    if (existing == null ||
+        !existing.isActive ||
+        existing.isPractice ||
+        existing.welcome) {
+      return;
+    }
+    _pendingReturnTarget = existing;
+    existing._suspendUserIdleTimer();
+  }
+
+  /// Cancel this session's user-idle timer for the duration of a pending
+  /// practice call. [_userIdleArmedAt] is deliberately left in place: it
+  /// records that the clock was running, so [_resumeUserIdleTimer] can
+  /// tell a never-armed clock (first response still to come — the normal
+  /// [_noteAgentResponse] path arms it later) from a running one.
+  void _suspendUserIdleTimer() {
+    if (_userIdleSuspendedForPractice) return;
+    _userIdleSuspendedForPractice = true;
+    _userIdleTimer?.cancel();
+    _userIdleTimer = null;
+  }
+
+  /// Resume the user-idle timer suspended by [_suspendUserIdleTimer]:
+  /// a fresh window, since the practice attempt consumed the user's
+  /// attention, not Ayma's. Only re-arms if Ayma had actually responded
+  /// (the F1 rule: the clock starts at her first genuine response, not
+  /// at room setup) — otherwise the normal first-response path arms it.
+  /// No-op when the session is no longer live.
+  void _resumeUserIdleTimer() {
+    if (!_userIdleSuspendedForPractice) return;
+    _userIdleSuspendedForPractice = false;
+    if (_userIdleTimeout == null || _phase != VoiceSessionPhase.live) return;
+    if (_agentRespondedOnce) _armUserIdleTimer();
+  }
+
   /// This session reached [VoiceSessionPhase.live] at least once. Gates the
   /// practice-return fire: a practice call that never connected displaced
   /// Ayma only for a failed attempt, whose error surface owns that moment.
@@ -581,6 +643,7 @@ class VoiceSessionController extends ChangeNotifier {
       _disconnectReason = null;
       _userIdlePendingEnd = false;
       _userIdleArmedAt = null;
+      _userIdleSuspendedForPractice = false;
       _cappedError = false;
       _backgroundPermissionDenied = false;
       _relayRetrying = false;
@@ -697,7 +760,11 @@ class VoiceSessionController extends ChangeNotifier {
             '${isIceConnectivityFailure(e) ? ' (ICE connectivity)' : ''}');
         debugPrint(
             '[voice] relay-retry: retrying once with ${_forceRelayFirst ? 'the direct route' : 'TURN relay forced'}');
-        await _teardown();
+        // Same attempt, second transport: keep the debrief return armed
+        // (note 125 — a cold worker is exactly when a first connect
+        // attempt fails, so disarming here would lose the return for the
+        // practice call that then goes on to connect and run).
+        await _teardown(preservePracticeReturn: true);
         _relayRetrying = true;
         notifyListeners(); // status line: "Connecting…" -> "Reconnecting…"
         await _connectTransport(
@@ -1045,6 +1112,9 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _armUserIdleTimer() {
     if (_userIdleTimeout == null || _phase != VoiceSessionPhase.live) return;
+    // A practice call is pending: the clock is suspended until the
+    // practice call displaces this session or fails (note 125).
+    if (_userIdleSuspendedForPractice) return;
     _userIdlePendingEnd = false;
     _userIdleTimer?.cancel();
     _userIdleArmedAt = DateTime.now();
@@ -1060,6 +1130,9 @@ class VoiceSessionController extends ChangeNotifier {
   /// and reconnects NEVER bump.
   void _noteUserActivity() {
     if (_userIdleTimeout == null || _phase != VoiceSessionPhase.live) return;
+    // A practice call is pending: the clock is suspended until the
+    // practice call displaces this session or fails (note 125).
+    if (_userIdleSuspendedForPractice) return;
     _userIdlePendingEnd = false;
     _userIdleTimer?.cancel();
     _userIdleArmedAt = DateTime.now();
@@ -1508,13 +1581,20 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoiceSessionPhase.error);
   }
 
-  Future<void> _teardown() async {
+  Future<void> _teardown({bool preservePracticeReturn = false}) async {
     // A practice call that never went live armed the debrief return when
     // it displaced Ayma but never became a session the user could hang up
     // from — disarm it here, so the marker cannot outlive the failed
     // attempt and fire at some later, unrelated practice call's end.
-    if (isPractice && !_wentLive) {
+    // The Ayma session it was going to displace is still live — only
+    // suspended (note 125) — so resume its idle timer; without this it
+    // would sit live forever with no idle timeout. Skipped on an
+    // intra-attempt relay retry ([preservePracticeReturn]): the same
+    // attempt is still going, and its return must survive the retry.
+    if (isPractice && !_wentLive && !preservePracticeReturn) {
+      final target = _pendingReturnTarget;
       _pendingReturnTarget = null;
+      target?._resumeUserIdleTimer();
     }
     _wakingTimer?.cancel();
     _wakingTimer = null;
@@ -1528,6 +1608,7 @@ class VoiceSessionController extends ChangeNotifier {
     _userIdleTimer = null;
     _userIdleArmedAt = null;
     _userIdlePendingEnd = false;
+    _userIdleSuspendedForPractice = false;
 
     // Snapshot every session-scoped handle (subscriptions + transport) and
     // null the instance fields *synchronously*, before the first `await`
