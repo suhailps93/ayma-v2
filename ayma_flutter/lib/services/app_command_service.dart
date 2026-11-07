@@ -738,7 +738,12 @@ class AppCommandService {
       case 'search_explore':
         AppContext.instance.pendingExploreQuery =
             (cmd['query'] as String? ?? '').trim();
-        _navigate(ExploreScreen.path);
+        // Through [_open], not a bare push, like every other navigation
+        // command: the destination must be visible, never left underneath
+        // a still-open chat popup. (The live-query publish that also rode
+        // with this case on the old staging line is part of the v2 live
+        // UI updates feature and is intentionally not carried here.)
+        _open(ExploreScreen.path);
         return true;
       case 'open_profile':
         final uid = (cmd['uid'] as String? ?? '').trim();
