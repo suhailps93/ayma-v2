@@ -271,8 +271,16 @@ def make_session_tool_fns(
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name == "find_fact_source" and deep_dive_ctx:
             out[s.name] = s.bind(db, uid, **deep_dive_ctx)
+        elif s.name == "report_bug":
+            # image_path threads the same-turn screenshot (as before); the
+            # session_id keys the capability-gap guard's one-report-per-gap
+            # dedupe (capability_gap.py, founder rule 2026-11-07).
+            out[s.name] = s.bind(
+                db, uid, image_path=image_path,
+                session_id=(session_ctx or {}).get("session_id", ""),
+            )
         elif s.name in (
-            "analyze_physical_attributes", "run_appearance_report", "report_bug"
+            "analyze_physical_attributes", "run_appearance_report"
         ):
             out[s.name] = s.bind(db, uid, image_path=image_path)
         elif s.name in _DM_OUTREACH_NAMES:
@@ -607,6 +615,10 @@ def make_livekit_tools(
             description = set_voice_preference.stack_description(voice_pref)
         elif s.name in _DM_OUTREACH_NAMES:
             fn = s.bind(db, uid, session_id=session_id, turns=turns)
+        elif s.name == "report_bug":
+            # The session_id keys the capability-gap guard's
+            # one-report-per-gap dedupe for this call (capability_gap.py).
+            fn = s.bind(db, uid, session_id=session_id)
         elif s.name in _GUIDED_TOUR_VOICE_NAMES:
             # Voice surface — the composer is the call bar, so voice-only steps
             # (e.g. "type in the message box") are skipped (§11.2b).

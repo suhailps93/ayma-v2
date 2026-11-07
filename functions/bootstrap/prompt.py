@@ -63,6 +63,7 @@ _VOICE_VERBATIM_LINE_PATH = _DIR / "prompts" / "voice_verbatim_line.md"
 _VOICE_VOCAB_PATH = _DIR / "prompts" / "voice_vocab.md"
 _VOICE_VOCAB_LIVE_PATH = _DIR / "prompts" / "voice_vocab_live.md"
 _VOICE_VOCAB_NEXT_CALL_PATH = _DIR / "prompts" / "voice_vocab_next_call.md"
+_CAPABILITY_GAP_PATH = _DIR / "prompts" / "capability_gap.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
 _LESSONS_CONFIG_DOC = "ayma_persona"
@@ -430,6 +431,21 @@ def voice_swap_failed(change: str) -> str:
 
 
 @lru_cache(maxsize=1)
+def load_capability_gap() -> str:
+    """The capability-gap auto-report instruction (``prompts/capability_gap.md``,
+    founder rule 2026-11-07): when a user asks for something no tool covers,
+    Ayma answers honestly and silently files one gap report through the
+    existing ``report_bug`` path — with the hard exceptions (prohibited /
+    user-only requests, tool errors, clarifying questions, vague chat)
+    spelled out in the file itself. Static and user-independent, so it
+    joins the stable prefix in :func:`compose_system_prompt` and lands in
+    both the text prompt and the lean voice seed."""
+    if not _CAPABILITY_GAP_PATH.exists():
+        return ""
+    return _CAPABILITY_GAP_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
 def load_questionnaire_guidance() -> str:
     """Standing behavioural guidance for working the tree-based questionnaire
     into conversation (referenced from ``persona.md``). ``""`` if absent."""
@@ -572,6 +588,16 @@ def compose_system_prompt(
     # byte-stable, so it joins the stable prefix here too, in both the
     # lean voice seed and the full text prompt.
     parts.append(action_facts())
+
+    # The capability-gap auto-report instruction (founder rule 2026-11-07):
+    # static prompt text from prompts/capability_gap.md — answer honestly
+    # and silently file one report_bug gap report when no tool covers a
+    # request, never for a prohibited ask, a tool error, or a clarifying
+    # question. Byte-stable and user-independent, so it closes the stable
+    # prefix here, in both the text prompt and the voice seed.
+    _capability_gap = load_capability_gap()
+    if _capability_gap:
+        parts.append(_capability_gap)
 
     # Cache-alignment reorder (see the docstring): the wiki block joins the
     # stable prefix right here, before any per-turn volatile part.
