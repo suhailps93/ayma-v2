@@ -32,6 +32,10 @@ def db(monkeypatch):
     practice_seed.seed(fake)
     monkeypatch.setattr(taste_match, "get_db", lambda: fake)
     monkeypatch.delenv("QLOO_API_KEY", raising=False)
+    # Qloo removal (Nov 6, 2026): the flag defaults OFF now; the engine
+    # tests exercise the offline fixture, so enable the feature here.
+    # Kill-switch tests set it back to false explicitly.
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "true")
     taste_match._demo_cache.clear()
     return fake
 
@@ -121,66 +125,15 @@ def test_live_failure_falls_back_to_fixture(db):
     assert result["source"] == "fixture" and result["date_ideas"]
 
 
-def test_live_client_wire_shape(monkeypatch):
-    calls = []
-
-    class _Resp:
-        def __init__(self, payload):
-            self._b = json.dumps(payload).encode()
-
-        def read(self):
-            return self._b
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def fake_urlopen(req, timeout):
-        calls.append((req.full_url, req.headers.get("X-api-key")))
-        if "/search" in req.full_url:
-            return _Resp({"results": [{"entity_id": "E1", "name": "Khruangbin"}]})
-        return _Resp(
-            {
-                "results": {
-                    "entities": [
-                        {
-                            "entity_id": "P1",
-                            "name": "Yoshi's",
-                            "query": {"affinity": 0.91},
-                            "tags": [{"name": "Jazz", "tag_id": "urn:tag:genre:jazz"}],
-                            "properties": {"address": "510 Embarcadero W"},
-                        }
-                    ]
-                }
-            }
-        )
-
-    monkeypatch.setattr(qloo_client.urllib.request, "urlopen", fake_urlopen)
-    live = qloo_client.LiveQlooClient("k", "https://q.example", 3)
-    assert live.search("Khruangbin", "urn:entity:artist")["id"] == "E1"
-    recs = live.insights("urn:entity:place", ["E1"], location="Oakland", take=3)
-    assert recs == [
-        {
-            "id": "P1",
-            "name": "Yoshi's",
-            "affinity": 0.91,
-            "tags": ["Jazz"],
-            "tag_ids": ["urn:tag:genre:jazz"],
-            "address": "510 Embarcadero W",
-        }
-    ]
-    assert all(key == "k" for _, key in calls)
-    assert "signal.interests.entities=E1" in calls[1][0]
-    assert "filter.location.query=Oakland" in calls[1][0]
-
-
 def test_get_client_uses_key_when_present(monkeypatch):
+    # Qloo removal (Nov 6, 2026): there is no live client anymore. A key
+    # in the environment is ignored; get_client() always returns the
+    # offline fixture and no network call can be made.
+    assert not hasattr(qloo_client, "LiveQlooClient")
     monkeypatch.delenv("QLOO_API_KEY", raising=False)
     assert isinstance(qloo_client.get_client(), qloo_client.FixtureQlooClient)
     monkeypatch.setenv("QLOO_API_KEY", "x")
-    assert isinstance(qloo_client.get_client(), qloo_client.LiveQlooClient)
+    assert isinstance(qloo_client.get_client(), qloo_client.FixtureQlooClient)
 
 
 # --------------------------------------------------------------------------- #
@@ -202,7 +155,8 @@ def test_parse_taste_recognizes_all_new_domain_headers():
     assert parsed["nightlife"] == ["The Saloon"]
 
 
-def test_new_entity_types_parsed_and_scored_via_fixture():
+def test_new_entity_types_parsed_and_scored_via_fixture(monkeypatch):
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "true")  # fixture engine test (Qloo removed Nov 6, 2026; flag defaults off)
     """A Taste page with TV + Books + Travel scores those domains and emits a
     date idea per present domain (fixture entities)."""
     fix = qloo_client.FixtureQlooClient()
@@ -218,7 +172,8 @@ def test_new_entity_types_parsed_and_scored_via_fixture():
     assert "tv" in kinds and "books" in kinds
 
 
-def test_absence_of_a_domain_does_not_break_scoring():
+def test_absence_of_a_domain_does_not_break_scoring(monkeypatch):
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "true")  # fixture engine test (Qloo removed Nov 6, 2026; flag defaults off)
     """A music-only pair scores only music — no film/dining calls, no crash."""
     fix = qloo_client.FixtureQlooClient()
     a = ("A", "San Francisco", {"music": ["Khruangbin", "Bon Iver"]})
@@ -229,7 +184,8 @@ def test_absence_of_a_domain_does_not_break_scoring():
     assert "shared_tags" in result and isinstance(result["shared_tags"], list)
 
 
-def test_domain_only_one_side_stated_is_never_an_overlap():
+def test_domain_only_one_side_stated_is_never_an_overlap(monkeypatch):
+    monkeypatch.setenv("FLAG_QLOO_ENABLED", "true")  # fixture engine test (Qloo removed Nov 6, 2026; flag defaults off)
     """Bug G: a domain only ONE person listed (here Ada's books) must never be
     scored, shown as a per-domain overlap bar, or named the "strongest
     overlap", and its Qloo cross-domain predictions must never surface as a
@@ -302,49 +258,6 @@ def test_fixture_match_adds_shared_tags_and_degrades_demographics(db):
     assert result["demographics"] is None
 
 
-def test_live_client_tags_and_demographics_wire_shape(monkeypatch):
-    def fake_urlopen(req, timeout):
-        url = req.full_url
-
-        class _Resp:
-            def __init__(self, payload):
-                self._b = json.dumps(payload).encode()
-
-            def read(self):
-                return self._b
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        if "urn%3Atag" in url or "urn:tag" in url:
-            return _Resp({"results": {"tags": [
-                {"tag_id": "urn:tag:genre:indie", "name": "Indie", "query": {"affinity": 0.92}},
-                {"tag_id": "urn:tag:genre:folk", "name": "Folk", "popularity": 0.5},
-            ]}})
-        return _Resp({"results": {"demographics": [
-            {"entity_id": "E1", "query": {"age": {"25_to_29": 0.4, "30_to_34": 0.2}, "gender": {"male": 0.1, "female": -0.1}}},
-            {"entity_id": "E2", "query": {"age": {"25_to_29": 0.2, "30_to_34": 0.4}, "gender": {"male": 0.3, "female": -0.3}}},
-        ]}})
-
-    monkeypatch.setattr(qloo_client.urllib.request, "urlopen", fake_urlopen)
-    live = qloo_client.LiveQlooClient("k", "https://q.example", 3)
-    tags = live.tags(["E1", "E2"])
-    assert tags == [
-        {"id": "urn:tag:genre:indie", "name": "Indie", "affinity": 0.92},
-        {"id": "urn:tag:genre:folk", "name": "Folk", "affinity": 0.5},
-    ]
-    demo = live.demographics(["E1", "E2"])
-    # Averaged across the two anchor entities.
-    assert demo["age"]["25_to_29"] == 0.3 and demo["age"]["30_to_34"] == 0.3
-    assert demo["gender"]["male"] == 0.2
-
-
-# --------------------------------------------------------------------------- #
-# HTTP
-# --------------------------------------------------------------------------- #
 def test_demo_page_and_pair_are_public(db):
     page = client.get("/taste/demo")
     assert page.status_code == 200 and "Qloo" in page.text
@@ -518,7 +431,9 @@ def test_kill_switch_get_client_never_returns_live(monkeypatch):
     monkeypatch.setenv("FLAG_QLOO_ENABLED", "false")
     assert isinstance(qloo_client.get_client(), qloo_client.FixtureQlooClient)
     monkeypatch.setenv("FLAG_QLOO_ENABLED", "true")
-    assert isinstance(qloo_client.get_client(), qloo_client.LiveQlooClient)
+    # Even with the flag back on there is no live client (removed
+    # Nov 6, 2026) — the fixture is all that exists.
+    assert isinstance(qloo_client.get_client(), qloo_client.FixtureQlooClient)
 
 
 def test_kill_switch_report_section_degrades_to_no_taste(db, monkeypatch):
@@ -543,8 +458,10 @@ def test_kill_switch_demo_pair_is_404(db, monkeypatch):
     assert resp.status_code == 404
 
 
-def test_on_by_default_normal_behaviour_unchanged(db):
-    """Default (flag unset) keeps Qloo on — the engine still scores a pair."""
-    assert qloo_client.qloo_enabled() is True
-    result = asyncio.run(taste_match.match(*_pair(db, MAYA, LEO)))
-    assert 0 <= result["score"] <= 100 and result["source"] == "fixture"
+def test_on_by_default_normal_behaviour_unchanged(db, monkeypatch):
+    """Default (flag unset) is OFF since the Qloo removal (Nov 6, 2026):
+    no taste work happens and the pair degrades to NoTaste."""
+    monkeypatch.delenv("FLAG_QLOO_ENABLED", raising=False)
+    assert qloo_client.qloo_enabled() is False
+    with pytest.raises(taste_match.NoTaste):
+        asyncio.run(taste_match.match(*_pair(db, MAYA, LEO)))

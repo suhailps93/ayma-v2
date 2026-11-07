@@ -119,11 +119,14 @@ REGISTRY: dict[str, Flag] = {
              "Ayma MCP server (bring-your-own-agent). Default OFF — when off "
              "every /mcp request answers 503. See docs/MCP_SERVER.md."),
         Flag("qloo_enabled", "bool", None,
-             "Kill switch for ALL Qloo Taste API calls (billing protection). "
-             "Default ON. When false, NO Qloo HTTP request is made anywhere and "
-             "the taste features degrade to the no-taste empty state. Flip with "
-             "scripts/flags.py set qloo_enabled=false --yes (no redeploy).",
-             default=True),
+             "Taste-match feature switch. The Qloo API integration was "
+             "REMOVED Nov 6, 2026 (founder order): no Qloo HTTP request "
+             "exists anywhere in the codebase and no Qloo key is held, so "
+             "no Qloo charge is possible. Default OFF. When false the "
+             "taste features degrade to the no-taste empty state. Flip "
+             "with scripts/flags.py set qloo_enabled=false --yes "
+             "(no redeploy).",
+             default=False),
         Flag("emotion_matching", "bool", None,
              "Emotion-matched responses (founder directive 2026-11-06): Ayma "
              "reads the user's emotional state from the transcript and "
