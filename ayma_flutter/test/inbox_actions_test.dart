@@ -92,18 +92,30 @@ void main() {
       expect(out.message, 'Marked 2 conversations as read.');
     });
 
-    test('set_notification_filter sets the shared state and navigates',
-        () async {
+    test('set_notification_filter sets the shared state and navigates', () async {
       NotificationFilterState.instance
           .setFilter(NotificationFilter.all);
       final nav = <String>[];
       final out = await svc(nav: nav).runInboxCommand(
           {'action': 'set_notification_filter', 'filter': 'unread'});
       expect(out.ok, isTrue);
-      expect(out.message, 'Showing Unread notifications.');
+      expect(out.message, 'Showing Unread notifications. (was: all)');
       expect(NotificationFilterState.instance.current.value,
           NotificationFilter.unread);
       expect(nav, ['/notifications']);
+      NotificationFilterState.instance
+          .setFilter(NotificationFilter.all);
+    });
+
+    test('set_notification_filter reports the filter it replaced', () async {
+      NotificationFilterState.instance
+          .setFilter(NotificationFilter.matches);
+      final out = await svc().runInboxCommand(
+          {'action': 'set_notification_filter', 'filter': 'unread'});
+      expect(out.ok, isTrue);
+      expect(out.message, 'Showing Unread notifications. (was: matches)');
+      expect(NotificationFilterState.instance.current.value,
+          NotificationFilter.unread);
       NotificationFilterState.instance
           .setFilter(NotificationFilter.all);
     });

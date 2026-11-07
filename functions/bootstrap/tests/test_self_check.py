@@ -43,11 +43,28 @@ def test_trigger_rejects_conversation(text):
 # --- fakes -------------------------------------------------------------------
 
 class _Harness:
-    def __init__(self, *, fail_nav=(), web_search_fails=False, location="San Jose"):
+    def __init__(
+        self,
+        *,
+        fail_nav=(),
+        web_search_fails=False,
+        location="San Jose",
+        filter_state="all",
+        filter_fail=None,
+        filter_no_marker=False,
+    ):
         self.store = {"location": location}
         self.bugs = []
         self.fail_nav = set(fail_nav)
         self.web_search_fails = web_search_fails
+        # The notification-filter fake mimics the client protocol: it
+        # keeps the filter in memory (client-only state) and reports the
+        # filter it replaced in the ack line ("... (was: <key>)").
+        self.filter_state = filter_state
+        self.filter_calls = []
+        self.filter_fail = filter_fail  # 1-based call number to fail, or None
+        self.filter_no_marker = filter_no_marker
+        self.record_feedback_calls = []
 
     async def nav_fn(self, dest):
         if dest["key"] in self.fail_nav:
@@ -79,7 +96,15 @@ class _Harness:
             return f"set {field}"
 
         async def set_notification_filter(filter=""):
-            return "Done."
+            self.filter_calls.append(filter)
+            if self.filter_fail == len(self.filter_calls):
+                return "Not done: the app did NOT change the notification filter"
+            prev = self.filter_state
+            self.filter_state = filter or "all"
+            line = f"Showing {self.filter_state} notifications."
+            if not self.filter_no_marker:
+                line += f" (was: {prev})"
+            return line
 
         def submit_feedback(kind, title, body):
             return "drafted"
@@ -89,6 +114,10 @@ class _Harness:
 
         async def go_back():
             return "navigated: back"
+
+        def record_feedback(category=None, note=None, **_kw):
+            self.record_feedback_calls.append((category, note))
+            return "noted"
 
         fns = {name: (lambda: "probe") for name in self_check.PROBE_TOOLS}
         fns.update(
@@ -100,7 +129,7 @@ class _Harness:
                 "next_questions": lambda: "q1?",
                 "find_fact_source": lambda q: "found in profile",
                 "read_dm_thread": lambda person: "no thread yet",
-                "record_feedback": lambda category=None, note=None: "noted",
+                "record_feedback": record_feedback,
                 "current_screen": lambda: "The user hasn't opened anything specific.",
                 "recall": lambda topic="": "recalled",
                 "open_profile": open_profile,
@@ -201,6 +230,83 @@ def test_write_revert_skips_when_no_original_to_restore():
     by_name = {r.name: r for r in runner.results}
     assert by_name["wr:profile_field"].status == self_check.SKIP
     assert h.store["location"] == ""  # never wrote the test value
+
+
+# --- defect 1: record_feedback is probe-only, writes nothing -------------
+
+def test_record_feedback_is_probe_only_and_writes_nothing():
+    h = _Harness()
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:record_feedback"].status == self_check.PROBE
+    # The bound callable was never invoked: no feedback doc, no rule.
+    assert h.record_feedback_calls == []
+
+
+# --- defect 2: filter check restores the user's filter ---------------------
+
+def test_filter_check_restores_non_default_filter():
+    h = _Harness(filter_state="matches")
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["wr:notification_filter"].status == self_check.PASS
+    assert "restored matches" in by_name["wr:notification_filter"].detail
+    # The three calls: unread (test), all (test), matches (restore).
+    assert h.filter_calls == ["unread", "all", "matches"]
+    assert h.filter_state == "matches"
+
+
+def test_filter_check_restores_on_second_call_failure():
+    h = _Harness(filter_state="matches", filter_fail=2)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["wr:notification_filter"].status == self_check.FAIL
+    assert "Not done:" in by_name["wr:notification_filter"].error
+    # The restore still ran, even though the check failed.
+    assert h.filter_calls == ["unread", "all", "matches"]
+    assert h.filter_state == "matches"
+
+
+def test_filter_check_fails_on_not_done_first_call_without_moving_filter():
+    h = _Harness(filter_state="matches", filter_fail=1)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["wr:notification_filter"].status == self_check.FAIL
+    assert "Not done:" in by_name["wr:notification_filter"].error
+    # Nothing was applied, so no restore call: the filter never moved.
+    assert h.filter_calls == ["unread"]
+    assert h.filter_state == "matches"
+
+
+def test_filter_check_fails_when_client_reports_no_previous_filter():
+    h = _Harness(filter_state="matches", filter_no_marker=True)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["wr:notification_filter"].status == self_check.FAIL
+    assert "did not report the previous filter" in by_name[
+        "wr:notification_filter"
+    ].error
+    # Restored to the default rather than stranding the user on a test
+    # value — the honest fallback for an old client.
+    assert h.filter_calls == ["unread", "all", "all"]
+    assert h.filter_state == "all"
+
+
+def test_filter_check_fails_when_restore_itself_fails():
+    h = _Harness(filter_state="matches", filter_fail=3)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["wr:notification_filter"].status == self_check.FAIL
+    assert "could not be restored" in by_name["wr:notification_filter"].error
+    assert h.filter_calls == ["unread", "all", "matches"]
+    # The restore was attempted and refused; the filter sits on "all".
+    assert h.filter_state == "all"
 
 
 # --- exclusions -----------------------------------------------------------------
