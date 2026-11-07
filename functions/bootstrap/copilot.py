@@ -27,9 +27,9 @@ confirmation — never silently, never on the strength of this response
 alone. In the voice flow Ayma reads the draft aloud first (``draft_say``,
 built deterministically in :func:`normalize_locate_result`) and asks; a
 spoken yes lets her tap that same button through the app's ui_action
-surface, and the user then long-presses and pastes in the other app. The
-separate Ayma Keyboard is the heavier-duty path; this clipboard path is
-the zero-setup version inside a live walkthrough. Secure
+surface, and the user then long-presses and pastes in the other app.
+This clipboard path is the cross-app path (the Ayma Keyboard was cut
+Nov 6, 2026 — a keyboard can only insert, never send). Secure
 screens (FLAG_SECURE — banking / passwords) never reach here at all: the
 native capture pauses on black frames before any frame leaves the device.
 """

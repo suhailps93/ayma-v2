@@ -42,7 +42,6 @@ class MainActivity : FlutterActivity() {
         const val MEDIA_SAVE_CHANNEL = "ayma/media_save"
         const val PUSH_CHANNEL = "ayma/push"
         const val BADGE_CHANNEL = "ayma/badge"
-        const val KEYBOARD_DRAFT_CHANNEL = "ayma/keyboard_draft"
         const val COPILOT_CHANNEL = "ayma/copilot"
         const val COPILOT_CAPTURE_REQUEST = 9021
 
@@ -302,55 +301,6 @@ class MainActivity : FlutterActivity() {
                     "initialDeepLink" -> result.success(takeDeepLink(intent))
                     else -> result.notImplemented()
                 }
-            }
-        }
-
-        // Ayma Keyboard V1 draft plumbing: the Flutter side writes the
-        // current draft to the app-internal file the IME reads (same
-        // application, same sandbox — see KeyboardDraftStore). It can
-        // also open the system keyboard settings and the keyboard
-        // picker for the explainer screen. No draft text is logged.
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            KEYBOARD_DRAFT_CHANNEL
-        ).setMethodCallHandler { call, result ->
-            val store = KeyboardDraftFile(filesDir)
-            when (call.method) {
-                "setDraft" -> {
-                    val text = call.argument<String>("text")
-                    val created = call.argument<Number>("createdAtMillis")
-                    if (text.isNullOrBlank() || created == null) {
-                        result.success(false)
-                    } else {
-                        store.write(
-                            KeyboardDraft(
-                                text,
-                                created.toLong(),
-                                call.argument<String>("source")
-                            )
-                        )
-                        result.success(true)
-                    }
-                }
-                "getDraft" -> result.success(store.read()?.encode())
-                "clearDraft" -> {
-                    store.clear()
-                    result.success(null)
-                }
-                "openKeyboardSettings" -> {
-                    startActivity(
-                        Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                    result.success(true)
-                }
-                "showKeyboardPicker" -> {
-                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE)
-                        as InputMethodManager
-                    imm.showInputMethodPicker()
-                    result.success(true)
-                }
-                else -> result.notImplemented()
             }
         }
 

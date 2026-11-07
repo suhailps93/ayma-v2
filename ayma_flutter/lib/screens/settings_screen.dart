@@ -20,7 +20,6 @@ import 'delete_account_screen.dart';
 import 'developer_screen.dart';
 import 'main_shell_screen.dart';
 import 'notification_prefs_screen.dart';
-import 'ayma_keyboard_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -305,18 +304,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(NotificationPrefsScreen.path),
-          ),
-          Divider(color: ac.lineSoft),
-          ListTile(
-            key: const ValueKey('settings-ayma-keyboard'),
-            leading: Icon(Icons.keyboard_outlined, color: ac.fgDim),
-            title: Text('Ayma Keyboard',
-                style: AymaType.sans(size: 15, color: ac.fg)),
-            subtitle: Text(
-                'Insert a draft Ayma wrote into any app, with one tap.',
-                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
-            onTap: () => context.push(AymaKeyboardScreen.path),
           ),
           Divider(color: ac.lineSoft),
           Padding(

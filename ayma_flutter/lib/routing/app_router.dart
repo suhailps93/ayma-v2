@@ -53,7 +53,6 @@ import '../screens/delete_account_screen.dart';
 import '../screens/underage_screen.dart';
 import '../screens/release_notes_screen.dart';
 import '../screens/settings_screen.dart';
-import '../screens/ayma_keyboard_screen.dart';
 import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
@@ -455,11 +454,6 @@ final appRouter = GoRouter(
     GoRoute(
       path: SettingsScreen.path,
       builder: (context, state) => const NavBarShell(child: SettingsScreen()),
-    ),
-    GoRoute(
-      path: AymaKeyboardScreen.path,
-      builder: (context, state) =>
-          const NavBarShell(child: AymaKeyboardScreen()),
     ),
     GoRoute(
       path: AymaSettingsScreen.path,
