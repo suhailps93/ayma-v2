@@ -1773,6 +1773,108 @@ void main() {
       expect(ayma.phase, VoiceSessionPhase.live);
       await ayma.stop();
     });
+
+    test('opening the practice screen suspends the idle timer; closing '
+        'it resumes it (note 129)', () async {
+      // Note 129: the practice icon tap came at ~02:27:11 and Ayma
+      // idle-fired at 02:27:25 — nine seconds BEFORE the voice button
+      // was tapped. The suspension must start at practice-screen open,
+      // not at the voice tap.
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended,
+          userIdleTimeout: const Duration(milliseconds: 150));
+      await startAymaLive(ayma, vended);
+      await emitAymaFirstResponse(vended.last);
+      expect(ayma.userIdleArmedAtForTest, isNotNull);
+
+      // Practice screen opens (icon tap): suspend only, no return armed.
+      VoiceSessionController.suspendIdleForPractice();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(ayma.phase, VoiceSessionPhase.live);
+      expect(ayma.disconnectReason, isNull);
+
+      // Practice screen closes without any voice call: resume, fresh window.
+      VoiceSessionController.resumeIdleAfterPractice();
+      expect(ayma.userIdleArmedAtForTest, isNotNull);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      expect(ayma.disconnectReason, 'client_idle_timeout');
+    });
+
+    test('note-129 end to end: setup dwell, then voice practice, then '
+        'the return — and closing the practice screen leaves the '
+        'returned session alone', () async {
+      final api = returnApi(practiceStartDelay: const Duration(milliseconds: 300));
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended,
+          userIdleTimeout: const Duration(milliseconds: 150));
+      await startAymaLive(ayma, vended);
+      await emitAymaFirstResponse(vended.last);
+
+      // Practice screen opens; the setup dwell (longer than the idle
+      // window) passes with Ayma still live.
+      VoiceSessionController.suspendIdleForPractice();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(ayma.phase, VoiceSessionPhase.live);
+
+      // Voice button tapped: arms the return; the cold connect takes
+      // another window's worth of time.
+      VoiceSessionController.preparePracticeReturn();
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await practice.start();
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      tPractice.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+      expect(practice.phase, VoiceSessionPhase.live);
+
+      await practice.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(bootstrapBodies, hasLength(2));
+      expect(bootstrapBodies.last['practice_return_session_id'],
+          'practice_v1');
+      expect(ayma.isActive, isTrue);
+
+      // Practice screen closes now that the call ended: the resume must
+      // not touch the returned session — its own idle clock (armed at
+      // the debrief greeting) stays in charge.
+      VoiceSessionController.resumeIdleAfterPractice();
+      vended.last.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+      expect(ayma.phase, VoiceSessionPhase.live);
+      await ayma.stop();
+    });
+
+    test('opening and closing the practice screen for a text practice '
+        'does not arm the return (note 129)', () async {
+      // A text practice must never leave an armed marker behind: if it
+      // did, a later, unrelated voice practice started with Ayma down
+      // would resurrect her at its end.
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended);
+      await startAymaLive(ayma, vended);
+
+      VoiceSessionController.suspendIdleForPractice();
+      VoiceSessionController.resumeIdleAfterPractice();
+      expect(ayma.phase, VoiceSessionPhase.live);
+
+      // Ayma hangs up on her own; a later voice practice starts with
+      // her down.
+      await ayma.stop();
+      expect(bootstrapBodies, hasLength(1));
+
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await _startLive(practice, tPractice);
+      await practice.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(bootstrapBodies, hasLength(1));
+      expect(ayma.isActive, isFalse);
+    });
   });
 
   // --- Single-active-voice-session invariant ------------------------------- //
