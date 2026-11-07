@@ -75,9 +75,13 @@ import '../widgets/nav_bar_shell.dart';
 ///   would double it up);
 /// - the pre-auth screens the redirect gate below already lets an
 ///   unauthenticated user reach ([SplashScreen], [SignInScreen],
-///   [TermsScreen], [PrivacyScreen], [RecoveryScreen]) — there is no signed-in
+///   [RecoveryScreen]) — there is no signed-in
 ///   session yet for the bar's tabs to mean anything, and tapping one would
 ///   just bounce straight back here;
+/// - the legacy legal routes ([TermsScreen], [PrivacyScreen]) — they are
+///   not screens at all any more: arriving there opens the hosted page in
+///   the browser and goes straight back (see `LegalRedirect`), so there
+///   is nothing for the bar to wrap;
 /// - the marketing [ChatScreen] route (`marketing: true`) — the pre-signup
 ///   "just talk to Ayma first" landing chat for a `session_mode: marketing`
 ///   user (see `entryRouteFor`), reached signed in but before the account

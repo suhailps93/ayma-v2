@@ -1,12 +1,10 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../legal/biometric_consent_text.dart';
-import '../screens/privacy_screen.dart';
-import '../screens/terms_screen.dart';
 import '../services/api_client.dart';
 import '../services/biometric_consent.dart';
+import '../services/legal_links.dart';
 import '../theme.dart';
 import 'ayma_wing_loader.dart';
 import 'markdown_text.dart';
@@ -150,10 +148,10 @@ class _BiometricConsentPanelState extends State<BiometricConsentPanel> {
       decoration: TextDecoration.underline,
       fontWeight: FontWeight.w600,
     );
-    TextSpan link(String text, String path) => TextSpan(
+    TextSpan link(String text, VoidCallback onTap) => TextSpan(
           text: text,
           style: linkStyle,
-          recognizer: TapGestureRecognizer()..onTap = () => context.push(path),
+          recognizer: TapGestureRecognizer()..onTap = onTap,
         );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -179,11 +177,11 @@ class _BiometricConsentPanelState extends State<BiometricConsentPanel> {
               text: "I'm 18 or older and I agree to the updated ",
               style: base,
               children: [
-                link('Terms', TermsScreen.path),
+                link('Terms', () => LegalLinks.openTerms(context)),
                 const TextSpan(
                   text: ' (including use of my data for advertising) and ',
                 ),
-                link('Privacy Policy', PrivacyScreen.path),
+                link('Privacy Policy', () => LegalLinks.openPrivacy(context)),
                 const TextSpan(text: '.'),
               ],
             ),

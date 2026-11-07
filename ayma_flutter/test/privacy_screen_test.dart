@@ -1,29 +1,42 @@
 import 'package:ayma_flutter/legal/privacy_text.dart';
 import 'package:ayma_flutter/screens/privacy_screen.dart';
+import 'package:ayma_flutter/services/legal_links.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('opens the hosted policy and does not render the bundled body',
-      (tester) async {
+  testWidgets(
+      'the legacy route opens the hosted policy directly and renders no '
+      'in-between screen', (tester) async {
+    final launched = <Uri>[];
+    LegalLinks.setLauncherForTesting((url) async {
+      launched.add(url);
+      return true;
+    });
+    addTearDown(() => LegalLinks.setLauncherForTesting(null));
+
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
       home: const PrivacyScreen(),
     ));
     await tester.pumpAndSettle();
 
-    // The screen is a launcher to the single hosted source, not a renderer.
-    expect(find.byKey(const Key('legal_link_open')), findsOneWidget);
-    expect(find.text('Open Privacy Policy'), findsOneWidget);
-    expect(find.text(PrivacyScreen.url), findsOneWidget);
-    // The full policy body is no longer bundled into the viewer.
+    // Arriving on the route launches the single hosted source at once.
+    expect(launched, [Uri.parse('https://ayma-ai.web.app/privacy-policy')]);
+    // No middle screen: no message, no re-open button, no printed address.
+    expect(find.byKey(const Key('legal_link_open')), findsNothing);
+    expect(find.text('Open Privacy Policy'), findsNothing);
+    expect(find.textContaining('Opening the Privacy Policy'), findsNothing);
+    expect(find.text(PrivacyScreen.url), findsNothing);
+    // The full policy body is not rendered either.
     expect(find.textContaining('Data we collect'), findsNothing);
     expect(find.textContaining('automatically analyses'), findsNothing);
   });
 
   test('points at the canonical hosted Privacy Policy URL', () {
     expect(PrivacyScreen.url, 'https://ayma-ai.web.app/privacy-policy');
+    expect(LegalLinks.privacyUrl, 'https://ayma-ai.web.app/privacy-policy');
   });
 
   test('kPrivacyText covers the disclosed points', () {

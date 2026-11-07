@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/legal_links.dart';
 import '../services/meta_integrations.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
@@ -19,11 +20,9 @@ import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
 import 'invite_friends_screen.dart';
-import 'privacy_screen.dart';
 import 'instagram_screen.dart';
 import 'settings_screen.dart';
 import 'skills_screen.dart';
-import 'terms_screen.dart';
 import 'sign_in_screen.dart';
 
 /// Profile tab (§11.3, §14.3): a hub linking to the "You" items (public
@@ -163,13 +162,13 @@ class ProfileTabScreen extends StatelessWidget {
             icon: Icons.description_outlined,
             label: 'Terms of Service',
             hint: 'How Ayma uses your photos and public information',
-            onTap: () => context.push(TermsScreen.path),
+            onTap: () => LegalLinks.openTerms(context),
           ),
           _Item(
             icon: Icons.privacy_tip_outlined,
             label: 'Privacy Policy',
             hint: 'What we collect, why, and your choices',
-            onTap: () => context.push(PrivacyScreen.path),
+            onTap: () => LegalLinks.openPrivacy(context),
           ),
           _Item(
             icon: Icons.logout,

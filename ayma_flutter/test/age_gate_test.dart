@@ -1,8 +1,8 @@
 import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
-import 'package:ayma_flutter/screens/terms_screen.dart';
 import 'package:ayma_flutter/screens/underage_screen.dart';
 import 'package:ayma_flutter/services/age_gate.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/legal_links.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -74,6 +74,13 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
+    final launched = <Uri>[];
+    LegalLinks.setLauncherForTesting((url) async {
+      launched.add(url);
+      return true;
+    });
+    addTearDown(() => LegalLinks.setLauncherForTesting(null));
+
     final api = _FakeApi();
     final router = GoRouter(routes: [
       GoRoute(
@@ -82,7 +89,6 @@ void main() {
       ),
       GoRoute(
           path: UnderageScreen.path, builder: (_, __) => const UnderageScreen()),
-      GoRoute(path: TermsScreen.path, builder: (_, __) => const TermsScreen()),
     ]);
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
@@ -100,10 +106,12 @@ void main() {
     expect(api.declared, ['$year-01-01']);
     expect(find.byKey(const Key('underage_title')), findsOneWidget);
     expect(find.byKey(const Key('preboarding_dob')), findsNothing);
-    // the only way onward is the Terms
+    // The Terms open directly in the browser — no Terms screen is pushed
+    // and the hard stop stays exactly where it was.
     await tester.tap(find.byKey(const Key('underage_terms')));
     await tester.pumpAndSettle();
-    expect(find.text('Terms of Service'), findsOneWidget);
+    expect(launched, [Uri.parse(LegalLinks.termsUrl)]);
+    expect(find.byKey(const Key('underage_title')), findsOneWidget);
   });
 
   testWidgets('continue with no date explains instead of advancing',

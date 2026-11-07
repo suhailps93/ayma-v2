@@ -10,6 +10,7 @@ import '../legal/biometric_consent_text.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/biometric_consent.dart';
+import '../services/legal_links.dart';
 import '../services/sign_in_voice_intent.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
@@ -19,10 +20,8 @@ import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/phone_number_field.dart';
 import 'biometric_info_screen.dart';
-import 'privacy_screen.dart';
 import 'sign_in_critical_consent_dialog.dart';
 import 'splash_screen.dart';
-import 'terms_screen.dart';
 
 /// The sign-in gate (§3.3). The app requires a real credential up front — no
 /// anonymous browsing — so this is the first screen an unauthenticated user
@@ -188,9 +187,9 @@ class _SignInScreenState extends State<SignInScreen> {
     _lastHandledVoiceTurn = last;
     switch (parseSignInVoiceIntent(last.text)) {
       case SignInVoiceIntent.openTerms:
-        context.push(TermsScreen.path);
+        LegalLinks.openTerms(context);
       case SignInVoiceIntent.openPrivacy:
-        context.push(PrivacyScreen.path);
+        LegalLinks.openPrivacy(context);
       case SignInVoiceIntent.openBiometric:
         context.push(BiometricInfoScreen.path);
       case SignInVoiceIntent.critical:
@@ -886,11 +885,10 @@ class _ConsentBoxes extends StatelessWidget {
       decoration: TextDecoration.underline,
       fontWeight: FontWeight.w600,
     );
-    TextSpan link(String text, String path) => TextSpan(
+    TextSpan link(String text, VoidCallback onTap) => TextSpan(
           text: text,
           style: linkStyle,
-          recognizer: TapGestureRecognizer()
-            ..onTap = () => context.push(path),
+          recognizer: TapGestureRecognizer()..onTap = onTap,
         );
     Widget box({
       required Key key,
@@ -918,11 +916,11 @@ class _ConsentBoxes extends StatelessWidget {
             text: "I'm 18 or older and I agree to the ",
             style: base,
             children: [
-              link('Terms', TermsScreen.path),
+              link('Terms', () => LegalLinks.openTerms(context)),
               const TextSpan(
                 text: ' (including use of my data for advertising) and ',
               ),
-              link('Privacy Policy', PrivacyScreen.path),
+              link('Privacy Policy', () => LegalLinks.openPrivacy(context)),
               const TextSpan(text: '.'),
             ],
           ),
@@ -935,7 +933,8 @@ class _ConsentBoxes extends StatelessWidget {
             text: 'I consent to face recognition. $kBiometricConsentSignInLine ',
             style: base,
             children: [
-              link('Biometric Information', BiometricInfoScreen.path),
+              link('Biometric Information',
+                  () => context.push(BiometricInfoScreen.path)),
             ],
           ),
         ),
