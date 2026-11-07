@@ -470,6 +470,8 @@ final appRouter = GoRouter(
       path: CopilotScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: CopilotScreen()),
+    ),
+    GoRoute(
       path: AssistantScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: AssistantScreen()),
