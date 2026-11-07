@@ -164,6 +164,10 @@ from .app_control_ui import (
     _UI_ID_TYPES,
     _UI_OPS,
 )
+from .app_control_inbox import (
+    _bind_set_notification_filter,
+    _SET_NOTIFICATION_FILTER,
+)
 
 # How long a command tool waits for the client's ack before reporting the
 # navigation as NOT having happened. The client acks the instant it executes
@@ -186,6 +190,11 @@ _ACK_POLL_SECONDS = 0.25
 # ("Reached the bottom." / "Stopped after N scrolls…") comes back; if even this
 # lapses the tool still returns the honest _NOT_APPLIED, never hanging.
 _SCROLL_ACK_TIMEOUT_SECONDS = 30.0
+
+# The set_notification_filter command acks only once the client has
+# written the shared filter state and navigated, so it gets a longer
+# bounded wait than a navigation's 6s.
+_INBOX_ACK_TIMEOUT_SECONDS = 20.0
 
 # After a search_explore is acked, how long to wait for the client to report
 # the loaded results (the feed is a network call after navigation).
@@ -211,6 +220,8 @@ COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_ACCOUNT_ACTION, bind=_bind_account_action),
     Skill(declaration=_UI_ACTION, bind=_bind_ui_action),
     Skill(declaration=_GO_BACK, bind=_bind_go_back),
+    Skill(declaration=_SET_NOTIFICATION_FILTER,
+          bind=_bind_set_notification_filter),
 ]
 
 VOICE_SKILLS: list[Skill] = [

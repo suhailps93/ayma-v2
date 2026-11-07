@@ -351,31 +351,31 @@ def test_undeclared_unbound_tools_skip_without_filing_bugs():
     h = _Harness()
     runner = h.runner()
     # copilot_locate / take_picture sit in the cross-build manifest but
-    # are neither declared nor bound in this build; the notification
-    # filter tool is likewise absent here (no client handler).
+    # are neither declared nor bound in this build (v2-only features).
     del runner.deps.tool_fns["copilot_locate"]
     del runner.deps.tool_fns["take_picture"]
-    del runner.deps.tool_fns["set_notification_filter"]
     asyncio.run(runner.run())
     by_name = {r.name: r for r in runner.results}
     assert by_name["tool:copilot_locate"].status == self_check.SKIP
     assert by_name["tool:take_picture"].status == self_check.SKIP
-    assert by_name["wr:notification_filter"].status == self_check.SKIP
-    # The filter check never touched the client-side filter.
-    assert h.filter_calls == []
     assert not any("copilot_locate" in b for b in h.bugs)
     assert not any("take_picture" in b for b in h.bugs)
-    assert not any("wr:notification_filter" in b for b in h.bugs)
 
 
 def test_declared_but_unbound_run_tool_still_fails_and_files_bug():
     h = _Harness()
     runner = h.runner()
     del runner.deps.tool_fns["list_conversations"]
+    del runner.deps.tool_fns["set_notification_filter"]
     asyncio.run(runner.run())
     by_name = {r.name: r for r in runner.results}
     assert by_name["tool:list_conversations"].status == self_check.FAIL
     assert any("check=tool:list_conversations" in b for b in h.bugs)
+    # set_notification_filter is declared on this build (staging
+    # port), so its write check FAILs too - and never calls through.
+    assert by_name["wr:notification_filter"].status == self_check.FAIL
+    assert any("check=wr:notification_filter" in b for b in h.bugs)
+    assert h.filter_calls == []
 
 
 # --- progress bubbles ----------------------------------------------------------

@@ -172,6 +172,15 @@
     "reason": "A client recording + background-delivery flow Ayma neither opens nor changes: hold the chat mic to record, release to send — the clip renders immediately as a sent, playable voice bubble, uploads in the background (queued on the phone when offline), and Ayma's spoken reply lands in the thread. If asked about it, explain how to send one; never claim to record, play, or re-send it yourself."
   },
 
+  "inbox_actions": {
+    "_doc": "Notification filter (founder feedback item 11, 2026-11-06; staging port 2026-11-07): the filter chips on the Notifications page are Ayma-operable — the set_notification_filter tool in skills/app_control_inbox.py queues the client command below and AppCommandService writes the shared NotificationFilterState the page filter chips also write, then navigates to the page, acking with the filter it replaced. The bulk inbox actions (mark all read / clear all / mark all conversations read) remain v2-only. No route of its own, so deliberately not a destination.",
+    "key": "inbox_actions",
+    "label": "Notification filter",
+    "aliases": ["notification filters", "filter notifications", "show unread notifications"],
+    "operated_by_ayma": true,
+    "commands": ["set_notification_filter"],
+    "notification_filters": ["all", "unread", "matches", "ayma", "reports", "suggestions"]
+  },
   "voice_call_resilience": {
     "_doc": "Forgiving voice-call route (Nov 2026): if a voice call's first connect attempt fails, the app retries once with WebRTC forced onto LiveKit Cloud TURN relay (TLS/443), which survives UDP-blocking and weak networks; the status line reads 'Reconnecting…' during the retry. If an established call's connection drops mid-call, the LiveKit SDK re-establishes it and resumes the same session — the voice status reads 'Reconnecting…' while that lasts and the call only ends if the reconnect ultimately fails. Behavior inside the existing voice-call feature with no route of its own, so — like connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
     "key": "voice_call_resilience",
