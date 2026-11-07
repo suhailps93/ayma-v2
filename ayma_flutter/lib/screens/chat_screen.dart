@@ -85,6 +85,7 @@ class ChatScreen extends StatefulWidget {
     this.scrollController,
     this.askAymaContext,
     this.onExchange,
+    this.onGoToMainChat,
     this.voiceApiClient,
     this.voiceTransportFactory,
     this.pendingQueue,
@@ -118,6 +119,19 @@ class ChatScreen extends StatefulWidget {
   /// (the Ayma tab, the marketing route, the Story sheets) that already has
   /// its own, more specific context params.
   final ScreenContext? pageContext;
+
+  /// Set ONLY for the nav-bar orb's page-context popup: where its
+  /// header's expand button goes. The popup's sheet never grows to full
+  /// screen in place (founder order, 2026-11-07 — the grown sheet was a
+  /// stale-looking duplicate of this conversation, its history list
+  /// mounted at the oldest turn), so the button instead runs this
+  /// callback: the host closes the sheet and navigates to the real main
+  /// chat screen, where this same live conversation already rests at
+  /// its tail. Null everywhere else — a ChatScreen hosted in an
+  /// expandable sheet (a scoped Ask-Ayma turn) keeps the in-place
+  /// expand/collapse button, and a sheet-less one (the main tab) shows
+  /// no button at all.
+  final VoidCallback? onGoToMainChat;
 
   /// External scroll controller for the transcript list — set by the global
   /// floating sheet so its `DraggableScrollableSheet` can turn a drag over
@@ -2664,9 +2678,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         // Founder rule (Nov 2026): a partial sheet never lists conversation
         // history — the scoped correction/ask sheets and the plain
         // page-context popup alike show only their context (card/chip),
-        // quick chips and the composer. Full screen (this same sheet
+        // quick chips and the composer. Full screen (a scoped sheet
         // expanded, or the Ayma tab, which has no sheet at all) shows the
-        // whole conversation. Partial and full are literally the same
+        // whole conversation. The plain popup is never expanded at all
+        // (founder order, 2026-11-07), so for it this gate is permanent:
+        // its history list — the stale-looking duplicate page — no
+        // longer exists. Partial and full are literally the same
         // ChatScreen — nothing re-mounts — so this is one presentation gate
         // on the host sheet's live expanded state (rebuilt via this
         // `maybeOf` dependency, same as [_sheetExpanded]); `_send` and
@@ -2716,15 +2733,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     child: const Text('Get started'),
                                   )
                                 : null);
-                      // Hosted in the page-context popup: expand grows that
-                      // same sheet to full screen in place, collapse shrinks it
-                      // back (founder ask) — here the arrow genuinely means
-                      // "make the chat bigger", unlike the voice case above.
-                      // Sits beside the voice button (its own slot, no overlap)
-                      // when a call is live.
+                      // Hosted in a sheet, this slot is the full-screen
+                      // affordance. In the page-context popup the sheet
+                      // never grows in place (founder order, 2026-11-07):
+                      // the button leaves the sheet entirely for the real
+                      // main chat via [ChatScreen.onGoToMainChat]. In an
+                      // expandable sheet (a scoped Ask-Ayma turn) it grows
+                      // that same sheet to full screen in place and
+                      // collapse shrinks it back — there the arrow
+                      // genuinely means "make the chat bigger", unlike the
+                      // voice case above. Sits beside the voice button
+                      // (its own slot, no overlap) when a call is live.
                       final sheet = AymaChatSheetController.maybeOf(context);
                       final Widget? expandAction = sheet == null
                           ? null
+                          : widget.onGoToMainChat != null
+                          ? IconButton(
+                              key: const Key('chatExpandFullscreenButton'),
+                              icon: Icon(
+                                Icons.open_in_full_rounded,
+                                size: 20,
+                                color: ac.fgDim,
+                              ),
+                              tooltip: 'Open full chat',
+                              onPressed: widget.onGoToMainChat,
+                            )
                           : sheet.isExpanded
                           ? IconButton(
                               key: const Key('chatCollapseFullscreenButton'),

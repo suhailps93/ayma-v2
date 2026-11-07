@@ -69,11 +69,11 @@ class NavBarShell extends StatelessWidget {
   /// second orb tap while that sheet is still docked (its own on-top copy
   /// of this same bar, wired to this same method — see [_navBar]) closes
   /// the sheet and navigates to the real main chat screen instead of
-  /// growing the overlay or stacking a second sheet; a tap once the sheet
-  /// is full screen (via its header expand button or a drag) activates
-  /// voice (the same `toggleVoiceCall` the hold uses) — except from a
-  /// scoped Ask-Ayma correction sheet, which never takes the voice or
-  /// main-chat rungs (see [orbTapOnOpenSheet]).
+  /// growing the overlay or stacking a second sheet. The popup can no
+  /// longer be full screen at all (founder order, 2026-11-07: its grown
+  /// history view is deleted); its header expand button takes this same
+  /// close-and-navigate path. A scoped Ask-Ayma correction sheet never
+  /// takes the voice or main-chat rungs (see [orbTapOnOpenSheet]).
   ///
   /// Any other tab while the sheet is open closes it first: `_goTab`'s
   /// `context.go` replaces this route but would leave the imperatively-pushed
@@ -96,7 +96,13 @@ class NavBarShell extends StatelessWidget {
           },
         );
       } else {
-        showPageContextAymaPopup(context, navBarBuilder: _navBar);
+        showPageContextAymaPopup(
+          context,
+          navBarBuilder: _navBar,
+          onGoToMainChat: () {
+            _closeSheetAndGoToMainChat(context);
+          },
+        );
       }
       return;
     }
@@ -134,8 +140,9 @@ class NavBarShell extends StatelessWidget {
   /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
   /// renders behaves identically to this one, including a second tap on it
   /// closing the popup and navigating to the real main chat rather than
-  /// opening a second popup. That copy highlights the orb while the popup
-  /// is expanded to full screen.
+  /// opening a second popup. That copy highlights the orb while a scoped
+  /// sheet is expanded to full screen (the popup itself no longer
+  /// expands).
   Widget _navBar(BuildContext context) {
     final expanded =
         AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;

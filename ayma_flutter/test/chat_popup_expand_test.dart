@@ -1,12 +1,17 @@
-// The page-context popup's expand/collapse (founder ask: expanding must look
-// like the sheet itself growing to fill the screen, not a new page). Full
-// screen is the SAME `showAymaChatModal` sheet at its largest snap size:
-// the header's `open_in_full` button animates it up
-// to the whole screen above the nav bar, `close_fullscreen` (or system back)
-// shrinks it back. Nothing is re-mounted, so the hosted `ChatScreen` State,
-// its transcript and its composer text carry straight across. The pinned
-// page-context chip is set aside while expanded (founder rule: full screen
-// drops the context; the popup keeps it) and comes back on collapse.
+// Expand, in two parts. (1) The `showAymaChatModal` mechanism itself —
+// still what scoped Ask-Ayma correction sheets use: full screen is the
+// SAME sheet at its largest snap size, the header's `open_in_full` button
+// animates it up, `close_fullscreen` (or system back) shrinks it back,
+// and nothing is re-mounted, so the hosted `ChatScreen` State, its
+// transcript and its composer text carry straight across; the pinned
+// page-context chip is set aside while expanded. Those tests below drive
+// the modal directly, with no host navigation wired. (2) The real
+// page-context popup NO LONGER expands (founder order, 2026-11-07): its
+// grown state was a full-screen history view that mounted its message
+// list at the oldest turn — last night's conversation — while the main
+// chat showed the live one, a stale duplicate page. That destination is
+// deleted: the popup's snap sizes stop at docked, and its header expand
+// button closes the sheet and lands on the real main chat screen.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/chat_screen.dart';
@@ -274,83 +279,109 @@ void main() {
   );
 
   testWidgets(
-    'system back while full collapses to the docked sheet; back again '
-    'closes it',
+    'the header expand button closes the popup and lands on the REAL '
+    'main chat tab — no grown sheet, no collapse state',
     (tester) async {
       _phoneViewport(tester);
       await _openPopupOverExplore(tester);
+      expect(find.byKey(_collapseButton), findsNothing);
 
       await tester.tap(find.byKey(_expandButton));
       await tester.pumpAndSettle();
-      expect(_sheetRect(tester).top, 0);
 
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
-
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
+      // The popup is gone entirely (not grown over Explore) and the
+      // shell shows its Ayma tab — the main chat screen itself, where
+      // the live conversation rests at its tail.
       expect(find.byKey(_modalHandle), findsNothing);
+      expect(find.byKey(_sheetBox), findsNothing);
+      expect(find.byKey(_collapseButton), findsNothing);
       expect(isAymaSheetOpen, isFalse);
-      expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index, 1);
+      expect(aymaSheet.isExpanded, isFalse);
+      expect(
+        tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+        MainShellScreen.aymaTabIndex,
+      );
     },
   );
 
+  testWidgets('system back on the docked popup closes it', (tester) async {
+    _phoneViewport(tester);
+    await _openPopupOverExplore(tester);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byKey(_modalHandle), findsNothing);
+    expect(isAymaSheetOpen, isFalse);
+    expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index, 1);
+  });
+
   testWidgets(
-    'dragging the handle up from docked snaps to full screen, and down from '
-    'full snaps back',
+    'dragging the handle up cannot grow the popup past docked anymore — '
+    'the full-screen size is deleted, not just unbuttoned',
     (tester) async {
       _phoneViewport(tester);
       await _openPopupOverExplore(tester);
 
       await tester.drag(find.byKey(_modalHandle), const Offset(0, -600));
       await tester.pumpAndSettle();
-      expect(_sheetRect(tester).top, 0);
-      expect(aymaSheet.isExpanded, isTrue);
-
-      await tester.drag(find.byKey(_modalHandle), const Offset(0, 600));
-      await tester.pumpAndSettle();
       expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
       expect(aymaSheet.isExpanded, isFalse);
+      expect(find.byKey(_modalHandle), findsOneWidget);
     },
   );
 
-  testWidgets('with reduced motion the expand is instant and fades in', (
-    tester,
-  ) async {
-    _phoneViewport(tester);
-    await _openPopupOverExplore(
-      tester,
-      host: MaterialApp(
-        theme: AymaTheme.light,
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(disableAnimations: true),
-          child: child!,
+  testWidgets(
+    'with reduced motion the modal expand is instant and fades in '
+    '(the scoped-sheet mechanism, driven directly)',
+    (tester) async {
+      _phoneViewport(tester);
+      final api = await _historyOnlyApi();
+      final sheet = AymaChatSheetController();
+      addTearDown(sheet.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => showAymaChatModal(
+                  context,
+                  controller: sheet,
+                  builder: (_) => ChatScreen(apiClient: api),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
         ),
-        home: const MainShellScreen(),
-      ),
-    );
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(_expandButton));
-    await tester.pump();
-    expect(_sheetRect(tester).top, 0);
-    final fade = tester.widget<FadeTransition>(
-      find
-          .descendant(
-            of: find.byKey(_sheetBox),
-            matching: find.byType(FadeTransition),
-          )
-          .first,
-    );
-    expect(fade.opacity.value, lessThan(1));
-    await tester.pumpAndSettle();
-    expect(fade.opacity.value, 1);
-  });
+      await tester.tap(find.byKey(_expandButton));
+      await tester.pump();
+      expect(_sheetRect(tester).top, 0);
+      final fade = tester.widget<FadeTransition>(
+        find
+            .descendant(
+              of: find.byKey(_sheetBox),
+              matching: find.byType(FadeTransition),
+            )
+            .first,
+      );
+      expect(fade.opacity.value, lessThan(1));
+      await tester.pumpAndSettle();
+      expect(fade.opacity.value, 1);
+    },
+  );
 
   testWidgets(
-    'from a NavBarShell-wrapped screen, expand grows in place (no route '
-    'change) and back collapses it',
+    'from a NavBarShell-wrapped screen, the header expand button closes '
+    'the popup and navigates to the real main chat route',
     (tester) async {
       _phoneViewport(tester);
       // Same tiny local router as `nav_bar_shell_test.dart`: a plain marker
@@ -382,14 +413,14 @@ void main() {
       await tester.tap(find.byKey(_expandButton));
       await tester.pumpAndSettle();
 
-      expect(_sheetRect(tester).top, 0);
-      expect(find.text('screen:shell'), findsNothing);
-
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
-      expect(find.text('screen:other'), findsOneWidget);
+      // Sheet closed; the router is on the real shell route with the
+      // Ayma tab requested — the main chat screen, not a grown sheet
+      // still sitting over 'screen:other'.
+      expect(find.byKey(_modalHandle), findsNothing);
+      expect(find.byKey(_sheetBox), findsNothing);
+      expect(find.text('screen:other'), findsNothing);
+      expect(find.text('screen:shell'), findsOneWidget);
+      expect(TabRequest.instance.consume(), MainShellScreen.aymaTabIndex);
     },
   );
 

@@ -151,8 +151,10 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// still activates voice directly from anywhere, unchanged and
   /// independent of this.
   ///
-  /// - Sheet open and expanded to full screen (via the header expand
-  ///   button or a drag — the orb no longer expands it) -> voice.
+  /// - The popup can no longer BE expanded (founder order, 2026-11-07:
+  ///   its grown full-screen history view is deleted); its header expand
+  ///   button takes the same close-and-show-main-chat path as the
+  ///   second tap below.
   /// - Sheet open but still docked (half, with the page-context chip) ->
   ///   the SECOND tap: close the sheet and select the real Ayma tab
   ///   (the actual main chat screen in this shell), rather than growing
@@ -178,7 +180,13 @@ class _MainShellScreenState extends State<MainShellScreen>
     if (_index == 0) {
       _startVoiceFromOrb();
     } else {
-      showPageContextAymaPopup(context, navBarBuilder: _navBar);
+      showPageContextAymaPopup(
+        context,
+        navBarBuilder: _navBar,
+        onGoToMainChat: () {
+          _closeSheetAndShowMainChat();
+        },
+      );
     }
   }
 
@@ -223,7 +231,8 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// renders behaves identically to this shell's own `bottomNavigationBar`,
   /// including a second tap on it closing the popup and landing on the
   /// real Ayma tab rather than opening a second popup. That copy
-  /// highlights the orb while the popup is expanded to full screen.
+  /// highlights the orb while a scoped sheet is expanded to full screen
+  /// (the page-context popup itself no longer expands).
   Widget _navBar(BuildContext context, {bool anchored = false}) {
     final expanded =
         AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;
