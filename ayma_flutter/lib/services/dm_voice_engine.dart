@@ -18,14 +18,36 @@ import 'voice_note_controller.dart';
 /// ([AsyncVoiceController.maxDuration], 120s) rather than inventing a
 /// second number.
 class DmVoiceNoteEngine extends VoiceNoteEngine {
-  DmVoiceNoteEngine({AsyncVoiceRecorder? recorder, required this.onSendClip})
-    : _recorder = recorder ?? RecordPluginRecorder();
+  DmVoiceNoteEngine({
+    AsyncVoiceRecorder? recorder,
+    required this.onSendClip,
+    Duration? capDuration,
+  }) : _recorder = recorder ?? RecordPluginRecorder(),
+       _capDuration = capDuration ?? AsyncVoiceController.maxDuration;
 
   /// Called once per finished, sendable clip. Owns upload + posting; the
   /// engine is already back to idle when it runs.
   final Future<void> Function(File file) onSendClip;
 
   final AsyncVoiceRecorder _recorder;
+
+  /// The cap this instance enforces — the shared 120s in production,
+  /// injectable so tests can reach the cap without waiting.
+  final Duration _capDuration;
+
+  /// A clip stopped at the cap while locked, held unsent (F3).
+  File? _heldFile;
+
+  bool _holdClipAtCap = false;
+
+  @override
+  bool get hasCapHeldClip => _heldFile != null;
+
+  @override
+  bool get holdClipAtCap => _holdClipAtCap;
+
+  @override
+  set holdClipAtCap(bool value) => _holdClipAtCap = value;
 
   bool _recording = false;
   String? _error;
@@ -49,7 +71,7 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
   Duration get elapsed => _elapsed;
 
   @override
-  Duration get maxClipDuration => AsyncVoiceController.maxDuration;
+  Duration get maxClipDuration => _capDuration;
 
   @override
   String? takeError() {
@@ -91,6 +113,8 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
       return false;
     }
     _tempPath = tempPath;
+    _heldFile = null;
+    _holdClipAtCap = false;
     _pausedAccum = Duration.zero;
     _pausedAt = null;
     _capRemaining = null;
@@ -102,13 +126,56 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
       _elapsed = _effectiveElapsed();
       notifyListeners();
     });
-    _capTimer = Timer(maxClipDuration, () => unawaited(sendRecording()));
+    _capTimer = Timer(maxClipDuration, () => unawaited(_onCapReached()));
     notifyListeners();
     return true;
   }
 
+  /// The max-duration cap fired. On the hold-to-record path this keeps the
+  /// legacy behavior — stop and send what we have. When the controller
+  /// armed [holdClipAtCap] (the recording is LOCKED, hands-free), the
+  /// WhatsApp rule applies instead (Scout note 123, F3): stop the
+  /// recorder and HOLD the finished clip unsent — it leaves only via an
+  /// explicit [sendRecording] from the locked bar, and is discarded by an
+  /// explicit [cancelRecording]. [onSendClip] is NOT called here.
+  Future<void> _onCapReached() async {
+    if (!_recording) return;
+    if (!_holdClipAtCap) {
+      await sendRecording();
+      return;
+    }
+    _elapsed = _effectiveElapsed();
+    _stopTimers();
+    _recording = false;
+    _pausedAt = null;
+    _capRemaining = null;
+    RecordedClip? clip;
+    try {
+      clip = await _recorder.stop();
+    } catch (_) {
+      clip = null;
+    }
+    if (clip == null || clip.sizeBytes < _minClipBytes) {
+      if (clip != null) await _recorder.discard(clip.path);
+      _resetToIdle();
+      return;
+    }
+    _heldFile = File(clip.path);
+    notifyListeners();
+  }
+
   @override
   Future<void> sendRecording() async {
+    // A cap-held clip (F3) sends from its stash — the recorder already
+    // stopped at the cap, so there is nothing new to stop.
+    final held = _heldFile;
+    if (held != null) {
+      _heldFile = null;
+      _holdClipAtCap = false;
+      _resetToIdle();
+      await onSendClip(held);
+      return;
+    }
     if (!_recording) return;
     _stopTimers();
     _recording = false;
@@ -137,6 +204,16 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
 
   @override
   Future<void> cancelRecording() async {
+    // A cap-held clip (F3) is discarded from its stash — the recorder
+    // already stopped at the cap, so there is nothing live to cancel.
+    final held = _heldFile;
+    if (held != null) {
+      _heldFile = null;
+      _holdClipAtCap = false;
+      _resetToIdle();
+      await _recorder.discard(held.path);
+      return;
+    }
     if (!_recording) return;
     _stopTimers();
     _recording = false;
@@ -172,10 +249,10 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
     _capRemaining = null;
     if (remaining != null) {
       if (remaining <= Duration.zero) {
-        unawaited(sendRecording());
+        unawaited(_onCapReached());
         return;
       }
-      _capTimer = Timer(remaining, () => unawaited(sendRecording()));
+      _capTimer = Timer(remaining, () => unawaited(_onCapReached()));
     }
     final r = _recorder;
     if (r is RecordPluginRecorder) await r.resume();
@@ -192,6 +269,8 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
   void _resetToIdle() {
     _stopTimers();
     _tempPath = null;
+    _heldFile = null;
+    _holdClipAtCap = false;
     _elapsed = Duration.zero;
     _startedAt = null;
     _pausedAccum = Duration.zero;

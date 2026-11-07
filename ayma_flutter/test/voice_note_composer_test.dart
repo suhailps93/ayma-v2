@@ -31,6 +31,9 @@ class _FakeEngine extends VoiceNoteEngine {
   int resumes = 0;
   String? _error;
 
+  bool _heldClip = false;
+  bool _holdAtCap = false;
+
   @override
   bool get isRecording => recording;
   @override
@@ -39,6 +42,27 @@ class _FakeEngine extends VoiceNoteEngine {
   Duration get elapsed => const Duration(seconds: 3);
   @override
   Duration get maxClipDuration => const Duration(seconds: 120);
+  @override
+  bool get hasCapHeldClip => _heldClip;
+  @override
+  bool get holdClipAtCap => _holdAtCap;
+  @override
+  set holdClipAtCap(bool value) => _holdAtCap = value;
+
+  /// Test driver: the max-duration cap fires while recording. Locked
+  /// (hold-at-cap armed) stops and holds the clip unsent; holding
+  /// auto-sends, matching the real engines.
+  void simulateCapReached() {
+    if (!recording) return;
+    recording = false;
+    paused = false;
+    if (_holdAtCap) {
+      _heldClip = true;
+    } else {
+      sends++;
+    }
+    notifyListeners();
+  }
   @override
   String? takeError() {
     final e = _error;
@@ -55,6 +79,8 @@ class _FakeEngine extends VoiceNoteEngine {
       return false;
     }
     recording = true;
+    _heldClip = false;
+    _holdAtCap = false;
     notifyListeners();
     return true;
   }
@@ -64,6 +90,8 @@ class _FakeEngine extends VoiceNoteEngine {
     sends++;
     recording = false;
     paused = false;
+    _heldClip = false;
+    _holdAtCap = false;
     notifyListeners();
   }
 
@@ -72,6 +100,8 @@ class _FakeEngine extends VoiceNoteEngine {
     cancels++;
     recording = false;
     paused = false;
+    _heldClip = false;
+    _holdAtCap = false;
     notifyListeners();
   }
 
@@ -94,6 +124,7 @@ class _FakeRecorder implements AsyncVoiceRecorder {
   bool allowed = true;
   String? lastPath;
   int cancels = 0;
+  final discarded = <String>[];
 
   @override
   Future<bool> ensurePermission() async => allowed;
@@ -116,7 +147,9 @@ class _FakeRecorder implements AsyncVoiceRecorder {
   }
 
   @override
-  Future<void> discard(String path) async {}
+  Future<void> discard(String path) async {
+    discarded.add(path);
+  }
 
   @override
   void dispose() {}
@@ -453,6 +486,92 @@ void main() {
       expect(note.phase, VoiceNotePhase.idle);
     });
 
+    // Scout note 123, F3: a LOCKED recording that hits the 120s cap must
+    // STOP and stay in the locked bar, unsent — never auto-send.
+    testWidgets('locked recording at the cap stops unsent in the locked '
+        'bar; explicit send delivers it', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      await gesture.moveBy(const Offset(0, -100));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+      expect(note.phase, VoiceNotePhase.locked);
+      // Locking arms the engine's hold-at-cap behavior.
+      expect(engine.holdClipAtCap, isTrue);
+
+      engine.simulateCapReached();
+      await tester.pump();
+
+      // Stopped, held, unsent — and still locked, not idle.
+      expect(engine.isRecording, isFalse);
+      expect(engine.hasCapHeldClip, isTrue);
+      expect(engine.sends, 0);
+      expect(note.phase, VoiceNotePhase.locked);
+      expect(find.text('Stopped'), findsOneWidget);
+      expect(find.byKey(const ValueKey('voiceNotePauseButton')),
+          findsNothing);
+      expect(find.byKey(const ValueKey('voiceNoteSendButton')),
+          findsOneWidget);
+
+      // The user's explicit SEND is what finally delivers it.
+      await tester.tap(find.byKey(const ValueKey('voiceNoteSendButton')));
+      await tester.pump();
+      expect(engine.sends, 1);
+      expect(engine.hasCapHeldClip, isFalse);
+      expect(note.phase, VoiceNotePhase.idle);
+    });
+
+    testWidgets('locked recording at the cap: delete discards the held '
+        'clip, nothing sent', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      await gesture.moveBy(const Offset(0, -100));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      engine.simulateCapReached();
+      await tester.pump();
+      expect(note.phase, VoiceNotePhase.locked);
+      expect(engine.sends, 0);
+
+      await tester.tap(find.byKey(const ValueKey('voiceNoteDeleteButton')));
+      await tester.pump();
+      expect(engine.cancels, 1);
+      expect(engine.sends, 0);
+      expect(engine.hasCapHeldClip, isFalse);
+      expect(note.phase, VoiceNotePhase.idle);
+    });
+
+    testWidgets('a HOLDING (not locked) recording still auto-sends at '
+        'the cap', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      expect(note.phase, VoiceNotePhase.holding);
+      expect(engine.holdClipAtCap, isFalse);
+
+      engine.simulateCapReached();
+      await tester.pump();
+      expect(engine.sends, 1);
+      expect(note.phase, VoiceNotePhase.idle);
+      await gesture.up();
+      await tester.pump();
+      expect(engine.sends, 1); // the release does not send twice
+    });
+
     testWidgets('locked pause and resume toggle the engine', (tester) async {
       final engine = _FakeEngine();
       final note = VoiceNoteController(engine: engine);
@@ -531,6 +650,73 @@ void main() {
       expect(await engine.startRecording(), isFalse);
       expect(engine.isRecording, isFalse);
       expect(engine.takeError(), contains('Microphone'));
+    });
+
+    // Scout note 123, F3 (the actual incident surface — a DM): a locked
+    // recording that reaches the cap stops and holds its clip unsent.
+    test('locked recording stops at the cap UNSENT; explicit send '
+        'delivers the held clip', () async {
+      final recorder = _FakeRecorder();
+      final sent = <File>[];
+      final engine = DmVoiceNoteEngine(
+        recorder: recorder,
+        onSendClip: (f) async => sent.add(f),
+        capDuration: const Duration(milliseconds: 300),
+      );
+      addTearDown(engine.dispose);
+
+      expect(await engine.startRecording(), isTrue);
+      engine.holdClipAtCap = true; // the controller arms this on lock
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+
+      expect(engine.isRecording, isFalse);
+      expect(engine.hasCapHeldClip, isTrue);
+      expect(sent, isEmpty); // the bug sent ~120s into the DM here
+
+      await engine.sendRecording();
+      expect(sent, hasLength(1));
+      expect(engine.hasCapHeldClip, isFalse);
+    });
+
+    test('cap-held clip is discarded by cancel — nothing is sent',
+        () async {
+      final recorder = _FakeRecorder();
+      final sent = <File>[];
+      final engine = DmVoiceNoteEngine(
+        recorder: recorder,
+        onSendClip: (f) async => sent.add(f),
+        capDuration: const Duration(milliseconds: 300),
+      );
+      addTearDown(engine.dispose);
+
+      expect(await engine.startRecording(), isTrue);
+      engine.holdClipAtCap = true;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(engine.hasCapHeldClip, isTrue);
+
+      await engine.cancelRecording();
+      expect(sent, isEmpty);
+      expect(engine.hasCapHeldClip, isFalse);
+      expect(recorder.discarded, hasLength(1));
+    });
+
+    test('a holding (not locked) recording still auto-sends at the cap',
+        () async {
+      final recorder = _FakeRecorder();
+      final sent = <File>[];
+      final engine = DmVoiceNoteEngine(
+        recorder: recorder,
+        onSendClip: (f) async => sent.add(f),
+        capDuration: const Duration(milliseconds: 300),
+      );
+      addTearDown(engine.dispose);
+
+      expect(await engine.startRecording(), isTrue);
+      expect(engine.holdClipAtCap, isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(sent, hasLength(1));
+      expect(engine.hasCapHeldClip, isFalse);
+      expect(engine.isRecording, isFalse);
     });
   });
 

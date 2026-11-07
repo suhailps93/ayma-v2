@@ -294,6 +294,10 @@ class _LockedBarState extends State<_LockedBar>
     final ac = context.ac;
     final controller = widget.controller;
     final paused = controller.engine.isPaused;
+    // F3: the recording hit the cap and stopped, holding the clip unsent.
+    // The bar stays up in a stopped state — no recording dot, no pause —
+    // until the user explicitly sends or deletes.
+    final stopped = controller.engine.hasCapHeldClip;
     return Container(
       key: const ValueKey('voiceNoteRecordingBar'),
       color: ac.bg,
@@ -305,7 +309,7 @@ class _LockedBarState extends State<_LockedBar>
             child: Icon(Icons.lock_rounded, size: 18, color: ac.accent),
           ),
           const SizedBox(width: 8),
-          if (!paused)
+          if (!paused && !stopped)
             Container(
               width: 10,
               height: 10,
@@ -314,11 +318,11 @@ class _LockedBarState extends State<_LockedBar>
                 color: AymaColors.error,
               ),
             ),
-          if (!paused) const SizedBox(width: 8),
+          if (!paused && !stopped) const SizedBox(width: 8),
           Text(widget.elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
           const SizedBox(width: 10),
           Text(
-            paused ? 'Paused' : 'Recording',
+            stopped ? 'Stopped' : (paused ? 'Paused' : 'Recording'),
             style: AymaType.sans(size: 13, color: ac.fgMute),
           ),
           const Spacer(),
@@ -328,15 +332,16 @@ class _LockedBarState extends State<_LockedBar>
             onPressed: () => unawaited(controller.discardLocked()),
             icon: Icon(Icons.delete_outline_rounded, color: ac.fgDim),
           ),
-          IconButton(
-            key: const ValueKey('voiceNotePauseButton'),
-            tooltip: paused ? 'Resume recording' : 'Pause recording',
-            onPressed: () => unawaited(controller.togglePause()),
-            icon: Icon(
-              paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
-              color: ac.fgDim,
+          if (!stopped)
+            IconButton(
+              key: const ValueKey('voiceNotePauseButton'),
+              tooltip: paused ? 'Resume recording' : 'Pause recording',
+              onPressed: () => unawaited(controller.togglePause()),
+              icon: Icon(
+                paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                color: ac.fgDim,
+              ),
             ),
-          ),
           IconButton(
             key: const ValueKey('voiceNoteSendButton'),
             tooltip: 'Send voice message',

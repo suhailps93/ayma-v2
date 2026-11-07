@@ -21,8 +21,23 @@ abstract class VoiceNoteEngine extends ChangeNotifier {
   /// How long the current recording has run, excluding paused spans.
   Duration get elapsed;
 
-  /// Longest single voice note before the engine stops and sends itself.
+  /// Longest single voice note before the engine stops at the cap.
   Duration get maxClipDuration;
+
+  /// True when the engine stopped a recording at the [maxClipDuration]
+  /// cap and is HOLDING the finished clip unsent — the clip leaves only
+  /// via an explicit [sendRecording], and is discarded by an explicit
+  /// [cancelRecording] (Scout note 123, F3: a locked recording that hits
+  /// the cap must never send itself).
+  bool get hasCapHeldClip;
+
+  /// Armed by [VoiceNoteController] when the recording locks. While true,
+  /// reaching the max-duration cap stops the recorder and holds the clip
+  /// ([hasCapHeldClip]) instead of auto-sending it. While false (the
+  /// hold-to-record path), the cap keeps its legacy behavior: stop and
+  /// send what we have.
+  bool get holdClipAtCap;
+  set holdClipAtCap(bool value);
 
   /// A one-shot recording failure for the UI to surface — cleared once read.
   String? takeError();
@@ -69,7 +84,9 @@ enum VoiceNotePhase {
 /// - slide UP past [lockSlideDistance] → the recording locks
 ///   ([VoiceNotePhase.locked]) and continues hands-free after release;
 /// - release while holding (neither armed) → the clip sends immediately;
-/// - locked: DELETE discards, PAUSE/RESUME hold the recorder, SEND sends.
+/// - locked: DELETE discards, PAUSE/RESUME hold the recorder, SEND sends;
+/// - locked and the 120s cap hits → the recording STOPS and stays in the
+///   locked bar, unsent, until the user taps SEND or DELETE (note 123, F3).
 class VoiceNoteController extends ChangeNotifier {
   VoiceNoteController({
     required this.engine,
@@ -132,9 +149,16 @@ class VoiceNoteController extends ChangeNotifier {
 
   void _onEngineChanged() {
     if (_disposed) return;
-    // The engine stopping on its own (max-duration auto-send, an error)
-    // ends whatever gesture phase we were in.
     if (!engine.isRecording && _phase != VoiceNotePhase.idle) {
+      // F3: a LOCKED recording that stopped at the cap is held unsent by
+      // the engine — stay in the locked phase so the locked bar remains
+      // up for the user's explicit send/delete. It never ends itself.
+      if (_phase == VoiceNotePhase.locked && engine.hasCapHeldClip) {
+        notifyListeners();
+        return;
+      }
+      // The engine stopping on its own otherwise (max-duration auto-send
+      // on the hold path, an error) ends whatever gesture phase we were in.
       _phase = VoiceNotePhase.idle;
       _cancelArmed = false;
       _lockArmed = false;
@@ -173,6 +197,9 @@ class VoiceNoteController extends ChangeNotifier {
       _phase = VoiceNotePhase.locked;
       _cancelArmed = false;
       _dragOffset = Offset.zero;
+      // From here the recording is hands-free: if it runs to the cap the
+      // engine must stop and HOLD the clip, never auto-send it (F3).
+      engine.holdClipAtCap = true;
     }
     // Notify on every move: the lock bubble tracks the finger live.
     notifyListeners();
@@ -226,9 +253,11 @@ class VoiceNoteController extends ChangeNotifier {
     await engine.sendRecording();
   }
 
-  /// Locked bar: pause/resume the recording.
+  /// Locked bar: pause/resume the recording. A cap-stopped (held) clip is
+  /// no longer recording, so there is nothing to pause or resume.
   Future<void> togglePause() async {
     if (_phase != VoiceNotePhase.locked) return;
+    if (engine.hasCapHeldClip) return;
     if (engine.isPaused) {
       await engine.resumeRecording();
     } else {

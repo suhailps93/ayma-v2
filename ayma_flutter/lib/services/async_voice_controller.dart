@@ -27,12 +27,20 @@ enum AsyncVoiceUiState {
 /// [state]/[elapsed]/[activeJobId] from here and the delivery stage from
 /// the queue. One message at a time: starting while busy is a no-op.
 class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
-  AsyncVoiceController({AsyncVoiceRecorder? recorder, AsyncVoiceQueue? queue})
-    : _recorder = recorder ?? RecordPluginRecorder(),
-      _queue = queue ?? AsyncVoiceQueue.instance;
+  AsyncVoiceController({
+    AsyncVoiceRecorder? recorder,
+    AsyncVoiceQueue? queue,
+    Duration? capDuration,
+  }) : _recorder = recorder ?? RecordPluginRecorder(),
+       _queue = queue ?? AsyncVoiceQueue.instance,
+       _capDuration = capDuration ?? maxDuration;
 
   final AsyncVoiceRecorder _recorder;
   final AsyncVoiceQueue _queue;
+
+  /// The cap this instance enforces — [maxDuration] in production,
+  /// injectable so tests can reach the cap without waiting 120s.
+  final Duration _capDuration;
 
   /// The longest a single voice message may run before the controller
   /// stops it itself (~3.8MB at 16kHz mono — inside the server's clip cap).
@@ -56,7 +64,23 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
   bool get isPaused => _pausedAt != null;
 
   @override
-  Duration get maxClipDuration => maxDuration;
+  Duration get maxClipDuration => _capDuration;
+
+  /// A clip stopped at the cap while locked, held unsent (F3). Kept with
+  /// its job id until [stopAndSend] delivers it or [cancelRecording]
+  /// discards it.
+  RecordedClip? _heldClip;
+
+  bool _holdClipAtCap = false;
+
+  @override
+  bool get hasCapHeldClip => _heldClip != null;
+
+  @override
+  bool get holdClipAtCap => _holdClipAtCap;
+
+  @override
+  set holdClipAtCap(bool value) => _holdClipAtCap = value;
 
   @override
   Future<void> sendRecording() => stopAndSend();
@@ -129,6 +153,8 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
     _queue.removeListener(_onQueueChanged);
     _jobId = jobId;
     _tempPath = tempPath;
+    _heldClip = null;
+    _holdClipAtCap = false;
     _pausedAccum = Duration.zero;
     _pausedAt = null;
     _capRemaining = null;
@@ -140,12 +166,43 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
       _elapsed = _effectiveElapsed();
       notifyListeners();
     });
-    _capTimer = Timer(maxDuration, () {
-      // A finger held forever still ends: stop and send what we have.
-      unawaited(stopAndSend());
-    });
+    _capTimer = Timer(_capDuration, () => unawaited(_onCapReached()));
     notifyListeners();
     return true;
+  }
+
+  /// The max-duration cap fired. On the hold-to-record path this keeps the
+  /// legacy behavior — stop and send what we have. When the controller
+  /// armed [holdClipAtCap] (the recording is LOCKED, hands-free), the
+  /// WhatsApp rule applies instead (Scout note 123, F3): stop the
+  /// recorder and HOLD the finished clip unsent — it leaves only when the
+  /// user explicitly sends from the locked bar, and is discarded when
+  /// they delete it. Nothing is queued here.
+  Future<void> _onCapReached() async {
+    if (_state != AsyncVoiceUiState.recording) return;
+    if (!_holdClipAtCap) {
+      // A finger held forever still ends: stop and send what we have.
+      await stopAndSend();
+      return;
+    }
+    _elapsed = _effectiveElapsed();
+    _stopTimers();
+    _pausedAt = null;
+    _capRemaining = null;
+    RecordedClip? clip;
+    try {
+      clip = await _recorder.stop();
+    } catch (_) {
+      clip = null;
+    }
+    if (clip == null || clip.sizeBytes < _minClipBytes) {
+      if (clip != null) await _recorder.discard(clip.path);
+      _resetToIdle();
+      return;
+    }
+    _heldClip = clip;
+    _state = AsyncVoiceUiState.idle;
+    notifyListeners();
   }
 
   /// Pause the current recording (WhatsApp locked-state pause): the
@@ -156,7 +213,7 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
     if (_state != AsyncVoiceUiState.recording || _pausedAt != null) return;
     _pausedAt = DateTime.now();
     _elapsed = _effectiveElapsed();
-    _capRemaining = maxDuration - _elapsed;
+    _capRemaining = _capDuration - _elapsed;
     _capTimer?.cancel();
     _capTimer = null;
     final r = _recorder;
@@ -175,10 +232,10 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
     _capRemaining = null;
     if (remaining != null) {
       if (remaining <= Duration.zero) {
-        unawaited(stopAndSend());
+        unawaited(_onCapReached());
         return;
       }
-      _capTimer = Timer(remaining, () => unawaited(stopAndSend()));
+      _capTimer = Timer(remaining, () => unawaited(_onCapReached()));
     }
     final r = _recorder;
     if (r is RecordPluginRecorder) await r.resume();
@@ -192,16 +249,25 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
   /// Touches no file IO itself (the recorder reports the clip's size, the
   /// queue moves the bytes), so widget tests drive this in the fake zone.
   Future<void> stopAndSend() async {
-    if (_state != AsyncVoiceUiState.recording) return;
+    // A cap-held clip (F3) sends from its stash — the recorder already
+    // stopped at the cap, so there is nothing new to stop.
+    final held = _heldClip;
+    if (held == null && _state != AsyncVoiceUiState.recording) return;
     _stopTimers();
     _state = AsyncVoiceUiState.working;
     notifyListeners();
     final jobId = _jobId;
     RecordedClip? clip;
-    try {
-      clip = await _recorder.stop();
-    } catch (_) {
-      clip = null;
+    if (held != null) {
+      _heldClip = null;
+      _holdClipAtCap = false;
+      clip = held;
+    } else {
+      try {
+        clip = await _recorder.stop();
+      } catch (_) {
+        clip = null;
+      }
     }
     if (jobId == null || clip == null) {
       if (_queue.items.isNotEmpty) {
@@ -250,12 +316,22 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
   /// sheet dismissed mid-record): nothing is queued or sent.
   @override
   Future<void> cancelRecording() async {
-    if (_state != AsyncVoiceUiState.recording) return;
+    // A cap-held clip (F3) is discarded from its stash — the recorder
+    // already stopped at the cap, so there is nothing live to cancel.
+    final held = _heldClip;
+    if (held == null && _state != AsyncVoiceUiState.recording) return;
     _stopTimers();
-    try {
-      await _recorder.cancel();
-    } catch (_) {}
-    await _deleteTemp();
+    if (held != null) {
+      _heldClip = null;
+      _holdClipAtCap = false;
+      _tempPath = null;
+      await _recorder.discard(held.path);
+    } else {
+      try {
+        await _recorder.cancel();
+      } catch (_) {}
+      await _deleteTemp();
+    }
     if (_queue.items.isNotEmpty) {
       _jobId = _queue.items.last.jobId;
       _state = AsyncVoiceUiState.working;
@@ -305,6 +381,8 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
     _stopTimers();
     _tempPath = null;
     _jobId = null;
+    _heldClip = null;
+    _holdClipAtCap = false;
     _elapsed = Duration.zero;
     _startedAt = null;
     _pausedAccum = Duration.zero;
