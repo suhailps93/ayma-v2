@@ -19,6 +19,7 @@ import 'services/push_service.dart';
 import 'services/report_cache.dart';
 import 'services/revenuecat_service.dart';
 import 'services/theme_controller.dart';
+import 'services/ui_stall_watchdog.dart';
 import 'theme.dart';
 import 'widgets/ayma_toast.dart';
 import 'widgets/connection_banner.dart';
@@ -52,6 +53,12 @@ Future<void> main() async {
   // `[core/no-app]`, aborting main() on the splash). See startup_nodes_test.dart
   // for the "run-to-N8 guarantees N7" regression guard.
   await dag.run(targetNodes: {'N8:first_frame_mount'});
+
+  // From the first frame on, record any frame that stalls the UI thread
+  // (NOTE 133: the 02:41 ANR's trace was taken after the blocking work
+  // finished, so the block was never named — a stall now logs its phase
+  // split in logcat at the moment it happens).
+  UiStallWatchdog.instance.start();
 
   // Firebase is up. Register the ongoing session listeners that depend on it.
   // N9:auth_session_restore blocks on `notifyAuthSessionRestored` (fired by the
