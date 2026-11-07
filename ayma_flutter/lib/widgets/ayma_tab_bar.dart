@@ -164,7 +164,7 @@ class AymaTabBar extends StatelessWidget {
   /// This bar's own real on-screen height, *excluding* whatever the device's
   /// bottom safe-area inset adds (the bar's `SafeArea(top: false)` — default
   /// `bottom: true` — pads that in separately at paint time): the outer
-  /// `Padding`'s `vertical: 6` (12 total) plus the orb tab's own content
+  /// `Padding`'s `vertical: 8` (16 total) plus the orb tab's own content
   /// height (its [_orbVerticalPadding] top+bottom, around [_orbBoxSize] — the
   /// tallest of the row's children, so it — not the other tabs' 24px-icon/
   /// 12px-padding box — sets the bar's height). A caller that needs to float
@@ -182,7 +182,7 @@ class AymaTabBar extends StatelessWidget {
   /// fit the bigger orb itself (56 -> 72), not the padding around it; the
   /// other four icons' own box/padding, and the bar's horizontal rhythm
   /// (`spaceAround`, unaffected by a taller row), are untouched.
-  static const contentHeight = 84.0;
+  static const contentHeight = 88.0;
 
   /// [contentHeight] in a short window (split-screen, freeform resize,
   /// landscape phone — see [isCompact]): the orb shrinks to
@@ -305,7 +305,7 @@ class AymaTabBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: EdgeInsets.symmetric(vertical: compact ? 4 : 6),
+          padding: EdgeInsets.symmetric(vertical: compact ? 4 : 8),
           child: LayoutBuilder(
             builder: (context, constraints) {
               // Narrow-window taper (Scout P1: `wm size 720x1280` @ 420dpi is

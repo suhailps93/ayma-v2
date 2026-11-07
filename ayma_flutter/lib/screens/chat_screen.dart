@@ -1868,7 +1868,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+        padding: kComposerBarPadding,
         child: ChatComposer(
           mode: composerMode,
           controller: _composerController,
@@ -2799,8 +2799,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               )
                             : null,
                         padding: short
-                            ? const EdgeInsets.fromLTRB(20, 8, 12, 4)
-                            : const EdgeInsets.fromLTRB(20, 24, 12, 12),
+                            ? const EdgeInsets.fromLTRB(20, 8, 20, 4)
+                            : const EdgeInsets.fromLTRB(20, 24, 20, 12),
                         action: expandAction == null
                             ? voiceAction
                             : (voiceAction == null
@@ -3755,7 +3755,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 14,
-                        vertical: 10,
+                        vertical: 12,
                       ),
                       decoration: BoxDecoration(
                         // Solid accent, same as a sent DM bubble — one "mine"
@@ -4110,7 +4110,7 @@ class _QueuedBubble extends StatelessWidget {
                   opacity: 0.6,
                   child: Container(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
                       color: ac.accent,
                       borderRadius: const BorderRadius.only(
@@ -4637,7 +4637,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                     decoration: BoxDecoration(
@@ -4678,7 +4678,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                     decoration: BoxDecoration(
@@ -4715,7 +4715,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 4),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
