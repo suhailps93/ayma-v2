@@ -201,6 +201,13 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    // The merged screen is one info row taller (voice-call rail), so the
+    // card sits below the fold in the default viewport: scroll it into
+    // view before asserting, as the App info button below already does.
+    await tester.ensureVisible(
+        find.byKey(const Key('copilot_restricted_help'), skipOffstage: false));
+    await tester.pumpAndSettle();
+
     // The recovery card is up front for sideloaded installs, with the
     // exact App info → three-dot → Allow restricted settings steps.
     expect(find.byKey(const Key('copilot_restricted_help')), findsOneWidget);
