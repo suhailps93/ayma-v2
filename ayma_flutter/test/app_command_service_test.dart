@@ -273,6 +273,50 @@ void main() {
     expect(ok, isTrue);
   });
 
+  // Regression (founder feedback item 6, 2026-11-06): opening a conversation
+  // bounced straight back to the conversations page. open_dm_thread used to
+  // push the thread ON TOP of Ayma's still-open chat popup, so the next
+  // popup-close pop (which pops the top route, assuming it is the popup)
+  // killed the thread route instead. Like `navigate`, it must close the
+  // popup first and only then push.
+  test('open_dm_thread closes Ayma chat popup first, then opens the thread',
+      () async {
+    final events = <String>[];
+    var popupOpen = true;
+    final auth =
+        MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+    final svc = AppCommandService(
+      navigate: (p) => events.add('push $p'),
+      auth: auth,
+      currentPath: () => '/',
+      chatPopupOpen: () => popupOpen,
+      closeChatPopup: () async {
+        events.add('close');
+        popupOpen = false;
+      },
+    );
+    expect(svc.handleCommand({'action': 'open_dm_thread', 'uid': 'u-jordan'}),
+        isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(events, ['close', 'push /dm/me__u-jordan']);
+  });
+
+  test('open_dm_thread is skipped when already on that thread', () {
+    final nav = <String>[];
+    final auth =
+        MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+    final svc = AppCommandService(
+      navigate: nav.add,
+      auth: auth,
+      currentPath: () => '/dm/me__u-jordan',
+      chatPopupOpen: () => false,
+    );
+    final ok =
+        svc.handleCommand({'action': 'open_dm_thread', 'uid': 'u-jordan'});
+    expect(ok, isTrue);
+    expect(nav, isEmpty);
+  });
+
   test('open_notification routes the notification deep link (§ L6)', () {
     final nav = <String>[];
     final auth =
