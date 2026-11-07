@@ -62,6 +62,7 @@ from config import CONFIG, PLAN_TIERS  # noqa: E402
 import agent_wake  # noqa: E402
 import emotion as emotion_mod  # noqa: E402
 import feedback_bubble as feedback_bubble_mod  # noqa: E402
+import self_check as self_check_mod  # noqa: E402
 import feature_flags  # noqa: E402
 import gemini  # noqa: E402
 from llm_provider import get_user_brain_provider  # noqa: E402
@@ -1485,6 +1486,16 @@ async def _prepare_chat(
     if not req.image_path.strip() and not req.photo_url.strip():
         # F3: Mid-tour questions must not trigger navigation that hijacks the tour
         if not tour_active:
+            # Deterministic self-check (founder 2026-11-06): the bare
+            # slash command /self-check runs the real capability runner
+            # BEFORE the model — a self-check is never the model’s to
+            # summarize or fake (voice session s-0Y9QgcivBffTuLNJyDe0IN).
+            if self_check_mod.is_self_check_command(req.message):
+                reply = await self_check_mod.run_self_check(
+                    get_db(), uid, session_id=req.session_id
+                )
+                return ({"reply": reply, "self_check": True}, None)
+
             stack_cmd = set_model_stack.detect_stack_command(req.message)
             if stack_cmd is not None:
                 reply = await set_model_stack.run_stack_command(

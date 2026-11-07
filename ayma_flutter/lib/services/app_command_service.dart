@@ -815,12 +815,16 @@ class AppCommandService {
                   ? 'No unread conversations.'
                   : 'Marked $n conversation${n == 1 ? '' : 's'} as read.');
         case 'set_notification_filter':
+          // The backend self-check needs the filter it replaced so it
+          // can restore it afterwards: this client-only state has no
+          // other read path, so the previous key rides in the ack line.
+          final previous = NotificationFilterState.instance.current.value;
           final filter = NotificationFilter.fromKey(
               (cmd['filter'] as String? ?? '').trim());
           NotificationFilterState.instance.setFilter(filter);
           _navigate(NotificationCenterScreen.path);
-          return InboxActionResult(
-              true, 'Showing ${filter.label} notifications.');
+          return InboxActionResult(true,
+              'Showing ${filter.label} notifications. (was: ${previous.key})');
         default:
           return InboxActionResult(false, 'Unknown inbox action: $action');
       }
