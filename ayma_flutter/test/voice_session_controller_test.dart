@@ -1363,7 +1363,9 @@ void main() {
   group('practice voice return', () {
     final bootstrapBodies = <Map<String, dynamic>>[];
 
-    ApiClient returnApi({bool failPracticeStart = false}) {
+    ApiClient returnApi(
+        {bool failPracticeStart = false,
+        Duration practiceStartDelay = Duration.zero}) {
       bootstrapBodies.clear();
       return ApiClient(
         auth: MockFirebaseAuth(signedIn: true),
@@ -1387,6 +1389,9 @@ void main() {
           if (request.url.path == '/practice/voice/start') {
             if (failPracticeStart) {
               return http.Response('boom', 500);
+            }
+            if (practiceStartDelay != Duration.zero) {
+              await Future<void>.delayed(practiceStartDelay);
             }
             return http.Response(
               jsonEncode({
@@ -1422,10 +1427,12 @@ void main() {
     /// close, exactly like the real LiveKit transport), recorded in
     /// [vended] so the test can drive the current session's transport.
     VoiceSessionController aymaController(
-            ApiClient api, List<FakeVoiceTransport> vended) =>
+            ApiClient api, List<FakeVoiceTransport> vended,
+            {Duration? userIdleTimeout}) =>
         VoiceSessionController(
           transcriptStore: TranscriptStore(),
           apiClient: api,
+          userIdleTimeout: userIdleTimeout,
           transportFactory: () {
             final t = FakeVoiceTransport();
             vended.add(t);
@@ -1438,6 +1445,17 @@ void main() {
       await c.start();
       vended.last.markAgentReady();
       await Future<void>.delayed(Duration.zero);
+    }
+
+    /// Drive Ayma's first genuine response (her opening greeting) so the
+    /// user-idle clock arms (F1: the clock starts at the first response).
+    Future<void> emitAymaFirstResponse(FakeVoiceTransport transport) async {
+      transport.transcriptsController.add(const TranscriptSegment(
+        topic: 'agent_transcript',
+        text: 'Hi, how can I help?',
+        isFinal: true,
+      ));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
 
     VoiceSessionController practiceController(
@@ -1594,6 +1612,166 @@ void main() {
       // restart would show up here).
       expect(ayma.phase, VoiceSessionPhase.idle);
       expect(bootstrapBodies, isEmpty);
+    });
+
+    test('cold-worker connect: a practice call initiated while Ayma is live '
+        'does not let her idle window fire before it connects (note 125)',
+        () async {
+      // The bench case, at test scale: a 33 s cold connect vs the 30 s
+      // idle window becomes a 300 ms practice start vs a 150 ms window.
+      final api = returnApi(
+          practiceStartDelay: const Duration(milliseconds: 300));
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended,
+          userIdleTimeout: const Duration(milliseconds: 150));
+      await startAymaLive(ayma, vended);
+      await emitAymaFirstResponse(vended.last);
+      expect(ayma.userIdleArmedAtForTest, isNotNull);
+
+      // The tap: the practice call is initiated, but its controller has
+      // not started yet — the slow connect is still ahead.
+      VoiceSessionController.preparePracticeReturn();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      // Twice the idle window has passed with no practice start: without
+      // the suspension Ayma would have idle-fired at ~150 ms.
+      expect(ayma.phase, VoiceSessionPhase.live);
+      expect(ayma.disconnectReason, isNull);
+
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await _startLive(practice, tPractice);
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      expect(practice.phase, VoiceSessionPhase.live);
+
+      await practice.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(bootstrapBodies, hasLength(2));
+      expect(bootstrapBodies.last['practice_return_session_id'],
+          'practice_v1');
+      expect(ayma.isActive, isTrue);
+
+      vended.last.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+      expect(ayma.phase, VoiceSessionPhase.live);
+      await ayma.stop();
+    });
+
+    test('a practice call that is initiated but never starts releases the '
+        'idle suspension — Ayma keeps her idle timeout (note 125)',
+        () async {
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended,
+          userIdleTimeout: const Duration(milliseconds: 150));
+      await startAymaLive(ayma, vended);
+      await emitAymaFirstResponse(vended.last);
+      expect(ayma.userIdleArmedAtForTest, isNotNull);
+
+      VoiceSessionController.preparePracticeReturn();
+
+      // The practice screen goes away without ever starting its
+      // controller (backed out, offline deny): its teardown must disarm
+      // the return and resume Ayma's idle timer.
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await practice.stop();
+      practice.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(ayma.phase, VoiceSessionPhase.live);
+      expect(ayma.userIdleArmedAtForTest, isNotNull);
+
+      // The resumed clock is a fresh window: silence past it ends the
+      // call exactly as if no practice call had ever been initiated.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      expect(ayma.disconnectReason, 'client_idle_timeout');
+    });
+
+    test('Ayma responding while a practice call is pending still leaves '
+        'her with an idle timeout once the practice call goes away '
+        '(note 125)', () async {
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended,
+          userIdleTimeout: const Duration(milliseconds: 150));
+      await startAymaLive(ayma, vended);
+      // No first response yet: the idle clock has not armed.
+      expect(ayma.userIdleArmedAtForTest, isNull);
+
+      VoiceSessionController.preparePracticeReturn();
+
+      // Her greeting lands while the practice call is pending: the arm
+      // is suppressed by the suspension, but the response is recorded.
+      await emitAymaFirstResponse(vended.last);
+      expect(ayma.userIdleArmedAtForTest, isNull);
+
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await practice.stop();
+      practice.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // The resume re-arms from the recorded response — the clock must
+      // not be lost just because it was suspended before it ever armed.
+      expect(ayma.phase, VoiceSessionPhase.live);
+      expect(ayma.userIdleArmedAtForTest, isNotNull);
+
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      expect(ayma.disconnectReason, 'client_idle_timeout');
+    });
+
+    test('a practice call whose first connect fails and retries still '
+        'returns when it ends (note 125)', () async {
+      // A cold worker is exactly when a first connect attempt fails: the
+      // relay retry is part of the SAME attempt, so the armed return must
+      // survive its teardown — disarming there would lose the return for
+      // a practice call that then connects and runs.
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended);
+      await startAymaLive(ayma, vended);
+
+      final practiceTransports = <FakeVoiceTransport>[];
+      final practice = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: api,
+        transportFactory: () {
+          final t = FakeVoiceTransport();
+          if (practiceTransports.isEmpty) {
+            t.connectError = MediaConnectException(
+                'Timed out waiting for PeerConnection to connect');
+          }
+          practiceTransports.add(t);
+          return t;
+        },
+      );
+      await practice.start();
+      expect(practiceTransports, hasLength(2));
+      expect(practice.relayRetrying, isTrue);
+      expect(practice.phase, VoiceSessionPhase.waking);
+      expect(ayma.phase, VoiceSessionPhase.idle);
+
+      practiceTransports.last.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+      expect(practice.phase, VoiceSessionPhase.live);
+
+      await practice.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(bootstrapBodies, hasLength(2));
+      expect(bootstrapBodies.last['practice_return_session_id'],
+          'practice_v1');
+      expect(ayma.isActive, isTrue);
+
+      vended.last.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+      expect(ayma.phase, VoiceSessionPhase.live);
+      await ayma.stop();
     });
   });
 

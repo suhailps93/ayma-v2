@@ -66,6 +66,11 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
   void initState() {
     super.initState();
     _voice.addListener(_onVoiceChange);
+    // Belt-and-braces with the tap handler's call (which runs first): arm
+    // the debrief return + suspend Ayma's idle timer the moment this
+    // screen exists, so any path that opens it — tap, deep link, retry —
+    // is covered even if the tap handler is bypassed (note 125).
+    VoiceSessionController.preparePracticeReturn();
     if (!_voice.isActive) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _voice.isActive) return;
