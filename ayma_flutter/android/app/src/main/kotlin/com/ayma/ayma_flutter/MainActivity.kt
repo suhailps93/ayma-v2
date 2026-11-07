@@ -3,6 +3,8 @@ package com.ayma.ayma_flutter
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.role.RoleManager
+import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -44,6 +46,19 @@ class MainActivity : FlutterActivity() {
         const val COPILOT_CHANNEL = "ayma/copilot"
         const val COPILOT_CAPTURE_REQUEST = 9021
 
+        /** Default-assistant channel: Dart's `AssistantService`. */
+        const val ASSISTANT_CHANNEL = "ayma/assistant"
+
+        /** Action [AymaAssistantSession] launches this activity with. */
+        const val ACTION_ASSIST_LAUNCH =
+            "com.ayma.ayma_flutter.action.ASSIST_LAUNCH"
+
+        /** Boolean extra marking an intent as an assistant summon. */
+        const val EXTRA_FROM_ASSISTANT = "from_assistant"
+
+        /** Request code for the ROLE_ASSISTANT role-request intent. */
+        const val ASSISTANT_ROLE_REQUEST = 9022
+
         /**
          * Notification channel for FCM `notification`-payload pushes the system
          * displays on its own (web-search ready, new match, Ayma check-in …).
@@ -61,6 +76,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var pushChannel: MethodChannel? = null
+    private var assistantChannel: MethodChannel? = null
 
     /** The pending Dart requestCapture call, completed by the
      *  MediaProjection consent result in [onActivityResult]. */
@@ -69,6 +85,7 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ensureDefaultPushChannel()
+        noteAssistantIntent(intent)
     }
 
     /**
@@ -110,6 +127,104 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         takeDeepLink(intent)?.let { pushChannel?.invokeMethod("onDeepLink", it) }
+        if (isAssistantIntent(intent)) {
+            noteAssistantIntent(intent)
+            assistantChannel?.invokeMethod("onAssistSummon", null)
+        }
+    }
+
+    /** True when [intent] is an assistant summon reaching this activity:
+     *  launched by [AymaAssistantSession], or a system ACTION_ASSIST. */
+    private fun isAssistantIntent(intent: Intent?): Boolean =
+        intent?.action == ACTION_ASSIST_LAUNCH ||
+            intent?.action == Intent.ACTION_ASSIST ||
+            intent?.getBooleanExtra(EXTRA_FROM_ASSISTANT, false) == true
+
+    /**
+     * For a bare ACTION_ASSIST launch (some launchers route the gesture
+     * to the activity instead of the voice-interaction session) there
+     * is no AssistBridge snapshot: seed an empty one so Dart opens the
+     * assistant surface in its "could not see that screen" state
+     * rather than dropping the summon. A real session snapshot is
+     * already in the bridge and is never overwritten here.
+     */
+    private fun noteAssistantIntent(intent: Intent?) {
+        if (!isAssistantIntent(intent)) return
+        if (AssistBridge.peek() != null) return
+        if (intent?.action == ACTION_ASSIST_LAUNCH) return
+        AssistBridge.store(
+            AssistSnapshotData(
+                capturedAtMillis = System.currentTimeMillis(),
+                screenDataAllowed = false,
+                source = "assist_intent",
+            )
+        )
+    }
+
+    /** True when Ayma is the device's default digital assistant. */
+    private fun isDefaultAssistant(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager =
+                getSystemService(Context.ROLE_SERVICE) as? RoleManager
+            if (roleManager != null &&
+                roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT) &&
+                roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)
+            ) {
+                return true
+            }
+        }
+        val mine = ComponentName(this, AymaAssistantService::class.java)
+        val voiceService = Settings.Secure.getString(
+            contentResolver, "voice_interaction_service"
+        )
+        if (voiceService == mine.flattenToString() ||
+            voiceService == mine.flattenToShortString()
+        ) {
+            return true
+        }
+        val assistant = Settings.Secure.getString(contentResolver, "assistant")
+        return assistant?.contains(packageName) == true
+    }
+
+    /**
+     * Deep-links to the system UI for choosing the default assistant:
+     * the ROLE_ASSISTANT request dialog on Android 10+ (one tap for
+     * the user to confirm), else the default-apps settings page, else
+     * the voice-input settings page.
+     */
+    private fun openDefaultAssistantSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager =
+                getSystemService(Context.ROLE_SERVICE) as? RoleManager
+            if (roleManager != null &&
+                roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT) &&
+                !roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)
+            ) {
+                @Suppress("DEPRECATION")
+                startActivityForResult(
+                    roleManager.createRequestRoleIntent(
+                        RoleManager.ROLE_ASSISTANT
+                    ),
+                    ASSISTANT_ROLE_REQUEST,
+                )
+                return
+            }
+        }
+        val intents = listOf(
+            Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+            Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS),
+        )
+        for (candidate in intents) {
+            try {
+                startActivity(
+                    candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+                return
+            } catch (e: Exception) {
+                // Try the next settings surface.
+            }
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -349,6 +464,40 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+        // Default digital assistant (Assist API). Dart's AssistantService
+        // reads the one-shot summon snapshot from AssistBridge through
+        // this channel; the native session already stored it before
+        // launching this activity. Warm summons also get an
+        // "onAssistSummon" invoke (see onNewIntent); a cold-start
+        // summon is picked up by Dart's initial takePendingAssist,
+        // because this invoke can race handler registration.
+        assistantChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            ASSISTANT_CHANNEL
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isDefaultAssistant" ->
+                        result.success(isDefaultAssistant())
+                    "openDefaultAssistantSettings" -> {
+                        openDefaultAssistantSettings()
+                        result.success(true)
+                    }
+                    "takePendingAssist" ->
+                        result.success(AssistBridge.take()?.toMap())
+                    "hasPendingAssist" ->
+                        result.success(AssistBridge.peek() != null)
+                    "clearPendingAssist" -> {
+                        AssistBridge.clear()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        if (isAssistantIntent(intent)) {
+            assistantChannel?.invokeMethod("onAssistSummon", null)
         }
     }
 

@@ -114,6 +114,6 @@ dependencies {
     // exposes it as `implementation`. Same BoM version as firebase_core.
     implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
     implementation("com.google.firebase:firebase-messaging")
-    // Local JVM unit tests (Ayma Keyboard draft store / secure-field guard).
+    // Local JVM unit tests (Ayma Keyboard draft store / secure-field guard; default-assistant AssistBridge / text flattener).
     testImplementation("junit:junit:4.13.2")
 }

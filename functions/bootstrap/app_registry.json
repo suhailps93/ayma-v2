@@ -32,6 +32,7 @@
     {"key": "biometric_info", "path": "/legal/biometric", "label": "Biometric information (face matching) policy", "aliases": ["biometric policy", "biometric information", "face matching policy", "face data policy"]},
     {"key": "copilot", "path": "/copilot", "label": "Screen co-pilot", "aliases": ["screen co-pilot", "copilot", "co-pilot", "screen share", "share my screen", "share screen", "help me in another app", "what do i tap", "highlight what to tap"], "found_on": "ayma_settings"},
     {"key": "connect_agent", "path": "/settings/connect-agent", "label": "Connect an agent", "aliases": ["connect an agent", "connect agent", "mcp", "connect an ai", "connect claude", "link an agent", "bring your own agent"], "found_on": "settings"},
+    {"key": "assistant", "path": "/assistant", "label": "Ayma Assistant", "aliases": ["ayma assistant", "default assistant", "assistant", "summon ayma", "assistant settings", "digital assistant"], "found_on": "ayma_settings"},
     {"key": "release_notes", "path": "/whats-new", "label": "What's new", "aliases": ["whats new", "what's new", "release notes", "changelog", "updates", "new features"], "found_on": "settings"}
   ],
   "parameterized": [

@@ -3,6 +3,7 @@
 import 'package:ayma_flutter/routing/app_router.dart';
 import 'package:ayma_flutter/screens/accent_color_screen.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
+import 'package:ayma_flutter/screens/assistant_screen.dart';
 import 'package:ayma_flutter/screens/ayma_settings_screen.dart';
 import 'package:ayma_flutter/screens/ayma_keyboard_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
@@ -272,6 +273,10 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         service: CopilotService(debugSupportedOverride: true),
       ),
     ),
+    // The assistant surface in its dormant state (no summon capture,
+    // not the default assistant): the platform channel is absent under
+    // the layout matrix and the service degrades to exactly this.
+    AssistantScreen.path: () => shell(AssistantScreen(api: api)),
     SkillsScreen.path: () =>
         shell(SkillsScreen(profileService: profiles, api: api)),
     BiometricConsentScreen.path: () => BiometricConsentScreen(api: api),

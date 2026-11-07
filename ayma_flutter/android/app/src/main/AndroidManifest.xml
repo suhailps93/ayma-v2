@@ -64,6 +64,16 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Assistant gesture fallback: some launchers route a
+                 summon to the default assistant's activity with
+                 ACTION_ASSIST instead of (or before) the
+                 VoiceInteractionSession. MainActivity treats it as a
+                 summon with no screen payload (see noteAssistantIntent)
+                 — the rich path is the session below. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
             <!-- Shared-report links (https://justabot.info/s/<token>) open the
                  read-only in-app view. autoVerify needs
                  /.well-known/assetlinks.json (docs/deploy.md). -->
@@ -165,6 +175,26 @@
             android:name=".CopilotProjectionService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- Ayma as the Android default digital assistant (Assist API).
+             This declaration is what lists Ayma in Settings → Apps →
+             Default apps → Digital assistant app. Screen content is
+             delivered ONLY to AymaAssistantSession on a user-initiated
+             summon, and only when the user enabled "Use screen and app
+             data" — there is no background capture. BIND_VOICE_INTERACTION
+             is the system-only permission every assistant declares. -->
+        <service
+            android:name=".AymaAssistantService"
+            android:label="Ayma"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/ayma_voice_interaction_service" />
+        </service>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

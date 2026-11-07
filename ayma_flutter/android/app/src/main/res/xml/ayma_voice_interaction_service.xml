@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ayma as the default digital assistant (Assist API).
+
+     supportsAssist=true is the contract that matters: when the user
+     summons Ayma from another app and "Use screen and app data" is on,
+     Android delivers that app's AssistContent + view hierarchy +
+     screenshot to AymaAssistantSession. Nothing is delivered at any
+     other time — there is no background or Accessibility capture. -->
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="com.ayma.ayma_flutter.AymaRecognitionService"
+    android:sessionService="com.ayma.ayma_flutter.AymaAssistantSessionService"
+    android:supportsAssist="true" />
