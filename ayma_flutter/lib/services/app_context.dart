@@ -1,5 +1,7 @@
 import 'package:flutter/widgets.dart';
 
+import 'navigation_history.dart';
+
 /// What the user is currently looking at in the app — the screen and, where it
 /// applies, which person. Only meaningful to Ayma **during a voice call**:
 /// [VoiceSessionController] mirrors this to the backend while a session is live
@@ -48,6 +50,12 @@ class ScreenContext {
         'detail': detail,
         'route': route,
         'visible': visible,
+        // Where a spoken go back would land (founder feedback item 15):
+        // the previous page of the session navigation history, so the
+        // context names both the current page and the one before it.
+        'previous_route': NavigationHistory.instance.previous?.path ?? '',
+        'previous_label':
+            NavigationHistory.instance.previous?.label ?? '',
       };
 
   bool sameAs(ScreenContext o) =>

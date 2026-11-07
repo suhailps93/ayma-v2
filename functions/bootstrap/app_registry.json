@@ -201,5 +201,12 @@
     "aliases": ["voice offline", "call offline", "can't call offline", "weak connection call", "voice message instead of call", "switch to voice message", "call keeps dropping"],
     "operated_by_ayma": false,
     "reason": "Automatic client behavior driven by the connection heartbeat; Ayma neither triggers nor configures it. If asked about it, explain what it means (the phone's connection is too weak or absent for a live call, so the app protects the conversation by offering a voice message instead) — never claim to fix the user's connection."
+  },
+  "navigation": {
+    "_doc": "Session navigation memory (founder feedback item 15): the app keeps a session-only stack of the pages the user has been on \u2014 their own navigation and Ayma-driven opens alike \u2014 in ayma_flutter/lib/services/navigation_history.dart, capped at 20 entries and never persisted. Ayma's screen context carries the current page and the previous page's spoken label. The one action below unwinds one step per call; a modal/sheet is dismissed first (as the user's own back would), an active tour blocks it, and at the root it answers honestly instead of failing silently or exiting.",
+    "actions": ["go_back"],
+    "tool": "go_back",
+    "client_action": "go_back",
+    "history_cap": 20
   }
 }

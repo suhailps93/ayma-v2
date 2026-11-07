@@ -65,6 +65,15 @@ def _describe(ctx: dict) -> str:
         items = app_registry.found_on(dest["key"]) if dest else []
         if items and dest["key"] != "profile":
             parts.append("On this page: " + "; ".join(items) + ".")
+    prev_label = str(ctx.get("previous_label") or "").strip()
+    prev_route = str(ctx.get("previous_route") or "").strip()
+    if not prev_label and prev_route:
+        prev_label = app_registry.route_name(prev_route)
+    if prev_label:
+        parts.append(
+            f"Previous page: {prev_label} — if the user says 'go back' or "
+            "'take me back', call go_back to return there."
+        )
     if visible:
         parts.append(
             "On screen now (live; controls read [id] type \"label\" = state "

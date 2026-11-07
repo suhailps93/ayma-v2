@@ -72,6 +72,23 @@ def test_voice_context_endpoint_writes_and_clears(monkeypatch):
     assert ("users", "me", "voice_context", "current") not in db.store
 
 
+def test_voice_context_stores_the_previous_page(monkeypatch):
+    # Feedback item 15: the mirror carries the previous page so
+    # current_screen can name it and go_back has a known target.
+    db = _Db()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.post(
+        "/voice/context",
+        headers=_auth(monkeypatch),
+        json={"screen": "explore", "route": "/explore",
+              "previous_route": "/matches", "previous_label": "New matches"},
+    )
+    assert r.status_code == 200
+    doc = db.store[("users", "me", "voice_context", "current")]
+    assert doc["previous_route"] == "/matches"
+    assert doc["previous_label"] == "New matches"
+
+
 def test_voice_context_delete_endpoint(monkeypatch):
     db = _Db()
     db.store[("users", "me", "voice_context", "current")] = {"screen": "explore"}

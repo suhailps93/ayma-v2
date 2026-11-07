@@ -502,7 +502,7 @@ _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "list_conversations",
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
-    "ui_action", "take_picture",
+    "ui_action", "take_picture", "go_back",
 }
 
 
@@ -1969,3 +1969,129 @@ def test_launch_clarification_asks_who_with(tool):
     low = out.lower()
     assert "who" in low and "with" in low
     assert "couldn't find" not in low
+
+
+# --- go_back (feedback item 15: session navigation memory) ------------
+
+
+class _GoBackAckStore(dict):
+    """Plays the real client's go_back ack: the instant a go_back command
+    is queued, ack it with a fixed outcome payload (kind/result/reason/
+    current), the way AppCommandService._runGoBackCommand writes it."""
+
+    def __init__(self, ack):
+        super().__init__()
+        self._ack = ack
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if key == _PENDING and isinstance(value, dict) and value.get("id"):
+            super().__setitem__(_ACK, {"id": value["id"], **self._ack})
+
+
+def _go_back_db(ack):
+    return _Db(_GoBackAckStore(ack))
+
+
+def test_go_back_queues_the_command_and_reports_the_landing_page():
+    db = _go_back_db(
+        {"ok": True, "kind": "navigated", "current": "Explore",
+         "result": "Went back to Explore."}
+    )
+    out = _run(app_control._bind_go_back(db, "me")())
+    assert out == "navigated back: the user is now on Explore."
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "go_back" and cmd["id"]
+
+
+def test_go_back_reports_the_modal_dismissal_line():
+    db = _go_back_db(
+        {"ok": True, "kind": "dismissed_modal",
+         "result": "Closed that first — you are still on Explore."}
+    )
+    out = _run(app_control._bind_go_back(db, "me")())
+    assert out == "Closed that first — you are still on Explore."
+
+
+def test_go_back_at_root_relays_the_clients_sayable_reason():
+    db = _go_back_db(
+        {"ok": False, "kind": "at_root",
+         "reason": "There's nowhere to go back to — you're on Explore."}
+    )
+    out = _run(app_control._bind_go_back(db, "me")())
+    assert out == "There's nowhere to go back to — you're on Explore."
+
+
+def test_go_back_during_a_tour_relays_the_reason():
+    db = _go_back_db(
+        {"ok": False, "kind": "tour_active",
+         "reason": "A tour is showing right now, so I didn't go back."}
+    )
+    out = _run(app_control._bind_go_back(db, "me")())
+    assert "tour is showing" in out
+
+
+def test_go_back_reports_failure_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    out = _run(app_control._bind_go_back(_Db(), "me")())
+    assert out == app_control._NOT_NAVIGATED
+
+
+@pytest.mark.parametrize("phrase", [
+    "go back", "Go back.", "take me back", "please go back",
+    "go back please", "back", "previous page", "previous screen",
+    "go back to the previous page", "head back", "take me back!",
+])
+def test_detect_go_back_command_matches_clear_back_phrases(phrase):
+    assert app_control.detect_go_back_command(phrase) is True
+
+
+@pytest.mark.parametrize("phrase", [
+    # A destination tail is open_screen's job, not go_back's.
+    "go back to Explore", "take me back to my messages",
+    "back to the chat", "go back to sleep",
+    # Ordinary chat that merely contains "back".
+    "back in the day we talked for hours", "call me back",
+    "get back to me", "I want my money back", "she has a back tattoo",
+    # Everything else.
+    "open my profile", "", "what is on my screen",
+])
+def test_detect_go_back_command_leaves_everything_else_alone(phrase):
+    assert app_control.detect_go_back_command(phrase) is False
+
+
+def test_run_go_back_command_speaks_the_landing_page():
+    db = _go_back_db(
+        {"ok": True, "kind": "navigated", "current": "Explore",
+         "result": "Went back to Explore."}
+    )
+    out = _run(app_control.run_go_back_command(db, "me"))
+    assert out == "Taking you back to Explore."
+
+
+def test_run_go_back_command_passes_the_root_line_through():
+    db = _go_back_db(
+        {"ok": False, "kind": "at_root",
+         "reason": "There's nowhere to go back to — you're on Explore."}
+    )
+    out = _run(app_control.run_go_back_command(db, "me"))
+    assert out == "There's nowhere to go back to — you're on Explore."
+
+
+def test_run_go_back_command_is_honest_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    out = _run(app_control.run_go_back_command(_Db(), "me"))
+    assert "didn't respond" in out
+
+
+def test_current_screen_names_the_previous_page():
+    db = _Db()
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "explore",
+        "previous_label": "New matches",
+        "previous_route": "/matches",
+        "updated_at": _FreshTs(),
+    }
+    out = _current_screen(db)()
+    assert "Previous page: New matches" in out
+    assert "go_back" in out

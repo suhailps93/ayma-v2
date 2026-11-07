@@ -88,6 +88,7 @@ from .app_control_mirror import (
     _voice_context_doc,
 )
 from .app_control_navigation import (
+    _bind_go_back,
     _bind_open_date_sim,
     _bind_open_match_report,
     _bind_open_message_thread,
@@ -103,6 +104,7 @@ from .app_control_navigation import (
     run_app_command,
     run_profile_command,
     _FUZZY_NAME_THRESHOLD,
+    _GO_BACK,
     _navigate,
     _navigate_only,
     _not_a_page,
@@ -121,6 +123,8 @@ from .app_control_navigation import (
     _SEARCH_EXPLORE,
     _story_edit_redirect,
     _unavailable_reply,
+    detect_go_back_command,
+    run_go_back_command,
 )
 from .app_control_queue import (
     _ack_doc,
@@ -212,6 +216,7 @@ COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_ACCOUNT_ACTION, bind=_bind_account_action),
     Skill(declaration=_UI_ACTION, bind=_bind_ui_action),
     Skill(declaration=_TAKE_PICTURE, bind=_bind_take_picture),
+    Skill(declaration=_GO_BACK, bind=_bind_go_back),
 ]
 
 VOICE_SKILLS: list[Skill] = [

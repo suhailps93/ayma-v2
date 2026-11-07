@@ -407,6 +407,15 @@ def test_imperative_pushes_target_registered_routes_or_listed_subviews():
         )
 
 
+def test_navigation_registers_go_back():
+    # Feedback item 15: the session-back action is registered with its
+    # tool + client action names (the APP_ACTION_GRAPH naming).
+    assert app_registry.navigation_actions() == ["go_back"]
+    nav = app_registry.registry()["navigation"]
+    assert nav["tool"] == "go_back" and nav["client_action"] == "go_back"
+    assert nav["history_cap"] == 20
+
+
 def test_guided_tour_resolves_from_the_users_own_words():
     # Antigravity review 2026-11-03: "open the tour" was denied as nonexistent
     # even though the guided_tour block exists — the overlay-only tour has no

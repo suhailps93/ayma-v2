@@ -51,6 +51,8 @@ void main() {
       'screen_route': '',
       'screen_detail': '',
       'screen_visible': '',
+      'screen_previous_route': '',
+      'screen_previous_label': '',
       'tour_continuation': false,
     });
   });
@@ -180,6 +182,8 @@ void main() {
       'screen_route': '',
       'screen_detail': '',
       'screen_visible': '',
+      'screen_previous_route': '',
+      'screen_previous_label': '',
       'tour_continuation': false,
     });
   });

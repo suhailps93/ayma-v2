@@ -818,6 +818,41 @@ def _unread_notifications(db, uid: str, limit: int = 50) -> list[dict]:
     return out[:limit]
 
 
+def _bind_go_back(db, uid: str) -> Callable[..., str]:
+    async def go_back() -> str:
+        # One step back in the client's session navigation history
+        # (feedback item 15). The client owns the stack and the edge
+        # cases; this tool relays its ack honestly, kind by kind:
+        # * navigated — say where the user landed;
+        # * dismissed_modal — a pop-up/sheet was up, so this back closed
+        #   it and the user stayed on the page (the client's line says so);
+        # * at_root / tour_active — the client's reason IS the sayable
+        #   answer ("nowhere to go back to", "a tour is showing"), not a
+        #   failure to soften into _NOT_NAVIGATED.
+        cmd_id = _queue_command(db, uid, {"action": "go_back"})
+        ack = await _await_ack(db, uid, cmd_id)
+        if not ack:
+            return _NOT_NAVIGATED
+        kind = str(ack.get("kind") or "").strip()
+        if ack.get("ok") and kind == "navigated":
+            current = str(ack.get("current") or "").strip()
+            return (
+                f"navigated back: the user is now on "
+                f"{current or 'the previous page'}."
+            )
+        if ack.get("ok") and kind == "dismissed_modal":
+            result = str(ack.get("result") or "").strip()
+            return result or (
+                "Closed that first — the user is still on the same page."
+            )
+        reason = str(ack.get("reason") or "").strip()
+        if reason:
+            return reason
+        return _NOT_NAVIGATED
+
+    return go_back
+
+
 def _bind_open_notification(db, uid: str) -> Callable[..., str]:
     async def open_notification() -> str:
         # One ask opens the latest unread notification's DESTINATION directly
@@ -945,6 +980,24 @@ _OPEN_MESSAGE_THREAD = {
     },
 }
 
+_GO_BACK = {
+    "name": "go_back",
+    "description": (
+        "Take the user back to the previous page they were on ('go back', "
+        "'take me back'). The app remembers the session's pages whether the "
+        "user navigated there or you took them there, including tab pages. "
+        "One step per call — call it again to go back another page. If a "
+        "pop-up or sheet is open, this closes that first and the user stays "
+        "on the page. If a tour is showing, it does not go back and the "
+        "return says why. At the first page there is nowhere to go back to "
+        "and the return says so — relay it honestly, never invent a page. "
+        "Prefer this over ui_action back for page-level 'back' requests: "
+        "it knows the previous PAGE, not just the route stack. The return "
+        "says where the user ended up."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
 _OPEN_NOTIFICATION = {
     "name": "open_notification",
     "description": _prompt("app_control_open_notification"),
@@ -1006,3 +1059,56 @@ _OPEN_PRACTICE = {
         "required": ["name"],
     },
 }
+
+
+# --- deterministic pre-model go-back intent (feedback item 15) --------------
+#
+# "go back" / "take me back" with NO destination is a different intent from
+# "go back to Explore" (a destination open — :func:`detect_app_command`,
+# whose verb set already includes "go back to" / "back to"). This matcher
+# is anchored to the WHOLE utterance, so a destination tail can never
+# match it, and ordinary chat ("back in the day", "call me back", "get
+# back to me") never does either. Both lanes run it BEFORE the model like
+# the other app commands (main._prepare_chat for text, agent.py's
+# detect_voice_command for voice), so it fires regardless of which brain
+# is active; :func:`run_go_back_command` executes it through the SAME
+# bound ``go_back`` tool the model would call.
+_GO_BACK_RE = re.compile(
+    r"(?:please\s+)?(?:"
+    r"go\s+back|take\s+me\s+back|head\s+back|"
+    r"(?:go\s+back\s+to|back\s+to|return\s+to)\s+the\s+previous\s+(?:page|screen)|"
+    r"previous\s+(?:page|screen)|back"
+    r")(?:\s+please)?",
+    re.IGNORECASE,
+)
+
+
+def detect_go_back_command(message: str) -> bool:
+    """A clear, destination-less "go back" / "take me back" → True.
+
+    Strict by design: the whole (short) utterance must be the back phrase
+    itself, so "go back to Explore" keeps routing to that page and no
+    narrative sentence is ever intercepted."""
+    m = (message or "").strip().rstrip(".!").strip()
+    if not m or len(m) > 200 or len(m.split()) > 8:
+        return False
+    return _GO_BACK_RE.fullmatch(m) is not None
+
+
+async def run_go_back_command(db, uid: str) -> str:
+    """Execute a detected go-back through the bound ``go_back`` tool and
+    translate its model-facing return into a short line for the user (the
+    deterministic path has no model turn to relay it). The at-root, tour
+    and modal lines the tool returns are already user-facing sentences
+    and pass through verbatim; no ack is the honest didn't-work line."""
+    result = await _bind_go_back(db, uid)()
+    prefix = "navigated back: the user is now on "
+    if isinstance(result, str) and result.startswith(prefix):
+        label = result[len(prefix):].rstrip(".").strip()
+        return f"Taking you back to {label}." if label else "Going back for you."
+    if result == _NOT_NAVIGATED:
+        return (
+            "I tried to take you back, but the app didn't respond just "
+            "now — try again in a moment."
+        )
+    return result
