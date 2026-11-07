@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
 import 'connect_agent_screen.dart';
+import 'copilot_screen.dart';
 import 'voice_preference_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -101,6 +102,23 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(ConnectAgentScreen.path),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Co-pilot',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          ListTile(
+            key: const Key('ayma_settings_copilot'),
+            leading: Icon(Icons.screen_share_outlined, color: ac.fgDim),
+            title: Text('Screen co-pilot',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text(
+                'Share your screen and Ayma points at what to tap',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(CopilotScreen.path),
           ),
           Divider(color: ac.lineSoft),
           Padding(

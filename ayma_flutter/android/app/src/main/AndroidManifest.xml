@@ -11,6 +11,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Screen co-pilot: draw the highlight ring over other apps (the
+         user grants this once in system settings) and run the
+         MediaProjection capture as a mediaProjection foreground
+         service (Android 14 requirement). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
 
     <!-- Location auto-detect during preboarding (Step 35). -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
@@ -143,6 +149,13 @@
             android:name=".CallForegroundService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+        <!-- Screen co-pilot capture: MediaProjection foreground service.
+             Started only from the in-app co-pilot screen after the
+             per-session system consent; never exported. -->
+        <service
+            android:name=".CopilotProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

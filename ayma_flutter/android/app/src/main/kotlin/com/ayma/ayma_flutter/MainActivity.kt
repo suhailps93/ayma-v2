@@ -14,6 +14,9 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
+import android.app.Activity
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -38,6 +41,8 @@ class MainActivity : FlutterActivity() {
         const val PUSH_CHANNEL = "ayma/push"
         const val BADGE_CHANNEL = "ayma/badge"
         const val KEYBOARD_DRAFT_CHANNEL = "ayma/keyboard_draft"
+        const val COPILOT_CHANNEL = "ayma/copilot"
+        const val COPILOT_CAPTURE_REQUEST = 9021
 
         /**
          * Notification channel for FCM `notification`-payload pushes the system
@@ -56,6 +61,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private var pushChannel: MethodChannel? = null
+
+    /** The pending Dart requestCapture call, completed by the
+     *  MediaProjection consent result in [onActivityResult]. */
+    private var copilotCaptureResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -258,6 +267,66 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // Screen co-pilot (MediaProjection + highlight overlay). Dart's
+        // CopilotService drives everything through this one channel; the
+        // capture service itself calls back on the same channel name via
+        // the cached engine (see CopilotProjectionService.invokeDart).
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            COPILOT_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "canDrawOverlays" ->
+                    result.success(CopilotOverlay.canDraw(this))
+                "openOverlaySettings" -> {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    result.success(null)
+                }
+                "requestCapture" -> {
+                    if (copilotCaptureResult != null) {
+                        result.error("BUSY", "a capture request is already pending", null)
+                    } else {
+                        copilotCaptureResult = result
+                        val manager = getSystemService(
+                            Context.MEDIA_PROJECTION_SERVICE
+                        ) as MediaProjectionManager
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(
+                            manager.createScreenCaptureIntent(),
+                            COPILOT_CAPTURE_REQUEST
+                        )
+                    }
+                }
+                "stopSharing" -> {
+                    startService(
+                        Intent(this, CopilotProjectionService::class.java)
+                            .setAction(CopilotProjectionService.ACTION_STOP)
+                    )
+                    CopilotOverlay.hideAll(this)
+                    result.success(null)
+                }
+                "isSharing" -> result.success(CopilotProjectionService.isRunning)
+                "showHighlight" -> {
+                    val x = call.argument<Double>("x")?.toFloat() ?: 0f
+                    val y = call.argument<Double>("y")?.toFloat() ?: 0f
+                    val w = call.argument<Double>("w")?.toFloat() ?: 0f
+                    val h = call.argument<Double>("h")?.toFloat() ?: 0f
+                    val label = call.argument<String>("label")
+                    CopilotOverlay.showHighlight(this, x, y, w, h, label)
+                    result.success(null)
+                }
+                "clearHighlight" -> {
+                    CopilotOverlay.hideHighlight(this)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     /**
@@ -302,6 +371,29 @@ class MainActivity : FlutterActivity() {
             )
         }
         return location
+    }
+
+    @Deprecated("MediaProjection consent still arrives here")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != COPILOT_CAPTURE_REQUEST) return
+        val pending = copilotCaptureResult
+        copilotCaptureResult = null
+        if (resultCode == Activity.RESULT_OK && data != null) {
+            val intent = Intent(this, CopilotProjectionService::class.java).apply {
+                action = CopilotProjectionService.ACTION_START
+                putExtra(CopilotProjectionService.EXTRA_RESULT_CODE, resultCode)
+                putExtra(CopilotProjectionService.EXTRA_RESULT_DATA, data)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            pending?.success(true)
+        } else {
+            pending?.success(false)
+        }
     }
 
     private fun startCallService(intent: Intent) {

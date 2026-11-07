@@ -619,6 +619,12 @@ import practice_date  # noqa: E402
 
 app.include_router(practice_date.router)
 
+# Screen co-pilot (vision + highlight overlay; see copilot.py) — its own
+# router module for the same clean-lift reason as Practice Date.
+import copilot  # noqa: E402
+
+app.include_router(copilot.router)
+
 # AI Date Simulation (hackathon flagship) — two personas (the user's full own
 # context + the match's public-only profile) hold a bounded conversation,
 # returning a transcript + compatibility read. Its own module for the same
