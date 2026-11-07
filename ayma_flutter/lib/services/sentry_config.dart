@@ -7,6 +7,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart' show kInteractiveTimeout;
+import 'error_reporting.dart';
 
 final _log = Logger('sentry');
 
@@ -142,7 +143,15 @@ void configureSentryOptions(SentryFlutterOptions options, SentryFlag flag) {
   options.maxRequestBodySize = MaxRequestBodySize.never;
   options.sampleRate = flag.errorSampleRate;
   options.tracesSampleRate = flag.tracesSampleRate;
-  options.beforeSend = (event, hint) => scrubSentryEvent(event);
+  options.beforeSend = (event, hint) {
+    // Storm guard: an identical fatal error that is already reported
+    // inside the gate window (a framework error rethrown every frame)
+    // is dropped instead of flooding Sentry — the first event of the
+    // burst carries the full stack and breadcrumbs.
+    final key = sentryEventGateKey(event);
+    if (key != null && !fatalErrorGate.allow(key)) return null;
+    return scrubSentryEvent(event);
+  };
   options.beforeSendTransaction =
       (transaction, hint) => scrubSentryTransaction(transaction);
   options.beforeBreadcrumb = (crumb, hint) => scrubSentryBreadcrumb(crumb);
@@ -150,6 +159,25 @@ void configureSentryOptions(SentryFlutterOptions options, SentryFlag flag) {
 
 final _emailRe = RegExp(r'[\w.+\-]+@[\w\-]+(\.[\w\-]+)+');
 final _phoneRe = RegExp(r'\+?\d[\d\s().\-]{7,}\d');
+
+/// The [RepeatedErrorGate] identity of a Sentry event: its first
+/// exception's type + value (later exceptions in a chain repeat the
+/// same root failure). Null when the event carries no exception and no
+/// message to key on — such events are never gated.
+String? sentryEventGateKey(SentryEvent event) {
+  final exceptions = event.exceptions;
+  if (exceptions != null && exceptions.isNotEmpty) {
+    final first = exceptions.first;
+    final type = first.type ?? 'Exception';
+    final value = (first.value ?? '').split('\n').first.trim();
+    return '$type: $value';
+  }
+  final formatted = event.message?.formatted;
+  if (formatted != null && formatted.isNotEmpty) {
+    return 'Message: ${formatted.split('\n').first.trim()}';
+  }
+  return null;
+}
 
 /// Replaces emails and phone-number-like runs in [text] with placeholders.
 @visibleForTesting

@@ -120,3 +120,63 @@ class ErrorReporter {
     }
   }
 }
+
+
+/// Rate-limits IDENTICAL fatal-error reports so one broken frame cannot
+/// flood the crash dashboards.
+///
+/// Why this exists (2026-11-06, build 2327, Sentry AYMA-FLUTTER-3R):
+/// a Flutter framework check on the semantics tree failed on EVERY frame
+/// while its state persisted — 466 identical fatal events reached Sentry
+/// in 75 seconds in one burst (issue 3N), 49 more in a 5-second burst
+/// (issue 3R), and every one was also recorded to Crashlytics as fatal.
+/// The first report carries the full value (stack, breadcrumbs, tags);
+/// repeats of the same error inside [window] are counted and dropped,
+/// and one further report is allowed once the window passes, so an app
+/// that stays broken stays visible without drowning the dashboards —
+/// and the phone — in duplicates.
+class RepeatedErrorGate {
+  RepeatedErrorGate({
+    this.window = const Duration(seconds: 60),
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
+
+  /// How long an identical error stays suppressed after a report.
+  final Duration window;
+  final DateTime Function() _clock;
+  final Map<String, DateTime> _lastReportedAt = {};
+  final Map<String, int> _suppressed = {};
+
+  /// A stable identity for an error: its runtime type plus the first
+  /// line of its text. Later lines (stacks, ownership chains) vary
+  /// between repeats of the same failure and must not split the key.
+  static String keyFor(Object error) {
+    final firstLine = error.toString().split('\n').first.trim();
+    return '${error.runtimeType}: $firstLine';
+  }
+
+  /// True when an error with [key] may be reported now.
+  bool allow(String key) {
+    final now = _clock();
+    final last = _lastReportedAt[key];
+    if (last == null || now.difference(last) >= window) {
+      _lastReportedAt[key] = now;
+      return true;
+    }
+    _suppressed[key] = (_suppressed[key] ?? 0) + 1;
+    return false;
+  }
+
+  /// True when [error] may be reported now (see [keyFor]).
+  bool allowError(Object error) => allow(keyFor(error));
+
+  /// How many repeats of [key] have been dropped inside its window.
+  int suppressedCount(String key) => _suppressed[key] ?? 0;
+}
+
+/// The one gate shared by the reporting sinks: Sentry's beforeSend
+/// (sentry_config.dart — it sees every Sentry event, fatal or handled)
+/// and the Crashlytics fatal calls in startup node N3. The Crashlytics
+/// side of deliberate handled reports (ErrorReporter.report) is not
+/// gated: those call sites are already deliberate and low-frequency.
+final fatalErrorGate = RepeatedErrorGate();

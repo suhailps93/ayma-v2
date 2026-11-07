@@ -86,14 +86,23 @@ class StartupNodes {
           dumpBuildErrorToConsole(details, source: 'FlutterError.onError');
           logLayoutErrorLoudly(details);
           try {
-            FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+            // Storm guard (see RepeatedErrorGate): a framework error
+            // rethrown on every frame is recorded once per window, not
+            // once per frame. The console dump above stays ungated so
+            // logcat still shows every occurrence for QA.
+            if (fatalErrorGate.allowError(details.exception)) {
+              FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+            }
           } catch (_) {}
         };
         PlatformDispatcher.instance.onError = (error, stack) {
           dumpAsyncErrorToConsole(error, stack,
               source: 'PlatformDispatcher.onError');
           try {
-            FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+            if (fatalErrorGate.allowError(error)) {
+              FirebaseCrashlytics.instance
+                  .recordError(error, stack, fatal: true);
+            }
           } catch (_) {}
           return true;
         };
