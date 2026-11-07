@@ -174,6 +174,41 @@ void main() {
       expect(flagAtConnect, isTrue);
       expect(DebugCaptureIsolation.disabled.value, isTrue);
     });
+
+    test('re-fetches updated flag from Firestore at connect after initial load',
+        () async {
+      final db = FakeFirebaseFirestore();
+      final doc = db.collection('app_config').doc('debug_capture_isolation');
+
+      // Initially false
+      await doc.set({'enabled': false});
+      await DebugCaptureIsolation.refresh(db);
+      expect(DebugCaptureIsolation.disabled.value, isFalse);
+
+      // Now flag is flipped to true in Firestore
+      await doc.set({'enabled': true});
+
+      // Session connect re-checks Firestore and picks up the flipped flag
+      final flagAtConnect = await DebugCaptureIsolation.readAtConnect(db: db);
+      expect(flagAtConnect, isTrue);
+      expect(DebugCaptureIsolation.disabled.value, isTrue);
+    });
+
+    test('refresh shares in-flight future between concurrent callers and clears on complete',
+        () async {
+      final db = FakeFirebaseFirestore();
+      await db
+          .collection('app_config')
+          .doc('debug_capture_isolation')
+          .set({'enabled': true});
+
+      final f1 = DebugCaptureIsolation.refresh(db);
+      final f2 = DebugCaptureIsolation.refresh(db);
+      expect(identical(f1, f2), isTrue);
+
+      await Future.wait([f1, f2]);
+      expect(DebugCaptureIsolation.disabled.value, isTrue);
+    });
   });
 
   group('captureAudioOptions', () {
