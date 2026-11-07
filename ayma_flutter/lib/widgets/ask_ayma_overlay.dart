@@ -117,9 +117,11 @@ Future<void> showAskAymaOverlay(
 /// through the exact same tap-handling as the real bar — including its
 /// "already open" branch (see [isAymaSheetOpen]).
 ///
-/// The header's expand button and a second orb tap both grow this same
-/// sheet to full screen in place ([aymaSheet]); see [showAymaChatModal]
-/// for the transition and why nothing is re-mounted.
+/// The header's expand button (or a drag up) grows this same sheet to
+/// full screen in place ([aymaSheet]); see [showAymaChatModal] for the
+/// transition and why nothing is re-mounted. A second orb tap does NOT
+/// grow it — it closes the sheet and navigates to the real main chat
+/// screen instead (see [orbTapOnOpenSheet]).
 Future<void> showPageContextAymaPopup(
   BuildContext context, {
   required WidgetBuilder navBarBuilder,
@@ -175,7 +177,7 @@ Future<void> showPageContextAymaPopup(
 /// Whether ANY Ayma chat sheet is currently showing — the orb's
 /// page-context popup ([showPageContextAymaPopup]) or a scoped Ask-Ayma
 /// correction turn ([showAskAymaOverlay]); at most one is ever open, since a
-/// second orb tap expands the open one instead of stacking another (see
+/// second orb tap acts on the open one instead of stacking another (see
 /// [orbTapOnOpenSheet]).
 /// A plain top-level flag (not `ChangeNotifier`/`ValueNotifier`) since every
 /// reader here is a synchronous tap handler (`AymaTabBar`'s `onSelected` in
@@ -199,20 +201,52 @@ final aymaSheet = AymaChatSheetController();
 /// `NavBarShell`/`PublicProfileScreen`) `await`s this before going on.
 Future<void>? pendingAymaSheet;
 
-/// An orb tap while [isAymaSheetOpen]: an expanded PLAIN sheet (the
-/// full-screen main chat) runs [onVoice] — the tap progression's third rung
-/// — while anything else grows the sheet to full screen in place instead. A
-/// scoped correction turn ([isAymaSheetScoped]) never takes the voice rung,
-/// at any size: the voice agent doesn't bind its correction tools, so a
-/// full-duplex call from one could only ever answer "I can't do that" — its
-/// voice stays push-to-talk via the composer's own mic button, which sends
-/// through the same scoped turn pipeline as typed text.
-void orbTapOnOpenSheet({required VoidCallback onVoice}) {
+/// An orb tap while [isAymaSheetOpen]. Second-tap detection is exactly
+/// this state at tap time — the sheet is open, it is not yet expanded,
+/// and it is the plain page-context popup (not a scoped correction turn):
+///
+/// * docked PLAIN sheet -> [onGoToMainChat], when the caller supplies one:
+///   the second tap closes the sheet and navigates to the REAL main chat
+///   screen (the shell's Ayma tab / `MainShellScreen.path`), it does not
+///   grow the overlay into a full-screen dialog over the current page
+///   (founder report, 2026-11-06: the grown overlay hid every page Ayma
+///   navigated to behind it). Callers without a main-chat destination
+///   (tests, synthetic hosts) omit it and keep the old expand behaviour.
+/// * expanded PLAIN sheet -> [onVoice]: the tap progression's third rung.
+///   Full screen here is only reachable now via the header expand button
+///   or a drag — those entry points are unchanged.
+/// * a scoped correction turn ([isAymaSheetScoped]) never takes the voice
+///   rung and never navigates away, at any size: it grows to full screen
+///   in place instead. The voice agent doesn't bind its correction tools,
+///   so a full-duplex call from one could only ever answer "I can't do
+///   that" — its voice stays push-to-talk via the composer's own mic
+///   button, which sends through the same scoped turn pipeline as typed
+///   text.
+void orbTapOnOpenSheet({
+  required VoidCallback onVoice,
+  VoidCallback? onGoToMainChat,
+}) {
   if (aymaSheet.isExpanded && !isAymaSheetScoped) {
     onVoice();
+  } else if (!aymaSheet.isExpanded &&
+      !isAymaSheetScoped &&
+      onGoToMainChat != null) {
+    onGoToMainChat();
   } else {
     aymaSheet.expand();
   }
+}
+
+/// Dismisses the currently-open Ayma chat sheet and waits until its
+/// dismissal has completed ([pendingAymaSheet] resolves). This is a
+/// dismissal only — it is NOT a page navigation: it records no route, tab
+/// or go-back history entry, and callers perform the actual destination
+/// navigation themselves after it returns, so the destination is what
+/// becomes visible once the sheet is gone. A no-op when no sheet is open.
+Future<void> dismissOpenAymaSheet(BuildContext context) async {
+  if (!isAymaSheetOpen) return;
+  Navigator.of(context).pop();
+  await pendingAymaSheet;
 }
 
 /// Exposes the host screen's own bottom-bar builder to Ask-Ayma sheets

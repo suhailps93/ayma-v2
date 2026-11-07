@@ -171,9 +171,8 @@ void main() {
   );
 
   testWidgets(
-    'tapping the orb again while the popup is already open expands that same '
-    'sheet to full screen in place (no second popup), and another tab closes '
-    'it and switches',
+    'tapping the orb again while the popup is open closes it and lands on '
+    'the real Ayma tab (no second popup, no grown overlay)',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
@@ -203,23 +202,61 @@ void main() {
       await tester.tap(
         find.descendant(of: popupBar, matching: find.byTooltip('Ayma')),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
-      expect(aymaSheet.isExpanded, isTrue);
-      // Still over Explore — expanding is not a tab switch.
+      // Second tap: sheet closed, shell on the real main chat tab.
+      expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+      expect(isAymaSheetOpen, isFalse);
+      expect(aymaSheet.isExpanded, isFalse);
       expect(
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
-        1,
+        MainShellScreen.aymaTabIndex,
+      );
+    },
+  );
+
+  testWidgets(
+    'with the popup expanded, tapping another tab in its bar closes it '
+    'and switches to that tab',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Explore'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byType(ExploreScreen), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+        findsOneWidget,
       );
 
+      // Expand first: in the popup bar copy the current tab (Explore) is
+      // the selected one and a tap on a selected tab is inert by design;
+      // once expanded the bar highlights the orb instead, so Explore is
+      // tappable — the arrangement the original combined test used.
+      await tester.tap(find.byKey(const Key('chatExpandFullscreenButton')));
+      await tester.pumpAndSettle();
+      expect(aymaSheet.isExpanded, isTrue);
+
+      final popupBar = find.byKey(const ValueKey('aymaChatModalNavBar'));
       await tester.tap(
         find.descendant(of: popupBar, matching: find.byTooltip('Explore')),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
       expect(isAymaSheetOpen, isFalse);
+      expect(
+        tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+        1,
+      );
     },
   );
 

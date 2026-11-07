@@ -1,7 +1,7 @@
 // The page-context popup's expand/collapse (founder ask: expanding must look
 // like the sheet itself growing to fill the screen, not a new page). Full
 // screen is the SAME `showAymaChatModal` sheet at its largest snap size:
-// the header's `open_in_full` button (or a second orb tap) animates it up
+// the header's `open_in_full` button animates it up
 // to the whole screen above the nav bar, `close_fullscreen` (or system back)
 // shrinks it back. Nothing is re-mounted, so the hosted `ChatScreen` State,
 // its transcript and its composer text carry straight across. The pinned
@@ -242,8 +242,8 @@ void main() {
   );
 
   testWidgets(
-    'a second orb tap expands the popup over the current tab (no tab '
-    'switch, no second popup)',
+    'a second orb tap closes the popup and switches to the real main '
+    'chat tab (no grown overlay, no second popup)',
     (tester) async {
       _phoneViewport(tester);
       await _openPopupOverExplore(tester);
@@ -261,14 +261,15 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(_sheetRect(tester).top, 0);
+      // Sheet gone entirely; the shell is on its Ayma tab (index 0), the
+      // real main chat screen — not the sheet at full size over Explore.
+      expect(find.byKey(_modalHandle), findsNothing);
+      expect(find.byKey(_sheetBox), findsNothing);
+      expect(isAymaSheetOpen, isFalse);
       expect(
-        _sheetRect(tester).bottom,
-        closeTo(_screenHeight - _barHeight, 1),
+        tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+        MainShellScreen.aymaTabIndex,
       );
-      expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(find.text(_chip), findsNothing);
-      expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index, 1);
     },
   );
 

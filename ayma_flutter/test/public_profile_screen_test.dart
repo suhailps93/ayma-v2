@@ -601,11 +601,12 @@ void main() {
     expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
   });
 
-  // A second orb tap while the popup is already open grows that same sheet
-  // to full screen in place — no second popup, no navigation away.
+  // A second orb tap while the popup is docked closes it and navigates to
+  // the real main chat screen (the shell route) — it does not grow the
+  // overlay to full screen in place.
   testWidgets(
-      'tapping the orb again while the popup is already open expands it in '
-      'place', (tester) async {
+      'tapping the orb again while the popup is open closes it and goes '
+      'to the shell (real main chat screen)', (tester) async {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
@@ -625,13 +626,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
-    expect(aymaSheet.isExpanded, isTrue);
-    expect(
-      tester.getRect(find.byKey(const ValueKey('aymaChatModalSheetBox'))).top,
-      0,
-    );
-    expect(find.text('SHELL'), findsNothing);
+    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+    expect(isAymaSheetOpen, isFalse);
+    expect(aymaSheet.isExpanded, isFalse);
+    expect(find.text('SHELL'), findsOneWidget);
   });
 
   testWidgets('Run match calls the endpoint and opens the report',
