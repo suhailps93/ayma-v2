@@ -36,6 +36,7 @@ from prompt import load_prompt_sections
 import deep_dive_links
 import feature_flags
 import gemini
+import llm_routing
 import report_blocks as rb
 import schema
 import token_ledger
@@ -1544,7 +1545,21 @@ async def run(
         f"Research {who} and write up everything you can find, with source "
         f"URLs inline.{linkedin_note}"
     )
-    prose, sources = await _grounded_research(ask, uid=uid)
+    try:
+        prose, sources = await _grounded_research(ask, uid=uid)
+    except llm_routing.DirectGoogleDisabledError:
+        # Grounded research is disabled by the direct-Google kill
+        # (2026-11-04, LiveKit-only inference): gemini.research always
+        # raises. Degrade to an empty sweep instead of surfacing an
+        # internal error - the digest pass below turns empty prose into
+        # an honest not_found / low-confidence report and the image and
+        # social steps still run. Other exceptions still propagate.
+        logger.warning(
+            "deep-dive grounded research disabled (direct-Google kill); "
+            "continuing with an empty sweep for %s",
+            name,
+        )
+        prose, sources = "", []
 
     validate_links = feature_flags.enabled("deepdive_validate_links")
     if validate_links:

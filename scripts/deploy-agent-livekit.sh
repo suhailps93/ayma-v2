@@ -8,6 +8,19 @@
 #   scripts/deploy-agent-livekit.sh deploy   # subsequent: deploy a new version
 #   scripts/deploy-agent-livekit.sh update-secrets   # rotate secrets only
 #
+# Target environment: prod by default. For the STAGING agent
+# (ayma-lk-staging, which must write to the ayma-staging Firestore):
+#
+#   AGENT_TARGET_ENV=staging scripts/deploy-agent-livekit.sh update-secrets
+#
+# Staging flips GOOGLE_CLOUD_PROJECT to ayma-staging, reads the Firestore SA
+# key from Secret Manager secret LK_AGENT_FIRESTORE_SA_STAGING (a key for
+# lk-agent-firestore@ayma-staging), and sets AGENT_NAME_LIVEKIT /
+# LIVEKIT_ROOM_PREFIX / SENTRY_ENVIRONMENT to their staging values. Secret
+# Manager reads themselves always stay on project ayma-ai (both SA keys and
+# the LiveKit keys live there). With AGENT_TARGET_ENV unset the prod values
+# below are byte-identical to the original hardcoded ones.
+#
 # Requires: a recent `lk` CLI (>= 2.19 — LiveKit Cloud Agents rejects older
 # CLIs with a "version header is required" error; set LK_BIN to point at it),
 # `gcloud` with Secret Manager read on project ayma-ai, Docker (the build runs
@@ -23,6 +36,23 @@
 set -euo pipefail
 
 PROJECT_GCP=ayma-ai
+
+# Per-environment agent target. Prod defaults reproduce the original
+# hardcoded values exactly; AGENT_TARGET_ENV=staging overrides them.
+AGENT_TARGET_ENV="${AGENT_TARGET_ENV:-prod}"
+if [[ "$AGENT_TARGET_ENV" == "staging" ]]; then
+  TARGET_FIRESTORE_PROJECT="${TARGET_FIRESTORE_PROJECT:-ayma-staging}"
+  TARGET_SA_SECRET="${TARGET_SA_SECRET:-LK_AGENT_FIRESTORE_SA_STAGING}"
+  TARGET_AGENT_NAME="${TARGET_AGENT_NAME:-ayma-lk-staging}"
+  TARGET_ROOM_PREFIX="${TARGET_ROOM_PREFIX:-ayma-staging-}"
+  TARGET_SENTRY_ENV="${TARGET_SENTRY_ENV:-staging}"
+else
+  TARGET_FIRESTORE_PROJECT="${TARGET_FIRESTORE_PROJECT:-ayma-ai}"
+  TARGET_SA_SECRET="${TARGET_SA_SECRET:-LK_AGENT_FIRESTORE_SA}"
+  TARGET_AGENT_NAME="${TARGET_AGENT_NAME:-ayma-lk}"
+  TARGET_ROOM_PREFIX="${TARGET_ROOM_PREFIX:-ayma-}"
+  TARGET_SENTRY_ENV="${TARGET_SENTRY_ENV:-production}"
+fi
 LK_URL="wss://aimma-wt34nu3l.livekit.cloud"
 # LiveKit Cloud Agents region (available: us-east me-central eu-central
 # ap-south). us-east is closest to our us-central1 Firestore/Vertex.
@@ -49,7 +79,7 @@ LK_AUTH=(--url "$LK_URL" --api-key "$LK_KEY" --api-secret "$LK_SECRET")
 NONSECRET_ENV=(
   "USE_VERTEX=true"
   "VERTEX_LOCATION=us-central1"
-  "GOOGLE_CLOUD_PROJECT=${PROJECT_GCP}"
+  "GOOGLE_CLOUD_PROJECT=${TARGET_FIRESTORE_PROJECT}"
   "GEMINI_LIVE_USE_DEV_API=true"
   "CONTEXT_OPT_LEVEL=3"
   "CONTEXT_OPT_MEASURE=true"
@@ -65,6 +95,16 @@ NONSECRET_ENV=(
   # config.py defaults — the single source of truth.
 )
 
+# Prod relies on the config.py defaults for these three (ayma-lk / ayma- /
+# production), so they are only sent for staging, whose values differ.
+if [[ "$AGENT_TARGET_ENV" == "staging" ]]; then
+  NONSECRET_ENV+=(
+    "AGENT_NAME_LIVEKIT=${TARGET_AGENT_NAME}"
+    "LIVEKIT_ROOM_PREFIX=${TARGET_ROOM_PREFIX}"
+    "SENTRY_ENVIRONMENT=${TARGET_SENTRY_ENV}"
+  )
+fi
+
 # Secrets pulled from GCP Secret Manager → injected into LiveKit's secret store
 # as env vars. Format: "ENV_NAME=secret-manager-name".
 SECRET_MAP=(
@@ -72,7 +112,7 @@ SECRET_MAP=(
   "META_API_KEY=META_API_KEY"
   "CARTESIA_API_KEY=CARTESIA_API_KEY"
   "SENTRY_DSN=SENTRY_DSN_AGENT"
-  "LK_AGENT_FIRESTORE_SA=LK_AGENT_FIRESTORE_SA"
+  "LK_AGENT_FIRESTORE_SA=${TARGET_SA_SECRET}"
 )
 
 echo ">> staging build context (Dockerfile.livekit -> Dockerfile)"

@@ -129,3 +129,18 @@ def test_inference_chat_max_tokens_env_override(monkeypatch):
     monkeypatch.setenv("INFERENCE_CHAT_MAX_TOKENS", "12000")
     cfg = config._load()
     assert cfg.inference_chat_max_tokens == 12000
+
+
+def test_gemini_web_search_defaults_off(monkeypatch):
+    # Grounded research is disabled (direct-Google kill, 2026-11-04), so the
+    # text-chat web_search tool must NOT be offered by default - every call
+    # would fail as an internal error.
+    monkeypatch.delenv("GEMINI_WEB_SEARCH", raising=False)
+    cfg = config._load()
+    assert cfg.gemini_web_search is False
+
+
+def test_gemini_web_search_env_override(monkeypatch):
+    monkeypatch.setenv("GEMINI_WEB_SEARCH", "true")
+    cfg = config._load()
+    assert cfg.gemini_web_search is True
