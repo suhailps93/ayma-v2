@@ -505,6 +505,7 @@ _COMMAND_TOOLS = {
     "ui_action", "take_picture", "go_back", "play_voice_clip",
     "mark_all_notifications_read", "clear_all_notifications",
     "set_notification_filter", "mark_all_conversations_read",
+    "copilot_locate", "copilot_copy_draft",
 }
 
 

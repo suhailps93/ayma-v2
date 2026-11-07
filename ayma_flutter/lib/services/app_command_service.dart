@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:image_picker/image_picker.dart';
 
 import '../routing/app_router.dart';
@@ -15,6 +16,8 @@ import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
 import 'api_client.dart';
 import 'app_context.dart';
+import 'copilot_highlight.dart';
+import 'copilot_service.dart';
 import 'ayma_session.dart';
 import 'chat_service.dart';
 import 'gallery_saver.dart';
@@ -121,6 +124,16 @@ import 'voice_session_controller.dart';
 ///   items 9–11, 2026-11-06: the buttons existed on the Notifications
 ///   page but Ayma had no commands for them). They own their acks like
 ///   `play_voice_clip`: the ack carries the count that actually moved.
+/// * `copilot_locate` / `copilot_copy_draft` — the co-pilot voice bridge
+///   (founder, Nov 6, 2026: "voice mode is not using the screen"): while a
+///   co-pilot screen share runs, the voice agent looks at the CURRENT
+///   shared frame through the page's own `/copilot/locate` pass and
+///   draws the highlight ring over the other app; a draft it composed
+///   can then be copied — only after the user heard it read aloud and
+///   said yes — by `copilot_copy_draft`. Frame-on-ask holds: a frame
+///   leaves the device only when a locate command actually runs. Both
+///   own their ack (a locate is a vision round trip, and the ack carries
+///   the spoken report or the honest reason).
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
@@ -146,6 +159,10 @@ class AppCommandService {
     Future<void> Function(int index)? sendTourStop,
     Future<TakePictureOutcome> Function(Map<String, dynamic> cmd)?
         takePicture,
+    Future<CopilotCommandOutcome> Function(Map<String, dynamic> cmd)?
+        copilotLocate,
+    Future<CopilotCommandOutcome> Function(Map<String, dynamic> cmd)?
+        copilotCopyDraft,
     Future<LibrarySaveOutcome> Function(XFile file)? saveToLibrary,
     VoiceClipRegistry? clipRegistry,
     VoiceClipPlayback? clipPlayback,
@@ -156,6 +173,8 @@ class AppCommandService {
         _inboxActions = inboxActions ?? InboxActions(),
         _clipRegistry = clipRegistry ?? VoiceClipRegistry.instance,
         _clipPlayback = clipPlayback ?? VoiceClipPlayback(),
+        _copilotLocate = copilotLocate ?? _performCopilotLocate,
+        _copilotCopyDraft = copilotCopyDraft ?? _performCopilotCopyDraft,
         _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
         _sendTourStop = sendTourStop ?? _postTourStop,
         _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
@@ -252,6 +271,14 @@ class AppCommandService {
   /// [_performTakePicture].
   final Future<TakePictureOutcome> Function(Map<String, dynamic> cmd)
       _takePicture;
+
+  /// Execute one co-pilot voice-bridge command against the live share.
+  /// Injectable for tests; the defaults are [_performCopilotLocate] /
+  /// [_performCopilotCopyDraft].
+  final Future<CopilotCommandOutcome> Function(Map<String, dynamic> cmd)
+      _copilotLocate;
+  final Future<CopilotCommandOutcome> Function(Map<String, dynamic> cmd)
+      _copilotCopyDraft;
 
   /// The production `take_picture` executor. Reuses the app's existing
   /// camera plumbing — [ImagePicker] with the chosen
@@ -604,6 +631,14 @@ class AppCommandService {
       unawaited(_runTakePicture(snap.reference, data, id));
       return;
     }
+    if (data['action'] == 'copilot_locate' ||
+        data['action'] == 'copilot_copy_draft') {
+      // Owns its ack like ui_action/take_picture: a locate runs a real
+      // vision pass (seconds) and the ack carries the spoken report (or
+      // the honest reason the shared screen cannot be seen).
+      unawaited(_runCopilotCommand(snap.reference, data, id));
+      return;
+    }
     if (data['action'] == 'go_back') {
       // Owns its ack like ui_action/tour_step: it may await a modal
       // dismissal, and its ack carries the outcome kind + where the user
@@ -793,6 +828,113 @@ class AppCommandService {
       debugPrint('Ayma inbox action $action failed: $e');
       return const InboxActionResult(false, 'That inbox action failed.');
     }
+  }
+
+  /// Run one co-pilot voice-bridge command, then ack with its
+  /// outcome: `ok` + the spoken `result` report, or the `reason` the
+  /// backend tool turns into an honest line.
+  Future<void> _runCopilotCommand(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> cmd,
+    String id,
+  ) async {
+    final handler =
+        cmd['action'] == 'copilot_copy_draft' ? _copilotCopyDraft : _copilotLocate;
+    CopilotCommandOutcome out;
+    try {
+      out = await handler(cmd);
+    } catch (_) {
+      out = const CopilotCommandOutcome.failed('vision_failed');
+    }
+    await ref.parent
+        .doc('ack')
+        .set(<String, dynamic>{
+          'id': id,
+          'ok': out.ok,
+          if (out.ok) 'result': out.result else 'reason': out.reason,
+          'ts': FieldValue.serverTimestamp(),
+        })
+        .catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// The production `copilot_locate`: look at the live share's current
+  /// frame for [cmd]'s goal, through the SAME `/copilot/locate` vision
+  /// pass the co-pilot page's text ask uses, and draw the ring. Privacy
+  /// rails are inherited, not re-decided: the frame used is the one the
+  /// share is already holding in memory (never stored), it leaves the
+  /// device only because this command ran (frame-on-ask), and a
+  /// protected (FLAG_SECURE) screen never produces a frame at all —
+  /// the share is secure-paused instead, which acks honestly.
+  static Future<CopilotCommandOutcome> _performCopilotLocate(
+    Map<String, dynamic> cmd,
+  ) async {
+    final service = copilotServiceGlobal;
+    if (!service.isSharing) {
+      return const CopilotCommandOutcome.failed('not_sharing');
+    }
+    if (service.securePaused) {
+      return const CopilotCommandOutcome.failed('secure_paused');
+    }
+    if (service.lockPaused) {
+      return const CopilotCommandOutcome.failed('screen_locked');
+    }
+    final frame = service.latestFrame;
+    if (frame == null) {
+      return const CopilotCommandOutcome.failed('no_frame');
+    }
+    final goal = (cmd['goal'] as String? ?? '').trim();
+    final CopilotTarget target;
+    try {
+      target = await ApiClient().copilotLocate(
+        frameBytes: frame.bytes,
+        goal: goal.isEmpty ? 'what the user is showing me' : goal,
+      );
+    } on ApiException {
+      return const CopilotCommandOutcome.failed('vision_failed');
+    } catch (_) {
+      return const CopilotCommandOutcome.failed('vision_failed');
+    }
+    service.lastDraftText = target.draftText;
+    if (!target.found) {
+      return CopilotCommandOutcome.done(
+        'You looked at the shared screen for "$goal" and nothing on it '
+        'matches. Say this to the user: "${target.say}" No highlight '
+        'ring was drawn.',
+      );
+    }
+    await service.showHighlight(target, geometry: frame.geometry());
+    final report = StringBuffer(
+      'The highlight ring is now drawn over "${target.label}" in the '
+      'other app (it fades after a few seconds). Say this guidance '
+      'aloud: "${target.say}"',
+    );
+    if (target.draftText != null) {
+      report.write(
+        ' A draft was composed for that text field. Read it aloud and '
+        'ask before copying, exactly: "${target.voiceDraftPrompt}" '
+        'Only if the user says yes, call copilot_copy_draft.',
+      );
+    }
+    return CopilotCommandOutcome.done(report.toString());
+  }
+
+  /// The production `copilot_copy_draft`: put the draft the last locate
+  /// composed onto the clipboard — the ONLY clipboard write on the
+  /// voice path, reachable only through the confirmation-gated tool.
+  /// Never types, never sends; the user long-presses and pastes.
+  static Future<CopilotCommandOutcome> _performCopilotCopyDraft(
+    Map<String, dynamic> cmd,
+  ) async {
+    if (!copilotServiceGlobal.isSharing) {
+      return const CopilotCommandOutcome.failed('not_sharing');
+    }
+    final draft = copilotServiceGlobal.lastDraftText;
+    if (draft == null || draft.isEmpty) {
+      return const CopilotCommandOutcome.failed('no_draft');
+    }
+    await Clipboard.setData(ClipboardData(text: draft));
+    return const CopilotCommandOutcome.done('copied');
   }
 
   /// Show one Ayma-driven tour step (§11.2b) and wire its reports back to the
@@ -1273,6 +1415,29 @@ class AppCommandService {
 /// when the vision reaction landed, its text as `result`; on failure a
 /// machine `reason` (`cancelled`, `camera_unavailable`, `upload_failed`)
 /// the tool turns into an honest user-facing line.
+/// The outcome of one co-pilot voice-bridge command: on success a
+/// spoken-report [result] the backend tool relays to the model; on
+/// failure a machine [reason] (not_sharing / secure_paused /
+/// screen_locked / no_frame / vision_failed / no_draft) it turns into
+/// an honest line.
+class CopilotCommandOutcome {
+  const CopilotCommandOutcome._({
+    required this.ok,
+    this.result = '',
+    this.reason = '',
+  });
+
+  const CopilotCommandOutcome.done(String result)
+      : this._(ok: true, result: result);
+
+  const CopilotCommandOutcome.failed(String reason)
+      : this._(ok: false, reason: reason);
+
+  final bool ok;
+  final String result;
+  final String reason;
+}
+
 class TakePictureOutcome {
   const TakePictureOutcome.captured({
     required this.imagePath,

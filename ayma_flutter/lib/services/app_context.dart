@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import 'copilot_service.dart';
 import 'navigation_history.dart';
 
 /// What the user is currently looking at in the app — the screen and, where it
@@ -56,6 +57,12 @@ class ScreenContext {
         'previous_route': NavigationHistory.instance.previous?.path ?? '',
         'previous_label':
             NavigationHistory.instance.previous?.label ?? '',
+        // Co-pilot screen share state, read live from the share service
+        // (like the navigation history above): while a share runs, the
+        // voice agent is told it can see the shared screen and to use
+        // copilot_locate — the fix for "voice mode is not using the
+        // screen" (founder, Nov 6, 2026).
+        'copilot_share': copilotServiceGlobal.isSharing ? 'active' : '',
       };
 
   bool sameAs(ScreenContext o) =>

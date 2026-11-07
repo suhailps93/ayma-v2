@@ -187,6 +187,12 @@ from .take_picture import (
     _TAKE_PICTURE,
     _TAKE_PICTURE_ACK_TIMEOUT_SECONDS,
 )
+from .app_control_copilot import (
+    _bind_copilot_copy_draft,
+    _bind_copilot_locate,
+    _COPILOT_COPY_DRAFT,
+    _COPILOT_LOCATE,
+)
 
 # How long a command tool waits for the client's ack before reporting the
 # navigation as NOT having happened. The client acks the instant it executes
@@ -255,6 +261,8 @@ COMMAND_SKILLS: list[Skill] = [
           bind=_bind_set_notification_filter),
     Skill(declaration=_MARK_ALL_CONVERSATIONS_READ,
           bind=_bind_mark_all_conversations_read),
+    Skill(declaration=_COPILOT_LOCATE, bind=_bind_copilot_locate),
+    Skill(declaration=_COPILOT_COPY_DRAFT, bind=_bind_copilot_copy_draft),
 ]
 
 VOICE_SKILLS: list[Skill] = [

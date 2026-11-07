@@ -92,6 +92,8 @@ TOOL_LABELS = {
     "app_action": "Did that for you",
     "account_action": "Handled your account request",
     "ui_action": "Did that on your screen",
+    "copilot_locate": "Looked at your shared screen",
+    "copilot_copy_draft": "Copied the draft for you",
     # Model stack (skills/set_model_stack.py)
     "set_brain": "Switched Ayma's brain",
     "set_voice_mode": "Changed the voice mode",
@@ -203,6 +205,8 @@ WORKING_LABELS = {
     "app_action": "Changing that…",
     "account_action": "Checking your account request…",
     "ui_action": "Doing that on your screen…",
+    "copilot_locate": "Looking at your shared screen…",
+    "copilot_copy_draft": "Copying the draft…",
     # Questionnaire skill
     "next_questions": "Thinking what to ask…",
     "record_answer": "Noting that down…",
