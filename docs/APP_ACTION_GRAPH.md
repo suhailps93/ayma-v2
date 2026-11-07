@@ -77,6 +77,14 @@ superseding a brief same-day belt-and-suspenders prompt version):
   `kUiDenyRules` / `kUiDenyRoutes` in
   `ayma_flutter/lib/services/screen_capture.dart` (a test fails when the
   two drift).
+* Prompt context: none of this is hardcoded into prompt text —
+  `prompt.compose_system_prompt` renders the permitted-action context
+  from this same registry at build time (`action_facts.py` +
+  `prompts/action_facts.md`, the plan_facts pattern): the pages,
+  settings and runnable account actions she may use, with the
+  exclusions applied as a filter so a user-only action never appears
+  as permitted. The block teaches the refusal behaviour generically;
+  it never names an excluded button.
 * Command layer: the config is load-bearing. Each item names the
   surfaces it blocks (`account_actions`, `deny_keys`); `account_action`
   checks `excluded_account_action_keys()` BEFORE dispatch and refuses

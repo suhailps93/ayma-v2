@@ -179,6 +179,7 @@ def test_exclusion_config_names_its_enforcement_surfaces():
         "delete_account", "wipe_memory"}
     assert reg.excluded_deny_keys() == {
         "delete", "purchase", "clear_memory"}
+    assert reg.excluded_destination_keys() == {"delete_account"}
     deny_keys = {
         r["key"] for r in reg.registry()["ui_action_policy"]["deny"]}
     assert reg.excluded_deny_keys() <= deny_keys

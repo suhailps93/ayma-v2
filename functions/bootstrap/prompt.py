@@ -35,6 +35,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
+from action_facts import action_facts
 from plan_facts import plan_facts
 from transcript import Turn, format_recent_turns
 
@@ -561,6 +562,16 @@ def compose_system_prompt(
     # here (after persona/lessons/mode/guidance, before every volatile part),
     # landing in both the lean voice seed and the full text prompt.
     parts.append(plan_facts())
+
+    # The permitted-action context, rendered from the app registry config
+    # (action_facts.py — same config-to-prompt pattern as plan_facts): the
+    # pages she can open, the settings she can change and the account
+    # actions she can run, with the registry's exclusions deny-list applied
+    # as a filter so a user-only action never appears as permitted. Nothing
+    # about buttons is hardcoded in prompt text. User-independent and
+    # byte-stable, so it joins the stable prefix here too, in both the
+    # lean voice seed and the full text prompt.
+    parts.append(action_facts())
 
     # Cache-alignment reorder (see the docstring): the wiki block joins the
     # stable prefix right here, before any per-turn volatile part.
