@@ -445,7 +445,10 @@ class _ChatComposerState extends State<ChatComposer>
         if (note != null && note.isActive)
           Positioned(
             left: 0,
-            right: 0,
+            // Stop short of the mic slot: the held mic stays visible
+            // (swelled + accent) for the whole recording (founder,
+            // 2026-11-06 - the bar must not swallow the mic).
+            right: 56,
             bottom: 0,
             child: VoiceNoteRecordingBar(controller: note),
           ),
