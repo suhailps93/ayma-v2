@@ -499,7 +499,8 @@ def test_open_profile_fuzzy_matches_a_near_identical_name():
 # --- registry wiring --------------------------------------------------
 
 _COMMAND_TOOLS = {
-    "open_screen", "search_explore", "open_profile", "list_conversations",
+    "open_screen", "search_explore", "open_profile", "show_profile_photo",
+    "list_conversations",
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
     "ui_action", "take_picture", "go_back", "play_voice_clip",
@@ -2121,3 +2122,153 @@ def test_current_screen_names_the_previous_page():
     out = _current_screen(db)()
     assert "Previous page: New matches" in out
     assert "go_back" in out
+
+
+# --- show_profile_photo / carousel_photo -----------------------------------
+#
+# Founder clarification 2026-11-06: Ayma could already open a profile —
+# the missing piece was moving WITHIN its photo carousel ("click the
+# third picture"). The tool queues one `carousel_photo` command; the
+# client acks with the real photo count either way, so photo 5 of 3
+# comes back as the count, never as a false success, and never moves.
+
+class _CarouselStore(_AckStore):
+    """Plays a healthy client with a 3-photo carousel open: acks each
+    queued carousel command from its own fake page state, exactly the
+    fields the real client's ack carries."""
+
+    def __init__(self, count=3):
+        super().__init__(ok=True)
+        self.count = count
+        self.page = 0  # 0-based
+
+    def __setitem__(self, key, value):
+        if key != _PENDING or not isinstance(value, dict) or not value.get("id"):
+            super().__setitem__(key, value)
+            return
+        dict.__setitem__(self, key, value)
+        self.acked.append(value["id"])
+        op = value.get("op")
+        idx = value.get("index") or 0
+        ack = {"id": value["id"], "photo_count": self.count}
+        if op == "goto":
+            ack["requested_photo"] = idx
+            if 1 <= idx <= self.count:
+                self.page = idx - 1
+                ack.update(ok=True, current_photo=idx)
+            else:
+                ack.update(ok=False, reason="out_of_range",
+                           current_photo=self.page + 1)
+        elif op == "next":
+            if self.page >= self.count - 1:
+                ack.update(ok=False, reason="at_last",
+                           current_photo=self.page + 1)
+            else:
+                self.page += 1
+                ack.update(ok=True, current_photo=self.page + 1)
+        elif op == "previous":
+            if self.page <= 0:
+                ack.update(ok=False, reason="at_first", current_photo=1)
+            else:
+                self.page -= 1
+                ack.update(ok=True, current_photo=self.page + 1)
+        elif op == "last":
+            self.page = self.count - 1
+            ack.update(ok=True, current_photo=self.count,
+                       requested_photo=self.count)
+        else:
+            ack.update(ok=False, reason="unknown_op",
+                       current_photo=self.page + 1)
+        super().__setitem__(_ACK, ack)
+
+
+def _carousel_db(count=3):
+    return _Db(_CarouselStore(count=count))
+
+
+def test_show_profile_photo_is_registered_for_voice_and_text():
+    names = [s.declaration["name"] for s in app_control.COMMAND_SKILLS]
+    voice = [s.declaration["name"] for s in app_control.VOICE_SKILLS]
+    assert "show_profile_photo" in names
+    assert "show_profile_photo" in voice
+
+
+def test_show_profile_photo_goto_queues_carousel_command_and_confirms():
+    db = _carousel_db()
+    out = _run(app_control._bind_show_profile_photo(db, "me")(op="goto", index=3))
+    assert out.startswith("showing: photo 3 of 3")
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "carousel_photo"
+    assert cmd["op"] == "goto" and cmd["index"] == 3
+    assert db.store.page == 2
+
+
+def test_show_profile_photo_out_of_range_returns_the_real_count():
+    db = _carousel_db()
+    out = _run(app_control._bind_show_profile_photo(db, "me")(op="goto", index=5))
+    assert out.startswith("out_of_range:")
+    assert "only 3 photos" in out
+    assert "no photo 5" in out
+    assert db.store.page == 0  # never moved
+
+
+def test_show_profile_photo_next_and_previous_step():
+    db = _carousel_db()
+    bind = app_control._bind_show_profile_photo(db, "me")
+    assert _run(bind(op="next")).startswith("showing: photo 2 of 3")
+    assert _run(bind(op="next")).startswith("showing: photo 3 of 3")
+    assert _run(bind(op="next")).startswith("at_last:")
+    assert _run(bind(op="previous")).startswith("showing: photo 2 of 3")
+    assert db.store.page == 1
+
+
+def test_show_profile_photo_reports_failure_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()  # no client — nothing ever acks
+    out = _run(app_control._bind_show_profile_photo(db, "me")(op="goto", index=2))
+    assert "did NOT change the photo" in out
+
+
+def test_show_profile_photo_goto_without_an_index_asks_which():
+    db = _carousel_db()
+    out = _run(app_control._bind_show_profile_photo(db, "me")(op="goto", index=0))
+    assert out.startswith("Which photo?")
+    assert _PENDING not in db.store  # nothing was queued
+
+
+@pytest.mark.parametrize("phrase,expected", [
+    ("click the third picture", ("goto", 3)),
+    ("show the third picture", ("goto", 3)),
+    ("show me photo 2", ("goto", 2)),
+    ("go to the first photo", ("goto", 1)),
+    ("open the 4th picture", ("goto", 4)),
+    ("next photo", ("next", None)),
+    ("show the next picture please", ("next", None)),
+    ("previous photo", ("previous", None)),
+    ("go to the previous picture", ("previous", None)),
+    ("show the last photo", ("last", None)),
+])
+def test_detect_photo_command_matches_clear_asks(phrase, expected):
+    assert app_control.detect_photo_command(phrase) == expected
+
+
+@pytest.mark.parametrize("phrase", [
+    "I like the third picture",
+    "the third picture is my favourite",
+    "how many pictures does she have",
+    "open her profile",
+    "next please",
+    "show me her photos",  # a gallery ask, no target photo
+    "that photo shoot was great",
+])
+def test_detect_photo_command_leaves_ordinary_chat_alone(phrase):
+    assert app_control.detect_photo_command(phrase) is None
+
+
+def test_run_photo_command_translates_success_and_out_of_range():
+    db = _carousel_db()
+    out = _run(app_control.run_photo_command(db, "me", "goto", 3))
+    assert out == "Showing photo 3 of 3."
+    out = _run(app_control.run_photo_command(db, "me", "goto", 5))
+    assert "only 3 photos" in out and "no photo 5" in out
+    assert db.store.page == 2  # the failed ask never moved it
