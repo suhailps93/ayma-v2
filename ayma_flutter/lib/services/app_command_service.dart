@@ -1150,6 +1150,8 @@ class TakePictureOutcome {
   /// versus the save itself failing.
   final bool librarySaved;
   final bool libraryDenied;
+}
+
 /// How one `go_back` step resolved (see [AppCommandService.runGoBack]).
 enum GoBackKind { navigated, dismissedModal, atRoot, tourActive }
 
