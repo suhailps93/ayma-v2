@@ -100,8 +100,10 @@ void main() {
 
     // A real failure (not a dropped socket) is NOT silently reconciled — the
     // user is told honestly and offered a retry.
-    expect(find.text("Couldn't reach Ayma. Check your connection."),
+    expect(find.text("Ayma hit a problem with that message — try again."),
         findsOneWidget);
+    expect(find.text("Couldn't reach Ayma. Check your connection."),
+        findsNothing);
     expect(reloads, 0);
   });
 

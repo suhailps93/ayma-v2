@@ -988,6 +988,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// kills the socket; whatever error that surfaces as, the server may well
   /// have finished the turn). A genuine 4xx/5xx *response* with the app in
   /// the foreground the whole time is a real failure and stays one.
+  /// User-facing copy for a send failure that was NOT reconciled: when the
+  /// failure carries an HTTP status, the server answered and rejected the
+  /// send, so say so — never blame a connection that was not broken
+  /// (2026-11-07: a 422 rejection showed "Check your connection."). The
+  /// connection wording is kept only for failures with no server response
+  /// at all. (The client-fabricated 408 timeout is connection-class, not a
+  /// server answer.)
+  String _sendFailureMessage(Object error) {
+    if (error is ApiException &&
+        error.statusCode != null &&
+        !error.message.startsWith('Request timed out')) {
+      return 'Ayma hit a problem with that message — try again.';
+    }
+    return "Couldn't reach Ayma. Check your connection.";
+  }
+
   bool _shouldReconcile(Object error) {
     if (_backgroundedDuringSend) return true;
     if (error is SocketException || error is TimeoutException) return true;
@@ -2262,7 +2278,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _store.dropPending();
           AymaToast.show(
             context,
-            "Couldn't reach Ayma. Check your connection.",
+            _sendFailureMessage(e),
             kind: AymaToastKind.error,
             action: AymaToastAction(
               label: 'Retry',
@@ -2457,7 +2473,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _store.dropPending();
       AymaToast.show(
         context,
-        "Couldn't reach Ayma. Check your connection.",
+        _sendFailureMessage(e),
         kind: AymaToastKind.error,
         action: AymaToastAction(
           label: 'Retry',

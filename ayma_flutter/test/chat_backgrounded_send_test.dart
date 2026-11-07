@@ -133,7 +133,9 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded).hitTestable());
     await tester.pumpAndSettle();
 
-    expect(find.text("Couldn't reach Ayma. Check your connection."),
+    expect(find.text("Ayma hit a problem with that message — try again."),
         findsOneWidget);
+    expect(find.text("Couldn't reach Ayma. Check your connection."),
+        findsNothing);
   });
 }

@@ -252,6 +252,134 @@ class BudgetHttpClient extends http.BaseClient {
   void close() => _inner.close();
 }
 
+/// Server caps for the context-carried strings on a chat send, mirroring
+/// `functions/bootstrap/main.py` (TurnModel.text and the ChatRequest fields).
+/// Context is attached from data the user did not type for this send, so it
+/// is clamped at send time instead of ever letting the wire exceed a cap and
+/// bounce the whole send with a 422 against any server version (2026-11-07:
+/// a 4,642-char self-check summary bubble bricked every later send).
+abstract final class ChatContextCaps {
+  static const turnText = 4000;
+  static const sessionId = 128;
+  static const clientMsgId = 64;
+  static const viewingProfileUid = 128;
+  static const imagePath = 256;
+  static const storyPageId = 80;
+  static const storyPassage = 8000;
+  static const storyTimelineEntryId = 64;
+  static const deepDiveReportId = 128;
+  static const deepDiveTarget = 2200;
+  static const appearanceFindingId = 64;
+  static const matchReportId = 128;
+  static const photoUrl = 2000;
+  static const photoSource = 16;
+  static const screen = 32;
+  static const screenSubjectUid = 128;
+  static const screenSubjectName = 200;
+  static const screenNote = 500;
+  static const screenRoute = 200;
+  static const screenPreviousRoute = 200;
+  static const screenPreviousLabel = 200;
+  static const screenDetail = 1500;
+  static const screenVisible = 3200;
+}
+
+/// Clamp one context string to [cap] characters (no-op when already within).
+String clampChatContext(String value, int cap) =>
+    value.length <= cap ? value : value.substring(0, cap);
+
+/// Clamp every turn text in a recent-turns window to the TurnModel cap.
+List<Map<String, String>> clampRecentTurns(
+  List<Map<String, String>> recentTurns,
+) =>
+    [
+      for (final turn in recentTurns)
+        {
+          for (final entry in turn.entries)
+            entry.key: entry.key == 'text'
+                ? clampChatContext(entry.value, ChatContextCaps.turnText)
+                : entry.value,
+        },
+    ];
+
+/// The clamped wire body shared by `POST /chat` and `POST /chat/stream`.
+/// The users own [message] is passed through untouched on purpose: it is
+/// their input, not context, and stays strict server-side.
+Map<String, dynamic> buildChatRequestBody({
+  required String message,
+  String sessionId = '',
+  String clientMsgId = '',
+  String viewingProfileUid = '',
+  List<Map<String, String>> recentTurns = const [],
+  String imagePath = '',
+  String storyPageId = '',
+  String storyPassage = '',
+  String storyTimelineEntryId = '',
+  String deepDiveReportId = '',
+  String deepDiveTarget = '',
+  String appearanceFindingId = '',
+  String matchReportId = '',
+  bool profileEdit = false,
+  String photoUrl = '',
+  String photoSource = '',
+  String screen = '',
+  String screenSubjectUid = '',
+  String screenSubjectName = '',
+  String screenNote = '',
+  String screenRoute = '',
+  String screenDetail = '',
+  String screenVisible = '',
+  String screenPreviousRoute = '',
+  String screenPreviousLabel = '',
+  bool tourContinuation = false,
+  bool includeTourContinuation = true,
+}) =>
+    {
+      'message': message,
+      'session_id': clampChatContext(sessionId, ChatContextCaps.sessionId),
+      'client_msg_id':
+          clampChatContext(clientMsgId, ChatContextCaps.clientMsgId),
+      if (includeTourContinuation) 'tour_continuation': tourContinuation,
+      'viewing_profile_uid': clampChatContext(
+          viewingProfileUid, ChatContextCaps.viewingProfileUid),
+      'recent_turns': clampRecentTurns(recentTurns),
+      'image_path': clampChatContext(imagePath, ChatContextCaps.imagePath),
+      'story_page_id':
+          clampChatContext(storyPageId, ChatContextCaps.storyPageId),
+      'story_passage':
+          clampChatContext(storyPassage, ChatContextCaps.storyPassage),
+      'story_timeline_entry_id': clampChatContext(
+          storyTimelineEntryId, ChatContextCaps.storyTimelineEntryId),
+      'deep_dive_report_id': clampChatContext(
+          deepDiveReportId, ChatContextCaps.deepDiveReportId),
+      'deep_dive_target':
+          clampChatContext(deepDiveTarget, ChatContextCaps.deepDiveTarget),
+      'appearance_finding_id': clampChatContext(
+          appearanceFindingId, ChatContextCaps.appearanceFindingId),
+      'match_report_id':
+          clampChatContext(matchReportId, ChatContextCaps.matchReportId),
+      'profile_edit': profileEdit,
+      'photo_url': clampChatContext(photoUrl, ChatContextCaps.photoUrl),
+      'photo_source':
+          clampChatContext(photoSource, ChatContextCaps.photoSource),
+      'screen': clampChatContext(screen, ChatContextCaps.screen),
+      'screen_subject_uid':
+          clampChatContext(screenSubjectUid, ChatContextCaps.screenSubjectUid),
+      'screen_subject_name': clampChatContext(
+          screenSubjectName, ChatContextCaps.screenSubjectName),
+      'screen_note': clampChatContext(screenNote, ChatContextCaps.screenNote),
+      'screen_route':
+          clampChatContext(screenRoute, ChatContextCaps.screenRoute),
+      'screen_detail':
+          clampChatContext(screenDetail, ChatContextCaps.screenDetail),
+      'screen_visible':
+          clampChatContext(screenVisible, ChatContextCaps.screenVisible),
+      'screen_previous_route': clampChatContext(
+          screenPreviousRoute, ChatContextCaps.screenPreviousRoute),
+      'screen_previous_label': clampChatContext(
+          screenPreviousLabel, ChatContextCaps.screenPreviousLabel),
+    };
+
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
 class ApiClient {
@@ -448,7 +576,7 @@ class ApiClient {
             headers: headers,
             body: jsonEncode({
               'session_id': sessionId,
-              'recent_turns': recentTurns,
+              'recent_turns': clampRecentTurns(recentTurns),
               if (practiceReturnSessionId.isNotEmpty)
                 'practice_return_session_id': practiceReturnSessionId,
             }),
@@ -2039,7 +2167,7 @@ class ApiClient {
         'job_id': jobId,
         'storage_path': storagePath,
         'session_id': sessionId,
-        'recent_turns': recentTurns,
+        'recent_turns': clampRecentTurns(recentTurns),
       }),
     );
     if (r.statusCode != 200) {
@@ -2527,34 +2655,34 @@ class ApiClient {
       response = await _http.post(
         _uri('/chat'),
         headers: await _headers(),
-        body: jsonEncode({
-          'message': message,
-          'session_id': sessionId,
-          'client_msg_id': clientMsgId,
-          'tour_continuation': tourContinuation,
-          'viewing_profile_uid': viewingProfileUid,
-          'recent_turns': recentTurns,
-          'image_path': imagePath,
-          'story_page_id': storyPageId,
-          'story_passage': storyPassage,
-          'story_timeline_entry_id': storyTimelineEntryId,
-          'deep_dive_report_id': deepDiveReportId,
-          'deep_dive_target': deepDiveTarget,
-          'appearance_finding_id': appearanceFindingId,
-          'match_report_id': matchReportId,
-          'profile_edit': profileEdit,
-          'photo_url': photoUrl,
-          'photo_source': photoSource,
-          'screen': screen,
-          'screen_subject_uid': screenSubjectUid,
-          'screen_subject_name': screenSubjectName,
-          'screen_note': screenNote,
-          'screen_route': screenRoute,
-          'screen_detail': screenDetail,
-          'screen_visible': screenVisible,
-        'screen_previous_route': screenPreviousRoute,
-        'screen_previous_label': screenPreviousLabel,
-        }),
+        body: jsonEncode(buildChatRequestBody(
+          message: message,
+          sessionId: sessionId,
+          clientMsgId: clientMsgId,
+          tourContinuation: tourContinuation,
+          viewingProfileUid: viewingProfileUid,
+          recentTurns: recentTurns,
+          imagePath: imagePath,
+          storyPageId: storyPageId,
+          storyPassage: storyPassage,
+          storyTimelineEntryId: storyTimelineEntryId,
+          deepDiveReportId: deepDiveReportId,
+          deepDiveTarget: deepDiveTarget,
+          appearanceFindingId: appearanceFindingId,
+          matchReportId: matchReportId,
+          profileEdit: profileEdit,
+          photoUrl: photoUrl,
+          photoSource: photoSource,
+          screen: screen,
+          screenSubjectUid: screenSubjectUid,
+          screenSubjectName: screenSubjectName,
+          screenNote: screenNote,
+          screenRoute: screenRoute,
+          screenDetail: screenDetail,
+          screenVisible: screenVisible,
+          screenPreviousRoute: screenPreviousRoute,
+          screenPreviousLabel: screenPreviousLabel,
+        )),
       );
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
@@ -2605,33 +2733,34 @@ class ApiClient {
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
-      ..body = jsonEncode({
-        'message': message,
-        'session_id': sessionId,
-        'client_msg_id': clientMsgId,
-        'viewing_profile_uid': viewingProfileUid,
-        'recent_turns': recentTurns,
-        'image_path': imagePath,
-        'story_page_id': storyPageId,
-        'story_passage': storyPassage,
-        'story_timeline_entry_id': storyTimelineEntryId,
-        'deep_dive_report_id': deepDiveReportId,
-        'deep_dive_target': deepDiveTarget,
-        'appearance_finding_id': appearanceFindingId,
-        'match_report_id': matchReportId,
-        'profile_edit': profileEdit,
-        'photo_url': photoUrl,
-        'photo_source': photoSource,
-        'screen': screen,
-        'screen_subject_uid': screenSubjectUid,
-        'screen_subject_name': screenSubjectName,
-        'screen_note': screenNote,
-        'screen_route': screenRoute,
-        'screen_detail': screenDetail,
-        'screen_visible': screenVisible,
-        'screen_previous_route': screenPreviousRoute,
-        'screen_previous_label': screenPreviousLabel,
-      });
+      ..body = jsonEncode(buildChatRequestBody(
+        message: message,
+        sessionId: sessionId,
+        clientMsgId: clientMsgId,
+        viewingProfileUid: viewingProfileUid,
+        recentTurns: recentTurns,
+        imagePath: imagePath,
+        storyPageId: storyPageId,
+        storyPassage: storyPassage,
+        storyTimelineEntryId: storyTimelineEntryId,
+        deepDiveReportId: deepDiveReportId,
+        deepDiveTarget: deepDiveTarget,
+        appearanceFindingId: appearanceFindingId,
+        matchReportId: matchReportId,
+        profileEdit: profileEdit,
+        photoUrl: photoUrl,
+        photoSource: photoSource,
+        screen: screen,
+        screenSubjectUid: screenSubjectUid,
+        screenSubjectName: screenSubjectName,
+        screenNote: screenNote,
+        screenRoute: screenRoute,
+        screenDetail: screenDetail,
+        screenVisible: screenVisible,
+        screenPreviousRoute: screenPreviousRoute,
+        screenPreviousLabel: screenPreviousLabel,
+        includeTourContinuation: false,
+      ));
 
     final http.StreamedResponse res;
     try {
@@ -2970,7 +3099,10 @@ class ApiClient {
     final response = await _http.post(
       _uri('/post-turn'),
       headers: await _headers(),
-      body: jsonEncode({'session_id': sessionId, 'recent_turns': recentTurns}),
+      body: jsonEncode({
+        'session_id': sessionId,
+        'recent_turns': clampRecentTurns(recentTurns),
+      }),
     );
     if (response.statusCode != 200) {
       throw ApiException(

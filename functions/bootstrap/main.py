@@ -34,7 +34,7 @@ import logging  # noqa: E402
 import secrets  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
 from datetime import datetime  # noqa: E402
-from typing import Literal  # noqa: E402
+from typing import ClassVar, Literal  # noqa: E402
 
 from fastapi import (  # noqa: E402 - must follow the dotenv load
     BackgroundTasks,
@@ -44,7 +44,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     Request,
 )
 from fastapi.responses import HTMLResponse, Response, StreamingResponse  # noqa: E402
-from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
+from pydantic import BaseModel, ConfigDict, Field, field_validator  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
@@ -174,9 +174,34 @@ _MAX_RECENT_TURNS = 200
 _SESSION_ID = Field(default="", max_length=128, pattern=r"^[A-Za-z0-9_-]*$")
 
 
-class TurnModel(BaseModel):
+class _TruncatingModel(BaseModel):
+    """A request model whose context-carried string fields are TRUNCATED to
+    their caps instead of rejecting the whole request with a 422.
+
+    Context (recent turns, screen capture, scoped-report passages) is
+    attached by the client from data the user did not type for this send —
+    a single over-long Ayma bubble in the history (e.g. a 4,642-char
+    self-check summary) must never brick every later send, which is exactly
+    what happened 2026-11-07. The user's own `message` is deliberately NOT
+    in any caps map below, so it stays strict.
+    """
+
+    _truncate_caps: ClassVar[dict[str, int]] = {}
+
+    @field_validator("*", mode="before", check_fields=False)
+    @classmethod
+    def _truncate_capped_fields(cls, value, info):
+        cap = cls._truncate_caps.get(info.field_name or "")
+        if cap is not None and isinstance(value, str) and len(value) > cap:
+            return value[:cap]
+        return value
+
+
+class TurnModel(_TruncatingModel):
     role: Literal["user", "ayma"]
     text: str = Field(min_length=1, max_length=4000)
+
+    _truncate_caps: ClassVar[dict[str, int]] = {"text": 4000}
 
 
 def _to_turns(models: list[TurnModel]) -> list[Turn]:
@@ -674,7 +699,10 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "ayma-api", "version": CONFIG.version}
 
 
-class BootstrapRequest(BaseModel):
+class BootstrapRequest(_TruncatingModel):
+    _truncate_caps: ClassVar[dict[str, int]] = {
+        "practice_return_session_id": 128,
+    }
     session_id: str = _SESSION_ID
     recent_turns: list[TurnModel] = Field(
         default_factory=list, max_length=_MAX_RECENT_TURNS
@@ -1169,7 +1197,33 @@ async def welcome_token(
     return {"livekit": {"token": token, "url": CONFIG.livekit_url, "room": room}}
 
 
-class ChatRequest(BaseModel):
+class ChatRequest(_TruncatingModel):
+    # Every context-carried string field, capped at its Field max_length.
+    # `message` is absent on purpose: the senders own input stays strict.
+    _truncate_caps: ClassVar[dict[str, int]] = {
+        "session_id": 128,
+        "client_msg_id": 64,
+        "viewing_profile_uid": 128,
+        "image_path": 256,
+        "story_page_id": 80,
+        "story_passage": 8000,
+        "story_timeline_entry_id": 64,
+        "deep_dive_report_id": 128,
+        "deep_dive_target": 2200,
+        "appearance_finding_id": 64,
+        "match_report_id": 128,
+        "photo_url": 2000,
+        "photo_source": 16,
+        "screen": 32,
+        "screen_subject_uid": 128,
+        "screen_subject_name": 200,
+        "screen_note": 500,
+        "screen_route": 200,
+        "screen_previous_route": 200,
+        "screen_previous_label": 200,
+        "screen_detail": 1500,
+        "screen_visible": 3200,
+    }
     message: str = Field(min_length=1, max_length=4000)
     session_id: str = _SESSION_ID
     # A client-generated id unique to ONE user send (stable across retries of
@@ -2589,7 +2643,8 @@ async def _run_chat_followups(
     await _run_ingest(uid, session_id, enriched)
 
 
-class PostTurnRequest(BaseModel):
+class PostTurnRequest(_TruncatingModel):
+    _truncate_caps: ClassVar[dict[str, int]] = {"session_id": 128}
     session_id: str = Field(max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     recent_turns: list[TurnModel] = Field(
         default_factory=list, max_length=_MAX_RECENT_TURNS
@@ -2652,7 +2707,18 @@ async def chat_history_page(
     )
 
 
-class VoiceContextRequest(BaseModel):
+class VoiceContextRequest(_TruncatingModel):
+    _truncate_caps: ClassVar[dict[str, int]] = {
+        "screen": 40,
+        "subject_uid": 128,
+        "subject_name": 120,
+        "note": 200,
+        "detail": 1500,
+        "route": 200,
+        "visible": 3200,
+        "previous_route": 200,
+        "previous_label": 200,
+    }
     """What the user is looking at, mirrored while a voice call is live (§5.6).
     An empty ``screen`` clears the mirror (call ended / app backgrounded)."""
 
