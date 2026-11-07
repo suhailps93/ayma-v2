@@ -69,7 +69,8 @@ class DebugCaptureIsolation {
     await loadCached();
     if (db != null) {
       try {
-        await refresh(db).timeout(const Duration(seconds: 2));
+        await refresh(db, timeout: const Duration(seconds: 2))
+            .timeout(const Duration(seconds: 2));
       } catch (_) {}
     } else if (_refreshFuture != null) {
       try {
@@ -158,11 +159,14 @@ class DebugCaptureIsolation {
   /// Fetches the Firestore flag, caches it for the next launch, and applies
   /// it in memory at once. Never throws; a failure leaves the cached value
   /// untouched. Concurrent calls share the in-flight future.
-  static Future<void> refresh(FirebaseFirestore db) {
+  static Future<void> refresh(
+    FirebaseFirestore db, {
+    Duration timeout = kInteractiveTimeout,
+  }) {
     if (_refreshFuture != null) {
       return _refreshFuture!;
     }
-    final fut = _doRefresh(db);
+    final fut = _doRefresh(db, timeout: timeout);
     _refreshFuture = fut;
     fut.whenComplete(() {
       if (identical(_refreshFuture, fut)) {
@@ -172,13 +176,16 @@ class DebugCaptureIsolation {
     return fut;
   }
 
-  static Future<void> _doRefresh(FirebaseFirestore db) async {
+  static Future<void> _doRefresh(
+    FirebaseFirestore db, {
+    Duration timeout = kInteractiveTimeout,
+  }) async {
     try {
       final snap = await db
           .collection(collection)
           .doc(docId)
           .get()
-          .timeout(kInteractiveTimeout);
+          .timeout(timeout);
       if (snap.exists) {
         final value = parse(snap.data());
         final prefs = await SharedPreferences.getInstance();

@@ -434,20 +434,32 @@ class StartupNodes {
 
   /// N19: Remote Sync (Meta, Sentry, debug capture-isolation flags,
   /// Accent color)
-  static StartupNode<void> createRemoteSyncNode() {
+  static StartupNode<void> createRemoteSyncNode({FirebaseFirestore? firestore}) {
     return StartupNode<void>(
       id: 'N19:remote_sync',
-      dependencies: {'N7:firebase_core'},
+      dependencies: {
+        'N7:firebase_core',
+        'N8:first_frame_mount',
+        'N9:auth_session_restore',
+      },
       action: (ctx) async {
         try {
-          final db = FirebaseFirestore.instance;
-          unawaited(MetaIntegrations.refresh(db));
-          unawaited(SentryFlag.refresh(db));
-          unawaited(DebugCaptureIsolation.refresh(db));
-          final user = ctx.contains('auth_user') ? ctx.get<User?>('auth_user') : null;
-          if (user != null && !user.isAnonymous) {
-            unawaited(accentColorControllerGlobal.syncRemoteIfMissing());
+          FirebaseFirestore? db = firestore;
+          if (db == null) {
+            try {
+              db = FirebaseFirestore.instance;
+            } catch (_) {
+              return;
+            }
           }
+          final user = ctx.contains('auth_user') ? ctx.get<User?>('auth_user') : null;
+          await Future.wait([
+            MetaIntegrations.refresh(db),
+            SentryFlag.refresh(db),
+            DebugCaptureIsolation.refresh(db),
+            if (user != null && !user.isAnonymous)
+              accentColorControllerGlobal.syncRemoteIfMissing(),
+          ]);
         } catch (e) {
           debugPrint('[N19:remote_sync] error: $e');
         }
@@ -456,7 +468,11 @@ class StartupNodes {
   }
 
   /// Builds a [StartupDAG] populated with all 19 nodes and explicit dependencies.
-  static StartupDAG buildDefaultDAG({Widget? app, GoRouter? router}) {
+  static StartupDAG buildDefaultDAG({
+    Widget? app,
+    GoRouter? router,
+    FirebaseFirestore? firestore,
+  }) {
     final dag = StartupDAG();
     dag.addNode(createEngineBindingNode());
     dag.addNode(createOrientationNode());
@@ -476,7 +492,7 @@ class StartupNodes {
     dag.addNode(createPushTokenSyncNode());
     dag.addNode(createDevObserversNode(router: router));
     dag.addNode(createSentryInitNode());
-    dag.addNode(createRemoteSyncNode());
+    dag.addNode(createRemoteSyncNode(firestore: firestore));
     return dag;
   }
 }

@@ -80,6 +80,7 @@ Future<void> main() async {
       RecoveryRequiredState.instance.clear();
       BiometricConsentState.instance.clear();
       unawaited(RevenueCatService.instance.logOut());
+      AuthService.instance.notifyAuthSessionRestored(null);
     } else {
       lastKnownUid = user.uid;
       AuthService.instance.notifyAuthSessionRestored(user);

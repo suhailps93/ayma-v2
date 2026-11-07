@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:ayma_flutter/core/dag/startup_dag.dart';
+import 'package:ayma_flutter/core/dag/startup_nodes.dart';
 import 'package:ayma_flutter/services/debug_capture_isolation.dart';
 import 'package:ayma_flutter/services/voice_transport.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -229,6 +231,54 @@ void main() {
       expect(optionalConstraint(map, 'googNoiseSuppression2'), isFalse);
       expect(optionalConstraint(map, 'echoCancellation'), isTrue);
       expect(optionalConstraint(map, 'autoGainControl'), isTrue);
+    });
+  });
+
+  group('DebugCaptureIsolation startup hydration and timeout resilience', () {
+    test('startup N19 remote sync hydrates flag within budget when session is ready', () async {
+      DebugCaptureIsolation.disabled.value = false;
+      final db = FakeFirebaseFirestore();
+      await db
+          .collection('app_config')
+          .doc('debug_capture_isolation')
+          .set({'enabled': true});
+
+      final ctx = DAGContext();
+      // Session restored:
+      ctx.put<dynamic>('auth_user', null);
+
+      final n19 = StartupNodes.createRemoteSyncNode(firestore: db);
+      await n19.action(ctx);
+
+      expect(DebugCaptureIsolation.disabled.value, isTrue);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('debug_capture_isolation_disabled'), isTrue);
+    });
+
+    test('refresh accepts custom timeout budget and completes within budget', () async {
+      DebugCaptureIsolation.disabled.value = false;
+      final db = FakeFirebaseFirestore();
+      await db
+          .collection('app_config')
+          .doc('debug_capture_isolation')
+          .set({'enabled': true});
+
+      await DebugCaptureIsolation.refresh(db, timeout: const Duration(seconds: 4));
+      expect(DebugCaptureIsolation.disabled.value, isTrue);
+    });
+
+    test('a timeout on refresh is non-fatal and leaves cached flag intact', () async {
+      SharedPreferences.setMockInitialValues({'debug_capture_isolation_disabled': true});
+      final prefs = await SharedPreferences.getInstance();
+      DebugCaptureIsolation.loadFromPrefs(prefs);
+      expect(DebugCaptureIsolation.disabled.value, isTrue);
+
+      final db = FakeFirebaseFirestore();
+      // Force refresh with 0 microsecond timeout so it immediately trips TimeoutException
+      await DebugCaptureIsolation.refresh(db, timeout: Duration.zero);
+
+      // Value remains intact (not reverted or cleared)
+      expect(DebugCaptureIsolation.disabled.value, isTrue);
     });
   });
 }

@@ -76,6 +76,16 @@ void main() {
           'N10:boot_config_read',
         ]),
       );
+
+      final n19 = dag.nodes['N19:remote_sync']!;
+      expect(
+        n19.dependencies,
+        containsAll([
+          'N7:firebase_core',
+          'N8:first_frame_mount',
+          'N9:auth_session_restore',
+        ]),
+      );
     });
 
     // Regression: P0 boot crash — Firebase init order after startup flattening.
@@ -227,6 +237,37 @@ void main() {
           reason: '$id (Firebase-dependent) ran before N7:firebase_core',
         );
       }
+    });
+
+    test(
+        'N19:remote_sync runs post-frame and post-auth so remote flag refresh '
+        'does not fire before session is ready (ordering vs session init regression)', () async {
+      final real = StartupNodes.buildDefaultDAG();
+      final completionOrder = <String>[];
+      final mirror = StartupDAG();
+      for (final node in real.nodes.values) {
+        mirror.addNode(
+          StartupNode<void>(
+            id: node.id,
+            dependencies: node.dependencies,
+            critical: node.critical,
+            action: (ctx) async {
+              completionOrder.add(node.id);
+            },
+          ),
+        );
+      }
+
+      await mirror.run();
+
+      final n8Index = completionOrder.indexOf('N8:first_frame_mount');
+      final n9Index = completionOrder.indexOf('N9:auth_session_restore');
+      final n19Index = completionOrder.indexOf('N19:remote_sync');
+
+      expect(n19Index, greaterThan(n8Index),
+          reason: 'N19 must run post-frame (after N8)');
+      expect(n19Index, greaterThan(n9Index),
+          reason: 'N19 must run after auth session is ready (after N9)');
     });
   });
 }
