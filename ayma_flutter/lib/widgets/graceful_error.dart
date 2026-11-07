@@ -47,12 +47,12 @@ Widget gracefulErrorWidget(FlutterErrorDetails details) {
       color: bg,
       child: Container(
         alignment: Alignment.center,
-        padding: const EdgeInsets.all(28),
+        padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: const [
             Icon(Icons.cloud_off_rounded, color: muted, size: 36),
-            SizedBox(height: 14),
+            SizedBox(height: 16),
             Text(
               "Something didn't load",
               textAlign: TextAlign.center,
@@ -75,7 +75,7 @@ Widget gracefulErrorWidget(FlutterErrorDetails details) {
             // "Go back" affordance below guarantees a way out, and crucially it
             // RECOVERS THE FRAME even when the Router itself was torn out (see
             // [recoverAppRoot]) — not just when a single route can be popped.
-            SizedBox(height: 22),
+            SizedBox(height: 24),
             _GoBackButton(),
           ],
         ),
@@ -101,7 +101,7 @@ class _GoBackButton extends StatelessWidget {
       onTap: recoverAppRoot,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 11),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
           border: Border.all(color: muted),

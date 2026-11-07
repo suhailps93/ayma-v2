@@ -173,10 +173,10 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
     if (_dismissed) return const SizedBox.shrink();
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: ac.bgElev,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: _sent ? _sentView(ac) : _draftView(ac),
@@ -224,7 +224,7 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
             selected: {_kind},
             onSelectionChanged: (s) => setState(() => _kind = s.first),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           TextField(
             key: const ValueKey('feedback-title-field'),
             controller: _title,
@@ -334,7 +334,7 @@ class _KindChip extends StatelessWidget {
     final bg = isBug ? ac.warning.withValues(alpha: 0.16) : ac.accentFaint;
     final fg = isBug ? ac.warning : ac.accent;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(999),
@@ -344,7 +344,7 @@ class _KindChip extends StatelessWidget {
         children: [
           Icon(isBug ? Icons.bug_report_outlined : Icons.lightbulb_outline,
               size: 13, color: fg),
-          const SizedBox(width: 5),
+          const SizedBox(width: 4),
           Text(
             label,
             style: AymaType.sans(size: 12, color: fg)

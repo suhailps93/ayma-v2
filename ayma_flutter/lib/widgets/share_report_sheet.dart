@@ -235,7 +235,7 @@ class RecipientPickerState extends State<RecipientPicker> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
                 child: TextField(
                   key: const ValueKey('recipientSearch'),
                   onChanged: (v) => setState(() => _query = v.trim()),
@@ -247,11 +247,11 @@ class RecipientPickerState extends State<RecipientPicker> {
                     filled: true,
                     fillColor: ac.bgCard,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
                       borderSide: BorderSide(color: ac.lineSoft),
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
                       borderSide: BorderSide(color: ac.lineSoft),
                     ),
                   ),

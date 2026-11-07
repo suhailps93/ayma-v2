@@ -604,7 +604,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                       label: 'Phone (optional)',
                     ),
                     const SizedBox(height: 20),
-                    const SizedBox(height: 12),
                     _label('Gender', ac),
                     Wrap(
                       spacing: 8,
@@ -682,7 +681,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                               width: 160, height: 160, fit: BoxFit.cover),
                         ),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
                     ],
                     OutlinedButton.icon(
                       onPressed: _pickVerificationSelfie,
@@ -701,13 +700,13 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     const SizedBox(height: 12),
                     if (_photos.isNotEmpty) ...[
                       Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
                           for (var i = 0; i < _photos.length; i++) _photoThumb(i),
                         ],
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
                     ],
                     OutlinedButton.icon(
                       onPressed: _photos.length >= _maxPhotos ? null : _pickPhotos,
@@ -778,17 +777,23 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
               ),
             ),
           Positioned(
-            right: 2,
-            top: 2,
+            right: 0,
+            top: 0,
             child: GestureDetector(
               onTap: () => setState(() => _photos.removeAt(i)),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  shape: BoxShape.circle,
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: Center(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(4),
+                    child: const Icon(Icons.close, size: 16, color: Colors.white),
+                  ),
                 ),
-                padding: const EdgeInsets.all(3),
-                child: const Icon(Icons.close, size: 16, color: Colors.white),
               ),
             ),
           ),

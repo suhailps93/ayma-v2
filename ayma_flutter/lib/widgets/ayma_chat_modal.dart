@@ -487,12 +487,12 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet>
         // pill fades) so a drag down from the top still collapses.
         SizedBox(
           key: const ValueKey('aymaChatModalHandle'),
-          height: 24,
+          height: 32,
           child: ListView(
             controller: scrollController,
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.symmetric(vertical: 14),
                 child: Center(
                   child: ValueListenableBuilder<double>(
                     valueListenable: _size,

@@ -27,7 +27,7 @@ Future<void> showSignInCriticalConsent(BuildContext context) {
           children: [
             for (final point in kSignInCriticalConsentPoints)
               Padding(
-                padding: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.only(bottom: 12),
                 child: Text(
                   '• $point',
                   style: AymaType.sans(size: 14, color: ac.fg),

@@ -367,7 +367,7 @@ class AymaToastCard extends StatelessWidget {
         child: Material(
           type: MaterialType.transparency,
           child: Container(
-            padding: EdgeInsets.fromLTRB(12, 10, action == null ? 16 : 6, 10),
+            padding: EdgeInsets.fromLTRB(16, 12, action == null ? 16 : 8, 12),
             decoration: BoxDecoration(
               color: surface,
               borderRadius: BorderRadius.circular(18),
@@ -383,13 +383,13 @@ class AymaToastCard extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  width: 30,
-                  height: 30,
+                  width: 32,
+                  height: 32,
                   decoration: BoxDecoration(
                     color: tinted.withValues(alpha: 0.16),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(style.icon, size: 17, color: iconColor),
+                  child: Icon(style.icon, size: 18, color: iconColor),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -401,7 +401,7 @@ class AymaToastCard extends StatelessWidget {
                         style.label.toUpperCase(),
                         style: AymaType.mono(size: 9.5, color: ac.fgDim),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 4),
                       Text(
                         message,
                         maxLines: 2,
@@ -416,7 +416,7 @@ class AymaToastCard extends StatelessWidget {
                   ),
                 ),
                 if (action != null) ...[
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 8),
                   // Capped so at large text on a narrow phone the label
                   // ellipsizes instead of pushing the row off screen.
                   ConstrainedBox(
@@ -428,7 +428,7 @@ class AymaToastCard extends StatelessWidget {
                       style: TextButton.styleFrom(
                         foregroundColor:
                             legible(ac.accent, surface, ac.fg, 4.5),
-                        minimumSize: const Size(48, 40),
+                        minimumSize: const Size(48, 48),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                       ),
                       child: Text(
