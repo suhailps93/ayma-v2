@@ -174,7 +174,6 @@ United States, that agreement includes the Standard Contractual Clauses
 - **Google LLC (Google Cloud, Firebase, Firebase Crashlytics, Vertex AI / Gemini)** — Hosting, database, storage, sign-in, crash reporting, and the AI models that power Ayma. Where data is processed: United States.
 - **LiveKit, Inc.** — Real-time voice infrastructure for calls with Ayma. Where data is processed: United States.
 - **RevenueCat, Inc.** — Subscription and purchase management. Where data is processed: United States.
-- **Qloo LLC** — Taste and cultural-interest data used to enrich matching signals. Where data is processed: United States.
 - **Functional Software, Inc. (Sentry)** — Error and performance monitoring. Where data is processed: United States.
 
 We will update this list before any new provider starts processing

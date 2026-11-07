@@ -127,7 +127,7 @@ void main() {
     // `_runSim` has scrolled the taste card into view; assert its contents
     // here (the taller bars push the verdict score above the built range).
     expect(find.text('Taste match'), findsOneWidget);
-    expect(find.text('powered by Qloo'), findsOneWidget);
+    expect(find.text('powered by Qloo'), findsNothing);
     expect(find.byKey(const Key('tasteMatchScore')), findsOneWidget);
     expect(find.text('Strong overlap'), findsOneWidget);
     // Per-domain bars: labelled rows with the numeric score at the right.
@@ -246,7 +246,7 @@ void main() {
   testWidgets(
       'any other failure hides the card, never an "unavailable" error card',
       (tester) async {
-    // § founder BUG A: a non-200 (or degraded Qloo) used to render a "Taste
+    // § founder BUG A: a non-200 (or degraded taste) used to render a "Taste
     // match unavailable right now." error card. It must now be absent.
     await _runSim(
       tester,
@@ -265,7 +265,7 @@ void main() {
 
   testWidgets('a 200 with no overlap substance hides the card (no blank card)',
       (tester) async {
-    // § founder: two people with Taste pages whose Qloo graphs don't overlap
+    // § founder: two people with Taste pages whose taste graphs don't overlap
     // get a 200 carrying only a bare score + "quite different taste graphs"
     // summary — no per-domain bars, shared favourites, tags or date ideas.
     // That used to paint a header + "0/100" + one sentence that reads as a

@@ -165,7 +165,7 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'qloo_taste',
     headline: 'Matched on taste',
-    subtitle: 'Tap Explore — Qloo pairs you by real taste, not just looks.',
+    subtitle: 'Tap Explore — get matched by real taste, not just looks.',
     icon: Icons.interests_outlined,
     anchorId: TourAnchors.exploreTab,
   ),

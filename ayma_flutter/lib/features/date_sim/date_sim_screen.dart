@@ -23,7 +23,7 @@ import '../../widgets/taste_models.dart';
 /// to Firestore, followed by a compatibility read: a 0–100 score and a short
 /// "how it went" summary, with a Done action that returns to the origin
 /// profile. A failed run shows an inline error under the partial transcript.
-/// Under the read, a [TasteMatchCard] (Qloo taste overlap + date ideas).
+/// Under the read, a [TasteMatchCard] (taste overlap + date ideas).
 ///
 /// Reuses the shared [ChatBubble] so the simulated chat reads like a real one,
 /// and the app theme tokens (light + dark). Metered/credit-aware: an
@@ -124,7 +124,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
   /// True while a "reset" (discard this pair's sim) request is in flight.
   bool _resetting = false;
 
-  /// The Qloo taste match, fetched once when the simulation completes.
+  /// The taste match, fetched once when the simulation completes.
   Future<TasteMatchLoad>? _taste;
 
   static const _min = 2;

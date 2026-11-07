@@ -260,7 +260,7 @@ def test_fixture_match_adds_shared_tags_and_degrades_demographics(db):
 
 def test_demo_page_and_pair_are_public(db):
     page = client.get("/taste/demo")
-    assert page.status_code == 200 and "Qloo" in page.text
+    assert page.status_code == 200 and "Qloo" not in page.text and "Taste match" in page.text
     resp = client.get("/taste/demo/pair", params={"a": "maya", "b": "aisha"})
     assert resp.status_code == 200
     body = resp.json()
