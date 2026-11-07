@@ -422,7 +422,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           ..._realtimeControls(ac, cat, sel)
         else
           ..._cascadeControls(ac, cat, sel),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         _voiceAndLanguage(ac, cat, sel),
         if (widget.showSaveButton) ...[
           const SizedBox(height: 16),
@@ -439,7 +439,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           ),
         ],
         Padding(
-          padding: const EdgeInsets.only(top: 10),
+          padding: const EdgeInsets.only(top: 12),
           child: Text(
             cat.source == 'livekit'
                 ? 'Options are pulled live from LiveKit Inference. A new '
@@ -600,7 +600,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             ),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Text(
           'Ayma speaks with this accent from the first word of every call.',
           style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
@@ -632,7 +632,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   }
 
   Widget _label(AymaTokens ac, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.only(bottom: 8),
         child: Text(text,
             style: AymaType.mono(size: 10, color: ac.fgMute)
                 .copyWith(letterSpacing: 1.5)),

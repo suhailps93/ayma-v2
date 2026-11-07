@@ -893,7 +893,7 @@ class _Filmstrip extends StatelessWidget {
     return ColoredBox(
       color: AymaColors.darkBg,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.all(12),
         child: SizedBox(
           height: _thumb,
           child: ListView.separated(

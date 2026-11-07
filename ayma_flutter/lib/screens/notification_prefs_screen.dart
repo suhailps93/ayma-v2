@@ -165,6 +165,7 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
     return Column(
       children: [
         ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20),
           title: Text('Push notifications',
               style: AymaType.sans(size: 15, color: ac.fg)),
           subtitle: Text(label, style: AymaType.sans(size: 13, color: ac.fg)),
@@ -172,7 +173,7 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
               ? null
               : FilledButton(
                   style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 40)),
+                      minimumSize: const Size(0, 48)),
                   onPressed: _enable,
                   child: Text(s == PushPermissionState.notAsked
                       ? 'Turn on'
@@ -218,6 +219,8 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
                     _pushSection(ac),
                     for (final entry in notificationCategories.entries)
                       SwitchListTile(
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 20),
                         title: Text(entry.value,
                             style: AymaType.sans(size: 15, color: ac.fg)),
                         value: _prefs![entry.key] ?? true,

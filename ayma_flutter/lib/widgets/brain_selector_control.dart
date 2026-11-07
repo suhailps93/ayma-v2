@@ -287,7 +287,7 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
   }
 
   Widget _label(AymaTokens ac, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.only(bottom: 8),
         child: Text(text,
             style: AymaType.mono(size: 10, color: ac.fgMute)
                 .copyWith(letterSpacing: 1.5)),

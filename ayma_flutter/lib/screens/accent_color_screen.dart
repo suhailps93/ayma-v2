@@ -67,7 +67,7 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
             'accent, live, and stays your default.',
             style: AymaType.sans(size: 13, soft: true, color: ac.fgDim),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
           Center(
             child: AnimatedBuilder(
               animation: _accent,
@@ -139,9 +139,9 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
             'Text contrast adjusts automatically for readability.',
             style: AymaType.sans(size: 12, color: ac.fgDim),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 8),
           DividerLabel('preview'),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           AnimatedBuilder(
             animation: _accent,
             builder: (context, _) => Row(

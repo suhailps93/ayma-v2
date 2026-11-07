@@ -79,11 +79,12 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
       body: ListView(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
             child:
                 Text('Models', style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             leading: Icon(Icons.record_voice_over_outlined, color: ac.fgDim),
             title: Text('Ayma’s models',
                 style: AymaType.sans(size: 15, color: ac.fg)),
@@ -93,6 +94,7 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
             onTap: () => context.push(VoicePreferenceScreen.path),
           ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const Key('ayma_settings_connect_agent'),
             leading: Icon(Icons.hub_outlined, color: ac.fgDim),
             title: Text('Connect an agent (MCP)',
@@ -104,7 +106,7 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Animation',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
@@ -113,6 +115,7 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
             builder: (context, _) => Column(
               children: [
                 SwitchListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
                   title: Text('Wing flutter animation',
                       style: AymaType.sans(size: 15, color: ac.fg)),
                   subtitle: Text(
@@ -124,6 +127,7 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
                   onChanged: (v) => _orbAnim.setFlutterEnabled(v),
                 ),
                 SwitchListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
                   title: Text('Wing flutter in nav bar',
                       style: AymaType.sans(
                           size: 15,
@@ -146,6 +150,7 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             title: Text('Wipe what Ayma has learned',
                 style: AymaType.sans(size: 15, color: AymaColors.error)),
             subtitle: Text('Clears your wiki + history; keeps your account.',

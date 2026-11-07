@@ -178,7 +178,7 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
     return Scaffold(
       appBar: AppBar(leading: const AymaBackButton(), title: const Text('Connect an agent')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: [
           Text(
             'Let an outside AI assistant — like Claude — act for you in Ayma. '
@@ -357,7 +357,6 @@ class _CapabilitiesCard extends StatelessWidget {
               body: 'Run practice conversations so you can rehearse before you '
                   'reach out for real.',
             ),
-            const SizedBox(height: 4),
             _GuardrailsNote(),
           ],
         ),
@@ -383,7 +382,7 @@ class _Capability extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -583,7 +582,6 @@ class _UrlRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         IconButton(
-          visualDensity: VisualDensity.compact,
           tooltip: 'Copy',
           icon: const Icon(Icons.copy_rounded, size: 18),
           onPressed: onCopy,
@@ -702,7 +700,7 @@ class _ConnectionTile extends StatelessWidget {
         .map((s) => kMcpScopeLabels[s] ?? s)
         .join(', ');
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

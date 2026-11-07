@@ -558,12 +558,12 @@ class _PlanScreenState extends State<PlanScreen> {
                         },
                         child: ListView(
                           padding:
-                              const EdgeInsets.fromLTRB(24, 20, 24, 32),
+                              const EdgeInsets.fromLTRB(20, 20, 20, 32),
                           children: [
                             _Hero(data: shown, onRetry: _reload),
                             const SizedBox(height: 40),
                             const Eyebrow('Plans'),
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 8),
                             Text(
                               'Each plan adds a monthly pool of credits.',
                               style:
@@ -593,7 +593,7 @@ class _PlanScreenState extends State<PlanScreen> {
                               available: shown.usage != null,
                               load: _periodUsage,
                             ),
-                            const SizedBox(height: 32),
+                            const SizedBox(height: 40),
                             Divider(height: 0.5, color: ac.lineSoft),
                             const SizedBox(height: 8),
                             Wrap(
@@ -693,7 +693,7 @@ class _Hero extends StatelessWidget {
             color: ac.accent,
           ).copyWith(letterSpacing: 2),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Row(
           crossAxisAlignment: CrossAxisAlignment.baseline,
           textBaseline: TextBaseline.alphabetic,
@@ -706,7 +706,7 @@ class _Hero extends StatelessWidget {
                 color: out ? ac.error : ac.fg,
               ).copyWith(height: 1),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Flexible(
               child: Text(
                 'credits left',
@@ -715,7 +715,7 @@ class _Hero extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         if (u == null)
           Row(
             children: [
@@ -739,7 +739,7 @@ class _Hero extends StatelessWidget {
           const SizedBox(height: 20),
           Container(
             key: const ValueKey('plan-reassurance'),
-            padding: const EdgeInsets.only(left: 14),
+            padding: const EdgeInsets.only(left: 16),
             decoration: BoxDecoration(
               border: Border(left: BorderSide(color: ac.accentSoft, width: 2)),
             ),
@@ -754,12 +754,12 @@ class _Hero extends StatelessWidget {
                     color: ac.fg,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 Text(
                   kOutOfCreditsStillFree,
                   style: AymaType.sans(size: 13, color: ac.fgDim, height: 1.45),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 Text(
                   kOutOfCreditsNeedsCredits,
                   style: AymaType.sans(size: 13, color: ac.fgDim, height: 1.45),
@@ -812,7 +812,7 @@ class _PlanSelector extends StatelessWidget {
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     curve: Curves.easeOut,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
                       color: p.productId == selected
                           ? ac.bg
@@ -835,7 +835,7 @@ class _PlanSelector extends StatelessWidget {
                             color: p.productId == selected ? ac.fg : ac.fgDim,
                           ),
                         ),
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 4),
                         Text(
                           p.productId == current
                               ? 'CURRENT'
@@ -881,7 +881,7 @@ class _PlanDetail extends StatelessWidget {
       child: Container(
         key: ValueKey('plan-detail-${plan.productId}'),
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: ac.bgElev,
           borderRadius: BorderRadius.circular(16),
@@ -918,7 +918,7 @@ class _PlanDetail extends StatelessWidget {
               plan.blurb,
               style: AymaType.sans(size: 13, color: ac.fgMute, height: 1.4),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             Row(
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
@@ -939,13 +939,13 @@ class _PlanDetail extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Divider(height: 0.5, color: ac.lineSoft),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             for (final f in [
               ?trial == null ? null : 'Includes a ${trial!.label} free trial',
               ..._planFeatures,
             ])
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5),
+                padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1174,7 +1174,7 @@ class _ActionBar extends StatelessWidget {
         child: CappedScroll(
           maxHeight: MediaQuery.sizeOf(context).height * 0.45,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

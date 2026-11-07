@@ -112,7 +112,7 @@ class _ManualProfileEditScreenState extends State<ManualProfileEditScreen> {
                   child: AymaWingLoader(lines: AymaLoaderLines.profileText),
                 )
               : Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

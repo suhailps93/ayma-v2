@@ -221,11 +221,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
             child: Text('Plan',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const ValueKey('settings-plan'),
             leading: Icon(Icons.workspace_premium_outlined, color: ac.fgDim),
             title: Text('Plan and credits',
@@ -237,7 +238,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Appearance',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
@@ -250,6 +251,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   for (final mode in ThemeMode.values)
                     RadioListTile<ThemeMode>(
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 20),
                       value: mode,
                       title: Text(_label(mode),
                           style: AymaType.sans(size: 15, color: ac.fg)),
@@ -259,6 +262,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             leading: Icon(Icons.palette_outlined, color: ac.accent),
             title: Text('Accent Color',
                 style: AymaType.sans(size: 15, color: ac.fg)),
@@ -269,7 +273,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Matching',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
@@ -278,6 +282,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             builder: (context, snap) {
               final paused = snap.data ?? false;
               return SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
                 title: Text('Pause matching',
                     style: AymaType.sans(size: 15, color: ac.fg)),
                 subtitle: Text(
@@ -291,11 +296,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Notifications',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const ValueKey('settings-notifications'),
             leading: Icon(Icons.notifications_outlined, color: ac.fgDim),
             title: Text('Notification preferences',
@@ -307,13 +313,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Privacy',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           StreamBuilder<bool>(
             stream: _profiles.watchAiAvatar(),
             builder: (context, snap) => SwitchListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
               key: const Key('settings_ai_avatar'),
               title: Text('AI Avatar',
                   style: AymaType.sans(size: 15, color: ac.fg)),
@@ -330,12 +337,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Verification',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           if (_verified == true)
             ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
               leading: const Icon(Icons.verified_outlined,
                   color: AymaColors.success),
               title: Text('Face verified',
@@ -347,6 +355,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             )
           else if (_verified == false)
             ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
               leading: Icon(Icons.gpp_maybe_outlined, color: ac.fgMute),
               title: Text('Verify your face',
                   style: AymaType.sans(size: 15, color: ac.fg)),
@@ -362,6 +371,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: _verifying ? null : _verifyFace,
             ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const Key('settings_biometric_consent'),
             leading: Icon(Icons.face_retouching_natural_outlined,
                 color: ac.fgMute),
@@ -377,11 +387,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Help',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const ValueKey('settings-feature-tour'),
             leading: Icon(Icons.explore_outlined, color: ac.fgDim),
             title: Text('How to use Ayma',
@@ -400,11 +411,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           Divider(color: ac.lineSoft),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Text('Account',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             leading: Icon(Icons.delete_outline, color: ac.error),
             title: Text('Delete account',
                 style: AymaType.sans(size: 15, color: ac.error)),
