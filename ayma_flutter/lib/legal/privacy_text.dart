@@ -398,6 +398,6 @@ Postal address for privacy questions and formal notices: Justabot LLC,
 c/o Harvard Business Services, Inc., 16192 Coastal Highway, Lewes, DE
 19958, USA. Email: founder@justabot.info.
 
-See also our [Child Safety Standards](https://justabot.info/child-safety.html)
+See also our [Child Safety Standards](https://ayma-ai.web.app/child-safety.html)
 and the [account deletion page](https://justabot.info/delete-account.html).
 ''';
