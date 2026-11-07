@@ -377,6 +377,11 @@ class _Row {
     final hasUnread = unread > 0;
     return ListTile(
       onTap: () => context.push('/dm/$threadId'),
+      // Jobs UI audit: rows align to the 20pt screen edge the header uses
+      // (AymaScreenHeader left inset), not the ListTile default 16;
+      // avatar-to-text gap matches the notification rows (12).
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      horizontalTitleGap: 12,
       leading: ClipOval(
         child: SizedBox(
           width: 40,
@@ -407,7 +412,7 @@ class _Row {
             const SizedBox(width: 8),
             Container(
               padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: ac.accentSoft,
                 borderRadius: BorderRadius.circular(999),
@@ -429,8 +434,8 @@ class _Row {
       trailing: hasUnread
           ? Container(
               key: const ValueKey('unread-badge'),
-              constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-              padding: const EdgeInsets.symmetric(horizontal: 6),
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
                 color: ac.accent,
                 borderRadius: BorderRadius.circular(999),

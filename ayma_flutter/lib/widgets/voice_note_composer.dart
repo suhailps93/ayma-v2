@@ -360,7 +360,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
                   const _PulsingDot(),
                   const SizedBox(width: 8),
                   Text(elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Flexible(
                     child: Text(
                       cancelArmed ? 'Release to cancel' : 'Release to send',
@@ -374,7 +374,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 3),
+              const SizedBox(height: 4),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -429,7 +429,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           VoiceNoteLockBubble(progress: lockProgress),
           const SizedBox(width: 2),
         ],
@@ -498,7 +498,7 @@ class _LockedBarState extends State<_LockedBar>
             ),
           if (!paused && !stopped) const SizedBox(width: 8),
           Text(widget.elapsed, style: AymaType.mono(size: 14, color: ac.fg)),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Text(
             stopped ? 'Stopped' : (paused ? 'Paused' : 'Recording'),
             style: AymaType.sans(size: 13, color: ac.fgMute),

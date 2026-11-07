@@ -54,7 +54,7 @@ class ChatBubble extends StatelessWidget {
           margin: const EdgeInsets.symmetric(vertical: 4),
           padding: tight
               ? const EdgeInsets.all(4)
-              : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              : const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.78,
           ),
@@ -80,7 +80,7 @@ class ChatBubble extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.flag_rounded, size: 14, color: ac.error),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 8),
                         Text(
                           'Flagged for review',
                           style: AymaType.sans(
@@ -91,7 +91,7 @@ class ChatBubble extends StatelessWidget {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     child,
                   ],
                 )
