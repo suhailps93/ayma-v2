@@ -1513,6 +1513,19 @@ async def _prepare_chat(
                 )
                 return ({"reply": reply}, None)
 
+            # Deterministic profile-photo carousel: a clear "click / show
+            # the third picture", "next photo" or "previous picture" moves
+            # WITHIN the open profile (open_profile only opens it — founder
+            # clarification 2026-11-06). Runs through the same bound
+            # show_profile_photo the model calls; an out-of-range number
+            # answers with the real photo count, never a false success.
+            photo_cmd = app_control_mod.detect_photo_command(req.message)
+            if photo_cmd is not None:
+                reply = await app_control_mod.run_photo_command(
+                    get_db(), uid, photo_cmd[0], photo_cmd[1]
+                )
+                return ({"reply": reply}, None)
+
             # Deterministic navigation (§13.9): a clear "open / go to <known page>"
             # is executed BEFORE the model, so it works regardless of which brain is
             # active. The open-weights brain (Llama-3.1-8B) is weak at tool-calling
