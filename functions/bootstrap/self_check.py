@@ -31,6 +31,10 @@ files):
   tour, DM sending, and the irreversible inbox bulk actions are
   PROBE-only in this MVP: the runner verifies they are bound, it does
   not execute them. The six excluded actions are not even probed.
+* ``record_feedback`` is PROBE-only too, even though it is cheap:
+  executing it writes a real feedback doc + steering rule, and a
+  diagnostic never writes user data. Probe mode is the default; a
+  future full-run mode would need its own explicit opt-in.
 * ``web_search`` runs for real and is EXPECTED to fail today:
   ``gemini.research()`` raises ``DirectGoogleDisabledError`` by design
   (LiveKit-only inference, founder 2026-11-04). The runner reports that
@@ -142,9 +146,17 @@ PROBE_TOOLS: dict[str, str] = {
     "copilot_copy_draft": "needs a live co-pilot session and a draft",
     "set_user_steering": "write+revert candidate, read-back unverified",
     "set_voice_preference": "covered as a probe in the MVP (no-op write candidate)",
+    # record_feedback is deliberately PROBE-only even though it is cheap:
+    # executing it writes a real feedback doc + steering rule, and a
+    # diagnostic never writes user data (delta review, ledger row 2bs).
+    "record_feedback": "probe only — writes a real feedback doc + steering rule",
 }
 
 # Tools the MVP actually executes (beyond navigation/read/write-revert).
+# record_feedback is NOT here: executing it writes a real feedback doc +
+# steering rule, so in probe mode (the default) it is binding-verified
+# only — see PROBE_TOOLS. A future full-run mode would need its own
+# explicit opt-in; it must never become the default.
 RUN_TOOLS = (
     "web_search",
     "submit_feedback",
@@ -153,7 +165,6 @@ RUN_TOOLS = (
     "find_fact_source",
     "read_dm_thread",
     "current_screen",
-    "record_feedback",
     "open_profile",
     "go_back",
 )
@@ -196,6 +207,30 @@ def manifest_tool_names() -> set[str]:
     names = set(RUN_TOOLS) | set(PROBE_TOOLS) | set(SCOPED_TOOLS)
     names |= {"set_profile_field", "set_notification_filter", "open_screen"}
     return names
+
+
+# The marker the client appends to a set_notification_filter ack line
+# ("Showing X notifications. (was: <key>)") naming the filter it
+# replaced — the self-check's only way to learn the user's filter.
+_PREVIOUS_FILTER = re.compile(r"\(was:\s*([a-z_]+)\)")
+
+
+def _previous_filter(text: str) -> str | None:
+    """The filter the client replaced, from its ack line, or None."""
+    match = _PREVIOUS_FILTER.search(text or "")
+    return match.group(1) if match else None
+
+
+def _filter_failed(text: str) -> bool:
+    """True when a filter command reports it did not run.
+
+    The client acks a refused/failed command as ``"Not done: <reason>"``
+    and the queue layer falls back to ``"The app did NOT ..."`` when no
+    ack arrives — both mean the filter did not move, and both are a
+    FAIL (the old check only looked for "did NOT" and missed "Not
+    done:").
+    """
+    return ("Not done:" in text) or ("did NOT" in text)
 
 
 @dataclass
@@ -434,15 +469,64 @@ class SelfCheckRunner:
         return PASS, "location write → verify → revert → verify", ""
 
     async def _do_wr_filter(self):
+        """Exercise the notification filter, then restore the user's own.
+
+        The filter lives only in the client
+        (``NotificationFilterState``) — there is no server-side read of
+        it. The client reports the filter it replaced in the ack line
+        (``"... (was: <key>)"``) — that marker is the only way to learn
+        the user's filter before touching it. If the client does not
+        report one (old client), the check FAILs honestly and restores
+        the default rather than stranding the user on a test filter.
+        The restore runs in a ``finally`` so a failed second call still
+        leaves the user's filter as it was — and a restore that itself
+        fails is a FAIL, not a silent PASS.
+        """
         fn = self._tool_fns().get("set_notification_filter")
         if fn is None:
             return FAIL, "", "set_notification_filter not bound"
-        first = str(await self._call(fn, "unread") or "")
-        second = str(await self._call(fn, "all") or "")
-        bad = ("did NOT" in first) or ("did NOT" in second)
-        if bad:
-            return FAIL, "", f"filter command not applied: {first} / {second}"
-        return PASS, "filter unread → all (reverted)", ""
+        original = "all"  # the client default; replaced by the reported value
+        reported = False
+        changed = False
+        restore_error = ""
+        status, detail, error = PASS, "", ""
+        try:
+            first = str(await self._call(fn, "unread") or "")
+            if _filter_failed(first):
+                status, error = FAIL, f"filter command not applied: {first}"
+            else:
+                # The first call landed, so the filter has moved.
+                changed = True
+                previous = _previous_filter(first)
+                if previous is not None:
+                    original, reported = previous, True
+                second = str(await self._call(fn, "all") or "")
+                if _filter_failed(second):
+                    status, error = (
+                        FAIL,
+                        f"filter command not applied: {second}",
+                    )
+                elif not reported:
+                    status, error = FAIL, (
+                        "client did not report the previous filter — "
+                        "restored to the default (all)"
+                    )
+                else:
+                    detail = f"filter unread → all (restored {original})"
+        finally:
+            # Restore even on failure — but only if the check actually
+            # moved the filter; a failed first call changed nothing, so
+            # restoring then would itself move the user's filter.
+            if changed:
+                try:
+                    restored = str(await self._call(fn, original) or "")
+                    if _filter_failed(restored):
+                        restore_error = restored
+                except Exception as exc:  # noqa: BLE001
+                    restore_error = f"{type(exc).__name__}: {exc}"
+        if restore_error:
+            return FAIL, "", f"filter could not be restored: {restore_error}"
+        return status, detail, error
 
     async def _do_web_search(self):
         if self.deps.web_search_fn is not None:
@@ -490,17 +574,6 @@ class SelfCheckRunner:
             if "did NOT" in out:
                 return FAIL, "", out[:200]
             return PASS, out[:120], ""
-        if name == "record_feedback":
-            for kwargs in (
-                {"category": "other", "note": "[self-check] runner verification"},
-                {"note": "[self-check] runner verification"},
-            ):
-                try:
-                    out = await self._call(fn, **kwargs)
-                    return PASS, str(out or "")[:120], ""
-                except TypeError:
-                    continue
-            return PROBE, "record_feedback signature mismatch — probed only", ""
         if name in ("find_fact_source", "recall"):
             out = await self._call(fn, "self-check")
             return PASS, str(out or "")[:120], ""
@@ -582,7 +655,9 @@ class SelfCheckRunner:
             )
         )
 
-        # F (run half). Executed tool checks.
+        # F (run half). Executed tool checks. record_feedback is NOT here:
+        # it writes a real feedback doc + steering rule, so it is
+        # binding-verified only (PROBE_TOOLS) — see the PROBE half below.
         for name in (
             "web_search",
             "submit_feedback",
@@ -591,7 +666,6 @@ class SelfCheckRunner:
             "find_fact_source",
             "read_dm_thread",
             "current_screen",
-            "record_feedback",
         ):
             await self._emit(
                 await self._timed(
