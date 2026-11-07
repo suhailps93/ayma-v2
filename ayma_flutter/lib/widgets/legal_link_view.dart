@@ -60,7 +60,7 @@ class _LegalLinkViewState extends State<LegalLinkView> {
       ),
       body: SafeArea(
         child: CenteredScroll(
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 40),
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -74,14 +74,14 @@ class _LegalLinkViewState extends State<LegalLinkView> {
                 textAlign: TextAlign.center,
                 style: AymaType.sans(size: 15, color: ac.fg, height: 1.45),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               FilledButton.icon(
                 key: const Key('legal_link_open'),
                 onPressed: _open,
                 icon: const Icon(Icons.open_in_new_rounded, size: 18),
                 label: Text('Open ${widget.title}'),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               SelectableText(
                 widget.url,
                 textAlign: TextAlign.center,

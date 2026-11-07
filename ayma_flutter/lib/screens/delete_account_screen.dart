@@ -100,7 +100,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
         title: const Text('Delete account'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         children: [
           Text('Delete your Ayma account?',
               style: AymaType.serif(size: 24, color: ac.fg)),

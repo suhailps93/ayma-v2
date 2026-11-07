@@ -224,7 +224,7 @@ class _Group extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 2, bottom: 10),
+            padding: const EdgeInsets.only(bottom: 8),
             child: Eyebrow(label),
           ),
           Container(
@@ -390,7 +390,7 @@ class _CompletenessCardState extends State<_CompletenessCard> {
       return Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
         child: Container(
-          height: 84,
+          height: 88,
           decoration: BoxDecoration(
             color: ac.bgElev,
             borderRadius: BorderRadius.circular(16),
@@ -415,13 +415,13 @@ class _CompletenessCardState extends State<_CompletenessCard> {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: ac.lineSoft, width: 0.5),
             ),
-            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
                 CompletenessRing(
                   score: c.score, complete: c.isComplete, size: 56, stroke: 5,
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

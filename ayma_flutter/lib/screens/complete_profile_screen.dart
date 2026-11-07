@@ -154,14 +154,14 @@ class _Body extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
         children: [
           _Header(score: c.score, complete: c.isComplete),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           _TunedForLine(
             intentSet: c.intentSet,
             intentLabel: intentLabel,
             onTap: _discussIntent,
           ),
           if (!c.intentSet) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               'More sections open up once Ayma knows what you\'re looking for.',
               style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
@@ -174,7 +174,7 @@ class _Body extends StatelessWidget {
               style: AymaType.mono(size: 10, color: ac.fgMute)
                   .copyWith(letterSpacing: 1.4),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             for (final s in unlocked)
               _SectionTile(
                 section: s,
@@ -204,7 +204,7 @@ class _Body extends StatelessWidget {
               ),
           ],
           if (locked.isNotEmpty) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Text(
@@ -216,7 +216,7 @@ class _Body extends StatelessWidget {
                 Expanded(child: Divider(height: 0.5, color: ac.lineSoft)),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             for (final s in locked) _LockedSectionTile(section: s),
           ],
           const SizedBox(height: 24),
@@ -337,7 +337,7 @@ class _TunedForLine extends StatelessWidget {
               style: AymaType.sans(
                   size: 13, weight: FontWeight.w600, color: ac.fg),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
             Icon(Icons.tune, size: 14, color: ac.fgMute),
           ],
         ),
@@ -375,7 +375,7 @@ class _SectionTileState extends State<_SectionTile> {
   Widget _nodeRow(BuildContext context, QuestionNode n) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -397,9 +397,9 @@ class _SectionTileState extends State<_SectionTile> {
             InkWell(
               onTap: () => widget.onDiscussNode(n),
               child: Padding(
-                padding: const EdgeInsets.all(2),
+                padding: const EdgeInsets.all(14),
                 child:
-                    Icon(Icons.forum_outlined, size: 15, color: ac.accent),
+                    Icon(Icons.forum_outlined, size: 20, color: ac.accent),
               ),
             ),
         ],
@@ -415,7 +415,7 @@ class _SectionTileState extends State<_SectionTile> {
     final deep = widget.nodes.where((n) => !n.isCore).toList();
     final showDeep = s.coreComplete;
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(14),
@@ -428,7 +428,7 @@ class _SectionTileState extends State<_SectionTile> {
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               child: Row(
                 children: [
                   Expanded(
@@ -468,7 +468,7 @@ class _SectionTileState extends State<_SectionTile> {
           if (_expanded) ...[
             Divider(height: 0.5, color: ac.lineSoft),
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -499,14 +499,14 @@ class _SectionTileState extends State<_SectionTile> {
                       style: AymaType.sans(
                           size: 12, soft: true, color: ac.fgMute),
                     ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   TextButton.icon(
                     onPressed: widget.onDiscussSection,
                     icon: const Icon(Icons.forum_outlined, size: 15),
                     label: const Text('Talk to Ayma about this'),
                     style: TextButton.styleFrom(
                       padding: EdgeInsets.zero,
-                      minimumSize: const Size(0, 32),
+                      minimumSize: const Size(0, 48),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
@@ -533,8 +533,8 @@ class _LockedSectionTile extends StatelessWidget {
     return Opacity(
       opacity: 0.55,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: ac.bgElev,
           borderRadius: BorderRadius.circular(14),
@@ -623,7 +623,7 @@ class _Message extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return CenteredScroll(
-      padding: const EdgeInsets.all(28),
+      padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

@@ -121,7 +121,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
         title: const Text('Ayma’s models'),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
           Text(
@@ -145,7 +145,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
             controller: _brainCtl,
             showSaveButton: false,
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
           Divider(color: ac.lineSoft, height: 1),
           const SizedBox(height: 24),
           // VOICE — mode / STT / TTS / voice / language & accent (§13.9).
