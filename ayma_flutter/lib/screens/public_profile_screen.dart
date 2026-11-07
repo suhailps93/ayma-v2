@@ -9,6 +9,7 @@ import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
 import '../services/date_sim_service.dart';
 import '../services/match_activity.dart';
+import '../services/photo_carousel_registry.dart';
 import '../services/tab_request.dart';
 import '../theme.dart';
 import '../widgets/ask_ayma_overlay.dart';
@@ -579,8 +580,31 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
   final _controller = PageController();
   int _page = 0;
 
+  /// The handle Ayma's command layer drives this carousel through (see
+  /// [PhotoCarouselRegistry]): it reads the live photo list and page, and
+  /// jumps through the very same [_goToPage] a filmstrip tap uses — so a
+  /// voice/chat "show the third picture" animates exactly like a swipe.
+  /// Registered for the whole mount, so whichever profile is open (the
+  /// owner's own editable one included — [_photos] follows its live grid)
+  /// is the carousel a `carousel_photo` command moves.
+  late final PhotoCarouselHandle _carouselHandle = PhotoCarouselHandle(
+    photoCount: () => _photos.length,
+    currentPage: () {
+      final count = _photos.length;
+      return count == 0 ? 0 : _page.clamp(0, count - 1);
+    },
+    animateToPage: _goToPage,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    PhotoCarouselRegistry.instance.register(_carouselHandle);
+  }
+
   @override
   void dispose() {
+    PhotoCarouselRegistry.instance.unregister(_carouselHandle);
     _controller.dispose();
     super.dispose();
   }
