@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 
+import 'debug_capture_isolation.dart';
+
 /// One transcript segment relayed by the agent over the room data channel
 /// (§1.6). [topic] is `user_transcript` or `agent_transcript`.
 class TranscriptSegment {
@@ -155,6 +157,21 @@ abstract class VoiceTransport {
   Future<void> dispose();
 }
 
+/// Capture options for a voice session.
+///
+/// Default (flag off): the SDK defaults — noise suppression on, which is
+/// what requests `voiceIsolation: true` and `googNoiseSuppression: true`
+/// in the getUserMedia constraints. Debug flag on: noise suppression off,
+/// which turns both of those constraints off while echo cancellation and
+/// auto-gain control stay at their defaults. Pure so tests can assert the
+/// exact emitted constraints without a room.
+AudioCaptureOptions captureAudioOptions({
+  required bool disableCaptureIsolation,
+}) =>
+    disableCaptureIsolation
+        ? const AudioCaptureOptions(noiseSuppression: false)
+        : const AudioCaptureOptions();
+
 /// True when [error] is LiveKit's "the PeerConnection never reached
 /// connected" failure — client ↔ LiveKit Cloud ICE connectivity, typically a
 /// UDP-blocking network. Lives here so [VoiceSessionController] never has to
@@ -258,8 +275,21 @@ class LiveKitVoiceTransport implements VoiceTransport {
   }) async {
     debugPrint('[voice] connect -> $url (token ${token.length} chars)'
         '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}');
+    final isDisabled = await DebugCaptureIsolation.readAtConnect();
+    final captureOptions = captureAudioOptions(
+      disableCaptureIsolation: isDisabled,
+    );
+    final msg = '[voice] capture isolation disabled=$isDisabled '
+        'constraints=${captureOptions.toMediaConstraintsMap()}';
+    debugPrint(msg);
+    // ignore: avoid_print
+    print(msg);
     final room = Room(
-      roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
+      roomOptions: RoomOptions(
+        adaptiveStream: true,
+        dynacast: true,
+        defaultAudioCaptureOptions: captureOptions,
+      ),
     );
     _room = room;
     final listener = room.createListener();
@@ -430,7 +460,13 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Future<void> setMicrophoneEnabled(bool enabled) async {
     debugPrint('[voice] setMicrophoneEnabled($enabled)');
     try {
-      await _room?.localParticipant?.setMicrophoneEnabled(enabled);
+      final captureOptions = captureAudioOptions(
+        disableCaptureIsolation: DebugCaptureIsolation.disabled.value,
+      );
+      await _room?.localParticipant?.setMicrophoneEnabled(
+        enabled,
+        audioCaptureOptions: captureOptions,
+      );
       debugPrint('[voice] mic set ok');
     } catch (e, st) {
       debugPrint('[voice] setMicrophoneEnabled THREW: $e\n$st');
