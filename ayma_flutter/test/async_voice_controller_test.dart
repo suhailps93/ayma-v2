@@ -541,6 +541,74 @@ void main() {
       ]);
     },
   );
+
+  // Scout note 123, F3 — the Ayma-chat engine side of the locked-cap fix.
+  test('locked recording stops at the cap UNSENT and held; explicit '
+      'send queues the held clip', () async {
+    final recorder = _FakeRecorder();
+    final queue = _FakeQueue();
+    final controller = AsyncVoiceController(
+      recorder: recorder,
+      queue: queue,
+      capDuration: const Duration(milliseconds: 300),
+    );
+    addTearDown(controller.dispose);
+
+    expect(await controller.startRecording(), isTrue);
+    controller.holdClipAtCap = true; // armed by the controller on lock
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+
+    expect(recorder.stopped, isTrue);
+    expect(controller.isRecording, isFalse);
+    expect(controller.hasCapHeldClip, isTrue);
+    expect(queue.delivered, isEmpty); // the bug queued ~120s here
+
+    await controller.stopAndSend();
+    expect(queue.delivered, hasLength(1));
+    expect(controller.hasCapHeldClip, isFalse);
+    expect(controller.state, AsyncVoiceUiState.working);
+  });
+
+  test('cap-held clip is discarded by cancel — nothing is queued',
+      () async {
+    final recorder = _FakeRecorder();
+    final queue = _FakeQueue();
+    final controller = AsyncVoiceController(
+      recorder: recorder,
+      queue: queue,
+      capDuration: const Duration(milliseconds: 300),
+    );
+    addTearDown(controller.dispose);
+
+    expect(await controller.startRecording(), isTrue);
+    controller.holdClipAtCap = true;
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    expect(controller.hasCapHeldClip, isTrue);
+
+    await controller.cancelRecording();
+    expect(queue.delivered, isEmpty);
+    expect(controller.hasCapHeldClip, isFalse);
+    expect(recorder.discarded, hasLength(1));
+    expect(controller.state, AsyncVoiceUiState.idle);
+  });
+
+  test('a holding (not locked) recording still auto-sends at the cap',
+      () async {
+    final recorder = _FakeRecorder();
+    final queue = _FakeQueue();
+    final controller = AsyncVoiceController(
+      recorder: recorder,
+      queue: queue,
+      capDuration: const Duration(milliseconds: 300),
+    );
+    addTearDown(controller.dispose);
+
+    expect(await controller.startRecording(), isTrue);
+    expect(controller.holdClipAtCap, isFalse);
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    expect(queue.delivered, hasLength(1));
+    expect(controller.hasCapHeldClip, isFalse);
+  });
 }
 
 class _FailOnceFirestore extends Fake implements FirebaseFirestore {
