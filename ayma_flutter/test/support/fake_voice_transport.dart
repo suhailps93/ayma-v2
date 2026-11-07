@@ -156,6 +156,14 @@ class FakeVoiceTransport implements VoiceTransport {
     visionControlCalls.add((source: source, active: active));
   }
 
+  /// The track [localCameraTrack] hands back — null by default (widget
+  /// tests cannot build a real LiveKit VideoTrack; the self-view simply
+  /// stays hidden, which the screen treats as "no preview yet").
+  VideoTrack? fakeLocalCameraTrack;
+
+  @override
+  VideoTrack? get localCameraTrack => fakeLocalCameraTrack;
+
   /// Every [sendAgentMuteControl] request, in order.
   final List<bool> muteControlCalls = [];
   bool failMuteControl = false;
@@ -233,23 +241,42 @@ class FakeVoiceTransport implements VoiceTransport {
   @override
   Future<void> dispose() async {
     disposeCalls++;
-    if (!agentReadyController.isClosed) await agentReadyController.close();
-    if (!agentSpeakingController.isClosed)
+    if (!agentReadyController.isClosed) {
+      await agentReadyController.close();
+    }
+    if (!agentSpeakingController.isClosed) {
       await agentSpeakingController.close();
-    if (!transcriptsController.isClosed) await transcriptsController.close();
-    if (!toolEventsController.isClosed) await toolEventsController.close();
-    if (!callEndingController.isClosed) await callEndingController.close();
-    if (!agentMuteController.isClosed) await agentMuteController.close();
+    }
+    if (!transcriptsController.isClosed) {
+      await transcriptsController.close();
+    }
+    if (!toolEventsController.isClosed) {
+      await toolEventsController.close();
+    }
+    if (!callEndingController.isClosed) {
+      await callEndingController.close();
+    }
+    if (!agentMuteController.isClosed) {
+      await agentMuteController.close();
+    }
     if (!practiceCoachController.isClosed) {
       await practiceCoachController.close();
     }
-    if (!voiceStatusController.isClosed) await voiceStatusController.close();
-    if (!visionStateController.isClosed) await visionStateController.close();
+    if (!voiceStatusController.isClosed) {
+      await voiceStatusController.close();
+    }
+    if (!visionStateController.isClosed) {
+      await visionStateController.close();
+    }
     if (!reconnectingController.isClosed) {
       await reconnectingController.close();
     }
-    if (!closedController.isClosed) await closedController.close();
-    if (!localLevelController.isClosed) await localLevelController.close();
+    if (!closedController.isClosed) {
+      await closedController.close();
+    }
+    if (!localLevelController.isClosed) {
+      await localLevelController.close();
+    }
     if (!agentLevelController.isClosed) await agentLevelController.close();
   }
 }

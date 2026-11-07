@@ -4,6 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 
+/// The one LiveKit type the transport seam hands upward: the local camera
+/// track the call screen renders as the self-view. Everything else about
+/// LiveKit stays behind [VoiceTransport].
+export 'package:livekit_client/livekit_client.dart' show VideoTrack;
+
 /// One transcript segment relayed by the agent over the room data channel
 /// (§1.6). [topic] is `user_transcript` or `agent_transcript`.
 class TranscriptSegment {
@@ -194,6 +199,13 @@ abstract class VoiceTransport {
     required String source,
     required bool active,
   });
+
+  /// The local camera track currently published in the room, or null when
+  /// video is off / not yet published. The call screen renders it as the
+  /// user's self-view — Gemini Live puts the camera feed on the call's main
+  /// stage while video is on (design references: design-references/
+  /// gemini-live). Read-only; publishing stays with [setCameraEnabled].
+  VideoTrack? get localCameraTrack;
 
   Future<void> disconnect();
 
@@ -540,6 +552,19 @@ class LiveKitVoiceTransport implements VoiceTransport {
       debugPrint('[voice] setScreenShareEnabled THREW: $e\n$st');
       rethrow;
     }
+  }
+
+  @override
+  VideoTrack? get localCameraTrack {
+    final participant = _room?.localParticipant;
+    if (participant == null) return null;
+    for (final publication in participant.videoTrackPublications) {
+      if (publication.source == TrackSource.camera) {
+        final track = publication.track;
+        if (track is VideoTrack) return track;
+      }
+    }
+    return null;
   }
 
   @override

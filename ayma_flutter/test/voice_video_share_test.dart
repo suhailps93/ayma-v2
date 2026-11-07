@@ -169,6 +169,9 @@ void main() {
       transport.emitVoiceStatus('vision_unsupported');
       await _settle();
       expect(c.visionSupported, isFalse);
+      // The unsupported flag is what the call screen renders as visible-
+      // but-disabled toggles with the reason (founder addition 2026-11-06).
+      expect(c.visionUnsupported, isTrue);
 
       await c.toggleVideo();
       expect(transport.cameraCalls, isEmpty);

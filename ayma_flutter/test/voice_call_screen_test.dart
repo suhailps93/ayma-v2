@@ -113,6 +113,7 @@ class _FakeVoice extends VoiceSessionController {
   // Vision toggles (feedback item 13): the same fake treatment — state
   // flips + notify, gated on live + visionSupported like the real ones.
   bool _fakeVisionSupported = false;
+  bool _fakeVisionUnsupported = false;
   bool _fakeVideoOn = false;
   bool _fakeScreenShareOn = false;
   String? _fakeVisionNotice;
@@ -121,6 +122,9 @@ class _FakeVoice extends VoiceSessionController {
 
   @override
   bool get visionSupported => _fakeVisionSupported;
+
+  @override
+  bool get visionUnsupported => _fakeVisionUnsupported;
 
   @override
   bool get videoOn => _fakeVideoOn;
@@ -133,6 +137,11 @@ class _FakeVoice extends VoiceSessionController {
 
   void setVisionSupported(bool supported) {
     _fakeVisionSupported = supported;
+    notifyListeners();
+  }
+
+  void setVisionUnsupported(bool unsupported) {
+    _fakeVisionUnsupported = unsupported;
     notifyListeners();
   }
 
@@ -696,6 +705,78 @@ void main() {
       },
     );
 
+    testWidgets(
+      'visible but disabled with the reason on an unsupported model',
+      (tester) async {
+        final voice = _FakeVoice()
+          ..setVisionUnsupported(true)
+          ..setPhase(VoiceSessionPhase.live)
+          ..setResponded();
+
+        await tester.pumpWidget(
+          MaterialApp(home: VoiceCallScreen(voice: voice)),
+        );
+        await tester.pump();
+
+        // Shown, not hidden — with the plain explanation under the row.
+        expect(videoButton, findsOneWidget);
+        expect(screenButton, findsOneWidget);
+        expect(
+          find.byKey(const Key('voiceCallVisionUnsupportedNote')),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            'Video and screen share need a realtime model '
+            '— switch in Models.',
+          ),
+          findsOneWidget,
+        );
+
+        // Disabled: the InkWell under each button carries no tap handler,
+        // and tapping changes nothing.
+        for (final button in [videoButton, screenButton]) {
+          final inkWell = tester.widget<InkWell>(
+            find.descendant(of: button, matching: find.byType(InkWell)),
+          );
+          expect(inkWell.onTap, isNull);
+        }
+        await tester.tap(videoButton);
+        await tester.tap(screenButton);
+        await tester.pump();
+        expect(voice.toggleVideoCalls, 0);
+        expect(voice.toggleScreenShareCalls, 0);
+      },
+    );
+
+    testWidgets('the sharing pill shows while sharing and stops on tap', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+      expect(find.byKey(const Key('voiceCallSharingPill')), findsNothing);
+
+      await tester.tap(screenButton);
+      await tester.pump();
+      expect(voice.screenShareOn, isTrue);
+      expect(find.byKey(const Key('voiceCallSharingPill')), findsOneWidget);
+      expect(
+        find.text('Sharing your screen — tap to stop'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('voiceCallSharingPill')));
+      await tester.pump();
+      expect(voice.toggleScreenShareCalls, 2);
+      expect(voice.screenShareOn, isFalse);
+      expect(find.byKey(const Key('voiceCallSharingPill')), findsNothing);
+    });
+
     testWidgets('hidden until the call is live, even when supported', (
       tester,
     ) async {
@@ -725,13 +806,26 @@ void main() {
       await tester.pump();
       expect(voice.toggleVideoCalls, 1);
       expect(voice.videoOn, isTrue);
-      expect(find.byIcon(Icons.videocam_rounded), findsOneWidget);
+      expect(
+        find.descendant(
+          of: videoButton,
+          matching: find.byIcon(Icons.videocam_rounded),
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(screenButton);
       await tester.pump();
       expect(voice.toggleScreenShareCalls, 1);
       expect(voice.screenShareOn, isTrue);
-      expect(find.byIcon(Icons.screen_share_rounded), findsOneWidget);
+      // Scoped to the button: the sharing pill carries the same icon.
+      expect(
+        find.descendant(
+          of: screenButton,
+          matching: find.byIcon(Icons.screen_share_rounded),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('the vision notice line renders while one is set', (

@@ -372,12 +372,17 @@ class VoiceSessionController extends ChangeNotifier {
 
   /// The `voice_status` states by which the agent declares whether the
   /// stack serving THIS call can actually perceive video (feedback item
-  /// 13, founder rule: only models that support video perception expose
-  /// the controls). Realtime stacks (Gemini Live) publish
-  /// [_kVisionSupported] on session start; cascade stacks — whose frames
-  /// the LiveKit agent pipeline cannot consume in this SDK — publish
-  /// [_kVisionUnsupported]. Until either arrives the controls stay hidden:
-  /// never offer a camera/screen button Ayma cannot see through.
+  /// 13, founder rule: the toggles enable only on a stack that supports
+  /// video perception). The declaration is the agent reading the ONE
+  /// catalog source of truth (`voice_catalog` `RuntimeVoices.supports_video`,
+  /// driven by `CONFIG.voice_video_capable_providers`): realtime stacks on
+  /// a video-capable provider (Gemini Live, OpenAI Realtime) publish
+  /// [_kVisionSupported]; cascade stacks — whose frames the LiveKit agent
+  /// pipeline cannot consume in this SDK — publish [_kVisionUnsupported].
+  /// Until either arrives the controls stay hidden; on
+  /// [_kVisionUnsupported] they show DISABLED with the reason, and
+  /// [toggleVideo] / [toggleScreenShare] refuse: never publish video into
+  /// a session whose model cannot perceive it.
   static const _kVisionSupported = 'vision_supported';
   static const _kVisionUnsupported = 'vision_unsupported';
 
@@ -387,6 +392,20 @@ class VoiceSessionController extends ChangeNotifier {
   /// Gates the voice-call screen's Video / Screen share toggles and
   /// [toggleVideo] / [toggleScreenShare] themselves.
   bool get visionSupported => _visionSupported;
+
+  bool _visionUnsupported = false;
+
+  /// Whether the serving stack has declared it CANNOT perceive video on
+  /// this call (see [_kVisionUnsupported]). The call screen shows the
+  /// Video / Screen share toggles disabled, with the plain reason, while
+  /// this is true — the capability gap is visible, never a silent absence.
+  bool get visionUnsupported => _visionUnsupported;
+
+  /// The local camera track while [videoOn] (the self-view the call
+  /// screen puts on its main stage, Gemini Live-style); null whenever the
+  /// track is not published yet or the platform has no preview.
+  VideoTrack? get localCameraTrack =>
+      _videoOn ? _transport?.localCameraTrack : null;
 
   /// True while the user's camera track is published into the room
   /// ([toggleVideo]). Dies with the session — reset in [start] and
@@ -608,6 +627,7 @@ class VoiceSessionController extends ChangeNotifier {
       _noJoinRetried = false;
       _micCaptured = false;
       _visionSupported = false;
+      _visionUnsupported = false;
       _videoOn = false;
       _screenShareOn = false;
       _visionNotice = null;
@@ -968,8 +988,11 @@ class VoiceSessionController extends ChangeNotifier {
     // exposes (or keeps hidden) the Video / Screen share toggles.
     if (state == _kVisionSupported || state == _kVisionUnsupported) {
       final supported = state == _kVisionSupported;
-      if (_visionSupported == supported) return;
+      if (_visionSupported == supported && _visionUnsupported == !supported) {
+        return;
+      }
       _visionSupported = supported;
+      _visionUnsupported = !supported;
       notifyListeners();
       return;
     }
@@ -1779,6 +1802,7 @@ class VoiceSessionController extends ChangeNotifier {
     _videoOn = false;
     _screenShareOn = false;
     _visionSupported = false;
+    _visionUnsupported = false;
     _visionNotice = null;
     _openWeightsWarming = false;
     _voiceTrouble = false;
