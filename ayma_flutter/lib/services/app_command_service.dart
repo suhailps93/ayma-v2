@@ -7,7 +7,6 @@ import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
 import '../screens/explore_screen.dart';
-import '../screens/notification_center_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';

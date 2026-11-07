@@ -18,7 +18,6 @@ import '../services/app_context.dart';
 import '../services/navigation_history.dart';
 import '../services/async_voice_controller.dart';
 import '../services/voice_clip_registry.dart';
-import '../services/voice_note_controller.dart';
 import '../services/async_voice_player.dart';
 import '../services/async_voice_queue.dart';
 import '../services/call_permissions.dart';
