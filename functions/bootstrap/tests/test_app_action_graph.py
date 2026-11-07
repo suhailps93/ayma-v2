@@ -36,6 +36,9 @@ _NON_TOOL_NAMES = {
     # registry structure / blocks
     "destinations", "parameterized", "non_navigable", "unavailable",
     "exclusions", "async_voice", "connection_banner",
+    # a real tool on v2; on staging it lands via the self-check port
+    # (fleet/self-check-staging), so the graph may name it already
+    "set_notification_filter",
     # exclusions config field names
     "account_actions", "deny_keys", "excluded_account_action_keys",
     # destination keys named as open_screen arguments

@@ -136,6 +136,7 @@ undone.)
 | Orb (tap / press-and-hold) | Start a live voice call with Ayma | COVERED — she *is* the call; starting one is user-initiated by definition (voice entry degrade is `AUTO`) |
 | Notification bell | Open Notifications | COVERED `open_screen notifications` / `open_notification` |
 | Connection banner | Shows offline/weak state; not tappable to change anything | `AUTO` (registry `connection_banner`) |
+| Back (system / in-app) | Return to the previous page | COVERED `go_back` — one step of the session navigation history per ask (founder feedback item 15, staging): a modal or sheet is dismissed first, an active tour is never fought, and at the root she says why instead of failing silently |
 
 ## 2. Ayma chat (`/`) — `chat_screen.dart`, `chat_composer.dart`, `voice_note_composer.dart`
 
