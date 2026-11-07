@@ -102,6 +102,7 @@ class _CopilotScreenState extends State<CopilotScreen>
       );
       if (!mounted) return;
       setState(() => _lastTarget = target);
+      _service.lastDraftText = target.draftText;
       if (target.found) {
         await _service.showHighlight(target, geometry: frame.geometry());
       }
@@ -157,6 +158,8 @@ class _CopilotScreenState extends State<CopilotScreen>
                   'Bank and password screens pause sharing automatically — Ayma sees a black screen there, never your details.'),
               _rail(context, Icons.stop_circle_outlined,
                   'Stop any time: the Stop pill floats over every app while you share, and the notification has a Stop button too.'),
+              _rail(context, Icons.record_voice_over_outlined,
+                  'Sharing during a voice call? Just ask out loud — "can you see this?" or "what do I tap?" — and Ayma looks at the shared screen, highlights what to tap, and talks you through it.'),
               const SizedBox(height: 20),
               if (!_service.isSupported)
                 Text(

@@ -74,6 +74,16 @@ def _describe(ctx: dict) -> str:
             f"Previous page: {prev_label} — if the user says 'go back' or "
             "'take me back', call go_back to return there."
         )
+    if str(ctx.get("copilot_share") or "").strip() == "active":
+        parts.append(
+            "Co-pilot screen share is ACTIVE: the user is sharing their "
+            "phone screen (they are likely in another app). You CAN see "
+            "that shared screen — call copilot_locate with what they want "
+            "to do to look at the current frame and highlight what to "
+            "tap. Never say you cannot see their screen while the share "
+            "is active; if copilot_locate reports the share stopped or "
+            "the screen is protected, relay exactly that."
+        )
     if visible:
         parts.append(
             "On screen now (live; controls read [id] type \"label\" = state "

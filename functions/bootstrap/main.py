@@ -2652,6 +2652,10 @@ class VoiceContextRequest(BaseModel):
     # model knows about.
     previous_route: str = Field(default="", max_length=200)
     previous_label: str = Field(default="", max_length=200)
+    # Co-pilot screen share state ("active" while a MediaProjection share
+    # runs), mirrored so current_screen can tell the voice agent it CAN
+    # see the user's shared screen — through copilot_locate, frame-on-ask.
+    copilot_share: str = Field(default="", max_length=16)
 
 
 def _voice_context_doc(uid: str):
@@ -2686,6 +2690,7 @@ async def set_voice_context(
             "visible": req.visible.strip(),
             "previous_route": req.previous_route.strip(),
             "previous_label": req.previous_label.strip(),
+            "copilot_share": req.copilot_share.strip(),
             "updated_at": _server_ts(),
         },
     )

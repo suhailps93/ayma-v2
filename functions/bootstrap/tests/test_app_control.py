@@ -503,6 +503,7 @@ _COMMAND_TOOLS = {
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
     "ui_action", "take_picture", "go_back",
+    "copilot_locate", "copilot_copy_draft",
 }
 
 

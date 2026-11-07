@@ -150,11 +150,19 @@ class CopilotService extends ChangeNotifier {
   @visibleForTesting
   Future<dynamic> debugHandleNativeCall(MethodCall call) => _onNativeCall(call);
 
+  /// The most recent draft Ayma composed for a text field — from the
+  /// co-pilot page's ask or a voice-driven `copilot_locate` command —
+  /// held for the confirmation-gated copy (`copilot_copy_draft` in
+  /// voice, the "Copy Ayma's draft" button on the page). In memory
+  /// only; cleared when the share session resets.
+  String? lastDraftText;
+
   void _resetSession() {
     _sharing = false;
     _securePaused = false;
     _lockPaused = false;
     _latestFrame = null;
+    lastDraftText = null;
   }
 
   // ------------------------------------------------------------ Dart → native
