@@ -123,7 +123,9 @@
       {"key": "consent", "pattern": "\\b(i agree|agree|accept|i consent|consent to)\\b", "say": "Consent is only ever the user's own tap. Tell them where to tap it."},
       {"key": "consent", "types": ["checkbox"], "pattern": "terms|privacy|policy|consent|agree|biometric|18", "say": "Consent and terms checkboxes are only ever ticked by the user."},
       {"key": "account_action", "pattern": "\\b(sign out|log out)\\b", "say": "Use account_action for this; it asks the user to confirm first."},
-      {"key": "clear_memory", "pattern": "\\b(wipe what ayma has learned|clear (your |ayma )?memory|wipe (your )?memory|forget everything)\\b", "say": "Clearing what Ayma has learned is something the user does themselves. Open Ayma's settings (open_screen ayma_settings) and tell them which button to tap."}
+      {"key": "clear_memory", "pattern": "\\b(wipe what ayma has learned|clear (your |ayma )?memory|wipe (your )?memory|forget everything)\\b", "say": "Clearing what Ayma has learned is something the user does themselves. Open Ayma's settings (open_screen ayma_settings) and tell them which button to tap."},
+      {"key": "block_report", "pattern": "\\bblock\\b", "say": "Blocking and reporting someone is the user's own call — it affects another person and can't be undone here. Tell them it is in the menu at the top of their message thread, and let them tap it themselves."},
+      {"key": "dismiss_all", "pattern": "\\bdismiss all\\b", "say": "Dismissing all suggestions at once is the user's own tap — it drops every one of them. Per-suggestion Dismiss is fine. The button is at the top of the profile suggestions (open_screen profile_suggestions)."}
     ],
     "deny_routes": [
       {"route": "/consent", "reason": "the face-matching consent gate must only be answered by the user"},
@@ -141,7 +143,10 @@
     "items": [
       {"key": "delete_account", "label": "Delete account", "found_on": "delete_account", "account_actions": ["delete_account"], "deny_keys": ["delete"], "destinations": ["delete_account"], "via": "account_action delete_account is refused by the exclusions guard (navigate_only: she opens the page and the user taps it); the Delete account route is a ui_action deny_route"},
       {"key": "purchase", "label": "Subscribe / buy / upgrade / start a trial / buy credits / switch plan (any purchase control)", "found_on": "credits", "account_actions": [], "deny_keys": ["purchase"], "destinations": [], "via": "the purchase unavailable entry is navigate_only to the Plan page; the ui_action purchase deny rules refuse the controls"},
-      {"key": "clear_memory", "label": "Clear Ayma memory (Wipe what Ayma has learned)", "found_on": "ayma_settings", "account_actions": ["wipe_memory"], "deny_keys": ["clear_memory"], "destinations": [], "via": "account_action wipe_memory is refused by the exclusions guard (navigate_only to Ayma's settings: she opens the page and the user taps it); the ui_action clear_memory deny rule refuses the control"}
+      {"key": "clear_memory", "label": "Clear Ayma memory (Wipe what Ayma has learned)", "found_on": "ayma_settings", "account_actions": ["wipe_memory"], "deny_keys": ["clear_memory"], "destinations": [], "via": "account_action wipe_memory is refused by the exclusions guard (navigate_only to Ayma's settings: she opens the page and the user taps it); the ui_action clear_memory deny rule refuses the control"},
+      {"key": "delete_photo_everywhere", "label": "Delete everywhere (photo)", "found_on": "photos", "account_actions": [], "deny_keys": ["delete"], "destinations": [], "via": "the ui_action delete deny rule refuses the Delete everywhere buttons in both photo dialogs; Ayma's delete_photo skill only ever soft-hides a photo (the Remove from public path) — the irreversible PhotoService.deletePermanent has no tool path"},
+      {"key": "block_report", "label": "Block & report (in a message thread)", "found_on": "messages", "account_actions": [], "deny_keys": ["block_report"], "destinations": [], "via": "the ui_action block_report deny rule refuses the Block & report menu item and its Block confirm; there is no block skill"},
+      {"key": "dismiss_all_suggestions", "label": "Dismiss all (profile suggestions)", "found_on": "profile_suggestions", "account_actions": [], "deny_keys": ["dismiss_all"], "destinations": [], "via": "the ui_action dismiss_all deny rule refuses the Dismiss all button; per-suggestion Dismiss stays operable"}
     ]
   },
   "guided_tour": {

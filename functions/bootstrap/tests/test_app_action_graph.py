@@ -47,6 +47,8 @@ _NON_TOOL_NAMES = {
     "distance_preference", "partner_age_range",
     # exclusion + unavailable keys
     "clear_memory", "delete_account", "purchase", "developer_panel",
+    # deny rule keys named in the graph
+    "delete", "block_report", "dismiss_all",
     # client-internal identifiers: AppCommandService command actions
     # and the app_action names it executes
     "tour_step", "tour_event", "resume_matching", "end_call",
@@ -108,7 +110,11 @@ def test_every_backticked_name_in_the_graph_is_real():
 
 def test_exclusions_config_is_complete_and_enforced():
     keys = app_registry.exclusion_keys()
-    assert keys == {"delete_account", "purchase", "clear_memory"}
+    assert keys == {
+        "delete_account", "purchase", "clear_memory",
+        "delete_photo_everywhere", "block_report",
+        "dismiss_all_suggestions",
+    }
     acts = {a["key"]: a for a in app_registry.account_actions()}
     # Delete account: navigate-only, and its page is a ui_action deny route.
     assert acts["delete_account"]["handler"] == "navigate_only"
@@ -131,6 +137,13 @@ def test_exclusions_config_is_complete_and_enforced():
     assert acts["wipe_memory"]["handler"] == "navigate_only"
     assert acts["wipe_memory"]["destination"] == "ayma_settings"
     assert "clear_memory" in deny_keys
+    # Founder-confirmed 2026-11-06 (19:41 PT): the three proposed
+    # exclusions are wired the same way — each names a deny rule that
+    # exists, and none of them is an account action.
+    for item in app_registry.exclusions():
+        assert set(item["deny_keys"]) <= deny_keys, item["key"]
+    for key in ("block_report", "dismiss_all"):
+        assert key in deny_keys
     # No server-side account handler may remain executable.
     assert {a["key"] for a in acts.values() if a["handler"] not in (
         "navigate_only", "client")} == set()
@@ -178,7 +191,8 @@ def test_exclusion_config_names_its_enforcement_surfaces():
     assert reg.excluded_account_action_keys() == {
         "delete_account", "wipe_memory"}
     assert reg.excluded_deny_keys() == {
-        "delete", "purchase", "clear_memory"}
+        "delete", "purchase", "clear_memory", "block_report",
+        "dismiss_all"}
     assert reg.excluded_destination_keys() == {"delete_account"}
     deny_keys = {
         r["key"] for r in reg.registry()["ui_action_policy"]["deny"]}

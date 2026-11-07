@@ -49,8 +49,14 @@ void main() {
   test('exclusions config lists exactly the founder-ruled controls', () {
     final exclusions = _registry()['exclusions'] as Map<String, dynamic>;
     final items = (exclusions['items'] as List).cast<Map<String, dynamic>>();
-    expect(items.map((e) => e['key']).toSet(),
-        {'delete_account', 'purchase', 'clear_memory'});
+    expect(items.map((e) => e['key']).toSet(), {
+      'delete_account',
+      'purchase',
+      'clear_memory',
+      'delete_photo_everywhere',
+      'block_report',
+      'dismiss_all_suggestions',
+    });
     for (final item in items) {
       expect((item['via'] as String).trim(), isNotEmpty, reason: '$item');
     }
@@ -61,7 +67,7 @@ void main() {
     final wipe = acts.singleWhere((a) => a['key'] == 'wipe_memory');
     expect(wipe['handler'], 'navigate_only');
     expect(wipe['destination'], 'ayma_settings');
-    // And the graph marks all three EXCLUDED.
+    // And the graph marks them EXCLUDED.
     final graph = _graph();
     expect(graph, contains('EXCLUDED'));
     expect(graph, contains('Delete account'));
