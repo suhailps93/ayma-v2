@@ -43,6 +43,48 @@ def test_black_frame_detection_matches_the_copilot_threshold():
     assert agent.vision_frame_is_black(b"") is False
 
 
+def test_video_capability_matrix_is_catalog_driven():
+    # The support matrix (founder addition, 2026-11-06) lives in ONE place —
+    # voice_catalog, driven by CONFIG.voice_video_capable_providers —
+    # mirroring provider_supports_accent. Realtime native-audio providers
+    # perceive video; cascade stacks never do in livekit-agents 1.8.9,
+    # whatever their components.
+    import voice_catalog
+
+    assert voice_catalog.provider_supports_video("gemini") is True
+    assert voice_catalog.provider_supports_video("openai") is True
+    assert voice_catalog.provider_supports_video("deepgram") is False
+    assert voice_catalog.provider_supports_video("") is False
+
+    gemini = voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_REALTIME,
+        realtime_model_id=voice_catalog.REALTIME_GEMINI,
+    )
+    assert gemini.supports_video is True
+    openai = voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_REALTIME,
+        realtime_model_id=voice_catalog.REALTIME_OPENAI,
+    )
+    assert openai.supports_video is True
+    cascade = voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_CASCADE, tts_id="fishaudio/s2.1-pro"
+    )
+    assert cascade.supports_video is False
+
+    # The served catalog carries the flag on its realtime entries so the
+    # Models screen reads the same truth the agent declares.
+    catalog = voice_catalog._build_catalog()
+    by_id = {m["id"]: m for m in catalog["realtime_models"]}
+    assert by_id[voice_catalog.REALTIME_GEMINI]["supports_video"] is True
+
+    # The saved-stack reader agrees with the default (Gemini Live) stack.
+    assert voice_catalog.video_supported({}) is True
+    assert (
+        voice_catalog.video_supported({"ayma_voice_mode": "cascade"})
+        is False
+    )
+
+
 def test_vision_instructions_carry_the_secure_content_rule():
     text = agent.VISION_INSTRUCTIONS
     assert "cannot see protected content" in text

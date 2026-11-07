@@ -3435,10 +3435,23 @@ async def _start_main_gemini_session(
         room_input_options=RoomInputOptions(video_enabled=True),
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
-    # This stack (realtime) genuinely perceives video — declare it so the
-    # client exposes the Video / Screen share toggles, and watch the
-    # tracks for FLAG_SECURE black frames.
-    await _publish_voice_status(ctx, VOICE_STATUS_VISION_SUPPORTED)
+    # Declare vision support from the ONE catalog source of truth
+    # (``RuntimeVoices.supports_video`` — feedback item 13): a realtime
+    # model on a video-capable provider (Gemini Live, OpenAI Realtime)
+    # genuinely perceives the frames, so the client enables the Video /
+    # Screen share toggles; anything else is declared unsupported and the
+    # client shows them disabled. Watch the tracks either way for
+    # FLAG_SECURE black frames.
+    _vision_ok = voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_REALTIME,
+        realtime_model_id=seed.realtime_model_id,
+    ).supports_video
+    await _publish_voice_status(
+        ctx,
+        VOICE_STATUS_VISION_SUPPORTED
+        if _vision_ok
+        else VOICE_STATUS_VISION_UNSUPPORTED,
+    )
     watch_vision_tracks(ctx)
     session_live_ts = time.monotonic()
     logger.info("voice session LIVE: ts=%.3f uid=%s session=%s", 
@@ -3674,12 +3687,24 @@ async def _start_main_cascade_session(
         room_input_options=RoomInputOptions(video_enabled=True),
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
-    # This stack (cascade pipeline) cannot consume video frames in
-    # livekit-agents 1.8.9 — declare that honestly so the client never
-    # shows the Video / Screen share toggles on this stack (feedback item
-    # 13 founder rule). The track watcher still runs, so secure-content
-    # detection stays correct if a share ever reaches this room.
-    await _publish_voice_status(ctx, VOICE_STATUS_VISION_UNSUPPORTED)
+    # Declare vision support from the ONE catalog source of truth
+    # (``RuntimeVoices.supports_video`` — feedback item 13): a cascade
+    # pipeline cannot consume video frames in livekit-agents 1.8.9, so this
+    # resolves False and the client shows the Video / Screen share toggles
+    # disabled with the reason — it never lets the user publish video into
+    # a session whose model cannot perceive it. The track watcher still
+    # runs, so secure-content detection stays correct if a share ever
+    # reaches this room.
+    _vision_ok = voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_CASCADE,
+        tts_id=seed.tts_id,
+    ).supports_video
+    await _publish_voice_status(
+        ctx,
+        VOICE_STATUS_VISION_SUPPORTED
+        if _vision_ok
+        else VOICE_STATUS_VISION_UNSUPPORTED,
+    )
     watch_vision_tracks(ctx)
 
     # Start idle timer NOW that session is truly live (cascade path, same fix)
