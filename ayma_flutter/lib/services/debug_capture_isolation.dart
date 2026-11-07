@@ -1,0 +1,112 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+import 'package:logging/logging.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_client.dart' show kInteractiveTimeout;
+
+final _log = Logger('debug_capture_isolation');
+
+/// Debug-only flag that turns OFF client-side capture isolation for voice
+/// sessions (bench A/B test for the NOTE 126 bench-deaf cause, ledger 2bx).
+///
+/// Firestore doc `app_config/debug_capture_isolation`, `{enabled: bool}`.
+/// Only a literal `enabled: true` disables isolation. A missing doc, missing
+/// field, or unreadable cache means OFF — isolation stays ON, which is the
+/// founder rule (isolation ON by default wherever covered). The flag doc
+/// exists only in the ayma-staging project, and this code lives only on the
+/// staging branch, so prod can never see it on.
+///
+/// When the flag is ON, the voice transport publishes the mic with
+/// `AudioCaptureOptions(noiseSuppression: false)`. In livekit_client 2.6.4
+/// that one switch drives the emitted getUserMedia constraints for BOTH
+/// `voiceIsolation` and `googNoiseSuppression` (the constraints map keys
+/// `voiceIsolation` off `noiseSuppression`, not off the `voiceIsolation`
+/// field). Echo cancellation and auto-gain control stay at their defaults:
+/// the A/B test is about noise suppression / voice isolation only.
+///
+/// Wiring: loaded from prefs at startup (N5) and refreshed from Firestore
+/// at startup (N19), same pattern as [MetaIntegrations]. Unlike
+/// MetaIntegrations, [refresh] also updates the in-memory value at once, so
+/// a flip takes effect on the next app launch (one relaunch), not two:
+/// Scout flips the doc in the Firebase console, force-stops the app,
+/// relaunches, and the next voice session runs with isolation off.
+class DebugCaptureIsolation {
+  DebugCaptureIsolation._();
+
+  static const collection = 'app_config';
+  static const docId = 'debug_capture_isolation';
+  static const _kDisabled = 'debug_capture_isolation_disabled';
+
+  /// Current value; the voice transport reads this synchronously at
+  /// session start. Defaults to OFF (isolation on).
+  static final ValueNotifier<bool> disabled = ValueNotifier<bool>(false);
+
+  static Completer<void>? _readyCompleter;
+
+  /// Awaits readiness of the cached flag.
+  static Future<void> ensureReady() async {
+    if (_readyCompleter != null) {
+      await _readyCompleter!.future;
+      return;
+    }
+    await loadCached();
+  }
+
+  /// Only a literal `enabled: true` disables capture isolation.
+  static bool parse(Map<String, dynamic>? data) => data?['enabled'] == true;
+
+  /// Synchronously loads the flag from preloaded preferences.
+  static void loadFromPrefs(SharedPreferences prefs) {
+    try {
+      disabled.value = prefs.getBool(_kDisabled) ?? false;
+    } catch (e) {
+      _log.warning('flag cache unreadable: $e');
+      disabled.value = false;
+    } finally {
+      if (_readyCompleter == null) {
+        _readyCompleter = Completer<void>()..complete();
+      } else if (!_readyCompleter!.isCompleted) {
+        _readyCompleter!.complete();
+      }
+    }
+  }
+
+  /// Applies the cached value from the last successful [refresh].
+  static Future<void> loadCached() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      loadFromPrefs(prefs);
+    } catch (e) {
+      _log.warning('flag cache unreadable: $e');
+      disabled.value = false;
+      if (_readyCompleter == null) {
+        _readyCompleter = Completer<void>()..complete();
+      } else if (!_readyCompleter!.isCompleted) {
+        _readyCompleter!.complete();
+      }
+    }
+  }
+
+  /// Fetches the Firestore flag, caches it for the next launch, and applies
+  /// it in memory at once. Never throws; a failure leaves the cached value
+  /// untouched.
+  static Future<void> refresh(FirebaseFirestore db) async {
+    try {
+      final snap = await db
+          .collection(collection)
+          .doc(docId)
+          .get()
+          .timeout(kInteractiveTimeout);
+      final value = parse(snap.data());
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kDisabled, value);
+      disabled.value = value;
+      _log.info('flag refreshed: capture isolation disabled=$value');
+    } catch (e) {
+      _log.warning('flag refresh failed: $e');
+    }
+  }
+}

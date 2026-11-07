@@ -23,6 +23,7 @@ import '../../services/app_command_service.dart';
 import '../../services/navigation_history.dart';
 import '../../services/auth_service.dart';
 import '../../services/biometric_consent.dart';
+import '../../services/debug_capture_isolation.dart';
 import '../../services/deep_link_queue.dart';
 import '../../services/dev_panel_session.dart';
 import '../../services/error_reporting.dart';
@@ -131,6 +132,7 @@ class StartupNodes {
         accentColorControllerGlobal.loadFromPrefs(prefs);
         orbAnimationSettingsGlobal.loadFromPrefs(prefs);
         MetaIntegrations.loadFromPrefs(prefs);
+        DebugCaptureIsolation.loadFromPrefs(prefs);
         ReportCache.instance.hydrateFromPrefs(prefs);
       },
     );
@@ -428,7 +430,8 @@ class StartupNodes {
     );
   }
 
-  /// N19: Remote Sync (Meta, Sentry flags, Accent color)
+  /// N19: Remote Sync (Meta, Sentry, debug capture-isolation flags,
+  /// Accent color)
   static StartupNode<void> createRemoteSyncNode() {
     return StartupNode<void>(
       id: 'N19:remote_sync',
@@ -438,6 +441,7 @@ class StartupNodes {
           final db = FirebaseFirestore.instance;
           unawaited(MetaIntegrations.refresh(db));
           unawaited(SentryFlag.refresh(db));
+          unawaited(DebugCaptureIsolation.refresh(db));
           final user = ctx.contains('auth_user') ? ctx.get<User?>('auth_user') : null;
           if (user != null && !user.isAnonymous) {
             unawaited(accentColorControllerGlobal.syncRemoteIfMissing());
