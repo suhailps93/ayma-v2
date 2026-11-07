@@ -232,16 +232,24 @@ def test_write_revert_skips_when_no_original_to_restore():
     assert h.store["location"] == ""  # never wrote the test value
 
 
-# --- defect 1: record_feedback is probe-only, writes nothing -------------
+# --- defect 1: record_feedback check is probe-only; the one record -----
+# --- per run is the post-run consolidated suggestions filing -----------
 
-def test_record_feedback_is_probe_only_and_writes_nothing():
+def test_record_feedback_check_probe_only_one_consolidated_record():
     h = _Harness()
     runner = h.runner()
     asyncio.run(runner.run())
     by_name = {r.name: r for r in runner.results}
+    # The check itself never executes the tool: probe status only.
     assert by_name["tool:record_feedback"].status == self_check.PROBE
-    # The bound callable was never invoked: no feedback doc, no rule.
-    assert h.record_feedback_calls == []
+    # Exactly one call in the whole run: the consolidated post-run
+    # record (founder, 2026-11-07), tagged self-check, carrying the
+    # run suggestions - not a per-check execution.
+    assert len(h.record_feedback_calls) == 1
+    category, note = h.record_feedback_calls[0]
+    assert category == "self_check"
+    assert note.startswith("[self-check] run ")
+    assert "feature suggestions" in note
 
 
 # --- defect 2: filter check restores the user's filter ---------------------
@@ -381,7 +389,7 @@ def test_declared_but_unbound_run_tool_still_fails_and_files_bug():
 # --- progress bubbles ----------------------------------------------------------
 
 
-def test_progress_bubbles_start_and_per_check_lines():
+def test_progress_bubbles_plain_names_marks_no_raw_ids():
     h = _Harness(fail_nav={"explore"})
     lines = []
     runner = h.runner()
@@ -389,18 +397,134 @@ def test_progress_bubbles_start_and_per_check_lines():
     asyncio.run(runner.run())
     # A start bubble posts before any check result.
     assert lines[0].startswith("Self-check started")
-    # One bubble per executed check, PASS and FAIL alike.
-    assert "Self-check: nav:ayma — PASS" in lines
-    fail_lines = [ln for ln in lines if "nav:explore" in ln]
+    # Every result bubbles exactly once, in plain names with marks:
+    # start + one per result + summary + suggestions.
+    assert len(lines) == 1 + len(runner.results) + 2
+    assert "\u2705 Nav to Explore" not in lines  # explore fails here
+    assert "\u2705 Nav to Chat" in lines
+    fail_lines = [ln for ln in lines if ln.startswith("\u274c Nav to Explore")]
     assert len(fail_lines) == 1
     # The FAIL bubble carries the short reason, not just the name.
-    assert "FAIL" in fail_lines[0] and "did NOT navigate" in fail_lines[0]
-    executed = [
-        r
-        for r in runner.results
-        if r.status in (self_check.PASS, self_check.FAIL)
+    assert "did NOT navigate" in fail_lines[0]
+    # Probes and excluded checks bubble too, with the skip mark.
+    assert "\u23ed Deep-dive web research (probe only)" in lines
+    assert "\u23ed Delete the account (excluded \u2014 never run)" in lines
+    # No bubble anywhere carries a raw check id.
+    for ln in lines:
+        for raw in ("nav:", "tool:", "wr:", "read:", "setting:",
+                    "excluded:", "open:"):
+            assert raw not in ln, (raw, ln)
+    # The summary is ONE bubble listing every result, with counts.
+    summary = [ln for ln in lines if ln.startswith("\U0001f9ea Self-check summary")]
+    assert len(summary) == 1
+    summary = summary[0]
+    assert f"{len(runner.results)} checks" in summary
+    marked = [
+        ln
+        for ln in summary.split("\n")
+        if ln[:1] in ("\u2705", "\u274c", "\u23ed")
     ]
-    assert len(lines) == 1 + len(executed)
-    # Probes, skips and excluded checks never bubble.
-    assert not any("deep_dive" in ln for ln in lines)
-    assert not any("setting:" in ln for ln in lines)
+    assert len(marked) == len(runner.results)
+    for r in runner.results:
+        assert runner._line(r) in summary
+
+
+# --- feature suggestions + consolidated feedback record -------------------
+
+
+def test_suggestions_from_fails_and_skips_filed_exactly_once():
+    h = _Harness(fail_nav={"explore"})
+    fns = h.tool_fns()
+    del fns["copilot_locate"]  # not bound here -> build-relative SKIP
+    lines = []
+    runner = SelfCheckRunner(
+        object(),
+        "u1",
+        session_id="s-test",
+        env_label="test-env",
+        deps=_Deps(
+            nav_fn=h.nav_fn,
+            read_fn=h.read_fn,
+            profile_read=h.profile_read,
+            tool_fns=fns,
+            web_search_fn=h.web_search_fn,
+            bug_record=h.bug_record,
+            destinations=[
+                {"key": "ayma", "label": "Chat"},
+                {"key": "explore", "label": "Explore"},
+                {"key": "delete_account", "label": "Delete account"},
+            ],
+            settings_keys=["theme", "notify_all"],
+            progress=lines.append,
+        ),
+    )
+    asyncio.run(runner.run())
+    bubble = [ln for ln in lines if ln.startswith("\U0001f4a1 Feature ideas")]
+    assert len(bubble) == 1
+    bubble = bubble[0]
+    # Derived from THIS run: the explore FAIL and the copilot SKIP both
+    # become concrete, plain-language suggestions.
+    assert "Fix Nav to Explore" in bubble
+    assert "Add Point at something on a shared screen to this build" in bubble
+    # One consolidated record for the whole run, never one per gap.
+    assert len(h.record_feedback_calls) == 1
+    category, note = h.record_feedback_calls[0]
+    assert category == "self_check"
+    assert "Nav to Explore" in note
+    assert "Point at something on a shared screen" in note
+
+
+# --- nav cluster: window + same-command re-wait ----------------------------
+
+
+def test_nav_default_window_matches_production_six_seconds():
+    runner = SelfCheckRunner(object(), "u1")
+    assert runner.nav_timeout == 6.0
+
+
+def _patched_nav(monkeypatch, ack_outcomes):
+    import skills.app_control_navigation as acn
+    import skills.app_control_queue as acq
+
+    calls = {"queue": 0, "ack": 0}
+
+    def fake_resolve(db, uid, dest):
+        return "/explore", "Explore"
+
+    def fake_queue(db, uid, payload):
+        calls["queue"] += 1
+        return "cmd-1"
+
+    outcomes = list(ack_outcomes)
+
+    async def fake_ack(db, uid, cmd_id, timeout=None):
+        calls["ack"] += 1
+        return outcomes.pop(0)
+
+    monkeypatch.setattr(acn, "_resolve_path", fake_resolve)
+    monkeypatch.setattr(acq, "_queue_command", fake_queue)
+    monkeypatch.setattr(acq, "_await_ack", fake_ack)
+    return calls
+
+
+def test_nav_rewaits_once_on_the_same_command(monkeypatch):
+    # First window silent (client watch gap), ack lands in the second:
+    # the check PASSES and only ONE command was ever queued.
+    calls = _patched_nav(monkeypatch, [None, {"ok": True}])
+    runner = SelfCheckRunner(object(), "u1", deps=_Deps(tool_fns={}))
+    status, detail, error = asyncio.run(
+        runner._do_nav({"key": "explore", "label": "Explore"})
+    )
+    assert status == self_check.PASS
+    assert calls == {"queue": 1, "ack": 2}
+
+
+def test_nav_fails_only_after_both_windows(monkeypatch):
+    calls = _patched_nav(monkeypatch, [None, None])
+    runner = SelfCheckRunner(object(), "u1", deps=_Deps(tool_fns={}))
+    status, detail, error = asyncio.run(
+        runner._do_nav({"key": "explore", "label": "Explore"})
+    )
+    assert status == self_check.FAIL
+    assert "12s" in error  # two 6s windows, honestly reported
+    assert calls == {"queue": 1, "ack": 2}

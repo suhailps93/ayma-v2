@@ -27,6 +27,14 @@ files):
 * Write checks write through the tool's own bound callable, read the
   stored value back, revert, and read back again. No original value to
   restore -> SKIP; a self-check never leaves a test value behind.
+* Display (founder, 2026-11-07, on the first live staging run):
+  bubbles, the end-of-run summary and the feature-suggestion
+  bubble speak in plain names with marks - never raw check ids.
+  After the summary, the runner files ONE consolidated feedback
+  record holding the run's feature suggestions (the founder-
+  ordered exception to the probe-only rule for record_feedback:
+  the check itself still never executes it; the filing is a
+  separate post-run write through the same bound tool).
 * Generative / credit-spending tools, the model-stack setters, the
   tour, DM sending, and the irreversible inbox bulk actions are
   PROBE-only in this MVP: the runner verifies they are bound, it does
@@ -239,6 +247,136 @@ def _filter_failed(text: str) -> bool:
     return ("Not done:" in text) or ("did NOT" in text)
 
 
+# -- display names -----------------------------------------------------
+# Chat bubbles, the summary and the suggestion bubble use plain
+# names, never raw check ids (founder, 2026-11-07): "Nav to
+# Photos", not "nav:photos". Curated names below; anything
+# unlisted falls back to a humanised tail, so a bubble can never
+# carry a raw "prefix:name" id.
+
+_MARKS = {PASS: "\u2705", FAIL: "\u274c", SKIP: "\u23ed",
+          PROBE: "\u23ed", EXCLUDED: "\u23ed"}
+
+_TOOL_DISPLAY = {
+    "web_search": "Web search",
+    "submit_feedback": "Draft a feedback note",
+    "list_conversations": "List conversations",
+    "next_questions": "Next questions for you",
+    "find_fact_source": "Find where a fact came from",
+    "read_dm_thread": "Read a DM thread",
+    "current_screen": "See the current screen",
+    "open_profile": "Open a profile",
+    "go_back": "Go back",
+    "recall": "Recall from memory",
+    "open_screen": "Open a page",
+    "set_profile_field": "Edit a profile field",
+    "set_notification_filter": "Set the notification filter",
+    "record_feedback": "Record feedback about a conversation",
+    "report_bug": "File a bug report",
+    "add_followup_question": "Add a follow-up question",
+    "set_brain": "Switch the brain",
+    "set_voice_brain": "Switch the voice brain",
+    "set_voice_mode": "Switch the voice mode",
+    "set_realtime_model": "Switch the realtime model",
+    "set_stt": "Switch speech-to-text",
+    "set_tts": "Switch text-to-speech",
+    "reconnect_voice": "Reconnect the voice call",
+    "start_guided_tour": "Start the guided tour",
+    "advance_guided_tour": "Advance the guided tour",
+    "back_guided_tour": "Go back in the guided tour",
+    "stop_guided_tour": "Stop the guided tour",
+    "remember": "Remember something",
+    "send_dm_message": "Send a DM",
+    "deep_dive": "Deep-dive web research",
+    "rerun_web_research": "Re-run web research",
+    "face_report": "Face report",
+    "body_report": "Body report",
+    "analyze_physical_attributes": "Analyse physical attributes",
+    "run_appearance_report": "Appearance report",
+    "record_answer": "Record a questionnaire answer",
+    "set_relationship_intent": "Set relationship intent",
+    "generate_image": "Generate an image",
+    "edit_story_entry": "Edit a Story entry",
+    "remove_story_entry": "Remove a Story entry",
+    "search_explore": "Search Explore",
+    "open_message_thread": "Open a message thread",
+    "open_notification": "Open a notification",
+    "open_match_report": "Open a match report",
+    "open_date_sim": "Open a date sim",
+    "open_practice_date": "Open a practice date",
+    "app_action": "Change a setting",
+    "account_action": "Account actions",
+    "ui_action": "Tap or scroll on screen",
+    "take_picture": "Take a picture",
+    "play_voice_clip": "Play a voice clip",
+    "mark_all_notifications_read": "Mark all notifications read",
+    "clear_all_notifications": "Clear all notifications",
+    "mark_all_conversations_read": "Mark all conversations read",
+    "copilot_locate": "Point at something on a shared screen",
+    "copilot_copy_draft": "Draft text for another app",
+    "set_user_steering": "Set a steering preference",
+    "set_voice_preference": "Set a voice preference",
+    "edit_passage": "Edit a Story passage",
+    "set_passage_privacy": "Set passage privacy",
+    "set_section_privacy": "Set section privacy",
+    "edit_career_timeline_entry": "Edit a career timeline entry",
+    "delete_career_timeline_entry": "Delete a career timeline entry",
+    "remove_from_profile": "Remove something from the profile",
+    "list_profile_sections": "List profile sections",
+    "edit_profile_section": "Edit a profile section",
+    "set_profile_section_visibility": "Set profile section visibility",
+    "edit_photo": "Edit a photo",
+    "update_photo_note": "Update a photo note",
+    "delete_photo": "Delete a photo",
+    "correct_deep_dive_item": "Correct a research item",
+    "remove_deep_dive_item": "Remove a research item",
+    "correct_appearance_item": "Correct an appearance item",
+    "clear_appearance_item": "Clear an appearance item",
+}
+
+_READ_DISPLAY = {
+    "read:profile": "Read your profile",
+    "read:story": "Read your Story",
+    "read:explore_feed": "Read the Explore feed",
+    "read:matches": "Read your matches",
+    "read:notifications": "Read your notifications",
+    "read:chat_history": "Read the chat history",
+}
+
+_WRITE_DISPLAY = {
+    "wr:profile_field": "Edit a profile field, then undo it",
+    "wr:notification_filter": "Change the notification filter, then restore it",
+}
+
+_OPEN_DISPLAY = {
+    "open:message_thread": "Open a message thread",
+    "open:match_report": "Open a match report",
+    "open:date_sim": "Open a date sim",
+    "open:practice_date": "Open a practice date",
+}
+
+_EXCLUDED_DISPLAY = {
+    "delete_account": "Delete the account",
+    "purchase": "Make a purchase",
+    "clear_memory": "Clear Ayma memory",
+    "delete_photo_everywhere": "Delete a photo everywhere",
+    "block_report": "Block and report someone",
+    "dismiss_all_suggestions": "Dismiss all suggestions",
+}
+
+
+def _humanise(tail: str) -> str:
+    text = tail.replace("_", " ").replace("-", " ").strip()
+    return text[:1].upper() + text[1:] if text else tail
+
+
+def _title_label(label) -> str:
+    """A registry label with its first letter raised ("your photos"
+    -> "Your photos"), the rest untouched."""
+    text = str(label or "").strip()
+    return text[:1].upper() + text[1:] if text else text
+
+
 @dataclass
 class CheckResult:
     name: str
@@ -264,6 +402,7 @@ class _Deps:
     destinations: list | None = None        # registry destination dicts
     settings_keys: list | None = None       # registry setting keys
     declared_tools: set | None = None       # session tool declaration names
+    feedback_record: Callable | None = None  # (category, note) -> object
 
 
 class SelfCheckRunner:
@@ -276,7 +415,11 @@ class SelfCheckRunner:
         *,
         session_id: str = "",
         env_label: str = "",
-        nav_timeout: float = 3.0,
+        # Matches the production nav tool's ack window (raised there
+        # from 3s after the 2026-11-01 founder bug: healthy acks on a
+        # laggy app can miss 3s). _do_nav waits a second window on
+        # the same command before failing - see its comment.
+        nav_timeout: float = 6.0,
         check_timeout: float = 10.0,
         deps: _Deps | None = None,
     ):
@@ -293,6 +436,7 @@ class SelfCheckRunner:
         self._feedback_sink: dict = {}
         self._tool_fns_cache: dict | None = None
         self._declared_cache: set | None = None
+        self._labels: dict[str, str] = {}
 
     # -- plumbing ------------------------------------------------------
 
@@ -364,17 +508,19 @@ class SelfCheckRunner:
             out = await out
         return out
 
-    async def _timed(self, name: str, category: str, coro) -> CheckResult:
+    async def _timed(self, name: str, category: str, coro,
+                     timeout: float | None = None) -> CheckResult:
+        limit = timeout if timeout is not None else self.check_timeout
         started = time.monotonic()
         try:
             status, detail, error = await asyncio.wait_for(
-                coro, timeout=self.check_timeout
+                coro, timeout=limit
             )
         except asyncio.TimeoutError:
             status, detail, error = (
                 FAIL,
                 "",
-                f"timeout after {self.check_timeout:g}s",
+                f"timeout after {limit:g}s",
             )
         except Exception as exc:  # noqa: BLE001 - a check error IS the result
             status, detail, error = FAIL, "", f"{type(exc).__name__}: {exc}"
@@ -387,18 +533,47 @@ class SelfCheckRunner:
             duration_ms=int((time.monotonic() - started) * 1000),
         )
 
+    def _display(self, result: CheckResult) -> str:
+        """The plain name for a check - bubbles never show raw ids."""
+        name = result.name
+        if name in self._labels:
+            return self._labels[name]
+        if name in _READ_DISPLAY:
+            return _READ_DISPLAY[name]
+        if name in _WRITE_DISPLAY:
+            return _WRITE_DISPLAY[name]
+        if name in _OPEN_DISPLAY:
+            return _OPEN_DISPLAY[name]
+        if name.startswith("tool:"):
+            tail = name[5:]
+            return _TOOL_DISPLAY.get(tail) or _humanise(tail)
+        if name.startswith("setting:"):
+            return "Setting: " + _humanise(name[8:])
+        if name.startswith("excluded:"):
+            tail = name[9:]
+            return _EXCLUDED_DISPLAY.get(tail) or _humanise(tail)
+        if name.startswith("nav:"):
+            return "Nav to " + _humanise(name[4:])
+        return _humanise(name.split(":")[-1])
+
+    def _line(self, result: CheckResult) -> str:
+        """One marked, plain-name line for a check (bubble/summary)."""
+        line = f"{_MARKS.get(result.status, _MARKS[SKIP])} {self._display(result)}"
+        if result.status == FAIL:
+            reason = (result.error or result.detail or "").strip()
+            if reason:
+                line += f" — {reason[:120]}"
+        elif result.status == PROBE:
+            line += " (probe only)"
+        elif result.status == EXCLUDED:
+            line += " (excluded — never run)"
+        return line
+
     async def _emit(self, result: CheckResult) -> None:
         self.results.append(result)
         if result.status == FAIL:
             await self._file_bug(result)
-        if result.status == PASS:
-            await self._announce(f"Self-check: {result.name} — PASS")
-        elif result.status == FAIL:
-            reason = result.error or result.detail
-            line = f"Self-check: {result.name} — FAIL"
-            if reason:
-                line += f" — {reason}"
-            await self._announce(line)
+        await self._announce(self._line(result))
 
     async def _file_bug(self, result: CheckResult) -> None:
         """File this failure once per run, at the moment it happened."""
@@ -439,12 +614,24 @@ class SelfCheckRunner:
             {"action": "navigate", "screen": dest["key"], "path": path},
         )
         ack = await _await_ack(self.db, self.uid, cmd_id, timeout=self.nav_timeout)
+        if ack is None:
+            # One re-wait on the SAME command before failing: the
+            # client's command watch can be down for ~10s while it
+            # resubscribes after a stream error, and the queued
+            # command stays executable for 90s client-side, so its
+            # late ack still lands on this id. Founder run
+            # 2026-11-07: four consecutive navs (registry order)
+            # failed inside one such ~14s gap at the old single
+            # 3s window; acks before and after the gap flowed.
+            ack = await _await_ack(
+                self.db, self.uid, cmd_id, timeout=self.nav_timeout
+            )
         if ack and ack.get("ok"):
             return PASS, label, ""
         return (
             FAIL,
             "",
-            f"The app did NOT navigate (no ack within {self.nav_timeout:g}s)",
+            f"The app did NOT navigate (no ack within {self.nav_timeout * 2:g}s)",
         )
 
     def _default_read(self, name: str):
@@ -640,6 +827,122 @@ class SelfCheckRunner:
 
     # -- the run ---------------------------------------------------------
 
+    # -- post-run: summary, suggestions, one feedback record --------
+
+    def _suggestions(self) -> list[str]:
+        """Feature gaps from THIS run, in plain language.
+
+        Every FAIL, SKIP, probe-only tool and excluded action is a
+        candidate gap (founder, 2026-11-07); each becomes one
+        concrete suggestion line. Ordered most-actionable first
+        (failures, then missing-in-build, then probe-only, then
+        excluded) so the consolidated feedback record - whose note
+        is clipped by feedback_ops - holds the important ones.
+        """
+        rank = {FAIL: 0, SKIP: 1, PROBE: 2, EXCLUDED: 3}
+        gaps = [r for r in self.results if r.status in rank]
+        gaps.sort(key=lambda r: rank[r.status])
+        out: list[str] = []
+        for r in gaps:
+            plain = self._display(r)
+            if r.status == FAIL:
+                reason = (r.error or r.detail or "").strip()
+                if reason:
+                    out.append(f"Fix {plain} — it failed ({reason[:80]}).")
+                else:
+                    out.append(f"Fix {plain} — it failed in this run.")
+            elif r.status == SKIP:
+                if "not part of this build" in (r.detail or ""):
+                    out.append(
+                        f"Add {plain} to this build — not wired up here yet."
+                    )
+                elif r.category == "scoped":
+                    out.append(
+                        f"Bring {plain} into the main chat — it only "
+                        "works inside a specific screen today."
+                    )
+                else:
+                    out.append(
+                        f"Make {plain} runnable in a self-check — "
+                        f"skipped ({(r.detail or '')[:60]})."
+                    )
+            elif r.status == PROBE:
+                out.append(
+                    f"Exercise {plain} for real in self-checks — "
+                    "probe-only today (checked for wiring, never run)."
+                )
+            else:  # EXCLUDED
+                out.append(
+                    f"{plain} — off-limits by your rule; never run, "
+                    "listed so the gap is visible."
+                )
+        return out
+
+    async def _file_feedback(self, suggestions: list[str]) -> None:
+        """File the run suggestions as ONE feedback record.
+
+        Through the same bound record_feedback tool the session
+        uses (feedback_ops, source ayma), tagged self-check in the
+        note (the stored category taxonomy coerces to "other").
+        feedback_ops clips notes at 4000 chars, so the record
+        keeps as many suggestions as fit and counts the rest; the
+        chat summary always carries the full list.
+        """
+        fn = self.deps.feedback_record
+        if fn is None:
+            fn = self._tool_fns().get("record_feedback")
+        if fn is None:
+            return
+        header = f"[self-check] run {self.run_id} — feature suggestions:"
+        lines: list[str] = []
+        size = len(header)
+        for s in suggestions:
+            if lines and size + len(s) + 3 > 3800:
+                lines.append(
+                    f"- and {len(suggestions) - len(lines)} more "
+                    "(see the run summary in chat)"
+                )
+                break
+            lines.append(f"- {s}")
+            size += len(s) + 3
+        note = header + "\n" + "\n".join(lines)
+        try:
+            out = fn("self_check", note)
+            if inspect.isawaitable(out):
+                await out
+        except Exception:  # noqa: BLE001 - feedback never breaks a run
+            logger.exception("self-check feedback filing failed")
+
+    async def _finish(self) -> None:
+        """Summary bubble, suggestion bubble, one feedback record."""
+        counts = {PASS: 0, FAIL: 0, PROBE: 0, SKIP: 0, EXCLUDED: 0}
+        for r in self.results:
+            counts[r.status] = counts.get(r.status, 0) + 1
+        not_run = counts[PROBE] + counts[SKIP] + counts[EXCLUDED]
+        lines = [
+            f"\U0001f9ea Self-check summary — {len(self.results)} checks: "
+            f"{_MARKS[PASS]} {counts[PASS]} passed · "
+            f"{_MARKS[FAIL]} {counts[FAIL]} failed · "
+            f"{_MARKS[SKIP]} {not_run} not run"
+        ]
+        lines.extend(self._line(r) for r in self.results)
+        await self._announce("\n".join(lines))
+        suggestions = self._suggestions()
+        if suggestions:
+            bubble = (
+                "\U0001f4a1 Feature ideas from this run — what would "
+                "help Ayma do more, better:\n"
+                + "\n".join(f"• {s}" for s in suggestions)
+            )
+        else:
+            bubble = (
+                "\U0001f4a1 Feature ideas from this run: nothing to "
+                "suggest — everything in this build ran."
+            )
+        await self._announce(bubble)
+        if suggestions:
+            await self._file_feedback(suggestions)
+
     async def run(self) -> str:
         deps = self.deps
         await self._announce(
@@ -661,14 +964,20 @@ class SelfCheckRunner:
             key = str(dest.get("key") or "")
             if not key:
                 continue
+            self._labels[f"nav:{key}"] = (
+                "Nav to " + _title_label(dest.get("label"))
+            )
             if key in excluded_dest or key in EXCLUDED_KEYS:
-                self.results.append(
+                await self._emit(
                     CheckResult(f"nav:{key}", "navigation", EXCLUDED,
                                 "founder-excluded — never exercised")
                 )
                 continue
             await self._emit(
-                await self._timed(f"nav:{key}", "navigation", self._do_nav(dest))
+                await self._timed(
+                    f"nav:{key}", "navigation", self._do_nav(dest),
+                    timeout=self.nav_timeout * 2 + 5,
+                )
             )
 
         # B. Parameterized opens.
@@ -683,7 +992,7 @@ class SelfCheckRunner:
             ("open:date_sim", "probe only — no sim generation in a diagnostic"),
             ("open:practice_date", "probe only — no generation in a diagnostic"),
         ):
-            self.results.append(CheckResult(name, "navigation", PROBE, reason))
+            await self._emit(CheckResult(name, "navigation", PROBE, reason))
 
         # C. Read checks.
         for name in (
@@ -735,7 +1044,7 @@ class SelfCheckRunner:
                 )
             )
         else:
-            self.results.append(
+            await self._emit(
                 CheckResult("tool:recall", "tools", SKIP,
                             "not registered at this context level")
             )
@@ -748,12 +1057,19 @@ class SelfCheckRunner:
         settings_keys = deps.settings_keys
         if settings_keys is None:
             try:
-                settings_keys = [str(s.get("key")) for s in app_registry.settings()]
+                settings_list = app_registry.settings()
+                settings_keys = [str(s.get("key")) for s in settings_list]
+                for s in settings_list:
+                    k = str(s.get("key") or "")
+                    if k and s.get("label"):
+                        self._labels[f"setting:{k}"] = (
+                            "Setting: " + str(s["label"])
+                        )
             except Exception:  # noqa: BLE001
                 settings_keys = []
         for key in settings_keys:
             if key:
-                self.results.append(
+                await self._emit(
                     CheckResult(f"setting:{key}", "settings", PROBE,
                                 "app_action binding + registry presence verified")
                 )
@@ -762,7 +1078,7 @@ class SelfCheckRunner:
         fns = self._tool_fns()
         for name, reason in PROBE_TOOLS.items():
             if name in fns:
-                self.results.append(
+                await self._emit(
                     CheckResult(f"tool:{name}", "tools", PROBE, reason)
                 )
             elif name in self._declared_tools():
@@ -771,27 +1087,29 @@ class SelfCheckRunner:
                                 "", "tool not bound in the session tool set")
                 )
             else:
-                self.results.append(
+                await self._emit(
                     CheckResult(f"tool:{name}", "tools", SKIP,
                                 "not part of this build (not declared and not bound)")
                 )
 
         # G. Context-scoped tools.
         for name, scope in SCOPED_TOOLS.items():
-            self.results.append(
+            await self._emit(
                 CheckResult(f"tool:{name}", "scoped", SKIP,
                             f"binds only in the {scope}")
             )
 
         # H. Excluded — listed, never exercised.
         for key in excluded_keys():
-            self.results.append(
+            await self._emit(
                 CheckResult(f"excluded:{key}", "excluded", EXCLUDED,
                             "founder-excluded — never exercised")
             )
 
-        return build_report(self.results, self.run_id, self.session_id,
-                            self.env_label)
+        report = build_report(self.results, self.run_id, self.session_id,
+                              self.env_label)
+        await self._finish()
+        return report
 
 
 def _env_label() -> str:
