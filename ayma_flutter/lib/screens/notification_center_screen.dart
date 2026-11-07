@@ -199,7 +199,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                   background: Container(
                     color: ac.lineSoft,
                     alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 24),
+                    padding: const EdgeInsets.only(right: 20),
                     child: Icon(Icons.close, size: 18, color: ac.fgMute),
                   ),
                   child: FadeSlideIn(
@@ -231,7 +231,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
   Widget _filterChips(AymaTokens ac) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
       child: Row(
         children: [
           for (final f in NotificationFilter.values)
@@ -405,14 +405,14 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: EdgeInsets.only(top: isFirst ? 12 : 22, left: 16, right: 16),
+      padding: EdgeInsets.only(top: isFirst ? 12 : 24, left: 20, right: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
               style: AymaType.mono(size: 11, color: ac.fgMute)
                   .copyWith(letterSpacing: 2.4)),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Divider(height: 1, color: ac.lineSoft),
         ],
       ),
@@ -477,7 +477,7 @@ class _EntryRow extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(13, 14, 16, 14),
+            padding: const EdgeInsets.fromLTRB(17, 16, 20, 16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -506,13 +506,13 @@ class _EntryRow extends StatelessWidget {
                             ),
                           ],
                           if (count > 0) ...[
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 8),
                             _UnreadBadge(count: count, color: ac.accent),
                           ],
                         ],
                       ),
                       if (subtitle != null && subtitle.isNotEmpty) ...[
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 4),
                         Text(subtitle,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -539,7 +539,7 @@ class _UnreadBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(999),

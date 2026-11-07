@@ -889,9 +889,9 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                               keyboardDismissBehavior:
                                   ScrollViewKeyboardDismissBehavior.onDrag,
                               padding: const EdgeInsets.fromLTRB(
+                                20,
                                 16,
-                                16,
-                                16,
+                                20,
                                 kChatListBottomInset, // bottom 12
                               ),
                               itemCount: msgs.length + (_fetchingOlder ? 1 : 0),
@@ -1029,11 +1029,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           if (_translateOutgoing)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
               child: Row(
                 children: [
                   Icon(Icons.translate, size: 14, color: ac.accent),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Ayma will translate your message to their language — '
@@ -1092,7 +1092,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                           ),
                           Expanded(
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
                               child: TextField(
                                 controller: _composer,
                                 focusNode: _composerFocus,
@@ -1226,7 +1226,7 @@ class _Header extends StatelessWidget {
               ),
           ],
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 12),
         Flexible(
           child: Text(
             name,
@@ -1264,7 +1264,7 @@ class _PendingAttachment extends StatelessWidget {
         : 'file';
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
       ),
@@ -1289,7 +1289,7 @@ class _PendingAttachment extends StatelessWidget {
                         ),
                       ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   name,
@@ -1335,7 +1335,7 @@ class _SuggestionBar extends StatelessWidget {
     final ac = context.ac;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
       ),
@@ -1347,18 +1347,18 @@ class _SuggestionBar extends StatelessWidget {
             'Things to talk about',
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           for (final c in chips)
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.only(bottom: 8),
               child: InkWell(
                 onTap: () => onTap(c),
                 borderRadius: BorderRadius.circular(14),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
+                    horizontal: 16,
+                    vertical: 12,
                   ),
                   decoration: BoxDecoration(
                     color: ac.bgCard,
@@ -1402,10 +1402,10 @@ class _SafetyNote extends StatelessWidget {
     final tint = ac.warning.withValues(alpha: isWarning ? 0.12 : 0.08);
     final line = ac.warning.withValues(alpha: isWarning ? 0.45 : 0.30);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
         decoration: BoxDecoration(
           color: tint,
           borderRadius: BorderRadius.circular(14),
@@ -1422,7 +1422,7 @@ class _SafetyNote extends StatelessWidget {
                 color: ac.warning,
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1436,7 +1436,7 @@ class _SafetyNote extends StatelessWidget {
                       color: ac.fg,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     safety.reason,
                     softWrap: true,
@@ -1474,7 +1474,7 @@ class _CoachTip extends StatelessWidget {
     final ac = context.ac;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+      padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
       ),
@@ -1714,7 +1714,7 @@ class _Bubble extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               content,
-              const SizedBox(height: 2),
+              const SizedBox(height: 4),
               Padding(
                 padding: EdgeInsets.only(
                   right: tight ? 4 : 0,
@@ -1794,7 +1794,7 @@ class _Bubble extends StatelessWidget {
         ),
         if (message.body.trim().isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
             child: Text(
               message.body,
               style: AymaType.message(color: _ink(ac)),
@@ -1823,7 +1823,7 @@ class _Bubble extends StatelessWidget {
                 _fileIcon(message.mime),
                 color: mine && !message.moderated ? ac.onAccent : ac.fgDim,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Flexible(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1859,7 +1859,7 @@ class _Bubble extends StatelessWidget {
         ),
         if (message.body.trim().isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 8),
             child: Text(
               message.body,
               style: AymaType.message(color: _ink(ac)),
@@ -2019,7 +2019,7 @@ class _TranslatableTextState extends State<_TranslatableText> {
       if (_revealed && _show) {
         // Reader is seeing the translation inline (auto-translate or after tap).
         rows.add(Padding(
-          padding: const EdgeInsets.only(top: 6),
+          padding: const EdgeInsets.only(top: 8),
           child: Text(
             _tr!.translated,
             style: AymaType.message(color: widget.ink),
@@ -2097,7 +2097,7 @@ class _TranslatableTextState extends State<_TranslatableText> {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.only(top: 4, bottom: 2),
+        padding: const EdgeInsets.only(top: 4, bottom: 4),
         child: Text(label, style: muted),
       ),
     );
