@@ -260,9 +260,13 @@ class Config:
     gemini_web_search: bool
     """Let Ayma's **text** chat ground answers on live Google Search + read
     URLs the user pastes (``google_search`` + ``url_context`` built-in tools,
-    alongside the session function tools). On by default;
-    ``GEMINI_WEB_SEARCH=false`` to disable. Voice is unaffected — the Live
-    model wires search separately."""
+    alongside the session function tools). **Off by default** while grounded
+    research is disabled (direct-Google kill, 2026-11-04): the research
+    backend always raises ``DirectGoogleDisabledError``, so a
+    guaranteed-to-fail tool must not be offered — every call surfaced as an
+    internal error. Set ``GEMINI_WEB_SEARCH=true`` only once a LiveKit-routed
+    search backend exists. Voice is unaffected — the Live model wires search
+    separately."""
 
     gemini_maps_grounding: bool
     """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
@@ -1198,7 +1202,7 @@ def _load() -> Config:
             "GEMINI_LIVE_PROACTIVITY", "false"
         ).lower()
         == "true",
-        gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "true").lower()
+        gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "false").lower()
         == "true",
         gemini_maps_grounding=os.getenv("GEMINI_MAPS_GROUNDING", "true").lower()
         == "true",

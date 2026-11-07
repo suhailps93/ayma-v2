@@ -2587,6 +2587,36 @@ def test_disabled_research_is_not_retried():
     assert attempts["n"] == 1  # no retry on a deterministic failure
 
 
+def test_run_completes_when_grounded_research_is_disabled(monkeypatch):
+    """With grounded research killed (DirectGoogleDisabledError on every
+    call), run() must still complete honestly - an empty sweep digested
+    into a not_found report - instead of raising an internal error."""
+    import llm_routing
+
+    async def _disabled(prompt, system_prompt=None, **kw):
+        raise llm_routing.DirectGoogleDisabledError("research disabled")
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        assert "(the search returned little)" in contents
+        return {"summary": "", "confidence": "not_found",
+                "facts": [], "links": [], "caveats": ""}
+
+    monkeypatch.setattr(gemini, "research", _disabled)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    monkeypatch.setattr(
+        deep_dive_images, "find_web_images", _no_web_images
+    )
+    monkeypatch.setattr(
+        deep_dive_social, "find_social_handles", lambda *a, **k: []
+    )
+
+    d = _run(deep_dive.run("Dana Reis", uid="u1", context="Lisbon"))
+    assert d["name"] == "Dana Reis"
+    assert d["confidence"] == "not_found"
+    assert d["facts"] == []
+    assert d["links"] == []
+
+
 def test_deterministic_bad_request_is_not_retried(monkeypatch):
     """A 4xx bad request would just fail again — it is raised, not retried."""
     attempts = {"n": 0}

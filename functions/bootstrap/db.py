@@ -33,7 +33,18 @@ def _init_app() -> None:
             cred = credentials.Certificate(json.loads(sa))
         else:
             cred = credentials.Certificate(sa)
-        firebase_admin.initialize_app(cred)
+        # Pin the app to the CONFIGURED project, not the key home project:
+        # a service-account key silently targets its own project when no
+        # projectId is given, so a staging worker holding the prod key wrote
+        # its app_commands / bug_reports / raw_turns into prod Firestore
+        # while the staging client waited in staging (2026-11-06 bug). With
+        # projectId set, a mismatched key fails LOUDLY (permission errors
+        # against the configured project) instead of writing the wrong one.
+        project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+        if project_id:
+            firebase_admin.initialize_app(cred, {"projectId": project_id})
+        else:
+            firebase_admin.initialize_app(cred)
     else:
         firebase_admin.initialize_app()
 
