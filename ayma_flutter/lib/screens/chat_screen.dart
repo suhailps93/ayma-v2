@@ -17,7 +17,6 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/navigation_history.dart';
 import '../services/async_voice_controller.dart';
-import '../services/voice_note_controller.dart';
 import '../services/async_voice_player.dart';
 import '../services/async_voice_queue.dart';
 import '../services/call_permissions.dart';
@@ -39,7 +38,6 @@ import '../services/voice_transport.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import '../widgets/ask_ayma_context.dart';
-import '../widgets/async_voice_sheet.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/voice_clip_row.dart';
@@ -219,25 +217,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   late final AsyncVoiceController _voiceMessage =
       widget.asyncVoiceController ?? AsyncVoiceController(queue: _voiceQueue);
 
-  /// The WhatsApp voice-note state machine over [_voiceMessage] (founder,
-  /// 2026-11-06): hold the composer mic to record, slide left to cancel,
-  /// slide up to lock, release to send. The engine underneath is unchanged -
-  /// the clip still sends immediately as a playable bubble and Ayma
-  /// transcribes/understands in the background. A hold is refused while a
-  /// live voice call owns the mic (the old hold path's rule, kept).
-  late final VoiceNoteController _voiceNote = VoiceNoteController(
-    engine: _voiceMessage,
-    canStart: () => _canQueue && !_voice.isActive,
-    onStartRefused: () {
-      if (!mounted) return;
-      AymaToast.show(
-        context,
-        _voice.isActive
-            ? 'End the call first - then hold the mic to record.'
-            : 'Voice messages are not available here.',
-      );
-    },
-  );
   late final AsyncVoicePlayer _clipPlayer =
       widget.asyncVoicePlayer ?? JustAudioVoicePlayer();
 
@@ -976,24 +955,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     if (_asyncSwitchOffered || _voice.reconnectCount < 2) return;
     _asyncSwitchOffered = true;
+    // Voice-note recording lives only in human-to-human DMs (founder,
+    // 2026-11-06): a dropping call offers no recording fallback here.
     AymaToast.show(
       context,
       'This connection keeps dropping.',
       kind: AymaToastKind.error,
-      action: _canQueue
-          ? AymaToastAction(
-              label: 'Voice message',
-              onPressed: () async {
-                await _voice.stop();
-                if (!mounted) return;
-                showAsyncVoiceSheet(
-                  context,
-                  controller: _voiceMessage,
-                  queue: _voiceQueue,
-                );
-              },
-            )
-          : null,
     );
   }
 
@@ -1609,7 +1576,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // down, the same `late final` hazard the [_voice] guard documents.
     if (_canQueue) {
       _voiceMessage.removeListener(_onVoiceMessageChanged);
-      _voiceNote.dispose();
       if (widget.asyncVoiceController == null) _voiceMessage.dispose();
     }
     if (widget.asyncVoicePlayer == null) _clipPlayer.dispose();
@@ -1654,16 +1620,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           context,
           "You're offline — a live call needs a connection.",
           kind: AymaToastKind.error,
-          action: _canQueue
-              ? AymaToastAction(
-                  label: 'Voice message',
-                  onPressed: () => showAsyncVoiceSheet(
-                    context,
-                    controller: _voiceMessage,
-                    queue: _voiceQueue,
-                  ),
-                )
-              : null,
         );
         return;
       }
@@ -1682,20 +1638,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // of a dead end: a voice message sends whenever the connection
           // allows, and Ayma answers out loud in this same thread.
           final message = _voice.errorMessage!;
+          // Voice-note recording lives only in human-to-human DMs (founder,
+          // 2026-11-06): a failed call offers no recording fallback here.
           AymaToast.show(
             context,
             message,
             kind: AymaToastKind.error,
-            action: _canQueue
-                ? AymaToastAction(
-                    label: 'Voice message',
-                    onPressed: () => showAsyncVoiceSheet(
-                      context,
-                      controller: _voiceMessage,
-                      queue: _voiceQueue,
-                    ),
-                  )
-                : null,
           );
         }
       }
@@ -3254,7 +3202,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             onExpandTap: _openVoiceScreen,
                             micLevel: _voice.micLevel,
                             aymaLevel: _voice.aymaLevel,
-                            voiceNoteController: _canQueue ? _voiceNote : null,
                           ),
                         ),
                       ),
@@ -4479,17 +4426,12 @@ class _Composer extends StatelessWidget {
     required this.onExpandTap,
     required this.micLevel,
     required this.aymaLevel,
-    this.voiceNoteController,
     this.micAnchorKey,
   });
 
   /// Feature-tour anchor for the whole composer; forwarded to [ChatComposer].
   final Key? anchorKey;
 
-  /// The WhatsApp voice-note state machine for the composer's mic/send
-  /// slot; forwarded to [ChatComposer]. Null disables voice notes
-  /// (Ask-Ayma mode, tests that don't wire it).
-  final VoiceNoteController? voiceNoteController;
   final Key? micAnchorKey;
 
   final TextEditingController controller;
@@ -4723,7 +4665,6 @@ class _Composer extends StatelessWidget {
               onSend: onSend,
               onAttach: onAttach,
               onMicPressed: () => onVoiceTap(),
-              voiceNoteController: voiceNoteController,
               micKey: micAnchorKey,
               onStopPressed: () => onVoiceTap(),
               onMuteTap: () => onMuteTap(),

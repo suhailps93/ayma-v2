@@ -4,10 +4,8 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../services/voice_note_controller.dart';
 import '../theme.dart';
 import 'keyboard_dismiss.dart';
-import 'voice_note_composer.dart';
 
 /// Padding wrapping the composer bar at the bottom of a chat screen — shared
 /// by the Ayma chat (`ChatScreen`'s `_Composer`) and the user-to-user DM
@@ -65,9 +63,6 @@ class ChatComposer extends StatefulWidget {
     required this.onSend,
     required this.onAttach,
     required this.onMicPressed,
-    this.onMicHoldStart,
-    this.onMicHoldEnd,
-    this.voiceNoteController,
     this.micKey,
     required this.onStopPressed,
     required this.onMuteTap,
@@ -95,21 +90,6 @@ class ChatComposer extends StatefulWidget {
 
   /// Text mode's mic button — starts a voice session.
   final VoidCallback onMicPressed;
-
-  /// Text mode's mic button, held down — records an async voice message
-  /// instead of starting a live call (press [onMicHoldStart], speak,
-  /// release [onMicHoldEnd]). Null disables hold-to-record; the tap path
-  /// ([onMicPressed]) is unaffected either way.
-  final VoidCallback? onMicHoldStart;
-  final VoidCallback? onMicHoldEnd;
-
-  /// The WhatsApp voice-note state machine (founder, 2026-11-06). When
-  /// present, the send slot swaps between this controller's mic button
-  /// (input empty, nothing staged) and the send button (text typed or an
-  /// attachment staged - the caller's [canSend]), and while a note is
-  /// recording the text row is replaced by the recording bar. Supersedes
-  /// [onMicHoldStart]/[onMicHoldEnd] when both are given.
-  final VoiceNoteController? voiceNoteController;
 
   /// Key for the text mode's mic button (the feature-tour anchor) — the
   /// main shell's chat passes it, so it never collides with the Ask-Ayma
@@ -171,7 +151,6 @@ class _ChatComposerState extends State<ChatComposer>
   void initState() {
     super.initState();
     widget.controller.addListener(_onComposerInputChanged);
-    widget.voiceNoteController?.addListener(_onComposerInputChanged);
   }
 
   void _onComposerInputChanged() {
@@ -206,10 +185,6 @@ class _ChatComposerState extends State<ChatComposer>
       old.controller.removeListener(_onComposerInputChanged);
       widget.controller.addListener(_onComposerInputChanged);
     }
-    if (old.voiceNoteController != widget.voiceNoteController) {
-      old.voiceNoteController?.removeListener(_onComposerInputChanged);
-      widget.voiceNoteController?.addListener(_onComposerInputChanged);
-    }
   }
 
   /// Starts the ticker the moment a voice mode needs the wave; leaves it
@@ -227,7 +202,6 @@ class _ChatComposerState extends State<ChatComposer>
   @override
   void dispose() {
     widget.controller.removeListener(_onComposerInputChanged);
-    widget.voiceNoteController?.removeListener(_onComposerInputChanged);
     _phase?.dispose();
     super.dispose();
   }
@@ -349,11 +323,13 @@ class _ChatComposerState extends State<ChatComposer>
   }
 
   Widget _textRow(AymaTokens ac) {
-    final note = widget.voiceNoteController;
     // WhatsApp swap (founder, 2026-11-06): the bottom-right slot is the
     // MIC while the input is empty and nothing is staged, and the SEND
     // button only while there is text or a staged attachment (the
-    // caller's [canSend] carries the attachment/staged state).
+    // caller's [canSend] carries the attachment/staged state). The mic is
+    // tap-only: it starts a live voice call. Voice-note recording lives
+    // only in human-to-human DMs (founder, 2026-11-06) — holding the mic
+    // here starts nothing.
     final hasText = widget.controller.text.trim().isNotEmpty;
     final showSend = widget.canSend || hasText;
     final row = Row(
@@ -402,18 +378,7 @@ class _ChatComposerState extends State<ChatComposer>
             foreground: ac.onAccent,
             onPressed: widget.onSend,
           )
-        else if (note != null)
-          VoiceNoteMicButton(
-            key: widget.micKey,
-            controller: note,
-            onTap: widget.onMicPressed,
-            background: ac.bgElev,
-            foreground: ac.fgDim,
-          )
         else
-          // No voice-note controller (e.g. the Ask-Ayma popup): the legacy
-          // mic - a tap takes [onMicPressed]'s path, a sustained hold
-          // takes the [onMicHoldStart]/[onMicHoldEnd] path when wired.
           _RoundIconButton(
             key: widget.micKey,
             icon: Icons.mic_none_rounded,
@@ -421,36 +386,10 @@ class _ChatComposerState extends State<ChatComposer>
             background: ac.bgElev,
             foreground: ac.fgDim,
             onPressed: widget.onMicPressed,
-            onLongPress: widget.onMicHoldStart,
-            onLongPressUp: widget.onMicHoldEnd == null
-                ? null
-                : () => widget.onMicHoldEnd?.call(),
           ),
       ],
     );
-    // While a voice note is recording, the recording bar covers the
-    // composer row (WhatsApp model). The row itself stays MOUNTED
-    // underneath: the held mic button's gesture recognizer lives there,
-    // and unmounting it mid-hold would kill the slide/release events the
-    // state machine runs on. The Stack is there from the start for the
-    // same reason - swapping the row's parent mid-hold would remount the
-    // mic subtree and destroy the in-flight recognizer.
-    return Stack(
-      // The recording bar is bottom-anchored, not fill: it is taller than
-      // the composer row (the lock bubble rides in it) and grows UP over
-      // the transcript instead of being squeezed into the row's height.
-      clipBehavior: Clip.none,
-      children: [
-        row,
-        if (note != null && note.isActive)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: VoiceNoteRecordingBar(controller: note),
-          ),
-      ],
-    );
+    return row;
   }
 
   Widget _voiceRow(AymaTokens ac) {
@@ -514,8 +453,6 @@ class _RoundIconButton extends StatelessWidget {
     required this.background,
     required this.foreground,
     required this.onPressed,
-    this.onLongPress,
-    this.onLongPressUp,
   });
 
   final IconData icon;
@@ -523,16 +460,6 @@ class _RoundIconButton extends StatelessWidget {
   final Color background;
   final Color foreground;
   final VoidCallback? onPressed;
-
-  /// Hold-to-record on the mic button (async voice message): [onLongPress]
-  /// fires once the hold passes the long-press timeout, [onLongPressUp] on
-  /// the release after it (never on a quick tap). Wired on the [InkWell]
-  /// itself — not on an ancestor detector — so the hold beats the button's
-  /// own [Tooltip] (same 500ms long-press timeout, but deeper in the tree,
-  /// so an outer detector would always lose the arena to it) while the tap
-  /// path keeps working untouched.
-  final GestureLongPressCallback? onLongPress;
-  final GestureLongPressUpCallback? onLongPressUp;
 
   @override
   Widget build(BuildContext context) {
@@ -544,8 +471,6 @@ class _RoundIconButton extends StatelessWidget {
         child: InkWell(
           customBorder: const CircleBorder(),
           onTap: onPressed,
-          onLongPress: onLongPress,
-          onLongPressUp: onLongPressUp,
           child: SizedBox(
             width: 44,
             height: 44,

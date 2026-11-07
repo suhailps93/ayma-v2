@@ -238,76 +238,53 @@ Future<ApiClient> _api() async {
 }
 
 void main() {
-  testWidgets('hold the mic speaks a voice message into the thread', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final store = TranscriptStore();
-    final voice = _FakeVoice();
-    final queue = _FakeQueue(store);
-    final recorder = _FakeRecorder();
-    final controller = AsyncVoiceController(recorder: recorder, queue: queue);
-    final player = _FakePlayer();
-    addTearDown(controller.dispose);
-    addTearDown(queue.dispose);
-    addTearDown(player.dispose);
+  testWidgets(
+    'holding the Ayma mic starts no recording (voice notes are DM-only)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = TranscriptStore();
+      final voice = _FakeVoice();
+      final queue = _FakeQueue(store);
+      final recorder = _FakeRecorder();
+      final controller = AsyncVoiceController(recorder: recorder, queue: queue);
+      final player = _FakePlayer();
+      addTearDown(controller.dispose);
+      addTearDown(queue.dispose);
+      addTearDown(player.dispose);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AymaTheme.light,
-        home: ChatScreen(
-          apiClient: await _api(),
-          voiceController: voice,
-          transcriptStore: store,
-          asyncVoiceController: controller,
-          asyncVoiceQueue: queue,
-          asyncVoicePlayer: player,
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: ChatScreen(
+            apiClient: await _api(),
+            voiceController: voice,
+            transcriptStore: store,
+            asyncVoiceController: controller,
+            asyncVoiceQueue: queue,
+            asyncVoicePlayer: player,
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    // Press and hold the composer's mic: the recording bar appears, and no
-    // live call starts (tap path untouched).
-    final mic = find.byIcon(Icons.mic_none_rounded);
-    expect(mic, findsOneWidget);
-    final gesture = await tester.startGesture(tester.getCenter(mic));
-    await tester.pump(const Duration(milliseconds: 600));
-    expect(controller.state, AsyncVoiceUiState.recording);
-    expect(voice.phase, VoiceSessionPhase.idle);
-    expect(find.text('Release to send'), findsOneWidget);
+      // The mic is tap-only now: a sustained hold starts no recording, shows
+      // no recording bar, and sends nothing. Voice-note recording lives
+      // only in human-to-human DMs (founder, 2026-11-06).
+      final mic = find.byIcon(Icons.mic_none_rounded);
+      expect(mic, findsOneWidget);
+      final gesture = await tester.startGesture(tester.getCenter(mic));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(controller.state, AsyncVoiceUiState.idle);
+      expect(voice.phase, VoiceSessionPhase.idle);
+      expect(find.text('Release to send'), findsNothing);
 
-    // Release: the clip renders in the thread immediately as the user's sent,
-    // playable voice bubble (from the local file) — before upload or server processing.
-    await gesture.up();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(queue.delivered, hasLength(1));
-    expect(find.text('Voice message'), findsOneWidget);
-    expect(find.text('Sending your voice…'), findsNothing);
-
-    // Playable locally right away:
-    await tester.tap(find.text('Voice message').first);
-    await tester.pump();
-    expect(player.playedFiles, hasLength(1));
-
-    // The cloud finishes: both turns land in the thread, playable.
-    queue.complete(
-      queue.delivered.first,
-      transcript: 'book me a table',
-      reply: 'done, see you at eight',
-      replyAudioUrl: 'https://cdn.example/r.wav',
-    );
-    await tester.pump();
-    expect(find.text('book me a table'), findsOneWidget);
-    expect(find.text('done, see you at eight'), findsOneWidget);
-    expect(find.text('Voice message'), findsNWidgets(2));
-
-    // Tapping Ayma's play row plays her remote reply audio.
-    await tester.tap(find.text('Voice message').last);
-    await tester.pump();
-    expect(player.playedUrls, ['https://cdn.example/r.wav']);
-  });
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(queue.delivered, isEmpty);
+      expect(find.text('Voice message'), findsNothing);
+    },
+  );
 
   testWidgets(
     'regression (note 113): second mic hold during an in-flight job starts recording '
@@ -341,30 +318,31 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // First mic hold: start recording message 1
+      // Seed message 1 through the controller: the composer's hold-to-record
+      // path was removed from Ayma chat (recording lives only in DMs), so the
+      // job is started directly. The re-entrancy property under test is the
+      // controller's, not the gesture's.
       final mic = find.byIcon(Icons.mic_none_rounded);
       expect(mic, findsOneWidget);
-      final gesture1 = await tester.startGesture(tester.getCenter(mic));
-      await tester.pump(const Duration(milliseconds: 600));
+      expect(await controller.startRecording(), isTrue);
+      await tester.pump();
       expect(controller.state, AsyncVoiceUiState.recording);
-      expect(find.text('Release to send'), findsOneWidget);
 
-      // Release message 1: sent locally as first bubble; job is now in-flight
-      await gesture1.up();
+      // Send message 1: sent locally as first bubble; job is now in-flight
+      await controller.stopAndSend();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(queue.delivered, hasLength(1));
       expect(find.text('Voice message'), findsOneWidget);
       final job1 = queue.delivered.first;
 
-      // Second mic hold while job 1 is in flight: MUST start recording immediately
-      final gesture2 = await tester.startGesture(tester.getCenter(mic));
-      await tester.pump(const Duration(milliseconds: 600));
+      // Second recording while job 1 is in flight: MUST start immediately
+      expect(await controller.startRecording(), isTrue);
+      await tester.pump();
       expect(controller.state, AsyncVoiceUiState.recording);
-      expect(find.text('Release to send'), findsOneWidget);
 
-      // Release message 2: sent locally as second bubble
-      await gesture2.up();
+      // Send message 2: sent locally as second bubble
+      await controller.stopAndSend();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(queue.delivered, hasLength(2));
@@ -396,7 +374,7 @@ void main() {
     },
   );
 
-  testWidgets('a call that cannot connect offers the voice-message fallback', (
+  testWidgets('a call that cannot connect shows the error with no voice-message fallback', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -433,14 +411,13 @@ void main() {
     await tester.pump();
     expect(voice.phase, VoiceSessionPhase.error);
 
-    // The honest error carries the fallback action, which opens the sheet.
+    // The honest error carries NO recording fallback: voice-note recording
+    // lives only in human-to-human DMs (founder, 2026-11-06).
     expect(
       find.text('Could not reach Ayma. Check your connection.'),
       findsOneWidget,
     );
-    await tester.tap(find.text('Voice message'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Hold the button'), findsOneWidget);
+    expect(find.text('Voice message'), findsNothing);
   });
 
   testWidgets('a denied mic on hold explains instead of hanging', (
@@ -473,10 +450,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final mic = find.byIcon(Icons.mic_none_rounded);
-    final gesture = await tester.startGesture(tester.getCenter(mic));
-    await tester.pump(const Duration(milliseconds: 600));
-    await gesture.up();
+    // The denied-mic path is the controller's, not the composer's hold:
+    // starting directly must explain instead of hanging.
+    expect(await controller.startRecording(), isFalse);
     await tester.pump();
     expect(find.textContaining('Microphone'), findsOneWidget);
     expect(queue.delivered, isEmpty);
@@ -512,13 +488,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final mic = find.byIcon(Icons.mic_none_rounded);
-      final gesture = await tester.startGesture(tester.getCenter(mic));
-      await tester.pump(const Duration(milliseconds: 600));
+      // Seed the clip through the controller (the composer's hold-to-record
+      // path was removed from Ayma chat; recording lives only in DMs).
+      expect(await controller.startRecording(), isTrue);
+      await tester.pump();
       expect(controller.state, AsyncVoiceUiState.recording);
 
-      // Release mic: the clip renders in the thread immediately as sent + playable
-      await gesture.up();
+      // Send: the clip renders in the thread immediately as sent + playable
+      await controller.stopAndSend();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
@@ -571,10 +548,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final mic = find.byIcon(Icons.mic_none_rounded);
-      final gesture = await tester.startGesture(tester.getCenter(mic));
-      await tester.pump(const Duration(milliseconds: 600));
-      await gesture.up();
+      // Seed the clip through the controller (the composer's hold-to-record
+      // path was removed from Ayma chat; recording lives only in DMs).
+      expect(await controller.startRecording(), isTrue);
+      await tester.pump();
+      await controller.stopAndSend();
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
       final userTurnBefore = store.turns.first;
@@ -644,10 +623,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final mic = find.byIcon(Icons.mic_none_rounded);
-      final gesture = await tester.startGesture(tester.getCenter(mic));
-      await tester.pump(const Duration(milliseconds: 600));
-      await gesture.up();
+      // Seed the clip through the controller (the composer's hold-to-record
+      // path was removed from Ayma chat; recording lives only in DMs).
+      expect(await controller.startRecording(), isTrue);
+      await tester.pump();
+      await controller.stopAndSend();
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
       final jobId = queue.delivered.first;

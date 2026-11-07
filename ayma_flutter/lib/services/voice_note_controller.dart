@@ -209,6 +209,10 @@ class VoiceNoteController extends ChangeNotifier {
     } else {
       _pendingOffset = null;
       _endAfterStart = false;
+      // The engine refused (mic denied, couldn't start): tell the caller
+      // the same way the canStart gate does, so a wired explanation shows
+      // instead of a silent no-op.
+      onStartRefused?.call();
     }
   }
 
