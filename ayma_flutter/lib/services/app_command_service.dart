@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../routing/app_router.dart';
 import '../screens/explore_screen.dart';
+import '../screens/notification_center_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
@@ -18,6 +19,7 @@ import 'ayma_session.dart';
 import 'chat_service.dart';
 import 'gallery_saver.dart';
 import 'guided_tour_controller.dart';
+import 'inbox_actions.dart';
 import 'navigation_history.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
@@ -31,6 +33,8 @@ import 'tour_anchors.dart';
 import 'tour_content.dart';
 import 'tour_controller.dart';
 import 'transcript_store.dart';
+import 'voice_clip_playback.dart';
+import 'voice_clip_registry.dart';
 import 'voice_session_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
@@ -104,6 +108,19 @@ import 'voice_session_controller.dart';
 ///   carries a sayable reason instead of a silent failure. Like
 ///   `ui_action` it owns its ack (see [_runGoBackCommand]) because it may
 ///   have to await the modal dismissal first.
+/// * `play_voice_clip` — play a voice clip from the open Ayma chat
+///   ([VoiceClipRegistry] / [VoiceClipPlayback]; founder feedback items
+///   7+8, 2026-11-06: Ayma said "I can't play it" because no such command
+///   existed). It owns its ack like `ui_action`: the ack lands once
+///   playback has started, reporting whether a live voice session was
+///   disconnected to play the clip (the session reconnects, with
+///   context, when the clip finishes).
+/// * the inbox actions — `mark_all_notifications_read`,
+///   `clear_all_notifications`, `set_notification_filter` and
+///   `mark_all_conversations_read` ([InboxActions]; founder feedback
+///   items 9–11, 2026-11-06: the buttons existed on the Notifications
+///   page but Ayma had no commands for them). They own their acks like
+///   `play_voice_clip`: the ack carries the count that actually moved.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
@@ -130,9 +147,15 @@ class AppCommandService {
     Future<TakePictureOutcome> Function(Map<String, dynamic> cmd)?
         takePicture,
     Future<LibrarySaveOutcome> Function(XFile file)? saveToLibrary,
+    VoiceClipRegistry? clipRegistry,
+    VoiceClipPlayback? clipPlayback,
+    InboxActions? inboxActions,
   })  : _takePicture = takePicture ??
             ((cmd) => _performTakePicture(
                 cmd, saveToLibrary ?? _defaultSaveToLibrary)),
+        _inboxActions = inboxActions ?? InboxActions(),
+        _clipRegistry = clipRegistry ?? VoiceClipRegistry.instance,
+        _clipPlayback = clipPlayback ?? VoiceClipPlayback(),
         _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
         _sendTourStop = sendTourStop ?? _postTourStop,
         _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
@@ -588,6 +611,22 @@ class AppCommandService {
       unawaited(_runGoBackCommand(snap.reference, id));
       return;
     }
+    if (data['action'] == 'play_voice_clip') {
+      // Playback owns its ack (like ui_action): it can only ack once it
+      // knows whether the clip actually started — and, on a live call,
+      // the disconnect-then-play sequence has begun.
+      unawaited(_runPlayVoiceClipCommand(snap.reference, data, id));
+      return;
+    }
+    if (data['action'] == 'mark_all_notifications_read' ||
+        data['action'] == 'clear_all_notifications' ||
+        data['action'] == 'set_notification_filter' ||
+        data['action'] == 'mark_all_conversations_read') {
+      // Inbox actions own their acks (like play_voice_clip): the ack
+      // reports the count that actually moved, not a bare ok.
+      unawaited(_runInboxCommand(snap.reference, data, id));
+      return;
+    }
     if (data['action'] == 'tour_step') {
       // The Ayma-driven tour spotlights one step and acks it only once the
       // overlay reports it shown (or its anchor absent), then waits for the
@@ -643,6 +682,117 @@ class AppCommandService {
         })
         .catchError((_) {});
     await _deleteIfStillCommand(ref, id);
+  }
+
+  /// The registry/playback pair `play_voice_clip` resolves and plays
+  /// through. Injectable for tests; the defaults are the process-wide
+  /// registry the chat screen publishes to and a playback orchestrator
+  /// acting on the live voice session.
+  final VoiceClipRegistry _clipRegistry;
+  final VoiceClipPlayback _clipPlayback;
+
+  /// Play the voice clip a `play_voice_clip` command names, then ack
+  /// with the outcome: `ok`, what is playing (`result`), whether a live
+  /// voice session was disconnected to play it (`voice_paused`), or why
+  /// nothing played (`reason`).
+  Future<void> _runPlayVoiceClipCommand(
+      DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd,
+      String id) async {
+    final out = await runPlayVoiceClip(cmd);
+    await ref.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': out.ok,
+      if (out.ok) 'result': out.message else 'reason': out.message,
+      if (out.ok) 'voice_paused': out.voicePaused,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Resolve and start one `play_voice_clip` command; any failure is
+  /// reported, never thrown. The returned [PlaybackStart] completes
+  /// once playback has begun — the disconnect/play/reconnect sequence
+  /// continues in the background from there.
+  @visibleForTesting
+  Future<PlaybackStart> runPlayVoiceClip(Map<String, dynamic> cmd) async {
+    try {
+      final clip =
+          _clipRegistry.resolve((cmd['which'] as String? ?? '').trim());
+      if (clip == null) {
+        return const PlaybackStart.failed(
+            'There is no voice clip in this chat to play.');
+      }
+      final run = _clipPlayback.begin(clip);
+      return await run.started;
+    } catch (e) {
+      debugPrint('Ayma play_voice_clip failed: $e');
+      return const PlaybackStart.failed('The clip could not be played.');
+    }
+  }
+
+  /// The bulk inbox actions `mark_all_notifications_read` and friends
+  /// run through. Injectable for tests; the default performs the same
+  /// NotificationService / DmService writes the on-screen buttons run.
+  final InboxActions _inboxActions;
+
+  /// Run one inbox command, then ack with the outcome: `ok`, plus what
+  /// actually happened (`result`) or why nothing did (`reason`).
+  Future<void> _runInboxCommand(
+      DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd,
+      String id) async {
+    final out = await runInboxCommand(cmd);
+    await ref.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': out.ok,
+      if (out.ok) 'result': out.message else 'reason': out.message,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Execute one inbox command; any failure is reported, never thrown.
+  @visibleForTesting
+  Future<InboxActionResult> runInboxCommand(Map<String, dynamic> cmd) async {
+    final action = (cmd['action'] as String? ?? '').trim();
+    try {
+      switch (action) {
+        case 'mark_all_notifications_read':
+          final n = await _inboxActions.markAllNotificationsRead();
+          return InboxActionResult(
+              true,
+              n == 0
+                  ? 'No unread notifications.'
+                  : 'Marked $n notification${n == 1 ? '' : 's'} as read.');
+        case 'clear_all_notifications':
+          final n = await _inboxActions.clearAllNotifications();
+          return InboxActionResult(
+              true,
+              n == 0
+                  ? 'No notifications to clear.'
+                  : 'Cleared $n notification${n == 1 ? '' : 's'}.');
+        case 'mark_all_conversations_read':
+          final n = await _inboxActions.markAllConversationsRead();
+          return InboxActionResult(
+              true,
+              n == 0
+                  ? 'No unread conversations.'
+                  : 'Marked $n conversation${n == 1 ? '' : 's'} as read.');
+        case 'set_notification_filter':
+          final filter = NotificationFilter.fromKey(
+              (cmd['filter'] as String? ?? '').trim());
+          NotificationFilterState.instance.setFilter(filter);
+          _navigate(NotificationCenterScreen.path);
+          return InboxActionResult(
+              true, 'Showing ${filter.label} notifications.');
+        default:
+          return InboxActionResult(false, 'Unknown inbox action: $action');
+      }
+    } catch (e) {
+      debugPrint('Ayma inbox action $action failed: $e');
+      return const InboxActionResult(false, 'That inbox action failed.');
+    }
   }
 
   /// Show one Ayma-driven tour step (§11.2b) and wire its reports back to the

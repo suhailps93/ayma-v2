@@ -123,8 +123,23 @@ const List<UiDenyRule> kUiDenyRules = [
   ),
   UiDenyRule(
     'account_action',
-    r'\b(sign out|log out|wipe)\b',
+    r'\b(sign out|log out)\b',
     'Use account_action for this; it asks the user to confirm first.',
+  ),
+  UiDenyRule(
+    'clear_memory',
+    r'\b(wipe what ayma has learned|clear (your |ayma )?memory|wipe (your )?memory|forget everything)\b',
+    "Clearing what Ayma has learned is something the user does themselves. Open Ayma's settings (open_screen ayma_settings) and tell them which button to tap.",
+  ),
+  UiDenyRule(
+    'block_report',
+    r'\bblock\b',
+    "Blocking and reporting someone is the user's own call — it affects another person and can't be undone here. Tell them it is in the menu at the top of their message thread, and let them tap it themselves.",
+  ),
+  UiDenyRule(
+    'dismiss_all',
+    r'\bdismiss all\b',
+    "Dismissing all suggestions at once is the user's own tap — it drops every one of them. Per-suggestion Dismiss is fine. The button is at the top of the profile suggestions (open_screen profile_suggestions).",
   ),
 ];
 
