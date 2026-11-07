@@ -65,9 +65,11 @@ tool descriptions are generated from `app_registry.json`, so the registry
 
 ## Exclusions (config-driven, founder 2026-11-06)
 
-Ayma must **NEVER** activate these, no matter how she is asked. They are
-**not** enumerated in her system prompt; enforcement lives in maintained
-config + the command layer, belt and suspenders:
+Ayma must **NEVER** activate these, no matter how she is asked.
+Enforcement is belt and suspenders (founder strengthening, later on
+2026-11-06 — this supersedes the earlier same-day config-only
+correction): maintained config + the command layer, AND an explicit
+prohibition in her base system prompt:
 
 * Config: `exclusions` in `functions/bootstrap/app_registry.json`
   (keys: `delete_account`, `purchase`, `clear_memory`), mirrored by the
@@ -79,6 +81,14 @@ config + the command layer, belt and suspenders:
   `app_registry.ui_denial` and client `uiDenial`); `account_action` treats
   all three as navigate-only — it opens the page and hands the user the
   exact button to tap themselves.
+* System prompt: the delimited "user-only actions" block in
+  `functions/bootstrap/persona.md` — the base prompt both chat and
+  voice load (`prompt.load_persona`, unmarked so it lands in both
+  variants) — states plainly that she must never perform or attempt
+  the three, and that if asked she declines and explains the user does
+  it themselves in Settings. Reserved for founder-ruled exclusions;
+  config-only stays the default for anything new (see keep-alive
+  rule 4).
 
 | Excluded control | Where it lives | Ayma may |
 |---|---|---|
@@ -503,7 +513,9 @@ each as `non_navigable` with its reason.
 4. **A new exclusion** is added to `exclusions` in
    `functions/bootstrap/app_registry.json`, to `ui_action_policy.deny`
    (same file), and to `kUiDenyRules` in `screen_capture.dart` — never
-   to the system prompt, and never as a one-off check in a single tool.
+   as a one-off check in a single tool. The persona.md "user-only
+   actions" block is extended only when the founder rules the new
+   exclusion belongs in the prompt layer too.
 5. Reviewers: a PR touching `ayma_flutter/lib/screens/` or
    `lib/widgets/` without touching this doc should be asked for the
    graph entry — the same discipline as the registry rule in (1).
