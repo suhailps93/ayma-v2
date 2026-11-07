@@ -739,6 +739,207 @@ def _bind_open_profile(db, uid: str) -> Callable[..., str]:
     return open_profile
 
 
+def _photo_word(count: int) -> str:
+    return "photo" if count == 1 else "photos"
+
+
+def _bind_show_profile_photo(db, uid: str) -> Callable[..., str]:
+    async def show_profile_photo(op: str = "goto", index: int = 0) -> str:
+        """Move within the photo carousel of the profile currently open.
+
+        ``op`` is ``goto`` (with the 1-based ``index`` as the user spoke
+        it — "the third picture" is index 3), ``next``, ``previous`` or
+        ``last``. The client acks with the real photo count either way,
+        so an out-of-range ask returns that count instead of a false
+        success: Ayma says how many photos there actually are, and the
+        carousel does not move.
+        """
+        op_norm = (op or "goto").strip().lower()
+        if op_norm in ("prev", "previous_photo"):
+            op_norm = "previous"
+        elif op_norm in ("go_to", "show"):
+            op_norm = "goto"
+        if op_norm not in ("goto", "next", "previous", "last"):
+            return (
+                "Use op goto (with a 1-based index), next, previous or "
+                "last to move in the open profile's photo carousel."
+            )
+        try:
+            index = int(index or 0)
+        except (TypeError, ValueError):
+            index = 0
+        if op_norm == "goto" and index < 1:
+            return (
+                "Which photo? Ask the user which photo number to show "
+                "on the open profile."
+            )
+        payload: dict = {"action": "carousel_photo", "op": op_norm}
+        if op_norm == "goto":
+            payload["index"] = index
+        cmd_id = _queue_command(db, uid, payload)
+        ack = await _await_ack(db, uid, cmd_id)
+        if ack is None:
+            return (
+                "The app did NOT change the photo — tell the user it "
+                "didn't work and that they can swipe the profile photos "
+                "themselves."
+            )
+        try:
+            count = int(ack.get("photo_count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        try:
+            current = int(ack.get("current_photo") or 0)
+        except (TypeError, ValueError):
+            current = 0
+        if ack.get("ok"):
+            return (
+                f"showing: photo {current} of {count} on the open "
+                f"profile — the carousel now shows photo {current}."
+            )
+        reason = str(ack.get("reason") or "").strip()
+        if reason == "out_of_range":
+            return (
+                f"out_of_range: that profile has only {count} "
+                f"{_photo_word(count)} — there is no photo {index}. "
+                f"Tell the user there are only {count} "
+                f"{_photo_word(count)}; the carousel did not move "
+                f"(still on photo {current})."
+            )
+        if reason == "at_last":
+            return (
+                f"at_last: already on the last photo (photo {count} of "
+                f"{count}) — there is no next photo. Tell the user that."
+            )
+        if reason == "at_first":
+            return (
+                "at_first: already on the first photo (photo 1) — there "
+                "is no previous photo. Tell the user that."
+            )
+        if reason == "no_carousel":
+            return (
+                "no_carousel: no profile photo carousel is open right "
+                "now. Tell the user to open a profile first (open_profile "
+                "can do that), then ask again."
+            )
+        return (
+            "The app did NOT change the photo — tell the user it "
+            "didn't work and that they can swipe the profile photos "
+            "themselves."
+        )
+
+    return show_profile_photo
+
+
+# --- deterministic pre-model profile-photo intent ----------------------------
+#
+# Mirrors detect_profile_command above: a clear "click / show the third
+# picture", "next photo" or "previous picture" on the currently open
+# profile is executed BEFORE the model (text lane: main._prepare_chat;
+# voice lane: agent.detect_voice_command), so it fires regardless of
+# which brain is active. Kept strict: a photo noun AND a target (an
+# ordinal / number, next, previous, or last) are required, and a goto /
+# last ask also needs a command verb — ordinary talk about a picture
+# ("I like the third picture") is never intercepted.
+
+_PHOTO_NOUN = re.compile(r"\b(?:photos?|pictures?|pics?|images?)\b", re.IGNORECASE)
+_PHOTO_VERB = re.compile(
+    r"\b(?:click|show|open|go|jump|display|switch|move|swipe|bring|pull|view|see|look)\b",
+    re.IGNORECASE,
+)
+_PHOTO_NEXT = re.compile(r"\bnext\b", re.IGNORECASE)
+_PHOTO_PREV = re.compile(r"\b(?:previous|prev)\b", re.IGNORECASE)
+_PHOTO_LAST = re.compile(r"\blast\b", re.IGNORECASE)
+_PHOTO_ORDINALS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
+_PHOTO_ORDINAL = re.compile(
+    r"\b(" + "|".join(_PHOTO_ORDINALS) + r")\b", re.IGNORECASE
+)
+_PHOTO_NUMBER = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\b")
+
+
+def detect_photo_command(message: str) -> tuple[str, int | None] | None:
+    """A clear photo-carousel ask on the open profile → ``(op, index)``,
+    else ``None``.
+
+    ``op`` is ``goto`` (``index`` is the 1-based photo as spoken),
+    ``next``, ``previous`` or ``last`` (``index`` is ``None`` for those).
+    Strict by design, like the other detectors here: a photo noun plus
+    a target, and a command verb for goto/last — so chat *about* photos
+    stays with the model.
+    """
+    m = (message or "").strip()
+    if not m or len(m) > 200:
+        return None
+    if _PHOTO_NOUN.search(m) is None:
+        return None
+    if _PHOTO_NEXT.search(m):
+        return "next", None
+    if _PHOTO_PREV.search(m):
+        return "previous", None
+    if _PHOTO_VERB.search(m) is None:
+        return None
+    if _PHOTO_LAST.search(m):
+        return "last", None
+    ordinal = _PHOTO_ORDINAL.search(m)
+    if ordinal:
+        return "goto", _PHOTO_ORDINALS[ordinal.group(1).lower()]
+    number = _PHOTO_NUMBER.search(m)
+    if number:
+        return "goto", int(number.group(1))
+    return None
+
+
+async def run_photo_command(
+    db, uid: str, op: str, index: int | None
+) -> str:
+    """Execute a detected photo command through the SAME bound
+    ``show_profile_photo`` the model would call, then translate its
+    model-facing return into a short, honest line for the user (the
+    deterministic path has no model turn to relay it)."""
+    result = await _bind_show_profile_photo(db, uid)(
+        op=op, index=index or 0
+    )
+    if isinstance(result, str) and result.startswith("showing:"):
+        hit = re.search(r"photo (\d+) of (\d+)", result)
+        if hit:
+            return f"Showing photo {hit.group(1)} of {hit.group(2)}."
+        return "Done — the photo is showing."
+    if isinstance(result, str) and result.startswith("out_of_range:"):
+        count_hit = re.search(r"only (\d+)", result)
+        count = count_hit.group(1) if count_hit else "that many"
+        return (
+            f"That profile has only {count} "
+            f"{'photo' if count == '1' else 'photos'}, so there is no "
+            f"photo {index} — still on the same photo."
+        )
+    if isinstance(result, str) and result.startswith("at_last:"):
+        return "You are already on the last photo."
+    if isinstance(result, str) and result.startswith("at_first:"):
+        return "You are already on the first photo."
+    if isinstance(result, str) and result.startswith("no_carousel:"):
+        return (
+            "No profile is open right now — open a profile first, "
+            "then I can move through its photos."
+        )
+    if isinstance(result, str) and result.startswith("Which photo?"):
+        return "Which photo should I show? Give me its number."
+    return (
+        "I tried to change the photo, but the app didn't confirm it — "
+        "you can swipe the profile photos yourself."
+    )
+
+
 def _bind_open_message_thread(db, uid: str) -> Callable[..., str]:
     async def open_message_thread(name: str = "") -> str:
         # Scoped to the people this user already has a `dm_threads` doc with —
@@ -920,6 +1121,37 @@ _OPEN_PROFILE = {
             }
         },
         "required": ["name"],
+    },
+}
+
+_SHOW_PROFILE_PHOTO = {
+    "name": "show_profile_photo",
+    "description": (
+        "Move within the photo carousel of the profile the user "
+        "currently has open: show a photo by its 1-based number as the "
+        "user spoke it ('the third picture' -> op goto, index 3), or "
+        "step with op next / previous, or jump to op last. Use this "
+        "whenever the user asks to click / show / see a specific photo "
+        "or the next / previous photo on the open profile — do NOT use "
+        "open_profile for that (it reopens the profile). If the asked-"
+        "for photo does not exist, the return says how many photos "
+        "there actually are — relay that number honestly; the carousel "
+        "does not move. The return says whether the app actually "
+        "changed the photo — relay it honestly."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "op": {
+                "type": "string",
+                "description": "goto, next, previous or last",
+            },
+            "index": {
+                "type": "integer",
+                "description": "1-based photo number, for op goto",
+            },
+        },
+        "required": ["op"],
     },
 }
 

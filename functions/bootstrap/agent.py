@@ -1537,6 +1537,10 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     app_dest = skills.app_control.detect_app_command(text)
     if app_dest is not None:
         return "open_screen", {"screen": app_dest}
+    photo_cmd = skills.app_control.detect_photo_command(text)
+    if photo_cmd is not None:
+        op, index = photo_cmd
+        return "show_profile_photo", {"op": op, "index": index or 0}
     launch_cmd = skills.app_control.detect_launch_command(text)
     if launch_cmd is not None:
         name, partner = launch_cmd

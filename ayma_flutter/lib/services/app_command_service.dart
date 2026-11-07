@@ -16,6 +16,7 @@ import 'guided_tour_controller.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
 import 'pair_key.dart';
+import 'photo_carousel_registry.dart';
 import 'profile_service.dart';
 import 'push_service.dart';
 import 'screen_capture.dart';
@@ -80,7 +81,16 @@ import 'voice_session_controller.dart';
 ///   call is live (`skills/set_model_stack`);
 /// * `ui_action` — operate one on-screen control through [ScreenCapture]
 ///   (which refuses the registry's denylist), acked with the outcome and
-///   what the screen shows afterwards.
+///   what the screen shows afterwards;
+/// * `carousel_photo` — move WITHIN the currently open profile's photo
+///   carousel (`op`: `goto` with a 1-based `index` as users speak it,
+///   `next`, `previous`), through [PhotoCarouselRegistry] — the handle the
+///   mounted `ProfilePhotoHeader` registers for its `PageController`,
+///   the same singleton-slot shape as `AppContext.pendingExploreQuery`.
+///   It owns its ack (like `ui_action`): the ack carries `photo_count`
+///   and `current_photo` either way, so an out-of-range ask ("photo 5"
+///   of 3) acks `ok:false` with the real count and Ayma can say there
+///   are only that many — the carousel does not move.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
@@ -100,7 +110,9 @@ class AppCommandService {
     Future<void> Function()? reconnectVoice,
     Future<void> Function(int index)? sendTourContinuation,
     Future<void> Function(int index)? sendTourStop,
-  })  : _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
+    PhotoCarouselRegistry? photoCarousel,
+  })  : _photoCarousel = photoCarousel ?? PhotoCarouselRegistry.instance,
+        _sendTourContinuation = sendTourContinuation ?? _postTourContinuation,
         _sendTourStop = sendTourStop ?? _postTourStop,
         _chatPopupOpen = chatPopupOpen ?? (() => isAymaSheetOpen),
         _hasActiveVoice = hasActiveVoice ??
@@ -146,6 +158,12 @@ class AppCommandService {
   final OrbAnimationSettings _orbAnim;
   final Future<void> Function()? _clearPushTokenOverride;
   final Future<UiActionResult> Function(Map<String, dynamic> cmd) _uiAction;
+
+  /// The photo carousel currently on screen, reached through its
+  /// registered handle (see [PhotoCarouselRegistry]). Injectable for
+  /// tests; the default is the process-wide registry the mounted
+  /// `ProfilePhotoHeader` registers itself into.
+  final PhotoCarouselRegistry _photoCarousel;
 
   static Future<UiActionResult> _performUiAction(Map<String, dynamic> cmd) =>
       ScreenCapture.instance.perform(
@@ -376,6 +394,13 @@ class AppCommandService {
       unawaited(_runUiAction(snap.reference, data, id));
       return;
     }
+    if (data['action'] == 'carousel_photo') {
+      // Owns its ack, like ui_action: the ack must carry the real photo
+      // count either way, so the backend tool can tell the user how many
+      // photos there actually are when the ask was out of range.
+      unawaited(_runCarouselPhoto(snap.reference, data, id));
+      return;
+    }
     if (data['action'] == 'tour_step') {
       // The Ayma-driven tour spotlights one step and acks it only once the
       // overlay reports it shown (or its anchor absent), then waits for the
@@ -407,6 +432,51 @@ class AppCommandService {
     _afterAck = null;
     if (after != null) {
       unawaited(Future.wait([acked, cleared]).then((_) => after()));
+    }
+  }
+
+  /// Move the open profile's photo carousel, then ack with the outcome
+  /// AND the real photo count: `photo_count` / `current_photo` ride along
+  /// on success and on failure, so "show photo 5" on a 3-photo profile
+  /// acks `ok:false, reason: out_of_range, photo_count: 3` and Ayma says
+  /// there are only 3 — the carousel itself never moved.
+  Future<void> _runCarouselPhoto(DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd, String id) async {
+    final out = runCarouselPhoto(cmd);
+    await ref.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': out.ok,
+      'photo_count': out.photoCount,
+      'current_photo': out.currentPhoto,
+      if (out.requestedPhoto != null) 'requested_photo': out.requestedPhoto,
+      'result': out.resultText,
+      if (!out.ok) 'reason': out.reason,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Runs one `carousel_photo` command against the registered carousel;
+  /// any failure is reported in the result, never thrown. The command is
+  /// `{op: goto|next|previous, index: <1-based, for goto>}` — the index
+  /// is 1-based exactly as users speak it ("the third picture" → 3).
+  @visibleForTesting
+  PhotoCarouselResult runCarouselPhoto(Map<String, dynamic> cmd) {
+    try {
+      final op = (cmd['op'] as String? ?? 'goto').trim().toLowerCase();
+      final rawIndex = cmd['index'] ?? cmd['photo'];
+      final index = rawIndex is num
+          ? rawIndex.toInt()
+          : int.tryParse((rawIndex as String? ?? '').trim());
+      return _photoCarousel.perform(op: op, index: index);
+    } catch (e) {
+      debugPrint('Ayma carousel_photo failed: $e');
+      return const PhotoCarouselResult(
+        ok: false,
+        photoCount: 0,
+        currentPhoto: 0,
+        reason: 'no_carousel',
+      );
     }
   }
 
@@ -612,6 +682,12 @@ class AppCommandService {
         if (self == null || self.isEmpty) return false;
         _open(deepLinkToRoute(link, myUid: self));
         return true;
+      case 'carousel_photo':
+        // The Firestore listener intercepts this action before
+        // handleCommand so its ack can carry the photo count (see
+        // _runCarouselPhoto); this case keeps a direct handleCommand
+        // call honest too.
+        return runCarouselPhoto(cmd).ok;
       case 'app_action':
         return _handleAppAction(
           (cmd['name'] as String? ?? '').trim(),
