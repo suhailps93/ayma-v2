@@ -30,6 +30,7 @@
     {"key": "biometric_consent", "path": "/settings/biometric-consent", "label": "Face matching consent", "aliases": ["face matching consent", "biometric consent", "my consent", "consent settings", "consent page", "what i agreed to"], "found_on": "settings"},
     {"key": "biometric_info", "path": "/legal/biometric", "label": "Biometric information (face matching) policy", "aliases": ["biometric policy", "biometric information", "face matching policy", "face data policy"]},
     {"key": "connect_agent", "path": "/settings/connect-agent", "label": "Connect an agent", "aliases": ["connect an agent", "connect agent", "mcp", "connect an ai", "connect claude", "link an agent", "bring your own agent"], "found_on": "settings"},
+    {"key": "assistant", "path": "/assistant", "label": "Ayma Assistant", "aliases": ["ayma assistant", "default assistant", "assistant", "summon ayma", "assistant settings", "digital assistant"], "found_on": "ayma_settings"},
     {"key": "release_notes", "path": "/whats-new", "label": "What's new", "aliases": ["whats new", "what's new", "release notes", "changelog", "updates", "new features"], "found_on": "settings"}
   ],
   "parameterized": [

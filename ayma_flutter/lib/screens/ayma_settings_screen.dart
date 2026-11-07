@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/assist_context.dart';
+import '../services/assistant_service.dart';
 import '../services/orb_animation_settings.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
+import 'assistant_screen.dart';
 import 'connect_agent_screen.dart';
 import 'voice_preference_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -13,23 +16,56 @@ import '../widgets/ayma_back_button.dart';
 /// Ayma's settings: the voice she speaks with, how her orb animates, and the
 /// wiki reset (§14.2), and connecting your own AI agent (MCP). Reached from the "Ayma" group on the Profile tab.
 class AymaSettingsScreen extends StatefulWidget {
-  const AymaSettingsScreen({super.key, this.api, this.orbAnimationSettings});
+  const AymaSettingsScreen(
+      {super.key, this.api, this.orbAnimationSettings, this.assistantService});
 
   static const path = '/settings/ayma';
 
   final ApiClient? api;
   final OrbAnimationSettings? orbAnimationSettings;
+  final AssistantService? assistantService;
 
   @override
   State<AymaSettingsScreen> createState() => _AymaSettingsScreenState();
 }
 
-class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
+class _AymaSettingsScreenState extends State<AymaSettingsScreen>
+    with WidgetsBindingObserver {
   OrbAnimationSettings get _orbAnim =>
       widget.orbAnimationSettings ?? orbAnimationSettingsGlobal;
   late final ApiClient _api = widget.api ?? ApiClient();
+  late final AssistantService _assistant =
+      widget.assistantService ?? AssistantService.instance;
 
   bool _resetting = false;
+
+  /// Null until the platform answers: whether Ayma is the default
+  /// digital assistant right now.
+  bool? _isDefaultAssistant;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadAssistantStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Back from the system default-apps page: reflect the choice.
+    if (state == AppLifecycleState.resumed) _loadAssistantStatus();
+  }
+
+  Future<void> _loadAssistantStatus() async {
+    final value = await _assistant.isDefaultAssistant();
+    if (mounted) setState(() => _isDefaultAssistant = value);
+  }
 
   Future<void> _confirmReset() async {
     final ok = await showDialog<bool>(
@@ -143,6 +179,44 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
                 ),
               ],
             ),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Assistant',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          ListTile(
+            key: const Key('ayma_settings_assistant'),
+            leading: Icon(Icons.smart_button_outlined, color: ac.fgDim),
+            title: Text('Ayma Assistant',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text(
+                _isDefaultAssistant == true
+                    ? 'Ayma is your default assistant — long-press Home '
+                        'in any app to summon her'
+                    : 'Summon Ayma from any app as your default assistant',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(AssistantScreen.path),
+          ),
+          ListTile(
+            key: const Key('ayma_settings_default_assistant'),
+            leading: Icon(Icons.settings_outlined, color: ac.fgDim),
+            title: Text('Default assistant app',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text(
+                _isDefaultAssistant == true
+                    ? 'Ayma is selected in Android settings'
+                    : 'Choose Ayma in Android default app settings',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.open_in_new, color: ac.fgMute),
+            onTap: () => _assistant.openDefaultAssistantSettings(),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Text(AssistPrivacy.settingsBlurb,
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
           ),
           Divider(color: ac.lineSoft),
           ListTile(

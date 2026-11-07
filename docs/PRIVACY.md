@@ -107,6 +107,31 @@ just a local deletion) and deletes the stored access token. Facts already
 distilled remain in your notes unless you edit or delete them, the same as
 anything else Ayma has learned about you from conversation.
 
+### Ayma as your default assistant (Android, optional)
+
+On Android you can choose Ayma as your device's **default digital
+assistant**. If you do, then when you summon her (for example by
+long-pressing the Home button) from another app, Android may share that
+app's screen with her — the visible text on it, its web address if it
+reports one, and a picture of the screen — **but only if you also turned
+on Android's "Use screen and app data" setting for Ayma**, and only at
+the moment you summon her. Ayma never sees your screen at any other
+time: there is no background capture, no accessibility-service reading,
+and no monitoring of other apps.
+
+What Android shares is held in your phone's memory only, for that one
+session, and is never stored — not on the device and not on our servers.
+The picture of the screen never leaves your phone. If you ask Ayma a
+question about the screen, the screen's text is sent to our servers as
+part of that question, the same way the in-app screen context works
+during a voice call, and it is handled like the rest of that
+conversation.
+
+_Basis: your explicit choice — selecting Ayma as your default assistant
+and enabling screen sharing in Android's own settings. You can undo
+both at any time in the same Android settings, which stops all sharing
+immediately._
+
 ## Why we use your data, and our legal bases
 
 Where GDPR-style law applies, the legal bases are noted in plain terms.

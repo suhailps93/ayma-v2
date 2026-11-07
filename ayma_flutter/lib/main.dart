@@ -11,7 +11,9 @@ import 'core/app_recovery.dart';
 import 'core/dag/launch_intent_resolver.dart';
 import 'core/dag/startup_nodes.dart';
 import 'routing/app_router.dart';
+import 'screens/assistant_screen.dart';
 import 'services/accent_color_controller.dart';
+import 'services/assistant_service.dart';
 import 'services/auth_service.dart';
 import 'services/biometric_consent.dart';
 import 'services/deep_link_queue.dart';
@@ -90,6 +92,15 @@ Future<void> main() async {
     queue: DeepLinkQueue.instance,
     router: appRouter,
     authService: AuthService.instance,
+  ));
+
+  // Default-assistant summons (Android Assist API): a summon that
+  // launched or relaunched MainActivity lands here — the capture is
+  // held by AssistantService and the assistant surface opens on it.
+  // The router's auth redirect still applies, so a signed-out summon
+  // goes to sign-in first and the capture waits in the session store.
+  unawaited(AssistantService.instance.bindSummons(
+    onSummon: (_) => navigateToRoute(AssistantScreen.path),
   ));
 }
 
