@@ -30,6 +30,7 @@ import '../widgets/freshness_indicator.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/keyboard_dismiss.dart';
 import '../widgets/message_timestamp.dart';
+import '../widgets/date_plan_card.dart';
 import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
 import '../widgets/voice_clip_row.dart';
@@ -294,6 +295,51 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       subjectUid: _safeOtherUid(),
       subjectName: name,
     );
+  }
+
+  /// Run a date-card action and surface a plain failure message.
+  Future<void> _runDatePlanAction(
+      Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      if (mounted) {
+        AymaToast.show(context,
+            'That did not go through - please try again.',
+            kind: AymaToastKind.error);
+      }
+    }
+  }
+
+  Future<void> _suggestDatePlanChange(String messageId) async {
+    final controller = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Suggest a change'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'A different time, place, or cheaper?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Send to Ayma'),
+          ),
+        ],
+      ),
+    );
+    if (text == null || text.isEmpty) return;
+    await _runDatePlanAction(() =>
+        _dm.suggestDatePlanChange(widget.threadId, messageId, text));
   }
 
   Future<void> _loadOther() async {
@@ -921,6 +967,17 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 final bubble = _Bubble(
                                   message: m,
                                   mine: mine,
+                                  myUid: me,
+                                  otherUid: _dm.otherUidOf(widget.threadId),
+                                  otherName: _other?.name ?? 'Them',
+                                  onDateApprove: () => _runDatePlanAction(
+                                      () => _dm.approveDatePlan(
+                                          widget.threadId, m.id)),
+                                  onDatePay: () => _runDatePlanAction(
+                                      () => _dm.payDatePlanHalf(
+                                          widget.threadId, m.id)),
+                                  onDateSuggest: () =>
+                                      _suggestDatePlanChange(m.id),
                                   voicePlayer: _clipPlayer,
                                   nowPlaying: _nowPlaying,
                                   localVoiceFile: _localVoiceFiles[m.id],
@@ -1611,6 +1668,12 @@ class _Bubble extends StatelessWidget {
     this.nowPlaying,
     this.localVoiceFile,
     this.voiceUrlResolver,
+    this.myUid = '',
+    this.otherUid = '',
+    this.otherName = 'Them',
+    this.onDateApprove,
+    this.onDatePay,
+    this.onDateSuggest,
   });
   final DmMessage message;
   final bool mine;
@@ -1634,6 +1697,12 @@ class _Bubble extends StatelessWidget {
   final bool autoTranslate;
   final void Function(String lang)? onDetected;
   final String preferredLang;
+  final String myUid;
+  final String otherUid;
+  final String otherName;
+  final VoidCallback? onDateApprove;
+  final VoidCallback? onDatePay;
+  final VoidCallback? onDateSuggest;
 
   @override
   Widget build(BuildContext context) {
@@ -1642,7 +1711,18 @@ class _Bubble extends StatelessWidget {
     final report = message.reportShare;
     final bool tight;
     final Widget content;
-    if (message.type == 'voice' && voicePlayer != null && nowPlaying != null) {
+    if (message.isDatePlan) {
+      tight = true;
+      content = DatePlanCard(
+        plan: message.datePlan!,
+        myUid: myUid,
+        otherUid: otherUid,
+        otherName: otherName,
+        onApprove: onDateApprove,
+        onPay: onDatePay,
+        onSuggest: onDateSuggest,
+      );
+    } else if (message.type == 'voice' && voicePlayer != null && nowPlaying != null) {
       // A voice note: a playable WhatsApp-style row, from the local file
       // while uploading or from the stored clip's URL once posted.
       tight = false;

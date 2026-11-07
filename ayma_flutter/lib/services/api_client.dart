@@ -1236,6 +1236,26 @@ class ApiClient {
     return DmAssist.fromJson(decoded);
   }
 
+  /// `POST /dm/{threadId}/date-plan/{messageId}/approve` - approve
+  /// the Ayma date card for myself (plan-a-date). The second
+  /// approval creates the two PayPal sandbox half orders.
+  Future<Map<String, dynamic>> datePlanApprove(
+          String threadId, String messageId) =>
+      _sendJson('POST', '/dm/$threadId/date-plan/$messageId/approve',
+          const {});
+
+  /// Reply to the date card with a suggested change.
+  Future<Map<String, dynamic>> datePlanSuggest(
+          String threadId, String messageId, String text) =>
+      _sendJson('POST', '/dm/$threadId/date-plan/$messageId/suggest',
+          {'text': text});
+
+  /// Capture my half of the split PayPal charge.
+  Future<Map<String, dynamic>> datePlanPay(
+          String threadId, String messageId) =>
+      _sendJson('POST', '/dm/$threadId/date-plan/$messageId/pay',
+          const {});
+
   /// `POST /dm/translate` — cross-language DM translation (§6.12): translate
   /// [text] into [targetLang] (a language code or name), returning the
   /// translation plus the detected source language. [threadId] scopes the call

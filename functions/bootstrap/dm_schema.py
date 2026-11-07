@@ -27,6 +27,10 @@ MESSAGE_GIF = "gif"
 # A shared report snapshot (``POST /share``): the doc carries a ``report_share``
 # map ({token, title, summary, card_url}) the app renders as an in-app card.
 MESSAGE_SHARED_REPORT = "shared_report"
+# A date plan card posted by Ayma (PayPal hackathon): the doc carries a
+# ``date_plan`` map (place, time, cost, approvals, payments, reservation)
+# that the state machine in date_plan.py updates in place.
+MESSAGE_DATE_PLAN = "date_plan"
 MESSAGE_TYPES = (
     MESSAGE_TEXT,
     MESSAGE_PHOTO,
@@ -36,6 +40,7 @@ MESSAGE_TYPES = (
     MESSAGE_FILE,
     MESSAGE_GIF,
     MESSAGE_SHARED_REPORT,
+    MESSAGE_DATE_PLAN,
 )
 
 # Message types that carry an attachment (path/url/mime/name/size) rather than

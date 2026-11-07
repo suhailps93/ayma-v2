@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'api_client.dart';
+import 'date_plan.dart';
 import 'fresh_data.dart';
 
 class DmThread {
@@ -37,6 +38,7 @@ class DmMessage {
     this.size = 0,
     this.moderated = false,
     this.reportShare,
+    this.datePlan,
   });
   final String id;
   final String senderUid;
@@ -59,7 +61,12 @@ class DmMessage {
   /// public card image.
   final DmReportShare? reportShare;
 
+  /// `date_plan` only - the plan Ayma proposed on this card.
+  final DatePlan? datePlan;
+
   bool get isSharedReport => type == 'shared_report' && reportShare != null;
+
+  bool get isDatePlan => type == 'date_plan' && datePlan != null;
 
   bool get hasImage => type == 'image' && attachmentUrl.isNotEmpty;
   bool get hasGif => type == 'gif' && attachmentUrl.isNotEmpty;
@@ -79,6 +86,7 @@ class DmMessage {
         size: (m['size'] as num?)?.toInt() ?? 0,
         moderated: m['moderated'] as bool? ?? false,
         reportShare: DmReportShare.tryParse(m['report_share']),
+        datePlan: DatePlan.tryParse(m['date_plan']),
       );
 }
 
@@ -394,6 +402,22 @@ class DmService {
         .reversed
         .toList();
   }
+
+  /// Approve the date card [messageId] for me (plan-a-date).
+  Future<Map<String, dynamic>> approveDatePlan(
+          String threadId, String messageId) =>
+      _api.datePlanApprove(threadId, messageId);
+
+  /// Reply to the date card with a suggested change; Ayma
+  /// revises the plan and approvals reset.
+  Future<Map<String, dynamic>> suggestDatePlanChange(
+          String threadId, String messageId, String text) =>
+      _api.datePlanSuggest(threadId, messageId, text);
+
+  /// Pay my half of the split for the date card [messageId].
+  Future<Map<String, dynamic>> payDatePlanHalf(
+          String threadId, String messageId) =>
+      _api.datePlanPay(threadId, messageId);
 
   Future<void> sendText(String threadId, String text) =>
       _api.sendDmMessage(threadId, type: 'text', body: text);

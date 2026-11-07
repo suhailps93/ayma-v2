@@ -52,6 +52,7 @@ def post_message(
     attachment: dict | None = None,
     moderation: dict | None = None,
     report_share: dict | None = None,
+    date_plan: dict | None = None,
 ) -> str:
     """Append a message to the pair's thread. Returns the message id. Raises on
     a bad type or when the pair has a block between them.
@@ -98,6 +99,8 @@ def post_message(
             k: str(report_share.get(k, ""))
             for k in ("token", "title", "summary", "card_url")
         }
+    if date_plan:
+        doc["date_plan"] = dict(date_plan)
     if moderation and moderation.get("flagged"):
         doc.update(
             {

@@ -3999,7 +3999,7 @@ async def explore_pass(
 class DmMessageRequest(BaseModel):
     type: Literal[
         "text", "photo", "voice", "shared_profile", "image", "file", "gif",
-        "shared_report"
+        "shared_report", "date_plan"
     ]
     # Required for text/photo/voice/shared_profile; an optional caption for
     # image/gif/file (validated per-type in the handler).
@@ -4115,7 +4115,20 @@ async def dm_send(
         req.body,
         req.attachment_path,
     )
-    return {"ok": True, "message_id": msg_id, "thread_id": thread_id}
+    date_plan_msg_id = ""
+    if req.type == "text":
+        try:
+            import date_plan as date_plan_mod
+            if date_plan_mod.is_plan_trigger(req.body):
+                date_plan_msg_id = await asyncio.to_thread(
+                    _create_date_plan_card, thread_id, uid, other)
+        except Exception:  # noqa: BLE001 - a plan failure never breaks a send
+            logger.exception("date plan creation failed for %s", thread_id)
+    result: dict[str, object] = {
+        "ok": True, "message_id": msg_id, "thread_id": thread_id}
+    if date_plan_msg_id:
+        result["date_plan_message_id"] = date_plan_msg_id
+    return result
 
 
 async def _notify_new_dm(
@@ -4242,6 +4255,133 @@ async def dm_translate_endpoint(
     return await dm_translate.translate(
         req.text, req.target_lang, req.source_lang or None, uid=uid
     )
+
+
+
+
+def _create_date_plan_card(thread_id: str, uid: str, other: str) -> str:
+    """Read the thread tail and both taste notes, then post the card.
+
+    Runs in a thread (Firestore reads). Every read is best-effort: a
+    missing taste note or an unreadable history just means Ayma plans
+    from less, never that the card fails to appear.
+    """
+    import date_plan as date_plan_mod
+
+    db = get_db()
+    texts: list[str] = []
+    try:
+        docs = (
+            db.collection(dm_schema.DM_THREADS_COLLECTION)
+            .document(thread_id)
+            .collection(dm_schema.DM_MESSAGES_COLLECTION)
+            .order_by("created_at", direction="DESCENDING")
+            .limit(30)
+            .stream()
+        )
+        for d in docs:
+            data = d.to_dict() or {}
+            if data.get("type") == "text":
+                texts.append(str(data.get("body", "")))
+        texts.reverse()
+    except Exception:  # noqa: BLE001
+        logger.exception("date plan: thread read failed for %s", thread_id)
+    tastes: list[str] = []
+    for who in (uid, other):
+        try:
+            snap = db.collection("users").document(who).get()
+            data = (snap.to_dict() or {}) if snap.exists else {}
+            for key, value in data.items():
+                low = str(key).lower()
+                if any(w in low for w in ("taste", "food", "cuisine", "favorite")):
+                    tastes.append(str(value))
+        except Exception:  # noqa: BLE001
+            pass
+    plan = date_plan_mod.propose_plan(texts, tastes)
+    return date_plan_mod.post_date_plan_message(
+        db, thread_id, sorted((uid, other)), plan)
+
+
+class DatePlanSuggestRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+def _date_plan_participants(thread_id: str, uid: str) -> tuple[str, str]:
+    from pair_key import uids_from_pair_key
+
+    try:
+        a, b = uids_from_pair_key(thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if uid not in (a, b):
+        raise HTTPException(status_code=403, detail="Not your thread.")
+    return a, b
+
+
+@app.post("/dm/{thread_id}/date-plan/{message_id}/approve")
+async def date_plan_approve(
+    thread_id: str, message_id: str,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """One person approves the date card for themselves. The second
+    approval creates the two linked PayPal sandbox half orders."""
+    _date_plan_participants(thread_id, uid)
+    import date_plan as date_plan_mod
+    import paypal_client
+
+    try:
+        plan = await asyncio.to_thread(
+            date_plan_mod.approve, get_db(), thread_id, message_id, uid,
+            paypal_client.get_client())
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Not your date plan.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "date_plan": plan}
+
+
+@app.post("/dm/{thread_id}/date-plan/{message_id}/suggest")
+async def date_plan_suggest(
+    thread_id: str, message_id: str, req: DatePlanSuggestRequest,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """Reply-to-card change: Ayma revises the plan, approvals reset."""
+    _date_plan_participants(thread_id, uid)
+    import date_plan as date_plan_mod
+
+    try:
+        plan = await asyncio.to_thread(
+            date_plan_mod.suggest_change, get_db(), thread_id, message_id,
+            uid, req.text)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Not your date plan.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "date_plan": plan}
+
+
+@app.post("/dm/{thread_id}/date-plan/{message_id}/pay")
+async def date_plan_pay(
+    thread_id: str, message_id: str,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """Capture the caller half of the split. Both halves paid writes
+    the booking record and confirms the reservation on the card."""
+    _date_plan_participants(thread_id, uid)
+    import date_plan as date_plan_mod
+    import paypal_client
+
+    try:
+        plan = await asyncio.to_thread(
+            date_plan_mod.pay_half, get_db(), thread_id, message_id, uid,
+            paypal_client.get_client())
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Not your date plan.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except paypal_client.PayPalError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+    return {"ok": True, "date_plan": plan}
 
 
 from routes.profile import ProfileShareRequest, profile_share  # noqa: E402
