@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:livekit_client/livekit_client.dart';
 
 import '../services/connection_heartbeat.dart';
 import '../services/voice_entry_gate.dart';
@@ -78,11 +79,12 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             final orbState = switch (phase) {
               VoiceSessionPhase.connecting ||
               VoiceSessionPhase.waking => AymaOrbState.thinking,
-              VoiceSessionPhase.live => voice.reconnecting
-                  ? AymaOrbState.thinking
-                  : (speaking
-                        ? AymaOrbState.speaking
-                        : AymaOrbState.listening),
+              VoiceSessionPhase.live =>
+                voice.reconnecting
+                    ? AymaOrbState.thinking
+                    : (speaking
+                          ? AymaOrbState.speaking
+                          : AymaOrbState.listening),
               _ => AymaOrbState.idle,
             };
             final label = switch (phase) {
@@ -91,19 +93,27 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               VoiceSessionPhase.connecting =>
                 voice.relayRetrying ? 'Reconnecting…' : 'Connecting…',
               VoiceSessionPhase.waking => 'Waking Ayma…',
-              VoiceSessionPhase.live => voice.muted
-                  ? 'Muted'
-                  : (voice.reconnecting
-                        ? 'Reconnecting…'
-                        : (speaking
-                              ? 'Ayma is speaking…'
-                              : (voice.activeToolLabel ??
-                                    voice.warmingNotice ??
-                                    (voice.awaitingFirstResponse
-                                        ? 'Connecting…'
-                                        : 'Listening…')))),
+              VoiceSessionPhase.live =>
+                voice.muted
+                    ? 'Muted'
+                    : (voice.reconnecting
+                          ? 'Reconnecting…'
+                          : (speaking
+                                ? 'Ayma is speaking…'
+                                : (voice.activeToolLabel ??
+                                      voice.warmingNotice ??
+                                      (voice.awaitingFirstResponse
+                                          ? 'Connecting…'
+                                          : 'Listening…')))),
               _ => '',
             };
+            // Gemini Live mirror (feedback item 13): with the camera on,
+            // the user's own feed takes the call's main stage and the orb
+            // shrinks to a presence indicator under it.
+            final cameraStage =
+                phase == VoiceSessionPhase.live &&
+                voice.videoOn &&
+                voice.localCameraTrack != null;
             return Stack(
               children: [
                 // Scrolls instead of overflowing in a short window (the
@@ -112,9 +122,26 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (cameraStage)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(24),
+                            child: SizedBox(
+                              key: const Key('voiceCallCameraStage'),
+                              width: double.infinity,
+                              height: 300,
+                              child: VideoTrackRenderer(
+                                voice.localCameraTrack!,
+                                fit: VideoViewFit.cover,
+                                mirrorMode: VideoViewMirrorMode.mirror,
+                              ),
+                            ),
+                          ),
+                        ),
                       AymaOrb(
                         key: const Key('voiceCallOrb'),
-                        size: 220,
+                        size: cameraStage ? 84 : 220,
                         state: orbState,
                         amplitudeListenable: speaking
                             ? voice.aymaLevel
@@ -135,13 +162,31 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                       const SizedBox(height: 32),
                       Text(
                         label,
-                        style: AymaType.mono(size: 12, color: ac.fgMute)
-                            .copyWith(letterSpacing: 2),
+                        style: AymaType.mono(
+                          size: 12,
+                          color: ac.fgMute,
+                        ).copyWith(letterSpacing: 2),
                       ),
                       if (voice.aymaQuiet && phase == VoiceSessionPhase.live)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
                           child: AymaQuietChip(onUnmute: voice.unmuteAyma),
+                        ),
+                      // Vision notice (feedback item 13): a denied camera
+                      // permission, a failed screen share, or the agent
+                      // reporting FLAG_SECURE black frames — shown as a
+                      // plain line, never an error state: the voice call
+                      // itself is untouched by any of them.
+                      if (voice.visionNotice != null &&
+                          phase == VoiceSessionPhase.live)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                          child: Text(
+                            voice.visionNotice!,
+                            key: const Key('voiceCallVisionNotice'),
+                            textAlign: TextAlign.center,
+                            style: AymaType.sans(size: 13, color: ac.fgMute),
+                          ),
                         ),
                     ],
                   ),
@@ -155,15 +200,75 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                     onPressed: () => Navigator.of(context).maybePop(),
                   ),
                 ),
-                // Mute toggle, bottom center (founder ask, 2026-09-26). The
-                // state lives on [voice] itself ([VoiceSessionController.muted]
-                // / `toggleMute()`, which flips the LiveKit local mic track and
-                // never touches the call), so it survives this screen being
-                // closed and reopened mid-call, and stays in sync with the
-                // chat composer's own inline mute button. Same mic/mic-off
-                // icon pair as that composer button; the muted treatment is a
-                // filled error-red circle so the state is unmistakable at a
-                // glance against the near-black backdrop.
+                // Screen-share indicator (feedback item 13, Gemini Live
+                // mirror): while the screen is shared there is always a
+                // visible in-app indicator, and tapping it stops the share
+                // — the same affordance Android's sharing notification
+                // offers ("Sharing your screen — Stop sharing").
+                if (phase == VoiceSessionPhase.live && voice.screenShareOn)
+                  Positioned(
+                    top: 10,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Material(
+                        key: const Key('voiceCallSharingPill'),
+                        color: ac.accent,
+                        borderRadius: BorderRadius.circular(999),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(999),
+                          onTap: voice.toggleScreenShare,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 7,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.screen_share_rounded,
+                                  size: 15,
+                                  color: ac.onAccent,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Sharing your screen — tap to stop',
+                                  style: AymaType.sans(
+                                    size: 12,
+                                    color: ac.onAccent,
+                                    weight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Call controls, bottom center (founder ask, 2026-09-26 for
+                // mute; feedback item 13, 2026-11-06 for the vision pair).
+                // The mute state lives on [voice] itself
+                // ([VoiceSessionController.muted] / `toggleMute()`, which
+                // flips the LiveKit local mic track and never touches the
+                // call), so it survives this screen being closed and
+                // reopened mid-call, and stays in sync with the chat
+                // composer's own inline mute button.
+                //
+                // The Video and Screen share toggles flank it — the same
+                // arrangement as Gemini Live's in-call bar — and follow the
+                // same state rule ([VoiceSessionController.videoOn] /
+                // `screenShareOn` / `toggleVideo()` / `toggleScreenShare()`,
+                // publishing the camera/screen track into the same LiveKit
+                // room). Visibility follows the stack's catalog-driven
+                // declaration (founder rule, feedback item 13): while the
+                // call is live and the stack declared it CAN perceive video
+                // (`visionSupported`) the toggles are enabled; when it
+                // declared it CANNOT (`visionUnsupported`) they stay
+                // VISIBLE but disabled, with the plain reason spelled out
+                // under the row; before any declaration (and on practice
+                // calls, which never declare) the row stays mute-only.
                 Positioned(
                   left: 0,
                   right: 0,
@@ -171,11 +276,72 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                   // inset is already accounted for — this is just breathing
                   // room above it.
                   bottom: 28,
-                  child: Center(
-                    child: _MuteButton(
-                      muted: voice.muted,
-                      onTap: voice.toggleMute,
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        key: const Key('voiceCallControlsRow'),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (phase == VoiceSessionPhase.live &&
+                              (voice.visionSupported ||
+                                  voice.visionUnsupported)) ...[
+                            _MediaToggleButton(
+                              buttonKey: const Key('voiceCallVideoButton'),
+                              active: voice.videoOn,
+                              icon: Icons.videocam_rounded,
+                              offIcon: Icons.videocam_off_rounded,
+                              tooltip: voice.visionUnsupported
+                                  ? 'Video needs a realtime model'
+                                  : (voice.videoOn
+                                        ? 'Turn camera off'
+                                        : 'Show Ayma your camera'),
+                              onTap: voice.visionSupported
+                                  ? voice.toggleVideo
+                                  : null,
+                            ),
+                            const SizedBox(width: 20),
+                          ],
+                          _MuteButton(
+                            muted: voice.muted,
+                            onTap: voice.toggleMute,
+                          ),
+                          if (phase == VoiceSessionPhase.live &&
+                              (voice.visionSupported ||
+                                  voice.visionUnsupported)) ...[
+                            const SizedBox(width: 20),
+                            _MediaToggleButton(
+                              buttonKey: const Key(
+                                'voiceCallScreenShareButton',
+                              ),
+                              active: voice.screenShareOn,
+                              icon: Icons.screen_share_rounded,
+                              offIcon: Icons.stop_screen_share_rounded,
+                              tooltip: voice.visionUnsupported
+                                  ? 'Screen share needs a realtime model'
+                                  : (voice.screenShareOn
+                                        ? 'Stop sharing screen'
+                                        : 'Share your screen with Ayma'),
+                              onTap: voice.visionSupported
+                                  ? voice.toggleScreenShare
+                                  : null,
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (phase == VoiceSessionPhase.live &&
+                          voice.visionUnsupported)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(32, 12, 32, 0),
+                          child: Text(
+                            'Video and screen share need a realtime model '
+                            '— switch in Models.',
+                            key: const Key('voiceCallVisionUnsupportedNote'),
+                            textAlign: TextAlign.center,
+                            style: AymaType.sans(size: 12, color: ac.fgMute),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ],
@@ -207,10 +373,7 @@ class _MuteButton extends StatelessWidget {
         key: const Key('voiceCallMuteButton'),
         color: muted ? ac.error : ac.bgElev,
         shape: CircleBorder(
-          side: BorderSide(
-            color: muted ? ac.error : ac.lineSoft,
-            width: 1,
-          ),
+          side: BorderSide(color: muted ? ac.error : ac.lineSoft, width: 1),
         ),
         child: InkWell(
           customBorder: const CircleBorder(),
@@ -222,6 +385,67 @@ class _MuteButton extends StatelessWidget {
               muted ? Icons.mic_off_rounded : Icons.mic_rounded,
               size: 28,
               color: muted ? AymaColors.onAccentFor(ac.error) : ac.fgDim,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One of the voice-call screen's vision toggles (Video / Screen share,
+/// feedback item 13): the same round control as [_MuteButton], in the
+/// accent fill while its track is live so the sharing state is unmistakable
+/// at a glance. Purely a control over [VoiceSessionController.toggleVideo]
+/// / `toggleScreenShare` — it never ends or disrupts the call.
+class _MediaToggleButton extends StatelessWidget {
+  const _MediaToggleButton({
+    required this.buttonKey,
+    required this.active,
+    required this.icon,
+    required this.offIcon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final Key buttonKey;
+  final bool active;
+  final IconData icon;
+  final IconData offIcon;
+  final String tooltip;
+
+  /// Null = DISABLED: the serving model cannot perceive video (the stack
+  /// declared `vision_unsupported`), so the toggle renders visibly dimmed
+  /// and untappable, with the reason spelled out under the controls row —
+  /// shown, never silently absent (founder rule, feedback item 13).
+  final Future<void> Function()? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final enabled = onTap != null;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        key: buttonKey,
+        color: active
+            ? ac.accent
+            : (enabled ? ac.bgElev : ac.bgElev.withValues(alpha: 0.45)),
+        shape: CircleBorder(
+          side: BorderSide(color: active ? ac.accent : ac.lineSoft, width: 1),
+        ),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 64,
+            height: 64,
+            child: Icon(
+              active ? icon : offIcon,
+              size: 28,
+              color: active
+                  ? ac.onAccent
+                  : (enabled ? ac.fgDim : ac.fgMute.withValues(alpha: 0.6)),
             ),
           ),
         ),
@@ -257,7 +481,8 @@ Future<void> toggleVoiceCall(
     return;
   }
   await voice.start(
-      forceRelayFirst: decision == VoiceEntryDecision.allowRelayFirst);
+    forceRelayFirst: decision == VoiceEntryDecision.allowRelayFirst,
+  );
   if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
     if (!context.mounted) return;
     if (voice.cappedError) {

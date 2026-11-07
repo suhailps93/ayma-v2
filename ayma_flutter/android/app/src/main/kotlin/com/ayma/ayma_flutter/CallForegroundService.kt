@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -57,6 +58,7 @@ class CallForegroundService : Service() {
         const val EXTRA_MUTED = "muted"
         const val EXTRA_AYMA_QUIET = "aymaQuiet"
         const val EXTRA_START_TIME = "startTimeMillis"
+        const val EXTRA_SCREEN_SHARING = "screenSharing"
 
         const val ENGINE_CACHE_ID = "ayma_main_engine"
         const val METHOD_CHANNEL = "ayma/call_ui"
@@ -65,6 +67,16 @@ class CallForegroundService : Service() {
 
     private var status = "Voice call"
     private var muted = false
+
+    // The user is sharing their screen with Ayma in this call (feedback
+    // item 13): the service must then carry the mediaProjection FGS type
+    // (Android 14 — a projection may only run while a mediaProjection-
+    // typed foreground service is up). Dart raises this via MainActivity
+    // AFTER the per-session MediaProjection consent has been granted and
+    // lowers it again when the share stops; start/update payloads that
+    // carry no EXTRA_SCREEN_SHARING leave it unchanged, so an ordinary
+    // mute/status update can never downgrade the type mid-share.
+    private var screenSharing = false
 
     // Ayma was told to "shut up" (agent `agent_mute`): the notification
     // reads "Ayma is quiet" and offers an "Unmute Ayma" action.
@@ -98,6 +110,9 @@ class CallForegroundService : Service() {
         if (intent?.hasExtra(EXTRA_START_TIME) == true) {
             startTimeMillis = intent.getLongExtra(EXTRA_START_TIME, startTimeMillis)
         }
+        if (intent?.hasExtra(EXTRA_SCREEN_SHARING) == true) {
+            screenSharing = intent.getBooleanExtra(EXTRA_SCREEN_SHARING, screenSharing)
+        }
 
         // Every branch calls startForeground() immediately, including the
         // stop path — Android expects it within 5s of any
@@ -115,7 +130,18 @@ class CallForegroundService : Service() {
         // backgrounded call). A missing notification is a much smaller
         // failure than losing the whole app mid-conversation.
         try {
-            startForeground(NOTIFICATION_ID, buildNotification())
+            if (Build.VERSION.SDK_INT >= 29) {
+                // Typed startForeground: microphone always; mediaProjection
+                // only while a consented screen share is live (declaring the
+                // type without a grant in hand is what Android rejects).
+                var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                if (screenSharing) {
+                    types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                }
+                startForeground(NOTIFICATION_ID, buildNotification(), types)
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
         } catch (e: Exception) {
             invokeDart("startFailed")
             stopSelf()

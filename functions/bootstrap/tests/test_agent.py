@@ -3677,9 +3677,11 @@ def test_boot_wires_accent_into_hot_swapper_and_listens_for_settings_changes(
     assert "indian" not in created["system_prompt"]
     assert "southern" in created["accent_block"]("a southern accent")
     # The settings screen's mid-call save has a listener on this call, and so
-    # does the guided-tour tap bridge (§11.2b) — two data_received handlers now.
+    # does the guided-tour tap bridge (§11.2b) — and, since feedback item 13,
+    # the vision-track watcher's `vision_control` listener (video / screen
+    # share): three data_received handlers now.
     assert "data_received" in ctx.room.handlers
-    assert len(ctx.room.handlers["data_received"]) == 2
+    assert len(ctx.room.handlers["data_received"]) == 3
 
 
 # --- cascade must not act on a stale seeded user turn (founder bug 2026-10-27)-

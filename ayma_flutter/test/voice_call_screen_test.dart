@@ -109,6 +109,62 @@ class _FakeVoice extends VoiceSessionController {
     _fakeMuted = !_fakeMuted;
     notifyListeners();
   }
+
+  // Vision toggles (feedback item 13): the same fake treatment — state
+  // flips + notify, gated on live + visionSupported like the real ones.
+  bool _fakeVisionSupported = false;
+  bool _fakeVisionUnsupported = false;
+  bool _fakeVideoOn = false;
+  bool _fakeScreenShareOn = false;
+  String? _fakeVisionNotice;
+  int toggleVideoCalls = 0;
+  int toggleScreenShareCalls = 0;
+
+  @override
+  bool get visionSupported => _fakeVisionSupported;
+
+  @override
+  bool get visionUnsupported => _fakeVisionUnsupported;
+
+  @override
+  bool get videoOn => _fakeVideoOn;
+
+  @override
+  bool get screenShareOn => _fakeScreenShareOn;
+
+  @override
+  String? get visionNotice => _fakeVisionNotice;
+
+  void setVisionSupported(bool supported) {
+    _fakeVisionSupported = supported;
+    notifyListeners();
+  }
+
+  void setVisionUnsupported(bool unsupported) {
+    _fakeVisionUnsupported = unsupported;
+    notifyListeners();
+  }
+
+  void setVisionNotice(String? notice) {
+    _fakeVisionNotice = notice;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> toggleVideo() async {
+    toggleVideoCalls += 1;
+    if (_fakePhase != VoiceSessionPhase.live || !_fakeVisionSupported) return;
+    _fakeVideoOn = !_fakeVideoOn;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> toggleScreenShare() async {
+    toggleScreenShareCalls += 1;
+    if (_fakePhase != VoiceSessionPhase.live || !_fakeVisionSupported) return;
+    _fakeScreenShareOn = !_fakeScreenShareOn;
+    notifyListeners();
+  }
 }
 
 Future<ApiClient> _historyOnlyApi() async {
@@ -122,13 +178,15 @@ Future<ApiClient> _historyOnlyApi() async {
     }
     return http.Response('{}', 200, headers: _jsonUtf8);
   });
-  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+  return ApiClient(
+    httpClient: mockHttp,
+    auth: MockFirebaseAuth(signedIn: true),
+  );
 }
 
 void main() {
   group('VoiceCallScreen layout', () {
-    testWidgets(
-        'a live call renders a large centered orb, a close button, and '
+    testWidgets('a live call renders a large centered orb, a close button, and '
         'nothing else — no transcript, no composer', (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
@@ -138,9 +196,7 @@ void main() {
         ..setPhase(VoiceSessionPhase.live)
         ..setResponded();
 
-      await tester.pumpWidget(MaterialApp(
-        home: VoiceCallScreen(voice: voice),
-      ));
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
       await tester.pump();
 
       // The orb: present, and sized like an immersive centerpiece (spec's
@@ -153,8 +209,8 @@ void main() {
       expect(orb.state, AymaOrbState.listening);
 
       // Roughly centered horizontally in the viewport.
-      final screenWidth = tester.view.physicalSize.width /
-          tester.view.devicePixelRatio;
+      final screenWidth =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio;
       final orbCenter = tester.getCenter(orbFinder);
       expect((orbCenter.dx - screenWidth / 2).abs(), lessThan(2));
 
@@ -172,27 +228,32 @@ void main() {
     });
 
     testWidgets(
-        'a live call with no first reply yet reads "Connecting…", flipping '
-        'to "Listening…" once Ayma responds', (tester) async {
-      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+      'a live call with no first reply yet reads "Connecting…", flipping '
+      'to "Listening…" once Ayma responds',
+      (tester) async {
+        final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
 
-      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
-      await tester.pump();
+        await tester.pumpWidget(
+          MaterialApp(home: VoiceCallScreen(voice: voice)),
+        );
+        await tester.pump();
 
-      // Live, but the opener is still in flight: honest wait state, never a
-      // fake "Listening…".
-      expect(find.text('Connecting…'), findsOneWidget);
-      expect(find.text('Listening…'), findsNothing);
+        // Live, but the opener is still in flight: honest wait state, never a
+        // fake "Listening…".
+        expect(find.text('Connecting…'), findsOneWidget);
+        expect(find.text('Listening…'), findsNothing);
 
-      voice.setResponded();
-      await tester.pump();
+        voice.setResponded();
+        await tester.pump();
 
-      expect(find.text('Listening…'), findsOneWidget);
-      expect(find.text('Connecting…'), findsNothing);
-    });
+        expect(find.text('Listening…'), findsOneWidget);
+        expect(find.text('Connecting…'), findsNothing);
+      },
+    );
 
-    testWidgets('shows the "Ayma is quiet" chip only while she is muted',
-        (tester) async {
+    testWidgets('shows the "Ayma is quiet" chip only while she is muted', (
+      tester,
+    ) async {
       final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
       final chipText = find.textContaining('Ayma is quiet', findRichText: true);
 
@@ -214,8 +275,9 @@ void main() {
       expect(chipText, findsNothing);
     });
 
-    testWidgets('reflects Ayma speaking with the speaking orb state',
-        (tester) async {
+    testWidgets('reflects Ayma speaking with the speaking orb state', (
+      tester,
+    ) async {
       final voice = _FakeVoice()
         ..setPhase(VoiceSessionPhase.live)
         ..setSpeaking(true);
@@ -229,53 +291,60 @@ void main() {
     });
 
     testWidgets(
-        'connecting/waking render the thinking orb state with the right '
-        'status label', (tester) async {
-      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.connecting);
+      'connecting/waking render the thinking orb state with the right '
+      'status label',
+      (tester) async {
+        final voice = _FakeVoice()..setPhase(VoiceSessionPhase.connecting);
 
-      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
-      await tester.pump();
+        await tester.pumpWidget(
+          MaterialApp(home: VoiceCallScreen(voice: voice)),
+        );
+        await tester.pump();
 
-      expect(
-        tester.widget<AymaOrb>(find.byKey(const Key('voiceCallOrb'))).state,
-        AymaOrbState.thinking,
-      );
-      expect(find.text('Connecting…'), findsOneWidget);
+        expect(
+          tester.widget<AymaOrb>(find.byKey(const Key('voiceCallOrb'))).state,
+          AymaOrbState.thinking,
+        );
+        expect(find.text('Connecting…'), findsOneWidget);
 
-      voice.setPhase(VoiceSessionPhase.waking);
-      await tester.pump();
+        voice.setPhase(VoiceSessionPhase.waking);
+        await tester.pump();
 
-      expect(
-        tester.widget<AymaOrb>(find.byKey(const Key('voiceCallOrb'))).state,
-        AymaOrbState.thinking,
-      );
-      expect(find.text('Waking Ayma…'), findsOneWidget);
-    });
+        expect(
+          tester.widget<AymaOrb>(find.byKey(const Key('voiceCallOrb'))).state,
+          AymaOrbState.thinking,
+        );
+        expect(find.text('Waking Ayma…'), findsOneWidget);
+      },
+    );
 
-    testWidgets('tapping close pops back to whatever was underneath',
-        (tester) async {
+    testWidgets('tapping close pops back to whatever was underneath', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
 
-      await tester.pumpWidget(MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: ElevatedButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => VoiceCallScreen(voice: voice),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => VoiceCallScreen(voice: voice),
+                    ),
                   ),
+                  child: const Text('open'),
                 ),
-                child: const Text('open'),
               ),
             ),
           ),
         ),
-      ));
+      );
 
       // Not `pumpAndSettle`: the orb's own internal animation controller
       // repeats forever while it's mounted, so a settle here would never
@@ -311,8 +380,9 @@ void main() {
   });
 
   group('VoiceCallScreen mute button', () {
-    testWidgets('renders round mic toggle at the bottom center, unmuted',
-        (tester) async {
+    testWidgets('renders round mic toggle at the bottom center, unmuted', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -330,44 +400,47 @@ void main() {
       // band of the screen.
       final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
       final buttonCenter = tester.getCenter(button);
-      final orbCenter =
-          tester.getCenter(find.byKey(const Key('voiceCallOrb')));
+      final orbCenter = tester.getCenter(find.byKey(const Key('voiceCallOrb')));
       expect((buttonCenter.dx - screen.width / 2).abs(), lessThan(2));
       expect(buttonCenter.dy, greaterThan(orbCenter.dy));
       expect(buttonCenter.dy, greaterThan(screen.height * 0.8));
     });
 
     testWidgets(
-        'tapping toggles the controller mic state both ways without ending '
-        'the call', (tester) async {
-      final voice = _FakeVoice()
-        ..setPhase(VoiceSessionPhase.live)
-        ..setResponded();
-      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
-      await tester.pump();
+      'tapping toggles the controller mic state both ways without ending '
+      'the call',
+      (tester) async {
+        final voice = _FakeVoice()
+          ..setPhase(VoiceSessionPhase.live)
+          ..setResponded();
+        await tester.pumpWidget(
+          MaterialApp(home: VoiceCallScreen(voice: voice)),
+        );
+        await tester.pump();
 
-      await tester.tap(find.byKey(const Key('voiceCallMuteButton')));
-      await tester.pump();
+        await tester.tap(find.byKey(const Key('voiceCallMuteButton')));
+        await tester.pump();
 
-      expect(voice.toggleMuteCalls, 1);
-      expect(voice.muted, isTrue);
-      // The button reflects the actual controller state, and the status
-      // label reads Muted.
-      expect(find.byIcon(Icons.mic_off_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.mic_rounded), findsNothing);
-      expect(find.text('Muted'), findsOneWidget);
-      // Muting never ends or disrupts the call, and never closes this view.
-      expect(voice.phase, VoiceSessionPhase.live);
-      expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
+        expect(voice.toggleMuteCalls, 1);
+        expect(voice.muted, isTrue);
+        // The button reflects the actual controller state, and the status
+        // label reads Muted.
+        expect(find.byIcon(Icons.mic_off_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.mic_rounded), findsNothing);
+        expect(find.text('Muted'), findsOneWidget);
+        // Muting never ends or disrupts the call, and never closes this view.
+        expect(voice.phase, VoiceSessionPhase.live);
+        expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('voiceCallMuteButton')));
-      await tester.pump();
+        await tester.tap(find.byKey(const Key('voiceCallMuteButton')));
+        await tester.pump();
 
-      expect(voice.muted, isFalse);
-      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
-      expect(find.text('Listening…'), findsOneWidget);
-      expect(voice.phase, VoiceSessionPhase.live);
-    });
+        expect(voice.muted, isFalse);
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+        expect(find.text('Listening…'), findsOneWidget);
+        expect(voice.phase, VoiceSessionPhase.live);
+      },
+    );
 
     testWidgets('mute state survives closing and reopening the screen '
         'mid-call (it lives on the controller)', (tester) async {
@@ -377,22 +450,24 @@ void main() {
 
       final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
 
-      await tester.pumpWidget(MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: ElevatedButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => VoiceCallScreen(voice: voice),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => VoiceCallScreen(voice: voice),
+                    ),
                   ),
+                  child: const Text('open'),
                 ),
-                child: const Text('open'),
               ),
             ),
           ),
         ),
-      ));
+      );
 
       // Open, let the entrance transition finish (see the layout group's
       // notes on why these explicit pumps instead of pumpAndSettle).
@@ -422,108 +497,116 @@ void main() {
 
   group('ChatScreen voice entry/re-entry', () {
     testWidgets(
-        'tapping the composer mic only starts the session inline — it never '
-        'pushes the full-screen voice view', (tester) async {
-      tester.view.physicalSize = const Size(1080, 2400);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
+      'tapping the composer mic only starts the session inline — it never '
+      'pushes the full-screen voice view',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
 
-      final api = await _historyOnlyApi();
-      final voice = _FakeVoice();
+        final api = await _historyOnlyApi();
+        final voice = _FakeVoice();
 
-      await tester.pumpWidget(MaterialApp(
-        home: ChatScreen(apiClient: api, voiceController: voice),
-      ));
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ChatScreen(apiClient: api, voiceController: voice),
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      // No session yet: no full-screen entry point in the header either.
-      expect(
-        find.byKey(const Key('chatVoiceFullscreenButton')),
-        findsNothing,
-      );
+        // No session yet: no full-screen entry point in the header either.
+        expect(
+          find.byKey(const Key('chatVoiceFullscreenButton')),
+          findsNothing,
+        );
 
-      await tester.tap(find.byIcon(Icons.mic_none_rounded));
-      // Same async cadence as `chat_voice_out_of_credits_test.dart`: a
-      // zero-duration pump to commit `connecting`, a 1ms one to let the fake
-      // `Future.delayed(Duration.zero)` in `start()` fire, then a final
-      // zero-duration one to render `live`. No `pumpAndSettle` anywhere in
-      // this flow — the composer's voice-mode wave animation loops forever
-      // while the call is up.
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1));
-      await tester.pump();
+        await tester.tap(find.byIcon(Icons.mic_none_rounded));
+        // Same async cadence as `chat_voice_out_of_credits_test.dart`: a
+        // zero-duration pump to commit `connecting`, a 1ms one to let the fake
+        // `Future.delayed(Duration.zero)` in `start()` fire, then a final
+        // zero-duration one to render `live`. No `pumpAndSettle` anywhere in
+        // this flow — the composer's voice-mode wave animation loops forever
+        // while the call is up.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1));
+        await tester.pump();
 
-      expect(voice.phase, VoiceSessionPhase.live);
-      // Founder revision (2026-09-26): the mic no longer auto-opens the
-      // full-screen orb view — we stay on the chat screen, composer morphed
-      // into the inline call bar.
-      expect(find.byKey(const Key('voiceCallOrb')), findsNothing);
-      expect(find.byType(VoiceCallScreen), findsNothing);
-      // The composer's inline call bar (its End button) is what's on screen
-      // now, not the full-screen orb. (`mic_none_rounded` can't distinguish
-      // the states here — the call bar's own inline mute button reuses it.)
-      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-    });
-
-    testWidgets(
-        'the header full-screen button appears only while a session is live '
-        'and opens the full-screen voice view', (tester) async {
-      tester.view.physicalSize = const Size(1080, 2400);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final api = await _historyOnlyApi();
-      final voice = _FakeVoice();
-
-      await tester.pumpWidget(MaterialApp(
-        home: ChatScreen(apiClient: api, voiceController: voice),
-      ));
-      await tester.pumpAndSettle();
-
-      final fullscreenButton =
-          find.byKey(const Key('chatVoiceFullscreenButton'));
-      expect(fullscreenButton, findsNothing);
-
-      // Start a call from the mic; the button appears top-right, above the
-      // transcript, without any route change having happened.
-      await tester.tap(find.byIcon(Icons.mic_none_rounded));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1));
-      await tester.pump();
-
-      expect(voice.phase, VoiceSessionPhase.live);
-      expect(fullscreenButton, findsOneWidget);
-      expect(find.byType(VoiceCallScreen), findsNothing);
-      // Top-right of the chat screen: in the header band, right half.
-      final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
-      final buttonCenter = tester.getCenter(fullscreenButton);
-      expect(buttonCenter.dx, greaterThan(screen.width / 2));
-      expect(buttonCenter.dy, lessThan(screen.height * 0.15));
-
-      // Tapping it opens the full-screen view over the same live session.
-      await tester.tap(fullscreenButton);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
-      expect(
-        tester.widget<AymaOrb>(find.byKey(const Key('voiceCallOrb'))).state,
-        AymaOrbState.listening,
-      );
-      expect(voice.phase, VoiceSessionPhase.live);
-
-      // Ending the call (after closing the view) hides the button again.
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.byIcon(Icons.close));
-      for (var i = 0; i < 8; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
-      await voice.stop();
-      await tester.pump();
-      expect(fullscreenButton, findsNothing);
-    });
+        expect(voice.phase, VoiceSessionPhase.live);
+        // Founder revision (2026-09-26): the mic no longer auto-opens the
+        // full-screen orb view — we stay on the chat screen, composer morphed
+        // into the inline call bar.
+        expect(find.byKey(const Key('voiceCallOrb')), findsNothing);
+        expect(find.byType(VoiceCallScreen), findsNothing);
+        // The composer's inline call bar (its End button) is what's on screen
+        // now, not the full-screen orb. (`mic_none_rounded` can't distinguish
+        // the states here — the call bar's own inline mute button reuses it.)
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      },
+    );
 
     testWidgets(
-        'closing the full-screen view returns to the inline call bar, '
+      'the header full-screen button appears only while a session is live '
+      'and opens the full-screen voice view',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final api = await _historyOnlyApi();
+        final voice = _FakeVoice();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ChatScreen(apiClient: api, voiceController: voice),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final fullscreenButton = find.byKey(
+          const Key('chatVoiceFullscreenButton'),
+        );
+        expect(fullscreenButton, findsNothing);
+
+        // Start a call from the mic; the button appears top-right, above the
+        // transcript, without any route change having happened.
+        await tester.tap(find.byIcon(Icons.mic_none_rounded));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1));
+        await tester.pump();
+
+        expect(voice.phase, VoiceSessionPhase.live);
+        expect(fullscreenButton, findsOneWidget);
+        expect(find.byType(VoiceCallScreen), findsNothing);
+        // Top-right of the chat screen: in the header band, right half.
+        final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+        final buttonCenter = tester.getCenter(fullscreenButton);
+        expect(buttonCenter.dx, greaterThan(screen.width / 2));
+        expect(buttonCenter.dy, lessThan(screen.height * 0.15));
+
+        // Tapping it opens the full-screen view over the same live session.
+        await tester.tap(fullscreenButton);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
+        expect(
+          tester.widget<AymaOrb>(find.byKey(const Key('voiceCallOrb'))).state,
+          AymaOrbState.listening,
+        );
+        expect(voice.phase, VoiceSessionPhase.live);
+
+        // Ending the call (after closing the view) hides the button again.
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.close));
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        await voice.stop();
+        await tester.pump();
+        expect(fullscreenButton, findsNothing);
+      },
+    );
+
+    testWidgets('closing the full-screen view returns to the inline call bar, '
         'which can re-open it', (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
@@ -532,9 +615,11 @@ void main() {
       final api = await _historyOnlyApi();
       final voice = _FakeVoice();
 
-      await tester.pumpWidget(MaterialApp(
-        home: ChatScreen(apiClient: api, voiceController: voice),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(apiClient: api, voiceController: voice),
+        ),
+      );
       await tester.pumpAndSettle();
 
       // Start the call (inline), then go full-screen through the header's
@@ -588,6 +673,180 @@ void main() {
 
       expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
       expect(voice.phase, VoiceSessionPhase.live);
+    });
+  });
+
+  group('VoiceCallScreen vision toggles (feedback item 13)', () {
+    final videoButton = find.byKey(const Key('voiceCallVideoButton'));
+    final screenButton = find.byKey(const Key('voiceCallScreenShareButton'));
+
+    testWidgets(
+      'hidden while the serving stack has not declared video perception',
+      (tester) async {
+        final voice = _FakeVoice()
+          ..setPhase(VoiceSessionPhase.live)
+          ..setResponded();
+
+        await tester.pumpWidget(
+          MaterialApp(home: VoiceCallScreen(voice: voice)),
+        );
+        await tester.pump();
+
+        expect(videoButton, findsNothing);
+        expect(screenButton, findsNothing);
+        // The mute toggle — the pre-existing control — is unaffected.
+        expect(find.byKey(const Key('voiceCallMuteButton')), findsOneWidget);
+
+        voice.setVisionSupported(true);
+        await tester.pump();
+
+        expect(videoButton, findsOneWidget);
+        expect(screenButton, findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'visible but disabled with the reason on an unsupported model',
+      (tester) async {
+        final voice = _FakeVoice()
+          ..setVisionUnsupported(true)
+          ..setPhase(VoiceSessionPhase.live)
+          ..setResponded();
+
+        await tester.pumpWidget(
+          MaterialApp(home: VoiceCallScreen(voice: voice)),
+        );
+        await tester.pump();
+
+        // Shown, not hidden — with the plain explanation under the row.
+        expect(videoButton, findsOneWidget);
+        expect(screenButton, findsOneWidget);
+        expect(
+          find.byKey(const Key('voiceCallVisionUnsupportedNote')),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            'Video and screen share need a realtime model '
+            '— switch in Models.',
+          ),
+          findsOneWidget,
+        );
+
+        // Disabled: the InkWell under each button carries no tap handler,
+        // and tapping changes nothing.
+        for (final button in [videoButton, screenButton]) {
+          final inkWell = tester.widget<InkWell>(
+            find.descendant(of: button, matching: find.byType(InkWell)),
+          );
+          expect(inkWell.onTap, isNull);
+        }
+        await tester.tap(videoButton);
+        await tester.tap(screenButton);
+        await tester.pump();
+        expect(voice.toggleVideoCalls, 0);
+        expect(voice.toggleScreenShareCalls, 0);
+      },
+    );
+
+    testWidgets('the sharing pill shows while sharing and stops on tap', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+      expect(find.byKey(const Key('voiceCallSharingPill')), findsNothing);
+
+      await tester.tap(screenButton);
+      await tester.pump();
+      expect(voice.screenShareOn, isTrue);
+      expect(find.byKey(const Key('voiceCallSharingPill')), findsOneWidget);
+      expect(
+        find.text('Sharing your screen — tap to stop'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('voiceCallSharingPill')));
+      await tester.pump();
+      expect(voice.toggleScreenShareCalls, 2);
+      expect(voice.screenShareOn, isFalse);
+      expect(find.byKey(const Key('voiceCallSharingPill')), findsNothing);
+    });
+
+    testWidgets('hidden until the call is live, even when supported', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.connecting);
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+
+      expect(videoButton, findsNothing);
+      expect(screenButton, findsNothing);
+    });
+
+    testWidgets('tapping each toggle calls through and reflects its state', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+
+      await tester.tap(videoButton);
+      await tester.pump();
+      expect(voice.toggleVideoCalls, 1);
+      expect(voice.videoOn, isTrue);
+      expect(
+        find.descendant(
+          of: videoButton,
+          matching: find.byIcon(Icons.videocam_rounded),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(screenButton);
+      await tester.pump();
+      expect(voice.toggleScreenShareCalls, 1);
+      expect(voice.screenShareOn, isTrue);
+      // Scoped to the button: the sharing pill carries the same icon.
+      expect(
+        find.descendant(
+          of: screenButton,
+          matching: find.byIcon(Icons.screen_share_rounded),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the vision notice line renders while one is set', (
+      tester,
+    ) async {
+      final voice = _FakeVoice()
+        ..setVisionSupported(true)
+        ..setPhase(VoiceSessionPhase.live)
+        ..setResponded();
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+      expect(find.byKey(const Key('voiceCallVisionNotice')), findsNothing);
+
+      voice.setVisionNotice("Ayma can't see protected content on this screen.");
+      await tester.pump();
+      expect(find.byKey(const Key('voiceCallVisionNotice')), findsOneWidget);
+      expect(
+        find.text("Ayma can't see protected content on this screen."),
+        findsOneWidget,
+      );
     });
   });
 }

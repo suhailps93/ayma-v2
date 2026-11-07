@@ -4,6 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 
+/// The one LiveKit type the transport seam hands upward: the local camera
+/// track the call screen renders as the self-view. Everything else about
+/// LiveKit stays behind [VoiceTransport].
+export 'package:livekit_client/livekit_client.dart' show VideoTrack;
+
 /// One transcript segment relayed by the agent over the room data channel
 /// (§1.6). [topic] is `user_transcript` or `agent_transcript`.
 class TranscriptSegment {
@@ -47,6 +52,18 @@ const _voiceAccentControlTopic = 'voice_accent_control';
 const _tourTappedControlTopic = 'tour_tapped';
 const _practiceCoachTopic = 'practice_coach';
 const _voiceStatusTopic = 'voice_status';
+const _visionStateTopic = 'vision_state';
+const _visionControlTopic = 'vision_control';
+
+/// Vision states the agent reports on the `vision_state` topic while the
+/// user is sharing video or their screen with Ayma (feedback item 13).
+/// [visionStateSecureContent] means the frames arriving are black because
+/// the shared surface is FLAG_SECURE protected content — Ayma cannot see
+/// it and must say so rather than guess. [visionStateFramesFlowing] means
+/// real frames are arriving again (or the share stopped), clearing that
+/// notice.
+const visionStateSecureContent = 'secure_content';
+const visionStateFramesFlowing = 'frames_flowing';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -150,6 +167,46 @@ abstract class VoiceTransport {
 
   Future<void> setMicrophoneEnabled(bool enabled);
 
+  /// Publishes (`true`) or unpublishes (`false`) the user's camera track
+  /// into the SAME LiveKit room as the voice session (feedback item 13:
+  /// user↔Ayma video). Frames reach the agent through the room's existing
+  /// LiveKit vision input — no separate upload or provider route. On first
+  /// enable the OS camera permission prompt is raised by the WebRTC layer;
+  /// a denial throws, and the caller leaves the voice call untouched.
+  Future<void> setCameraEnabled(bool enabled);
+
+  /// Publishes (`true`) or unpublishes (`false`) the user's screen-share
+  /// track into the same room. On Android this drives MediaProjection
+  /// (the per-session system consent is requested by the caller through
+  /// `ScreenSharePlatform` BEFORE enabling, and the media-projection
+  /// foreground service must already be running — Android 14). Unpublishing
+  /// removes the track outright, so a stopped share leaves nothing behind.
+  Future<void> setScreenShareEnabled(bool enabled);
+
+  /// Emits the agent's vision state while a video/screen share is live
+  /// (topic `vision_state`, payload `{"state"}`): [visionStateSecureContent]
+  /// when the shared frames are FLAG_SECURE black, [visionStateFramesFlowing]
+  /// when real frames resume. Never emits for a plain audio call.
+  Stream<String> get visionState;
+
+  /// Tells the live agent the user turned a vision source on or off (topic
+  /// `vision_control`, payload `{"source": "camera"|"screen", "active":
+  /// bool}` — the action-parity command names for the voice-call screen's
+  /// Video / Screen share toggles, see `VoiceSessionController.toggleVideo`
+  /// / `toggleScreenShare`). The agent uses it to know she may reference
+  /// what she sees, and to clear any secure-content state when a share ends.
+  Future<void> sendVisionControl({
+    required String source,
+    required bool active,
+  });
+
+  /// The local camera track currently published in the room, or null when
+  /// video is off / not yet published. The call screen renders it as the
+  /// user's self-view — Gemini Live puts the camera feed on the call's main
+  /// stage while video is on (design references: design-references/
+  /// gemini-live). Read-only; publishing stays with [setCameraEnabled].
+  VideoTrack? get localCameraTrack;
+
   Future<void> disconnect();
 
   Future<void> dispose();
@@ -179,6 +236,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _agentMute = StreamController<bool>.broadcast();
   final _practiceCoach = StreamController<String>.broadcast();
   final _voiceStatus = StreamController<String>.broadcast();
+  final _visionState = StreamController<String>.broadcast();
   final _reconnecting = StreamController<bool>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
@@ -245,6 +303,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Stream<String> get voiceStatus => _voiceStatus.stream;
 
   @override
+  Stream<String> get visionState => _visionState.stream;
+
+  @override
   Stream<bool> get reconnecting => _reconnecting.stream;
 
   @override
@@ -256,8 +317,10 @@ class LiveKitVoiceTransport implements VoiceTransport {
     required String token,
     bool forceRelay = false,
   }) async {
-    debugPrint('[voice] connect -> $url (token ${token.length} chars)'
-        '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}');
+    debugPrint(
+      '[voice] connect -> $url (token ${token.length} chars)'
+      '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}',
+    );
     final room = Room(
       roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
     );
@@ -267,13 +330,15 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
     listener
       ..on<DataReceivedEvent>(_onData)
-      ..on<RoomConnectedEvent>(
-          (_) => debugPrint('[voice] RoomConnected'))
-      ..on<ParticipantConnectedEvent>((e) => debugPrint(
-          '[voice] participant joined: ${e.participant.identity}'))
+      ..on<RoomConnectedEvent>((_) => debugPrint('[voice] RoomConnected'))
+      ..on<ParticipantConnectedEvent>(
+        (e) =>
+            debugPrint('[voice] participant joined: ${e.participant.identity}'),
+      )
       ..on<TrackSubscribedEvent>((e) {
         debugPrint(
-            '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}');
+          '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}',
+        );
         // First remote audio track = the agent is in the room and audible.
         if (e.track.kind == TrackType.AUDIO) {
           _markAgentReady('remote audio from ${e.participant.identity}');
@@ -314,11 +379,14 @@ class LiveKitVoiceTransport implements VoiceTransport {
               )
             : null,
       );
-      debugPrint('[voice] room.connect returned ok'
-          '${forceRelay ? ' (ice-relay-retry path)' : ''}');
+      debugPrint(
+        '[voice] room.connect returned ok'
+        '${forceRelay ? ' (ice-relay-retry path)' : ''}',
+      );
     } catch (e, st) {
       debugPrint(
-          '[voice] room.connect (forceRelay=$forceRelay) THREW: $e\n$st');
+        '[voice] room.connect (forceRelay=$forceRelay) THREW: $e\n$st',
+      );
       rethrow;
     }
 
@@ -340,18 +408,22 @@ class LiveKitVoiceTransport implements VoiceTransport {
       final decoded = jsonDecode(utf8.decode(e.data)) as Map<String, dynamic>;
       if (topic == _userTranscriptTopic || topic == _agentTranscriptTopic) {
         if (_transcripts.isClosed) return;
-        _transcripts.add(TranscriptSegment(
-          topic: topic!,
-          text: decoded['text'] as String? ?? '',
-          isFinal: decoded['is_final'] as bool? ?? true,
-        ));
+        _transcripts.add(
+          TranscriptSegment(
+            topic: topic!,
+            text: decoded['text'] as String? ?? '',
+            isFinal: decoded['is_final'] as bool? ?? true,
+          ),
+        );
       } else if (topic == _toolUsedTopic) {
         if (_toolEvents.isClosed) return;
-        _toolEvents.add(ToolUsedEvent(
-          name: decoded['name'] as String? ?? '',
-          label: decoded['label'] as String? ?? '',
-          phase: decoded['phase'] as String? ?? '',
-        ));
+        _toolEvents.add(
+          ToolUsedEvent(
+            name: decoded['name'] as String? ?? '',
+            label: decoded['label'] as String? ?? '',
+            phase: decoded['phase'] as String? ?? '',
+          ),
+        );
       } else if (topic == _callEndingTopic) {
         if (_callEnding.isClosed) return;
         final reason = decoded['reason'] as String? ?? '';
@@ -368,6 +440,10 @@ class LiveKitVoiceTransport implements VoiceTransport {
         if (_voiceStatus.isClosed) return;
         final state = decoded['state'] as String? ?? '';
         if (state.isNotEmpty) _voiceStatus.add(state);
+      } else if (topic == _visionStateTopic) {
+        if (_visionState.isClosed) return;
+        final state = decoded['state'] as String? ?? '';
+        if (state.isNotEmpty) _visionState.add(state);
       } else if (topic == _agentStateTopic) {
         // Fallback readiness signal: the first agent_state message means the
         // agent's session is live even if its audio track hasn't subscribed yet.
@@ -427,6 +503,22 @@ class LiveKitVoiceTransport implements VoiceTransport {
   }
 
   @override
+  Future<void> sendVisionControl({
+    required String source,
+    required bool active,
+  }) async {
+    final participant = _room?.localParticipant;
+    if (participant == null) {
+      throw StateError('not connected to a voice room');
+    }
+    await participant.publishData(
+      utf8.encode(jsonEncode({'source': source, 'active': active})),
+      reliable: true,
+      topic: _visionControlTopic,
+    );
+  }
+
+  @override
   Future<void> setMicrophoneEnabled(bool enabled) async {
     debugPrint('[voice] setMicrophoneEnabled($enabled)');
     try {
@@ -436,6 +528,43 @@ class LiveKitVoiceTransport implements VoiceTransport {
       debugPrint('[voice] setMicrophoneEnabled THREW: $e\n$st');
       rethrow;
     }
+  }
+
+  @override
+  Future<void> setCameraEnabled(bool enabled) async {
+    debugPrint('[voice] setCameraEnabled($enabled)');
+    try {
+      await _room?.localParticipant?.setCameraEnabled(enabled);
+      debugPrint('[voice] camera set ok');
+    } catch (e, st) {
+      debugPrint('[voice] setCameraEnabled THREW: $e\n$st');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setScreenShareEnabled(bool enabled) async {
+    debugPrint('[voice] setScreenShareEnabled($enabled)');
+    try {
+      await _room?.localParticipant?.setScreenShareEnabled(enabled);
+      debugPrint('[voice] screen share set ok');
+    } catch (e, st) {
+      debugPrint('[voice] setScreenShareEnabled THREW: $e\n$st');
+      rethrow;
+    }
+  }
+
+  @override
+  VideoTrack? get localCameraTrack {
+    final participant = _room?.localParticipant;
+    if (participant == null) return null;
+    for (final publication in participant.videoTrackPublications) {
+      if (publication.source == TrackSource.camera) {
+        final track = publication.track;
+        if (track is VideoTrack) return track;
+      }
+    }
+    return null;
   }
 
   @override
@@ -461,6 +590,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_agentMute.isClosed) await _agentMute.close();
     if (!_practiceCoach.isClosed) await _practiceCoach.close();
     if (!_voiceStatus.isClosed) await _voiceStatus.close();
+    if (!_visionState.isClosed) await _visionState.close();
     if (!_reconnecting.isClosed) await _reconnecting.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();

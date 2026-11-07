@@ -1095,6 +1095,20 @@ class Config:
     tell the user when a model cannot change accent (§13.9). Lowercase.
     ``VOICE_ACCENT_CAPABLE_PROVIDERS`` (CSV, lowercase) overrides."""
 
+    voice_video_capable_providers: tuple[str, ...]
+    """Provider segments whose REALTIME model accepts VIDEO input (camera /
+    screen-share frames) during a voice call (feedback item 13). The
+    native-audio realtime models take frames through the session's video
+    input, so ``gemini`` (Gemini Live) and ``openai`` (OpenAI Realtime) are
+    video-capable by default. CASCADE stacks are never video-capable in
+    livekit-agents 1.8.9 — the pipeline forwards frames only to realtime
+    sessions, so a cascade brain never receives them even when the brain
+    model is vision-capable over text. The single source of truth for
+    ``voice_catalog.provider_supports_video``, which the agent reads to
+    declare per-session vision support to the client (the Video / Screen
+    share toggles enable only on a capable stack). Lowercase.
+    ``VOICE_VIDEO_CAPABLE_PROVIDERS`` (CSV, lowercase) overrides."""
+
     image_variants_enabled: bool
     """Cloud profile-photo variants (Perf Phase 2 PREP, ``image_variants``).
     ``IMAGE_VARIANTS_ENABLED`` — set to ``true`` ONLY on ``ayma-api-staging``.
@@ -1449,6 +1463,11 @@ def _load() -> Config:
         ),
         voice_accent_capable_providers=_csv(
             "VOICE_ACCENT_CAPABLE_PROVIDERS",
+            "gemini,openai",
+            lower=True,
+        ),
+        voice_video_capable_providers=_csv(
+            "VOICE_VIDEO_CAPABLE_PROVIDERS",
             "gemini,openai",
             lower=True,
         ),

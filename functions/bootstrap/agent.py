@@ -58,6 +58,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     JobProcess,
     JobRequest,
     MetricsCollectedEvent,
+    RoomInputOptions,
     RoomOutputOptions,
     UserInputTranscribedEvent,
     WorkerOptions,
@@ -169,6 +170,58 @@ VOICE_STATUS_OPEN_WEIGHTS_WARMING = "open_weights_warming"
 # shows an honest "the voice hit a snag, reconnecting…" instead of dead air
 # (founder bug, staging 2026-11-03). Payload: {"state": "tts_error"}.
 VOICE_STATUS_TTS_ERROR = "tts_error"
+# User↔Ayma video + screen share (feedback item 13, 2026-11-06): the client
+# publishes the user's camera / screen track into this same LiveKit room and
+# the frames reach the model through the session's LiveKit video input
+# (`RoomInputOptions(video_enabled=True)` in `_start_main_session` /
+# `_start_main_cascade_session` — LiveKit-only inference, no new provider
+# route). On session start the serving stack declares, on the same
+# `voice_status` topic, whether it can actually perceive those frames:
+# realtime models (Gemini Live) consume them natively and publish
+# `vision_supported`; the cascade pipeline cannot consume video frames in
+# livekit-agents 1.8.9 (`AgentActivity.push_video` forwards only to a
+# realtime session), so it publishes `vision_unsupported` and the client
+# never shows the toggles (founder rule: only models that support video
+# perception expose the buttons). Payload: {"state": ...}.
+VOICE_STATUS_VISION_SUPPORTED = "vision_supported"
+VOICE_STATUS_VISION_UNSUPPORTED = "vision_unsupported"
+# While a share is live the agent samples the user's video track (see
+# `watch_vision_tracks`) and reports frame state on this topic. FLAG_SECURE
+# surfaces (banking / password screens) arrive as pure-black frames:
+# `secure_content` tells the client to show the honest notice, and Ayma's
+# instructions (VISION_INSTRUCTIONS) carry the same rule for her speech —
+# say she cannot see protected content, never guess at it. Payload:
+# {"state": "secure_content" | "frames_flowing"}.
+TOPIC_VISION_STATE = "vision_state"
+VISION_STATE_SECURE_CONTENT = "secure_content"
+VISION_STATE_FRAMES_FLOWING = "frames_flowing"
+# Client → agent: the user toggled a vision source (the action-parity
+# command names for the voice-call screen's Video / Screen share buttons).
+# Payload: {"source": "camera" | "screen", "active": bool}. The agent's
+# own track subscription stays the authoritative signal; this only clears
+# stale secure-content state the moment a share ends.
+TOPIC_VISION_CONTROL = "vision_control"
+
+# Appended to the main-call instructions (both stacks) so Ayma's spoken
+# behaviour matches the client UI for video / screen share.
+VISION_INSTRUCTIONS = (
+    "\n\n## Video and screen share\n"
+    "During this call the user can turn on their camera or share their "
+    "screen so you can see them or what they are looking at, and you may "
+    "refer naturally to what you see while a share is live. If the video "
+    "or shared screen is black or blank, that is protected content (a "
+    "secure screen Android will not show you): say plainly that you "
+    "cannot see protected content and ask the user to describe it or move "
+    "to another screen — never guess, invent, or claim to see anything "
+    "that is not actually in front of you. When no camera or screen share "
+    "is on, do not claim to see the user or their screen."
+)
+
+#: Mean 0..255 luminance at or below this counts as a black frame — the
+#: same threshold the co-pilot highlight build uses for FLAG_SECURE
+#: detection (`kCopilotBlackLuminanceMax` / `BLACK_LUMINANCE_MAX` there),
+#: so both features agree on what "Ayma cannot see this" means.
+VISION_BLACK_LUMINANCE_MAX = 4.0
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -861,6 +914,122 @@ async def _publish_voice_status(ctx: JobContext, state: str) -> None:
         )
     except Exception:  # noqa: BLE001 - a dropped status must not kill the call
         logger.exception("failed to publish voice_status (%s)", state)
+
+
+async def _publish_vision_state(ctx: JobContext, state: str) -> None:
+    """Tell the client the state of the frames arriving from the user's
+    video / screen share (see [TOPIC_VISION_STATE]). Best-effort like
+    [_publish_voice_status]: a dropped signal never affects the call."""
+    payload = json.dumps({"state": state}).encode()
+    try:
+        await ctx.room.local_participant.publish_data(
+            payload, reliable=True, topic=TOPIC_VISION_STATE
+        )
+    except Exception:  # noqa: BLE001 - a dropped signal must not kill the call
+        logger.exception("failed to publish vision_state (%s)", state)
+
+
+def vision_frame_is_black(rgb: bytes) -> bool:
+    """True when a raw RGB24 frame is (near-)pure black — how a FLAG_SECURE
+    surface arrives through a screen share. The mean over all channel bytes
+    approximates mean luminance closely enough at the black end, where the
+    secure-content decision lives (see [VISION_BLACK_LUMINANCE_MAX]). An
+    empty frame is not evidence of anything and reads as not black."""
+    if not rgb:
+        return False
+    return (sum(rgb) / len(rgb)) <= VISION_BLACK_LUMINANCE_MAX
+
+
+def watch_vision_tracks(ctx: JobContext) -> None:
+    """Sample the user's published video tracks during a main Ayma call and
+    report FLAG_SECURE black frames to the client (feedback item 13).
+
+    One sampler per subscribed remote video track (camera or screen share —
+    the check is identical): frames are pulled as RGB24 at the stream's own
+    pace and luminance-checked at most once a second. A black frame flips
+    the share to `secure_content` (the client shows the honest notice; the
+    model itself only receives black, and [VISION_INSTRUCTIONS] tells Ayma
+    to say she cannot see protected content rather than guess); the first
+    real frame after that flips it back to `frames_flowing`. Nothing is
+    recorded or persisted — frames are inspected in memory and dropped.
+    """
+    from livekit import rtc
+
+    samplers: dict[str, asyncio.Task] = {}
+    secure = {"active": False}
+
+    async def _sample(track: rtc.Track) -> None:
+        stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGB24)
+        last_check = 0.0
+        try:
+            async for event in stream:
+                now = asyncio.get_running_loop().time()
+                if now - last_check < 1.0:
+                    continue
+                last_check = now
+                black = vision_frame_is_black(bytes(event.frame.data))
+                if black and not secure["active"]:
+                    secure["active"] = True
+                    await _publish_vision_state(ctx, VISION_STATE_SECURE_CONTENT)
+                elif not black and secure["active"]:
+                    secure["active"] = False
+                    await _publish_vision_state(ctx, VISION_STATE_FRAMES_FLOWING)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a sampler must never kill the call
+            logger.exception("vision track sampler failed")
+        finally:
+            await stream.aclose()
+
+    def _on_track_subscribed(
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
+        participant: rtc.RemoteParticipant,
+    ) -> None:
+        if track.kind != rtc.TrackKind.KIND_VIDEO:
+            return
+        if publication.sid in samplers:
+            return
+        samplers[publication.sid] = asyncio.create_task(_sample(track))
+
+    def _on_track_unsubscribed(
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
+        participant: rtc.RemoteParticipant,
+    ) -> None:
+        task = samplers.pop(publication.sid, None)
+        if task is not None:
+            task.cancel()
+        # The share ended: no stale secure-content state survives it.
+        if secure["active"] and not samplers:
+            secure["active"] = False
+            asyncio.create_task(
+                _publish_vision_state(ctx, VISION_STATE_FRAMES_FLOWING)
+            )
+
+    def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
+        if getattr(packet, "topic", None) != TOPIC_VISION_CONTROL:
+            return
+        try:
+            payload = json.loads(bytes(packet.data).decode("utf-8"))
+        except Exception:  # noqa: BLE001 - a malformed control is dropped
+            return
+        if not isinstance(payload, dict):
+            return
+        logger.info(
+            "vision_control: source=%s active=%s",
+            payload.get("source"),
+            payload.get("active"),
+        )
+        if payload.get("active") is False and secure["active"]:
+            secure["active"] = False
+            asyncio.create_task(
+                _publish_vision_state(ctx, VISION_STATE_FRAMES_FLOWING)
+            )
+
+    ctx.room.on("track_subscribed", _on_track_subscribed)
+    ctx.room.on("track_unsubscribed", _on_track_unsubscribed)
+    ctx.room.on("data_received", _on_data)
 
 
 def _warm_open_weights_endpoint() -> None:
@@ -3195,6 +3364,8 @@ async def _start_main_gemini_session(
     # replaying the boot one.
     accent_block = _accent_block(rv, seed.voice_accent)
     _instructions = _compose_instructions(seed.system_prompt, accent_block, vocab)
+    # Video / screen share behaviour (feedback item 13) — both main stacks.
+    _instructions += VISION_INSTRUCTIONS
     # Mid-call voice hot-swap (``VoiceSwapper``) only rebuilds Gemini Live, so it
     # is wired only on the Gemini path; a non-Gemini realtime model
     # (``enable_hot_swap=False``) just saves the preference for the next call,
@@ -3260,8 +3431,30 @@ async def _start_main_gemini_session(
     await session.start(
         agent=agent,
         room=ctx.room,
+        # Video input ON (feedback item 13): the user's camera / screen
+        # tracks, published into this room by the client, flow to the
+        # realtime model through the existing LiveKit vision path.
+        room_input_options=RoomInputOptions(video_enabled=True),
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+    # Declare vision support from the ONE catalog source of truth
+    # (``RuntimeVoices.supports_video`` — feedback item 13): a realtime
+    # model on a video-capable provider (Gemini Live, OpenAI Realtime)
+    # genuinely perceives the frames, so the client enables the Video /
+    # Screen share toggles; anything else is declared unsupported and the
+    # client shows them disabled. Watch the tracks either way for
+    # FLAG_SECURE black frames.
+    _vision_ok = voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_REALTIME,
+        realtime_model_id=seed.realtime_model_id,
+    ).supports_video
+    await _publish_voice_status(
+        ctx,
+        VOICE_STATUS_VISION_SUPPORTED
+        if _vision_ok
+        else VOICE_STATUS_VISION_UNSUPPORTED,
+    )
+    watch_vision_tracks(ctx)
     session_live_ts = time.monotonic()
     logger.info("voice session LIVE: ts=%.3f uid=%s session=%s", 
                 session_live_ts, seed.uid, seed.session_id or "?")
@@ -3474,7 +3667,8 @@ async def _start_main_cascade_session(
         # discipline (founder, prod 2284).
         "instructions": _compose_instructions(
             seed.system_prompt, accent_block, vocab
-        ),
+        )
+        + VISION_INSTRUCTIONS,
         "tools": tools,
     }
     # A guided-tour tap arrives on the data channel (§11.2b) — drive the advance.
@@ -3492,9 +3686,29 @@ async def _start_main_cascade_session(
     await session.start(
         agent=agent,
         room=ctx.room,
+        room_input_options=RoomInputOptions(video_enabled=True),
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
-    
+    # Declare vision support from the ONE catalog source of truth
+    # (``RuntimeVoices.supports_video`` — feedback item 13): a cascade
+    # pipeline cannot consume video frames in livekit-agents 1.8.9, so this
+    # resolves False and the client shows the Video / Screen share toggles
+    # disabled with the reason — it never lets the user publish video into
+    # a session whose model cannot perceive it. The track watcher still
+    # runs, so secure-content detection stays correct if a share ever
+    # reaches this room.
+    _vision_ok = voice_catalog.runtime_voices(
+        mode=voice_catalog.MODE_CASCADE,
+        tts_id=seed.tts_id,
+    ).supports_video
+    await _publish_voice_status(
+        ctx,
+        VOICE_STATUS_VISION_SUPPORTED
+        if _vision_ok
+        else VOICE_STATUS_VISION_UNSUPPORTED,
+    )
+    watch_vision_tracks(ctx)
+
     # Start idle timer NOW that session is truly live (cascade path, same fix)
     if watchdog:
         watchdog.start()

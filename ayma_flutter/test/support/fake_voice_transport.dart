@@ -12,6 +12,7 @@ class FakeVoiceTransport implements VoiceTransport {
   final agentMuteController = StreamController<bool>.broadcast();
   final practiceCoachController = StreamController<String>.broadcast();
   final voiceStatusController = StreamController<String>.broadcast();
+  final visionStateController = StreamController<String>.broadcast();
   final reconnectingController = StreamController<bool>.broadcast();
   final closedController = StreamController<Object>.broadcast();
   final localLevelController = StreamController<double>.broadcast();
@@ -111,6 +112,58 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!agentMuteController.isClosed) agentMuteController.add(muted);
   }
 
+  @override
+  Stream<String> get visionState => visionStateController.stream;
+
+  /// Emit an agent vision state (test helper, feedback item 13) — e.g.
+  /// `secure_content` for FLAG_SECURE black frames.
+  void emitVisionState(String state) {
+    if (!visionStateController.isClosed) visionStateController.add(state);
+  }
+
+  /// Every [setCameraEnabled] call, in order.
+  final List<bool> cameraCalls = [];
+  bool failCamera = false;
+
+  @override
+  Future<void> setCameraEnabled(bool enabled) async {
+    if (failCamera && enabled) throw StateError('camera permission denied');
+    cameraCalls.add(enabled);
+  }
+
+  /// Every [setScreenShareEnabled] call, in order.
+  final List<bool> screenShareCalls = [];
+  bool failScreenShare = false;
+
+  @override
+  Future<void> setScreenShareEnabled(bool enabled) async {
+    if (failScreenShare && enabled) {
+      throw StateError('screen share publish failed');
+    }
+    screenShareCalls.add(enabled);
+  }
+
+  /// Every [sendVisionControl] request, in order (source, active).
+  final List<({String source, bool active})> visionControlCalls = [];
+  bool failVisionControl = false;
+
+  @override
+  Future<void> sendVisionControl({
+    required String source,
+    required bool active,
+  }) async {
+    if (failVisionControl) throw StateError('data channel closed');
+    visionControlCalls.add((source: source, active: active));
+  }
+
+  /// The track [localCameraTrack] hands back — null by default (widget
+  /// tests cannot build a real LiveKit VideoTrack; the self-view simply
+  /// stays hidden, which the screen treats as "no preview yet").
+  VideoTrack? fakeLocalCameraTrack;
+
+  @override
+  VideoTrack? get localCameraTrack => fakeLocalCameraTrack;
+
   /// Every [sendAgentMuteControl] request, in order.
   final List<bool> muteControlCalls = [];
   bool failMuteControl = false;
@@ -188,21 +241,42 @@ class FakeVoiceTransport implements VoiceTransport {
   @override
   Future<void> dispose() async {
     disposeCalls++;
-    if (!agentReadyController.isClosed) await agentReadyController.close();
-    if (!agentSpeakingController.isClosed) await agentSpeakingController.close();
-    if (!transcriptsController.isClosed) await transcriptsController.close();
-    if (!toolEventsController.isClosed) await toolEventsController.close();
-    if (!callEndingController.isClosed) await callEndingController.close();
-    if (!agentMuteController.isClosed) await agentMuteController.close();
+    if (!agentReadyController.isClosed) {
+      await agentReadyController.close();
+    }
+    if (!agentSpeakingController.isClosed) {
+      await agentSpeakingController.close();
+    }
+    if (!transcriptsController.isClosed) {
+      await transcriptsController.close();
+    }
+    if (!toolEventsController.isClosed) {
+      await toolEventsController.close();
+    }
+    if (!callEndingController.isClosed) {
+      await callEndingController.close();
+    }
+    if (!agentMuteController.isClosed) {
+      await agentMuteController.close();
+    }
     if (!practiceCoachController.isClosed) {
       await practiceCoachController.close();
     }
-    if (!voiceStatusController.isClosed) await voiceStatusController.close();
+    if (!voiceStatusController.isClosed) {
+      await voiceStatusController.close();
+    }
+    if (!visionStateController.isClosed) {
+      await visionStateController.close();
+    }
     if (!reconnectingController.isClosed) {
       await reconnectingController.close();
     }
-    if (!closedController.isClosed) await closedController.close();
-    if (!localLevelController.isClosed) await localLevelController.close();
+    if (!closedController.isClosed) {
+      await closedController.close();
+    }
+    if (!localLevelController.isClosed) {
+      await localLevelController.close();
+    }
     if (!agentLevelController.isClosed) await agentLevelController.close();
   }
 }

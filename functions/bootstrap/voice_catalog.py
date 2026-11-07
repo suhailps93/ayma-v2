@@ -366,6 +366,24 @@ def provider_supports_accent(provider: str) -> bool:
     return (provider or "").strip().lower() in CONFIG.voice_accent_capable_providers
 
 
+def provider_supports_video(provider: str) -> bool:
+    """Whether ``provider``'s REALTIME model accepts VIDEO input (camera /
+    screen-share frames) in a voice call — the ONE source of truth for the
+    per-provider capability (feedback item 13), mirroring
+    :func:`provider_supports_accent`. The native-audio realtime models
+    (``gemini`` Live, ``openai`` Realtime) consume frames through the
+    session's video input; driven by ``CONFIG.voice_video_capable_providers``
+    so a future realtime model can be marked capable with no code change.
+    NOTE: this answers for a realtime session only — a CASCADE stack never
+    perceives video in livekit-agents 1.8.9 (the pipeline forwards frames
+    only to realtime sessions), whatever this returns for its components;
+    :func:`runtime_voices` encodes that mode rule. The agent reads this (via
+    ``RuntimeVoices.supports_video``) to declare vision support to the
+    client, and the catalog entries carry it, so the declaration and the
+    Models screen can never disagree."""
+    return (provider or "").strip().lower() in CONFIG.voice_video_capable_providers
+
+
 # --- Catalog assembly -------------------------------------------------------
 def _realtime_voices_for(model_id: str) -> list[Voice]:
     provider = _provider_of(model_id) or model_id
@@ -386,6 +404,7 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
             "available": True,
             "requires_secret": "",
             "supports_accent": provider_supports_accent(PROVIDER_GEMINI),
+            "supports_video": provider_supports_video(PROVIDER_GEMINI),
             "voices": [v.to_dict() for v in _gemini_voices()],
             "languages": langs,
         }
@@ -402,6 +421,7 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
                 "available": True,
                 "requires_secret": "OPENAI_API_KEY",
                 "supports_accent": provider_supports_accent("openai"),
+                "supports_video": provider_supports_video("openai"),
                 "voices": [v.to_dict() for v in _OPENAI_REALTIME_VOICES],
                 "languages": langs,
             }
@@ -421,6 +441,7 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
                 "available": True,
                 "requires_secret": "",
                 "supports_accent": provider_supports_accent(prov),
+                "supports_video": provider_supports_video(prov),
                 "voices": [v.to_dict() for v in _realtime_voices_for(mid)],
                 "languages": langs,
             }
@@ -765,13 +786,18 @@ class RuntimeVoices:
     the active provider honours a free-text ACCENT instruction
     (``provider_supports_accent``) — the agent routes ``ayma_voice_accent`` to
     this session only then, and ``set_voice_preference`` reads it to tell the user
-    when this model cannot change accent (§13.9)."""
+    when this model cannot change accent (§13.9); ``supports_video`` is True
+    only on a REALTIME session whose model accepts video input
+    (``provider_supports_video``) — cascade is always False (frames never
+    reach a pipeline brain in livekit-agents 1.8.9) — and the agent reads it
+    to declare vision support to the client (feedback item 13)."""
 
     provider: str
     voices: tuple[Voice, ...]
     current: Voice | None
     hot_swap: bool
     supports_accent: bool
+    supports_video: bool
 
 
 def _match_current(voice_list: list[Voice], voice_id: str) -> Voice | None:
@@ -822,6 +848,13 @@ def runtime_voices(
         current=_match_current(voice_list, current_voice_id),
         hot_swap=hot_swap,
         supports_accent=provider_supports_accent(provider),
+        # Cascade pipelines never receive video frames in livekit-agents
+        # 1.8.9 (only realtime sessions do), so only a realtime session on a
+        # video-capable provider supports video — even when the cascade
+        # brain is a vision-capable model over text (feedback item 13).
+        supports_video=(
+            mode != MODE_CASCADE and provider_supports_video(provider)
+        ),
     )
 
 
@@ -848,6 +881,30 @@ def accent_supported(prof: dict) -> bool:
         ).supports_accent
     tts_id = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip() or default["tts_id"]
     return runtime_voices(mode=MODE_CASCADE, tts_id=tts_id).supports_accent
+
+
+def video_supported(prof: dict) -> bool:
+    """Whether the stack a user's SAVED preference (``prof``) resolves to
+    can perceive VIDEO in a voice call (feedback item 13). The saved-stack
+    twin of :func:`accent_supported`: funnels through the one
+    :func:`runtime_voices` resolver, so a reader with no live session (the
+    Models screen, a settings surface) gives the same answer the agent will
+    declare when the call starts — realtime on a video-capable provider
+    only; every cascade stack is False."""
+    import schema
+
+    default = default_selection()
+    mode = str(prof.get(schema.PF_AYMA_VOICE_MODE, "")).strip() or default["mode"]
+    if mode == MODE_REALTIME:
+        realtime_id = (
+            str(prof.get(schema.PF_AYMA_REALTIME_MODEL, "")).strip()
+            or default["realtime_model_id"]
+        )
+        return runtime_voices(
+            mode=MODE_REALTIME, realtime_model_id=realtime_id
+        ).supports_video
+    tts_id = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip() or default["tts_id"]
+    return runtime_voices(mode=MODE_CASCADE, tts_id=tts_id).supports_video
 
 
 # Gender synonyms for resolving a free-text voice request within a provider set

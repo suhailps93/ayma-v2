@@ -9,6 +9,7 @@ import 'app_command_service.dart';
 import 'app_context.dart';
 import 'screen_capture.dart';
 import 'call_permissions.dart';
+import 'screen_share_platform.dart';
 import 'error_reporting.dart';
 import 'transcript_store.dart';
 import 'voice_transport.dart';
@@ -50,40 +51,42 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? wakingTimeout,
     AppCommandService? appCommandService,
     CallPermissions? callPermissions,
+    ScreenSharePlatform? screenSharePlatform,
     Duration? idleGuardTimeout,
     Duration? responseGuardTimeout,
     Duration? openWeightsResponseGuardTimeout,
     Duration? toolGuardTimeout,
     Duration? userIdleTimeout,
     ErrorReporter? errorReporter,
-  })  : _store = transcriptStore,
-        _reporter = errorReporter ?? ErrorReporter.instance,
-        _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
-        _userIdleTimeout = (userIdleTimeout == null ||
-                userIdleTimeout <= Duration.zero ||
-                welcome ||
-                practiceOtherUid != null)
-            ? null
-            : userIdleTimeout,
-        _responseGuardTimeout =
-            responseGuardTimeout ?? const Duration(seconds: 20),
-        // Backstop for a tool "start" whose "end" never arrives (agent crash
-        // mid-tool, dropped data message, orphaned/superseded turn): without it
-        // `activeToolLabel` stays set forever, the status line shows a frozen
-        // "Working…"/tool label, and BOTH other guards are neutralized (the
-        // response guard is cancelled on tool start; the idle guard refuses to
-        // fire while a tool label is set) — a silent hang (AGENTS.md: voice must
-        // recover, never spin). Must sit ABOVE the longest legitimate tool wait,
-        // the guided tour's bounded tap-wait (~110s, skills/guided_tour.py), so
-        // a normal tour step never trips it.
-        _toolGuardTimeout = toolGuardTimeout ?? const Duration(seconds: 180),
-        _openWeightsResponseBudget =
-            openWeightsResponseGuardTimeout ?? const Duration(seconds: 150),
-        _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
-        _transportFactory =
-            transportFactory ?? (() => LiveKitVoiceTransport()),
-        _commands = appCommandService ?? AppCommandService.shared,
-        _permissions = callPermissions ?? CallPermissions();
+  }) : _store = transcriptStore,
+       _reporter = errorReporter ?? ErrorReporter.instance,
+       _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
+       _userIdleTimeout =
+           (userIdleTimeout == null ||
+               userIdleTimeout <= Duration.zero ||
+               welcome ||
+               practiceOtherUid != null)
+           ? null
+           : userIdleTimeout,
+       _responseGuardTimeout =
+           responseGuardTimeout ?? const Duration(seconds: 20),
+       // Backstop for a tool "start" whose "end" never arrives (agent crash
+       // mid-tool, dropped data message, orphaned/superseded turn): without it
+       // `activeToolLabel` stays set forever, the status line shows a frozen
+       // "Working…"/tool label, and BOTH other guards are neutralized (the
+       // response guard is cancelled on tool start; the idle guard refuses to
+       // fire while a tool label is set) — a silent hang (AGENTS.md: voice must
+       // recover, never spin). Must sit ABOVE the longest legitimate tool wait,
+       // the guided tour's bounded tap-wait (~110s, skills/guided_tour.py), so
+       // a normal tour step never trips it.
+       _toolGuardTimeout = toolGuardTimeout ?? const Duration(seconds: 180),
+       _openWeightsResponseBudget =
+           openWeightsResponseGuardTimeout ?? const Duration(seconds: 150),
+       _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
+       _transportFactory = transportFactory ?? (() => LiveKitVoiceTransport()),
+       _commands = appCommandService ?? AppCommandService.shared,
+       _permissions = callPermissions ?? CallPermissions(),
+       _screenShare = screenSharePlatform ?? const LiveKitScreenSharePlatform();
 
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`
   /// (no account) instead of `POST /bootstrap`.
@@ -122,6 +125,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// for the background call notification — F4/item 3), rather than
   /// discovering a missing permission only once the app is backgrounded.
   final CallPermissions _permissions;
+
+  /// The MediaProjection consent + foreground-service seam for in-call
+  /// screen share (feedback item 13) — see [toggleScreenShare].
+  final ScreenSharePlatform _screenShare;
 
   /// Where failed starts / dropped calls are reported (Sentry + Crashlytics).
   final ErrorReporter _reporter;
@@ -363,6 +370,64 @@ class VoiceSessionController extends ChangeNotifier {
   bool _muted = false;
   bool get muted => _muted;
 
+  /// The `voice_status` states by which the agent declares whether the
+  /// stack serving THIS call can actually perceive video (feedback item
+  /// 13, founder rule: the toggles enable only on a stack that supports
+  /// video perception). The declaration is the agent reading the ONE
+  /// catalog source of truth (`voice_catalog` `RuntimeVoices.supports_video`,
+  /// driven by `CONFIG.voice_video_capable_providers`): realtime stacks on
+  /// a video-capable provider (Gemini Live, OpenAI Realtime) publish
+  /// [_kVisionSupported]; cascade stacks — whose frames the LiveKit agent
+  /// pipeline cannot consume in this SDK — publish [_kVisionUnsupported].
+  /// Until either arrives the controls stay hidden; on
+  /// [_kVisionUnsupported] they show DISABLED with the reason, and
+  /// [toggleVideo] / [toggleScreenShare] refuse: never publish video into
+  /// a session whose model cannot perceive it.
+  static const _kVisionSupported = 'vision_supported';
+  static const _kVisionUnsupported = 'vision_unsupported';
+
+  bool _visionSupported = false;
+
+  /// Whether Ayma can perceive video on this call (see [_kVisionSupported]).
+  /// Gates the voice-call screen's Video / Screen share toggles and
+  /// [toggleVideo] / [toggleScreenShare] themselves.
+  bool get visionSupported => _visionSupported;
+
+  bool _visionUnsupported = false;
+
+  /// Whether the serving stack has declared it CANNOT perceive video on
+  /// this call (see [_kVisionUnsupported]). The call screen shows the
+  /// Video / Screen share toggles disabled, with the plain reason, while
+  /// this is true — the capability gap is visible, never a silent absence.
+  bool get visionUnsupported => _visionUnsupported;
+
+  /// The local camera track while [videoOn] (the self-view the call
+  /// screen puts on its main stage, Gemini Live-style); null whenever the
+  /// track is not published yet or the platform has no preview.
+  VideoTrack? get localCameraTrack =>
+      _videoOn ? _transport?.localCameraTrack : null;
+
+  /// True while the user's camera track is published into the room
+  /// ([toggleVideo]). Dies with the session — reset in [start] and
+  /// unpublished in `_teardown`.
+  bool _videoOn = false;
+  bool get videoOn => _videoOn;
+
+  /// True while the user's screen-share track is published into the room
+  /// ([toggleScreenShare]). Same session lifetime as [_videoOn].
+  bool _screenShareOn = false;
+  bool get screenShareOn => _screenShareOn;
+
+  /// A short, honest, user-facing note about the vision state — a denied
+  /// camera permission, a failed screen share, or the agent reporting the
+  /// shared frames are FLAG_SECURE black ("Ayma can't see protected
+  /// content"). Shown under the call controls; never an error phase: a
+  /// vision failure never touches the voice call itself.
+  String? _visionNotice;
+  String? get visionNotice => _visionNotice;
+
+  StreamSubscription<String>? _visionStateSub;
+
   /// True while the agent has been told to "shut up" and is deliberately
   /// silent (server-side `MuteState`, authoritative: the agent re-publishes
   /// it on every change and whenever the app (re)joins the room); cleared
@@ -445,9 +510,9 @@ class VoiceSessionController extends ChangeNotifier {
   /// back to its normal "Listening…".
   String? get warmingNotice =>
       (_openWeightsWarming && !_agentRespondedOnce && isListening)
-          ? 'Warming up the open-weights model — first reply can take a minute '
-              'or two'
-          : null;
+      ? 'Warming up the open-weights model — first reply can take a minute '
+            'or two'
+      : null;
 
   /// True while the call is live but the agent's FIRST genuine response
   /// (speech, transcript, or tool call) hasn't landed yet — the opener is
@@ -561,6 +626,11 @@ class VoiceSessionController extends ChangeNotifier {
       _activeToolLabel = null;
       _noJoinRetried = false;
       _micCaptured = false;
+      _visionSupported = false;
+      _visionUnsupported = false;
+      _videoOn = false;
+      _screenShareOn = false;
+      _visionNotice = null;
       _provider = '';
       _coachHint = '';
       active = this;
@@ -633,8 +703,11 @@ class VoiceSessionController extends ChangeNotifier {
       }
       debugPrint('[voice] token ok: url=$url tokenLen=${token.length}');
       if (token.isEmpty || url.isEmpty) {
-        _report(const VoiceStartError('no voice credentials in response'),
-            null, 'no_credentials');
+        _report(
+          const VoiceStartError('no voice credentials in response'),
+          null,
+          'no_credentials',
+        );
         _fail('The server did not return voice credentials.');
         return;
       }
@@ -643,7 +716,10 @@ class VoiceSessionController extends ChangeNotifier {
         // Sets `_transport` internally; the mic is NOT published here (see the
         // comment below) so the return value is not needed.
         await _connectTransport(
-            url: url, token: token, forceRelay: _forceRelayFirst);
+          url: url,
+          token: token,
+          forceRelay: _forceRelayFirst,
+        );
       } catch (e) {
         // ANY first-attempt connect failure gets one forgiving retry with
         // the ICE transport policy forced to TURN relay (LiveKit Cloud
@@ -656,15 +732,21 @@ class VoiceSessionController extends ChangeNotifier {
         // (bad token, server down) simply fails again on the retry and
         // propagates to the generic catch below — the existing error
         // surface, one attempt later.
-        debugPrint('[voice] connect attempt 1 failed: $e'
-            '${isIceConnectivityFailure(e) ? ' (ICE connectivity)' : ''}');
         debugPrint(
-            '[voice] relay-retry: retrying once with ${_forceRelayFirst ? 'the direct route' : 'TURN relay forced'}');
+          '[voice] connect attempt 1 failed: $e'
+          '${isIceConnectivityFailure(e) ? ' (ICE connectivity)' : ''}',
+        );
+        debugPrint(
+          '[voice] relay-retry: retrying once with ${_forceRelayFirst ? 'the direct route' : 'TURN relay forced'}',
+        );
         await _teardown();
         _relayRetrying = true;
         notifyListeners(); // status line: "Connecting…" -> "Reconnecting…"
         await _connectTransport(
-            url: url, token: token, forceRelay: !_forceRelayFirst);
+          url: url,
+          token: token,
+          forceRelay: !_forceRelayFirst,
+        );
         debugPrint('[voice] relay-retry: retry connect succeeded');
       }
 
@@ -686,8 +768,12 @@ class VoiceSessionController extends ChangeNotifier {
       }
     } on ApiException catch (e, st) {
       debugPrint('[voice] ApiException: ${e.message}');
-      _report(e, st, 'token_fetch',
-          extra: {'http_status': '${e.statusCode ?? 'none'}'});
+      _report(
+        e,
+        st,
+        'token_fetch',
+        extra: {'http_status': '${e.statusCode ?? 'none'}'},
+      );
       await _teardown();
       _fail(e.message);
     } catch (e, st) {
@@ -708,18 +794,25 @@ class VoiceSessionController extends ChangeNotifier {
     Map<String, String> extra = const {},
   }) {
     final screen = AppContext.instance.current.value.screen;
-    unawaited(_reporter.report(error, stack, reason: 'voice_$stage', tags: {
-      'feature': 'voice',
-      'voice_stage': stage,
-      'voice_phase': _phase.name,
-      'session_id': sessionId.isEmpty ? 'none' : sessionId,
-      'provider': _provider.isEmpty ? 'unknown' : _provider,
-      'route': screen.isEmpty ? 'unknown' : screen,
-      'welcome': '$welcome',
-      'attempt': _noJoinRetried ? '2' : '1',
-      'relay': '$_relayRetrying',
-      ...extra,
-    }));
+    unawaited(
+      _reporter.report(
+        error,
+        stack,
+        reason: 'voice_$stage',
+        tags: {
+          'feature': 'voice',
+          'voice_stage': stage,
+          'voice_phase': _phase.name,
+          'session_id': sessionId.isEmpty ? 'none' : sessionId,
+          'provider': _provider.isEmpty ? 'unknown' : _provider,
+          'route': screen.isEmpty ? 'unknown' : screen,
+          'welcome': '$welcome',
+          'attempt': _noJoinRetried ? '2' : '1',
+          'relay': '$_relayRetrying',
+          ...extra,
+        },
+      ),
+    );
   }
 
   /// Build a fresh transport, wire every stream listener, and connect —
@@ -755,12 +848,15 @@ class VoiceSessionController extends ChangeNotifier {
       if (!speaking && _userIdlePendingEnd) {
         if (_phase == VoiceSessionPhase.live) {
           debugPrint(
-              '[voice] Ayma utterance completed after deferred idle timeout — disconnect reason: client_idle_timeout');
+            '[voice] Ayma utterance completed after deferred idle timeout — disconnect reason: client_idle_timeout',
+          );
           _userIdlePendingEnd = false;
-          unawaited(_endForIdle(
-            notice: 'Call ended after 30 seconds of silence',
-            disconnectReason: 'client_idle_timeout',
-          ));
+          unawaited(
+            _endForIdle(
+              notice: 'Call ended after 30 seconds of silence',
+              disconnectReason: 'client_idle_timeout',
+            ),
+          );
         } else {
           _userIdlePendingEnd = false;
         }
@@ -801,6 +897,10 @@ class VoiceSessionController extends ChangeNotifier {
       if (!identical(_transport, transport)) return;
       _onVoiceStatus(state);
     });
+    _visionStateSub = transport.visionState.listen((state) {
+      if (!identical(_transport, transport)) return;
+      _onVisionState(state);
+    });
     _closedSub = transport.closed.listen((_) {
       // A close event queued by a transport this controller has already torn
       // down (e.g. ice-relay-retry attempt 1's Room emitting RoomDisconnected
@@ -811,8 +911,11 @@ class VoiceSessionController extends ChangeNotifier {
       unawaited(_teardown());
       if (_cappedError) return;
       _disconnectReason = 'dropped';
-      _report(const VoiceStartError('voice connection dropped'), null,
-          'dropped');
+      _report(
+        const VoiceStartError('voice connection dropped'),
+        null,
+        'dropped',
+      );
       _fail('The voice connection dropped.');
     });
     _reconnectingSub = transport.reconnecting.listen((reconnecting) {
@@ -880,6 +983,19 @@ class VoiceSessionController extends ChangeNotifier {
   /// status line says so (not a silent "Listening…") and extend the
   /// no-first-response guard past the cold start so it doesn't fire early.
   void _onVoiceStatus(String state) {
+    // Vision capability declaration (feedback item 13): the serving stack
+    // states whether Ayma can perceive video on this call, which is what
+    // exposes (or keeps hidden) the Video / Screen share toggles.
+    if (state == _kVisionSupported || state == _kVisionUnsupported) {
+      final supported = state == _kVisionSupported;
+      if (_visionSupported == supported && _visionUnsupported == !supported) {
+        return;
+      }
+      _visionSupported = supported;
+      _visionUnsupported = !supported;
+      notifyListeners();
+      return;
+    }
     if (state == _kTtsError) {
       if (_voiceTrouble) return;
       _voiceTrouble = true;
@@ -896,6 +1012,27 @@ class VoiceSessionController extends ChangeNotifier {
       _responseGuard = Timer(_firstResponseBudget, _onResponseGuardFired);
     }
     notifyListeners();
+  }
+
+  /// The agent's vision state for a live video/screen share (topic
+  /// `vision_state`). FLAG_SECURE surfaces (banking, password screens)
+  /// arrive at the agent as pure-black frames: surface the honest notice
+  /// so the UI — and Ayma herself, whose instructions carry the same rule
+  /// — say she cannot see protected content instead of guessing at it.
+  /// Real frames resuming clears the notice. Ignored when nothing is
+  /// being shared (a stale signal must never invent a notice).
+  void _onVisionState(String state) {
+    if (!_videoOn && !_screenShareOn) return;
+    if (state == visionStateSecureContent) {
+      const notice = "Ayma can't see protected content on this screen.";
+      if (_visionNotice == notice) return;
+      _visionNotice = notice;
+      notifyListeners();
+    } else if (state == visionStateFramesFlowing) {
+      if (_visionNotice == null) return;
+      _visionNotice = null;
+      notifyListeners();
+    }
   }
 
   /// The agent produced a genuine response (speech / transcript / tool call) —
@@ -966,8 +1103,10 @@ class VoiceSessionController extends ChangeNotifier {
     final budget = _firstResponseBudget;
     debugPrint('[voice] no first response — brain unreachable');
     _report(
-      VoiceStartError('no agent response within ${budget.inSeconds}s of live'
-          '${warming ? ' (open-weights)' : ''}'),
+      VoiceStartError(
+        'no agent response within ${budget.inSeconds}s of live'
+        '${warming ? ' (open-weights)' : ''}',
+      ),
       null,
       warming ? 'open_weights_no_response' : 'no_response',
     );
@@ -975,10 +1114,12 @@ class VoiceSessionController extends ChangeNotifier {
     // Honest, brain-specific copy: the open-weights (Modal) model never came up
     // in time, so say exactly that and offer the real options — instead of the
     // generic "Couldn't reach the voice service" (founder ask, 2026-11-02).
-    _fail(warming
-        ? 'The open-weights model is unavailable right now — try again or '
-            'switch models.'
-        : "Couldn't reach the voice service — tap the mic to try again.");
+    _fail(
+      warming
+          ? 'The open-weights model is unavailable right now — try again or '
+                'switch models.'
+          : "Couldn't reach the voice service — tap the mic to try again.",
+    );
   }
 
   /// Restarts the client idle guard (see [_idleGuardTimeout]) — only while
@@ -1011,9 +1152,11 @@ class VoiceSessionController extends ChangeNotifier {
     _userIdlePendingEnd = false;
     _userIdleTimer?.cancel();
     _userIdleArmedAt = DateTime.now();
-    debugPrint('[voice] user idle timer armed at '
-        '${_userIdleArmedAt!.toIso8601String()} '
-        '(+${_userIdleTimeout.inMilliseconds}ms)');
+    debugPrint(
+      '[voice] user idle timer armed at '
+      '${_userIdleArmedAt!.toIso8601String()} '
+      '(+${_userIdleTimeout.inMilliseconds}ms)',
+    );
     _userIdleTimer = Timer(_userIdleTimeout, _onUserIdleTimeout);
   }
 
@@ -1035,16 +1178,20 @@ class VoiceSessionController extends ChangeNotifier {
     if (_phase != VoiceSessionPhase.live) return;
     if (_agentSpeaking) {
       debugPrint(
-          '[voice] user idle timeout fired while Ayma speaking — deferring until turn complete');
+        '[voice] user idle timeout fired while Ayma speaking — deferring until turn complete',
+      );
       _userIdlePendingEnd = true;
       return;
     }
     debugPrint(
-        '[voice] client user idle timeout fired — disconnect reason: client_idle_timeout');
-    unawaited(_endForIdle(
-      notice: 'Call ended after 30 seconds of silence',
-      disconnectReason: 'client_idle_timeout',
-    ));
+      '[voice] client user idle timeout fired — disconnect reason: client_idle_timeout',
+    );
+    unawaited(
+      _endForIdle(
+        notice: 'Call ended after 30 seconds of silence',
+        disconnectReason: 'client_idle_timeout',
+      ),
+    );
   }
 
   void _onIdleGuardFired() {
@@ -1056,11 +1203,14 @@ class VoiceSessionController extends ChangeNotifier {
       return;
     }
     debugPrint(
-        '[voice] client idle guard fired — disconnect reason: client_idle_guard');
-    unawaited(_endForIdle(
-      notice: 'Call ended after 30 seconds of silence',
-      disconnectReason: 'client_idle_guard',
-    ));
+      '[voice] client idle guard fired — disconnect reason: client_idle_guard',
+    );
+    unawaited(
+      _endForIdle(
+        notice: 'Call ended after 30 seconds of silence',
+        disconnectReason: 'client_idle_guard',
+      ),
+    );
   }
 
   /// Ends the call because of silence (agent-reported, client user idle timeout,
@@ -1070,7 +1220,10 @@ class VoiceSessionController extends ChangeNotifier {
     String? notice,
     String disconnectReason = 'client_idle_timeout',
   }) async {
-    if (active == this) { active = null; _syncActiveNotifier(); }
+    if (active == this) {
+      active = null;
+      _syncActiveNotifier();
+    }
     _disposeSessionLifecycle();
     await _teardown();
     _agentSpeaking = false;
@@ -1116,7 +1269,9 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _onTranscriptSegment(TranscriptSegment seg) {
     _noteActivity();
-    final role = seg.topic == 'agent_transcript' ? TurnRole.ayma : TurnRole.user;
+    final role = seg.topic == 'agent_transcript'
+        ? TurnRole.ayma
+        : TurnRole.user;
     if (role == TurnRole.ayma) _noteAgentResponse();
     if (role == TurnRole.user) {
       _noteUserActivity();
@@ -1140,7 +1295,12 @@ class VoiceSessionController extends ChangeNotifier {
     final tools = (role == TurnRole.ayma && seg.isFinal)
         ? _flushPendingToolLabels()
         : const <String>[];
-    _store.applyVoiceSegment(role, seg.text, isFinal: seg.isFinal, tools: tools);
+    _store.applyVoiceSegment(
+      role,
+      seg.text,
+      isFinal: seg.isFinal,
+      tools: tools,
+    );
   }
 
   /// A tool call starting or finishing mid-call (§1.7 step 3) — mirrors text
@@ -1181,17 +1341,21 @@ class VoiceSessionController extends ChangeNotifier {
   void _onCallEnding(String reason) {
     if (reason == 'idle_timeout') {
       debugPrint('[voice] disconnect reason: agent_idle_timeout');
-      unawaited(_endForIdle(
-        notice: 'Call ended after 3 minutes of silence',
-        disconnectReason: 'agent_idle_timeout',
-      ));
+      unawaited(
+        _endForIdle(
+          notice: 'Call ended after 3 minutes of silence',
+          disconnectReason: 'agent_idle_timeout',
+        ),
+      );
       return;
     }
     if (reason != 'out_of_credits') return;
     _cappedError = true;
     _disconnectReason = 'out_of_credits';
-    _fail('Out of credits — Ayma had to end the call. Upgrade to '
-        'keep going.');
+    _fail(
+      'Out of credits — Ayma had to end the call. Upgrade to '
+      'keep going.',
+    );
   }
 
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent
@@ -1207,7 +1371,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
     _disconnectReason ??= 'user_stop';
-    if (active == this) { active = null; _syncActiveNotifier(); }
+    if (active == this) {
+      active = null;
+      _syncActiveNotifier();
+    }
     _disposeSessionLifecycle();
     await _teardown();
     _persistSession();
@@ -1257,8 +1424,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// deep-link instead of leaving the user with only "the call ended".
   void reportBackgroundBlocked() {
     _backgroundPermissionDenied = true;
-    _fail("Ayma needs notification access to keep a call going in the "
-        'background — turn it on in Settings, then try again.');
+    _fail(
+      "Ayma needs notification access to keep a call going in the "
+      'background — turn it on in Settings, then try again.',
+    );
   }
 
   Future<void> toggleMute() async {
@@ -1273,6 +1442,129 @@ class VoiceSessionController extends ChangeNotifier {
     } catch (_) {
       _muted = !_muted; // revert on failure
       notifyListeners();
+    }
+  }
+
+  /// Action-parity names for the voice-call screen's vision toggles
+  /// (APP_ACTION_GRAPH §3): the exact `source` values [toggleVideo] and
+  /// [toggleScreenShare] report on the `vision_control` data topic, so the
+  /// agent's command surface and the user's buttons are one vocabulary.
+  static const visionSourceCamera = 'camera';
+  static const visionSourceScreen = 'screen';
+
+  /// The user tapped Video on the voice-call screen (feedback item 13):
+  /// publish the camera track into THIS session's LiveKit room so Ayma
+  /// can see the user, or unpublish it immediately on the second tap.
+  /// Frames reach Ayma through the room's existing LiveKit vision input
+  /// (the agent enables `video_input` on its session — LiveKit-only
+  /// inference, no new provider route).
+  ///
+  /// Gates mirror [toggleMute] plus the vision rules: only a genuinely
+  /// ready call (nothing is captured during connecting/waking/warming),
+  /// only when the serving stack declared it can perceive video
+  /// ([visionSupported]), and never on a practice call (the persona is
+  /// not Ayma and gets no view of the user). A denied camera permission —
+  /// the OS prompt is raised by the WebRTC layer at first enable — leaves
+  /// [_videoOn] false and the voice call completely untouched, with an
+  /// honest [visionNotice] instead of an error phase.
+  Future<void> toggleVideo() async {
+    final transport = _transport;
+    if (!isConversationReady || !_visionSupported || isPractice) return;
+    if (transport == null) return;
+    if (_videoOn) {
+      _videoOn = false;
+      if (!_screenShareOn) _visionNotice = null;
+      notifyListeners();
+      try {
+        await transport.setCameraEnabled(false);
+      } catch (e) {
+        debugPrint('[voice] camera unpublish failed: $e');
+      }
+      unawaited(_sendVisionControl(transport, visionSourceCamera, false));
+      return;
+    }
+    try {
+      await transport.setCameraEnabled(true);
+    } catch (e) {
+      debugPrint('[voice] camera publish failed: $e');
+      _visionNotice = 'Ayma needs camera access to see you.';
+      notifyListeners();
+      return;
+    }
+    _videoOn = true;
+    _visionNotice = null;
+    notifyListeners();
+    unawaited(_sendVisionControl(transport, visionSourceCamera, true));
+  }
+
+  /// The user tapped Screen share on the voice-call screen (feedback item
+  /// 13): share the screen into THIS session's LiveKit room so Ayma can
+  /// see it, through Android MediaProjection. Same gates as [toggleVideo],
+  /// plus the platform must support it (Android — iOS needs a ReplayKit
+  /// broadcast extension this build does not ship, so the toggle refuses
+  /// quietly there and on the web).
+  ///
+  /// Turning on runs, in order: the standard per-session MediaProjection
+  /// consent dialog (a denial returns silently — voice untouched), the
+  /// media-projection foreground service Android 14 requires, then the
+  /// track publish. Turning off unpublishes the track and downgrades the
+  /// foreground service. A system revoke mid-share surfaces as the room
+  /// dropping the track, which [_teardown] and the session lifecycle
+  /// already treat as an ordinary state change; both tracks also die
+  /// with the voice session (see `_teardown`).
+  Future<void> toggleScreenShare() async {
+    final transport = _transport;
+    if (!isConversationReady || !_visionSupported || isPractice) return;
+    if (transport == null) return;
+    if (_screenShareOn) {
+      _screenShareOn = false;
+      if (!_videoOn) _visionNotice = null;
+      notifyListeners();
+      try {
+        await transport.setScreenShareEnabled(false);
+      } catch (e) {
+        debugPrint('[voice] screen-share unpublish failed: $e');
+      }
+      await _screenShare.stopProjectionService();
+      unawaited(_sendVisionControl(transport, visionSourceScreen, false));
+      return;
+    }
+    if (!_screenShare.isSupported) return;
+    final granted = await _screenShare.requestConsent();
+    // The user declined the system consent dialog (or the platform
+    // refused): nothing was captured, the call runs on untouched.
+    if (!granted) return;
+    // A stop() while the consent dialog was up ends the share before it
+    // starts — never publish into a session that is already gone.
+    if (!identical(_transport, transport) || !isConversationReady) return;
+    await _screenShare.startProjectionService();
+    try {
+      await transport.setScreenShareEnabled(true);
+    } catch (e) {
+      debugPrint('[voice] screen-share publish failed: $e');
+      await _screenShare.stopProjectionService();
+      _visionNotice = 'Screen share could not start.';
+      notifyListeners();
+      return;
+    }
+    _screenShareOn = true;
+    _visionNotice = null;
+    notifyListeners();
+    unawaited(_sendVisionControl(transport, visionSourceScreen, true));
+  }
+
+  /// Best-effort `vision_control` send (see [toggleVideo]): the agent's
+  /// own track subscription is the authoritative signal, so a dropped
+  /// control message never changes what the user sees locally.
+  Future<void> _sendVisionControl(
+    VoiceTransport transport,
+    String source,
+    bool active,
+  ) async {
+    try {
+      await transport.sendVisionControl(source: source, active: active);
+    } catch (e) {
+      debugPrint('[voice] vision-control send failed: $e');
     }
   }
 
@@ -1346,8 +1638,11 @@ class VoiceSessionController extends ChangeNotifier {
     // itself is still live. Covers connecting/waking/live; _teardown() always
     // disables it again on every exit path.
     if (isActive) {
-      unawaited(WakelockPlus.enable().catchError(
-          (e) => debugPrint('[voice] wakelock enable failed: $e')));
+      unawaited(
+        WakelockPlus.enable().catchError(
+          (e) => debugPrint('[voice] wakelock enable failed: $e'),
+        ),
+      );
     }
     notifyListeners();
   }
@@ -1377,8 +1672,10 @@ class VoiceSessionController extends ChangeNotifier {
       _ctxDebounce = Timer(const Duration(milliseconds: 500), _pushContext);
     };
     AppContext.instance.current.addListener(_ctxListener!);
-    _ctxHeartbeat =
-        Timer.periodic(_ctxHeartbeatInterval, (_) => _pushContext());
+    _ctxHeartbeat = Timer.periodic(
+      _ctxHeartbeatInterval,
+      (_) => _pushContext(),
+    );
     // Returning from the background can leave the doc stale — re-push at once.
     try {
       _lifecycle = AppLifecycleListener(
@@ -1393,8 +1690,9 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   void _pushContext() {
-    _api.setVoiceContext(AppContext.instance.current.value.toJson()).catchError(
-        (e) => debugPrint('[voice] setVoiceContext failed: $e'));
+    _api
+        .setVoiceContext(AppContext.instance.current.value.toJson())
+        .catchError((e) => debugPrint('[voice] setVoiceContext failed: $e'));
   }
 
   Future<void> _stopScreenAwareness() async {
@@ -1415,7 +1713,8 @@ class VoiceSessionController extends ChangeNotifier {
     }
     await _commands.stop();
     _api.clearVoiceContext().catchError(
-        (e) => debugPrint('[voice] clearVoiceContext failed: $e'));
+      (e) => debugPrint('[voice] clearVoiceContext failed: $e'),
+    );
   }
 
   void _fail(String message) {
@@ -1480,6 +1779,9 @@ class VoiceSessionController extends ChangeNotifier {
     final agentMuteSub = _agentMuteSub;
     final coachSub = _coachSub;
     final voiceStatusSub = _voiceStatusSub;
+    final visionStateSub = _visionStateSub;
+    final videoWasOn = _videoOn;
+    final screenShareWasOn = _screenShareOn;
     final closedSub = _closedSub;
     final reconnectingSub = _reconnectingSub;
     final micLevelSub = _micLevelSub;
@@ -1493,6 +1795,15 @@ class VoiceSessionController extends ChangeNotifier {
     _agentMuteSub = null;
     _coachSub = null;
     _voiceStatusSub = null;
+    _visionStateSub = null;
+    // Both vision tracks die with the voice session (feedback item 13):
+    // the flags drop synchronously here; the explicit unpublishes run in
+    // the try block below, ahead of the room disconnect.
+    _videoOn = false;
+    _screenShareOn = false;
+    _visionSupported = false;
+    _visionUnsupported = false;
+    _visionNotice = null;
     _openWeightsWarming = false;
     _voiceTrouble = false;
     _aymaQuiet = false;
@@ -1513,8 +1824,11 @@ class VoiceSessionController extends ChangeNotifier {
     // 2026-11-03). Idempotent: a concurrent/second call sees null fields and
     // does nothing.
     try {
-      unawaited(WakelockPlus.disable().catchError(
-          (e) => debugPrint('[voice] wakelock disable failed: $e')));
+      unawaited(
+        WakelockPlus.disable().catchError(
+          (e) => debugPrint('[voice] wakelock disable failed: $e'),
+        ),
+      );
       await _stopScreenAwareness();
       await speakingSub?.cancel();
       await readySub?.cancel();
@@ -1524,6 +1838,26 @@ class VoiceSessionController extends ChangeNotifier {
       await agentMuteSub?.cancel();
       await coachSub?.cancel();
       await voiceStatusSub?.cancel();
+      await visionStateSub?.cancel();
+      // Unpublish the vision tracks explicitly, ahead of the disconnect in
+      // the finally block — a stopped session must leave no camera or
+      // screen capture running behind it (feedback item 13). Failures here
+      // are non-fatal: the disconnect right after removes every track.
+      if (transport != null && videoWasOn) {
+        try {
+          await transport.setCameraEnabled(false);
+        } catch (e) {
+          debugPrint('[voice] teardown camera unpublish failed: $e');
+        }
+      }
+      if (transport != null && screenShareWasOn) {
+        try {
+          await transport.setScreenShareEnabled(false);
+        } catch (e) {
+          debugPrint('[voice] teardown screen-share unpublish failed: $e');
+        }
+        await _screenShare.stopProjectionService();
+      }
       await closedSub?.cancel();
       await reconnectingSub?.cancel();
       await micLevelSub?.cancel();
@@ -1535,8 +1869,10 @@ class VoiceSessionController extends ChangeNotifier {
       _pendingToolLabels.clear();
       _activeToolLabel = null;
     } catch (e, st) {
-      debugPrint('[voice] teardown cleanup error (continuing to release '
-          'the mic): $e\n$st');
+      debugPrint(
+        '[voice] teardown cleanup error (continuing to release '
+        'the mic): $e\n$st',
+      );
     } finally {
       if (transport != null) {
         try {
@@ -1625,7 +1961,10 @@ class VoiceSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
-    if (active == this) { active = null; _syncActiveNotifier(); }
+    if (active == this) {
+      active = null;
+      _syncActiveNotifier();
+    }
     _disposeSessionLifecycle();
     // Cancel every listener subscription synchronously — i.e. the `.cancel()`
     // calls themselves, not their returned futures — *before* `super.dispose()`
@@ -1650,6 +1989,7 @@ class VoiceSessionController extends ChangeNotifier {
     _coachSub?.cancel();
     _closedSub?.cancel();
     _reconnectingSub?.cancel();
+    _visionStateSub?.cancel();
     _micLevelSub?.cancel();
     _aymaLevelSub?.cancel();
     _userIdleTimer?.cancel();
