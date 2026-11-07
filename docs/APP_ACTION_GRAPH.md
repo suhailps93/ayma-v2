@@ -104,21 +104,24 @@ superseding a brief same-day belt-and-suspenders prompt version):
 | Delete account | Settings → Delete account (`/settings/delete-account`) | Open the page only |
 | Subscribe / buy / upgrade / start trial / buy credits / switch plan (any purchase control) | Plan (`/profile/plan`), trial paywall (`/profile/usage/trial`), out-of-credits upsells | Open the Plan page only |
 | Clear Ayma memory ("Wipe what Ayma has learned") | Ayma's settings (`/settings/ayma`) | Open the page only |
+| Delete everywhere (photo) | Photo viewer → Remove dialog (`/profile/photos`) | Nothing — she may only soft-hide via `delete_photo` (the Remove from public path) |
+| Block & report | Message thread menu | Nothing — she tells the user where it is |
+| Dismiss all (profile suggestions) | Profile suggestions (`/profile/suggestions`) | Dismiss suggestions one by one only |
 
 Also user-only by the same policy (pre-existing): withdrawing face-matching
 consent, any consent/terms checkbox or "I agree", typing passwords, codes
 or payment details.
 
-**Proposed additions to the exclusions config — awaiting founder
-confirmation (not wired as exclusions yet):** "Delete everywhere" for a
-photo (irreversible delete; "Remove from public" is reversible and stays
-operable), Block & report in a DM thread (affects another person),
-and "Dismiss all" profile suggestions (bulk-destructive). Until
-confirmed, these remain `UI`-operable. ("Clear all notifications" was
-on this list until the founder ruled on 2026-11-06 that it is a
-priority gap to CLOSE, not an exclusion — it is COVERED below via
-`clear_all_notifications`, with Ayma confirming in conversation first
-because it cannot be undone.)
+**Founder-confirmed additions (2026-11-06, 19:41 PT):** the three
+proposals formerly listed here are now wired exclusions in the table
+above — "Delete everywhere" for a photo (irreversible delete; "Remove
+from public" is reversible and stays operable), Block & report in a DM
+thread (affects another person), and "Dismiss all" profile suggestions
+(bulk-destructive). ("Clear all notifications" was on this list until
+the founder ruled on 2026-11-06 that it is a priority gap to CLOSE,
+not an exclusion — it is COVERED below via `clear_all_notifications`,
+with Ayma confirming in conversation first because it cannot be
+undone.)
 
 ---
 
@@ -200,7 +203,7 @@ because it cannot be undone.)
 | "Send in their language?" sheet: Send / Cancel | Confirm translated send | `UI` |
 | Coach chips ("Things to talk about") | Insert a suggested line | `UI`; suggestions themselves come from her `dm_assist` |
 | "Heads up from Ayma" tip dismiss (X) | Dismiss the coach tip | `UI` |
-| Block & report / Block (menu) | Block the person | `UI` — **proposed exclusion** (see Exclusions) |
+| Block & report / Block (menu) | Block the person | EXCLUDED — founder-confirmed 2026-11-06; refused by the `block_report` deny rule (see Exclusions) |
 | Retry (failed message) | Resend | `UI` |
 
 ## 7. Public profile (`/profile/user/:uid`) — `public_profile_screen.dart`
@@ -281,7 +284,7 @@ and also `UI`:
 
 | Control | Does | Ayma |
 |---|---|---|
-| Photo: remove (Remove from public / Delete everywhere dialog) | Hide or delete a photo | COVERED `delete_photo` (skill) / `UI` for remove-from-public; **"Delete everywhere" proposed exclusion** |
+| Photo: remove (Remove from public / Delete everywhere dialog) | Hide or delete a photo | COVERED `delete_photo` (skill) / `UI` for remove-from-public; **"Delete everywhere" EXCLUDED** — founder-confirmed 2026-11-06, refused by the `delete` deny rule |
 | "Review" (suggested updates entry) | Open profile proposals | COVERED `open_screen profile_suggestions` |
 | Story/passage rows, "Chat about it" (photo gallery) | Discuss/edit | COVERED `edit_profile_section`, story tools, `update_photo_note` |
 | Undo (snackbar) | Undo a removal | `UI` |
@@ -293,7 +296,7 @@ and also `UI`:
 | Apply (per suggestion) | Apply one suggested update | `UI` |
 | Dismiss (per suggestion) | Drop one suggestion | `UI` |
 | Apply all | Apply every suggestion | `UI` |
-| Dismiss all | Drop every suggestion | `UI` — **proposed exclusion** (bulk) |
+| Dismiss all | Drop every suggestion | EXCLUDED — founder-confirmed 2026-11-06 (bulk); refused by the `dismiss_all` deny rule |
 
 ## 15. My story / wiki (`/profile/wiki`) — `story_editor_screen.dart`, `manual_profile_edit_screen.dart`
 
