@@ -2143,6 +2143,96 @@ def test_command_claim_gate_speaks_via_generate_reply_when_say_raises():
     assert agent._COMMAND_NOT_CONFIRMED_LINE in s.replies[0]
 
 
+class _ClosingOpenerSession(_OpenerSession):
+    """The caller hung up during the opener grace window: say() refuses
+    because the session is gone, and the generate_reply fallback refuses
+    the same way (AYMA-AGENT-29, Nov 6 2026)."""
+
+    def say(self, text):
+        raise RuntimeError("AgentSession isn't running")
+
+    async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
+                             user_input=_UNSET):
+        raise RuntimeError(
+            "AgentSession is closing, cannot use generate_reply()"
+        )
+
+
+def test_opener_session_closing_is_quiet_not_an_error(monkeypatch, caplog):
+    """A session that ends before the greeting is an expected end-of-call
+    race: the opener reports not-spoken and stays off the error log (so
+    Sentry never files it), instead of a generate_reply ERRORED."""
+    import asyncio
+    import logging
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _ClosingOpenerSession()
+    with caplog.at_level(logging.DEBUG, logger=agent.logger.name):
+        assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is False
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors == []
+    assert any(
+        "session_already_closing" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_opener_real_failure_still_logs_an_error(monkeypatch, caplog):
+    """The closing-race downgrade must not mute genuine opener failures:
+    a non-closing generate_reply failure still lands on the error log."""
+    import asyncio
+    import logging
+
+    class _DeadSession(_RealtimeOpenerSession):
+        async def generate_reply(self, instructions=None, chat_ctx=_UNSET,
+                                 user_input=_UNSET):
+            raise RuntimeError("realtime session not established")
+
+    _arm_profile(monkeypatch, {"name": "Daniel Reyes"})
+    s = _DeadSession()
+    with caplog.at_level(logging.DEBUG, logger=agent.logger.name):
+        assert asyncio.run(_run_opener(s, _opener_seed(uid="u1"), [])) is False
+    assert any(
+        r.levelno >= logging.ERROR and "ERRORED" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_claim_gate_session_gone_is_quiet_not_an_error(caplog):
+    """AYMA-AGENT-2C/2D (Nov 6 2026): the gate's honest line fired after
+    the session ended - say() and generate_reply() both raised
+    "AgentSession isn't running" and the last-resort logger.exception
+    filed two Sentry issues for one hang-up. Now: latch still set, no
+    error-level log."""
+    import logging
+
+    class _Sess:
+        def say(self, _text):
+            raise RuntimeError("AgentSession isn't running")
+
+        def generate_reply(self, instructions=None, **_k):
+            raise RuntimeError("AgentSession isn't running")
+
+    gate = agent._CommandClaimGate(_Sess())
+    with caplog.at_level(logging.DEBUG, logger=agent.logger.name):
+        gate.note_failure()
+    assert gate.failed is True
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors == []
+
+
+def test_session_gone_error_matching():
+    assert agent._session_gone_error(
+        RuntimeError("AgentSession isn't running")
+    )
+    assert agent._session_gone_error(
+        RuntimeError("AgentSession is closing, cannot use generate_reply()")
+    )
+    assert not agent._session_gone_error(
+        RuntimeError("realtime session not established")
+    )
+    assert not agent._session_gone_error(RuntimeError("429 quota exceeded"))
+
+
 def test_opener_skipped_when_someone_already_spoke():
     import asyncio
 
