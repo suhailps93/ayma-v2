@@ -58,6 +58,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     JobProcess,
     JobRequest,
     MetricsCollectedEvent,
+    RoomInputOptions,
     RoomOutputOptions,
     UserInputTranscribedEvent,
     WorkerOptions,
