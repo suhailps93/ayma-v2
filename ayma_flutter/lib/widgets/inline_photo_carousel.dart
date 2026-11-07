@@ -298,7 +298,7 @@ class InlinePhotoStrip extends StatelessWidget {
     return ColoredBox(
       color: AymaColors.darkBg,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
         child: SizedBox(
           height: _stripHeight,
           // With no photos yet there's nothing to reorder — show just the add
@@ -376,7 +376,7 @@ class _EditableThumb extends StatelessWidget {
                   ),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(9),
+                  borderRadius: BorderRadius.circular(8),
                   child: AymaPhoto(
                     url: url,
                     displayWidth: 140,
@@ -420,7 +420,7 @@ class PhotoControlChip extends StatelessWidget {
     required this.icon,
     required this.iconColor,
     required this.onTap,
-    this.size = 40,
+    this.size = 48,
     this.iconSize = 22,
   });
 

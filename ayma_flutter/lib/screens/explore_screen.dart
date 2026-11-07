@@ -432,7 +432,7 @@ class ExploreScreenState extends State<ExploreScreen> {
               automaticallyImplyBack: true,
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: TextField(
                 controller: _searchController,
                 textInputAction: TextInputAction.search,
@@ -609,7 +609,7 @@ class _PageFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     if (feed.loadingNextPage) {
       return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 20),
+        padding: EdgeInsets.symmetric(vertical: 16),
         child: Center(
           // GET /explore next page — footer slot, no room for a line.
           child: AymaWingLoader(size: 20, showLabel: false),
@@ -730,7 +730,7 @@ class _Card extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: ac.bgElev,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: ac.lineSoft, width: 0.5),
         ),
         child: Column(
@@ -748,7 +748,7 @@ class _Card extends StatelessWidget {
                       right: 8,
                       top: 8,
                       child: Container(
-                        padding: const EdgeInsets.all(5),
+                        padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.45),
                           shape: BoxShape.circle,
@@ -764,7 +764,7 @@ class _Card extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(11, 10, 11, 12),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -796,7 +796,7 @@ class _Card extends StatelessWidget {
                           .copyWith(letterSpacing: 1.2),
                     ),
                   ],
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Text(
                     card.isSelf
                         ? (card.paused
