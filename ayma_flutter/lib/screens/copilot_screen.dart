@@ -40,6 +40,12 @@ class _CopilotScreenState extends State<CopilotScreen>
 
   final _goalController = TextEditingController();
   bool? _overlayGranted;
+  bool _sideloaded = false;
+  bool _installSourceChecked = false;
+  // Set when we send the user to the system overlay page; if they come
+  // back STILL ungranted, the grant is blocked (Restricted Settings on
+  // sideloaded installs locks the toggle) and we show the recovery card.
+  bool _overlaySettingsVisited = false;
   bool _asking = false;
   CopilotTarget? _lastTarget;
   String? _askError;
@@ -67,12 +73,27 @@ class _CopilotScreenState extends State<CopilotScreen>
 
   Future<void> _refreshOverlayPermission() async {
     final granted = await _service.canDrawOverlays();
-    if (mounted) setState(() => _overlayGranted = granted);
+    var sideloaded = _sideloaded;
+    if (!_installSourceChecked) {
+      _installSourceChecked = true;
+      sideloaded = await _service.wasSideloaded();
+    }
+    if (mounted) {
+      setState(() {
+        _overlayGranted = granted;
+        _sideloaded = sideloaded;
+      });
+    }
+  }
+
+  Future<void> _openOverlaySettings() async {
+    _overlaySettingsVisited = true;
+    await _service.openOverlaySettings();
   }
 
   Future<void> _startSharing() async {
     if (_overlayGranted != true) {
-      await _service.openOverlaySettings();
+      await _openOverlaySettings();
       return;
     }
     final consented = await _service.requestCaptureAndStart();
@@ -226,7 +247,7 @@ class _CopilotScreenState extends State<CopilotScreen>
         trailing: granted == true
             ? null
             : Icon(Icons.chevron_right, color: ac.fgMute),
-        onTap: granted == true ? null : _service.openOverlaySettings,
+        onTap: granted == true ? null : _openOverlaySettings,
       ),
       const SizedBox(height: 12),
       FilledButton.icon(
@@ -240,6 +261,67 @@ class _CopilotScreenState extends State<CopilotScreen>
         'Android asks for your OK every time you start — that prompt is '
         'the consent, and sharing runs only until you stop it.',
         style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+      ),
+      // Restricted Settings recovery: shown when the install is
+      // sideloaded (Android locks the overlay toggle for those), or when
+      // the user already went to the system page and came back still
+      // ungranted — the toggle was blocked, whatever the install source.
+      if (granted != true && (_sideloaded || _overlaySettingsVisited))
+        ..._restrictedSettingsHelp(context),
+    ];
+  }
+
+  /// The exact way out of Android's Restricted Settings lock, shown
+  /// in-app instead of leaving the user at the dead system dialog
+  /// ("App was denied access — this restricted permission").
+  List<Widget> _restrictedSettingsHelp(BuildContext context) {
+    final ac = context.ac;
+    Widget step(String text) => Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            text,
+            style: AymaType.sans(size: 13, soft: true, color: ac.fgMute),
+          ),
+        );
+    return [
+      const SizedBox(height: 16),
+      Container(
+        key: const Key('copilot_restricted_help'),
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: ac.bgCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: ac.lineSoft),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Android is locking this permission — here is the fix',
+              style: AymaType.sans(size: 14, color: ac.fg),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'This Ayma install did not come from Google Play, so Android '
+              'calls "Display over other apps" a restricted setting and '
+              'keeps the switch off ("App was denied access") until you '
+              'allow it once. It takes about 20 seconds:',
+              style: AymaType.sans(size: 13, soft: true, color: ac.fgMute),
+            ),
+            step('1. Tap "Open App info" below (or open Settings → Apps → Ayma).'),
+            step('2. Tap the three dots ⋮ at the top right of App info, then "Allow restricted settings".'),
+            step('3. Confirm with your PIN, pattern, or fingerprint.'),
+            step('4. Come back here and tap "Draw over other apps" again — the switch will turn on now.'),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              key: const Key('copilot_open_app_info_button'),
+              onPressed: () => _service.openAppInfo(),
+              icon: const Icon(Icons.info_outline),
+              label: const Text('Open App info'),
+            ),
+          ],
+        ),
       ),
     ];
   }

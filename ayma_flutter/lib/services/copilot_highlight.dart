@@ -286,6 +286,19 @@ abstract final class CopilotCoordinateMapper {
   }
 }
 
+/// The Google Play installer package. An install reporting anything
+/// else — or nothing (adb / APK download) — did not come from Play.
+const String kPlayStoreInstaller = 'com.android.vending';
+
+/// True when this install did NOT come from Google Play. Android 13+
+/// treats such installs as sideloaded and locks sensitive permissions —
+/// including "Display over other apps" — behind Restricted Settings: the
+/// overlay settings toggle stays denied ("App was denied access — this
+/// restricted permission") until the user allows restricted settings for
+/// the app from its App info page. Play installs never see the lock.
+bool copilotInstallIsSideloaded(String? installerPackage) =>
+    installerPackage != kPlayStoreInstaller;
+
 /// Mirrors the native black-frame threshold
 /// (CopilotProjectionService.BLACK_LUMINANCE_MAX): at or below this sampled
 /// mean luminance a frame is a FLAG_SECURE black frame and must be treated

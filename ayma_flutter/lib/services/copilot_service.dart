@@ -182,6 +182,39 @@ class CopilotService extends ChangeNotifier {
     }
   }
 
+  /// The package that installed Ayma (Play Store is
+  /// [kPlayStoreInstaller]), or null when it cannot be determined.
+  Future<String?> installerPackage() async {
+    if (!isSupported) return null;
+    try {
+      return await _channel.invokeMethod<String>('installerPackage');
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  /// True when Ayma was sideloaded rather than Play-installed — the
+  /// installs whose overlay grant Android locks behind Restricted
+  /// Settings (see [copilotInstallIsSideloaded]).
+  Future<bool> wasSideloaded() async =>
+      copilotInstallIsSideloaded(await installerPackage());
+
+  /// Opens Ayma's App info page — the Restricted Settings recovery
+  /// route (three-dot menu → Allow restricted settings → authenticate).
+  Future<void> openAppInfo() async {
+    if (!isSupported) return;
+    try {
+      await _channel.invokeMethod<void>('openAppInfo');
+    } on PlatformException {
+      // App info would not open; the recovery card also spells out the
+      // manual Settings → Apps → Ayma route, so the user is not stuck.
+    } on MissingPluginException {
+      // Non-Android build: nothing to open.
+    }
+  }
+
   /// Runs the per-session system consent and, on grant, starts the capture
   /// service. Returns whether the user consented. This is the ONLY way a
   /// share starts.
