@@ -86,9 +86,18 @@ class DebugCaptureIsolation {
   }
 
   /// Synchronously or asynchronously reads the flag value at session connect,
-  /// ensuring any cached or disk-seeded preference has been loaded.
+  /// ensuring any cached or disk-seeded preference has been loaded. If no [db]
+  /// is passed, attempts to use [FirebaseFirestore.instance] if available.
   static Future<bool> readAtConnect({FirebaseFirestore? db}) async {
-    await ensureReady(db: db);
+    FirebaseFirestore? firestore = db;
+    if (firestore == null) {
+      try {
+        firestore = FirebaseFirestore.instance;
+      } catch (_) {
+        // Leave null in unit test environments without Firebase initialized.
+      }
+    }
+    await ensureReady(db: firestore);
     return disabled.value;
   }
 
@@ -148,10 +157,18 @@ class DebugCaptureIsolation {
 
   /// Fetches the Firestore flag, caches it for the next launch, and applies
   /// it in memory at once. Never throws; a failure leaves the cached value
-  /// untouched.
+  /// untouched. Concurrent calls share the in-flight future.
   static Future<void> refresh(FirebaseFirestore db) {
+    if (_refreshFuture != null) {
+      return _refreshFuture!;
+    }
     final fut = _doRefresh(db);
     _refreshFuture = fut;
+    fut.whenComplete(() {
+      if (identical(_refreshFuture, fut)) {
+        _refreshFuture = null;
+      }
+    });
     return fut;
   }
 
