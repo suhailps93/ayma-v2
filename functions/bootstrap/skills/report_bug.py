@@ -17,6 +17,14 @@ path.
 Always-on: registered in ``skills._REGISTRY`` like ``record_feedback``, so
 it's available on every chat surface (main chat, voice, Your Story, etc.)
 rather than gated behind a special screen — a crash can happen anywhere.
+
+This tool is ALSO the filing path for capability gaps (founder rule,
+2026-11-07): when a user asks for something no tool can do, Ayma calls it
+with a description starting ``Capability gap:`` and the deterministic
+guard in :mod:`capability_gap` takes over — exclusion refusal + one
+report per distinct gap per session — writing through this same
+``bug_reports_ops`` path into the same ``bug_reports`` collection. No
+new tool, no new collection.
 """
 
 from __future__ import annotations
@@ -24,13 +32,16 @@ from __future__ import annotations
 from typing import Callable
 
 import bug_reports_ops
+import capability_gap
 
 from ._base import Skill
 
 DESCRIPTION = (
     "Log a bug / crash / technical problem with the APP ITSELF, as soon as "
     "the user describes one. Feedback on your own conversation handling goes "
-    "to `record_feedback`."
+    "to `record_feedback`. Also file a capability gap with this tool — "
+    "description starting `Capability gap:` — when a user asks for "
+    "something no tool you have can do."
 )
 
 DECLARATION = {
@@ -51,10 +62,19 @@ DECLARATION = {
 }
 
 
-def _bind(db, uid: str, *, image_path: str = "") -> Callable[..., str]:
+def _bind(
+    db, uid: str, *, image_path: str = "", session_id: str = ""
+) -> Callable[..., str]:
     def report_bug(description: str) -> str:
         """Log an app bug/crash report; a screenshot attached this same
-        turn (``image_path``) is saved alongside it automatically."""
+        turn (``image_path``) is saved alongside it automatically. A
+        description starting ``Capability gap:`` is a capability-gap
+        report instead — routed through the deterministic guard in
+        :mod:`capability_gap` (same ``bug_reports`` collection)."""
+        if capability_gap.is_gap_description(description):
+            return capability_gap.handle_gap_report(
+                db, uid, session_id, description
+            )
         rid = bug_reports_ops.record(
             db, uid, description, image_path=image_path,
         )

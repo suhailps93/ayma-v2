@@ -352,8 +352,11 @@ def test_flags_off_assembly_is_byte_identical_to_the_original_order():
     """With every context_opt flag off (the default), the assembled prompt
     must be byte-for-byte what the pre-cost-program code produced, plus the
     static plan-facts block that closes the stable prefix, plus the
-    config-rendered permitted-action block right after it: persona, lessons,
-    mode, questionnaire guidance, plan facts, action facts, progress,
+    config-rendered permitted-action block right after it, plus the static
+    capability-gap instruction block right after that (founder rule
+    2026-11-07): persona, lessons,
+    mode, questionnaire guidance, plan facts, action facts, capability
+    gap, progress,
     questionnaire note,
     story, screen line, wiki, history, photo note, viewing-profile — joined
     by blank lines."""
@@ -371,6 +374,9 @@ def test_flags_off_assembly_is_byte_identical_to_the_original_order():
         expected_parts.append(guidance)
     expected_parts.append(prompt_mod.plan_facts())
     expected_parts.append(prompt_mod.action_facts())
+    _capability_gap = prompt_mod.load_capability_gap()
+    if _capability_gap:
+        expected_parts.append(_capability_gap)
     expected_parts += [
         kwargs["profile_progress"],
         kwargs["questionnaire_note"],
