@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
@@ -8,6 +9,7 @@ import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
+import 'package:ayma_flutter/services/voice_transport.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +17,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+import 'support/fake_voice_transport.dart';
 
 /// A network-free [VoiceSessionController] for the voice-simulator screen
 /// tests — overrides the lifecycle so nothing touches LiveKit, wakelock or
@@ -511,5 +515,109 @@ void main() {
     expect(find.text('PROFILE her'), findsOneWidget);
     expect(find.byType(PracticeScreen), findsNothing);
     expect(find.byType(PracticeDebriefScreen), findsNothing);
+  });
+
+  // --- Practice screen suspends Ayma's idle timer (note 129) ------------- //
+
+  testWidgets('opening the practice screen suspends the live Ayma idle '
+      'timer; leaving it resumes it', (tester) async {
+    // Note 129, end to end at the widget level: the practice icon tap
+    // came at ~02:27:11 and Ayma idle-fired at 02:27:25 — nine seconds
+    // BEFORE the voice button was tapped. The suspension must start when
+    // the practice screen opens (initState), and end when it closes
+    // (dispose) — the controller-level tests prove the mechanism, this
+    // one proves the wiring.
+    VoiceSessionController.active = null;
+    final transports = <FakeVoiceTransport>[];
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/bootstrap') {
+          return _json({
+            'session_mode': 'marketing',
+            'uid': 'u1',
+            'livekit': {
+              'token': 'tok-abc',
+              'url': 'wss://example.livekit.cloud',
+              'room': 'ayma-u1',
+            },
+          });
+        }
+        if (req.url.path == '/practice/start') {
+          return _json({
+            'session_id': 'practice_1',
+            'simulation': true,
+            'persona': {
+              'name': 'Dana',
+              'age': 30,
+              'location': 'Berlin',
+              'photo_count': 2,
+            },
+            'banner':
+                "Practice mode — you're talking to a simulated version of Dana, not the real person.",
+          });
+        }
+        if (req.url.path == '/post-turn' ||
+            req.url.path == '/voice/context') {
+          return _json({'ok': true});
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    final ayma = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: api,
+      userIdleTimeout: const Duration(milliseconds: 150),
+      transportFactory: () {
+        final t = FakeVoiceTransport();
+        transports.add(t);
+        return t;
+      },
+    );
+    addTearDown(() {
+      // Non-awaited on purpose: the body already stops her; this is only
+      // a safety net for an early assertion failure, and awaiting the
+      // teardown chain in fake async can stall the tearDown itself.
+      unawaited(ayma.stop());
+      VoiceSessionController.active = null;
+    });
+
+    await ayma.start();
+    transports.last.markAgentReady();
+    await tester.pump(Duration.zero);
+    expect(ayma.phase, VoiceSessionPhase.live);
+    transports.last.transcriptsController.add(const TranscriptSegment(
+      topic: 'agent_transcript',
+      text: 'Hi, how can I help?',
+      isFinal: true,
+    ));
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(ayma.userIdleArmedAtForTest, isNotNull);
+
+    // Open the practice screen: initState suspends the idle timer.
+    await tester.pumpWidget(_wrap(PracticeScreen(uid: 'her', api: api)));
+    await _settle(tester);
+    expect(find.byType(PracticeScreen), findsOneWidget);
+
+    // A full setup dwell (longer than the 150 ms idle window) passes
+    // with Ayma still live.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(ayma.phase, VoiceSessionPhase.live);
+    expect(ayma.disconnectReason, isNull);
+
+    // Leave the practice screen: dispose resumes the timer. The
+    // re-armed clock is the wiring proof — assert it directly rather
+    // than waiting for the fire: the idle teardown chain is long
+    // (subscriptions + transport + persist) and the fake-async pump
+    // does not drain it deterministically, while the controller-level
+    // test (real time) already proves a resumed timer fires.
+    await tester.pumpWidget(_wrap(const SizedBox.shrink()));
+    expect(ayma.userIdleArmedAtForTest, isNotNull);
+    expect(ayma.phase, VoiceSessionPhase.live);
+    // End the session so no timer is left pending when the test returns
+    // (the framework fails a testWidgets with a pending Timer): stop()'s
+    // teardown cancels the idle timer synchronously in its prefix.
+    unawaited(ayma.stop());
+    expect(ayma.userIdleArmedAtForTest, isNull);
   });
 }

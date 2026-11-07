@@ -61,11 +61,25 @@ class _PracticeScreenState extends State<PracticeScreen> {
   @override
   void initState() {
     super.initState();
+    // Suspend the live Ayma session's idle timer for as long as this
+    // screen is open (Scout note 129): the setup dwell between opening
+    // the practice screen and tapping the voice button can itself exceed
+    // her 30 s idle window (icon tap ~02:27:11, fire 02:27:25, voice tap
+    // ~02:27:34), so waiting for the voice tap leaves that gap
+    // unprotected. Suspend-only — the debrief return itself is armed
+    // later, when a voice call actually displaces her (see _startVoice);
+    // a text practice must never leave an armed marker behind.
+    VoiceSessionController.suspendIdleForPractice();
     _begin();
   }
 
   @override
   void dispose() {
+    // The practice screen is closing without a voice call having taken
+    // over (or after one ended): give the still-live Ayma session its
+    // idle timeout back. A no-op when a voice call already displaced her
+    // or the debrief return already fired — see resumeIdleAfterPractice.
+    VoiceSessionController.resumeIdleAfterPractice();
     _input.dispose();
     _scroll.dispose();
     super.dispose();

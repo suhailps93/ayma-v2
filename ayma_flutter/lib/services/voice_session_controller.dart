@@ -497,30 +497,84 @@ class VoiceSessionController extends ChangeNotifier {
   static VoiceSessionController? _pendingReturnTarget;
 
   /// True while this session's user-idle timer is suspended for a practice
-  /// call that has been initiated but has not yet displaced this session
-  /// (Scout note 125, Nov 6 2026): the practice worker can take ~33 s to
-  /// connect on a cold start — longer than the 30 s idle window — so without
-  /// this the live Ayma session idle-fires (client_idle_timeout) before the
-  /// practice call connects and the debrief return can never arm. While set,
-  /// [_armUserIdleTimer] / [_noteUserActivity] do not (re-)arm the timer.
-  /// Cleared when the practice call displaces this session ([_teardown]),
-  /// when the session is manually restarted ([start]), or when a practice
-  /// call that never went live is torn down — which resumes the timer
+  /// flow that has not yet displaced this session. Two entry points
+  /// (Scout notes 125 + 129, Nov 6–7 2026): [preparePracticeReturn] at
+  /// the voice-button tap, and [suspendIdleForPractice] when the practice
+  /// screen opens — the setup dwell between the two can itself exceed
+  /// the 30 s window (note 129: icon tap ~02:27:11, fire 02:27:25, voice
+  /// tap ~02:27:34), and the practice worker can take ~33 s to connect
+  /// on a cold start, so without this the live Ayma session idle-fires
+  /// (client_idle_timeout) before the practice call connects and the
+  /// debrief return can never arm. While set, [_armUserIdleTimer] /
+  /// [_noteUserActivity] do not (re-)arm the timer. Cleared when the
+  /// practice call displaces this session ([_teardown]), when the session
+  /// is manually restarted ([start]), or when a practice call that never
+  /// went live is torn down — which resumes the timer
   /// ([_resumeUserIdleTimer]) so a still-live session never sits without
   /// its idle timeout.
   bool _userIdleSuspendedForPractice = false;
 
-  /// The moment a practice voice call is initiated (the tap, before the
-  /// practice screen even opens): arm the debrief return for the live Ayma
-  /// session and suspend its user-idle timer while the practice call is
-  /// pending. [start]'s exclusion still stops Ayma the moment the practice
-  /// controller actually starts — this only covers the gap before that,
-  /// when a slow first frame or a cold worker would otherwise let her idle
-  /// window fire first (Scout note 125: practice took 33 s to connect vs
-  /// the 30 s window, Ayma idle-fired, no return armed). Idempotent: a
-  /// second call while already armed is a no-op. No-op when no Ayma
-  /// session is live (voice off), when the live session is itself a
-  /// practice call, or when it is the welcome room.
+  /// The live Ayma session whose user-idle timer is suspended because a
+  /// practice screen is open (Scout note 129, Nov 7 2026) — distinct from
+  /// [_pendingReturnTarget], which is only armed when a voice practice
+  /// call actually displaces her. A practice screen can stay open for a
+  /// text practice (no voice call, no return), so arming the return here
+  /// would leave a stale marker that a later, unrelated voice practice
+  /// could fire; the suspension alone is what the open screen needs.
+  /// Cleared by [resumeIdleAfterPractice]; the resume itself is guarded
+  /// by the target's suspension flag, so it is a no-op when a voice call
+  /// already took over or the return already fired.
+  static VoiceSessionController? _idleSuspendedTarget;
+
+  /// Suspend the live Ayma session's user-idle timer for the duration of
+  /// an open practice screen (called from the practice screen's
+  /// initState): the setup dwell between opening the practice screen and
+  /// tapping the voice button can itself exceed the 30 s idle window
+  /// (note 129: icon tap ~02:27:11, fire 02:27:25, voice tap ~02:27:34),
+  /// so suspending only from the voice tap leaves that gap unprotected.
+  /// No-op when no Ayma session is live (voice off), when the live
+  /// session is itself a practice call, or when it is the welcome room.
+  /// Idempotent: a second call while already suspended re-stores the
+  /// same target.
+  static void suspendIdleForPractice() {
+    final existing = active;
+    if (existing == null ||
+        !existing.isActive ||
+        existing.isPractice ||
+        existing.welcome) {
+      return;
+    }
+    _idleSuspendedTarget = existing;
+    existing._suspendUserIdleTimer();
+  }
+
+  /// Resume the user-idle timer suspended by [suspendIdleForPractice]
+  /// (called from the practice screen's dispose): the practice screen is
+  /// closing without a voice call having taken over, so the still-live
+  /// Ayma session gets its idle timeout back. A no-op when nothing was
+  /// suspended, and when a voice call already displaced her or the
+  /// debrief return already fired — the target's suspension flag was
+  /// cleared by [start]'s field reset in both cases, so the resume
+  /// cannot touch the returned session's timer.
+  static void resumeIdleAfterPractice() {
+    final target = _idleSuspendedTarget;
+    _idleSuspendedTarget = null;
+    target?._resumeUserIdleTimer();
+  }
+
+  /// The moment a practice voice call is initiated (the voice-button tap,
+  /// before the practice voice screen even opens): arm the debrief return
+  /// for the live Ayma session and suspend its user-idle timer while the
+  /// practice call is pending. [start]'s exclusion still stops Ayma the
+  /// moment the practice controller actually starts — this only covers
+  /// the gap before that, when a slow first frame or a cold worker would
+  /// otherwise let her idle window fire first (Scout note 125: practice
+  /// took 33 s to connect vs the 30 s window, Ayma idle-fired, no return
+  /// armed). The earlier setup dwell is covered separately by
+  /// [suspendIdleForPractice] at practice-screen open (note 129).
+  /// Idempotent: a second call while already armed is a no-op. No-op
+  /// when no Ayma session is live (voice off), when the live session is
+  /// itself a practice call, or when it is the welcome room.
   static void preparePracticeReturn() {
     final existing = active;
     if (existing == null ||
