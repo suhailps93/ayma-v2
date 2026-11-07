@@ -51,6 +51,14 @@ def report_actions() -> list[dict]:
     return list(registry().get("report_actions") or [])
 
 
+def media_actions() -> list[dict]:
+    """Media captures Ayma can perform herself (take a picture). Not pages
+    or settings: each ``via`` names the chat/voice tool that actually runs
+    it (``take_picture``), and each ``key`` is the action's APP_ACTION_GRAPH
+    entry name."""
+    return list(registry().get("media_actions") or [])
+
+
 def story_edit_actions() -> list[dict]:
     """Direct story/wiki edit + soft-remove actions Ayma does herself. Not
     pages: each ``via`` names the chat/voice tool that actually does it

@@ -502,7 +502,7 @@ _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "list_conversations",
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
-    "ui_action",
+    "ui_action", "take_picture",
 }
 
 
