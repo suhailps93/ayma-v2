@@ -7,12 +7,14 @@ import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
 import '../screens/explore_screen.dart';
+import '../screens/notification_center_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
 import 'api_client.dart';
 import 'app_context.dart';
 import 'guided_tour_controller.dart';
+import 'inbox_actions.dart';
 import 'navigation_history.dart';
 import 'notification_service.dart';
 import 'orb_animation_settings.dart';
@@ -434,6 +436,15 @@ class AppCommandService {
       unawaited(_runGoBackCommand(snap.reference, id));
       return;
     }
+    if (data['action'] == 'set_notification_filter') {
+      // Owns its ack like go_back: the ack carries the filter it
+      // replaced, which the backend (and its self-check restore) needs
+      // because the filter lives only in this client's shared state.
+      // Only the filter is wired on staging; the bulk inbox actions
+      // remain v2-only.
+      unawaited(_runInboxCommand(snap.reference, data, id));
+      return;
+    }
     if (data['action'] == 'tour_step') {
       // The Ayma-driven tour spotlights one step and acks it only once the
       // overlay reports it shown (or its anchor absent), then waits for the
@@ -623,6 +634,55 @@ class AppCommandService {
         })
         .catchError((_) {});
     await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Run one inbox command, then ack with the outcome: `ok`, plus
+  /// what actually happened (`result`) or why nothing did (`reason`).
+  Future<void> _runInboxCommand(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> cmd,
+    String id,
+  ) async {
+    final out = await runInboxCommand(cmd);
+    await ref.parent
+        .doc('ack')
+        .set(<String, dynamic>{
+          'id': id,
+          'ok': out.ok,
+          if (out.ok) 'result': out.message else 'reason': out.message,
+          'ts': FieldValue.serverTimestamp(),
+        })
+        .catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Execute one inbox command; any failure is reported, never thrown.
+  /// On staging only `set_notification_filter` is wired (the bulk
+  /// inbox actions remain v2-only and are refused as unknown).
+  @visibleForTesting
+  Future<InboxActionResult> runInboxCommand(
+      Map<String, dynamic> cmd) async {
+    final action = (cmd['action'] as String? ?? '').trim();
+    try {
+      switch (action) {
+        case 'set_notification_filter':
+          // The backend self-check needs the filter it replaced so it
+          // can restore it afterwards: this client-only state has no
+          // other read path, so the previous key rides in the ack line.
+          final previous = NotificationFilterState.instance.current.value;
+          final filter = NotificationFilter.fromKey(
+              (cmd['filter'] as String? ?? '').trim());
+          NotificationFilterState.instance.setFilter(filter);
+          _navigate(NotificationCenterScreen.path);
+          return InboxActionResult(true,
+              'Showing ${filter.label} notifications. (was: ${previous.key})');
+        default:
+          return InboxActionResult(false, 'Unknown inbox action: $action');
+      }
+    } catch (e) {
+      debugPrint('Ayma inbox action $action failed: $e');
+      return const InboxActionResult(false, 'That inbox action failed.');
+    }
   }
 
   /// One "go back" step (founder feedback item 15), in the order a user's
