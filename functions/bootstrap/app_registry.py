@@ -63,6 +63,55 @@ def unavailable() -> list[dict]:
     return list(registry()["unavailable"])
 
 
+def exclusions() -> list[dict]:
+    """The ACTION PARITY exclusion config (founder, 2026-11-06): the
+    controls Ayma must never activate (delete account, any purchase,
+    clear memory). Enforcement lives in the command layer — the
+    ``ui_action_policy`` deny rules and the navigate-only handlers named
+    in each item's ``via`` — never in the system prompt. Returns the
+    ``items`` list (empty when the registry predates the block)."""
+    block = registry().get("exclusions") or {}
+    return list(block.get("items") or [])
+
+
+def excluded_account_action_keys() -> set[str]:
+    """Account-action keys the exclusions config refuses outright.
+
+    Derived from each exclusion item's ``account_actions`` list, so the
+    config is load-bearing: listing an account action there makes the
+    command layer refuse it (see ``skills/app_control_account.py``),
+    whatever its handler field says.
+    """
+    out: set[str] = set()
+    for item in exclusions():
+        out.update(item.get("account_actions") or [])
+    return out
+
+
+def excluded_destination_keys() -> set[str]:
+    """Destination keys the exclusions config keeps out of the prompt's
+    permitted-pages list: a destination that exists solely as an
+    excluded control's own page (the Delete account page). General
+    pages an exclusion merely lives on (Plan, Ayma's settings) are NOT
+    listed — she may still open those; she just cannot act there."""
+    out: set[str] = set()
+    for item in exclusions():
+        out.update(item.get("destinations") or [])
+    return out
+
+
+def excluded_deny_keys() -> set[str]:
+    """ui_action deny-rule keys the exclusions config relies on."""
+    out: set[str] = set()
+    for item in exclusions():
+        out.update(item.get("deny_keys") or [])
+    return out
+
+
+def exclusion_keys() -> set[str]:
+    return {str(e.get("key") or "") for e in exclusions()}
+
+
 def guided_tour() -> dict:
     """The Ayma-driven interactive tour config (ARCHITECTURE §11.2b): its
     metadata and the ordered ``steps`` Ayma narrates. Empty dict when the

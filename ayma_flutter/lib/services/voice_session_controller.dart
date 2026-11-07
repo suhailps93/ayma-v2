@@ -251,6 +251,22 @@ class VoiceSessionController extends ChangeNotifier {
   String? _disconnectReason;
   String? get disconnectReason => _disconnectReason;
 
+  /// A one-shot context note for the NEXT [start] of this session: it is
+  /// appended to the `/bootstrap` recent-turns window (as an Ayma turn)
+  /// for that start only, then cleared — never rendered in the chat and
+  /// never persisted. Set via [noteResumeContext] by a flow that tears
+  /// this session down and reconnects it (today: `play_voice_clip`
+  /// disconnecting to play a clip, then reconnecting), so the
+  /// reconnected Ayma knows what happened while she was gone — the
+  /// practice voice-return shape.
+  String? _pendingResumeNote;
+
+  /// Attach [note] to this session's next [start] (see [_pendingResumeNote]).
+  void noteResumeContext(String note) {
+    final trimmed = note.trim();
+    if (trimmed.isNotEmpty) _pendingResumeNote = trimmed;
+  }
+
   /// Practice voice (hackathon B): the practice session id returned by
   /// `/practice/voice/start` — the client fetches the debrief with it once the
   /// call ends. Empty until a practice call has started.
@@ -771,9 +787,15 @@ class VoiceSessionController extends ChangeNotifier {
         token = sess.livekitToken;
       } else {
         debugPrint('[voice] start(): calling /bootstrap');
+        final resumeNote = _pendingResumeNote;
+        _pendingResumeNote = null;
         final session = await _api.bootstrap(
           sessionId: sessionId,
-          recentTurns: _store.wireTurns(),
+          recentTurns: [
+            ..._store.wireTurns(),
+            if (resumeNote != null)
+              {'role': 'ayma', 'text': resumeNote},
+          ],
           practiceReturnSessionId: _practiceReturnSessionId,
         );
         if (session.usageCapped) {

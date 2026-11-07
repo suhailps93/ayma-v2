@@ -254,6 +254,28 @@ class DmService {
     }
   }
 
+  /// Mark every thread with unread messages read for me — the Messages
+  /// tab's "Mark all read" button and Ayma's `mark_all_conversations_read`
+  /// command. Pages past the live top tier so threads below the fold
+  /// count too. Returns how many threads were marked.
+  Future<int> markAllThreadsRead() async {
+    final byId = <String, DmThread>{};
+    var page = await fetchActiveThreads(limit: 100);
+    for (var guard = 0; guard < 40; guard++) {
+      for (final t in page) {
+        byId[t.threadId] = t;
+      }
+      if (page.length < 100) break;
+      page = await fetchOlderThreads(lastThreadId: page.last.threadId, limit: 100);
+      if (page.isEmpty) break;
+    }
+    final unread = byId.values.where((t) => t.unread > 0).toList();
+    for (final t in unread) {
+      await markThreadRead(t.threadId);
+    }
+    return unread.length;
+  }
+
   /// The other participant in a sorted-pair thread id (`{lo}__{hi}`).
   String otherUidOf(String threadId) {
     final me = uid;

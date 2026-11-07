@@ -1,18 +1,22 @@
-"""App-control notification filter (founder feedback item 11,
-2026-11-06; staging port 2026-11-07, ordered with the self-check).
+"""App-control inbox actions: the bulk buttons on the Notifications
+page and the Messages list (ACTION PARITY priority gaps, founder
+feedback items 9–11, 2026-11-06).
 
-The Notifications page filter chips and Ayma share one state (the
-client's ``NotificationFilterState``): this tool queues one
-``set_notification_filter`` UI command at
+The buttons existed for the user — "Mark all read" and "Clear all" on
+the Notifications page, and (added with this work) "Mark all read" on
+the conversations list, plus the notification filter chips — but Ayma
+had no commands for them, so when the user asked her she was unaware
+they existed. Each tool here queues one UI command at
 ``users/{uid}/app_commands/pending``; the Flutter client
-(``AppCommandService``) writes the shared filter state, navigates to
-the Notifications page, and acks with the line naming the filter it
-replaced. That ack line is also how the self-check learns (and then
-restores) the user's own filter, which lives only in the client.
+(``AppCommandService`` + ``InboxActions``) runs the same
+NotificationService / DmService writes the buttons run and acks with
+the count that actually moved.
 
-The bulk inbox actions (mark-all-read / clear-all /
-mark-all-conversations-read) stay v2-only; only the filter was
-ordered into staging. Split out of ``skills/app_control.py``
+``clear_all_notifications`` is destructive (the user's own button asks
+for confirmation and says it cannot be undone), so its tool
+description makes Ayma confirm with the user in conversation before
+calling it — the ask-plus-confirm in chat is the check, the same shape
+as the tap-side dialog. Split out of ``skills/app_control.py``
 following the Tier-2 family layout.
 """
 
@@ -50,7 +54,7 @@ _FILTER_KEYS = ("all", "unread", "matches", "ayma", "reports", "suggestions")
 async def _run_inbox_command(db, uid: str, payload: dict, not_done: str) -> str:
     """Queue one inbox command and relay its ack honestly."""
     cmd_id = _queue_command(db, uid, payload)
-    # The filter write + navigation can take longer than a plain
+    # Bulk writes (a batch per notification) can take longer than a
     # navigation's 6s, so these get the inbox timeout.
     from skills import app_control as _facade  # deferred: owns the knobs
 
@@ -66,6 +70,32 @@ async def _run_inbox_command(db, uid: str, payload: dict, not_done: str) -> str:
         )
     result = str(ack.get("result") or "").strip()
     return result[:500] if result else "Done."
+
+
+def _bind_mark_all_notifications_read(db, uid: str) -> Callable[..., str]:
+    async def mark_all_notifications_read() -> str:
+        return await _run_inbox_command(
+            db, uid,
+            {"action": "mark_all_notifications_read"},
+            "The app did NOT mark the notifications read — tell the user "
+            "it didn't work and that the button is at the top of the "
+            "Notifications page.",
+        )
+
+    return mark_all_notifications_read
+
+
+def _bind_clear_all_notifications(db, uid: str) -> Callable[..., str]:
+    async def clear_all_notifications() -> str:
+        return await _run_inbox_command(
+            db, uid,
+            {"action": "clear_all_notifications"},
+            "The app did NOT clear the notifications — tell the user it "
+            "didn't work and that the button is at the top of the "
+            "Notifications page.",
+        )
+
+    return clear_all_notifications
 
 
 def _bind_set_notification_filter(db, uid: str) -> Callable[..., str]:
@@ -88,6 +118,31 @@ def _bind_set_notification_filter(db, uid: str) -> Callable[..., str]:
     return set_notification_filter
 
 
+def _bind_mark_all_conversations_read(db, uid: str) -> Callable[..., str]:
+    async def mark_all_conversations_read() -> str:
+        return await _run_inbox_command(
+            db, uid,
+            {"action": "mark_all_conversations_read"},
+            "The app did NOT mark the conversations read — tell the "
+            "user it didn't work and that the button is at the top of "
+            "the Messages list.",
+        )
+
+    return mark_all_conversations_read
+
+
+_MARK_ALL_NOTIFICATIONS_READ = {
+    "name": "mark_all_notifications_read",
+    "description": _prompt("app_control_mark_all_notifications_read"),
+    "parameters": {"type": "object", "properties": {}},
+}
+
+_CLEAR_ALL_NOTIFICATIONS = {
+    "name": "clear_all_notifications",
+    "description": _prompt("app_control_clear_all_notifications"),
+    "parameters": {"type": "object", "properties": {}},
+}
+
 _SET_NOTIFICATION_FILTER = {
     "name": "set_notification_filter",
     "description": _prompt("app_control_set_notification_filter"),
@@ -106,4 +161,10 @@ _SET_NOTIFICATION_FILTER = {
         },
         "required": ["filter"],
     },
+}
+
+_MARK_ALL_CONVERSATIONS_READ = {
+    "name": "mark_all_conversations_read",
+    "description": _prompt("app_control_mark_all_conversations_read"),
+    "parameters": {"type": "object", "properties": {}},
 }

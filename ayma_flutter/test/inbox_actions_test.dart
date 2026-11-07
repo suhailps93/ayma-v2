@@ -49,11 +49,56 @@ void main() {
   });
 
   group('AppCommandService inbox commands', () {
-    AppCommandService svc({List<String>? nav}) {
+    AppCommandService svc({
+      int notifRead = 0,
+      int cleared = 0,
+      int convRead = 0,
+      bool fail = false,
+      List<String>? nav,
+    }) {
+      Future<int> Function() op(int value) =>
+          () async => fail ? throw StateError('boom') : value;
       return AppCommandService(
         navigate: nav?.add ?? (_) {},
+        inboxActions: InboxActions(
+          markAllNotificationsRead: op(notifRead),
+          clearAllNotifications: op(cleared),
+          markAllConversationsRead: op(convRead),
+        ),
       );
     }
+
+    test('mark_all_notifications_read relays the count', () async {
+      final out = await svc(notifRead: 3)
+          .runInboxCommand({'action': 'mark_all_notifications_read'});
+      expect(out.ok, isTrue);
+      expect(out.message, 'Marked 3 notifications as read.');
+      final zero = await svc()
+          .runInboxCommand({'action': 'mark_all_notifications_read'});
+      expect(zero.message, 'No unread notifications.');
+    });
+
+    test('clear_all_notifications relays the count', () async {
+      final out = await svc(cleared: 1)
+          .runInboxCommand({'action': 'clear_all_notifications'});
+      expect(out.ok, isTrue);
+      expect(out.message, 'Cleared 1 notification.');
+    });
+
+    test('mark_all_conversations_read relays the count', () async {
+      final out = await svc(convRead: 2)
+          .runInboxCommand({'action': 'mark_all_conversations_read'});
+      expect(out.ok, isTrue);
+      expect(out.message, 'Marked 2 conversations as read.');
+    });
+
+
+    test('a failing op is an honest failure, never a throw', () async {
+      final out = await svc(fail: true)
+          .runInboxCommand({'action': 'mark_all_notifications_read'});
+      expect(out.ok, isFalse);
+      expect(out.message, 'That inbox action failed.');
+    });
 
     test('set_notification_filter sets the shared state and navigates',
         () async {
@@ -86,19 +131,18 @@ void main() {
       expect(out.ok, isFalse);
       expect(out.message, contains('Unknown inbox action'));
     });
+  });
 
-    test('the v2-only bulk actions are not wired on staging', () async {
-      // Staging split: mark-all-read / clear-all / mark-all-
-      // conversations-read were NOT ported with the filter.
-      for (final action in [
-        'mark_all_notifications_read',
-        'clear_all_notifications',
-        'mark_all_conversations_read',
-      ]) {
-        final out = await svc().runInboxCommand({'action': action});
-        expect(out.ok, isFalse, reason: action);
-        expect(out.message, contains('Unknown inbox action'));
-      }
+  group('InboxActions injectable ops', () {
+    test('returns the op counts untouched', () async {
+      final actions = InboxActions(
+        markAllNotificationsRead: () async => 4,
+        clearAllNotifications: () async => 9,
+        markAllConversationsRead: () async => 1,
+      );
+      expect(await actions.markAllNotificationsRead(), 4);
+      expect(await actions.clearAllNotifications(), 9);
+      expect(await actions.markAllConversationsRead(), 1);
     });
   });
 }

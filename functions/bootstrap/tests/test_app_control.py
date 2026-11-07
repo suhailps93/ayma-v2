@@ -502,7 +502,9 @@ _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "list_conversations",
     "open_message_thread", "open_notification", "open_match_report",
     "open_date_sim", "open_practice_date", "app_action", "account_action",
-    "ui_action", "go_back", "set_notification_filter",
+    "ui_action", "go_back", "set_notification_filter", "play_voice_clip",
+    "mark_all_notifications_read", "clear_all_notifications",
+    "mark_all_conversations_read",
 }
 
 
@@ -1276,7 +1278,10 @@ def test_account_action_voice_needs_time_for_the_spoken_yes(monkeypatch):
     assert db.store[_PENDING]["name"] == "sign_out"
 
 
-def test_account_action_wipe_memory_runs_server_side(monkeypatch):
+def test_account_action_wipe_memory_is_navigate_only(monkeypatch):
+    # ACTION PARITY exclusions (founder, 2026-11-06): clearing what Ayma
+    # has learned is user-only. Even a confirmed account_action never
+    # runs the wipe — it only opens Ayma's settings.
     import knowledge_wipe
 
     wiped = []
@@ -1284,11 +1289,31 @@ def test_account_action_wipe_memory_runs_server_side(monkeypatch):
         knowledge_wipe, "wipe_knowledge", lambda db, uid: wiped.append(uid)
     )
     monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
-    db = _Db()
+    db = _acking_db()
     act = app_control._bind_account_action(db, "me")
-    _run(act("wipe_memory"))
-    assert _run(act("wipe_memory", True)).startswith("Done:")
-    assert wiped == ["me"]
+    out = _run(act("wipe_memory"))
+    _navigated_only(db, out, "/settings/ayma")
+    out = _run(act("wipe_memory", True))
+    _navigated_only(db, out, "/settings/ayma")
+    assert wiped == []
+
+
+def test_exclusions_config_guard_wins_over_the_handler(monkeypatch):
+    # The exclusions CONFIG is load-bearing: listing an action there
+    # makes the layer refuse it even though its handler would run it.
+    # sign_out is the one executable account action; pretend the config
+    # excludes it and the confirmed call must be refused, not run.
+    import app_registry
+
+    monkeypatch.setattr(
+        app_registry, "excluded_account_action_keys", lambda: {"sign_out"}
+    )
+    monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
+    db = _acking_db()
+    act = app_control._bind_account_action(db, "me")
+    out = _run(act("sign_out", True))
+    assert out.startswith("Not done: that action is on the exclusions config"), out
+    assert _PENDING not in db.store
 
 
 def _navigated_only(db, out, path):
