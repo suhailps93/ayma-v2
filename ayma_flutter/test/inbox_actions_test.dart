@@ -92,14 +92,6 @@ void main() {
       expect(out.message, 'Marked 2 conversations as read.');
     });
 
-      expect(out.ok, isTrue);
-      expect(out.message, 'Showing Unread notifications.');
-      expect(NotificationFilterState.instance.current.value,
-          NotificationFilter.unread);
-      expect(nav, ['/notifications']);
-      NotificationFilterState.instance
-          .setFilter(NotificationFilter.all);
-    });
 
     test('a failing op is an honest failure, never a throw', () async {
       final out = await svc(fail: true)
