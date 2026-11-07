@@ -26,7 +26,8 @@ NO_CHIP = "\x00no_chip"
 # failure line otherwise (``skills/app_control.py``).
 _NAV_CHIP_TOOLS = frozenset(
     "open_message_thread open_screen open_profile open_match_report "
-    "open_date_sim open_practice_date search_explore open_notification".split()
+    "open_date_sim open_practice_date search_explore open_notification "
+    "go_back".split()
 )
 
 # Public alias: agent.py's command-claim gate scopes its speech suppression
@@ -80,6 +81,7 @@ TOOL_LABELS = {
     # App-control tools (skills/app_control.py) — voice and text chat
     "current_screen": "Checked what's on your screen",
     "open_screen": "Opened that for you",
+    "go_back": "Went back",
     "search_explore": "Searched Explore",
     "open_profile": "Opened their profile",
     "open_message_thread": "Opened that conversation",
@@ -190,6 +192,7 @@ WORKING_LABELS = {
     "send_dm_message": "Working on your message…",
     # App control (skills/app_control.py)
     "open_screen": "Opening that…",
+    "go_back": "Going back…",
     "search_explore": "Searching Explore…",
     "open_profile": "Opening their profile…",
     "open_message_thread": "Opening the conversation…",

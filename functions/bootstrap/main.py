@@ -1129,6 +1129,11 @@ class ChatRequest(BaseModel):
     # summary, and the live text + operable controls); see
     # `app_registry.json` `screen_context`.
     screen_route: str = Field(default="", max_length=200)
+    # The page before the current one in the session navigation history
+    # (feedback item 15) — folded into the same _describe line so Ayma
+    # can name it and knows go_back returns there.
+    screen_previous_route: str = Field(default="", max_length=200)
+    screen_previous_label: str = Field(default="", max_length=200)
     screen_detail: str = Field(default="", max_length=1500)
     screen_visible: str = Field(default="", max_length=3200)
     # A guided-tour continuation ping (§11.2b): the client fires a minimal /chat
@@ -1383,6 +1388,19 @@ async def _prepare_chat(
             # Runs through the same bound open_profile the model calls; an
             # unresolvable name answers with its couldn't-find clarification
             # instead of silently landing on the user's own profile.
+            # Deterministic go-back (feedback item 15): a clear,
+            # destination-less "go back" / "take me back" unwinds the
+            # session navigation history BEFORE the model, like the
+            # other app commands — and "go back to <page>" still routes
+            # to that page below, because this matcher is anchored to
+            # the whole utterance. (Suppressed mid-tour by the enclosing
+            # tour_active check, like all navigation here.)
+            if app_control_mod.detect_go_back_command(req.message):
+                reply = await app_control_mod.run_go_back_command(
+                    get_db(), uid
+                )
+                return ({"reply": reply}, None)
+
             profile_name = app_control_mod.detect_profile_command(req.message)
             if profile_name is not None:
                 reply = await app_control_mod.run_profile_command(
@@ -1478,6 +1496,8 @@ async def _prepare_chat(
                 "note": req.screen_note.strip(),
                 "detail": req.screen_detail.strip(),
                 "route": screen_route,
+                "previous_route": req.screen_previous_route.strip(),
+                "previous_label": req.screen_previous_label.strip(),
                 "visible": req.screen_visible.strip(),
             }
         )
@@ -2516,6 +2536,11 @@ class VoiceContextRequest(BaseModel):
     # The route pattern and the generic live capture (text + controls).
     route: str = Field(default="", max_length=200)
     visible: str = Field(default="", max_length=3200)
+    # Session navigation history (feedback item 15): the previous page,
+    # mirrored so current_screen can name it and go_back has a target the
+    # model knows about.
+    previous_route: str = Field(default="", max_length=200)
+    previous_label: str = Field(default="", max_length=200)
 
 
 def _voice_context_doc(uid: str):
@@ -2548,6 +2573,8 @@ async def set_voice_context(
             "detail": req.detail.strip(),
             "route": req.route.strip(),
             "visible": req.visible.strip(),
+            "previous_route": req.previous_route.strip(),
+            "previous_label": req.previous_label.strip(),
             "updated_at": _server_ts(),
         },
     )

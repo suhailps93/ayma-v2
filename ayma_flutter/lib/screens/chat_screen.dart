@@ -15,6 +15,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/navigation_history.dart';
 import '../services/async_voice_controller.dart';
 import '../services/voice_note_controller.dart';
 import '../services/async_voice_player.dart';
@@ -2319,6 +2320,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenRoute: screenCtx?.route ?? '',
           screenDetail: screenCtx?.detail ?? '',
           screenVisible: screenCtx?.visible ?? '',
+          screenPreviousRoute:
+              NavigationHistory.instance.previous?.path ?? '',
+          screenPreviousLabel:
+              NavigationHistory.instance.previous?.label ?? '',
           clientMsgId: msgId,
         );
 
@@ -2348,6 +2353,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenRoute: screenCtx?.route ?? '',
           screenDetail: screenCtx?.detail ?? '',
           screenVisible: screenCtx?.visible ?? '',
+          screenPreviousRoute:
+              NavigationHistory.instance.previous?.path ?? '',
+          screenPreviousLabel:
+              NavigationHistory.instance.previous?.label ?? '',
           clientMsgId: msgId,
         )) {
           if (!mounted) return;

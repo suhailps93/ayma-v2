@@ -78,6 +78,15 @@ def guided_tour_steps() -> list[dict]:
     return list(guided_tour().get("steps") or [])
 
 
+def navigation_actions() -> list[str]:
+    """The session navigation actions Ayma can run (feedback item 15) —
+    currently just ``go_back``. The client keeps the history itself
+    (session-only, capped); this names the action for the graph/tests.
+    Tolerant read, like :func:`guided_tour`."""
+    nav = registry().get("navigation") or {}
+    return list(nav.get("actions") or [])
+
+
 def find_guided_tour(text: str) -> dict | None:
     """The driven-tour entry when ``text`` names the guided walkthrough in the
     user's own words ("open the tour", "walk me through the app", …), else

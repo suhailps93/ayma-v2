@@ -1534,6 +1534,8 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
         if kwarg is not None:
             return name, {kwarg: value}
         logger.warning("voice command: unknown stack tool %r", name)
+    if skills.app_control.detect_go_back_command(text):
+        return "go_back", {}
     app_dest = skills.app_control.detect_app_command(text)
     if app_dest is not None:
         return "open_screen", {"screen": app_dest}
