@@ -233,12 +233,20 @@ async def practice_debrief(
     turns = list(data.get("turns") or [])
     if ctx is None:
         raise HTTPException(status_code=404, detail="No profile to practice with.")
-    try:
-        debrief = await generate_debrief(ctx, turns, uid=caller.uid)
-    except token_ledger.TokenCapExceeded as exc:
-        raise HTTPException(status_code=402, detail="Out of credits.") from exc
-    except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
-        raise HTTPException(status_code=502, detail=f"Debrief failed: {exc}") from exc
+    # A debrief already generated for this session (the voice-return
+    # greeting in /bootstrap generates one when Ayma's session resumes
+    # and caches it on the session doc) is reused verbatim — same
+    # transcript, same debrief, no second model call.
+    stored = data.get("debrief")
+    if isinstance(stored, dict) and stored:
+        debrief = stored
+    else:
+        try:
+            debrief = await generate_debrief(ctx, turns, uid=caller.uid)
+        except token_ledger.TokenCapExceeded as exc:
+            raise HTTPException(status_code=402, detail="Out of credits.") from exc
+        except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
+            raise HTTPException(status_code=502, detail=f"Debrief failed: {exc}") from exc
     end_session(db, caller.uid, req.session_id)
     return {"simulation": True, **debrief}
 

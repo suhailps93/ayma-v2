@@ -390,6 +390,7 @@ class ApiClient {
   Future<BootstrapResult> bootstrap({
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
+    String practiceReturnSessionId = '',
   }) async {
     // Refresh the ID token under a deadline. A hang here (flaky DNS reaching
     // Firebase) or a network-level Firebase failure is transient, so it
@@ -435,6 +436,8 @@ class ApiClient {
             body: jsonEncode({
               'session_id': sessionId,
               'recent_turns': recentTurns,
+              if (practiceReturnSessionId.isNotEmpty)
+                'practice_return_session_id': practiceReturnSessionId,
             }),
           )
           .timeout(_bootstrapPostTimeout);

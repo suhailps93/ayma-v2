@@ -552,6 +552,27 @@ class VoiceSessionController extends ChangeNotifier {
   /// start until the next start clears it).
   static VoiceSessionController? active;
 
+  /// The Ayma session a live Practice Date call displaced, if any (founder
+  /// rule, 2026-11-06): armed in [start]'s single-active-session exclusion
+  /// when a practice call tears down a live Ayma session, and consumed when
+  /// the practice call ends — that Ayma session restarts and opens the
+  /// debrief by voice. Static because the practice controller and the Ayma
+  /// controller are different objects. Cancelled if the target is started
+  /// manually first (the user took voice back themselves).
+  static VoiceSessionController? _pendingReturnTarget;
+
+  /// This session reached [VoiceSessionPhase.live] at least once. Gates the
+  /// practice-return fire: a practice call that never connected displaced
+  /// Ayma only for a failed attempt, whose error surface owns that moment.
+  bool _wentLive = false;
+
+  /// One-shot: the practice session the NEXT start of this controller is a
+  /// debrief return from. Rides the bootstrap as `practice_return_session_id`
+  /// so the server seeds the new room with greeting instructions that open
+  /// the debrief. Set only by [startAfterPractice]; cleared when that
+  /// session goes live (the agent has the greeting by then).
+  String _practiceReturnSessionId = '';
+
   /// Notifier mirror of [active], so a screen (the Models screen's
   /// save-button label) can rebuild when the active session appears or
   /// goes away, and when its phase changes it also hears the controller's
@@ -585,6 +606,13 @@ class VoiceSessionController extends ChangeNotifier {
     // its own room (two agents talking over each other — founder report
     // 2026-11-02). One tap/one start in a burst is admitted; the rest no-op.
     if (isActive || _starting) return;
+    // A manual start of the session a practice call displaced cancels the
+    // pending debrief return — the user took voice back themselves. (The
+    // return's own start can't trip this: the marker is consumed before
+    // [startAfterPractice] runs.)
+    if (identical(_pendingReturnTarget, this)) {
+      _pendingReturnTarget = null;
+    }
     _starting = true;
     try {
       // Single-active-voice-session invariant (ARCHITECTURE.md §1.3): only ONE
@@ -603,6 +631,14 @@ class VoiceSessionController extends ChangeNotifier {
       // voice surface writes on start.
       final existing = active;
       if (existing != null && !identical(existing, this) && existing.isActive) {
+        // A practice call displacing a live Ayma session arms the debrief
+        // return (founder rule, 2026-11-06): when this practice call ends,
+        // that Ayma session comes back up and opens the debrief. Only a
+        // main Ayma session counts — never practice-over-practice, never
+        // the pre-sign-in welcome room.
+        if (isPractice && !existing.isPractice && !existing.welcome) {
+          _pendingReturnTarget = existing;
+        }
         await existing.stop();
       }
       _errorMessage = null;
@@ -691,6 +727,7 @@ class VoiceSessionController extends ChangeNotifier {
         final session = await _api.bootstrap(
           sessionId: sessionId,
           recentTurns: _store.wireTurns(),
+          practiceReturnSessionId: _practiceReturnSessionId,
         );
         if (session.usageCapped) {
           _cappedError = true;
@@ -1368,6 +1405,30 @@ class VoiceSessionController extends ChangeNotifier {
     _api.postTurn(sessionId, _store.wireTurns()).catchError((_) {});
   }
 
+  /// Restart as the debrief return after a Practice Date voice call that
+  /// displaced this session ends (founder rule, 2026-11-06). The bootstrap
+  /// carries [practiceSessionId], so the server seeds the new room with
+  /// greeting instructions and Ayma speaks first — straight into asking
+  /// how the practice went, not a plain reconnect announcement.
+  Future<void> startAfterPractice(String practiceSessionId) async {
+    _practiceReturnSessionId = practiceSessionId;
+    await start();
+  }
+
+  /// Fire the armed debrief return (see [_pendingReturnTarget]): restart
+  /// the displaced Ayma session with this practice session's id. Consumes
+  /// the marker first, so it can never fire twice.
+  void _firePendingVoiceReturn() {
+    final target = _pendingReturnTarget;
+    if (target == null || identical(target, this)) return;
+    _pendingReturnTarget = null;
+    final sid = _practiceSessionId;
+    // Deferred out of the phase-flip stack: the return start runs the
+    // full single-active-session bookkeeping and must not re-enter it
+    // mid-flip.
+    scheduleMicrotask(() => unawaited(target.startAfterPractice(sid)));
+  }
+
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
     _disconnectReason ??= 'user_stop';
@@ -1632,7 +1693,23 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _setPhase(VoiceSessionPhase phase) {
     _phase = phase;
-    if (phase == VoiceSessionPhase.live) _startScreenAwareness();
+    if (phase == VoiceSessionPhase.live) {
+      _wentLive = true;
+      // The debrief-return greeting rode this start's bootstrap seed; once
+      // live, the agent has it, so no later restart may re-send it.
+      _practiceReturnSessionId = '';
+      _startScreenAwareness();
+    }
+    // A practice call that actually ran and then ended — hangup, idle
+    // stop, drop, or error — hands voice back to the Ayma session it
+    // displaced (founder rule, 2026-11-06). Every end path flips the
+    // phase through here, so this is the single fire point.
+    if (isPractice &&
+        _wentLive &&
+        (phase == VoiceSessionPhase.idle ||
+            phase == VoiceSessionPhase.error)) {
+      _firePendingVoiceReturn();
+    }
     // Voice is hands-free by design — without this the OS screen-off timeout
     // fires mid-call (no touch input) and cuts the screen while the call
     // itself is still live. Covers connecting/waking/live; _teardown() always
@@ -1731,6 +1808,13 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   Future<void> _teardown() async {
+    // A practice call that never went live armed the debrief return when
+    // it displaced Ayma but never became a session the user could hang up
+    // from — disarm it here, so the marker cannot outlive the failed
+    // attempt and fire at some later, unrelated practice call's end.
+    if (isPractice && !_wentLive) {
+      _pendingReturnTarget = null;
+    }
     _wakingTimer?.cancel();
     _wakingTimer = null;
     _idleGuard?.cancel();

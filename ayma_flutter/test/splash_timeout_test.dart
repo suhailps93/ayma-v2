@@ -270,6 +270,7 @@ class _BootstrapThrows extends ApiClient {
   Future<BootstrapResult> bootstrap({
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
+    String practiceReturnSessionId = '',
   }) async =>
       throw error;
 }
@@ -287,6 +288,7 @@ class _BootstrapHangs extends ApiClient {
   Future<BootstrapResult> bootstrap({
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
+    String practiceReturnSessionId = '',
   }) =>
       Completer<BootstrapResult>().future;
 }
@@ -308,6 +310,7 @@ class _BootstrapColdStart extends ApiClient {
   Future<BootstrapResult> bootstrap({
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
+    String practiceReturnSessionId = '',
   }) async {
     calls++;
     if (calls <= failures) {

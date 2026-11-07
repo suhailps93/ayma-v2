@@ -1355,6 +1355,248 @@ void main() {
     });
   });
 
+  // --- Practice voice return (founder rule, 2026-11-06) ------------------ //
+  // When voice mode is ON and a Practice Date voice call displaces Ayma's
+  // session, the end of the practice call — for any reason — must bring
+  // Ayma's session back up, with the bootstrap carrying the practice
+  // session id so the server seeds the debrief greeting.
+  group('practice voice return', () {
+    final bootstrapBodies = <Map<String, dynamic>>[];
+
+    ApiClient returnApi({bool failPracticeStart = false}) {
+      bootstrapBodies.clear();
+      return ApiClient(
+        auth: MockFirebaseAuth(signedIn: true),
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/bootstrap') {
+            bootstrapBodies
+                .add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(
+              jsonEncode({
+                'session_mode': 'marketing',
+                'uid': 'u1',
+                'livekit': {
+                  'token': 'tok-abc',
+                  'url': 'wss://example.livekit.cloud',
+                  'room': 'ayma-u1',
+                },
+              }),
+              200,
+            );
+          }
+          if (request.url.path == '/practice/voice/start') {
+            if (failPracticeStart) {
+              return http.Response('boom', 500);
+            }
+            return http.Response(
+              jsonEncode({
+                'session_id': 'practice_v1',
+                'simulation': true,
+                'persona': {'name': 'Dana', 'age': 30, 'location': 'Berlin'},
+                'banner': 'Practice mode — simulated Dana.',
+                'livekit': {
+                  'token': 'tok-practice',
+                  'url': 'wss://example.livekit.cloud',
+                  'room': 'ayma-her',
+                },
+              }),
+              200,
+              headers: const {
+                'content-type': 'application/json; charset=utf-8'
+              },
+            );
+          }
+          if (request.url.path == '/post-turn') {
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.url.path == '/voice/context') {
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+    }
+
+    /// Ayma controllers get a vending factory: every start creates a fresh
+    /// transport (a stopped session's transport is disposed and its streams
+    /// close, exactly like the real LiveKit transport), recorded in
+    /// [vended] so the test can drive the current session's transport.
+    VoiceSessionController aymaController(
+            ApiClient api, List<FakeVoiceTransport> vended) =>
+        VoiceSessionController(
+          transcriptStore: TranscriptStore(),
+          apiClient: api,
+          transportFactory: () {
+            final t = FakeVoiceTransport();
+            vended.add(t);
+            return t;
+          },
+        );
+
+    Future<void> startAymaLive(
+        VoiceSessionController c, List<FakeVoiceTransport> vended) async {
+      await c.start();
+      vended.last.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    VoiceSessionController practiceController(
+            ApiClient api, FakeVoiceTransport t) =>
+        VoiceSessionController(
+          transcriptStore: TranscriptStore(),
+          practiceOtherUid: 'her',
+          apiClient: api,
+          transportFactory: () => t,
+        );
+
+    test('ending the practice call (hangup) restarts the displaced Ayma '
+        'session with the practice id on its bootstrap', () async {
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended);
+      await startAymaLive(ayma, vended);
+      expect(ayma.phase, VoiceSessionPhase.live);
+      expect(bootstrapBodies, hasLength(1));
+      expect(bootstrapBodies.single.containsKey('practice_return_session_id'),
+          isFalse);
+
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await _startLive(practice, tPractice);
+      // The single-active-session exclusion stopped Ayma's session.
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      expect(practice.phase, VoiceSessionPhase.live);
+
+      await practice.stop();
+      // The return fires from a microtask; give the restart room to run.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(bootstrapBodies, hasLength(2));
+      expect(bootstrapBodies.last['practice_return_session_id'],
+          'practice_v1');
+      expect(ayma.isActive, isTrue);
+
+      vended.last.markAgentReady();
+      await Future<void>.delayed(Duration.zero);
+      expect(ayma.phase, VoiceSessionPhase.live);
+      await ayma.stop();
+    });
+
+    test('a practice call the agent ends on its own (idle timeout) also '
+        'returns', () async {
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended);
+      await startAymaLive(ayma, vended);
+
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await _startLive(practice, tPractice);
+      expect(practice.phase, VoiceSessionPhase.live);
+
+      tPractice.emitCallEnding('idle_timeout');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(bootstrapBodies, hasLength(2));
+      expect(bootstrapBodies.last['practice_return_session_id'],
+          'practice_v1');
+      expect(ayma.isActive, isTrue);
+
+      await ayma.stop();
+    });
+
+    test('no return when voice mode was off before the practice call',
+        () async {
+      final api = returnApi();
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await _startLive(practice, tPractice);
+      await practice.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(bootstrapBodies, isEmpty);
+    });
+
+    test('manually restarting Ayma mid-practice cancels the pending return',
+        () async {
+      final api = returnApi();
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended);
+      await startAymaLive(ayma, vended);
+
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await _startLive(practice, tPractice);
+      expect(practice.phase, VoiceSessionPhase.live);
+
+      // The user takes voice back themselves: Ayma restarts manually,
+      // displacing the practice call — no debrief return may fire after.
+      await ayma.start();
+      vended.last.markAgentReady();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(ayma.phase, VoiceSessionPhase.live);
+      expect(practice.phase, VoiceSessionPhase.idle);
+      expect(bootstrapBodies, hasLength(2));
+      expect(
+        bootstrapBodies.any((b) => b.containsKey('practice_return_session_id')),
+        isFalse,
+      );
+
+      await ayma.stop();
+    });
+
+    test('a practice call that never connects does not fire the return',
+        () async {
+      final api = returnApi(failPracticeStart: true);
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended);
+      await startAymaLive(ayma, vended);
+      expect(bootstrapBodies, hasLength(1));
+
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api, tPractice);
+      await practice.start();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(practice.phase, VoiceSessionPhase.error);
+      // Ayma stays down: the failed start's error surface owns the moment.
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      expect(bootstrapBodies, hasLength(1));
+    });
+
+    test('a failed practice start disarms its return — a later, unrelated '
+        'practice call ending does not resurrect the old session', () async {
+      // Regression: the armed marker used to outlive a never-live practice
+      // attempt and fire at the NEXT practice call's end, restarting the
+      // stale Ayma controller and tearing down whatever was live then.
+      final api = returnApi(failPracticeStart: true);
+      final vended = <FakeVoiceTransport>[];
+      final ayma = aymaController(api, vended);
+      await startAymaLive(ayma, vended);
+      final tFailed = FakeVoiceTransport();
+      final failed = practiceController(api, tFailed);
+      await failed.start();
+      expect(failed.phase, VoiceSessionPhase.error);
+      expect(bootstrapBodies, hasLength(1));
+
+      // A later practice call (fresh API, nothing displaced) runs and ends.
+      final api2 = returnApi();
+      final tPractice = FakeVoiceTransport();
+      final practice = practiceController(api2, tPractice);
+      await _startLive(practice, tPractice);
+      await practice.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // The stale session was NOT resurrected: it is still down, and no
+      // bootstrap has been recorded since (the second returnApi() cleared
+      // the shared record, and both APIs append to it — a resurrection
+      // restart would show up here).
+      expect(ayma.phase, VoiceSessionPhase.idle);
+      expect(bootstrapBodies, isEmpty);
+    });
+  });
+
   // --- Single-active-voice-session invariant ------------------------------- //
   // Only ONE voice session may ever be live at a time across every surface.
   // Each surface is a separate controller with its own LiveKit room, so
@@ -1440,6 +1682,11 @@ void main() {
       expect(practiceTransport.connectedToken, 'tok-practice');
 
       await practice.stop();
+      // Founder rule (2026-11-06): ending that practice call brings the
+      // displaced main session back up (the debrief return). Drain the
+      // return and stop it so it cannot leak into the next test.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await main.stop();
     });
 
     test('starting the main Ayma call disconnects an active practice call',

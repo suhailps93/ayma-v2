@@ -46,7 +46,7 @@
     {"route": "/practice/:uid", "via": "open_practice_date", "reason": "Practice Date with a specific person — rehearse talking to a clearly-labelled persona built from their profile; opened by name via open_practice_date"}
   ],
   "non_navigable": [
-    {"route": "/practice/:uid/debrief", "reason": "Practice Date debrief; reached only by ending a practice session"},
+    {"route": "/practice/:uid/debrief", "reason": "Practice Date debrief; reached by ending a practice session. When voice mode was on, Ayma's voice session also resumes automatically at the end of a voice practice call and opens this debrief by voice (bootstrap practice_return_session_id)."},
     {"route": "/consent", "reason": "biometric consent gate; the router forces it while consent is required and it must only ever be answered by the user's own tap"},
     {"route": "/splash", "reason": "app start-up bootstrap; re-running it mid-session would restart the app flow"},
     {"route": "/under-18", "reason": "age-gate outcome screen (18+ gate); never opened on request"},
