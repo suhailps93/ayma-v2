@@ -83,10 +83,19 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   String? _gender;
   final Set<String> _interestedIn = {};
   RangeValues? _pickedAges;
-  String _distance = defaultDistancePref;
 
-  /// The user's pick, else a default derived from their own age.
-  RangeValues get _ages => _pickedAges ?? defaultPartnerAgeRange(_birthdate);
+  /// Partner age range Ayma set on the profile doc (via her questionnaire
+  /// answers) while this screen is open — shown live until the user picks
+  /// their own (founder, 2026-11-06: Ayma-driven changes update the
+  /// visible UI in real time).
+  RangeValues? _liveAges;
+  String _distance = defaultDistancePref;
+  bool _distancePicked = false;
+
+  /// The user's pick, else Ayma's live-set range, else a default derived
+  /// from their own age.
+  RangeValues get _ages =>
+      _pickedAges ?? _liveAges ?? defaultPartnerAgeRange(_birthdate);
   File? _verificationSelfie;
   final List<File> _photos = [];
   bool _saving = false;
@@ -162,6 +171,21 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (_locationController.text.trim().isEmpty &&
           data.location.isNotEmpty) {
         _locationController.text = data.location;
+      }
+      // Partner preferences: Ayma's questionnaire writes land on the same
+      // doc this listener reads — show them on the slider/chips at once
+      // unless the user has already picked their own.
+      final lo = data.partnerAgeMin;
+      final hi = data.partnerAgeMax;
+      if (lo != null && hi != null) {
+        _liveAges = RangeValues(
+          lo.clamp(partnerAgeFloor, partnerAgeCeiling).toDouble(),
+          hi.clamp(partnerAgeFloor, partnerAgeCeiling).toDouble(),
+        );
+      }
+      if (!_distancePicked &&
+          distancePrefOptions.containsKey(data.distancePreference)) {
+        _distance = data.distancePreference;
       }
     });
   }
@@ -635,8 +659,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                       ages: _ages,
                       distance: _distance,
                       onAgesChanged: (v) => setState(() => _pickedAges = v),
-                      onDistanceChanged: (v) =>
-                          setState(() => _distance = v),
+                      onDistanceChanged: (v) => setState(() {
+                            _distance = v;
+                            _distancePicked = true;
+                          }),
                     ),
                     const SizedBox(height: 12),
                     _label('Verification selfie', ac),

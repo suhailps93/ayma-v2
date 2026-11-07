@@ -966,13 +966,17 @@ class AppCommandService {
         _open(path);
         return true;
       case 'search_explore':
-        AppContext.instance.pendingExploreQuery =
-            (cmd['query'] as String? ?? '').trim();
+        final query = (cmd['query'] as String? ?? '').trim();
+        AppContext.instance.pendingExploreQuery = query;
+        // Also publish live: an Explore screen already built/visible must
+        // run this search now, not only on its next build (founder,
+        // 2026-11-06 - Ayma-driven changes update the visible UI live;
+        // ported to staging 2026-11-07 per founder order).
+        AppContext.instance.liveExploreQuery.value = query;
         // Through [_open], not a bare push, like every other navigation
         // command: the destination must be visible, never left underneath
-        // a still-open chat popup. (The live-query publish that also rode
-        // with this case on the old staging line is part of the v2 live
-        // UI updates feature and is intentionally not carried here.)
+        // a still-open chat popup. (Staging adaptation of f5ac63c9: the
+        // v2 original used _navigate; staging routes through _open.)
         _open(ExploreScreen.path);
         return true;
       case 'open_profile':
