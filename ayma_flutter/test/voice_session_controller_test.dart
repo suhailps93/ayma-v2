@@ -2402,4 +2402,24 @@ void main() {
       await c.stop();
     });
   });
+
+  group('dispose race (note 134)', () {
+    test('a stop() that lands after dispose() does not throw', () async {
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: _api(),
+        transportFactory: () => FakeVoiceTransport(),
+      );
+      // The practice voice screen's teardown pattern: stop() is fired
+      // unawaited and the controller is disposed in the same synchronous
+      // breath, while stop()'s teardown is still walking its awaits. Its
+      // final _setPhase(idle) -> notifyListeners lands after disposal and
+      // must be a no-op — without the controller's dispose guard it throws
+      // "A VoiceSessionController was used after being disposed".
+      final stopped = c.stop();
+      c.dispose();
+      await stopped;
+    });
+  });
 }

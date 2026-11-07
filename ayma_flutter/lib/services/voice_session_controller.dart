@@ -1842,8 +1842,27 @@ class VoiceSessionController extends ChangeNotifier {
     }
   }
 
+  /// Set by [dispose]. Async work that outlives its owner — a stop()
+  /// teardown still in flight, a stream callback already queued — can
+  /// land after disposal and call [notifyListeners]; see the override.
+  bool _disposed = false;
+
+  /// Drops late notifications after [dispose]. ChangeNotifier throws on
+  /// a post-dispose notify in debug/profile, and the practice end path
+  /// hits exactly that (NOTE 134): PracticeVoiceScreen.dispose() calls
+  /// stop() unawaited and dispose() immediately, so stop()'s async
+  /// `_setPhase(idle)` lands after the controller is disposed. Nobody is
+  /// listening after disposal, so the notify is a no-op here, at the
+  /// single choke point every notification in this class goes through.
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     if (active == this) { active = null; _syncActiveNotifier(); }
     _disposeSessionLifecycle();
     // Cancel every listener subscription synchronously — i.e. the `.cancel()`

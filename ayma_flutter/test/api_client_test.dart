@@ -220,6 +220,51 @@ void main() {
     expect(result.room, 'ayma-u1');
   });
 
+  test(
+      'bootstrap() gives a practice return the long budget, not the '
+      'interactive one (note 134)', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    // The server's debrief seeding answers in 300 ms here; the client's
+    // interactive budget is squeezed to 50 ms and its long budget to 2 s
+    // so the two budgets are distinguishable in test time.
+    final mockHttp = MockClient((request) async {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      return http.Response(
+        jsonEncode({
+          'session_mode': 'active',
+          'uid': 'u1',
+          'livekit': {'token': 't', 'url': 'wss://x', 'room': 'ayma-u1'},
+        }),
+        200,
+      );
+    });
+    final client = ApiClient(
+      httpClient: mockHttp,
+      auth: auth,
+      interactiveTimeout: const Duration(milliseconds: 50),
+      longTimeout: const Duration(seconds: 2),
+    );
+
+    // A plain bootstrap stays on the interactive budget: a 300 ms answer
+    // is too slow, and the call aborts with the 408 request timeout.
+    await expectLater(
+      client.bootstrap(sessionId: 's-unit-000004'),
+      throwsA(
+          isA<ApiException>().having((e) => e.statusCode, 'statusCode', 408)),
+    );
+
+    // The SAME answer speed succeeds for a practice return: seeding the
+    // debrief (reading the finished practice session, building the
+    // greeting) legitimately takes longer than an interactive call. On
+    // build 2334 this call died at the 8 s interactive budget, twice,
+    // while the plain bootstrap beside it succeeded (note 134).
+    final result = await client.bootstrap(
+      sessionId: 's-unit-000004',
+      practiceReturnSessionId: 'practice_1',
+    );
+    expect(result.livekitToken, 't');
+  });
+
   test('chat() throws ApiException on non-200', () async {
     final auth = MockFirebaseAuth(signedIn: true);
     final mockHttp = MockClient((_) async => http.Response('nope', 500));
