@@ -88,6 +88,18 @@ def excluded_account_action_keys() -> set[str]:
     return out
 
 
+def excluded_destination_keys() -> set[str]:
+    """Destination keys the exclusions config keeps out of the prompt's
+    permitted-pages list: a destination that exists solely as an
+    excluded control's own page (the Delete account page). General
+    pages an exclusion merely lives on (Plan, Ayma's settings) are NOT
+    listed — she may still open those; she just cannot act there."""
+    out: set[str] = set()
+    for item in exclusions():
+        out.update(item.get("destinations") or [])
+    return out
+
+
 def excluded_deny_keys() -> set[str]:
     """ui_action deny-rule keys the exclusions config relies on."""
     out: set[str] = set()
