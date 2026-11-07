@@ -509,7 +509,7 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
         {
             "name": p["name"],
             "kind": "dining",
-            "why": "Ranked by Qloo for both of your tastes"
+            "why": "Ranked for both of your tastes"
             + (f" ({', '.join(p['tags'][:3])})" if p["tags"] else "")
             + "."
             + tag_hook,
@@ -541,7 +541,7 @@ async def _match_with(client, a: tuple, b: tuple) -> dict:
                 {
                     "name": pick["name"],
                     "kind": domain,
-                    "why": f"{lead}: Qloo ranks it highly for both of you.",
+                    "why": f"{lead}: ranked highly for both of you.",
                     "address": None,
                 }
             )
@@ -611,7 +611,7 @@ async def _resolve_pair(db, viewer_uid: str, other_uid: str) -> tuple[str, objec
 
 
 async def report_section(db, viewer_uid: str, other_uid: str) -> dict | None:
-    """The "Taste match · powered by Qloo" section for the match report between
+    """The "Taste match" section for the match report between
     the viewer and another matched user, from BOTH people's PUBLIC Taste pages
     only (same engine as ``POST /taste/pair`` — no duplicated Qloo calls, no
     private or cross-user private reads).

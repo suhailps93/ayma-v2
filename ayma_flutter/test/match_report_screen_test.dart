@@ -585,7 +585,7 @@ void main() {
     expect(find.text('Compatibility'), findsNothing);
   });
 
-  testWidgets("the Qloo taste card is present and reachable in the report scroll (never skipped)", (WidgetTester tester) async {
+  testWidgets("the taste card is present and reachable in the report scroll (never skipped)", (WidgetTester tester) async {
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     binding.platformDispatcher.views.first.physicalSize = const Size(400, 800);
     addTearDown(() => binding.platformDispatcher.views.first.resetPhysicalSize());
@@ -604,7 +604,7 @@ void main() {
           {'domain': 'film', 'score': 66},
         ],
         'date_ideas': [
-          {'name': 'Tartine', 'kind': 'dining', 'why': 'Ranked by Qloo for both of you.'},
+          {'name': 'Tartine', 'kind': 'dining', 'why': 'Ranked for both of you.'},
         ],
       },
     };
@@ -637,7 +637,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.byKey(const Key('tasteMatchCard')), findsOneWidget);
-    expect(find.text('powered by Qloo'), findsOneWidget);
+    expect(find.text('powered by Qloo'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

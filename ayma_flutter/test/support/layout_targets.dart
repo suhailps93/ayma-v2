@@ -401,7 +401,7 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
       useSafeArea: true,
       builder: (_) => AppearancePreRunSheet(api: api),
     ),
-    // The date-sim result's Qloo taste-match card (long strings, sample chip),
+    // The date-sim result's taste-match card (long strings, sample chip),
     // on a page of its own since the matrix pumps DateSimScreen pre-run.
     'date-sim taste match card': (context) {
       final taste = loadTasteMatch(api, 'her');

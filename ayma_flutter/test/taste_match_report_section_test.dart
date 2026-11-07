@@ -5,7 +5,7 @@ import 'package:ayma_flutter/widgets/taste_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// A match report payload with an embedded "Taste match · powered by Qloo"
+/// A match report payload with an embedded "Taste match"
 /// [taste] section (`GET /match/{id}` → `taste`).
 Map<String, dynamic> _report({Object? taste}) => {
       'match_id': 'me__her',
@@ -30,7 +30,7 @@ Map<String, dynamic> _tasteOk() => {
         {
           'name': 'Tartine Manufactory',
           'kind': 'dining',
-          'why': 'Ranked by Qloo for both of your tastes.',
+          'why': 'Ranked for both of your tastes.',
           'address': '595 Alabama St, San Francisco',
         },
       ],
@@ -76,12 +76,12 @@ void main() {
       await tester.pump();
 
       expect(find.text('Taste match'), findsOneWidget);
-      expect(find.text('powered by Qloo'), findsOneWidget);
+      expect(find.text('powered by Qloo'), findsNothing);
       expect(find.byKey(const Key('tasteMatchScore')), findsOneWidget);
       expect(find.text('Good taste overlap'), findsOneWidget);
       expect(find.text('Khruangbin'), findsOneWidget);
       expect(find.byKey(const Key('tasteMatchIdea')), findsOneWidget);
-      expect(find.text('Ranked by Qloo for both of your tastes.'),
+      expect(find.text('Ranked for both of your tastes.'),
           findsOneWidget);
       expect(tester.takeException(), isNull);
     });

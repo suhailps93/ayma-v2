@@ -296,7 +296,7 @@ class _Report extends StatelessWidget {
     final ac = context.ac;
     // ONE scrolling column for the whole screen (§ class doc: "don't keep
     // this part frozen") — the avatar-row chrome below is just its first
-    // item, ahead of the embedded [LivingReportView] and the Qloo taste card.
+    // item, ahead of the embedded [LivingReportView] and the taste card.
     // A `SingleChildScrollView` + `Column` (not a lazy `ListView`) so every
     // child is fully laid out: an exact scroll extent, smooth scrolling both
     // ways, and the trailing taste card always reachable (§ BUG: the lazy
@@ -344,7 +344,7 @@ class _Report extends StatelessWidget {
           // `shrinkWrap: true` — embedded as one item of the outer scroll
           // (a `SingleChildScrollView` + `Column`, NOT a lazy `ListView`:
           // the lazy list mis-estimated the scroll extent of this
-          // variable-height embedded report and let the trailing Qloo taste
+          // variable-height embedded report and let the trailing taste
           // card below be overshot / skipped — § BUG). Fully laying every
           // child out gives an exact extent, smooth scrolling both ways, and
           // a taste card that's always reachable. This is where the score,
@@ -358,10 +358,10 @@ class _Report extends StatelessWidget {
             emptyMessage: "Nothing to show for this report yet.",
             shrinkWrap: true,
           ),
-          // "Taste match · powered by Qloo" — the shared-taste section between
+          // "Taste match" — the shared-taste section between
           // the two people (score + domain reads + date ideas). Omitted
           // entirely unless the backend sent an actual taste MATCH: no section,
-          // or a no-Taste-page / degraded-Qloo marker, both render nothing (the
+          // or a no-Taste-page / degraded-taste marker, both render nothing (the
           // card self-hides too, but guarding here drops the surrounding
           // padding as well — § founder BUG A: never a bare "unavailable"
           // card). Reuses the same card the date-sim result uses; data is

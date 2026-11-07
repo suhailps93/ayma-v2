@@ -26,7 +26,7 @@ class TourAnchors {
   /// The Ayma orb in the nav bar — press & hold to start a voice chat.
   static const homeOrb = 'home_orb';
 
-  /// The Explore tab (taste matches / Qloo, date rehearsal).
+  /// The Explore tab (taste matches, date rehearsal).
   static const exploreTab = 'explore_tab';
 
   /// The Messages tab (chats + the in-chat coach).

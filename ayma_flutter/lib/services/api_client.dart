@@ -36,7 +36,7 @@ class BudgetHttpClient extends http.BaseClient {
   final Map<String, Future<http.Response>> _inFlightGets = {};
 
   // Endpoints whose server work legitimately runs well past the 8s interactive
-  // budget — model/report/photo builds, external-affinity (Qloo) resolution,
+  // budget — model/report/photo builds, external-affinity (taste) resolution,
   // and cold-start-sensitive first calls. The 8s budget aborts them
   // client-side (TimeoutException -> ApiException 408) while the server logs
   // `200 OK`, surfacing as "Couldn't finish…/load…/start…". The bounded GET
@@ -61,14 +61,14 @@ class BudgetHttpClient extends http.BaseClient {
     '/media', // POST: unified photo pipeline (moderate→embed→attributes→caption)
     '/media/photos/batch', // POST: analyses up to 9 photos into the Appearance report
     '/verification/selfie', // POST: moderate+embed selfie, seeds the initial Appearance read
-    '/taste/pair', // POST: Qloo cross-domain affinity (same resolution /match/ warm-returns in ~13–15s)
+    '/taste/pair', // POST: taste cross-domain affinity (same resolution /match/ warm-returns in ~13–15s)
     '/chat', // POST: non-stream model turn (tool use / cold start); fallback for /chat/stream
   };
 
   // Matched by PREFIX (a whole family of long builds / reads under one root).
   static const _longBudgetPrefixes = <String>[
     '/practice/', // builds the match persona + runs the model; first call after cold start (~18s)
-    '/match/', // match-report read resolves taste/Qloo affinity (~13–15s)
+    '/match/', // match-report read resolves taste affinity (~13–15s)
     '/report/match/', // the same match report via the generic report hub
   ];
 
@@ -1756,7 +1756,7 @@ class ApiClient {
     return 'Date simulation isn’t available for this profile.';
   }
 
-  /// `POST /taste/pair` — the taste overlap (Qloo) between the user and
+  /// `POST /taste/pair` — the taste overlap between the user and
   /// [otherUid], shown on the date-sim result. Throws [NoTasteException] when
   /// either person has no public Taste page (404 `no_taste`), else
   /// [ApiException] on any other failure.
@@ -4242,7 +4242,7 @@ class MatchReport {
   /// One-line note on how the score was built (structured vs. LLM).
   final String method;
 
-  /// "Taste match · powered by Qloo" section between the two people (Qloo
+  /// "Taste match" section between the two people (taste
   /// taste overlap + date ideas), or a no-Taste-page empty state. Null when
   /// the backend omitted the section (unexpected failure / unavailable).
   final TasteMatchLoad? taste;

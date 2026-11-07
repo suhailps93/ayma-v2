@@ -1,4 +1,4 @@
-/// Models for the "Taste match · powered by Qloo" card — the shared taste
+/// Models for the "Taste match" card — the shared taste
 /// overlap between two people. Used both on the AI Date Simulation result
 /// (`POST /taste/pair`) and as a section embedded in the match report
 /// (`GET /match/{id}` → `taste`).
@@ -57,7 +57,7 @@ class TasteDateIdea {
 }
 
 /// Result of `POST /taste/pair`: the pair's taste overlap. [isSample] is true
-/// when the backend served fixture data rather than live Qloo results.
+/// when the backend served fixture data rather than live results.
 class TasteMatch {
   const TasteMatch({
     this.isSample = false,
@@ -88,7 +88,7 @@ class TasteMatch {
 
   /// Whether there is real taste-overlap substance to render. A `200` from
   /// `/taste/pair` always carries a [score] and a [summary] (even for two
-  /// people whose Qloo graphs don't overlap — score 0, "quite different taste
+  /// people whose taste graphs don't overlap — score 0, "quite different taste
   /// graphs"), so those alone would paint a header + "0/100" + one sentence
   /// that reads as a broken, empty card. The card is shown only when at least
   /// one substantive section exists — per-domain bars, shared favourites,

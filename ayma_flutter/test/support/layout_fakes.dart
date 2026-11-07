@@ -74,7 +74,7 @@ Map<String, dynamic> _profile() => {
   'deep_dive_id': '',
 };
 
-/// A fully-populated "Taste match · powered by Qloo" payload (long strings so
+/// A fully-populated "Taste match" payload (long strings so
 /// the matrix stresses wrapping). Served for `/taste/pair` and embedded as the
 /// match report's `taste` section.
 Map<String, dynamic> _tastePayload() => {
@@ -337,7 +337,7 @@ Object? _bodyFor(String path) {
     };
   }
   if (path.startsWith('/match/')) {
-    // The match report carries the embedded "Taste match · powered by Qloo"
+    // The match report carries the embedded "Taste match"
     // section so the matrix exercises it on the match-report route.
     return {..._report(), 'taste': {..._tastePayload(), 'status': 'ok'}};
   }

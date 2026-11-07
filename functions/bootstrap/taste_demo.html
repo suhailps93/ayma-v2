@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ayma × Qloo — Taste match demo</title>
+<title>Ayma — Taste match demo</title>
 <style>
   :root { --pink:#e8457a; --ink:#1d1b20; --muted:#6b6670; --line:#ece6ee; --bg:#fbf8fb; }
   * { box-sizing:border-box; }
@@ -35,12 +35,8 @@
 </head>
 <body>
 <main>
-  <h1>Taste match, powered by Qloo</h1>
-  <p class="sub">Ayma is an AI matchmaker. Pick two demo profiles: Qloo's taste graph
-    scores how much their tastes overlap across music, film, food, TV, books,
-    podcasts, games, travel, brands and nightlife, reads the shared Qloo tags that
-    explain <em>why</em> they match and the audience each taste skews to, then
-    suggests date ideas they'd both enjoy. All four profiles are synthetic demo people.</p>
+  <h1>Taste match</h1>
+  <p class="sub">Ayma is an AI matchmaker. Pick two demo profiles and see how much their tastes overlap across music, film, food, TV, books, podcasts, games, travel, brands and nightlife, what they share, and the audience each taste skews to, then suggests date ideas they'd both enjoy. All four profiles are synthetic demo people.</p>
 
   <div class="card pick">
     <select id="a" aria-label="First person"></select>
@@ -52,10 +48,10 @@
   <div id="out"></div>
 
   <footer>Each demo person's public "Taste" page (e.g. <em>Music: Khruangbin, Bon Iver</em>)
-    is resolved to Qloo entities; per-domain overlap of their Qloo recommendations
+    is resolved to taste entities; per-domain overlap of their recommendations
     gives the score, the genre/theme tags their graphs share give the "why you match",
-    a Qloo demographics call reads the audience each taste skews to, and a joint,
-    tag-aligned Qloo query (both people's signals at once) ranks the date spots.
+    a demographics read shows the audience each taste skews to, and a joint,
+    tag-aligned query (both people's signals at once) ranks the date spots.
     Only public profile data is used.</footer>
 </main>
 <script>
@@ -70,7 +66,7 @@ const AGE = {"24_and_younger":"24 & under","25_to_29":"25–29","30_to_34":"30�
 
 async function run() {
   if (a.value === b.value) { out.innerHTML = '<div class="card err">Pick two different people.</div>'; return; }
-  go.disabled = true; out.innerHTML = '<div class="card muted">Asking Qloo…</div>';
+  go.disabled = true; out.innerHTML = '<div class="card muted">Matching tastes…</div>';
   try {
     const r = await fetch(`/taste/demo/pair?a=${encodeURIComponent(a.value)}&b=${encodeURIComponent(b.value)}`);
     const d = await r.json();
@@ -83,7 +79,7 @@ async function run() {
     let demoHtml = "";
     if (demo && (demo.a || demo.b)) {
       const line = p => p ? `${p.top_age ? "skews " + esc(p.top_age) : ""}${p.gender_lean && p.gender_lean !== "balanced" ? ", " + esc(p.gender_lean) + "-leaning" : ""}` : "no read";
-      demoHtml = `<div class="demo"><strong>Audience read</strong> <span class="muted">(Qloo demographics)</span>
+      demoHtml = `<div class="demo"><strong>Audience read</strong>
         <div class="muted">${esc(d.a.name)} ${line(demo.a)} · ${esc(d.b.name)} ${line(demo.b)}</div>
         ${demo.note ? `<div class="muted">${esc(demo.note)}</div>` : ""}</div>`;
     }
@@ -91,13 +87,13 @@ async function run() {
       `<li><strong>${esc(i.name)}</strong><span class="tag">${esc(i.kind)}</span>${i.address ? `<div class="muted">${esc(i.address)}</div>` : ""}<div class="why">${esc(i.why)}</div></li>`).join("");
     out.innerHTML = `
       <div class="card">
-        <div class="muted">${esc(d.a.name)} × ${esc(d.b.name)}${d.source === "fixture" ? '<span class="tag">sample data</span>' : '<span class="tag">live Qloo</span>'}</div>
+        <div class="muted">${esc(d.a.name)} × ${esc(d.b.name)}${d.source === "fixture" ? '<span class="tag">sample data</span>' : '<span class="tag">taste data</span>'}</div>
         <div class="score">${Number(d.score)||0}</div>
         <div class="label">${esc(d.score_label)}</div>
         <p>${esc(d.summary)}</p>
         ${domains}
         ${shared ? `<div class="label" style="margin-top:12px">Shared tastes</div><div class="chips">${shared}</div>` : ""}
-        ${tags ? `<div class="label" style="margin-top:12px">Why you match <span class="muted">(shared Qloo tags)</span></div><div class="chips">${tags}</div>` : ""}
+        ${tags ? `<div class="label" style="margin-top:12px">Why you match <span class="muted">(shared tags)</span></div><div class="chips">${tags}</div>` : ""}
         ${demoHtml}
       </div>
       <div class="card"><strong>Date ideas you'd both enjoy</strong><ul>${ideas || '<li class="muted">No ideas found.</li>'}</ul></div>`;

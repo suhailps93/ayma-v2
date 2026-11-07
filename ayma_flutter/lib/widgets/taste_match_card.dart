@@ -14,7 +14,7 @@ const _unavailable = 'Taste match unavailable right now.';
 /// wait — a hung fetch left the sim card spinning forever. The HTTP layer
 /// times out the POST itself, but the auth-token fetch ahead of it has no
 /// deadline, so this timeout (past the HTTP budget, so a slow-but-working
-/// Qloo resolve still renders) degrades only a true hang to the honest empty
+/// taste resolve still renders) degrades only a true hang to the honest empty
 /// below — absent, never an error card (§ BUG A).
 Future<TasteMatchLoad> loadTasteMatch(ApiClient api, String otherUid) async {
   try {
@@ -29,12 +29,12 @@ Future<TasteMatchLoad> loadTasteMatch(ApiClient api, String otherUid) async {
   }
 }
 
-/// "Taste match · powered by Qloo" — the overlap score, summary, shared tastes
+/// "Taste match" — the overlap score, summary, shared tastes
 /// and date ideas. Shown under the date-sim compatibility read and as a section
 /// in the match report. While [load] is pending it shows a muted "comparing"
 /// line; when there's a match with real overlap substance it shows that. When
 /// there's NO taste content to show — one side has no public Taste page, the
-/// Qloo lookup failed / degraded, OR the pair's graphs simply don't overlap
+/// The taste lookup failed / degraded, OR the pair's graphs simply don't overlap
 /// (a 200 with no per-domain bars / shared favourites / tags / date ideas, only
 /// a bare score + "quite different taste graphs" line) — the card is simply
 /// ABSENT (an empty [SizedBox]), never a bare/blank card: Taste is an optional
@@ -113,10 +113,6 @@ class TasteMatchCard extends StatelessWidget {
                 'Taste match',
                 style: AymaType.sans(
                     size: 15, weight: FontWeight.w700, color: ac.fg),
-              ),
-              Text(
-                'powered by Qloo',
-                style: AymaType.sans(size: 11.5, color: ac.fgMute),
               ),
             ],
           ),
