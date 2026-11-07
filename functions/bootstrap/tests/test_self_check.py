@@ -337,3 +337,70 @@ def test_manifest_covers_every_session_tool():
     declared = {d["name"] for d in skills.session_tool_declarations()}
     missing = declared - self_check.manifest_tool_names()
     assert missing == set(), f"tools missing from the self-check manifest: {missing}"
+
+
+# --- build-relative accounting (staging port) --------------------------------
+# The check lists are a superset across builds: a tool this build neither
+# declares (skills.session_tool_declarations) nor binds is not part of
+# the build, so its checks SKIP and file no bug. A tool the build DOES
+# declare but cannot bind stays a FAIL (see also
+# test_missing_probe_tool_is_a_fail_not_a_silent_skip).
+
+
+def test_undeclared_unbound_tools_skip_without_filing_bugs():
+    h = _Harness()
+    runner = h.runner()
+    # copilot_locate / take_picture sit in the cross-build manifest but
+    # are neither declared nor bound in this build; the notification
+    # filter tool is likewise absent here (no client handler).
+    del runner.deps.tool_fns["copilot_locate"]
+    del runner.deps.tool_fns["take_picture"]
+    del runner.deps.tool_fns["set_notification_filter"]
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:copilot_locate"].status == self_check.SKIP
+    assert by_name["tool:take_picture"].status == self_check.SKIP
+    assert by_name["wr:notification_filter"].status == self_check.SKIP
+    # The filter check never touched the client-side filter.
+    assert h.filter_calls == []
+    assert not any("copilot_locate" in b for b in h.bugs)
+    assert not any("take_picture" in b for b in h.bugs)
+    assert not any("wr:notification_filter" in b for b in h.bugs)
+
+
+def test_declared_but_unbound_run_tool_still_fails_and_files_bug():
+    h = _Harness()
+    runner = h.runner()
+    del runner.deps.tool_fns["list_conversations"]
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:list_conversations"].status == self_check.FAIL
+    assert any("check=tool:list_conversations" in b for b in h.bugs)
+
+
+# --- progress bubbles ----------------------------------------------------------
+
+
+def test_progress_bubbles_start_and_per_check_lines():
+    h = _Harness(fail_nav={"explore"})
+    lines = []
+    runner = h.runner()
+    runner.deps.progress = lines.append
+    asyncio.run(runner.run())
+    # A start bubble posts before any check result.
+    assert lines[0].startswith("Self-check started")
+    # One bubble per executed check, PASS and FAIL alike.
+    assert "Self-check: nav:ayma — PASS" in lines
+    fail_lines = [ln for ln in lines if "nav:explore" in ln]
+    assert len(fail_lines) == 1
+    # The FAIL bubble carries the short reason, not just the name.
+    assert "FAIL" in fail_lines[0] and "did NOT navigate" in fail_lines[0]
+    executed = [
+        r
+        for r in runner.results
+        if r.status in (self_check.PASS, self_check.FAIL)
+    ]
+    assert len(lines) == 1 + len(executed)
+    # Probes, skips and excluded checks never bubble.
+    assert not any("deep_dive" in ln for ln in lines)
+    assert not any("setting:" in ln for ln in lines)

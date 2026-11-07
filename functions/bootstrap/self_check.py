@@ -35,6 +35,12 @@ files):
   executing it writes a real feedback doc + steering rule, and a
   diagnostic never writes user data. Probe mode is the default; a
   future full-run mode would need its own explicit opt-in.
+* Build-relative accounting (staging port, 2026-11-07): the check
+  lists are a superset across builds. A check whose tool this build
+  neither declares (``skills.session_tool_declarations``) nor binds
+  is SKIP - the capability is not part of this build, so its absence
+  is not a defect and files no bug. Declared-but-unbound IS a FAIL:
+  the build claims the tool and cannot produce it.
 * ``web_search`` runs for real and is EXPECTED to fail today:
   ``gemini.research()`` raises ``DirectGoogleDisabledError`` by design
   (LiveKit-only inference, founder 2026-11-04). The runner reports that
@@ -257,6 +263,7 @@ class _Deps:
     progress: Callable | None = None        # (line: str) -> None
     destinations: list | None = None        # registry destination dicts
     settings_keys: list | None = None       # registry setting keys
+    declared_tools: set | None = None       # session tool declaration names
 
 
 class SelfCheckRunner:
@@ -285,6 +292,7 @@ class SelfCheckRunner:
         self._filed: set[str] = set()
         self._feedback_sink: dict = {}
         self._tool_fns_cache: dict | None = None
+        self._declared_cache: set | None = None
 
     # -- plumbing ------------------------------------------------------
 
@@ -305,6 +313,50 @@ class SelfCheckRunner:
                 feedback_result=self._feedback_sink,
             )
         return self._tool_fns_cache
+
+    def _declared_tools(self) -> set:
+        """Tool names this build declares to the model (its claims).
+
+        A capability the build neither declares nor binds is not
+        part of the build; one it declares but cannot bind is a
+        defect. If the declarations cannot be read, fall back to
+        treating the whole manifest as declared (the legacy FAIL
+        behavior) - silently skipping a real failure is worse.
+        """
+        if self.deps.declared_tools is not None:
+            return self.deps.declared_tools
+        if self._declared_cache is None:
+            try:
+                from skills import session_tool_declarations
+
+                self._declared_cache = {
+                    str(d["name"]) for d in session_tool_declarations()
+                }
+            except Exception:  # noqa: BLE001 - legacy FAIL fallback
+                logger.exception("self-check declarations read failed")
+                self._declared_cache = set(manifest_tool_names())
+        return self._declared_cache
+
+    def _unbound(self, name: str):
+        """(status, detail, error) for a check whose tool is unbound."""
+        if name in self._declared_tools():
+            return FAIL, "", f"{name} not bound in the session tool set"
+        return (
+            SKIP,
+            f"{name} is not part of this build (not declared and not bound)",
+            "",
+        )
+
+    async def _announce(self, line: str) -> None:
+        """Post one progress bubble; progress never breaks a run."""
+        if self.deps.progress is None:
+            return
+        try:
+            out = self.deps.progress(line)
+            if inspect.isawaitable(out):
+                await out
+        except Exception:  # noqa: BLE001 - progress never breaks a run
+            logger.exception("self-check progress failed")
 
     async def _call(self, fn, *args, **kwargs):
         out = fn(*args, **kwargs)
@@ -339,15 +391,14 @@ class SelfCheckRunner:
         self.results.append(result)
         if result.status == FAIL:
             await self._file_bug(result)
-        if self.deps.progress is not None and result.status in (PASS, FAIL):
-            try:
-                out = self.deps.progress(
-                    f"Self-check: {result.name} — {result.status}"
-                )
-                if inspect.isawaitable(out):
-                    await out
-            except Exception:  # noqa: BLE001 - progress never breaks a run
-                logger.exception("self-check progress failed")
+        if result.status == PASS:
+            await self._announce(f"Self-check: {result.name} — PASS")
+        elif result.status == FAIL:
+            reason = result.error or result.detail
+            line = f"Self-check: {result.name} — FAIL"
+            if reason:
+                line += f" — {reason}"
+            await self._announce(line)
 
     async def _file_bug(self, result: CheckResult) -> None:
         """File this failure once per run, at the moment it happened."""
@@ -449,7 +500,7 @@ class SelfCheckRunner:
     async def _do_wr_profile_field(self):
         fn = self._tool_fns().get("set_profile_field")
         if fn is None:
-            return FAIL, "", "set_profile_field not bound"
+            return self._unbound("set_profile_field")
         original = await asyncio.to_thread(self._profile_location)
         if not original:
             return SKIP, "no original location value to restore — not writing", ""
@@ -484,7 +535,7 @@ class SelfCheckRunner:
         """
         fn = self._tool_fns().get("set_notification_filter")
         if fn is None:
-            return FAIL, "", "set_notification_filter not bound"
+            return self._unbound("set_notification_filter")
         original = "all"  # the client default; replaced by the reported value
         reported = False
         changed = False
@@ -553,7 +604,7 @@ class SelfCheckRunner:
             return PASS, out[:120], ""
         fn = fns.get(name)
         if fn is None:
-            return FAIL, "", f"{name} not bound in the session tool set"
+            return self._unbound(name)
         if name == "submit_feedback":
             out = await self._call(
                 fn,
@@ -591,6 +642,10 @@ class SelfCheckRunner:
 
     async def run(self) -> str:
         deps = self.deps
+        await self._announce(
+            "Self-check started — running each capability one by one; "
+            "each result lands here in the chat as its check finishes."
+        )
         destinations = deps.destinations
         if destinations is None:
             destinations = app_registry.destinations()
@@ -710,10 +765,15 @@ class SelfCheckRunner:
                 self.results.append(
                     CheckResult(f"tool:{name}", "tools", PROBE, reason)
                 )
-            else:
+            elif name in self._declared_tools():
                 await self._emit(
                     CheckResult(f"tool:{name}", "tools", FAIL,
                                 "", "tool not bound in the session tool set")
+                )
+            else:
+                self.results.append(
+                    CheckResult(f"tool:{name}", "tools", SKIP,
+                                "not part of this build (not declared and not bound)")
                 )
 
         # G. Context-scoped tools.
