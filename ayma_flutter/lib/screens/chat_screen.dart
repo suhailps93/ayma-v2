@@ -2832,7 +2832,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         final notice = _voice.endNotice;
                         if (notice == null) return const SizedBox(height: 4);
                         return Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
                           child: Text(
                             notice.toUpperCase(),
                             key: const ValueKey('voice-end-notice'),
@@ -2849,14 +2849,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         // instead of a shouted all-caps error line for this one
                         // specifically-actionable case.
                         return Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
                             child: OutOfCreditsBanner(
                               message: _voice.errorMessage,
                             ),
                         );
                       }
                       return Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
                         child: Column(
                           children: [
                             Row(
@@ -3741,12 +3741,12 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               children: [
                 if (turn.sharedKind.isNotEmpty)
                   Padding(
-                    padding: EdgeInsets.only(bottom: !showBubble ? 0 : 6),
+                    padding: EdgeInsets.only(bottom: !showBubble ? 0 : 8),
                     child: _SharedRefCard(turn: turn),
                   ),
                 if (hasImage)
                   Padding(
-                    padding: EdgeInsets.only(bottom: !showBubble ? 0 : 6),
+                    padding: EdgeInsets.only(bottom: !showBubble ? 0 : 8),
                     child: _photo(context, rounded: true),
                   ),
                 if (showBubble)
@@ -3801,7 +3801,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   ),
                 if (!showBubble && timeStr != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 2, right: 4),
+                    padding: const EdgeInsets.only(top: 4, right: 4),
                     child: Text(
                       timeStr,
                       style: AymaType.sans(
@@ -3842,7 +3842,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     return Opacity(
       opacity: widget.latest || !turn.isFinal ? 1 : 0.62,
       child: Padding(
-        padding: const EdgeInsets.only(top: 12, bottom: 10),
+        padding: const EdgeInsets.only(top: 12, bottom: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3851,8 +3851,8 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 5,
+                    horizontal: 8,
+                    vertical: 4,
                   ),
                   decoration: BoxDecoration(
                     color: ac.accentFaint,
@@ -3877,10 +3877,10 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 4),
                       ] else ...[
                         Icon(Icons.auto_awesome, size: 13, color: ac.accent),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 4),
                       ],
                       Flexible(
                         child: Text(
@@ -3916,7 +3916,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     padding: EdgeInsets.only(top: 5),
                     child: AymaWingLoader(size: 14, showLabel: false),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       turn.text,
@@ -3948,7 +3948,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               ),
             if (reportKind != null && reportId != null && reportId.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 10),
+                padding: const EdgeInsets.only(top: 12),
                 child: _InlineReportCard(
                   kind: reportKind,
                   reportId: reportId,
@@ -3958,7 +3958,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               ),
             if (turn.feedbackKind.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 10),
+                padding: const EdgeInsets.only(top: 12),
                 child: FeedbackDraftCard(
                   key: ValueKey('feedback-${turn.feedbackTitle}-${turn.text.hashCode}'),
                   kind: turn.feedbackKind,
@@ -4002,7 +4002,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                                 color: _flagged ? ac.accent : ac.fgMute,
                               ),
                               if (_flagged) ...[
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 4),
                                 Text(
                                   'noted',
                                   style: AymaType.mono(
@@ -4392,7 +4392,7 @@ class _InlineReportCardState extends State<_InlineReportCard> {
                       ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(label, style: AymaType.sans(size: 13, color: ac.fg)),
             ),

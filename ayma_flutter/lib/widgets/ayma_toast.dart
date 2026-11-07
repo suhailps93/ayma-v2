@@ -367,7 +367,7 @@ class AymaToastCard extends StatelessWidget {
         child: Material(
           type: MaterialType.transparency,
           child: Container(
-            padding: EdgeInsets.fromLTRB(12, 10, action == null ? 16 : 6, 10),
+            padding: EdgeInsets.fromLTRB(12, 12, action == null ? 16 : 8, 12),
             decoration: BoxDecoration(
               color: surface,
               borderRadius: BorderRadius.circular(18),
@@ -401,7 +401,7 @@ class AymaToastCard extends StatelessWidget {
                         style.label.toUpperCase(),
                         style: AymaType.mono(size: 9.5, color: ac.fgDim),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 4),
                       Text(
                         message,
                         maxLines: 2,
