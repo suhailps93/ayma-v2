@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -45,14 +47,49 @@ class DebugCaptureIsolation {
   static final ValueNotifier<bool> disabled = ValueNotifier<bool>(false);
 
   static Completer<void>? _readyCompleter;
+  static Future<void>? _refreshFuture;
+
+  /// Converts various primitive representations of boolean to bool?
+  static bool? _asBool(Object? val) {
+    if (val is bool) return val;
+    if (val is String) {
+      final s = val.trim().toLowerCase();
+      if (s == 'true' || s == '1') return true;
+      if (s == 'false' || s == '0') return false;
+    }
+    if (val is num) {
+      if (val == 1) return true;
+      if (val == 0) return false;
+    }
+    return null;
+  }
 
   /// Awaits readiness of the cached flag.
-  static Future<void> ensureReady() async {
-    if (_readyCompleter != null) {
-      await _readyCompleter!.future;
-      return;
-    }
+  static Future<void> ensureReady({FirebaseFirestore? db}) async {
     await loadCached();
+    if (db != null) {
+      try {
+        await refresh(db).timeout(const Duration(seconds: 2));
+      } catch (_) {}
+    } else if (_refreshFuture != null) {
+      try {
+        await _refreshFuture!.timeout(const Duration(seconds: 1));
+      } catch (_) {}
+    }
+  }
+
+  @visibleForTesting
+  static void resetForTesting() {
+    disabled.value = false;
+    _readyCompleter = null;
+    _refreshFuture = null;
+  }
+
+  /// Synchronously or asynchronously reads the flag value at session connect,
+  /// ensuring any cached or disk-seeded preference has been loaded.
+  static Future<bool> readAtConnect({FirebaseFirestore? db}) async {
+    await ensureReady(db: db);
+    return disabled.value;
   }
 
   /// Only a literal `enabled: true` disables capture isolation.
@@ -61,9 +98,21 @@ class DebugCaptureIsolation {
   /// Synchronously loads the flag from preloaded preferences.
   static void loadFromPrefs(SharedPreferences prefs) {
     try {
-      disabled.value = prefs.getBool(_kDisabled) ?? false;
+      final raw = prefs.get(_kDisabled) ?? prefs.get('flutter.$_kDisabled');
+      final val = _asBool(raw);
+      if (val != null) {
+        disabled.value = val;
+      }
+      final msg = '[debug_capture_isolation] loadFromPrefs: '
+          'disabled.value=${disabled.value} (raw=$raw)';
+      _log.info(msg);
+      debugPrint(msg);
+      print(msg);
     } catch (e) {
-      _log.warning('flag cache unreadable: $e');
+      final err = '[debug_capture_isolation] flag cache unreadable: $e';
+      _log.warning(err);
+      debugPrint(err);
+      print(err);
       disabled.value = false;
     } finally {
       if (_readyCompleter == null) {
@@ -78,9 +127,16 @@ class DebugCaptureIsolation {
   static Future<void> loadCached() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      try {
+        await prefs.reload();
+      } catch (e) {
+        debugPrint('[debug_capture_isolation] prefs.reload non-fatal: $e');
+      }
       loadFromPrefs(prefs);
     } catch (e) {
-      _log.warning('flag cache unreadable: $e');
+      final err = '[debug_capture_isolation] loadCached error: $e';
+      debugPrint(err);
+      print(err);
       disabled.value = false;
       if (_readyCompleter == null) {
         _readyCompleter = Completer<void>()..complete();
@@ -93,20 +149,41 @@ class DebugCaptureIsolation {
   /// Fetches the Firestore flag, caches it for the next launch, and applies
   /// it in memory at once. Never throws; a failure leaves the cached value
   /// untouched.
-  static Future<void> refresh(FirebaseFirestore db) async {
+  static Future<void> refresh(FirebaseFirestore db) {
+    final fut = _doRefresh(db);
+    _refreshFuture = fut;
+    return fut;
+  }
+
+  static Future<void> _doRefresh(FirebaseFirestore db) async {
     try {
       final snap = await db
           .collection(collection)
           .doc(docId)
           .get()
           .timeout(kInteractiveTimeout);
-      final value = parse(snap.data());
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_kDisabled, value);
-      disabled.value = value;
-      _log.info('flag refreshed: capture isolation disabled=$value');
+      if (snap.exists) {
+        final value = parse(snap.data());
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_kDisabled, value);
+        disabled.value = value;
+        final msg = '[debug_capture_isolation] flag refreshed: '
+            'capture isolation disabled=$value';
+        _log.info(msg);
+        debugPrint(msg);
+        print(msg);
+      } else {
+        final msg = '[debug_capture_isolation] flag doc $collection/$docId '
+            'does not exist; keeping cached value';
+        _log.info(msg);
+        debugPrint(msg);
+        print(msg);
+      }
     } catch (e) {
-      _log.warning('flag refresh failed: $e');
+      final err = '[debug_capture_isolation] flag refresh failed: $e';
+      _log.warning(err);
+      debugPrint(err);
+      print(err);
     }
   }
 }

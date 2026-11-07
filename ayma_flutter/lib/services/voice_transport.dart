@@ -275,13 +275,15 @@ class LiveKitVoiceTransport implements VoiceTransport {
   }) async {
     debugPrint('[voice] connect -> $url (token ${token.length} chars)'
         '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}');
+    final isDisabled = await DebugCaptureIsolation.readAtConnect();
     final captureOptions = captureAudioOptions(
-      disableCaptureIsolation: DebugCaptureIsolation.disabled.value,
+      disableCaptureIsolation: isDisabled,
     );
-    debugPrint(
-        '[voice] capture isolation disabled='
-        '${DebugCaptureIsolation.disabled.value} '
-        'constraints=${captureOptions.toMediaConstraintsMap()}');
+    final msg = '[voice] capture isolation disabled=$isDisabled '
+        'constraints=${captureOptions.toMediaConstraintsMap()}';
+    debugPrint(msg);
+    // ignore: avoid_print
+    print(msg);
     final room = Room(
       roomOptions: RoomOptions(
         adaptiveStream: true,
@@ -458,7 +460,13 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Future<void> setMicrophoneEnabled(bool enabled) async {
     debugPrint('[voice] setMicrophoneEnabled($enabled)');
     try {
-      await _room?.localParticipant?.setMicrophoneEnabled(enabled);
+      final captureOptions = captureAudioOptions(
+        disableCaptureIsolation: DebugCaptureIsolation.disabled.value,
+      );
+      await _room?.localParticipant?.setMicrophoneEnabled(
+        enabled,
+        audioCaptureOptions: captureOptions,
+      );
       debugPrint('[voice] mic set ok');
     } catch (e, st) {
       debugPrint('[voice] setMicrophoneEnabled THREW: $e\n$st');

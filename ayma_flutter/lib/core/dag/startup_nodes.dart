@@ -107,7 +107,7 @@ class StartupNodes {
     return StartupNode<SharedPreferences>(
       id: 'N4:prefs_preload',
       dependencies: {'N1:engine_binding'},
-      timeout: const Duration(milliseconds: 1000),
+      timeout: const Duration(seconds: 3),
       action: (ctx) async {
         final prefs = await SharedPreferences.getInstance();
         ctx.put('prefs', prefs);
@@ -127,7 +127,9 @@ class StartupNodes {
       id: 'N5:ui_controllers',
       dependencies: {'N4:prefs_preload', 'N7:firebase_core'},
       action: (ctx) async {
-        final prefs = ctx.get<SharedPreferences>('prefs');
+        final prefs = ctx.contains('prefs')
+            ? ctx.get<SharedPreferences>('prefs')
+            : await SharedPreferences.getInstance();
         themeControllerGlobal.loadFromPrefs(prefs);
         accentColorControllerGlobal.loadFromPrefs(prefs);
         orbAnimationSettingsGlobal.loadFromPrefs(prefs);
