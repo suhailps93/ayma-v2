@@ -61,6 +61,7 @@ from auth import (  # noqa: E402
 from config import CONFIG, PLAN_TIERS  # noqa: E402
 import agent_wake  # noqa: E402
 import emotion as emotion_mod  # noqa: E402
+import feedback_bubble as feedback_bubble_mod  # noqa: E402
 import feature_flags  # noqa: E402
 import gemini  # noqa: E402
 from llm_provider import get_user_brain_provider  # noqa: E402
@@ -1299,6 +1300,28 @@ class _ChatCtx:
     feedback_draft: dict = field(default_factory=dict)
 
 
+
+def _feedback_bubble_for_turn(req, ctx, tools_used):
+    """Feedback-bubble offer for a finished chat turn (feedback_bubble.py).
+
+    Attached to the reply payload as ``feedback_bubble``; the client
+    renders the in-chat bubble card after the exchange. Never persisted
+    and never spoken — a session UI affordance, capped once per session
+    per trigger server-side (and mirrored client-side).
+    """
+    try:
+        return feedback_bubble_mod.decide_feedback_bubble(
+            uid=ctx.uid,
+            session_id=req.session_id,
+            message=req.message,
+            tools_used=tools_used or (),
+            has_draft_card=bool(ctx.feedback_draft),
+        )
+    except Exception:  # noqa: BLE001 - the bubble must never break a turn
+        logger.exception("feedback bubble decision failed")
+        return None
+
+
 async def _prepare_chat(
     req: ChatRequest, caller: Caller
 ) -> tuple[dict | None, _ChatCtx | None]:
@@ -2019,6 +2042,7 @@ async def chat(
         except Exception:  # noqa: BLE001 - complete honestly, never evaporate
             logger.exception("chat turn failed for %s", ctx.uid)
             reply_text, tools_used = _CHAT_INCOMPLETE_REPLY, []
+        bubble = _feedback_bubble_for_turn(req, ctx, tools_used)
         finalize_bg = BackgroundTasks()
         _finalize_chat(finalize_bg, ctx, req, reply_text, tools_used)
         _spawn_turn(finalize_bg())
@@ -2034,6 +2058,7 @@ async def chat(
             "tools_used": tools_used,
             "image_url": ctx.photo_edit_result.get("image_url", ""),
             "feedback_card": ctx.feedback_draft or None,
+            "feedback_bubble": bubble,
         }
 
     task = _spawn_turn(_turn(), key=key)
@@ -2159,6 +2184,8 @@ def _reply_event(result: dict) -> dict:
     }
     if result.get("usage_capped"):
         ev["usage_capped"] = True
+    if result.get("feedback_bubble"):
+        ev["feedback_bubble"] = result["feedback_bubble"]
     return ev
 
 
@@ -2278,18 +2305,23 @@ async def chat_stream(
                         if ev.get("type") == "reply":
                             reply_text = ev["text"]
                             tools_used = ev["tools_used"]
+                            bubble = _feedback_bubble_for_turn(
+                                req, ctx, tools_used
+                            )
                             ev = {
                                 **ev,
                                 "image_url": ctx.photo_edit_result.get(
                                     "image_url", ""
                                 ),
                                 "feedback_card": ctx.feedback_draft or None,
+                                "feedback_bubble": bubble,
                             }
                             result = {
                                 "reply": reply_text,
                                 "tools_used": tools_used,
                                 "image_url": ev["image_url"],
                                 "feedback_card": ev["feedback_card"],
+                                "feedback_bubble": bubble,
                             }
                         queue.put_nowait(ev)
             except token_ledger.TokenCapExceeded:
@@ -2324,6 +2356,7 @@ async def chat_stream(
                 result = {
                     "reply": reply_text, "tools_used": tools_used,
                     "image_url": "", "feedback_card": None,
+                    "feedback_bubble": None,
                 }
             finalize_bg = BackgroundTasks()
             _finalize_chat(finalize_bg, ctx, req, reply_text, tools_used)
