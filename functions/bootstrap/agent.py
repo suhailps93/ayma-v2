@@ -720,6 +720,60 @@ def build_cascade_session(
     return AgentSession(**session_kwargs)
 
 
+def _voice_isolation_filter(provider: str | None = None):
+    """Build the agent-side voice-isolation filter for a voice session.
+
+    Founder rule (2026-11-06): where the selected stack supports LiveKit
+    voice isolation and the LiveKit plan covers it, isolation is ON by
+    default — the funded project is on Scale, whose included
+    voice-isolation minutes cover Krisp VIVA and ai-coustics QUAIL_VF
+    (verified 2026-11-06). ``CONFIG.voice_isolation`` picks the provider
+    (``krisp`` / ``aicoustics``) or turns it ``off``; the user's model
+    choice is never restricted by this. Applied ONLY here, in the agent
+    (``RoomInputOptions.noise_cancellation`` on the user's inbound audio,
+    before VAD/STT/turn detection) — never stacked with a frontend
+    enhanced filter: the app client uses standard WebRTC capture only.
+
+    Fail-open: a missing plugin or construction error logs loudly and
+    returns None (plain audio) rather than killing the call.
+    """
+    provider = (
+        provider if provider is not None else CONFIG.voice_isolation
+    ).strip().lower()
+    if provider == "off":
+        return None
+    try:
+        if provider == "krisp":
+            from livekit.plugins import krisp
+
+            return krisp.voice_isolation()
+        if provider == "aicoustics":
+            from livekit.plugins import ai_coustics
+
+            return ai_coustics.audio_enhancement(
+                model=ai_coustics.EnhancerModel.QUAIL_VF_S
+            )
+    except Exception:
+        logger.exception(
+            "voice isolation filter unavailable (provider=%s); "
+            "continuing without it",
+            provider,
+        )
+    return None
+
+
+def _room_input_options(video_enabled: bool = False) -> RoomInputOptions:
+    """Room input options for a voice session: the user's inbound audio
+    runs through the voice-isolation filter (when enabled) before it
+    reaches VAD, STT, turn detection, or a realtime model. The two main
+    session starts also pass video_enabled=True (feedback item 13) so
+    the user's camera / screen tracks flow to the realtime model."""
+    return RoomInputOptions(
+        video_enabled=video_enabled,
+        noise_cancellation=_voice_isolation_filter(),
+    )
+
+
 def build_meta_cascade_session(
     voice_name: str | None = None,
     voice_language: str | None = None,
@@ -3434,7 +3488,7 @@ async def _start_main_gemini_session(
         # Video input ON (feedback item 13): the user's camera / screen
         # tracks, published into this room by the client, flow to the
         # realtime model through the existing LiveKit vision path.
-        room_input_options=RoomInputOptions(video_enabled=True),
+        room_input_options=_room_input_options(video_enabled=True),
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
     # Declare vision support from the ONE catalog source of truth
@@ -3686,7 +3740,7 @@ async def _start_main_cascade_session(
     await session.start(
         agent=agent,
         room=ctx.room,
-        room_input_options=RoomInputOptions(video_enabled=True),
+        room_input_options=_room_input_options(video_enabled=True),
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
     # Declare vision support from the ONE catalog source of truth
@@ -4036,6 +4090,7 @@ async def _start_practice_session(
     await session.start(
         agent=agent,
         room=ctx.room,
+        room_input_options=_room_input_options(),
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
     # The simulated match "picks up the phone" and opens in character instead of
