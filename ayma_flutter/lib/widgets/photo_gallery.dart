@@ -56,11 +56,11 @@ class PhotoGallery extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(11),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: photoEdgeColor(context, p), width: 2),
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(9),
+                borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
                   width: 92,
                   height: 92,
@@ -151,7 +151,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
                 builder: (_) => PhotoViewer(url: p.url),
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 child: AspectRatio(
                   aspectRatio: 1,
                   child: AymaPhoto(
@@ -170,7 +170,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
                 width: 8, height: 8,
                 decoration: BoxDecoration(color: edge, shape: BoxShape.circle),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               Text(label, style: AymaType.sans(size: 12, color: edge)),
             ]),
             if (p.sourcePage.isNotEmpty) ...[
@@ -184,7 +184,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
             const SizedBox(height: 16),
             Text('What Ayma knows about this photo',
                 style: AymaType.sans(size: 12, weight: FontWeight.w600, color: ac.fg)),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
               p.context.isNotEmpty
                   ? p.context
@@ -197,7 +197,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const AymaWingLoader(size: 16, showLabel: false),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   Text(_acting == 'publish' ? 'Publishing…' : 'Deleting…',
                       style: AymaType.sans(size: 13, color: ac.fgMute)),
                 ],
@@ -246,7 +246,7 @@ class PhotoViewer extends StatelessWidget {
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: Colors.black,
-      insetPadding: const EdgeInsets.all(12),
+      insetPadding: const EdgeInsets.all(16),
       child: Stack(
         children: [
           InteractiveViewer(
@@ -264,8 +264,8 @@ class PhotoViewer extends StatelessWidget {
             ),
           ),
           Positioned(
-            top: 4,
-            right: 4,
+            top: 8,
+            right: 8,
             child: IconButton(
               icon: const Icon(Icons.close, color: Colors.white),
               onPressed: () => Navigator.of(context).pop(),

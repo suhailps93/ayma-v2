@@ -726,7 +726,7 @@ class LivingReportViewState extends State<LivingReportView>
                   _enterSelection(b.blockId);
                 },
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
             ],
       ],
     );
@@ -849,7 +849,7 @@ class _SectionView extends StatelessWidget {
           child: Text(section.heading.toUpperCase(), style: _headingStyle(ac.accent)),
         ),
         const SizedBox(height: 12),
-        for (final r in rows) Padding(padding: const EdgeInsets.only(bottom: 10), child: r),
+        for (final r in rows) Padding(padding: const EdgeInsets.only(bottom: 8), child: r),
       ],
     );
   }
@@ -1000,7 +1000,7 @@ class _BlockRow extends StatelessWidget {
       onTap: onTap,
       onLongPress: onLongPress,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
         decoration: BoxDecoration(
           color: selected ? ac.accent.withValues(alpha: 0.14) : null,
           borderRadius: BorderRadius.circular(10),
@@ -1045,7 +1045,7 @@ class _FactRow extends StatelessWidget {
         if (showDevAnnotations && (block.tag.isNotEmpty || conf.isNotEmpty))
           Padding(
             key: const ValueKey('fact-dev-annotation'),
-            padding: const EdgeInsets.only(left: 14, top: 2),
+            padding: const EdgeInsets.only(left: 14, top: 4),
             child: Text('${block.tag}$conf',
                 style: AymaType.mono(size: 9, color: ac.fgMute)),
           ),
@@ -1210,7 +1210,7 @@ class _StatRow extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         ScoreBar(
           value: n,
           max: max,
@@ -1218,7 +1218,7 @@ class _StatRow extends StatelessWidget {
           colorFor: banded ? _bandColor : null,
         ),
         if (basisRest.isNotEmpty || source != null) ...[
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Row(
             children: [
               if (basisRest.isNotEmpty)
@@ -1252,7 +1252,7 @@ class _SourceTag extends StatelessWidget {
     final color = measured ? ac.success : ac.fgMute;
     final icon = measured ? Icons.check_circle : Icons.auto_awesome;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
@@ -1261,7 +1261,7 @@ class _SourceTag extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 10, color: color),
-          const SizedBox(width: 3),
+          const SizedBox(width: 4),
           Text(source.toUpperCase(),
               style: AymaType.mono(size: 8, color: color)
                   .copyWith(letterSpacing: 0.6)),
@@ -1293,7 +1293,7 @@ class _NonNumericStat extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(999),
@@ -1365,11 +1365,14 @@ class _LinkRow extends StatelessWidget {
         // talking about it.
         if (block.url.isNotEmpty)
           InkWell(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
             onTap: () => _openUrl(block.url),
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Icon(Icons.open_in_new, size: 14, color: ac.accent),
+            child: SizedBox(
+              width: 48,
+              height: 40,
+              child: Center(
+                child: Icon(Icons.open_in_new, size: 14, color: ac.accent),
+              ),
             ),
           ),
       ],
@@ -1482,10 +1485,10 @@ class _PhotoRow extends StatelessWidget {
       children: [
         InkWell(
           key: const ValueKey('photoRowThumb'),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           onTap: hasUrl ? () => _openUrl(block.url) : null,
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
             child: SizedBox(
               width: 72,
               height: 72,
@@ -1502,7 +1505,7 @@ class _PhotoRow extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.open_in_new, color: ac.accent, size: 18),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 4),
                       Text('Open photo link',
                           textAlign: TextAlign.center,
                           style: AymaType.sans(size: 9, color: ac.accent)),
@@ -1521,7 +1524,7 @@ class _PhotoRow extends StatelessWidget {
               if (block.isPending)
                 Container(
                   margin: const EdgeInsets.only(bottom: 4),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: ac.accentFaint,
                     borderRadius: BorderRadius.circular(4),
@@ -1568,7 +1571,7 @@ class _PhotoGridRow extends StatelessWidget {
         itemCount: photos.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) => ClipRRect(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           child: SizedBox(
             width: 76,
             height: 76,
@@ -1608,7 +1611,7 @@ class _SelectionBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: Row(
             children: [
               Expanded(
@@ -1637,13 +1640,14 @@ class _ErrorMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return CenteredScroll(
-      padding: const EdgeInsets.all(28),
+      padding: const EdgeInsets.all(32),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text("Couldn't load that report.",
               textAlign: TextAlign.center,
               style: AymaType.sans(size: 14, color: ac.fgMute)),
+          const SizedBox(height: 8),
           TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),

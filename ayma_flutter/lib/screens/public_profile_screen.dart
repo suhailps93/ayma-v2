@@ -732,7 +732,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                       ],
                     ),
                     if (widget.isOnline || widget.location.isNotEmpty) ...[
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 8),
                       Row(
                         children: [
                           if (widget.isOnline) ...[
@@ -744,7 +744,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                                 color: ac.success,
                               ),
                             ),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 8),
                             Text('Active now',
                                 style: AymaType.sans(
                                     size: 13, color: Colors.white70)),
@@ -796,8 +796,8 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
               // below stays clean (just the photos, primary star-badged).
               if (_editable && photos.isNotEmpty) ...[
                 Positioned(
-                  top: 12,
-                  left: 12,
+                  top: 16,
+                  left: 16,
                   child: PhotoControlChip(
                     tooltip: page == 0 ? 'Primary photo' : 'Make primary',
                     icon: page == 0
@@ -813,8 +813,8 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                   ),
                 ),
                 Positioned(
-                  top: 12,
-                  right: 12,
+                  top: 16,
+                  right: 16,
                   child: PhotoControlChip(
                     tooltip: 'Delete photo',
                     icon: Icons.delete_outline_rounded,
@@ -893,7 +893,7 @@ class _Filmstrip extends StatelessWidget {
     return ColoredBox(
       color: AymaColors.darkBg,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: SizedBox(
           height: _thumb,
           child: ListView.separated(
@@ -909,14 +909,14 @@ class _Filmstrip extends StatelessWidget {
                   height: _thumb,
                   padding: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: selected ? accent : Colors.transparent,
                       width: 2,
                     ),
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(7),
+                    borderRadius: BorderRadius.circular(8),
                     child: AymaPhoto(
                       url: photos[i],
                       displayWidth: 120,
@@ -1255,7 +1255,7 @@ class _Message extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(text, style: AymaType.sans(size: 14, color: context.ac.fgMute)),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
