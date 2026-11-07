@@ -116,7 +116,9 @@ def test_voice_context_stores_the_screen_detail(monkeypatch):
         headers=_auth(monkeypatch),
         json={"screen": "explore", "detail": "x" * 1501},
     )
-    assert too_long.status_code == 422
+    assert too_long.status_code == 200
+    doc = db.store[("users", "me", "voice_context", "current")]
+    assert doc["detail"] == "x" * 1500
 
 
 def test_profile_preferences_endpoint_saves_and_rejects(monkeypatch):
