@@ -913,17 +913,6 @@ class Config:
     budget on reasoning (~450 tokens, content truncated). Override with
     ``META_REASONING_EFFORT`` (minimal|low|medium|high|xhigh|max)."""
 
-    # QLOO TASTE API — Qloo hackathon (Oct 2026). ``QLOO_API_KEY`` is a SECRET
-    # read from the environment at the call site in ``qloo_client.py``; with no
-    # key the taste match runs on the bundled fixture. See docs/QLOO_TASTE.md.
-    qloo_api_base_url: str
-    """Qloo Taste/Insights API base URL (non-secret). Hackathon keys are served
-    from the hackathon host; override with ``QLOO_API_BASE_URL``."""
-
-    qloo_timeout_seconds: float
-    """Per-request timeout for Qloo calls; on timeout/error the taste match
-    falls back to the fixture. ``QLOO_TIMEOUT_SECONDS``."""
-
     llm_provider_chat: str
     llm_provider_matching: str
     llm_provider_reports: str
@@ -1371,10 +1360,6 @@ def _load() -> Config:
         open_weights_response_token_margin=int(
             os.getenv("OPEN_WEIGHTS_RESPONSE_TOKEN_MARGIN", "1200")
         ),
-        qloo_api_base_url=os.getenv(
-            "QLOO_API_BASE_URL", "https://hackathon.api.qloo.com"
-        ).rstrip("/"),
-        qloo_timeout_seconds=float(os.getenv("QLOO_TIMEOUT_SECONDS", "6")),
         llm_provider_chat=os.getenv(
             "LLM_PROVIDER_CHAT", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),
