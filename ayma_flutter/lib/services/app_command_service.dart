@@ -579,6 +579,8 @@ class AppCommandService {
       // reaction) and acks only once the photo is actually in the
       // conversation — so it owns its ack, like ui_action.
       unawaited(_runTakePicture(snap.reference, data, id));
+      return;
+    }
     if (data['action'] == 'go_back') {
       // Owns its ack like ui_action/tour_step: it may await a modal
       // dismissal, and its ack carries the outcome kind + where the user
