@@ -80,10 +80,6 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   String _name = 'You';
   int _loadGen = 0;
 
-  /// The decoded Ayma logo, kept so the PNG export captures it on the first
-  /// frame (like the photos); decoded lazily on the first share.
-  DecodedImage? _logo;
-
   /// The sharer's referral code, folded into the smart link in the caption.
   /// Best-effort: null when unknown (offline, no referral, or no API).
   String? _refCode;
@@ -142,24 +138,9 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     }
   }
 
-  /// The decoded logo for the PNG export, decoding it once on first use. Falls
-  /// back to the plain asset (fine on screen; it just won't be on the export's
-  /// first frame) if decoding fails.
-  Future<ImageProvider> _ensureLogo() async {
-    final existing = _logo;
-    if (existing != null) return existing;
-    final img = await ReportCardShare.decode(
-      const AssetImage(AppearanceReportCard.logoAsset),
-    );
-    if (img == null) return const AssetImage(AppearanceReportCard.logoAsset);
-    final decoded = DecodedImage(img);
-    if (!mounted) {
-      img.dispose();
-      return decoded;
-    }
-    setState(() => _logo = decoded);
-    return decoded;
-  }
+  // No logo decode step: the card's mark is the canonical painted orb
+  // (AymaOrbMark), which draws synchronously in the card's accent, so the
+  // PNG export captures it on the first frame exactly like the photos.
 
   String? _liveUid() {
     try {
@@ -286,7 +267,6 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   void dispose() {
     ReportEvents.instance.removeListener(_onReportEvents);
     _release(_decoded);
-    _logo?.image.dispose();
     super.dispose();
   }
 
@@ -314,14 +294,12 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   AppearanceReportCard _cardWidget(
     AppearanceCardData card,
     Color accent, {
-    ImageProvider? logo,
     void Function(int index)? onRemove,
   }) => AppearanceReportCard(
     data: card,
     name: _name,
     accent: accent,
     photos: _shownImages(),
-    logo: logo ?? _logo ?? const AssetImage(AppearanceReportCard.logoAsset),
     onRemovePhoto: onRemove,
   );
 
@@ -463,9 +441,8 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     final view = View.of(context);
     setState(() => _sharing = true);
     try {
-      final logo = await _ensureLogo();
       await _share.shareCard(
-        _cardWidget(card, accent, logo: logo),
+        _cardWidget(card, accent),
         view: view,
         logicalSize: AppearanceReportCard.size,
         caption: ReportCardShare.captionFor(_refCode),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/appearance_card.dart';
 import '../theme.dart';
+import 'ayma_orb.dart';
 
 /// The shareable Appearance report card (founder-approved design B,
 /// "collage"): a fixed 360x640 logical-pixel (9:16) layout so the on-screen
@@ -25,20 +26,12 @@ class AppearanceReportCard extends StatelessWidget {
     required this.name,
     required this.accent,
     required this.photos,
-    this.logo = const AssetImage(logoAsset),
     this.onRemovePhoto,
   });
 
   static const width = 360.0;
   static const height = 640.0;
   static const size = Size(width, height);
-
-  /// The real Ayma brand mark, bundled via pubspec `assets/icon/`. The card
-  /// draws this (not a painted stand-in) in its header and footer. For the
-  /// 1080x1920 PNG export, pass an already-decoded [logo] (a [DecodedImage])
-  /// so it is on the first frame the [RepaintBoundary] captures, exactly as
-  /// the photos are.
-  static const logoAsset = 'assets/icon/ayma_orb_ios.png';
 
   final AppearanceCardData data;
 
@@ -49,10 +42,6 @@ class AppearanceReportCard extends StatelessWidget {
   /// The photos that actually loaded, each with its accessibility label
   /// (never an empty frame for one that didn't).
   final List<(ImageProvider, String)> photos;
-
-  /// The Ayma logo image. Defaults to the bundled asset (fine on screen);
-  /// the PNG export passes a decoded image so it paints on the first frame.
-  final ImageProvider logo;
 
   /// Called with a photo's index when the user taps its "Remove from card"
   /// affordance. Null for the exported share image (the 1080x1920 PNG is the
@@ -319,9 +308,13 @@ class AppearanceReportCard extends StatelessWidget {
     ),
   );
 
-  /// The real Ayma mark: the bundled orb logo, clipped to a circle. A soft
-  /// accent glow sits behind it so the card keeps its accent theming, but the
-  /// mark itself is the brand asset, not a painted stand-in.
+  /// The real Ayma mark: the canonical orb itself ([AymaOrbMark], painted
+  /// by the same `AymaOrbPainter` as every other logo in the app) in this
+  /// card's own [accent] — never the bundled picture file, which could only
+  /// ever show the default Cherry Fuchsia. A soft accent glow sits behind
+  /// it so the card keeps its accent theming. Being a painter, it draws
+  /// synchronously, so the 1080x1920 PNG export captures it on the first
+  /// frame with no decode step.
   Widget _mark(double d) => SizedBox(
     width: d,
     height: d,
@@ -335,16 +328,10 @@ class AppearanceReportCard extends StatelessWidget {
           ),
         ],
       ),
-      child: ClipOval(
-        child: Image(
-          key: const ValueKey('reportCardLogo'),
-          image: logo,
-          width: d,
-          height: d,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          semanticLabel: 'Ayma',
-        ),
+      child: AymaOrbMark(
+        key: const ValueKey('reportCardLogo'),
+        size: d,
+        accent: accent,
       ),
     ),
   );

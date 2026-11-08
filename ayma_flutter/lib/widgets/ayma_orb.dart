@@ -338,6 +338,48 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   }
 }
 
+/// The canonical Ayma logo as a static mark — the exact frame [AymaOrb]
+/// paints at rest (idle, clock frozen at 0), drawn straight from
+/// [AymaOrbPainter], the single source every in-app logo renders from.
+///
+/// Use this wherever a logo must appear without the live widget's ambient
+/// inputs: a caller-supplied [accent] (the Appearance report card, whose
+/// colours are its own), a reduced-motion loader, or a capture surface that
+/// needs the mark painted synchronously on the first frame. There is
+/// deliberately no picture-file logo anywhere in the app: a bundled PNG can
+/// only ever show the accent it was rendered with (the Cherry Fuchsia
+/// default), which is how the loader and the report card ended up showing a
+/// pink logo next to a live orb in the user's own accent colour.
+class AymaOrbMark extends StatelessWidget {
+  const AymaOrbMark({super.key, required this.size, this.accent});
+
+  final double size;
+
+  /// The accent the mark is painted in; null reads the ambient theme accent
+  /// (`context.ac`), exactly like [AymaOrb].
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: AymaOrbPainter(
+          t: 0,
+          fromState: AymaOrbState.idle,
+          toState: AymaOrbState.idle,
+          transitionT: 1,
+          amplitude: 0,
+          accent: accent ?? context.ac.accent,
+          reducedMotion: false,
+          showGlow: false,
+        ),
+      ),
+    );
+  }
+}
+
 /// Per-state motion/appearance targets, blended by [AymaOrbPainter] across a
 /// state change. Field-by-field lerp, not a single global "intensity" knob —
 /// each axis (idle drift, voice reactivity, thinking circulation, highlight
@@ -470,7 +512,7 @@ _Tier _tierOf(double size) {
 /// replaced by a stroke widened by [blur] with alpha scaled to keep the
 /// same energy, composited srcOver, so there is nothing for Impeller to drop.
 Paint _glowStroke(Color c, double width, double blur, bool compact,
-    {bool round = false}) {
+    {bool round = false, Color? over}) {
   final paint = Paint()
     ..style = PaintingStyle.stroke
     ..strokeCap = round ? StrokeCap.round : StrokeCap.butt;
@@ -481,9 +523,14 @@ Paint _glowStroke(Color c, double width, double blur, bool compact,
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, blur)
       ..blendMode = BlendMode.screen;
   }
+  // Compact: no blur/screen (Impeller dropped those layers at this size) —
+  // paint the screen-blended colour (see [AymaColors.screenOver]) when
+  // the caller supplies the backdrop it lands on, so the stroke lands the
+  // same colour the big orb's screen blend produces.
+  final base = over == null ? c : AymaColors.screenOver(c, over);
   return paint
     ..strokeWidth = width + blur
-    ..color = c.withValues(alpha: c.a * width / (width + blur));
+    ..color = base.withValues(alpha: c.a * width / (width + blur));
 }
 
 /// One wing/petal lobe's shape, apex-relative, in fractions of the sphere's
@@ -635,6 +682,10 @@ class AymaOrbPainter extends CustomPainter {
   static Color _tint(Color c, double amt) => Color.lerp(c, Colors.white, amt)!;
   static Color _shade(Color c, double amt) => Color.lerp(c, Colors.black, amt)!;
 
+  /// The compact tiers pre-blend their glow colours with
+  /// [AymaColors.screenOver] — see its doc for why plain srcOver of the raw
+  /// tones read as leftover Cherry Fuchsia highlights at nav-bar size.
+
   // --- Phase-independent paint caches (perf pass, 2026-09-27) --------------
   // `paint()` used to allocate every gradient shader fresh on every frame.
   // Several of them are phase-independent: the sphere base/shadow/bounce,
@@ -759,12 +810,16 @@ class AymaOrbPainter extends CustomPainter {
       final g = angelicGlow.clamp(0.0, 1.0);
       Offset x(Offset local) =>
           _wingLocalToWorld(apex, radius, local, angle, flare);
+      // Compact tiers paint the screen-blended colour srcOver (see
+      // [AymaColors.screenOver]) so a small orb lands the same colours as the big
+      // voice-screen orb instead of the raw tones at full saturation.
+      Color glowOver(Color c) => compact ? AymaColors.screenOver(c, fillColor) : c;
       Paint screenFill(Color c) => Paint()
-        ..color = c
+        ..color = glowOver(c)
         ..blendMode = compact ? BlendMode.srcOver : BlendMode.screen;
       Paint screenStroke(Color c, double width, double blur,
               {bool round = false}) =>
-          _glowStroke(c, width, blur, compact, round: round);
+          _glowStroke(c, width, blur, compact, round: round, over: fillColor);
       Path curve(Offset a, Offset c1, Offset c2, Offset e) => Path()
         ..moveTo(a.dx, a.dy)
         ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, e.dx, e.dy);
@@ -800,10 +855,10 @@ class AymaOrbPainter extends CustomPainter {
         screenFill(Colors.white)
           ..shader = RadialGradient(
             colors: [
-              glowPearl.withValues(alpha: 0.78 * g),
-              glowPearl.withValues(alpha: 0.48 * g),
-              glowBlush.withValues(alpha: 0.24 * g),
-              glowBlush.withValues(alpha: 0),
+              glowOver(glowPearl.withValues(alpha: 0.78 * g)),
+              glowOver(glowPearl.withValues(alpha: 0.48 * g)),
+              glowOver(glowBlush.withValues(alpha: 0.24 * g)),
+              glowOver(glowBlush.withValues(alpha: 0)),
             ],
             stops: const [0, 0.35, 0.7, 1],
           ).createShader(Rect.fromCircle(center: bodyC, radius: bodyR)),
@@ -817,9 +872,9 @@ class AymaOrbPainter extends CustomPainter {
         screenFill(Colors.white)
           ..shader = RadialGradient(
             colors: [
-              glowLavender.withValues(alpha: 1.0 * g),
-              glowLavender.withValues(alpha: 0.55 * g),
-              glowLavender.withValues(alpha: 0),
+              glowOver(glowLavender.withValues(alpha: 1.0 * g)),
+              glowOver(glowLavender.withValues(alpha: 0.55 * g)),
+              glowOver(glowLavender.withValues(alpha: 0)),
             ],
             stops: const [0, 0.5, 1],
           ).createShader(Rect.fromCircle(center: lowC, radius: lowR)),
@@ -922,11 +977,11 @@ class AymaOrbPainter extends CustomPainter {
           ..shader = RadialGradient(
             colors: [
               Colors.white.withValues(alpha: 0.72 * g),
-              glowPearl.withValues(alpha: 0.34 * g),
+              glowOver(glowPearl.withValues(alpha: 0.34 * g)),
               // Transparent BLUSH, not Colors.transparent (black): Skia
               // interpolates unpremultiplied, and white -> transparent black
               // passes through visible grey.
-              glowBlush.withValues(alpha: 0),
+              glowOver(glowBlush.withValues(alpha: 0)),
             ],
             stops: const [0, 0.4, 1],
           ).createShader(Rect.fromCircle(center: tipC, radius: tipR)),
@@ -1519,6 +1574,11 @@ class AymaOrbPainter extends CustomPainter {
     // intensity speaking; a dimmer, warmer version through listening/thinking.
     if (connectedGlow > 0.001) {
       final g = connectedGlow;
+      // The tone the two translucent petals composite to where they cross
+      // (the 5b overlay colour) — the backdrop the compact path pre-blends
+      // its glow layers over (see [AymaColors.screenOver]).
+      final overlapTone = _shade(_tint(material, 0.42), 0.16);
+      Color overOverlap(Color c) => compact ? AymaColors.screenOver(c, overlapTone) : c;
       final b = overlap.getBounds();
       final poolC = Offset(b.center.dx, b.bottom - b.height * 0.22);
       final poolR = radius * 0.50;
@@ -1528,9 +1588,9 @@ class AymaOrbPainter extends CustomPainter {
         Paint()
           ..shader = RadialGradient(
             colors: [
-              glowMagenta.withValues(alpha: 0.70 * g),
-              glowMagenta.withValues(alpha: 0.28 * g),
-              glowMagenta.withValues(alpha: 0),
+              overOverlap(glowMagenta.withValues(alpha: 0.70 * g)),
+              overOverlap(glowMagenta.withValues(alpha: 0.28 * g)),
+              overOverlap(glowMagenta.withValues(alpha: 0)),
             ],
             stops: const [0, 0.5, 1],
           ).createShader(Rect.fromCircle(center: poolC, radius: poolR))
@@ -1539,7 +1599,8 @@ class AymaOrbPainter extends CustomPainter {
       canvas.drawPath(
         overlap,
         _glowStroke(glowLavender.withValues(alpha: 0.60 * g), radius * 0.08,
-            radius * 0.06, compact),
+            radius * 0.06, compact,
+            over: overlapTone),
       );
       final coreC = Offset(b.center.dx, b.top + b.height * 0.62);
       final coreR = math.max(b.width, b.height) * 0.55;
@@ -1549,7 +1610,7 @@ class AymaOrbPainter extends CustomPainter {
       // drop rather than washing out to the same white as the petals.
       canvas.drawPath(
         overlap,
-        Paint()..color = glowTeardrop.withValues(alpha: 0.50 * g),
+        Paint()..color = overOverlap(glowTeardrop.withValues(alpha: 0.50 * g)),
       );
       canvas.drawCircle(
         coreC,
@@ -1558,8 +1619,8 @@ class AymaOrbPainter extends CustomPainter {
           ..shader = RadialGradient(
             colors: [
               Colors.white.withValues(alpha: 0.95 * g),
-              glowLavenderWhite.withValues(alpha: 0.55 * g),
-              glowLavenderWhite.withValues(alpha: 0.10 * g),
+              overOverlap(glowLavenderWhite.withValues(alpha: 0.55 * g)),
+              overOverlap(glowLavenderWhite.withValues(alpha: 0.10 * g)),
             ],
             stops: const [0, 0.45, 1],
           ).createShader(Rect.fromCircle(center: coreC, radius: coreR))
@@ -1569,7 +1630,8 @@ class AymaOrbPainter extends CustomPainter {
       canvas.drawPath(
         overlap,
         _glowStroke(glowPearl.withValues(alpha: 0.75 * g), radius * 0.045,
-            radius * 0.025, compact),
+            radius * 0.025, compact,
+            over: overlapTone),
       );
       // Soft white-hot rim on the drop, matching the petals' own edge.
       canvas.drawPath(

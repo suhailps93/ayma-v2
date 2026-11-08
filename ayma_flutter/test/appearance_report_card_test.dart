@@ -13,6 +13,7 @@ import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/report_card_share.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/appearance_report_card.dart';
+import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:file/file.dart' as fs;
 import 'package:file/local.dart';
@@ -352,25 +353,20 @@ void main() {
       expect(_photoImages, findsNWidgets(2));
     });
 
-    testWidgets('header and footer show the real Ayma logo asset', (
+    testWidgets('header and footer show the canonical painted Ayma mark', (
       tester,
     ) async {
       await tester.pumpWidget(_card(_data(), photos: 4));
-      final logos = tester.widgetList<Image>(
+      final marks = tester.widgetList<AymaOrbMark>(
         find.byKey(const ValueKey('reportCardLogo')),
       );
-      expect(logos, hasLength(2));
-      for (final img in logos) {
-        expect(
-          img.image,
-          isA<AssetImage>().having(
-            (a) => a.assetName,
-            'assetName',
-            AppearanceReportCard.logoAsset,
-          ),
-        );
+      expect(marks, hasLength(2));
+      // The mark is painted by the one AymaOrbPainter, in the card's own
+      // accent — not the bundled PNG, which was frozen at the default
+      // Cherry Fuchsia no matter what accent the card carried.
+      for (final mark in marks) {
+        expect(mark.accent, AymaColors.accent);
       }
-      expect(AppearanceReportCard.logoAsset, 'assets/icon/ayma_orb_ios.png');
     });
 
     testWidgets('long name and long findings ellipsize without overflow', (
