@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/voice_preview_player.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
@@ -46,12 +47,17 @@ class VoiceEngineControl extends StatefulWidget {
     this.uid,
     this.controller,
     this.showSaveButton = true,
+    this.previewPlayer,
   });
 
   final ApiClient api;
   final VoidCallback? onSaved;
   final VoiceEngineController? controller;
   final bool showSaveButton;
+
+  /// Test seam for the voice-sample preview player; defaults to the real
+  /// just_audio player. The control owns and disposes the instance it uses.
+  final VoicePreviewPlayer? previewPlayer;
 
   /// Test seams for the live-update listener; default to the app globals.
   final FirebaseFirestore? firestore;
@@ -87,6 +93,17 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   VoiceSelection? _sel;
   String? _error;
   bool _saving = false;
+
+  // Voice-sample preview (founder feedback 2026-11-07): the play button
+  // beside the VOICE dropdown fetches the recorded sample for the
+  // dropdown's current (unsaved) choice and plays it through this
+  // standalone player. It deliberately never touches
+  // VoiceSessionController — a live call keeps running untouched; the
+  // sample plays alongside it the way a voice message plays.
+  late final VoicePreviewPlayer _previewPlayer =
+      widget.previewPlayer ?? JustAudioPreviewPlayer();
+  String? _previewingVoiceId;
+  bool _previewBusy = false;
 
   /// True once the catalog load's first attempt has failed and a cold-start
   /// backoff retry is pending/in flight: the loader swaps its line to
@@ -140,6 +157,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     _reloadDebounce?.cancel();
     _profileSub?.cancel();
     _accentCtrl.dispose();
+    _previewPlayer.dispose();
     super.dispose();
   }
 
@@ -148,6 +166,68 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     if (sel == null) return;
     _savedAccent = sel.accent;
     _savedLanguageCode = sel.languageCode;
+  }
+
+  /// The voice the dropdown currently shows: the selection, reconciled
+  /// against the active component's voice list the same way the dropdown's
+  /// own effective value is.
+  String get _effectiveVoiceId {
+    final sel = _sel;
+    if (sel == null) return '';
+    final voices = _activeVoices();
+    if (voices.any((v) => v.id == sel.voiceId)) return sel.voiceId;
+    return voices.isNotEmpty ? voices.first.id : '';
+  }
+
+  /// Stop any playing sample and forget which voice it was. Called when
+  /// the shown voice changes (voice / mode / component switch, catalog
+  /// reload) so the button state always matches the voice on screen.
+  /// Callers are inside (or immediately beside) a setState.
+  void _resetPreview() {
+    if (_previewingVoiceId == null) return;
+    _previewingVoiceId = null;
+    _previewPlayer.stop().catchError((Object _) {});
+  }
+
+  /// Play (or stop) the recorded sample for the voice the dropdown is
+  /// currently showing — BEFORE anything is saved, so the user hears the
+  /// voice before committing to it. Only the built-in Gemini presets have
+  /// recorded samples (cached clips server-side); any other voice fails
+  /// honestly with a toast instead of pretending. Never reads or mutates
+  /// the live voice session: a call in progress is left completely alone.
+  Future<void> _togglePreview() async {
+    final voiceId = _effectiveVoiceId;
+    if (voiceId.isEmpty || _previewBusy) return;
+    if (_previewingVoiceId == voiceId) {
+      await _previewPlayer.stop();
+      if (mounted) setState(() => _previewingVoiceId = null);
+      return;
+    }
+    setState(() => _previewBusy = true);
+    try {
+      final url = await widget.api.voicePreviewUrl(voiceId);
+      if (!mounted) return;
+      if (url.isEmpty) throw ApiException('voice preview failed.');
+      await _previewPlayer.play(url);
+      if (!mounted) return;
+      setState(() {
+        _previewingVoiceId = voiceId;
+        _previewBusy = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _previewingVoiceId = null;
+        _previewBusy = false;
+      });
+      AymaToast.show(
+        context,
+        (e is ApiException && (e.statusCode == 404 || e.statusCode == 502))
+            ? 'No preview recorded for this voice yet.'
+            : 'Could not play a preview of this voice.',
+        kind: AymaToastKind.error,
+      );
+    }
   }
 
   DocumentReference<Map<String, dynamic>>? _profileRef() {
@@ -183,9 +263,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
 
   void _onStackSnap(DocumentSnapshot<Map<String, dynamic>> snap) {
     final data = snap.data() ?? const <String, dynamic>{};
-    final sig = [
-      for (final f in _watchedFields) '$f=${data[f] ?? ''}',
-    ].join('|');
+    final sig = [for (final f in _watchedFields) '$f=${data[f] ?? ''}']
+        .join('|');
     if (_watchedSig == null) {
       _watchedSig = sig;
       return;
@@ -229,6 +308,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         _savedAccent = _sel!.accent;
         _savedLanguageCode = _sel!.languageCode;
       });
+      _resetPreview();
       widget.controller?._changed();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -333,8 +413,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       var appliedLive = false;
       if (languageChanged || (accentChanged && supportsAccent)) {
         try {
-          appliedLive = await VoiceSessionController.active
-                  ?.notifyVoiceAccentChanged(
+          appliedLive =
+              await VoiceSessionController.active?.notifyVoiceAccentChanged(
                 accent: sel.accent,
                 language: _languageLabel(),
               ) ??
@@ -356,8 +436,11 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       }
     } catch (e) {
       if (mounted) {
-        AymaToast.show(context, 'Could not save ($e).',
-            kind: AymaToastKind.error);
+        AymaToast.show(
+          context,
+          'Could not save ($e).',
+          kind: AymaToastKind.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -375,13 +458,12 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Could not load voices ($_error).',
-              style: AymaType.sans(size: 13, color: AymaColors.error)),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: _load,
-            child: const Text('Retry'),
+          Text(
+            'Could not load voices ($_error).',
+            style: AymaType.sans(size: 13, color: AymaColors.error),
           ),
+          const SizedBox(height: 8),
+          TextButton(onPressed: _load, child: const Text('Retry')),
         ],
       );
     }
@@ -415,7 +497,10 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             for (final m in cat.modes)
               DropdownMenuItem(value: m, child: Text(_modeLabel(m))),
           ],
-          onChanged: (m) => setState(() => _sel = sel.copyWith(mode: m)),
+          onChanged: (m) => setState(() {
+            _sel = sel.copyWith(mode: m);
+            _resetPreview();
+          }),
         ),
         const SizedBox(height: 16),
         if (sel.mode == 'realtime')
@@ -443,9 +528,9 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           child: Text(
             cat.source == 'livekit'
                 ? 'Options are pulled live from LiveKit Inference. A new '
-                    'voice starts on your next call.'
+                      'voice starts on your next call.'
                 : 'Showing the built-in option list (live catalog '
-                    'unavailable). A new voice starts on your next call.',
+                      'unavailable). A new voice starts on your next call.',
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
         ),
@@ -454,83 +539,142 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   }
 
   List<Widget> _realtimeControls(
-      AymaTokens ac, VoiceCatalog cat, VoiceSelection sel) {
+    AymaTokens ac,
+    VoiceCatalog cat,
+    VoiceSelection sel,
+  ) {
     return [
       _label(ac, 'REALTIME MODEL'),
-      Builder(builder: (_) {
-        // Same rule as the cascade pickers: hide realtime models the user
-        // can't select rather than showing them disabled.
-        final shown = [for (final m in cat.realtimeModels) if (m.available) m];
-        return _dropdown<String>(
-          ac,
-          value: shown.any((m) => m.id == sel.realtimeModelId)
-              ? sel.realtimeModelId
-              : (shown.isNotEmpty ? shown.first.id : null),
-          items: [
-            for (final m in shown)
-              DropdownMenuItem(
-                value: m.id,
-                child: Text(m.label, overflow: TextOverflow.ellipsis),
-              ),
-          ],
-          onChanged: shown.isEmpty
-              ? null
-              : (v) {
-                  setState(() {
-                    _sel = sel.copyWith(realtimeModelId: v);
-                    _reconcileVoice();
-                  });
-                },
-        );
-      }),
+      Builder(
+        builder: (_) {
+          // Same rule as the cascade pickers: hide realtime models the user
+          // can't select rather than showing them disabled.
+          final shown = [
+            for (final m in cat.realtimeModels)
+              if (m.available) m,
+          ];
+          return _dropdown<String>(
+            ac,
+            value: shown.any((m) => m.id == sel.realtimeModelId)
+                ? sel.realtimeModelId
+                : (shown.isNotEmpty ? shown.first.id : null),
+            items: [
+              for (final m in shown)
+                DropdownMenuItem(
+                  value: m.id,
+                  child: Text(m.label, overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: shown.isEmpty
+                ? null
+                : (v) {
+                    setState(() {
+                      _sel = sel.copyWith(realtimeModelId: v);
+                      _reconcileVoice();
+                      _resetPreview();
+                    });
+                  },
+          );
+        },
+      ),
     ];
   }
 
   List<Widget> _cascadeControls(
-      AymaTokens ac, VoiceCatalog cat, VoiceSelection sel) {
+    AymaTokens ac,
+    VoiceCatalog cat,
+    VoiceSelection sel,
+  ) {
     // No BRAIN (LLM) dropdown: the one Brain above is the cascade LLM too.
     return [
       _label(ac, 'SPEECH-TO-TEXT'),
-      _componentDropdown(ac, cat.stt, sel.sttId,
-          (v) => setState(() => _sel = sel.copyWith(sttId: v))),
+      _componentDropdown(
+        ac,
+        cat.stt,
+        sel.sttId,
+        (v) => setState(() => _sel = sel.copyWith(sttId: v)),
+      ),
       const SizedBox(height: 12),
       _label(ac, 'TEXT-TO-SPEECH'),
       _componentDropdown(ac, cat.tts, sel.ttsId, (v) {
         setState(() {
           _sel = sel.copyWith(ttsId: v);
           _reconcileVoice();
+          _resetPreview();
         });
       }),
     ];
   }
 
   Widget _voiceAndLanguage(
-      AymaTokens ac, VoiceCatalog cat, VoiceSelection sel) {
+    AymaTokens ac,
+    VoiceCatalog cat,
+    VoiceSelection sel,
+  ) {
     final voices = _activeVoices();
     final langs = _activeLanguages();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _label(ac, 'VOICE'),
-        _dropdown<String>(
-          ac,
-          dropdownKey: const ValueKey('voice-dropdown'),
-          value: voices.any((v) => v.id == sel.voiceId)
-              ? sel.voiceId
-              : (voices.isNotEmpty ? voices.first.id : null),
-          items: [
-            for (final v in voices)
-              DropdownMenuItem(
-                value: v.id,
-                child: Text(
-                  v.description.isEmpty ? v.label : '${v.label} — ${v.description}',
-                  overflow: TextOverflow.ellipsis,
-                ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: _dropdown<String>(
+                ac,
+                dropdownKey: const ValueKey('voice-dropdown'),
+                value: voices.any((v) => v.id == sel.voiceId)
+                    ? sel.voiceId
+                    : (voices.isNotEmpty ? voices.first.id : null),
+                items: [
+                  for (final v in voices)
+                    DropdownMenuItem(
+                      value: v.id,
+                      child: Text(
+                        v.description.isEmpty
+                            ? v.label
+                            : '${v.label} — ${v.description}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: voices.isEmpty
+                    ? null
+                    : (v) => setState(() {
+                        _sel = sel.copyWith(voiceId: v);
+                        _resetPreview();
+                      }),
               ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              key: const ValueKey('voice-preview-button'),
+              tooltip:
+                  _previewingVoiceId != null &&
+                      _previewingVoiceId == _effectiveVoiceId
+                  ? 'Stop preview'
+                  : 'Play a sample of this voice',
+              onPressed:
+                  (voices.isEmpty || _effectiveVoiceId.isEmpty || _previewBusy)
+                  ? null
+                  : _togglePreview,
+              icon: _previewBusy
+                  ? const AymaWingLoader(size: 16, showLabel: false)
+                  : Icon(
+                      _previewingVoiceId != null &&
+                              _previewingVoiceId == _effectiveVoiceId
+                          ? Icons.stop_circle_outlined
+                          : Icons.play_circle_outline,
+                    ),
+            ),
           ],
-          onChanged: voices.isEmpty
-              ? null
-              : (v) => setState(() => _sel = sel.copyWith(voiceId: v)),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Hear a short sample of the voice before you save. Playing a '
+          'sample never changes or interrupts a call in progress.',
+          style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
         const SizedBox(height: 12),
         _label(ac, 'LANGUAGE'),
@@ -545,7 +689,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           ],
           onChanged: langs.isEmpty
               ? null
-              : (v) => setState(() => _sel = sel.copyWith(languageCode: v ?? '')),
+              : (v) =>
+                    setState(() => _sel = sel.copyWith(languageCode: v ?? '')),
         ),
         // §13.9: show the ACCENT card ONLY when the active component (the
         // realtime model, or the cascade TTS) can honour a free-text accent.
@@ -609,12 +754,19 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     );
   }
 
-  Widget _componentDropdown(AymaTokens ac, List<VoiceComponent> items,
-      String value, ValueChanged<String?> onChanged) {
+  Widget _componentDropdown(
+    AymaTokens ac,
+    List<VoiceComponent> items,
+    String value,
+    ValueChanged<String?> onChanged,
+  ) {
     // Only ever list providers the user can actually pick (§ founder
     // 2026-10-28: "if it's not selectable why bother adding"). The catalog
     // still reports the unavailable ones truthfully — they're just not shown.
-    final shown = [for (final c in items) if (c.available) c];
+    final shown = [
+      for (final c in items)
+        if (c.available) c,
+    ];
     return _dropdown<String>(
       ac,
       value: shown.any((c) => c.id == value)
@@ -632,11 +784,15 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   }
 
   Widget _label(AymaTokens ac, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(text,
-            style: AymaType.mono(size: 10, color: ac.fgMute)
-                .copyWith(letterSpacing: 1.5)),
-      );
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text(
+      text,
+      style: AymaType.mono(
+        size: 10,
+        color: ac.fgMute,
+      ).copyWith(letterSpacing: 1.5),
+    ),
+  );
 
   Widget _dropdown<T>(
     AymaTokens ac, {
@@ -647,8 +803,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   }) {
     // DropdownButton asserts its value is among the items (or null); coerce to
     // null when the catalog is empty or the value isn't present.
-    final effective =
-        items.any((i) => i.value == value) ? value : null;
+    final effective = items.any((i) => i.value == value) ? value : null;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
