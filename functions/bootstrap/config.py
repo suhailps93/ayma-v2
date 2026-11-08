@@ -1019,6 +1019,23 @@ class Config:
     This selects a VENDOR only; the locked Gemini/Meta model ids above are never
     changed. See ``docs/ARCHITECTURE.md`` §13.10 and ``docs/META_PROVIDER.md``."""
 
+    brain_credited_providers: tuple[str, ...]
+    """Brain VENDORS this deploy is credited for, and may therefore offer in a
+    selection list or honour as a saved preference: ``gemini`` | ``meta`` |
+    ``open-weights``. Only Gemini runs on the funded LiveKit Inference
+    credits — Meta Muse Spark bills the Meta Model API directly and the
+    open-weights brain bills its Modal endpoint, so neither is covered.
+    Default = all three, so production behaviour is unchanged and the Meta
+    hackathon build keeps its Meta path. Staging pins
+    ``BRAIN_CREDITED_PROVIDERS=gemini`` (founder order 2026-11-07, after the
+    Meta Model API charges billed his card past the hackathon credits):
+    Meta then never appears in the Brain picker (``llm_provider``) or the
+    voice catalog (``voice_catalog``), and a saved ``meta`` preference
+    resolves to Gemini — never Meta, never an error. ``gemini`` is always
+    treated as credited (the funded default; the fallback of last resort).
+    ``BRAIN_CREDITED_PROVIDERS`` (CSV, lowercase) overrides, and
+    ``scripts/deploy-staging.sh`` pins ``gemini`` on staging."""
+
     # --- Voice ENGINE picker (§13.9, docs/META_PROVIDER.md) ---------------- #
     # The per-user voice stack (dev-settings "Voice engine"): a CASCADE
     # (brain/STT/TTS, independently selectable) or an all-in-one REALTIME model.
@@ -1433,6 +1450,12 @@ def _load() -> Config:
         # Muse (``meta``) post-Qloo. Capability gaps still route to Gemini
         # (web/vision) via the llm_provider capability map.
         brain_default=os.getenv("AYMA_BRAIN_DEFAULT", "gemini").strip().lower(),
+        # Credited brain vendors (see the field docstring): default = all
+        # three, so production is unchanged; staging pins gemini-only, so no
+        # direct-API brain (Meta / open-weights) is offered or honoured there.
+        brain_credited_providers=_csv(
+            "BRAIN_CREDITED_PROVIDERS", "gemini,meta,open-weights", lower=True
+        ),
         # Voice ENGINE picker (§13.9).
         openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime"),
         voice_openai_realtime_enabled=os.getenv(

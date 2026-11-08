@@ -90,6 +90,18 @@ ROUTE_INFERENCE = "inference"
 # ``CONFIG.open_weights_api_base_url``.
 ROUTE_OPEN_WEIGHTS = "open-weights"
 
+def _direct_brain_offered(vendor: str) -> bool:
+    """Whether a direct-API brain vendor (``meta`` / ``open-weights``) may be
+    listed in the catalog or routed on this deploy — the voice half of the
+    credited-brains gate (``CONFIG.brain_credited_providers``; see
+    ``llm_provider.brain_is_credited`` for the text half). Only LiveKit
+    Inference brains run on the funded credits: Meta bills the Meta Model
+    API directly and open-weights bills its Modal endpoint. Staging pins
+    the credited set to ``gemini`` (founder order 2026-11-07), so neither
+    direct brain is offered or served there."""
+    return (vendor or "").strip().lower() in CONFIG.brain_credited_providers
+
+
 _CATALOG_TTL_SECONDS = 300
 
 
@@ -456,9 +468,12 @@ def cascade_brain_for_unified(vendor: str) -> str:
 
     Unknown vendors map to "" (no override) rather than a guessed model."""
     v = (vendor or "").strip().lower()
-    if v == PROVIDER_META:
+    if v == PROVIDER_META and _direct_brain_offered(PROVIDER_META):
         return BRAIN_META
-    if v == PROVIDER_GEMINI:
+    if v in (PROVIDER_GEMINI, PROVIDER_META):
+        # Gemini — or a Meta vendor this deploy is not credited for
+        # (staging): the voice LLM is the Gemini Inference brain either way,
+        # so a saved Meta brain can never route a call to Meta-direct.
         for mid in CONFIG.voice_cascade_llm_models:
             if mid.startswith("google/"):
                 return mid
@@ -505,18 +520,34 @@ def resolved_cascade_brain(prof: dict, default: str = "") -> str:
         if mapped:
             return mapped
     legacy = str(prof.get(schema.PF_AYMA_CASCADE_BRAIN, "") or "").strip()
-    return legacy or default
+    resolved = legacy or default
+    if resolved == BRAIN_META and not _direct_brain_offered(PROVIDER_META):
+        # A stored Meta cascade brain on an uncredited deploy (staging):
+        # serve the Gemini Inference brain instead — never Meta.
+        return cascade_brain_for_unified(PROVIDER_GEMINI)
+    if resolved == BRAIN_OPEN_WEIGHTS and not _direct_brain_offered(
+        PROVIDER_OPEN_WEIGHTS
+    ):
+        return cascade_brain_for_unified(PROVIDER_GEMINI)
+    return resolved
 
 
 def brain_route(brain_id: str) -> tuple[str, str] | None:
-    """``(route, model_id)`` for a cascade brain id, or ``None`` if unknown.
+    """``(route, model_id)`` for a cascade brain id, or ``None`` if unknown
+    or not credited on this deploy (``_direct_brain_offered``).
     The Meta brain is ``meta`` → ``CONFIG.meta_chat_model``; the open-weights
     brain is ``open-weights`` → ``CONFIG.open_weights_model`` (offered only when
     ``OPEN_WEIGHTS_BASE_URL`` is set); every other brain id is itself a LiveKit
     Inference LLM model string (route ``inference``)."""
     if brain_id == BRAIN_META:
+        # Uncredited on this deploy (staging): routes nowhere, so the agent
+        # falls back to Gemini Live rather than serving Meta-direct.
+        if not _direct_brain_offered(PROVIDER_META):
+            return None
         return ROUTE_META, CONFIG.meta_chat_model
     if brain_id == BRAIN_OPEN_WEIGHTS and CONFIG.open_weights_api_base_url:
+        if not _direct_brain_offered(PROVIDER_OPEN_WEIGHTS):
+            return None
         return ROUTE_OPEN_WEIGHTS, CONFIG.open_weights_model
     # An extra brain may map its id to a distinct model string.
     for entry in CONFIG.voice_cascade_extra_brains:
@@ -532,21 +563,28 @@ def brain_route(brain_id: str) -> tuple[str, str] | None:
 
 def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
     # Meta Muse Spark is a direct-API brain; the rest are LiveKit Inference
-    # LLMs from the config fallback lists.
-    out: list[dict[str, object]] = [
-        {
-            "id": BRAIN_META,
-            "label": "Meta Muse Spark",
-            "provider": "meta",
-            "route": ROUTE_META,
-            "available": True,
-            "requires_secret": "META_API_KEY",
-        }
-    ]
+    # LLMs from the config fallback lists. The direct-API brains (Meta,
+    # open-weights) are listed ONLY while this deploy is credited for them
+    # (``_direct_brain_offered``) — on staging (credited = Gemini only)
+    # neither appears in the selection list at all.
+    out: list[dict[str, object]] = []
+    if _direct_brain_offered(PROVIDER_META):
+        out.append(
+            {
+                "id": BRAIN_META,
+                "label": "Meta Muse Spark",
+                "provider": "meta",
+                "route": ROUTE_META,
+                "available": True,
+                "requires_secret": "META_API_KEY",
+            }
+        )
     # Self-hosted open-weights brain: exposed ONLY when the endpoint is
     # configured (``OPEN_WEIGHTS_BASE_URL`` set), so production (env unset)
     # never lists it. Never a default (see ``_default_from``).
-    if CONFIG.open_weights_api_base_url:
+    if CONFIG.open_weights_api_base_url and _direct_brain_offered(
+        PROVIDER_OPEN_WEIGHTS
+    ):
         out.append(
             {
                 "id": BRAIN_OPEN_WEIGHTS,
@@ -572,7 +610,11 @@ def _brains(sources: dict[str, object]) -> list[dict[str, object]]:
         )
     for entry in CONFIG.voice_cascade_extra_brains:
         parts = [p.strip() for p in entry.split("|")]
-        if len(parts) >= 3 and parts[0]:
+        # An extra brain on the Meta route is a direct-API brain: withheld
+        # wherever Meta is not credited (staging), like the built-in one.
+        if len(parts) >= 3 and parts[0] and (
+            parts[1] != ROUTE_META or _direct_brain_offered(PROVIDER_META)
+        ):
             out.append(
                 {"id": parts[0], "label": parts[0], "provider": parts[1],
                  "route": parts[1], "available": True, "requires_secret": ""}
@@ -664,9 +706,17 @@ def _default_from(sources: dict[str, object]) -> dict[str, str]:
         }
     stt = _first(sources["stt"])  # type: ignore[index]
     tts = _first(sources["tts"])  # type: ignore[index]
+    # The pre-selected cascade brain shown alongside the realtime default:
+    # the Meta brain only while Meta is credited on this deploy; on staging
+    # the Gemini Inference brain is pre-selected instead.
+    default_brain = (
+        BRAIN_META
+        if _direct_brain_offered(PROVIDER_META)
+        else cascade_brain_for_unified(PROVIDER_GEMINI)
+    )
     return {
         "mode": MODE_REALTIME, "realtime_model_id": REALTIME_GEMINI,
-        "brain_id": BRAIN_META, "stt_id": stt, "tts_id": tts,
+        "brain_id": default_brain, "stt_id": stt, "tts_id": tts,
         "voice_id": "",
     }
 

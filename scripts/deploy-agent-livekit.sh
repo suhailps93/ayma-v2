@@ -102,6 +102,11 @@ if [[ "$AGENT_TARGET_ENV" == "staging" ]]; then
     "AGENT_NAME_LIVEKIT=${TARGET_AGENT_NAME}"
     "LIVEKIT_ROOM_PREFIX=${TARGET_ROOM_PREFIX}"
     "SENTRY_ENVIRONMENT=${TARGET_SENTRY_ENV}"
+    # Staging only (founder order 2026-11-07): only LiveKit-credit inference
+    # may be offered or served — Meta Muse Spark bills the card directly,
+    # so the credited brain set is gemini alone. Prod is NOT pinned (its
+    # config default keeps all three).
+    "BRAIN_CREDITED_PROVIDERS=gemini"
   )
 fi
 
