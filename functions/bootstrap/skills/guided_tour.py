@@ -891,7 +891,7 @@ _TOUR_START_VERB = re.compile(
     r"\b(?:"
     r"start|begin|launch|restart|redo|kick\s+off|give\s+me|"
     r"open(?:\s+up)?|show(?:\s+me)?|go\s+to|take\s+me\s+to|"
-    r"bring\s+(?:me\s+)?(?:up|to)|walk\s+me\s+through"
+    r"bring\s+(?:me\s+)?(?:up|to)|walk\s+(?:me\s+)?(?:through|around)"
     r")\b",
     re.IGNORECASE,
 )

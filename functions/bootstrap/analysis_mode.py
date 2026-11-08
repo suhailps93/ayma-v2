@@ -158,14 +158,35 @@ _VOICE_ANALYSIS_PHRASES = frozenset({
     "enter analysis mode",
     "start analysis mode",
     "open analysis mode",
+    "go to analysis mode",
+    "take me to analysis mode",
 })
 _VOICE_SELF_CHECK_PHRASES = frozenset({
     "self check",
     "self-check",
     "run self check",
     "run a self check",
+    "run the self check",
     "run self-check",
+    "run the self-check",
+    "do self check",
+    "do a self check",
+    "do the self check",
+    "do self-check",
+    "do a self-check",
+    "do the self-check",
 })
+
+_POLITENESS_PREFIX = re.compile(
+    r"^(?:(?:hey\s+)?ayma\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+|please\s+)+",
+    re.IGNORECASE,
+)
+
+
+def strip_politeness_prefixes(text: str) -> str:
+    """Strip common spoken politeness prefixes (can you, could you,
+    would you, please, hey ayma) before whole-utterance matching."""
+    return _POLITENESS_PREFIX.sub("", text).strip()
 
 
 def is_analysis_mode_command(text: str) -> bool:
@@ -183,13 +204,15 @@ def is_analysis_mode_command(text: str) -> bool:
 
 def detect_voice_trigger(text: str) -> str | None:
     """``"analysis"`` / ``"self_check"`` for a whole-utterance voice
-    trigger, else ``None``. Whole-utterance on purpose (the disconnect
-    phrases' strictness): talking ABOUT analysis mode mid-sentence must
-    never start the gate."""
+    trigger, else ``None``. Strips politeness prefixes (can you, could you,
+    would you, please, hey ayma) before whole-utterance matching.
+    Whole-utterance on purpose (the disconnect phrases' strictness):
+    talking ABOUT analysis mode mid-sentence must never start the gate."""
     normalized = normalize_text(text)
-    if normalized in _VOICE_ANALYSIS_PHRASES:
+    stripped = strip_politeness_prefixes(normalized)
+    if stripped in _VOICE_ANALYSIS_PHRASES:
         return "analysis"
-    if normalized in _VOICE_SELF_CHECK_PHRASES:
+    if stripped in _VOICE_SELF_CHECK_PHRASES:
         return "self_check"
     return None
 

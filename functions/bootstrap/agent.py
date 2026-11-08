@@ -2945,16 +2945,15 @@ def tour_tapped_handler(session: AgentSession) -> Callable[[object], None]:
     the client's already-written ``tour_event`` doc and narrates the next step.
     This is the bridge that advances the tour on a tap regardless of whether a
     blocking ``advance_guided_tour`` happened to be mid-wait (founder/Scout,
-    2026-11-03). Malformed payloads are dropped; the sync handler schedules the
-    coroutine so it never blocks the data-channel callback."""
+    2026-11-03). Malformed payloads are dropped."""
 
     def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
         if getattr(packet, "topic", None) != TOPIC_TOUR_TAPPED:
             return
         try:
-            asyncio.create_task(
-                session.generate_reply(instructions=load_tour_tapped_kick())
-            )
+            res = session.generate_reply(instructions=load_tour_tapped_kick())
+            if asyncio.iscoroutine(res):
+                asyncio.create_task(res)
         except Exception:  # noqa: BLE001 - never crash the data callback
             logger.exception("tour_tapped generate_reply failed to schedule")
 
