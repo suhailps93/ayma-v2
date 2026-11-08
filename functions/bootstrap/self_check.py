@@ -56,16 +56,23 @@ files):
   that error is reported SKIP (off by design), files no bug, and the
   suggestions carry one restore-plan line instead of a fix line.
 * Readability + stranding (founder, 2026-11-07 ~15:53, after two runs
-  on his phone): the summary and suggestions are posted as short
-  grouped bubbles — header counts, a failures bubble, then one bubble
-  per check category — never a bubble over 1500 chars, split only on
-  line boundaries (long bubbles were truncated mid-word in chat).
-  Destinations that leave the app for the browser (Terms, Privacy)
-  are never live-navigated in a run, a nav timeout after an external
-  open counts as not-run rather than failed (a backgrounded app
-  cannot hear nav commands), the nav section always queues a return
-  to the chat at the end, and bug filing de-dupes against the last
-  24h so repeat runs do not file the same failure twice.
+  on his phone): the end-of-run output is posted as short bubbles —
+  never a bubble over 1500 chars, split only on line boundaries (long
+  bubbles were truncated mid-word in chat). A nav timeout after an
+  external open counts as not-run rather than failed (a backgrounded
+  app cannot hear nav commands), the nav section queues a return to
+  the chat, and bug filing de-dupes against the last 24h so repeat
+  runs do not file the same failure twice.
+* Failures-only output + final nav group (founder, 2026-11-07
+  ~16:14): chat at the end of a run gets ONLY the counts header and
+  the failure lines — no per-category bubbles, no suggestions bubble
+  (the full grouped detail and the suggestions live in the run's one
+  feedback record). The destinations that need the user present —
+  Photos (the photo upload/edit page) and Terms/Privacy (they open
+  the browser) — run as real checks at the very END of the run, in
+  that order, with a longer 30s ack window (FINAL_NAV_TIMEOUT) so he
+  can respond to them while they run. Privacy goes last: it leaves
+  the app sitting in the browser.
 """
 
 from __future__ import annotations
@@ -208,10 +215,11 @@ MAX_BUBBLE_CHARS = 1500
 
 # Destinations that leave the app for the external browser. Flagged
 # ``external`` in app_registry.json; this literal set is the fallback
-# so Terms/Privacy keep the treatment even if the flag is lost.
+# so Terms/Privacy are still recognised as browser-opening even if
+# the flag is lost — the backgrounding rule (_nav_check) depends on
+# knowing a navigation threw the user out of the app.
 EXTERNAL_DESTINATION_KEYS = {"terms", "privacy"}
 
-EXTERNAL_SKIP_DETAIL = "opens your browser \u2014 not run during a check"
 BACKGROUNDED_SKIP_DETAIL = (
     "the app was in your browser \u2014 this check could not be heard"
 )
@@ -221,6 +229,15 @@ WEB_SEARCH_OFF_SUGGESTION = (
     "on the founder decision in the restore plan."
 )
 _DIRECT_GOOGLE_DISABLED = "DirectGoogleDisabledError"
+
+# -- final navigation group (founder, 2026-11-07 ~16:14) --------------
+# These destinations need the user present while they run — Photos
+# lands on the photo upload/edit page, Terms and Privacy open his
+# browser — so they run as real checks at the very END of the run, in
+# this order (Privacy last: it leaves the app sitting in the
+# browser), with a longer ack window so he has time to respond.
+FINAL_NAV_KEYS = ("photos", "terms", "privacy")
+FINAL_NAV_TIMEOUT = 30.0
 
 # Bug filing de-dupes against identical failures filed this recently.
 _BUG_DEDUPE_WINDOW = timedelta(hours=24)
@@ -479,19 +496,6 @@ def _title_label(label) -> str:
     -> "Your photos"), the rest untouched."""
     text = str(label or "").strip()
     return text[:1].upper() + text[1:] if text else text
-
-
-# Headings for the per-category summary bubbles (founder, 2026-11-07
-# ~15:53: results grouped by section, not one packed blob).
-_CATEGORY_TITLES = {
-    "navigation": "Navigation",
-    "read": "Reading",
-    "write_revert": "Write and revert",
-    "tools": "Tools",
-    "settings": "Settings",
-    "scoped": "Screen-only tools",
-    "excluded": "Off-limits \u2014 never run",
-}
 
 
 @dataclass
@@ -820,14 +824,15 @@ class SelfCheckRunner:
         except Exception:  # noqa: BLE001 - return-to-chat never breaks a run
             logger.exception("self-check return-to-chat queue failed")
 
-    async def _do_nav(self, dest: dict):
+    async def _do_nav(self, dest: dict, timeout: float | None = None):
+        window = self.nav_timeout if timeout is None else timeout
         if self.deps.nav_fn is not None:
             ok, error = await self.deps.nav_fn(dest)
             return (PASS, dest.get("label", ""), "") if ok else (FAIL, "", error)
         from skills.app_control_queue import _await_ack
 
         cmd_id, label = await asyncio.to_thread(self._queue_nav_command, dest)
-        ack = await _await_ack(self.db, self.uid, cmd_id, timeout=self.nav_timeout)
+        ack = await _await_ack(self.db, self.uid, cmd_id, timeout=window)
         if ack is None:
             # One re-wait on the SAME command before failing: the
             # client's command watch can be down for ~10s while it
@@ -838,15 +843,48 @@ class SelfCheckRunner:
             # failed inside one such ~14s gap at the old single
             # 3s window; acks before and after the gap flowed.
             ack = await _await_ack(
-                self.db, self.uid, cmd_id, timeout=self.nav_timeout
+                self.db, self.uid, cmd_id, timeout=window
             )
         if ack and ack.get("ok"):
             return PASS, label, ""
         return (
             FAIL,
             "",
-            f"The app did NOT navigate (no ack within {self.nav_timeout * 2:g}s)",
+            f"The app did NOT navigate (no ack within {window * 2:g}s)",
         )
+
+    async def _nav_check(self, dest: dict, *,
+                         timeout: float | None = None) -> None:
+        """Run one navigation check for ``dest`` and emit the result.
+
+        ``timeout`` overrides the ack window (the final nav group
+        passes FINAL_NAV_TIMEOUT). A no-ack timeout that follows an
+        external open or an earlier unheard command is a check
+        artifact — the app was backgrounded and could not hear — so
+        it is reported not-run, never a failure, never a bug.
+        """
+        key = str(dest.get("key") or "")
+        window = self.nav_timeout if timeout is None else timeout
+        nav_result = await self._timed(
+            f"nav:{key}", "navigation",
+            self._do_nav(dest, timeout=window),
+            timeout=window * 2 + 5,
+        )
+        if nav_result.status == FAIL and _is_no_ack_error(nav_result.error):
+            if self._external_seen or self._nav_unheard:
+                nav_result = CheckResult(
+                    nav_result.name, nav_result.category, SKIP,
+                    BACKGROUNDED_SKIP_DETAIL, "",
+                    duration_ms=nav_result.duration_ms,
+                )
+            else:
+                self._nav_unheard = True
+        if _is_external_destination(dest):
+            # Navigating here opened (or tried to open) the browser:
+            # the app is backgrounded from this point on, so a later
+            # no-ack timeout in this run is the same artifact.
+            self._external_seen = True
+        await self._emit(nav_result)
 
     def _default_read(self, name: str):
         user = self.db.collection("users").document(self.uid)
@@ -1051,8 +1089,8 @@ class SelfCheckRunner:
         each (founder, 2026-11-07 ~15:53: the one-line-per-gap list
         was unreadable): every screen-scoped "bring into the main
         chat" item is named in a single line, and every probe-only
-        item is named in a single line. By-design skips (external
-        destinations, backgrounded nav, web search off) are not gaps.
+        item is named in a single line. By-design skips (backgrounded
+        nav, web search off) are not gaps.
         Ordered most-actionable first so the consolidated feedback
         record — whose note is clipped by feedback_ops — holds the
         important ones.
@@ -1083,7 +1121,7 @@ class SelfCheckRunner:
                 elif r.category == "scoped":
                     if plain not in scoped_names:
                         scoped_names.append(plain)
-                elif detail in (EXTERNAL_SKIP_DETAIL, BACKGROUNDED_SKIP_DETAIL):
+                elif detail == BACKGROUNDED_SKIP_DETAIL:
                     continue  # by design — not a gap, no suggestion
                 else:
                     other_skips.append(
@@ -1123,8 +1161,9 @@ class SelfCheckRunner:
         uses (feedback_ops, source ayma), tagged self-check in the
         note (the stored category taxonomy coerces to "other").
         feedback_ops clips notes at 4000 chars, so the record
-        keeps as many suggestions as fit and counts the rest; the
-        chat summary always carries the full list.
+        keeps as many suggestions as fit and counts the rest. Chat
+        carries only the counts and the failures, so this record is
+        where the full list lives.
         """
         fn = self.deps.feedback_record
         if fn is None:
@@ -1161,12 +1200,17 @@ class SelfCheckRunner:
             await self._announce(heading + "\n" + chunk)
 
     async def _finish(self) -> None:
-        """Grouped summary bubbles, suggestion bubbles, one record.
+        """End-of-run chat output: the counts, then failures only.
 
-        Structure (founder, 2026-11-07 ~15:53): a header bubble with
-        the counts, a failures bubble listing every failure, then one
-        bubble per check category — never a bubble over
-        MAX_BUBBLE_CHARS, split only on line boundaries.
+        Founder, 2026-11-07 ~16:14: even grouped, the full readout
+        (header, failures, one bubble per category, suggestions)
+        landed as a wall of text, so chat now gets ONE header bubble
+        with the counts and then the failure lines only — packed
+        under MAX_BUBBLE_CHARS, split only on line boundaries. A run
+        with no failures posts the header alone, worded so it is
+        clear every check that ran passed. The full grouped detail
+        and the feature suggestions still go to the run's single
+        feedback record (_file_feedback) — they no longer post here.
         """
         counts = {PASS: 0, FAIL: 0, PROBE: 0, SKIP: 0, EXCLUDED: 0}
         for r in self.results:
@@ -1178,6 +1222,8 @@ class SelfCheckRunner:
             f"{_MARKS[FAIL]} {counts[FAIL]} failed · "
             f"{_MARKS[SKIP]} {not_run} not run"
         )
+        if counts[FAIL] == 0:
+            header += " — nothing failed; every check that ran passed \u2705"
         await self._announce(header)
         failures = [r for r in self.results if r.status == FAIL]
         if failures:
@@ -1185,28 +1231,7 @@ class SelfCheckRunner:
                 "\u274c Failures — every failure from this run:",
                 [self._line(r) for r in failures],
             )
-        grouped: dict[str, list[CheckResult]] = {}
-        for r in self.results:
-            grouped.setdefault(r.category, []).append(r)
-        for category, rs in grouped.items():
-            title = _CATEGORY_TITLES.get(category) or _humanise(category)
-            passed = sum(1 for r in rs if r.status == PASS)
-            await self._announce_bubbles(
-                f"{title} — {passed} of {len(rs)}",
-                [self._line(r) for r in rs],
-            )
         suggestions = self._suggestions()
-        if suggestions:
-            await self._announce_bubbles(
-                "\U0001f4a1 Feature ideas from this run — what would "
-                "help Ayma do more, better:",
-                [f"• {s}" for s in suggestions],
-            )
-        else:
-            await self._announce(
-                "\U0001f4a1 Feature ideas from this run: nothing to "
-                "suggest — everything in this build ran."
-            )
         if suggestions:
             await self._file_feedback(suggestions)
 
@@ -1226,7 +1251,11 @@ class SelfCheckRunner:
             pass
         excluded_dest.add("delete_account")
 
-        # A. Navigation — one ack-checked open per destination.
+        # A. Navigation — one ack-checked open per destination, EXCEPT
+        # the final group (FINAL_NAV_KEYS: photos, terms, privacy).
+        # Those need the user present while they run, so they are held
+        # back and executed at the very end of the run (below).
+        final_dests: dict[str, dict] = {}
         for dest in destinations:
             key = str(dest.get("key") or "")
             if not key:
@@ -1234,41 +1263,16 @@ class SelfCheckRunner:
             self._labels[f"nav:{key}"] = (
                 "Nav to " + _title_label(dest.get("label"))
             )
+            if key in FINAL_NAV_KEYS:
+                final_dests.setdefault(key, dest)
+                continue
             if key in excluded_dest or key in EXCLUDED_KEYS:
                 await self._emit(
                     CheckResult(f"nav:{key}", "navigation", EXCLUDED,
                                 "founder-excluded — never exercised")
                 )
                 continue
-            if _is_external_destination(dest):
-                # External destinations throw the user into the
-                # browser (Terms/Privacy open the hosted page there
-                # since build 2343): never live-navigate them in a
-                # run — the app backgrounds, the user is stranded,
-                # and later nav checks cannot be heard.
-                self._external_seen = True
-                await self._emit(
-                    CheckResult(f"nav:{key}", "navigation", SKIP,
-                                EXTERNAL_SKIP_DETAIL)
-                )
-                continue
-            nav_result = await self._timed(
-                f"nav:{key}", "navigation", self._do_nav(dest),
-                timeout=self.nav_timeout * 2 + 5,
-            )
-            if nav_result.status == FAIL and _is_no_ack_error(nav_result.error):
-                if self._external_seen or self._nav_unheard:
-                    # The app could not hear this command — it was
-                    # backgrounded (browser) or already unheard — so
-                    # the timeout is a check artifact, not a failure.
-                    nav_result = CheckResult(
-                        nav_result.name, nav_result.category, SKIP,
-                        BACKGROUNDED_SKIP_DETAIL, "",
-                        duration_ms=nav_result.duration_ms,
-                    )
-                else:
-                    self._nav_unheard = True
-            await self._emit(nav_result)
+            await self._nav_check(dest)
 
         # A run always leaves the user back in the chat.
         await self._return_to_chat(destinations)
@@ -1398,6 +1402,31 @@ class SelfCheckRunner:
                 CheckResult(f"excluded:{key}", "excluded", EXCLUDED,
                             "founder-excluded — never exercised")
             )
+
+        # Final navigation group — photos, terms, privacy, in that
+        # order, each with the longer ack window (FINAL_NAV_TIMEOUT).
+        # They land the user somewhere he may need to act — the photo
+        # upload/edit page, then his browser — so they run only when
+        # nothing else remains. Privacy is last because it leaves the
+        # app sitting in the browser.
+        final_ran = False
+        for key in FINAL_NAV_KEYS:
+            dest = final_dests.get(key)
+            if dest is None:
+                continue
+            final_ran = True
+            if key in excluded_dest or key in EXCLUDED_KEYS:
+                await self._emit(
+                    CheckResult(f"nav:{key}", "navigation", EXCLUDED,
+                                "founder-excluded — never exercised")
+                )
+                continue
+            await self._nav_check(dest, timeout=FINAL_NAV_TIMEOUT)
+        if final_ran:
+            # Line up a return to the chat, as after the main nav
+            # section. After Privacy the app sits in the browser, so
+            # this will usually go unheard — it is not a check.
+            await self._return_to_chat(destinations)
 
         report = build_report(self.results, self.run_id, self.session_id,
                               self.env_label)

@@ -403,7 +403,8 @@ def test_progress_bubbles_plain_names_marks_no_raw_ids():
     # with marks: start + one per result, then the finish bubbles.
     result_lines = lines[1:1 + len(runner.results)]
     assert len(result_lines) == len(runner.results)
-    assert len(lines) > 1 + len(runner.results) + 2
+    # Each live bubble is exactly the check's own line, in run order.
+    assert result_lines == [runner._line(r) for r in runner.results]
     assert "\u2705 Nav to Explore" not in lines  # explore fails here
     assert "\u2705 Nav to Chat" in lines
     fail_lines = [ln for ln in lines if ln.startswith("\u274c Nav to Explore")]
@@ -418,24 +419,21 @@ def test_progress_bubbles_plain_names_marks_no_raw_ids():
         for raw in ("nav:", "tool:", "wr:", "read:", "setting:",
                     "excluded:", "open:"):
             assert raw not in ln, (raw, ln)
-    # The finish is grouped bubbles, none over the readability cap:
-    # a header bubble with the counts, a failures bubble, then one
-    # bubble per check category. Every result line appears in them.
+    # The finish (founder, 2026-11-07 ~16:14) is failures-only: one
+    # header bubble with the counts, then the failure lines — no
+    # per-category bubbles, no pass lines, no suggestions bubble.
+    finish = lines[1 + len(runner.results):]
+    assert len(finish) == 2
     assert all(len(ln) <= self_check.MAX_BUBBLE_CHARS for ln in lines)
-    headers = [
-        ln for ln in lines if ln.startswith("\U0001f9ea Self-check summary")
-    ]
-    assert len(headers) == 1
-    assert f"{len(runner.results)} checks" in headers[0]
-    failure_bubbles = [
-        ln for ln in lines if ln.startswith("\u274c Failures")
-    ]
-    assert len(failure_bubbles) == 1
-    assert "Nav to Explore" in failure_bubbles[0]
-    assert any(ln.startswith("Navigation — ") for ln in lines)
-    joined = "\n".join(lines)
-    for r in runner.results:
-        assert runner._line(r) in joined
+    assert finish[0].startswith("\U0001f9ea Self-check summary")
+    assert f"{len(runner.results)} checks" in finish[0]
+    assert finish[1].startswith("\u274c Failures")
+    assert "Nav to Explore" in finish[1]
+    assert "Nav to Chat" not in finish[1]  # passes stay out of the finish
+    for title in ("Navigation — ", "Tools — ", "Reading — ",
+                  "Settings — ", "Write and revert — "):
+        assert not any(ln.startswith(title) for ln in finish)
+    assert not any(ln.startswith("\U0001f4a1") for ln in lines)
 
 
 # --- feature suggestions + consolidated feedback record -------------------
@@ -468,13 +466,9 @@ def test_suggestions_from_fails_and_skips_filed_exactly_once():
         ),
     )
     asyncio.run(runner.run())
-    bubbles = [ln for ln in lines if ln.startswith("\U0001f4a1 Feature ideas")]
-    assert bubbles
-    joined = "\n".join(bubbles)
-    # Derived from THIS run: the explore FAIL and the copilot SKIP both
-    # become concrete, plain-language suggestions.
-    assert "Fix Nav to Explore" in joined
-    assert "Add Point at something on a shared screen to this build" in joined
+    # Suggestions no longer post to chat (founder, 2026-11-07 ~16:14:
+    # the finish is failures-only) — they live in the record below.
+    assert not any(ln.startswith("\U0001f4a1") for ln in lines)
     # The two repetitive families collapse to ONE grouped line each.
     suggestions = runner._suggestions()
     scoped = [
@@ -494,8 +488,10 @@ def test_suggestions_from_fails_and_skips_filed_exactly_once():
     assert len(h.record_feedback_calls) == 1
     category, note = h.record_feedback_calls[0]
     assert category == "self_check"
-    assert "Nav to Explore" in note
-    assert "Point at something on a shared screen" in note
+    # Derived from THIS run: the explore FAIL and the copilot SKIP
+    # both become concrete, plain-language suggestions in the record.
+    assert "Fix Nav to Explore" in note
+    assert "Add Point at something on a shared screen to this build" in note
 
 
 # --- nav cluster: window + same-command re-wait ----------------------------
@@ -555,6 +551,7 @@ def test_nav_fails_only_after_both_windows(monkeypatch):
 
 
 # --- readability + stranding fixes (founder, 2026-11-07 ~15:53) ---------
+# --- failures-only finish + final nav group (founder, ~16:14) -------------
 # After two runs on his phone: the output was unreadable (one packed
 # summary bubble, truncated mid-word), the nav section threw him into
 # the browser (Terms) and onto the photo page and never brought him
@@ -605,17 +602,40 @@ def test_chunk_lines_wraps_a_grouped_line_at_its_separators():
     assert joined.count("Check number") == 40
 
 
-def test_finish_bubbles_grouped_by_category_none_over_limit():
+def test_finish_posts_header_and_failures_only():
     h = _Harness(fail_nav={"explore"})
     lines = []
     runner = h.runner()
     runner.deps.progress = lines.append
     asyncio.run(runner.run())
     assert all(len(ln) <= self_check.MAX_BUBBLE_CHARS for ln in lines)
-    headings = [ln.split("\n")[0] for ln in lines]
-    assert any(x.startswith("Navigation — ") for x in headings)
-    assert any(x.startswith("Tools — ") for x in headings)
-    assert any(x.startswith("\u274c Failures") for x in headings)
+    finish = lines[1 + len(runner.results):]
+    # Exactly two bubbles: the counts header and the failures bubble.
+    assert len(finish) == 2
+    assert finish[0].startswith("\U0001f9ea Self-check summary")
+    assert "1 failed" in finish[0]
+    assert finish[1].startswith("\u274c Failures")
+    assert "Nav to Explore" in finish[1]
+    # No per-category bubbles, and no pass lines in the failures bubble.
+    headings = [ln.split("\n")[0] for ln in finish]
+    assert not any(x.startswith("Navigation — ") for x in headings)
+    assert not any(x.startswith("Tools — ") for x in headings)
+    assert "Nav to Chat" not in finish[1]
+
+
+def test_zero_failure_run_posts_only_the_header_at_finish():
+    h = _Harness()
+    lines = []
+    runner = h.runner()
+    runner.deps.progress = lines.append
+    asyncio.run(runner.run())
+    assert not any(r.status == self_check.FAIL for r in runner.results)
+    finish = lines[1 + len(runner.results):]
+    # One bubble only — and it makes clear everything passed.
+    assert len(finish) == 1
+    assert finish[0].startswith("\U0001f9ea Self-check summary")
+    assert "0 failed" in finish[0]
+    assert "nothing failed" in finish[0]
 
 
 def test_suggestions_never_treat_passes_as_gaps():
@@ -632,7 +652,8 @@ def test_suggestions_never_treat_passes_as_gaps():
     assert not any("Nav to Chat" in s for s in suggestions)
 
 
-# B + C. external destinations, backgrounding artifacts, return-to-chat
+# B + C. final nav group (photos/terms/privacy run last, for real),
+# backgrounding artifacts, return-to-chat
 
 def test_registry_flags_terms_and_privacy_external():
     import app_registry
@@ -644,8 +665,44 @@ def test_registry_flags_terms_and_privacy_external():
     assert not self_check._is_external_destination(dests["explore"])
 
 
-def test_external_nav_skipped_and_later_timeout_is_not_a_failure():
-    h = _Harness(fail_nav={"matches"})
+def test_final_group_runs_last_in_photos_terms_privacy_order():
+    h = _Harness()
+    calls = []
+
+    async def nav_fn(dest):
+        calls.append(dest["key"])
+        return await h.nav_fn(dest)
+
+    runner = _runner_with(
+        h,
+        [
+            {"key": "ayma", "label": "Chat"},
+            {"key": "privacy", "label": "Privacy Policy", "external": True},
+            {"key": "explore", "label": "Explore"},
+            {"key": "photos", "label": "your photos"},
+            {"key": "terms", "label": "Terms of Service", "external": True},
+            {"key": "matches", "label": "Matches"},
+        ],
+        nav_fn=nav_fn,
+    )
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    # All three really execute and pass — nothing is skipped by design.
+    for key in ("photos", "terms", "privacy"):
+        assert by_name[f"nav:{key}"].status == self_check.PASS
+    # They are the last three checks of the whole run, in the final
+    # group order — the registry order above does not matter.
+    assert [r.name for r in runner.results[-3:]] == [
+        "nav:photos", "nav:terms", "nav:privacy",
+    ]
+    # And their navigations happen after every main-section nav.
+    assert calls.index("photos") > calls.index("matches")
+    assert calls.index("terms") > calls.index("photos")
+    assert calls.index("privacy") > calls.index("terms")
+
+
+def test_terms_executes_and_privacy_timeout_after_it_is_not_a_failure():
+    h = _Harness(fail_nav={"privacy"})
     calls = []
 
     async def nav_fn(dest):
@@ -657,25 +714,103 @@ def test_external_nav_skipped_and_later_timeout_is_not_a_failure():
         [
             {"key": "ayma", "label": "Chat"},
             {"key": "terms", "label": "Terms of Service", "external": True},
-            {"key": "matches", "label": "Matches"},
+            {"key": "privacy", "label": "Privacy Policy", "external": True},
         ],
         nav_fn=nav_fn,
     )
     asyncio.run(runner.run())
     by_name = {r.name: r for r in runner.results}
-    # Terms is never live-navigated: SKIP, no nav command queued.
-    assert "terms" not in calls
-    assert by_name["nav:terms"].status == self_check.SKIP
-    assert by_name["nav:terms"].detail == self_check.EXTERNAL_SKIP_DETAIL
-    # The matches timeout follows the external open: a check artifact,
-    # reported not-run — never a failure, never a bug.
-    assert by_name["nav:matches"].status == self_check.SKIP
-    assert by_name["nav:matches"].detail == (
+    # Terms really executes now — it is navigated, not skipped.
+    assert "terms" in calls
+    assert by_name["nav:terms"].status == self_check.PASS
+    # Privacy timed out AFTER Terms threw the app into the browser:
+    # the app was backgrounded and could not hear — not-run, never a
+    # failure, never a bug.
+    assert by_name["nav:privacy"].status == self_check.SKIP
+    assert by_name["nav:privacy"].detail == (
         self_check.BACKGROUNDED_SKIP_DETAIL
     )
     assert h.bugs == []
-    # The run ends by queueing a return to the chat.
-    assert calls == ["ayma", "matches", "ayma"]
+    # Chat, back to chat, then the final group, then a return lined up.
+    assert calls == ["ayma", "ayma", "terms", "privacy", "ayma"]
+
+
+def test_final_group_first_timeout_still_fails_and_files_bug():
+    h = _Harness(fail_nav={"terms"})
+    runner = _runner_with(
+        h,
+        [
+            {"key": "ayma", "label": "Chat"},
+            {"key": "terms", "label": "Terms of Service", "external": True},
+            {"key": "privacy", "label": "Privacy Policy", "external": True},
+        ],
+    )
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    # Terms is the FIRST unheard nav of the run — nothing was opened
+    # before it — so its timeout is a genuine failure with its bug.
+    assert by_name["nav:terms"].status == self_check.FAIL
+    assert len([b for b in h.bugs if "check=nav:terms" in b]) == 1
+    # Privacy still executes afterwards and passes.
+    assert by_name["nav:privacy"].status == self_check.PASS
+
+
+def test_final_group_uses_the_longer_nav_timeout(monkeypatch):
+    import skills.app_control_navigation as acn
+    import skills.app_control_queue as acq
+
+    timeouts = []
+
+    def fake_resolve(db, uid, dest):
+        return "/x", "X"
+
+    def fake_queue(db, uid, payload):
+        return "cmd-1"
+
+    async def fake_ack(db, uid, cmd_id, timeout=None):
+        timeouts.append(timeout)
+        return {"ok": True}
+
+    monkeypatch.setattr(acn, "_resolve_path", fake_resolve)
+    monkeypatch.setattr(acq, "_queue_command", fake_queue)
+    monkeypatch.setattr(acq, "_await_ack", fake_ack)
+
+    h = _Harness()
+    runner = SelfCheckRunner(
+        object(),
+        "u1",
+        session_id="s-test",
+        env_label="test-env",
+        deps=_Deps(
+            # nav_fn deliberately NOT injected: the production ack
+            # path runs, so the ack windows are observable here.
+            read_fn=h.read_fn,
+            profile_read=h.profile_read,
+            tool_fns=h.tool_fns(),
+            web_search_fn=h.web_search_fn,
+            bug_record=h.bug_record,
+            destinations=[
+                {"key": "ayma", "label": "Chat"},
+                {"key": "explore", "label": "Explore"},
+                {"key": "photos", "label": "your photos"},
+                {"key": "terms", "label": "Terms of Service",
+                 "external": True},
+                {"key": "privacy", "label": "Privacy Policy",
+                 "external": True},
+            ],
+            settings_keys=["theme", "notify_all"],
+        ),
+    )
+    asyncio.run(runner.run())
+    assert self_check.FINAL_NAV_TIMEOUT == 30.0
+    # Main-section destinations keep the standard 6s window; every
+    # final-group destination gets the longer 30s window. (The
+    # return-to-chat lineups queue a command but never await an ack,
+    # so they do not appear here.)
+    assert timeouts == [6.0, 6.0, 30.0, 30.0, 30.0]
+    by_name = {r.name: r for r in runner.results}
+    for key in ("photos", "terms", "privacy"):
+        assert by_name[f"nav:{key}"].status == self_check.PASS
 
 
 def test_genuine_foregrounded_nav_timeout_still_fails():
