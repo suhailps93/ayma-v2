@@ -431,8 +431,12 @@ def build_analysis_block(db, uid: str, extra_context: str = "") -> str:
         "user. The diagnostics and core memories below were pulled live "
         "for this turn from the real records. Answer from them; when "
         "something is not in them, say plainly that you cannot see it "
-        "instead of guessing. Never discuss any other user: these "
-        "records belong to the signed-in user only.",
+        "instead of guessing. When asked why something failed, if you have "
+        "no verified record you can point to in the diagnostics below, say "
+        "plainly that you do not know and cannot see the cause; never claim "
+        "a bug was logged, flagged in testing, reported, or fixed unless you "
+        "can cite the record from the diagnostics below. Never discuss any other user: "
+        "these records belong to the signed-in user only.",
         "",
         "DIAGNOSTICS:",
         *diagnostic_lines(db, uid),
