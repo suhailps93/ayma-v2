@@ -214,6 +214,22 @@ def test_prompt_block_carries_core_memories_and_diagnostics():
     # Diagnostics: last self-check + open bug reports, from real records.
     assert "46 passed, 0 failed" in block
     assert "Web search did not finish" in block
+    # Honesty rule for unverified failures
+    norm = " ".join(block.lower().split())
+    assert "when asked why something failed" in norm
+    assert "cannot see the cause" in norm
+    assert "flagged in testing" in norm
+    assert "bug was logged" in norm
+
+
+def test_analysis_prompt_block_carries_failure_honesty_rule():
+    db = _db_with_memories()
+    block = am.build_analysis_block(db, UID)
+    norm = " ".join(block.lower().split())
+    assert "when asked why something failed" in norm
+    assert "cannot see the cause" in norm
+    assert "flagged in testing" in norm
+    assert "bug was logged" in norm
 
 
 def test_prompt_block_absent_out_of_mode():

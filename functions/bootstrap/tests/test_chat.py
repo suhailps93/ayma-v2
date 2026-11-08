@@ -457,6 +457,64 @@ def test_chat_without_pinned_screen_does_not_claim_pin(monkeypatch):
     assert "currently looking at" not in seen["prompt"]
 
 
+def test_chat_unverified_failure_system_prompt_carries_honesty_rule(monkeypatch):
+    """Founder report Nov 8 12:08 PT: when asked why the guided tour kept failing,
+    Ayma must not invent a technical explanation or falsely claim a bug was logged
+    or flagged during testing. The composed system prompt must explicitly carry the
+    honesty rule instructing her to say plainly that she does not know and cannot
+    see the cause."""
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="I don't know and cannot see the cause.")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "why did the guided tour keep failing?"},
+    )
+    assert resp.status_code == 200
+    norm = " ".join(seen["prompt"].lower().split())
+    assert "when asked why something failed" in norm
+    assert "cannot see the cause" in norm
+    assert "flagged in testing" in norm
+    assert "bug was logged" in norm
+
+
+def test_chat_mid_tour_unverified_failure_prompt_carries_honesty_rule(monkeypatch):
+    """When a guided tour is active and the user asks why it failed, both the
+    guided tour active block and the base persona carry the honesty rule."""
+    import time
+    seen = {}
+
+    from skills import guided_tour
+
+    monkeypatch.setattr(
+        guided_tour,
+        "_read_state",
+        lambda _db, _uid: {"active": True, "index": 0, "updated_at": time.time()},
+    )
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="I don't know and cannot see the cause.")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "why does the guided tour keep failing?"},
+    )
+    assert resp.status_code == 200
+    norm = " ".join(seen["prompt"].lower().split())
+    assert "[guided tour active" in norm
+    assert "if asked why the tour or a step failed and you have no verified record you can point to" in norm
+    assert "cannot see the cause" in norm
+    assert "flagged in testing" in norm
+
+
 # --- Match report chat: unlike Story/deep-dive/Appearance, the score itself
 # can't be edited, but a disputed fact behind it should be corrected via
 # Ayma's existing profile/questionnaire tools, then picked up by a

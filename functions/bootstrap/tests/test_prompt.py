@@ -58,6 +58,64 @@ def test_persona_forbids_surfacing_internal_context_scaffolding():
     assert "photo-context" in persona
 
 
+def test_persona_forbids_inventing_failure_explanations():
+    """Founder bug Nov 8 12:08 PT: when asked why the guided tour kept failing,
+    Ayma answered with an invented technical story, falsely claiming it was
+    flagged during testing and a bug was logged. Neither happened.
+    The persona must carry an explicit honesty rule: when asked why something
+    failed, if she has no verified record she can point to, she says plainly
+    that she does not know and cannot see the cause, and must never claim a bug
+    was logged, flagged in testing, reported, or fixed unless she can cite the record."""
+    for variant in ("text", "voice"):
+        persona = load_persona(variant).lower()
+        assert "explaining failures and problems" in persona
+        assert "when asked why something failed" in persona
+        assert "guided tour" in persona
+        assert "verified record" in persona
+        assert "do not know and cannot see the cause" in persona
+        assert "never invent a technical story" in persona
+        assert "flagged in testing" in persona
+        assert "bug was logged" in persona
+
+
+def test_system_prompt_carries_failure_honesty_rule():
+    prompt = compose_system_prompt().lower()
+    assert "verified record" in prompt
+    assert "cannot see the cause" in prompt
+    assert "flagged in testing" in prompt
+    assert "bug was logged" in prompt
+
+
+def test_unverified_failure_instruction_regression():
+    """A prompt or instruction test where Ayma is asked about an unverified
+    failure and the expected output says she does not know instead of inventing
+    a story (founder report Nov 8 12:08 PT)."""
+    prompt = compose_system_prompt()
+    norm_prompt = " ".join(prompt.lower().split())
+    assert "when asked why something failed" in norm_prompt
+    assert "if you have no verified record you can point to, say plainly that you do not know and cannot see the cause" in norm_prompt
+    assert "never claim a bug was logged, flagged in testing, reported, or fixed unless you can cite the record" in norm_prompt
+
+    def _validate_reply_honesty(reply: str) -> bool:
+        low = reply.lower()
+        for forbidden in ("flagged in testing", "bug was logged", "we logged a bug", "filed a bug"):
+            if forbidden in low:
+                return False
+        return ("don't know" in low or "do not know" in low) and ("cannot see" in low or "can't see" in low)
+
+    invented_story = (
+        "The guided tour kept failing because our navigation bridge had a race condition. "
+        "The behaviour was flagged during testing and a bug was logged for it."
+    )
+    assert not _validate_reply_honesty(invented_story)
+
+    honest_reply = (
+        "I'm sorry about that — I don't know why the guided tour kept failing and "
+        "cannot see the cause from here. Want to try it again, or have me show you around in chat?"
+    )
+    assert _validate_reply_honesty(honest_reply)
+
+
 class _NoConfigDb:
     """Firestore stub with no `config/ayma_persona` doc at all."""
 
@@ -527,6 +585,9 @@ def test_voice_variant_keeps_every_rule_that_can_fire_in_a_call():
         assert ("current_screen" in p) == (variant == "voice")
         # photo-identity caution stays resident in voice too
         assert "never guess a stranger" in p
+        # failure honesty rule stays resident in voice too
+        assert "cannot see the cause" in p
+        assert "flagged in testing" in p
 
 
 def test_unbalanced_variant_markers_raise():
