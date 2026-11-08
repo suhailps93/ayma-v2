@@ -82,6 +82,7 @@ class AymaToaster {
     AymaToastKind kind = AymaToastKind.info,
     AymaToastAction? action,
   }) {
+    debugPrint('[toast] [${kind.name.toUpperCase()}] $message');
     final request = _ToastRequest(message: message, kind: kind, action: action);
     final layer = _AymaToastLayerState._active;
     if (layer != null) {

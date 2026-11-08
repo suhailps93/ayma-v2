@@ -99,6 +99,7 @@ Map<String, dynamic> _realtimeCatalog() => {
           'supports_accent': true,
           'voices': [
             {'id': 'Aoede', 'label': 'Aoede'},
+            {'id': 'Charon', 'label': 'Charon'},
           ],
           'languages': [
             {'code': '', 'label': 'Default (English)'},
@@ -118,6 +119,18 @@ Map<String, dynamic> _realtimeCatalog() => {
           'available': true,
           'voices': [
             {'id': 'Ashley', 'label': 'Ashley', 'description': 'bright'},
+          ],
+          'languages': [
+            {'code': '', 'label': 'Default (English)'},
+          ],
+        },
+        {
+          'id': 'fishaudio/s2.1-pro',
+          'label': 'fishaudio/s2.1-pro',
+          'available': true,
+          'voices': [
+            {'id': '', 'label': 'Default voice'},
+            {'id': 'speaker1', 'label': 'Speaker 1'},
           ],
           'languages': [
             {'code': '', 'label': 'Default (English)'},
@@ -177,10 +190,14 @@ void _bigViewport(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-Widget _host({bool voiceConnected = false}) => MaterialApp(
+Widget _host({
+  bool voiceConnected = false,
+  Map<String, dynamic> Function()? voiceCatalog,
+}) =>
+    MaterialApp(
       theme: AymaTheme.light,
       home: VoicePreferenceScreen(
-        api: _api(),
+        api: _api(voiceCatalog: voiceCatalog),
         voiceConnected: () => voiceConnected,
       ),
     );
@@ -359,5 +376,133 @@ void main() {
       find.textContaining('Type how you want her to sound'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'the VOICE list filters by realtimeModelId in realtime mode and ttsId in cascade mode, unaffected by brain',
+      (tester) async {
+    _bigViewport(tester);
+    await tester.pumpWidget(_host(voiceCatalog: _realtimeCatalog));
+    await tester.pumpAndSettle();
+
+    // In Realtime mode, the active voice is from Gemini Live.
+    expect(find.text('Aoede'), findsOneWidget);
+
+    // Opening the VOICE dropdown shows Gemini Live voices.
+    await tester.tap(find.byKey(const ValueKey('voice-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Aoede'), findsWidgets);
+    expect(find.text('Charon'), findsWidgets);
+    expect(find.text('Ashley — bright'), findsNothing);
+    await tester.tap(find.text('Aoede').last);
+    await tester.pumpAndSettle();
+
+    // Changing BRAIN (LLM reasoning) does NOT change or filter the realtime voice list
+    await tester.tap(find.byKey(const ValueKey('brain-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Meta Muse Spark').last);
+    await tester.pumpAndSettle();
+
+    // VOICE dropdown still shows Gemini Live voices — unchanged by brain.
+    await tester.tap(find.byKey(const ValueKey('voice-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Aoede'), findsWidgets);
+    expect(find.text('Charon'), findsWidgets);
+    expect(find.text('Ashley — bright'), findsNothing);
+    await tester.tap(find.text('Aoede').last);
+    await tester.pumpAndSettle();
+
+    // Switch MODE to Cascade
+    await tester.tap(find.byType(DropdownButton<String>).at(1)); // Mode dropdown
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
+    await tester.pumpAndSettle();
+
+    // In Cascade mode, the voice list is keyed by ttsId (inworld-tts-1 initially)
+    expect(find.text('Ashley — bright'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('voice-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ashley — bright'), findsWidgets);
+    expect(find.text('Aoede'), findsNothing);
+    await tester.tap(find.text('Ashley — bright').last);
+    await tester.pumpAndSettle();
+
+    // Switching TTS changes the voice list
+    await tester.tap(find.widgetWithText(DropdownButton<String>, 'inworld/inworld-tts-1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('fishaudio/s2.1-pro').last);
+    await tester.pumpAndSettle();
+
+    // Now voices are from Fish Audio (Default voice, Speaker 1)
+    await tester.tap(find.byKey(const ValueKey('voice-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Default voice'), findsWidgets);
+    expect(find.text('Speaker 1'), findsWidgets);
+    expect(find.text('Ashley — bright'), findsNothing);
+    await tester.tap(find.text('Speaker 1').last);
+    await tester.pumpAndSettle();
+
+    // Changing BRAIN again does NOT touch the cascade TTS voice list
+    await tester.tap(find.byKey(const ValueKey('brain-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Gemini').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('voice-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Default voice'), findsWidgets);
+    expect(find.text('Speaker 1'), findsWidgets);
+    await tester.tap(find.text('Speaker 1').last);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'save button disables after successful save and re-enables on change',
+      (tester) async {
+    _bigViewport(tester);
+    await tester.pumpWidget(_host(voiceCatalog: _realtimeCatalog));
+    await tester.pumpAndSettle();
+
+    // Pristine: Save button is disabled (not pink)
+    var btn = tester.widget<FilledButton>(find.byKey(const ValueKey('models-save')));
+    expect(btn.onPressed, isNull);
+
+    // Pick a different brain (Meta Muse Spark)
+    await tester.tap(find.byKey(const ValueKey('brain-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Meta Muse Spark').last);
+    await tester.pumpAndSettle();
+
+    // Dirty: Save button is enabled
+    btn = tester.widget<FilledButton>(find.byKey(const ValueKey('models-save')));
+    expect(btn.onPressed, isNotNull);
+
+    // Revert brain back to Gemini
+    await tester.tap(find.byKey(const ValueKey('brain-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Gemini').last);
+    await tester.pumpAndSettle();
+
+    // Pristine again: Save button is disabled
+    btn = tester.widget<FilledButton>(find.byKey(const ValueKey('models-save')));
+    expect(btn.onPressed, isNull);
+
+    // Pick a different voice (Charon)
+    await tester.tap(find.byKey(const ValueKey('voice-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Charon').last);
+    await tester.pumpAndSettle();
+
+    // Dirty again: Save button is enabled
+    btn = tester.widget<FilledButton>(find.byKey(const ValueKey('models-save')));
+    expect(btn.onPressed, isNotNull);
+
+    // Tap Save
+    await tester.tap(find.byKey(const ValueKey('models-save')));
+    await tester.pumpAndSettle();
+
+    // Saved: Save button is disabled again (no longer pink)
+    btn = tester.widget<FilledButton>(find.byKey(const ValueKey('models-save')));
+    expect(btn.onPressed, isNull);
   });
 }

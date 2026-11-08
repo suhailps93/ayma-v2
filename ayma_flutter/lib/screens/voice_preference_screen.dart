@@ -42,6 +42,8 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   final VoiceEngineController _voiceCtl = VoiceEngineController();
   late final ApiClient _client = widget.api ?? ApiClient();
   bool _saving = false;
+  String? _savedBrain;
+  VoiceSelection? _savedSelection;
 
   bool get _voiceConnected =>
       widget.voiceConnected?.call() ??
@@ -66,10 +68,30 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   }
 
   void _onCtlChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      if (_savedBrain == null && _brainCtl.selected != null) {
+        _savedBrain = _brainCtl.selected;
+      }
+      if (_savedSelection == null && _voiceCtl.selection != null) {
+        _savedSelection = _voiceCtl.selection;
+      }
+      setState(() {});
+    }
   }
 
   bool get _ready => _brainCtl.ready && _voiceCtl.ready;
+
+  bool get _isDirty {
+    final sb = _savedBrain;
+    final ss = _savedSelection;
+    if (sb == null || ss == null) return false;
+    final b = _brainCtl.selected;
+    final s = _voiceCtl.selection;
+    if (b == null || s == null) return false;
+    return b != sb || s != ss;
+  }
+
+  bool get _canSave => !_saving && _ready && (_voiceConnected || _isDirty);
 
   Future<void> _saveAll() async {
     final brain = _brainCtl.selected;
@@ -83,6 +105,8 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
         selection: sel,
         reconnect: connected,
       );
+      _savedBrain = brain;
+      _savedSelection = sel;
       _voiceCtl.markSaved();
       if (!mounted) return;
       if (connected) {
@@ -147,7 +171,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
             alignment: Alignment.centerLeft,
             child: FilledButton(
               key: const ValueKey('models-save'),
-              onPressed: (_saving || !_ready) ? null : _saveAll,
+              onPressed: _canSave ? _saveAll : null,
               child: _saving
                   ? const AymaWingLoader(size: 16, showLabel: false)
                   : Text(connected ? 'Save and reconnect' : 'Save'),
