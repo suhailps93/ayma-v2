@@ -108,8 +108,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   // Voice fallback notice (Part B): true when the shown voice is a
   // supported default the control (or the server) substituted for a saved
   // voice the selected model does not support — never silent.
-  bool _voiceFellBack = false;
-  String _fallbackFromLabel = '';
 
   /// True once the catalog load's first attempt has failed and a cold-start
   /// backoff retry is pending/in flight: the loader swaps its line to
@@ -207,15 +205,52 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
 
   int _previewToken = 0;
 
+  /// Resolves the voice ID to preview: returns the non-empty effective voice
+  /// ID, or identifies the vendor default voice from the catalog.
+  String _resolvePreviewVoiceId() {
+    final effective = _effectiveVoiceId;
+    if (effective.isNotEmpty) return effective;
+
+    // Default voice entry: identify the vendor default voice from the catalog.
+    final voices = _activeVoices();
+    final defaultVoice = voices.where((v) => v.id.isEmpty).firstOrNull;
+    if (defaultVoice != null) {
+      final match = RegExp(r'Default \((.+)\)').firstMatch(defaultVoice.label);
+      if (match != null) {
+        final targetName = match.group(1)!.trim().toLowerCase();
+        for (final v in voices) {
+          if (v.id.isNotEmpty &&
+              (v.id.toLowerCase() == targetName ||
+                  v.label.toLowerCase() == targetName)) {
+            return v.id;
+          }
+        }
+      }
+    }
+
+    // Per-TTS fallback from catalog definition:
+    final sel = _sel;
+    if (sel != null && sel.mode == 'cascade') {
+      final ttsId = sel.ttsId.toLowerCase();
+      if (ttsId.contains('inworld')) {
+        for (final v in voices) {
+          if (v.id.toLowerCase() == 'ashley' ||
+              v.label.toLowerCase() == 'ashley') {
+            return v.id;
+          }
+        }
+      }
+    }
+
+    return '';
+  }
+
   /// Play (or stop) the recorded sample for the voice the dropdown is
   /// currently showing — BEFORE anything is saved, so the user hears the
-  /// voice before committing to it. Only the built-in Gemini presets have
-  /// recorded samples (cached clips server-side); any other voice fails
-  /// honestly with a toast instead of pretending. Never reads or mutates
-  /// the live voice session: a call in progress is left completely alone.
+  /// voice before committing to it.
   Future<void> _togglePreview() async {
-    final voiceId = _effectiveVoiceId;
-    if (voiceId.isEmpty) return;
+    final voices = _activeVoices();
+    if (voices.isEmpty) return;
 
     // Tapping again while playing or busy loading cancels/stops immediately.
     if (_previewingVoiceId != null || _previewBusy) {
@@ -230,9 +265,19 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       return;
     }
 
+    final voiceId = _resolvePreviewVoiceId();
+    if (voiceId.isEmpty) {
+      AymaToast.show(
+        context,
+        'No preview recorded for this voice yet.',
+        kind: AymaToastKind.error,
+      );
+      return;
+    }
+
     final token = ++_previewToken;
     setState(() {
-      _previewingVoiceId = voiceId;
+      _previewingVoiceId = _effectiveVoiceId;
       _previewBusy = true;
     });
 
@@ -338,10 +383,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       setState(() {
         _cat = cat;
         _sel = _normalize(cat, cat.current);
-        _voiceFellBack = cat.current.voiceFellBack;
-        _fallbackFromLabel = cat.current.voiceFellBack
-            ? _labelForVoiceId(cat, cat.current.savedVoiceId)
-            : '';
         _accentCtrl.text = _sel!.accent;
         _savedAccent = _sel!.accent;
         _savedLanguageCode = _sel!.languageCode;
@@ -414,43 +455,8 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   void _reconcileVoice() {
     final voices = _activeVoices();
     if (!voices.any((v) => v.id == _sel!.voiceId)) {
-      final previous = _sel!.voiceId;
       _sel = _sel!.copyWith(voiceId: voices.isNotEmpty ? voices.first.id : '');
-      // No silent wrong voice: when a model switch drops the user's voice,
-      // the note under the dropdown says what happened.
-      if (previous.isNotEmpty && voices.isNotEmpty && _cat != null) {
-        _fallbackFromLabel = _labelForVoiceId(_cat!, previous);
-        _voiceFellBack = true;
-      }
     }
-  }
-
-  /// A voice id's display label from anywhere in the catalog ('' when the
-  /// id is not a catalog voice at all).
-  String _labelForVoiceId(VoiceCatalog cat, String voiceId) {
-    if (voiceId.isEmpty) return '';
-    for (final m in cat.realtimeModels) {
-      for (final v in m.voices) {
-        if (v.id == voiceId) return v.label;
-      }
-    }
-    for (final t in cat.tts) {
-      for (final v in t.voices) {
-        if (v.id == voiceId) return v.label;
-      }
-    }
-    return '';
-  }
-
-  String _fallbackNoteText() {
-    final to = _labelForVoiceId(_cat!, _sel!.voiceId);
-    final toText = to.isEmpty ? 'the default voice for this model' : to;
-    if (_fallbackFromLabel.isEmpty) {
-      return 'Your saved voice is not available with this model, '
-          'so we switched to $toText.';
-    }
-    return '$_fallbackFromLabel is not available with this model, '
-        'so we switched to $toText.';
   }
 
   /// The saved language LABEL for the current selection (the server stores
@@ -740,7 +746,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
                     : (v) => setState(() {
                         _sel = sel.copyWith(voiceId: v);
                         _resetPreview();
-                        _voiceFellBack = false;
                       }),
               ),
             ),
@@ -753,7 +758,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
                   ? 'Stop preview'
                   : 'Play a sample of this voice',
               onPressed:
-                  (voices.isEmpty || _effectiveVoiceId.isEmpty)
+                  voices.isEmpty
                   ? null
                   : _togglePreview,
               icon: _previewBusy
@@ -767,20 +772,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Hear a short sample of the voice before you save. Playing a '
-          'sample never changes or interrupts a call in progress.',
-          style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-        ),
-        if (_voiceFellBack) ...[
-          const SizedBox(height: 6),
-          Text(
-            key: const ValueKey('voice-fallback-note'),
-            _fallbackNoteText(),
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-          ),
-        ],
         const SizedBox(height: 12),
         const PickerInfoLabel(
           label: 'LANGUAGE',

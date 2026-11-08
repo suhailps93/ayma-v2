@@ -60,15 +60,15 @@ Widget _host(Widget child) => MaterialApp(
     );
 
 void main() {
-  testWidgets('pre-selects the default brain and shows its description',
+  testWidgets('pre-selects the default brain and does not show description under dropdown',
       (tester) async {
     await tester.pumpWidget(_host(BrainSelectorControl(api: _api())));
     await tester.pumpAndSettle();
 
-    // Nothing saved → the hackathon default (Muse) is shown selected, with its
-    // description (the Gemini fallback note).
+    // Nothing saved → the default (Muse) is shown selected.
+    // The description line under the dropdown is no longer rendered (Nov 8 founder order).
     expect(find.text('Meta Muse Spark'), findsOneWidget);
-    expect(find.textContaining('fall back to Gemini'), findsOneWidget);
+    expect(find.textContaining('fall back to Gemini'), findsNothing);
     expect(find.text('Save brain'), findsOneWidget);
   });
 

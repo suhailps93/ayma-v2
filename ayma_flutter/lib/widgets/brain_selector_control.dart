@@ -238,7 +238,6 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
     final selected = shown.any((b) => b.id == _selected)
         ? _selected
         : (shown.isNotEmpty ? shown.first.id : null);
-    final current = shown.where((b) => b.id == selected);
     return Column(
       key: const ValueKey('brain-selector-control'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -269,14 +268,6 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
                   widget.controller?._changed();
                 },
         ),
-        if (current.isNotEmpty && current.first.description.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              current.first.description,
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-            ),
-          ),
         if (widget.showSaveButton) ...[
           const SizedBox(height: 16),
           Align(
