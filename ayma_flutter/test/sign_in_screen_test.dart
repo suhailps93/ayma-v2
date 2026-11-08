@@ -15,8 +15,10 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_auth_mocks/src/mock_user_credential.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderParagraph;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,8 +27,8 @@ class _FakeAuth extends AuthService {
   _FakeAuth() : super(auth: MockFirebaseAuth());
   final List<String> calls = [];
 
-  /// When set, the next email sign-in / create / reset call throws this.
-  FirebaseAuthException? nextError;
+  /// When set, the next sign-in / create / reset call throws this.
+  Object? nextError;
 
   /// When true, the next email sign-in succeeds with a mock credential.
   bool succeedSignIn = false;
@@ -40,6 +42,11 @@ class _FakeAuth extends AuthService {
   @override
   Future<UserCredential> signInWithGoogle() async {
     calls.add('google');
+    if (nextError != null) _throwNext();
+    if (succeedSignIn) {
+      succeedSignIn = false;
+      return MockUserCredential(false);
+    }
     throw StateError('stubbed');
   }
 
@@ -607,6 +614,77 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('email-already-in-use'), findsNothing);
+  });
+
+  testWidgets(
+      'Google sign-in error surfaces descriptive toast on configuration failure',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth);
+
+    auth.nextError = const GoogleSignInException(
+      code: GoogleSignInExceptionCode.clientConfigurationError,
+      description: 'GoogleSignatureVerifier: package info is not set correctly',
+    );
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(
+      find.text(
+          'Google sign-in failed: GoogleSignatureVerifier: package info is not set correctly.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'Google sign-in canceled by user surfaces no error toast',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth);
+
+    auth.nextError = const GoogleSignInException(
+      code: GoogleSignInExceptionCode.canceled,
+    );
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.textContaining('Google sign-in failed'), findsNothing);
+  });
+
+  testWidgets(
+      'Google sign-in platform error surfaces honest message rather than silent dead tap',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth);
+
+    auth.nextError = PlatformException(
+      code: 'DEVELOPER_ERROR',
+      message: 'Google Play Services developer error (10)',
+    );
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(
+      find.text('Google Play Services developer error (10)'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'Google sign-in FirebaseAuthException surfaces friendly error toast',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth);
+
+    auth.nextError = FirebaseAuthException(code: 'operation-not-allowed');
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(
+      find.text('That sign-in method isn’t enabled yet.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(

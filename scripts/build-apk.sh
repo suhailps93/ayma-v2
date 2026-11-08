@@ -126,13 +126,14 @@ PY
   )
   # CRITICAL: the google-services Gradle task caches its generated native config
   # (google_app_id / project_id resources) under build/.../generated/res/
-  # google-services. On an incremental build it stays UP-TO-DATE and silently
-  # reuses the PREVIOUS (prod) config even though we just swapped in the staging
+  # google-services, and AGP 8 caches merged/packaged resources under
+  # build/app/intermediates/. On an incremental build tasks stay UP-TO-DATE and silently
+  # reuse the PREVIOUS (prod) config even though we just swapped in the staging
   # google-services.json — which shipped a staging build running on PROD Firebase
-  # (prod-aud tokens → staging API 401 crash loop, 2026-11-01). Delete the
-  # generated output so the task re-runs against the staging file every time.
+  # (prod-aud tokens → staging API 401 crash loop, 2026-11-01 / 2026-11-08). Delete the
+  # generated and intermediate outputs so Gradle re-merges resources against staging every time.
   rm -rf "$ROOT/ayma_flutter/build/app/generated/res/google-services" \
-         "$ROOT/ayma_flutter/build/app/intermediates/merged_res" 2>/dev/null || true
+         "$ROOT/ayma_flutter/build/app/intermediates" 2>/dev/null || true
   echo ">> staging build: Firebase=$FB_PROJECT_ID, API=staging (google-services cache busted)"
 fi
 

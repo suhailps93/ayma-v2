@@ -1246,10 +1246,12 @@ async def onboarding_complete(
 # --- POST /welcome/token (pre-sign-in voice greeting) ------------------
 
 _WELCOME_GREETING = (
-    "Open the call. In two or three sentences: you're Ayma, their matchmaker "
-    "— you get to know them by talking, then find and introduce people who "
-    "actually fit. Then tell them to sign in on this screen (Google, email or "
-    "phone) to get started. Warm, brief, inviting — no questions yet."
+    "Open the call. In two or three sentences: introduce yourself once — you're "
+    "Ayma, their matchmaker: you get to know them by talking, then find and "
+    "introduce people who actually fit. Mention they can sign in on this screen "
+    "(Google, email or phone) to get started. Warm, brief, inviting. Crucial: "
+    "introduce yourself once, then stay completely silent and wait for them to "
+    "reply — do not reprompt, ask again, or nag to log in."
 )
 # Best-effort per-IP throttle (single process; a burst across Cloud Run
 # instances can still slip through — acceptable for an ephemeral greeting room).

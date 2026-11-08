@@ -550,6 +550,17 @@ def test_welcome_prompt_uses_the_voice_persona():
     assert load_persona("voice") in welcome
 
 
+def test_welcome_prompt_instructs_introduce_once_and_wait():
+    prompt_mod.compose_welcome_prompt.cache_clear()
+    welcome = prompt_mod.compose_welcome_prompt()
+    assert "introduce once, then wait in silence" in welcome.lower()
+    assert "do not reprompt, nag, or repeat login reminders" in welcome.lower()
+    assert "18 or older" in welcome
+    assert "advertising" in welcome
+    assert "face recognition" in welcome
+    assert "public web" in welcome
+
+
 def test_summary_context_renders_before_the_history_tail():
     prompt = compose_system_prompt(
         recent_turns=[Turn(role="user", text="recent line")],
