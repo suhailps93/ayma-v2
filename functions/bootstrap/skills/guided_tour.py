@@ -301,10 +301,20 @@ _SLUG_TO_KEY = {
 
 
 def _landed_key(screen: str, route: str) -> str | None:
-    """The destination key a reported (screen slug, route) pair lands on."""
+    """The destination key a reported (screen slug, route) pair lands on.
+
+    The route wins when it names a real page — EXCEPT the shell route
+    '/': the shell's four tabs share that one route (an IndexedStack,
+    not router navigation), so '/' carries no tab information and the
+    screen slug is the only signal saying which tab the user is on.
+    Trusting '/' over the slug made every tab step re-guide forever:
+    the probe after tapping Messages reports ('messages', '/'), '/'
+    resolves to the Ayma destination, and the landing never matched
+    'messages' (founder report 2026-11-08).
+    """
     if route:
         dest = app_registry.destination_for_route(route)
-        if dest is not None:
+        if dest is not None and str(dest.get("path") or "") != "/":
             return str(dest.get("key") or "") or None
     return _SLUG_TO_KEY.get((screen or "").strip())
 
