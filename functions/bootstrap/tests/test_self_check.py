@@ -255,6 +255,23 @@ def test_photo_check_fails_when_no_carousel_on_an_open_profile():
     assert by_name["tool:show_profile_photo"].status == self_check.FAIL
 
 
+def test_photo_check_skips_when_open_profile_fails():
+    h = _Harness()
+
+    async def failing_open(name=""):
+        return "The app did NOT navigate"
+
+    runner = h.runner()
+    runner.deps.tool_fns["open_profile"] = failing_open
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    # Open profile failed, so photo check skips citing the missing precondition
+    assert by_name["tool:open_profile"].status == self_check.FAIL
+    assert by_name["tool:show_profile_photo"].status == self_check.SKIP
+    assert "prerequisite" in by_name["tool:show_profile_photo"].detail
+
+
+
 # --- runner: FAIL path --------------------------------------------------------
 
 def test_runner_failures_file_bugs_at_failure_time_with_context():
