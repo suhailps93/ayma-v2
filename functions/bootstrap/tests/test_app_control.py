@@ -1937,11 +1937,48 @@ def test_detect_app_command_resolves_a_clear_open(phrase, key):
     "the models page is my favorite screen",     # no nav verb
     "open and rerun the appearance report",      # report re-run → its own tool
     "change my story to say I grew up in Texas",  # story edit → its own tool
+    "I love this photo",                         # ordinary photo chat
+    "what do you think of my photos?",           # ordinary photo chat
+    "tell me about your photo",                  # ordinary photo chat
+    "can you describe my photo?",                # ordinary photo chat
+    "should I add photos with sunglasses?",      # advice question about photos
+    "what happens if I delete a photo?",         # hypothetical question
+    "why should I change my photo?",             # reasoning question
+    "next photo",                                # carousel move → detect_photo_command
+    "show the second picture",                   # carousel move → detect_photo_command
+    "click the third picture",                   # carousel move → detect_photo_command
+    "last photo",                                # carousel move → detect_photo_command
     "",
     "x" * 201,                                   # over the length guard
 ])
 def test_detect_app_command_leaves_ordinary_chat_alone(phrase):
     assert app_control.detect_app_command(phrase) is None
+
+
+@pytest.mark.parametrize("phrase,expected_key", [
+    # Reported add/edit photo phrasings → photos destination
+    ("add a photo", "photos"),
+    ("add photos", "photos"),
+    ("add a photo to my profile", "photos"),
+    ("edit my photo", "photos"),
+    ("change my profile photo", "photos"),
+    ("upload a photo", "photos"),
+    ("add or edit a photo", "photos"),
+    ("let me add a photo", "photos"),
+    ("I want to add a photo", "photos"),
+    ("open my photos", "photos"),
+    # Remove/delete photo phrasings → my_public_profile destination
+    ("remove a photo", "my_public_profile"),
+    ("remove my photo", "my_public_profile"),
+    ("delete a photo", "my_public_profile"),
+    ("delete my photo", "my_public_profile"),
+    ("delete my profile photo", "my_public_profile"),
+    ("remove photo from my profile", "my_public_profile"),
+    ("delete a photo from my profile", "my_public_profile"),
+    ("open my public profile", "my_public_profile"),
+])
+def test_detect_app_command_resolves_photo_management(phrase, expected_key):
+    assert app_control.detect_app_command(phrase) == expected_key
 
 
 def test_run_app_command_navigates_through_open_screen():

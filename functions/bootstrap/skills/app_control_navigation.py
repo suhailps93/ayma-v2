@@ -331,24 +331,123 @@ _APP_NAV_VERB = re.compile(
     re.IGNORECASE,
 )
 
+# --- deterministic photo add/edit & remove/delete intent --------------------
+#
+# Clear "add a photo", "edit my photo", "change my profile photo" or
+# "upload a photo" asks navigate to the registry's `photos` destination
+# (/profile/me/public?edit=photos), which auto-opens the photo picker on the
+# client. Clear "remove a photo" / "delete my photo" asks route to the plain
+# `my_public_profile` screen (/profile/me/public) so the user can tap the
+# photo and delete it there. Strict by design: anchored whole-utterance
+# matching with an explicit action verb and photo noun phrase, so ordinary
+# chat about photos ("I love this photo", "should I add photos with sunglasses?")
+# stays with the model, and carousel moves ("next photo", "show the second
+# picture") fall through to detect_photo_command.
+_PHOTO_CMD_PREFIX = (
+    r"(?:(?:"
+    r"(?:hey\s+)?ayma[,]?\s+)?"
+    r"(?:can\s+(?:you|i)\s+|could\s+(?:you|i)\s+|would\s+you\s+|please\s+)+"
+    r"|(?:hey\s+)?ayma[,]?\s+"
+    r"|let\s+me\s+"
+    r"|i\s+want\s+to\s+"
+    r"|i\s+wanna\s+"
+    r"|i(?:'d|\s+would)\s+like\s+to\s+"
+    r"|i\s+need\s+to\s+"
+    r"|help\s+me\s+(?:to\s+)?"
+    r"|take\s+me\s+to\s+"
+    r"|go\s+(?:and\s+)?"
+    r"|how\s+(?:can|do)\s+i\s+"
+    r")?"
+)
+_PHOTO_ADD_EDIT_VERB = (
+    r"(?:"
+    r"add\s*(?:/\s*|(?:or|and)\s+)(?:edit|change|update)|"
+    r"(?:edit|change|update)\s*(?:/\s*|(?:or|and)\s+)add|"
+    r"add|edit|change|upload|update|manage"
+    r")"
+)
+_PHOTO_REMOVE_DELETE_VERB = r"(?:remove|delete)"
+_PHOTO_CMD_DETERMINER = (
+    r"(?:(?:"
+    r"a|an|the|this|that|these|my|some|more|another|our|your|one|one\s+more"
+    r")\s+)?(?:new\s+)?"
+)
+_PHOTO_CMD_NOUN = (
+    r"(?:(?:"
+    r"profile|avatar|headshot"
+    r")\s+)?(?:photos?|pictures?|pics?|images?|avatar|headshot)"
+)
+_PHOTO_ADD_QUALIFIER = (
+    r"(?:"
+    r"to\s+(?:my\s+|the\s+)?(?:public\s+)?profile|"
+    r"on\s+(?:my\s+|the\s+)?(?:public\s+)?profile|"
+    r"in\s+(?:my\s+|the\s+)?(?:public\s+)?profile|"
+    r"to\s+it|"
+    r"from\s+(?:my\s+|the\s+)?(?:phone|camera|gallery|camera\s+roll|library)|"
+    r"of\s+me|"
+    r"of\s+myself"
+    r")"
+)
+_PHOTO_REMOVE_QUALIFIER = (
+    r"(?:"
+    r"from\s+(?:my\s+|the\s+)?(?:public\s+)?profile|"
+    r"off\s+(?:my\s+|the\s+)?(?:public\s+)?profile|"
+    r"on\s+(?:my\s+|the\s+)?(?:public\s+)?profile|"
+    r"in\s+(?:my\s+|the\s+)?(?:public\s+)?profile"
+    r")"
+)
+_PHOTO_CMD_FILLER = r"(?:please|now|here|for\s+me|right\s+now|too|again)"
+_PHOTO_ADD_TAIL = rf"(?:\s+(?:{_PHOTO_ADD_QUALIFIER}|{_PHOTO_CMD_FILLER}))*"
+_PHOTO_REMOVE_TAIL = rf"(?:\s+(?:{_PHOTO_REMOVE_QUALIFIER}|{_PHOTO_CMD_FILLER}))*"
 
-def detect_app_command(message: str) -> str | None:
-    """A clear, unambiguous "open / go to <known page>" command → the registry
-    destination ``key`` to navigate to, else ``None``.
+_PHOTO_ADD_EDIT_RE = re.compile(
+    rf"^{_PHOTO_CMD_PREFIX}{_PHOTO_ADD_EDIT_VERB}\s+{_PHOTO_CMD_DETERMINER}{_PHOTO_CMD_NOUN}{_PHOTO_ADD_TAIL}$",
+    re.IGNORECASE,
+)
+_PHOTO_REMOVE_DELETE_RE = re.compile(
+    rf"^{_PHOTO_CMD_PREFIX}{_PHOTO_REMOVE_DELETE_VERB}\s+{_PHOTO_CMD_DETERMINER}{_PHOTO_CMD_NOUN}{_PHOTO_REMOVE_TAIL}$",
+    re.IGNORECASE,
+)
 
-    Strict by design (so ordinary chat is never hijacked): requires a navigation
-    verb AND a destination that resolves in ``app_registry``. A story-edit or a
-    report-re-run request is excluded — those carry their own intent and must
-    still reach their own tools / the model. :func:`run_app_command` executes the
-    match through the same bound ``open_screen`` the model would call."""
-    m = (message or "").strip()
+
+def detect_photo_management_command(message: str) -> str | None:
+    """A clear add/edit or remove/delete photo command → registry destination
+    key (``photos`` or ``my_public_profile``), else ``None``.
+
+    Strict by design: the whole utterance must match a photo management intent,
+    so ordinary discussion about photos stays with the model and carousel moves
+    stay with :func:`detect_photo_command`."""
+    m = (message or "").strip().rstrip(".!?,;:").strip()
     if not m or len(m) > 200:
         return None
-    if not _APP_NAV_VERB.search(m):
+    if _PHOTO_ADD_EDIT_RE.fullmatch(m):
+        return "photos"
+    if _PHOTO_REMOVE_DELETE_RE.fullmatch(m):
+        return "my_public_profile"
+    return None
+
+
+def detect_app_command(message: str) -> str | None:
+    """A clear, unambiguous "open / go to <known page>" or photo add/edit/remove
+    command → the registry destination ``key`` to navigate to, else ``None``.
+
+    Strict by design (so ordinary chat is never hijacked): requires a navigation
+    verb AND a destination that resolves in ``app_registry``, or a clear photo
+    management command. A story-edit or a report-re-run request is excluded —
+    those carry their own intent and must still reach their own tools / the model.
+    :func:`run_app_command` executes the match through the same bound ``open_screen``
+    the model would call."""
+    m = (message or "").strip()
+    if not m or len(m) > 200:
         return None
     # A "change/remove … my story" or "rerun the appearance report" also brushes
     # a destination's words — leave those for their own tools / the model.
     if app_registry.find_story_edit_action(m) or app_registry.find_report_action(m):
+        return None
+    photo_dest = detect_photo_management_command(m)
+    if photo_dest is not None:
+        return photo_dest
+    if not _APP_NAV_VERB.search(m):
         return None
     dest = app_registry.find_destination(m)
     if dest is None:

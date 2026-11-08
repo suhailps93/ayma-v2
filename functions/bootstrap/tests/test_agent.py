@@ -4169,6 +4169,60 @@ def test_detect_voice_command_leaves_non_commands_alone(phrase):
     assert agent.detect_voice_command(phrase) is None
 
 
+@pytest.mark.parametrize("phrase", [
+    "I love this photo",
+    "what do you think of my photos?",
+    "tell me about your photo",
+    "can you describe my photo?",
+    "should I add photos with sunglasses?",
+    "what happens if I delete a photo?",
+    "why should I change my photo?",
+])
+def test_detect_voice_command_leaves_photo_chat_alone(phrase):
+    assert agent.detect_voice_command(phrase) is None
+
+
+@pytest.mark.parametrize("phrase,expected_screen", [
+    # Reported add/edit photo phrasings → photos destination
+    ("add a photo", "photos"),
+    ("add photos", "photos"),
+    ("add a photo to my profile", "photos"),
+    ("edit my photo", "photos"),
+    ("change my profile photo", "photos"),
+    ("upload a photo", "photos"),
+    ("add or edit a photo", "photos"),
+    ("let me add a photo", "photos"),
+    ("I want to add a photo", "photos"),
+    ("open my photos", "photos"),
+    # Remove/delete photo phrasings → my_public_profile destination
+    ("remove a photo", "my_public_profile"),
+    ("remove my photo", "my_public_profile"),
+    ("delete a photo", "my_public_profile"),
+    ("delete my photo", "my_public_profile"),
+    ("delete my profile photo", "my_public_profile"),
+    ("remove photo from my profile", "my_public_profile"),
+    ("delete a photo from my profile", "my_public_profile"),
+    ("open my public profile", "my_public_profile"),
+])
+def test_detect_voice_command_routes_photo_management(phrase, expected_screen):
+    assert agent.detect_voice_command(phrase) == (
+        "open_screen", {"screen": expected_screen},
+    )
+
+
+def test_detect_voice_command_photo_viewing_not_intercepted():
+    """Photo carousel moves must not be intercepted by open_screen."""
+    assert agent.detect_voice_command("show the second picture") == (
+        "show_profile_photo", {"op": "goto", "index": 2},
+    )
+    assert agent.detect_voice_command("next photo") == (
+        "show_profile_photo", {"op": "next", "index": 0},
+    )
+    assert agent.detect_voice_command("previous picture") == (
+        "show_profile_photo", {"op": "previous", "index": 0},
+    )
+
+
 def test_voice_stack_command_executes_deterministically(monkeypatch):
     """A stack-switch turn writes the profile through the session's own
     set_brain tool with no model involvement, and the model's same-turn
