@@ -6,6 +6,7 @@ import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// In-memory store double — no Firebase. Records what the engine marks seen.
@@ -195,6 +196,89 @@ void main() {
 
     expect(find.text('NEW'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Got it'), findsOneWidget);
+  });
+
+  testWidgets(
+      'spotlight mode: Got it button dismisses the popup and marks seen on tap',
+      (tester) async {
+    final store = _FakeTourStore();
+    var finished = 0;
+    const voiceStep = [
+      TourFeature(
+        featureId: 'async_voice',
+        headline: 'Voice messages',
+        subtitle: 'Hold the mic, speak, release',
+        anchorId: TourAnchors.homeOrb,
+      ),
+    ];
+    await tester.pumpWidget(host(
+      store: store,
+      onFinish: () => finished++,
+      features: voiceStep,
+      spotlight: true,
+    ));
+    await settle(tester);
+
+    expect(find.text('NEW'), findsOneWidget);
+    expect(find.text('Voice messages'), findsOneWidget);
+    final gotIt = find.widgetWithText(FilledButton, 'Got it');
+    expect(gotIt, findsOneWidget);
+
+    // Verify Semantics values for accessibility tree
+    final nextSemantics =
+        tester.getSemantics(find.byKey(const ValueKey('coach-next')));
+    expect(nextSemantics.label, 'Got it');
+    expect(
+      nextSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
+      isTrue,
+    );
+
+    await tester.tap(gotIt);
+    await tester.pump();
+    await settle(tester);
+
+    expect(finished, 1);
+    expect(store.seen, {'async_voice'});
+  });
+
+  testWidgets(
+      'spotlight mode: Skip tour button dismisses the popup on tap',
+      (tester) async {
+    final store = _FakeTourStore();
+    var finished = 0;
+    const voiceStep = [
+      TourFeature(
+        featureId: 'async_voice',
+        headline: 'Voice messages',
+        subtitle: 'Hold the mic, speak, release',
+        anchorId: TourAnchors.homeOrb,
+      ),
+    ];
+    await tester.pumpWidget(host(
+      store: store,
+      onFinish: () => finished++,
+      features: voiceStep,
+      spotlight: true,
+    ));
+    await settle(tester);
+
+    final skip = find.byKey(const ValueKey('coach-skip'));
+    expect(skip, findsOneWidget);
+
+    // Verify Semantics values for accessibility tree
+    final skipSemantics = tester.getSemantics(skip);
+    expect(skipSemantics.label, 'Skip tour');
+    expect(
+      skipSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
+      isTrue,
+    );
+
+    await tester.tap(skip);
+    await tester.pump();
+    await settle(tester);
+
+    expect(finished, 1);
+    expect(store.seen, {'async_voice'});
   });
 
   // A host that layers the overlay over a tappable anchor and a full-screen

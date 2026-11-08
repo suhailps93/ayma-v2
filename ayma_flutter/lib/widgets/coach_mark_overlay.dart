@@ -397,9 +397,10 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   Future<void> _finish() async {
     if (_finishing) return;
     setState(() => _finishing = true);
-    await _store.markSeen(widget.features.map((f) => f.featureId));
-    if (!mounted) return;
     widget.onFinish();
+    try {
+      await _store.markSeen(widget.features.map((f) => f.featureId));
+    } catch (_) {}
   }
 
   @override
@@ -448,7 +449,9 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
             if (_ready && widget.chromeless)
               _buildChromelessSkip(ac)
             else if (_ready)
-              SafeArea(child: _buildCallout(ac, feature, isLast)),
+              Positioned.fill(
+                child: SafeArea(child: _buildCallout(ac, feature, isLast)),
+              ),
           ],
         ),
       ),
@@ -468,15 +471,20 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
         child: Center(
           child: Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: TextButton(
-              key: const ValueKey('coach-skip'),
-              onPressed: _finishing ? null : widget.onStopPressed,
-              style: TextButton.styleFrom(
-                foregroundColor: ac.fgMute,
-                textStyle: AymaType.sans(size: 12, weight: FontWeight.w500),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Semantics(
+              button: true,
+              label: 'Skip tour',
+              value: 'Skip tour',
+              child: TextButton(
+                key: const ValueKey('coach-skip'),
+                onPressed: _finishing ? null : widget.onStopPressed,
+                style: TextButton.styleFrom(
+                  foregroundColor: ac.fgMute,
+                  textStyle: AymaType.sans(size: 12, weight: FontWeight.w500),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ),
+                child: const Text('Skip tour'),
               ),
-              child: const Text('Skip tour'),
             ),
           ),
         ),
@@ -694,49 +702,64 @@ class _CalloutCard extends StatelessWidget {
             style: AymaType.sans(size: 15, height: 1.4, color: ac.fgDim),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Flexible(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    key: const ValueKey('coach-skip'),
-                    onPressed: finishing ? null : onSkip,
-                    child: Text(
-                      'Skip tour',
-                      style: AymaType.sans(
-                        size: 14,
-                        weight: FontWeight.w600,
-                        color: ac.fgDim,
+          Builder(
+            builder: (context) {
+              final nextLabel =
+                  isLast ? (spotlight ? 'Got it' : 'Done') : 'Next';
+              return Row(
+                children: [
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Semantics(
+                        button: true,
+                        label: 'Skip tour',
+                        value: 'Skip tour',
+                        child: TextButton(
+                          key: const ValueKey('coach-skip'),
+                          onPressed: finishing ? null : onSkip,
+                          child: Text(
+                            'Skip tour',
+                            style: AymaType.sans(
+                              size: 14,
+                              weight: FontWeight.w600,
+                              color: ac.fgDim,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ),
-              if (!hideNext) ...[
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      key: const ValueKey('coach-next'),
-                      onPressed: finishing ? null : onNext,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: ac.accent,
-                        foregroundColor: ac.onAccent,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12),
-                        shape: const StadiumBorder(),
-                        textStyle: AymaType.sans(size: 15, weight: FontWeight.w600),
-                      ),
-                      child: Text(
-                        isLast ? (spotlight ? 'Got it' : 'Done') : 'Next',
+                  if (!hideNext) ...[
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Semantics(
+                          button: true,
+                          label: nextLabel,
+                          value: nextLabel,
+                          child: FilledButton(
+                            key: const ValueKey('coach-next'),
+                            onPressed: finishing ? null : onNext,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: ac.accent,
+                              foregroundColor: ac.onAccent,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 12),
+                              shape: const StadiumBorder(),
+                              textStyle: AymaType.sans(
+                                  size: 15, weight: FontWeight.w600),
+                            ),
+                            child: Text(nextLabel),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              ],
-            ],
+                  ],
+                ],
+              );
+            },
           ),
         ],
       ),

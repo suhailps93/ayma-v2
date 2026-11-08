@@ -152,6 +152,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   @override
   void initState() {
     super.initState();
+    _previewPlayer.onComplete = () {
+      if (mounted) {
+        setState(() {
+          _previewingVoiceId = null;
+          _previewBusy = false;
+        });
+      }
+    };
     widget.controller?._attach(this);
     _load();
     _listenForSavedStack();
@@ -190,10 +198,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   /// reload) so the button state always matches the voice on screen.
   /// Callers are inside (or immediately beside) a setState.
   void _resetPreview() {
+    _previewToken++;
+    _previewBusy = false;
     if (_previewingVoiceId == null) return;
     _previewingVoiceId = null;
     _previewPlayer.stop().catchError((Object _) {});
   }
+
+  int _previewToken = 0;
 
   /// Play (or stop) the recorded sample for the voice the dropdown is
   /// currently showing — BEFORE anything is saved, so the user hears the
@@ -203,24 +215,40 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   /// the live voice session: a call in progress is left completely alone.
   Future<void> _togglePreview() async {
     final voiceId = _effectiveVoiceId;
-    if (voiceId.isEmpty || _previewBusy) return;
-    if (_previewingVoiceId == voiceId) {
+    if (voiceId.isEmpty) return;
+
+    // Tapping again while playing or busy loading cancels/stops immediately.
+    if (_previewingVoiceId != null || _previewBusy) {
+      _previewToken++;
       await _previewPlayer.stop();
-      if (mounted) setState(() => _previewingVoiceId = null);
+      if (mounted) {
+        setState(() {
+          _previewingVoiceId = null;
+          _previewBusy = false;
+        });
+      }
       return;
     }
-    setState(() => _previewBusy = true);
+
+    final token = ++_previewToken;
+    setState(() {
+      _previewingVoiceId = voiceId;
+      _previewBusy = true;
+    });
+
     try {
       final url = await widget.api.voicePreviewUrl(voiceId);
+      if (token != _previewToken) return;
       if (!mounted) return;
       if (url.isEmpty) throw ApiException('voice preview failed.');
       await _previewPlayer.play(url);
+      if (token != _previewToken) return;
       if (!mounted) return;
       setState(() {
-        _previewingVoiceId = voiceId;
         _previewBusy = false;
       });
     } catch (e) {
+      if (token != _previewToken) return;
       if (!mounted) return;
       setState(() {
         _previewingVoiceId = null;
@@ -725,7 +753,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
                   ? 'Stop preview'
                   : 'Play a sample of this voice',
               onPressed:
-                  (voices.isEmpty || _effectiveVoiceId.isEmpty || _previewBusy)
+                  (voices.isEmpty || _effectiveVoiceId.isEmpty)
                   ? null
                   : _togglePreview,
               icon: _previewBusy
