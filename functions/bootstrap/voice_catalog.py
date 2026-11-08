@@ -1001,3 +1001,95 @@ def vocab_lines(rv: RuntimeVoices) -> str:
         f"- {v.label}" + (f" ({v.description})" if v.description else "")
         for v in pickable
     )
+
+
+# --- Per-stack voice resolution + preview-library index ---------------------
+#
+# Founder rule (2026-11-07): the picker shows ONLY the voices the selected
+# model supports, and a saved voice the model does not support falls back to
+# a supported one — never a silent wrong voice. These helpers are the ONE
+# resolver for that: /voice/engines resolves the reported current voice
+# through here, and the preview library (voice_preview +
+# scripts/generate_voice_previews.py) enumerates its work from here, so the
+# surfaces can never disagree about which voices belong to a model.
+
+
+def voices_for_stack(
+    *,
+    mode: str,
+    realtime_model_id: str = "",
+    tts_id: str = "",
+) -> list[Voice]:
+    """The exact voice list a stack supports: the cascade TTS's voices in
+    cascade mode, else the realtime model's voices (an empty realtime id
+    means Gemini Live)."""
+    if mode == MODE_CASCADE:
+        return _tts_voices(tts_id)
+    return _realtime_voices_for(realtime_model_id or REALTIME_GEMINI)
+
+
+def resolve_stack_voice(
+    *,
+    mode: str,
+    realtime_model_id: str = "",
+    tts_id: str = "",
+    voice_id: str,
+) -> tuple[str, bool]:
+    """``(resolved_voice_id, fell_back)`` for a saved ``voice_id`` on a stack.
+
+    A supported saved voice resolves to itself. An empty saved voice (no
+    preference saved yet) also resolves to itself — the caller layers its
+    own default on top. Anything else names a voice the selected model does
+    not support: fall back to the stack's first voice (the vendor-default
+    ``""`` entry when the provider lists one, else its first named voice)
+    and report ``fell_back`` so the UI can tell the user."""
+    vid = (voice_id or "").strip()
+    if not vid:
+        return "", False
+    stack_voices = voices_for_stack(
+        mode=mode, realtime_model_id=realtime_model_id, tts_id=tts_id
+    )
+    if any(v.id == vid for v in stack_voices):
+        return vid, False
+    return (stack_voices[0].id if stack_voices else ""), True
+
+
+def catalog_voice_index() -> dict[str, list[str]]:
+    """Every non-empty voice id in the catalog -> the stacks that offer it
+    (realtime model ids and cascade TTS ids). The preview library keys clips
+    by bare voice id, so an id offered by two stacks would be ambiguous:
+    :func:`find_catalog_voice` refuses those, and a test pins the catalog
+    collision-free."""
+    index: dict[str, list[str]] = {}
+    cat = catalog()
+    for m in cat["realtime_models"]:  # type: ignore[union-attr]
+        for v in m["voices"]:  # type: ignore[union-attr]
+            if v["id"]:
+                index.setdefault(str(v["id"]), []).append(str(m["id"]))
+    for t in cat["tts"]:  # type: ignore[union-attr]
+        for v in t["voices"]:  # type: ignore[union-attr]
+            if v["id"]:
+                index.setdefault(str(v["id"]), []).append(str(t["id"]))
+    return index
+
+
+def find_catalog_voice(voice_id: str) -> tuple[str, Voice] | None:
+    """``(stack_id, Voice)`` for a catalog voice id, or ``None`` when the id
+    is not a catalog voice or is offered by more than one stack (ambiguous —
+    never guess which stack's voice a preview clip belongs to)."""
+    vid = (voice_id or "").strip()
+    if not vid:
+        return None
+    owners = catalog_voice_index().get(vid, [])
+    if len(owners) != 1:
+        return None
+    owner = owners[0]
+    cat = catalog()
+    if any(m["id"] == owner for m in cat["realtime_models"]):  # type: ignore[union-attr]
+        stack_voices = _realtime_voices_for(owner)
+    else:
+        stack_voices = _tts_voices(owner)
+    for v in stack_voices:
+        if v.id == vid:
+            return owner, v
+    return None

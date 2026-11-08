@@ -1,18 +1,22 @@
-"""Cached Gemini TTS previews for the voice-preset picker (ARCHITECTURE §13.3).
+"""Cached voice previews for the voice picker (ARCHITECTURE §13.3).
 
-One short spoken sample per built-in voice preset ("Hi, I'm Ayma…") so a user
-can hear a preset before choosing it. Generated on first request and then cached
-forever in the app's Storage bucket at ``voice_previews/{voice_name}.wav``.
+One short spoken sample ("Hi, I'm Ayma…") per voice the app offers, so a user
+can hear a voice before choosing it. Clips live in the app's Storage bucket at
+``voice_previews/{voice_id}.wav`` and are served from cache only.
 
-Generation is DISABLED (founder rule 2026-11-04 — see
-``docs/DIRECT_GOOGLE_KILL_AUDIT.md`` item 5): TTS previews need the
-direct-Google TTS model, which the LiveKit gateway does not serve.
-:func:`preview_url` still serves already-cached clips; an uncached preset
-fails honestly (the endpoint maps it to a 502).
+In-request generation is DISABLED (founder rule 2026-11-04 — see
+``docs/DIRECT_GOOGLE_KILL_AUDIT.md`` item 5): the old Gemini TTS path needed
+the direct-Google model, which the LiveKit gateway does not serve. The
+preview LIBRARY is built out of band instead: the built-in Gemini presets'
+clips were recorded once, and every other catalog voice (the cascade TTS
+providers) is synthesized by ``scripts/generate_voice_previews.py`` through
+the LiveKit Inference route ONLY and uploaded to the same prefix. A catalog
+voice with no clip yet raises :class:`PreviewNotRecordedError` — the picker
+shows its honest "no preview recorded" state rather than a wrong sample.
 
 The sample script lives in ``prompts/voice_preview.txt`` (AGENTS.md — no
-prompt/script text inline in code); the TTS model id comes only from
-``config.py`` (AGENTS.md).
+prompt/script text inline in code); model ids come only from ``config.py``
+and the voice catalog (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -85,18 +89,46 @@ async def _synthesize(voice_name: str) -> bytes:
     )
 
 
-async def preview_url(voice_name: str) -> str:
-    """Return a download URL for ``voice_name``'s spoken sample, generating and
-    caching it on first request. Raises ``ValueError`` for a name that is not a
-    known preset (so it can't be used to spend tokens on arbitrary strings)."""
-    if not voices.is_valid_voice(voice_name):
-        raise ValueError(f"unknown voice preset: {voice_name!r}")
+class PreviewNotRecordedError(LookupError):
+    """A real catalog voice with no recorded sample in the library yet.
+    Distinct from an unknown voice (``ValueError``) and from a storage
+    failure, so the endpoint can answer an honest 404 for it."""
 
+
+def is_previewable_voice(voice_id: str) -> bool:
+    """True when a preview can ever exist for ``voice_id``: a built-in Gemini
+    preset, or a named voice in the voice catalog
+    (:func:`voice_catalog.find_catalog_voice`)."""
+    if voices.is_valid_voice(voice_id):
+        return True
+    import voice_catalog
+
+    return voice_catalog.find_catalog_voice(voice_id) is not None
+
+
+async def preview_url(voice_name: str) -> str:
+    """Return a download URL for ``voice_name``'s spoken sample, from the
+    cached library. Raises ``ValueError`` for a name that is not a known
+    voice (so it can't be used to spend tokens on arbitrary strings) and
+    :class:`PreviewNotRecordedError` for a catalog voice whose clip has not
+    been recorded yet. Uncached Gemini presets still route to the DISABLED
+    :func:`_synthesize`, which fails honestly."""
+    if voices.is_valid_voice(voice_name):
+        cached = await asyncio.to_thread(_cached_url, voice_name)
+        if cached:
+            return cached
+        wav_bytes = await _synthesize(voice_name)
+        url = await asyncio.to_thread(_store, voice_name, wav_bytes)
+        logger.info(
+            "generated voice preview for %s (%d bytes)", voice_name, len(wav_bytes)
+        )
+        return url
+
+    import voice_catalog
+
+    if voice_catalog.find_catalog_voice(voice_name) is None:
+        raise ValueError(f"unknown voice: {voice_name!r}")
     cached = await asyncio.to_thread(_cached_url, voice_name)
     if cached:
         return cached
-
-    wav_bytes = await _synthesize(voice_name)
-    url = await asyncio.to_thread(_store, voice_name, wav_bytes)
-    logger.info("generated voice preview for %s (%d bytes)", voice_name, len(wav_bytes))
-    return url
+    raise PreviewNotRecordedError(voice_name)
