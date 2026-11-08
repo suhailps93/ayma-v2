@@ -892,10 +892,18 @@ async def _practice_return_greeting(uid: str, practice_session_id: str) -> str:
             str(data.get("target_uid") or ""),
         )
         name = (ctx.name if ctx is not None else "").strip() or "them"
+        turns = list(data.get("turns") or [])
+        # A cached debrief is reused only when it was generated from
+        # exactly the turns the session holds now; a debrief cached from
+        # a partial transcript (the worker was still draining when this
+        # greeting was composed) is regenerated instead of recited. A
+        # cached debrief with no turn count is a legacy doc: reuse it.
         debrief = data.get("debrief")
+        stored_count = data.get("debrief_turn_count")
         if not isinstance(debrief, dict):
             debrief = None
-        turns = list(data.get("turns") or [])
+        elif stored_count is not None and stored_count != len(turns):
+            debrief = None
         if debrief is None and turns and ctx is not None:
             try:
                 debrief = await practice_core.generate_debrief(
@@ -907,6 +915,7 @@ async def _practice_return_greeting(uid: str, practice_session_id: str) -> str:
                     uid,
                     practice_session_id,
                     debrief,
+                    len(turns),
                 )
             except Exception:  # noqa: BLE001 - the greeting works without it
                 logger.exception(

@@ -29,6 +29,7 @@ practice voice room seeds with; see docs/PRACTICE_DATE.md for that seam.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -57,6 +58,17 @@ _USER_NAME_TOKEN = "{{USER_NAME}}"
 
 PRACTICE_SESSIONS_COLLECTION = "practice_sessions"
 _MAX_TURNS = 100  # hard ceiling on stored turns per practice session
+
+#: How many times a contended ``append_turns`` transaction retries on a
+#: fresh read before giving up (Firestore aborts a transaction whose read
+#: set changed underneath it; the voice worker persists every turn, so
+#: contention is routine, not exceptional).
+_APPEND_ATTEMPTS = 5
+
+#: How long the end-of-call drain waits for queued persists to land
+#: before marking the transcript final anyway (the worker is shutting
+#: down; anything still unpersisted then is lost either way).
+_PERSIST_DRAIN_TIMEOUT_SECONDS = 10.0
 
 # Self-persona texting-style exemplars (AI Date Simulation, founder directive
 # 2026-10-27): a CAPPED sample of the USER'S OWN recent, short sent DM messages,
@@ -725,28 +737,202 @@ def _load_session(db, uid: str, session_id: str) -> dict:
     return snap.to_dict() or {}
 
 
+def _is_contention(exc: Exception) -> bool:
+    """Firestore transaction contention (aborted/conflict) is worth a
+    fresh transaction; anything else from the store is a real failure."""
+    return type(exc).__name__ in ("Aborted", "Conflict")
+
+
 def append_turns(db, uid: str, session_id: str, new_turns: list[dict]) -> list[dict]:
     """Append ``new_turns`` (each ``{role, text}``) and return the full turn
-    list. Caps stored turns at ``_MAX_TURNS`` (oldest dropped)."""
-    data = _load_session(db, uid, session_id)
-    turns = list(data.get("turns") or [])
-    stamped = [
-        {"role": t["role"], "text": str(t["text"]), "ts": time.time()}
-        for t in new_turns
-    ]
-    turns.extend(stamped)
-    turns = turns[-_MAX_TURNS:]
-    _session_ref(db, uid, session_id).update({"turns": turns})
-    return turns
+    list. Caps stored turns at ``_MAX_TURNS`` (oldest dropped).
+
+    The read, the extend and the write happen in one Firestore
+    transaction (retried on contention), so two concurrent persists can
+    no longer load the same base list and overwrite each other — the
+    read-modify-write that used to silently drop voice turns. Appending
+    also clears ``transcript_final_at``: a turn landing after the
+    end-of-call drain means the transcript is growing again.
+    """
+    ref = _session_ref(db, uid, session_id)
+    last_exc: Exception | None = None
+    for _attempt in range(_APPEND_ATTEMPTS):
+        txn = db.transaction()
+        try:
+            snap = ref.get(transaction=txn)
+            if not getattr(snap, "exists", False):
+                raise KeyError(session_id)
+            data = snap.to_dict() or {}
+            turns = list(data.get("turns") or [])
+            stamped = [
+                {"role": t["role"], "text": str(t["text"]), "ts": time.time()}
+                for t in new_turns
+            ]
+            turns.extend(stamped)
+            turns = turns[-_MAX_TURNS:]
+            txn.update(ref, {"turns": turns, "transcript_final_at": None})
+            txn.commit()
+            return turns
+        except Exception as exc:  # noqa: BLE001 - classified just below
+            last_exc = exc
+            if isinstance(exc, KeyError) or not _is_contention(exc):
+                raise
+    raise RuntimeError(
+        f"append_turns stayed contended for {session_id}: {last_exc}"
+    )
 
 
 def end_session(db, uid: str, session_id: str) -> None:
     _session_ref(db, uid, session_id).update({"ended_at": time.time()})
 
 
-def store_debrief(db, uid: str, session_id: str, debrief: dict) -> None:
+def mark_transcript_final(db, uid: str, session_id: str) -> None:
+    """Mark the session's transcript final: every persist the voice
+    worker had queued has landed. The debrief endpoint waits for this
+    flag on voice sessions before generating, so it never debriefs a
+    partial transcript. Cleared again by :func:`append_turns` if a late
+    turn lands afterwards (e.g. a cascade fallback starts a second
+    session on the same room)."""
+    _session_ref(db, uid, session_id).update({"transcript_final_at": time.time()})
+
+
+def store_debrief(
+    db, uid: str, session_id: str, debrief: dict, turn_count: int | None = None
+) -> None:
     """Cache a generated debrief on the session doc so a second consumer
     (the voice-return greeting composed in ``main.bootstrap``, or the
     debrief screen via ``POST /practice/debrief``) reuses it instead of
-    paying for a second generation over the same transcript."""
-    _session_ref(db, uid, session_id).update({"debrief": debrief})
+    paying for a second generation over the same transcript.
+
+    ``turn_count`` records how many turns the debrief was generated
+    from; consumers reuse the cached debrief only when it matches the
+    session's current turn count, so a debrief generated from a partial
+    transcript can never become canonical once the rest of the
+    transcript lands."""
+    payload: dict = {"debrief": debrief}
+    if turn_count is not None:
+        payload["debrief_turn_count"] = int(turn_count)
+    _session_ref(db, uid, session_id).update(payload)
+
+
+class _AlreadyDone:
+    """Awaitable that is already resolved (returned by
+    :meth:`PracticePersistQueue.enqueue` when a turn was persisted
+    synchronously because no event loop was available at enqueue time)."""
+
+    def __await__(self):
+        yield from ()
+        return None
+
+
+class PracticePersistQueue:
+    """Ordered, single-consumer persist queue for one practice voice session.
+
+    The live coach fires one persist per finalized turn from two different
+    event handlers (user transcripts and persona replies), which used to
+    race as independent fire-and-forget ``append_turns`` calls. Every turn
+    enqueued here is persisted by exactly one consumer task, in enqueue
+    order, so the stored transcript is the conversation in the order it
+    happened. :meth:`enqueue` returns an awaitable that resolves once that
+    turn's persist has landed (the coach awaits it before hinting, so the
+    hint always sees the turn persisted). :meth:`close` drains the queue
+    and marks the transcript final — the voice worker registers it as a
+    shutdown callback, so no turn is dropped at call end.
+    """
+
+    def __init__(self, db, uid: str, session_id: str):
+        self._db = db
+        self._uid = uid
+        self._session_id = session_id
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._closed = False
+
+    def start(self) -> None:
+        """Start the consumer task on the running loop (call from the
+        voice worker's async setup, before any turn is enqueued)."""
+        if self._task is None:
+            self._loop = asyncio.get_running_loop()
+            self._task = self._loop.create_task(self._consume())
+
+    def enqueue(self, turn: dict):
+        """Enqueue ``turn`` for ordered persistence; the returned
+        awaitable resolves once the turn has landed in the session
+        store. Safe to call from the session's (sync) event handlers.
+        If no loop was captured (the queue was never started), persists
+        synchronously instead so the turn is never silently dropped."""
+        if self._loop is None:
+            try:
+                self.start()
+            except RuntimeError:
+                try:
+                    append_turns(self._db, self._uid, self._session_id, [turn])
+                except Exception:  # noqa: BLE001 - persistence is best-effort
+                    logger.warning(
+                        "practice voice: queued append failed", exc_info=True
+                    )
+                return _AlreadyDone()
+        fut: asyncio.Future = self._loop.create_future()
+        item = (turn, fut)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self._loop:
+            # On the loop thread: put the item in now, so a drain()
+            # awaited right after this call sees it.
+            self._queue.put_nowait(item)
+        else:
+            # Another thread: schedule the put on the loop.
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, item)
+        return fut
+
+    async def _consume(self) -> None:
+        while True:
+            turn, fut = await self._queue.get()
+            try:
+                result = await asyncio.to_thread(
+                    append_turns, self._db, self._uid, self._session_id, [turn]
+                )
+                if not fut.done():
+                    fut.set_result(result)
+            except Exception:  # noqa: BLE001 - persistence is best-effort
+                logger.warning("practice voice: queued append failed", exc_info=True)
+                if not fut.done():
+                    fut.set_result(None)
+            finally:
+                self._queue.task_done()
+
+    async def drain(self) -> None:
+        """Wait until every enqueued turn has been persisted."""
+        # Let any put scheduled from another thread land first, so a
+        # drain awaited right after such an enqueue still sees it.
+        await asyncio.sleep(0)
+        await self._queue.join()
+
+    async def close(self) -> None:
+        """Drain pending persists (bounded), then mark the transcript
+        final. Idempotent; safe as a job shutdown callback. Never
+        raises."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await asyncio.wait_for(
+                self.drain(), timeout=_PERSIST_DRAIN_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            logger.warning(
+                "practice voice: persist drain timed out for %s/%s",
+                self._uid,
+                self._session_id,
+            )
+        try:
+            await asyncio.to_thread(
+                mark_transcript_final, self._db, self._uid, self._session_id
+            )
+        except Exception:  # noqa: BLE001 - shutdown must still complete
+            logger.warning(
+                "practice voice: marking transcript final failed", exc_info=True
+            )

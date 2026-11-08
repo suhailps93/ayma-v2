@@ -3768,7 +3768,10 @@ def relay_practice_coach(
     side text hint the client shows separately, never spoken by the persona, so
     the roleplay immersion is preserved. Each finalized turn is also appended to
     the practice session store so the end-of-call debrief
-    (``POST /practice/debrief``) has the transcript.
+    (``POST /practice/debrief``) has the transcript — through one ordered
+    persist queue (``practice_core.PracticePersistQueue``), so concurrent
+    user/match turns cannot overwrite each other, and the queue drains and
+    marks the transcript final when the job shuts down.
 
     Reuses ``practice_date.coach_hint`` (best-effort, never raises). The coach
     context is rebuilt from ``persona_name`` / ``persona_gender`` alone via
@@ -3786,13 +3789,18 @@ def relay_practice_coach(
     )
     turns: list[dict] = []
 
-    def _persist(turn: dict) -> None:
-        if not (uid and session_id):
-            return
-        try:
-            practice_core.append_turns(db, uid, session_id, [turn])
-        except Exception:  # noqa: BLE001 - persistence is best-effort
-            logger.warning("practice voice: append turn failed", exc_info=True)
+    # One ordered persist queue for this session (founder re-report,
+    # build 2350): user and match turns used to persist as independent
+    # fire-and-forget appends that loaded the same base list and
+    # overwrote each other, so the stored transcript lost turns and the
+    # debrief was generated from a partial transcript. The queue's single
+    # consumer persists turns in event order, and its close drains the
+    # queue and marks the transcript final when the job ends.
+    persist_queue = practice_core.PracticePersistQueue(db, uid, session_id)
+    persist_queue.start()
+    add_shutdown = getattr(ctx, "add_shutdown_callback", None)
+    if callable(add_shutdown):
+        add_shutdown(persist_queue.close)
 
     @session.on("user_input_transcribed")
     def _on_user(ev: UserInputTranscribedEvent) -> None:
@@ -3803,7 +3811,7 @@ def relay_practice_coach(
         turns.append(turn)
 
         async def _coach() -> None:
-            await asyncio.to_thread(_persist, turn)
+            await persist_queue.enqueue(turn)
             hint = await practice_core.coach_hint(coach_ctx, list(turns), uid=uid)
             if hint:
                 _publish_transcript(ctx, TOPIC_PRACTICE_COACH, hint, True)
@@ -3819,7 +3827,7 @@ def relay_practice_coach(
             return
         turn = {"role": practice_core.ROLE_MATCH, "text": text}
         turns.append(turn)
-        asyncio.create_task(asyncio.to_thread(_persist, turn))
+        persist_queue.enqueue(turn)
 
 
 async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:

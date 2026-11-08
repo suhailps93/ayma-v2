@@ -267,6 +267,35 @@ void main() {
     expect(find.textContaining('push for her address'), findsOneWidget);
   });
 
+  testWidgets('empty debrief says plainly that nothing was captured',
+      (tester) async {
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/practice/debrief') {
+          return _json({
+            'simulation': true,
+            'empty': true,
+            'what_worked': [],
+            'suggested_next_lines': [],
+            'avoid': [],
+          });
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    await tester.pumpWidget(_wrap(PracticeDebriefScreen(
+        uid: 'her', sessionId: 'practice_1', name: 'Dana', api: api)));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('practiceDebrief')), findsOneWidget);
+    expect(find.byKey(const Key('debriefEmpty')), findsOneWidget);
+    expect(find.textContaining('didn\'t hear anything'), findsOneWidget);
+    expect(find.byKey(const Key('debriefWhatWorked')), findsNothing);
+    expect(find.byKey(const Key('debriefNextLines')), findsNothing);
+    expect(find.byKey(const Key('debriefAvoid')), findsNothing);
+  });
+
   // --- Voice practice (hackathon B) ---------------------------------------- //
 
   testWidgets('voice simulator shows the persona header and a live coach hint',
