@@ -25,6 +25,8 @@ Execution commands + pre-flight: `docs/agents/handoffs/staging-deploy-prep.md`.
 | `GOOGLE_IMPORT_CLIENT_SECRET` | same prod secret | **Shared** | Same Google OAuth client; staging's redirect URI must be registered on it (the deploy script prints it) |
 | `INSTAGRAM_APP_SECRET` | same prod secret | **Shared** | Placeholder (V2), same as prod |
 | `GOOGLE_API_KEY` (agent) | same prod secret | **Shared** | Same Gemini Developer API key; voice usage bills the same key |
+| `WEB_SEARCH_API_KEY` (api) | same prod secret | **Shared** | Google Custom Search API key for capped web search |
+| `WEB_SEARCH_CSE_ID` (api) | same prod secret | **Shared** | Google Programmable Search Engine ID (`cx`) for capped web search |
 | `SENTRY_DSN` | *(not mounted)* | **n/a — Sentry OFF** | Unset = Sentry fully off (same rule as prod). To enable: create `SENTRY_DSN_API_STAGING` / `SENTRY_DSN_AGENT_STAGING` secrets and add mounts; `SENTRY_ENVIRONMENT=staging` is already set |
 
 Each new `*_STAGING` secret needs the same `secretAccessor` IAM grant for the
@@ -50,6 +52,8 @@ revision fails to start.
 | `IMAGE_VARIANTS_PUSH_SA` (api) | `pubsub-push-invoker@ayma-staging.iam.gserviceaccount.com` | **Staging-only** — Pub/Sub push OIDC identity pinned by the variant endpoint |
 | `OPEN_WEIGHTS_BASE_URL` (api) | Modal `…/v1` endpoint | **Staging-only** — wires the open-weights cheap path (hackathon); routes **nothing** on its own (a surface reaches it only when its `LLM_PROVIDER_*` flag is `open-weights`; default stays `gemini`). Credit-guarded — see `scripts/modal_open_weights.py` |
 | `OPEN_WEIGHTS_COLD_START_TIMEOUT_S` (agent) | `120` | First-token timeout (seconds) for the VOICE cascade's **open-weights** LLM leg only (Modal scale-to-zero cold start ~100s). Widens *only* that leg from the 10s LiveKit default so a cold Modal still replies; Meta/Inference legs keep the default. See ARCHITECTURE.md §13.9 cold-start handling. |
+| `GEMINI_WEB_SEARCH` (api) | `true` | **Shared** — offers the capped `web_search` function tool in text chat |
+| `WEB_SEARCH_DAILY_CAP` (api) | `100` | **Shared** — hard daily free-quota cap on web search provider calls |
 
 Model ids / voices / Vertex locations stay locked in
 `functions/bootstrap/config.py` — never env vars, same as prod. `LLM_PROVIDER`

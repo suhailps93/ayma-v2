@@ -131,3 +131,16 @@ def test_livekit_secrets_use_the_staging_names():
     for secrets in (api_secrets, agent_secrets):
         assert "LIVEKIT_API_KEY=LIVEKIT_API_KEY_STAGING:latest" in secrets
         assert "LIVEKIT_API_SECRET=LIVEKIT_API_SECRET_STAGING:latest" in secrets
+
+
+def test_api_base_and_secrets_carry_web_search():
+    text = _script_text()
+    api_env = _base(text, "API_ENV_BASE")
+    api_secrets = _base(text, "API_SECRETS")
+    assert "GEMINI_WEB_SEARCH=true" in api_env
+    assert "WEB_SEARCH_DAILY_CAP=100" in api_env
+    assert "WEB_SEARCH_API_KEY=WEB_SEARCH_API_KEY:latest" in api_secrets
+    assert "WEB_SEARCH_CSE_ID=WEB_SEARCH_CSE_ID:latest" in api_secrets
+    assert "WEB_SEARCH_API_KEY" in text
+    assert "WEB_SEARCH_CSE_ID" in text
+
