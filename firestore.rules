@@ -172,10 +172,13 @@ service cloud.firestore {
       allow update: if request.auth != null
         && request.auth.uid in resource.data.participants
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['last_read_at', 'unread'])
+             .hasOnly(['last_read_at', 'last_delivered_at', 'unread'])
         // A participant may only touch their own entry in each map.
         && request.resource.data.get('last_read_at', {})
              .diff(resource.data.get('last_read_at', {}))
+             .affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.get('last_delivered_at', {})
+             .diff(resource.data.get('last_delivered_at', {}))
              .affectedKeys().hasOnly([request.auth.uid])
         && request.resource.data.get('unread', {})
              .diff(resource.data.get('unread', {}))

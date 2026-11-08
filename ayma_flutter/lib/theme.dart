@@ -132,6 +132,11 @@ class AymaColors {
   /// used to be a literal duplicated in both widgets.
   static const link = Color(0xFF3A7BD5);
 
+  /// Read-receipt tick blue for DM threads: the colour of the two ticks
+  /// once the other person has read a message — the conventional WhatsApp
+  /// blue, deliberately not tied to the user-configurable accent.
+  static const readTick = Color(0xFF53BDEB);
+
   /// Full-screen busy/loading scrim (e.g. the Skills screen's "running a
   /// skill" overlay) — translucent black, theme-independent by design (it
   /// sits above whatever content is mid-action in either theme).
