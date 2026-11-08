@@ -1249,21 +1249,23 @@ class SelfCheckRunner:
             await self._announce(heading + "\n" + chunk)
 
     def _summary_header(self) -> str:
-        """The one counts line — shared by the finish bubbles and the
-        turn reply, so the two can never drift into different formats."""
+        """The counts block — shared by the finish bubbles and the
+        turn reply, so the two can never drift into different formats.
+        One count per line, each count line starting with its mark
+        (founder, 2026-11-07 ~21:09: the counts used to be crammed
+        into one line with "·" separators; he asked for one per
+        line). A zero-failure run reads clearly from the counts
+        themselves — the passed line over a "0 failed" line."""
         counts = {PASS: 0, FAIL: 0, PROBE: 0, SKIP: 0, EXCLUDED: 0}
         for r in self.results:
             counts[r.status] = counts.get(r.status, 0) + 1
         not_run = counts[PROBE] + counts[SKIP] + counts[EXCLUDED]
-        header = (
-            f"\U0001f9ea Self-check summary — {len(self.results)} checks: "
-            f"{_MARKS[PASS]} {counts[PASS]} passed · "
-            f"{_MARKS[FAIL]} {counts[FAIL]} failed · "
-            f"{_MARKS[SKIP]} {not_run} not run"
-        )
-        if counts[FAIL] == 0:
-            header += " — nothing failed; every check that ran passed \u2705"
-        return header
+        return "\n".join([
+            f"\U0001f9ea Self-check summary — {len(self.results)} checks",
+            f"{_MARKS[PASS]} {counts[PASS]} passed",
+            f"{_MARKS[FAIL]} {counts[FAIL]} failed",
+            f"{_MARKS[SKIP]} {not_run} not run",
+        ])
 
     def _failure_lines(self) -> list[str]:
         """The failure lines in plain words — the same ``_line``
@@ -1271,7 +1273,7 @@ class SelfCheckRunner:
         return [self._line(r) for r in self.results if r.status == FAIL]
 
     def _reply_text(self) -> str:
-        """The /self-check turn reply: the counts line, plus the
+        """The /self-check turn reply: the counts block, plus the
         failure lines when there are any — and nothing else.
 
         The full raw report (build_report) is NOT the reply. It used

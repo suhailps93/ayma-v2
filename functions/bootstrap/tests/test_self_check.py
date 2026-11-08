@@ -640,11 +640,38 @@ def test_zero_failure_run_posts_only_the_header_at_finish():
     asyncio.run(runner.run())
     assert not any(r.status == self_check.FAIL for r in runner.results)
     finish = lines[1 + len(runner.results):]
-    # One bubble only — and it makes clear everything passed.
+    # One bubble only — and the counts lines make clear everything
+    # passed: the failed count sits on its own line, reading zero.
     assert len(finish) == 1
     assert finish[0].startswith("\U0001f9ea Self-check summary")
     assert "0 failed" in finish[0]
-    assert "nothing failed" in finish[0]
+    assert "\u274c 0 failed" in finish[0].split("\n")
+
+
+def test_summary_header_one_count_per_line_emoji_first():
+    """Founder, 2026-11-07 ~21:09: the counts were crammed into one
+    line — summary, then the three counts joined by "·" separators —
+    and he asked for each count on its own line, starting with the
+    emoji. This pins the exact shape of the shared formatter."""
+    h = _Harness()
+    runner = h.runner()
+    runner.results = [
+        CheckResult("a", "nav", self_check.PASS),
+        CheckResult("b", "nav", self_check.PASS),
+        CheckResult("c", "tool", self_check.FAIL),
+        CheckResult("d", "tool", self_check.PROBE),
+        CheckResult("e", "tool", self_check.SKIP),
+        CheckResult("f", "tool", self_check.EXCLUDED),
+    ]
+    header = runner._summary_header()
+    assert header == (
+        "\U0001f9ea Self-check summary — 6 checks\n"
+        "\u2705 2 passed\n"
+        "\u274c 1 failed\n"
+        "\u23ed 3 not run"
+    )
+    # No "·" separators survive anywhere in the counts block.
+    assert "·" not in header
 
 
 # --- turn reply: short summary only; full report in the record --------
@@ -659,9 +686,10 @@ def test_reply_clean_run_is_short_summary_no_raw_ids():
     runner = h.runner()
     reply = asyncio.run(runner.run())
     assert not any(r.status == self_check.FAIL for r in runner.results)
-    # The reply IS the shared counts line (one formatter, no fork).
+    # The reply IS the shared counts block (one formatter, no fork):
+    # the title line plus the three count lines, nothing else.
     assert reply == runner._summary_header()
-    assert "\n" not in reply
+    assert reply.count("\n") == 3
     assert "Self-check summary" in reply
     assert "0 failed" in reply
     # No raw check ids and no report list sections in the reply.
@@ -676,11 +704,13 @@ def test_reply_failing_run_names_failures_in_plain_words():
     runner = h.runner()
     reply = asyncio.run(runner.run())
     lines = reply.split("\n")
-    assert lines[0] == runner._summary_header()
-    assert "1 failed" in lines[0]
+    header_lines = runner._summary_header().split("\n")
+    # The reply opens with the shared counts block; failures follow it.
+    assert lines[:len(header_lines)] == header_lines
+    assert "\u274c 1 failed" in header_lines
     # The failure is named the plain way the finish bubbles name it —
     # never by its raw check id, and with no passed/probed lists.
-    assert any("Nav to Explore" in ln for ln in lines[1:])
+    assert any("Nav to Explore" in ln for ln in lines[len(header_lines):])
     assert "nav:explore" not in reply
     assert "PASSED:" not in reply
 
