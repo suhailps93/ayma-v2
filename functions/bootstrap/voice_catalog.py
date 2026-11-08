@@ -64,7 +64,14 @@ from dataclasses import dataclass
 
 import voices
 from config import CONFIG
-from llm_provider import PROVIDER_GEMINI, PROVIDER_META, PROVIDER_OPEN_WEIGHTS
+from llm_provider import (
+    LIVEKIT_BRAIN_VENDORS,
+    PROVIDER_GEMINI,
+    PROVIDER_META,
+    PROVIDER_OPEN_WEIGHTS,
+    brain_is_credited,
+    livekit_brain_model,
+)
 
 logger = logging.getLogger("ayma.voice_catalog")
 
@@ -460,22 +467,30 @@ def _realtime_models(sources: dict[str, object]) -> list[dict[str, object]]:
 # set a voice brain - e.g. the open-weights voice option - before ever
 # picking a unified brain keep that voice behaviour until they save one).
 
-UNIFIED_BRAIN_VENDORS = (PROVIDER_GEMINI, PROVIDER_META)
+UNIFIED_BRAIN_VENDORS = (
+    PROVIDER_GEMINI, PROVIDER_META, *LIVEKIT_BRAIN_VENDORS
+)
 
 
 def cascade_brain_for_unified(vendor: str) -> str:
-    """The cascade brain id for a unified Brain vendor (``gemini``|``meta``).
+    """The cascade brain id for a unified Brain vendor.
 
-    Unknown vendors map to "" (no override) rather than a guessed model."""
+    A LiveKit Inference vendor maps to its own LiveKit Inference model id
+    (the cascade brain id IS the model string), so the ONE picked brain
+    drives the voice LLM too. Unknown vendors map to "" (no override)
+    rather than a guessed model."""
     v = (vendor or "").strip().lower()
     if v == PROVIDER_META and _direct_brain_offered(PROVIDER_META):
         return BRAIN_META
-    if v in (PROVIDER_GEMINI, PROVIDER_META):
-        # Gemini — or a Meta vendor this deploy is not credited for
-        # (staging): the voice LLM is the Gemini Inference brain either way,
-        # so a saved Meta brain can never route a call to Meta-direct.
+    if v in LIVEKIT_BRAIN_VENDORS and brain_is_credited(v):
+        return livekit_brain_model(v)
+    if v in (PROVIDER_GEMINI, PROVIDER_META, *LIVEKIT_BRAIN_VENDORS):
+        # Gemini — or a vendor this deploy is not credited for (e.g. Meta
+        # on staging): the voice LLM is the Gemini Inference brain either
+        # way, so a saved uncredited brain can never route a voice call to
+        # an uncredited vendor.
         for mid in CONFIG.voice_cascade_llm_models:
-            if mid.startswith("google/"):
+            if mid.startswith("google/gemini"):
                 return mid
         return "google/gemini-3.8-flash"
     return ""
@@ -483,10 +498,15 @@ def cascade_brain_for_unified(vendor: str) -> str:
 
 def unified_vendor_for_cascade(brain_id: str) -> str:
     """The unified Brain vendor a cascade brain id belongs to, or "" when it
-    has no unified equivalent (open-weights and other inference-only ids)."""
+    has no unified equivalent (open-weights and other inference-only ids).
+    The LiveKit Brain model ids resolve FIRST — Gemma's id is also a
+    ``google/`` id but belongs to the ``gemma`` vendor, not Gemini."""
     b = (brain_id or "").strip()
     if b == BRAIN_META:
         return PROVIDER_META
+    for v in LIVEKIT_BRAIN_VENDORS:
+        if b == livekit_brain_model(v):
+            return v
     if b.startswith("google/"):
         return PROVIDER_GEMINI
     return ""

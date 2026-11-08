@@ -125,15 +125,17 @@ OPEN_WEIGHTS_BASE_URL="https://suhailps93--ayma-open-weights-serve.us-east.modal
 # GET /voice/engines availability, and the agent's set_stt/set_tts skills
 # re-validate availability against the same catalog.
 CARTESIA_CREDITED_PROVIDERS="inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,elevenlabs,openai,cartesia"
-# Brain credited providers (founder order 2026-11-07): staging is credited
-# for Gemini ONLY. Meta Muse Spark bills the Meta Model API directly (the
-# $150 hackathon credits do not cover that usage — $42 billed to the card),
-# and the open-weights brain bills Modal, so neither may be offered in a
-# selection list or honoured as a saved preference on staging.
-# BRAIN_CREDITED_PROVIDERS=gemini is pinned on both staging env bases below;
-# config.py defaults to all three so prod and the Meta hackathon build keep
-# their Meta path.
-API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=livekit,AGENT_NAME_LIVEKIT=ayma-lk-staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini,VOICE_CREDITED_PROVIDERS=${CARTESIA_CREDITED_PROVIDERS},BRAIN_CREDITED_PROVIDERS=gemini"
+# Brain credited providers (founder orders 2026-11-07): staging is credited
+# for the LiveKit Inference brains ONLY — Gemini plus the LiveKit-wired
+# vendors (gemma, openai, openai-chat, openai-oss, kimi, deepseek, grok).
+# Meta Muse Spark bills the Meta Model API directly (the $150 hackathon
+# credits do not cover that usage — $42 billed to the card), and the
+# open-weights brain bills Modal, so neither may be offered in a selection
+# list or honoured as a saved preference on staging.
+# BRAIN_CREDITED_PROVIDERS=gemini,gemma,openai,openai-chat,openai-oss,kimi,deepseek,grok is pinned on both staging env bases below;
+# config.py defaults additionally include meta/open-weights so prod and
+# the Meta hackathon build keep their Meta path.
+API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=livekit,AGENT_NAME_LIVEKIT=ayma-lk-staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini,VOICE_CREDITED_PROVIDERS=${CARTESIA_CREDITED_PROVIDERS},BRAIN_CREDITED_PROVIDERS=gemini,gemma,openai,openai-chat,openai-oss,kimi,deepseek,grok"
 
 # Cloud image variants (Perf Phase 2 PREP chunk A, staging-only): enabled ONLY
 # when the staging data plane is the staging Firebase project. A staging
@@ -147,7 +149,7 @@ fi
 # gemini here. LLM_PROVIDER_VOICE_MAIN is deliberately left unpinned (explicit-
 # only, no global inheritance). gemini (gateway) only — never a vertex/google
 # direct override here.
-AGENT_ENV_BASE="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging,LLM_PROVIDER=gemini,LLM_PROVIDER_VOICE=gemini,VOICE_CREDITED_PROVIDERS=${CARTESIA_CREDITED_PROVIDERS},BRAIN_CREDITED_PROVIDERS=gemini"
+AGENT_ENV_BASE="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},GEMINI_LIVE_USE_DEV_API=true,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,SENTRY_ENVIRONMENT=staging,LLM_PROVIDER=gemini,LLM_PROVIDER_VOICE=gemini,VOICE_CREDITED_PROVIDERS=${CARTESIA_CREDITED_PROVIDERS},BRAIN_CREDITED_PROVIDERS=gemini,gemma,openai,openai-chat,openai-oss,kimi,deepseek,grok"
 
 # Same env names as prod, staging-only values where it matters — see docs/STAGING.md.
 # META_API_KEY: the Meta Model API key (Muse Spark) shared with prod — required

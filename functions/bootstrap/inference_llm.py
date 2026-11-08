@@ -212,11 +212,17 @@ async def complete(
     response_schema: dict | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    max_completion_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> InferenceResponse:
     """One chat completion through LiveKit Inference, with a backed-off
     retry-on-anything policy. A timeout is not retried (the wait already
-    spent the budget)."""
+    spent the budget).
+
+    ``max_completion_tokens`` is sent INSTEAD of ``max_tokens`` when given:
+    the GPT-5 family behind the gateway rejects ``max_tokens`` outright
+    (HTTP 400, verified live 2026-11-07), so callers serving those models
+    must pass the budget this way."""
     kwargs: dict = {"model": model, "messages": messages}
     if tools:
         kwargs["tools"] = tools
@@ -229,7 +235,9 @@ async def complete(
         }
     if temperature is not None:
         kwargs["temperature"] = temperature
-    if max_tokens is not None:
+    if max_completion_tokens is not None:
+        kwargs["max_completion_tokens"] = max_completion_tokens
+    elif max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     if reasoning_effort:
         kwargs["reasoning_effort"] = reasoning_effort

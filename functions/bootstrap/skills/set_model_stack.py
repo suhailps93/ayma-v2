@@ -36,7 +36,18 @@ from firebase_admin import firestore
 import schema
 import voice_catalog
 import voices
-from llm_provider import PROVIDER_GEMINI, PROVIDER_META, available_brains
+from llm_provider import (
+    PROVIDER_DEEPSEEK,
+    PROVIDER_GEMINI,
+    PROVIDER_GEMMA,
+    PROVIDER_GROK,
+    PROVIDER_KIMI,
+    PROVIDER_META,
+    PROVIDER_OPENAI,
+    PROVIDER_OPENAI_CHAT,
+    PROVIDER_OPENAI_OSS,
+    available_brains,
+)
 
 from ._base import Skill
 from .app_control_queue import _await_ack, _prompt, _queue_command
@@ -75,6 +86,28 @@ _BRAIN_ALIASES: dict[str, str] = {
     "gemini": PROVIDER_GEMINI,
     "google": PROVIDER_GEMINI,
     "google gemini": PROVIDER_GEMINI,
+    # LiveKit Inference brains (2026-11-07). The bare vendor ids also
+    # resolve via the raw-text fallback in ``_resolve_brain``; these are
+    # the everyday names users actually say.
+    "gemma": PROVIDER_GEMMA,
+    "gemma 4": PROVIDER_GEMMA,
+    "gpt-5": PROVIDER_OPENAI,
+    "gpt5": PROVIDER_OPENAI,
+    "gpt 5": PROVIDER_OPENAI,
+    "openai": PROVIDER_OPENAI,
+    "chatgpt": PROVIDER_OPENAI_CHAT,
+    "chatgpt latest": PROVIDER_OPENAI_CHAT,
+    "chatgpt-latest": PROVIDER_OPENAI_CHAT,
+    "gpt oss": PROVIDER_OPENAI_OSS,
+    "gpt-oss": PROVIDER_OPENAI_OSS,
+    "gpt oss 120b": PROVIDER_OPENAI_OSS,
+    "kimi": PROVIDER_KIMI,
+    "kimi k2.6": PROVIDER_KIMI,
+    "moonshot": PROVIDER_KIMI,
+    "deepseek": PROVIDER_DEEPSEEK,
+    "deepseek v4": PROVIDER_DEEPSEEK,
+    "grok": PROVIDER_GROK,
+    "xai": PROVIDER_GROK,
 }
 _OPEN_WEIGHTS_WORDS = frozenset(
     "open-weights open weights openweights llama open-weight".split()

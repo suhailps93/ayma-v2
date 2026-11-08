@@ -367,6 +367,37 @@ class Config:
     ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` — see ``inference_llm.py``).
     Non-secret. ``LIVEKIT_INFERENCE_URL`` overrides it."""
 
+    livekit_brain_gemma_model: str
+    """LiveKit Inference model id for the Gemma Brain vendor (``gemma``,
+    founder order 2026-11-07: wire every LiveKit Inference LLM in as a
+    selectable Brain). Ids come from the live LiveKit Inference LLM catalog
+    (docs.livekit.io/agents/models/llm, fetched 2026-11-07) and live ONLY
+    here. ``LIVEKIT_BRAIN_GEMMA_MODEL`` overrides."""
+
+    livekit_brain_openai_model: str
+    """LiveKit Inference model id for the GPT-5 Brain vendor (``openai``).
+    ``LIVEKIT_BRAIN_OPENAI_MODEL`` overrides."""
+
+    livekit_brain_openai_chat_model: str
+    """LiveKit Inference model id for the ChatGPT Latest Brain vendor
+    (``openai-chat``). ``LIVEKIT_BRAIN_OPENAI_CHAT_MODEL`` overrides."""
+
+    livekit_brain_openai_oss_model: str
+    """LiveKit Inference model id for the GPT OSS Brain vendor
+    (``openai-oss``). ``LIVEKIT_BRAIN_OPENAI_OSS_MODEL`` overrides."""
+
+    livekit_brain_kimi_model: str
+    """LiveKit Inference model id for the Kimi Brain vendor (``kimi``).
+    ``LIVEKIT_BRAIN_KIMI_MODEL`` overrides."""
+
+    livekit_brain_deepseek_model: str
+    """LiveKit Inference model id for the DeepSeek Brain vendor
+    (``deepseek``). ``LIVEKIT_BRAIN_DEEPSEEK_MODEL`` overrides."""
+
+    livekit_brain_grok_model: str
+    """LiveKit Inference model id for the Grok Brain vendor (``grok``).
+    ``LIVEKIT_BRAIN_GROK_MODEL`` overrides."""
+
     llm_route_json: str
     """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
     validate): structured-JSON text jobs always run on LiveKit Inference.
@@ -1021,20 +1052,23 @@ class Config:
 
     brain_credited_providers: tuple[str, ...]
     """Brain VENDORS this deploy is credited for, and may therefore offer in a
-    selection list or honour as a saved preference: ``gemini`` | ``meta`` |
-    ``open-weights``. Only Gemini runs on the funded LiveKit Inference
-    credits — Meta Muse Spark bills the Meta Model API directly and the
-    open-weights brain bills its Modal endpoint, so neither is covered.
-    Default = all three, so production behaviour is unchanged and the Meta
-    hackathon build keeps its Meta path. Staging pins
-    ``BRAIN_CREDITED_PROVIDERS=gemini`` (founder order 2026-11-07, after the
-    Meta Model API charges billed his card past the hackathon credits):
-    Meta then never appears in the Brain picker (``llm_provider``) or the
-    voice catalog (``voice_catalog``), and a saved ``meta`` preference
-    resolves to Gemini — never Meta, never an error. ``gemini`` is always
-    treated as credited (the funded default; the fallback of last resort).
-    ``BRAIN_CREDITED_PROVIDERS`` (CSV, lowercase) overrides, and
-    ``scripts/deploy-staging.sh`` pins ``gemini`` on staging."""
+    selection list or honour as a saved preference. The LiveKit Inference
+    brains — ``gemini`` plus the vendors wired in 2026-11-07 (``gemma``,
+    ``openai``, ``openai-chat``, ``openai-oss``, ``kimi``, ``deepseek``,
+    ``grok``) — all run on the funded LiveKit Inference credits. Meta Muse
+    Spark bills the Meta Model API directly and the open-weights brain
+    bills its Modal endpoint, so neither of those is covered by LiveKit
+    credits (they stay in the default set only so production behaviour and
+    the Meta hackathon build are unchanged). Staging pins
+    ``BRAIN_CREDITED_PROVIDERS`` to the LiveKit set (founder orders
+    2026-11-07: no direct-API brain after the Meta charges billed his card,
+    and every LiveKit model wired in): Meta then never appears in the
+    Brain picker (``llm_provider``) or the voice catalog (``voice_catalog``),
+    and a saved ``meta`` preference resolves to Gemini — never Meta, never
+    an error. ``gemini`` is always treated as credited (the funded default;
+    the fallback of last resort). ``BRAIN_CREDITED_PROVIDERS`` (CSV,
+    lowercase) overrides, and ``scripts/deploy-staging.sh`` pins the
+    LiveKit set on staging."""
 
     # --- Voice ENGINE picker (§13.9, docs/META_PROVIDER.md) ---------------- #
     # The per-user voice stack (dev-settings "Voice engine"): a CASCADE
@@ -1275,6 +1309,33 @@ def _load() -> Config:
         livekit_inference_url=os.getenv(
             "LIVEKIT_INFERENCE_URL", "https://agent-gateway.livekit.cloud/v1"
         ).rstrip("/"),
+        # LiveKit Inference Brain vendors (founder order 2026-11-07). Exact
+        # ids from the live LiveKit Inference LLM catalog
+        # (docs.livekit.io/agents/models/llm, fetched 2026-11-07): the
+        # newest non-deprecated model of each family. ZAI GLM is NOT in
+        # the live catalog (no ZAI section on the page) and a guessed id
+        # 404s on the gateway, so there is deliberately no glm field.
+        livekit_brain_gemma_model=os.getenv(
+            "LIVEKIT_BRAIN_GEMMA_MODEL", "google/gemma-4-31b-it"
+        ),
+        livekit_brain_openai_model=os.getenv(
+            "LIVEKIT_BRAIN_OPENAI_MODEL", "openai/gpt-5"
+        ),
+        livekit_brain_openai_chat_model=os.getenv(
+            "LIVEKIT_BRAIN_OPENAI_CHAT_MODEL", "openai/chat-latest"
+        ),
+        livekit_brain_openai_oss_model=os.getenv(
+            "LIVEKIT_BRAIN_OPENAI_OSS_MODEL", "openai/gpt-oss-120b"
+        ),
+        livekit_brain_kimi_model=os.getenv(
+            "LIVEKIT_BRAIN_KIMI_MODEL", "moonshotai/kimi-k2.6"
+        ),
+        livekit_brain_deepseek_model=os.getenv(
+            "LIVEKIT_BRAIN_DEEPSEEK_MODEL", "deepseek-ai/deepseek-v4-pro"
+        ),
+        livekit_brain_grok_model=os.getenv(
+            "LIVEKIT_BRAIN_GROK_MODEL", "xai/grok-4.7"
+        ),
         llm_route_json=_choice("LLM_ROUTE_JSON", "inference", _LLM_ROUTES),
         llm_route_vision=_choice("LLM_ROUTE_VISION", "inference", _LLM_ROUTES),
         llm_route_chat=_choice("LLM_ROUTE_CHAT", "inference", _LLM_ROUTES),
@@ -1450,11 +1511,15 @@ def _load() -> Config:
         # Muse (``meta``) post-Qloo. Capability gaps still route to Gemini
         # (web/vision) via the llm_provider capability map.
         brain_default=os.getenv("AYMA_BRAIN_DEFAULT", "gemini").strip().lower(),
-        # Credited brain vendors (see the field docstring): default = all
-        # three, so production is unchanged; staging pins gemini-only, so no
-        # direct-API brain (Meta / open-weights) is offered or honoured there.
+        # Credited brain vendors (see the field docstring): default = the
+        # LiveKit Inference set plus meta/open-weights, so production is
+        # unchanged; staging pins the LiveKit set only, so no direct-API
+        # brain (Meta / open-weights) is offered or honoured there.
         brain_credited_providers=_csv(
-            "BRAIN_CREDITED_PROVIDERS", "gemini,meta,open-weights", lower=True
+            "BRAIN_CREDITED_PROVIDERS",
+            "gemini,meta,open-weights,gemma,openai,openai-chat,openai-oss,"
+            "kimi,deepseek,grok",
+            lower=True,
         ),
         # Voice ENGINE picker (§13.9).
         openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime"),
@@ -1491,12 +1556,14 @@ def _load() -> Config:
         voice_cascade_llm_models=_csv(
             "VOICE_CASCADE_LLM_MODELS",
             "google/gemini-3.8-flash,google/gemini-3.7-flash,"
-            "google/gemini-3.5-flash-lite",
+            "google/gemini-3.5-flash-lite,google/gemma-4-31b-it,"
+            "openai/gpt-5,openai/chat-latest,openai/gpt-oss-120b,"
+            "moonshotai/kimi-k2.6,deepseek-ai/deepseek-v4-pro,xai/grok-4.7",
         ),
         voice_cascade_extra_brains=_csv("VOICE_CASCADE_EXTRA_BRAINS", ""),
         voice_credited_providers=_csv(
             "VOICE_CREDITED_PROVIDERS",
-            "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,elevenlabs,openai,cartesia",
+            "inworld,deepgram,fishaudio,assemblyai,rime,gradium,google,elevenlabs,openai,cartesia,moonshotai,deepseek-ai,xai",
             lower=True,
         ),
         voice_accent_capable_providers=_csv(

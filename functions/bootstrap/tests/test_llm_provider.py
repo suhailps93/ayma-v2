@@ -407,6 +407,7 @@ from llm_provider import (  # noqa: E402
     CAP_TOOLS,
     CAP_VISION,
     CAP_WEB,
+    LIVEKIT_BRAIN_VENDORS,
     PROVIDER_GEMINI,
     PROVIDER_META,
     available_brains,
@@ -439,7 +440,11 @@ def test_capability_map_unknown_brain_defaults_to_gemini():
 
 def test_available_brains_shape():
     brains = available_brains()
-    assert [b["id"] for b in brains] == [PROVIDER_GEMINI, PROVIDER_META]
+    # Default config credits every wired vendor (prod parity): Gemini, the
+    # LiveKit Inference brains in picker order, then Meta.
+    assert [b["id"] for b in brains] == [
+        PROVIDER_GEMINI, *LIVEKIT_BRAIN_VENDORS, PROVIDER_META,
+    ]
     for b in brains:
         assert b["label"] and b["description"] and b["available"] is True
         assert set(b["capabilities"]) == brain_capabilities(b["id"])
