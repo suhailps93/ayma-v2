@@ -737,12 +737,6 @@ def _load_session(db, uid: str, session_id: str) -> dict:
     return snap.to_dict() or {}
 
 
-def _is_contention(exc: Exception) -> bool:
-    """Firestore transaction contention (aborted/conflict) is worth a
-    fresh transaction; anything else from the store is a real failure."""
-    return type(exc).__name__ in ("Aborted", "Conflict")
-
-
 def append_turns(db, uid: str, session_id: str, new_turns: list[dict]) -> list[dict]:
     """Append ``new_turns`` (each ``{role, text}``) and return the full turn
     list. Caps stored turns at ``_MAX_TURNS`` (oldest dropped).
@@ -753,33 +747,40 @@ def append_turns(db, uid: str, session_id: str, new_turns: list[dict]) -> list[d
     read-modify-write that used to silently drop voice turns. Appending
     also clears ``transcript_final_at``: a turn landing after the
     end-of-call drain means the transcript is growing again.
+
+    The transaction MUST run through ``firestore.transactional``: a
+    transaction object taken straight from ``db.transaction()`` is
+    never begun, and the client library (google-cloud-firestore 2.x)
+    raises "Transaction not in progress, cannot be used in API
+    requests." on the first read through it (see web_search.py lines
+    163-174, the 2026-11-07 incident). The decorator supplies the
+    begin/commit/rollback and contention retry lifecycle.
     """
+    from google.cloud import firestore
+
     ref = _session_ref(db, uid, session_id)
-    last_exc: Exception | None = None
-    for _attempt in range(_APPEND_ATTEMPTS):
+    stamped = [
+        {"role": t["role"], "text": str(t["text"]), "ts": time.time()}
+        for t in new_turns
+    ]
+
+    @firestore.transactional
+    def _attempt(transaction) -> list[dict]:
+        snap = ref.get(transaction=transaction)
+        if not getattr(snap, "exists", False):
+            raise KeyError(session_id)
+        data = snap.to_dict() or {}
+        turns = list(data.get("turns") or [])
+        turns.extend(stamped)
+        turns = turns[-_MAX_TURNS:]
+        transaction.update(ref, {"turns": turns, "transcript_final_at": None})
+        return turns
+
+    try:
+        txn = db.transaction(max_attempts=_APPEND_ATTEMPTS)
+    except TypeError:
         txn = db.transaction()
-        try:
-            snap = ref.get(transaction=txn)
-            if not getattr(snap, "exists", False):
-                raise KeyError(session_id)
-            data = snap.to_dict() or {}
-            turns = list(data.get("turns") or [])
-            stamped = [
-                {"role": t["role"], "text": str(t["text"]), "ts": time.time()}
-                for t in new_turns
-            ]
-            turns.extend(stamped)
-            turns = turns[-_MAX_TURNS:]
-            txn.update(ref, {"turns": turns, "transcript_final_at": None})
-            txn.commit()
-            return turns
-        except Exception as exc:  # noqa: BLE001 - classified just below
-            last_exc = exc
-            if isinstance(exc, KeyError) or not _is_contention(exc):
-                raise
-    raise RuntimeError(
-        f"append_turns stayed contended for {session_id}: {last_exc}"
-    )
+    return _attempt(txn)
 
 
 def end_session(db, uid: str, session_id: str) -> None:
@@ -848,6 +849,7 @@ class PracticePersistQueue:
         self._task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
+        self._failed_appends: int = 0
 
     def start(self) -> None:
         """Start the consumer task on the running loop (call from the
@@ -869,8 +871,12 @@ class PracticePersistQueue:
                 try:
                     append_turns(self._db, self._uid, self._session_id, [turn])
                 except Exception:  # noqa: BLE001 - persistence is best-effort
-                    logger.warning(
-                        "practice voice: queued append failed", exc_info=True
+                    self._failed_appends += 1
+                    logger.error(
+                        "practice voice: queued append failed for %s/%s",
+                        self._uid,
+                        self._session_id,
+                        exc_info=True,
                     )
                 return _AlreadyDone()
         fut: asyncio.Future = self._loop.create_future()
@@ -898,7 +904,13 @@ class PracticePersistQueue:
                 if not fut.done():
                     fut.set_result(result)
             except Exception:  # noqa: BLE001 - persistence is best-effort
-                logger.warning("practice voice: queued append failed", exc_info=True)
+                self._failed_appends += 1
+                logger.error(
+                    "practice voice: queued append failed for %s/%s",
+                    self._uid,
+                    self._session_id,
+                    exc_info=True,
+                )
                 if not fut.done():
                     fut.set_result(None)
             finally:
@@ -918,21 +930,36 @@ class PracticePersistQueue:
         if self._closed:
             return
         self._closed = True
+        drain_timed_out = False
         try:
             await asyncio.wait_for(
                 self.drain(), timeout=_PERSIST_DRAIN_TIMEOUT_SECONDS
             )
         except TimeoutError:
-            logger.warning(
+            drain_timed_out = True
+            logger.error(
                 "practice voice: persist drain timed out for %s/%s",
                 self._uid,
                 self._session_id,
             )
+        if self._failed_appends or drain_timed_out:
+            logger.error(
+                "practice voice: transcript NOT marked final for %s/%s "
+                "(failed_appends=%d, drain_timed_out=%s) — save failures prevent certifying final transcript",
+                self._uid,
+                self._session_id,
+                self._failed_appends,
+                drain_timed_out,
+            )
+            return
         try:
             await asyncio.to_thread(
                 mark_transcript_final, self._db, self._uid, self._session_id
             )
         except Exception:  # noqa: BLE001 - shutdown must still complete
-            logger.warning(
-                "practice voice: marking transcript final failed", exc_info=True
+            logger.error(
+                "practice voice: marking transcript final failed for %s/%s",
+                self._uid,
+                self._session_id,
+                exc_info=True,
             )
