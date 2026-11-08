@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/credits_balance.dart';
-import 'package:ayma_flutter/services/legal_links.dart';
 import 'package:ayma_flutter/services/meta_integrations.dart';
 import 'package:ayma_flutter/widgets/completeness_ring.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -150,41 +149,17 @@ void main() {
   });
 
   testWidgets(
-      'Terms and Privacy rows open the hosted pages directly in the '
-      'browser and stay on the You tab', (tester) async {
+      'Terms and Privacy rows are not on the You tab (relocated to Settings)',
+      (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    // The host router deliberately has no /terms or /privacy route: the
-    // rows must not navigate anywhere.
-    final launched = <Uri>[];
-    LegalLinks.setLauncherForTesting((url) async {
-      launched.add(url);
-      return true;
-    });
-    addTearDown(() => LegalLinks.setLauncherForTesting(null));
-
     await tester.pumpWidget(_host(_api()));
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Terms of Service'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Terms of Service'));
-    await tester.pumpAndSettle();
-    expect(launched, [Uri.parse(LegalLinks.termsUrl)]);
-    expect(find.byType(ProfileTabScreen), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Privacy Policy'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Privacy Policy'));
-    await tester.pumpAndSettle();
-    expect(launched, [
-      Uri.parse(LegalLinks.termsUrl),
-      Uri.parse(LegalLinks.privacyUrl),
-    ]);
-    expect(find.byType(ProfileTabScreen), findsOneWidget);
-    expect(find.textContaining('Opening the'), findsNothing);
+    expect(find.text('Terms of Service'), findsNothing);
+    expect(find.text('Privacy Policy'), findsNothing);
   });
 
   testWidgets('menu has You then Ayma sections in the requested order',

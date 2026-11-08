@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/legal_links.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
@@ -16,9 +17,9 @@ import 'delete_account_screen.dart';
 /// Privacy: everything privacy-related under the single Privacy row on
 /// Settings (founder cleanup, 2026-11-07): pause matching (pulled in
 /// from its own top-level section), the AI-avatar opt-out, face
-/// verification, face matching consent, wiping what Ayma has learned
-/// (directly above Delete account) and Delete account itself. Handlers
-/// and prefs are unchanged — this is regrouping only.
+/// verification, face matching consent, Terms of Service and Privacy Policy,
+/// wiping what Ayma has learned (directly above Delete account) and Delete
+/// account itself. Handlers and prefs are unchanged — this is regrouping only.
 class PrivacySettingsScreen extends StatefulWidget {
   const PrivacySettingsScreen({
     super.key,
@@ -273,6 +274,33 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
             ),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(BiometricConsentSettingsScreen.path),
+          ),
+          Divider(color: ac.lineSoft),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            key: const Key('settings_terms'),
+            leading: Icon(Icons.description_outlined, color: ac.fgMute),
+            title: Text('Terms of Service',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text(
+              'How Ayma uses your photos and public information',
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            ),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => LegalLinks.openTerms(context),
+          ),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            key: const Key('settings_privacy_policy'),
+            leading: Icon(Icons.privacy_tip_outlined, color: ac.fgMute),
+            title: Text('Privacy Policy',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text(
+              'What we collect, why, and your choices',
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            ),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => LegalLinks.openPrivacy(context),
           ),
           Divider(color: ac.lineSoft),
           ListTile(
