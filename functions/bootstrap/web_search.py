@@ -11,13 +11,16 @@ How it works:
   Programmable Search image paths (``docs/DIRECT_GOOGLE_KILL_AUDIT.md``).
   Grounded research on direct Google (:func:`gemini.research`) stays
   disabled; nothing here re-enables it.
-* The provider is Google Programmable Search (Custom Search JSON API) —
-  the retrieval path already wired for the deep-dive image step
-  (:mod:`deep_dive_images`), so the key + engine id resolve from the same
-  config, with ``WEB_SEARCH_*`` overrides. Google retires this API on
-  2027-01-01, so the provider sits behind a small seam: config names it
+* The provider sits behind a small seam: config names it
   (``web_search_provider``) and :data:`_PROVIDERS` maps the name to its
-  caller. Swapping to Brave/Tavily later is one new caller + config.
+  caller, so a provider swap is one new caller + config. Staging runs on
+  Serper (founder decision 2026-11-07): new Programmable Search engines
+  cannot search the whole web (50 named sites at most), while Serper
+  returns Google's own results whole-web from one API key — no engine
+  id. ``google_cse`` remains for environments still configured for it,
+  and only its key + engine fall back to the deep-dive image step's pair
+  (:mod:`deep_dive_images`, same account). The image step keeps its own
+  Programmable Search path and is untouched by the swap.
 * HARD CAP (the point of the design): a Firestore counter at
   ``web_search_usage/{YYYY-MM-DD}`` — the America/Los_Angeles day, in
   this environment's own Firestore project — is checked AND incremented
@@ -58,6 +61,7 @@ _DEFAULT_CAP = 100
 _TIMEOUT_SECONDS = 15
 _RESULTS_PER_CALL = 10
 _CSE_API_URL = "https://www.googleapis.com/customsearch/v1"
+_SERPER_API_URL = "https://google.serper.dev/search"
 _RESERVE_ATTEMPTS = 3
 
 STATUS_OK = "ok"
@@ -118,12 +122,17 @@ class _Settings:
 
 
 def _settings() -> _Settings:
-    """Resolve the provider seam from config. The Programmable Search
-    key/engine fall back to the deep-dive image step's pair (same
-    account) unless the ``WEB_SEARCH_*`` overrides are set."""
+    """Resolve the provider seam from config. For ``google_cse`` only,
+    the key/engine fall back to the deep-dive image step's pair (same
+    Programmable Search account) unless the ``WEB_SEARCH_*`` overrides
+    are set; other providers use the ``WEB_SEARCH_*`` values alone, so
+    the Google key is never handed to them."""
     provider = (CONFIG.web_search_provider or "").strip() or "google_cse"
-    api_key = (CONFIG.web_search_api_key or CONFIG.image_search_api_key or "").strip()
-    engine_id = (CONFIG.web_search_cse_id or CONFIG.image_search_cse_id or "").strip()
+    api_key = (CONFIG.web_search_api_key or "").strip()
+    engine_id = (CONFIG.web_search_cse_id or "").strip()
+    if provider == "google_cse":
+        api_key = api_key or (CONFIG.image_search_api_key or "").strip()
+        engine_id = engine_id or (CONFIG.image_search_cse_id or "").strip()
     cap = CONFIG.web_search_daily_cap
     if not isinstance(cap, int):
         cap = _DEFAULT_CAP
@@ -230,10 +239,55 @@ def _google_cse_search(
     return out
 
 
-# The provider seam: config names one of these. Adding Brave/Tavily for
-# the 2027-01-01 Programmable Search retirement is one new caller here
-# (same signature) plus its config — nothing else in the module moves.
-_PROVIDERS = {"google_cse": _google_cse_search}
+def _serper_search(
+    query: str, *, api_key: str, engine_id: str, num: int
+) -> list[SearchResult]:
+    """One Serper lookup — POST to ``google.serper.dev/search`` with the
+    key in the ``X-API-KEY`` header; the ``organic`` results map onto
+    :class:`SearchResult` the way the Programmable Search items did.
+    ``engine_id`` is accepted for the shared provider signature and
+    ignored — Serper has no engine. Raises :class:`_ProviderError`."""
+    body = json.dumps({"q": query, "num": max(1, min(100, num))}).encode()
+    req = urllib.request.Request(
+        _SERPER_API_URL,
+        data=body,
+        method="POST",
+        headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        raise _ProviderError(
+            f"search provider HTTP {exc.code}", code=exc.code
+        ) from exc
+    except (urllib.error.URLError, ValueError, TimeoutError) as exc:
+        raise _ProviderError(f"search provider failed: {exc}") from exc
+    out: list[SearchResult] = []
+    for item in data.get("organic", []) or []:
+        link = str(item.get("link") or "").strip()
+        if not link:
+            continue
+        out.append(
+            SearchResult(
+                title=str(item.get("title") or "").strip(),
+                url=link,
+                snippet=str(item.get("snippet") or "").strip(),
+            )
+        )
+    return out
+
+
+# The provider seam: config names one of these. Adding another provider
+# is one new caller here (same signature) plus its config — nothing
+# else in the module moves. Staging names "serper" (founder decision
+# 2026-11-07); "google_cse" stays for environments still configured
+# for it.
+_PROVIDERS = {"google_cse": _google_cse_search, "serper": _serper_search}
+
+# Providers that need an engine id next to the key before a search may
+# run. Serper is not one of them: its key alone configures it.
+_PROVIDERS_REQUIRING_ENGINE = frozenset({"google_cse"})
 
 
 def _search_sync(
@@ -248,7 +302,11 @@ def _search_sync(
         return SearchOutcome(STATUS_ERROR, message=ERROR_MESSAGE)
     settings = _settings()
     caller = _PROVIDERS.get(settings.provider)
-    if caller is None or not settings.api_key or not settings.engine_id:
+    engine_missing = (
+        settings.provider in _PROVIDERS_REQUIRING_ENGINE
+        and not settings.engine_id
+    )
+    if caller is None or not settings.api_key or engine_missing:
         logger.warning(
             "web search unconfigured (provider=%s, key set=%s, engine set=%s)",
             settings.provider,
