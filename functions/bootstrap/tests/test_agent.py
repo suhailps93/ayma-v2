@@ -1292,6 +1292,30 @@ def test_tour_tapped_handler_drives_advance_on_the_topic_only():
     assert "advance_guided_tour" in calls[0]
 
 
+def test_tour_tapped_handler_handles_synchronous_speech_handle():
+    """In real livekit-agents, generate_reply returns a SpeechHandle (not a
+    coroutine). tour_tapped_handler must schedule without raising TypeError or
+    logging an exception."""
+    from livekit.agents.voice.agent_session import SpeechHandle
+
+    calls = []
+
+    class _FakeSession:
+        def generate_reply(self, *, instructions):
+            calls.append(instructions)
+            return SpeechHandle.create()
+
+    class _Packet:
+        def __init__(self, topic):
+            self.topic = topic
+            self.data = b'{"index": 1}'
+
+    handler = agent.tour_tapped_handler(_FakeSession())
+    handler(_Packet(agent.TOPIC_TOUR_TAPPED))
+    assert len(calls) == 1
+    assert "advance_guided_tour" in calls[0]
+
+
 # --- §F3 mid-call credit cap (founder cost bug, 2026-09-21) ----------------
 #
 # Root cause: credits were checked only once, at /bootstrap (session token
@@ -4132,6 +4156,12 @@ def test_detect_voice_command_passes_text_lane_values_through():
         "open_screen", {"screen": "voice_preference"},
     )
     assert agent.detect_voice_command("start the guided tour") == (
+        "start_guided_tour", {},
+    )
+    assert agent.detect_voice_command("Can you walk me through the app?") == (
+        "start_guided_tour", {},
+    )
+    assert agent.detect_voice_command("Can you walk me around the app?") == (
         "start_guided_tour", {},
     )
     assert agent.detect_voice_command("go back") == ("go_back", {})

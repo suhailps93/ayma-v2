@@ -86,9 +86,28 @@ def test_text_trigger_rejects_conversation(text):
         ("analysis mode", "analysis"),
         ("Analysis mode.", "analysis"),
         ("enter analysis mode", "analysis"),
+        ("go to analysis mode", "analysis"),
+        ("take me to analysis mode", "analysis"),
+        ("Can you go to analysis mode?", "analysis"),
+        ("Could you go to analysis mode?", "analysis"),
+        ("Would you take me to analysis mode?", "analysis"),
+        ("Please go to analysis mode", "analysis"),
+        ("Hey Ayma, go to analysis mode", "analysis"),
+        ("Hey Ayma, can you go to analysis mode?", "analysis"),
         ("self check", "self_check"),
+        ("Self check", "self_check"),
         ("run a self check", "self_check"),
+        ("Run a self check", "self_check"),
+        ("run the self check", "self_check"),
         ("run self-check", "self_check"),
+        ("do a self check", "self_check"),
+        ("do self check", "self_check"),
+        ("Can you run a self check?", "self_check"),
+        ("Could you run a self check?", "self_check"),
+        ("Would you run a self check?", "self_check"),
+        ("Please run a self check", "self_check"),
+        ("Hey Ayma, run a self check", "self_check"),
+        ("Hey Ayma, can you run a self check?", "self_check"),
     ],
 )
 def test_voice_triggers(text, expected):
@@ -97,7 +116,21 @@ def test_voice_triggers(text, expected):
 
 @pytest.mark.parametrize(
     "text",
-    ["", "tell me about analysis mode", "can you run a self check for me", "check yourself", "analysis"],
+    [
+        "",
+        "What is analysis mode?",
+        "what is analysis mode",
+        "Do you have a self check?",
+        "do you have a self check",
+        "tell me about analysis mode",
+        "can you run a self check for me",
+        "can you tell me what is analysis mode?",
+        "check yourself",
+        "analysis",
+        "any ordinary sentence that merely mentions the words",
+        "I was thinking about analysis mode earlier",
+        "we need to do a self check on our relationship",
+    ],
 )
 def test_voice_triggers_reject_conversation(text):
     assert am.detect_voice_trigger(text) is None

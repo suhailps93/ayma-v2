@@ -666,6 +666,10 @@ def test_fast_tap_at_the_presentation_instant_is_fresh_not_rejected():
     "give me a tour",
     "show me around",
     "walk me through the app",
+    "Can you walk me through the app?",
+    "walk me around the app",
+    "walk around the app",
+    "Can you walk me around the app?",
     "open the guided tour",
     "show me the tour",
 ])
