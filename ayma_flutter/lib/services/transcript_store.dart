@@ -33,6 +33,9 @@ class TranscriptTurn {
     this.feedbackTitle = '',
     this.feedbackBody = '',
     this.createdAt,
+    this.replySubject = '',
+    this.replySnippet = '',
+    this.replyKind = '',
   });
 
   final TurnRole role;
@@ -104,6 +107,16 @@ class TranscriptTurn {
   final String feedbackKind;
   final String feedbackTitle;
   final String feedbackBody;
+
+  /// When this turn quotes a page or an Ayma message: the subject name
+  /// (e.g. "Alex's profile", "Explore — \"hiking\"", "Ayma").
+  final String replySubject;
+
+  /// Quoted snippet / note / detail of what was replied to.
+  final String replySnippet;
+
+  /// Kind of reply: `'page'` for pinned page context, `'message'` for swipe-reply.
+  final String replyKind;
 }
 
 /// The single rolling window of conversation turns, voice and text interleaved
@@ -139,11 +152,17 @@ class TranscriptStore extends ChangeNotifier {
             {
               'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
               'text': () {
+                var s = t.text;
+                if (t.replyKind == 'message' &&
+                    t.replySubject.isNotEmpty &&
+                    t.replySnippet.isNotEmpty) {
+                  s = '[Replying to ${t.replySubject}: "${t.replySnippet}"]\n$s';
+                }
                 final hasImage = t.imageUrl != null || t.imageFile != null;
-                if (!hasImage) return t.text;
-                return t.text.isEmpty
+                if (!hasImage) return s;
+                return s.isEmpty
                     ? '[shared a photo]'
-                    : '${t.text}\n[shared a photo]';
+                    : '$s\n[shared a photo]';
               }(),
             },
       ];
@@ -157,27 +176,33 @@ class TranscriptStore extends ChangeNotifier {
     String text,
     TurnSource source, {
     String? imageUrl,
-      File? imageFile,
+    File? imageFile,
     String? audioUrl,
     File? audioFile,
-      List<String> tools = const [],
-      String? subjectImage,
-      bool capped = false,
+    List<String> tools = const [],
+    String? subjectImage,
+    bool capped = false,
     DateTime? createdAt,
+    String replySubject = '',
+    String replySnippet = '',
+    String replyKind = '',
   }) {
     final trimmed = text.trim();
     final turn = TranscriptTurn(
-        role: role,
-        text: trimmed,
-        source: source,
-        imageUrl: imageUrl,
-        imageFile: imageFile,
+      role: role,
+      text: trimmed,
+      source: source,
+      imageUrl: imageUrl,
+      imageFile: imageFile,
       audioUrl: audioUrl,
       audioFile: audioFile,
-        tools: tools,
-        subjectImage: subjectImage,
-        capped: capped,
+      tools: tools,
+      subjectImage: subjectImage,
+      capped: capped,
       createdAt: createdAt,
+      replySubject: replySubject,
+      replySnippet: replySnippet,
+      replyKind: replyKind,
     );
     if (trimmed.isEmpty &&
         imageUrl == null &&
@@ -217,6 +242,13 @@ class TranscriptStore extends ChangeNotifier {
       sharedName: turn.sharedName,
       sharedPhoto: turn.sharedPhoto,
       sharedRefId: turn.sharedRefId,
+      feedbackKind: turn.feedbackKind,
+      feedbackTitle: turn.feedbackTitle,
+      feedbackBody: turn.feedbackBody,
+      createdAt: turn.createdAt,
+      replySubject: turn.replySubject,
+      replySnippet: turn.replySnippet,
+      replyKind: turn.replyKind,
     );
     notifyListeners();
   }
@@ -261,6 +293,9 @@ class TranscriptStore extends ChangeNotifier {
       feedbackTitle: turn.feedbackTitle,
       feedbackBody: turn.feedbackBody,
       createdAt: turn.createdAt,
+      replySubject: turn.replySubject,
+      replySnippet: turn.replySnippet,
+      replyKind: turn.replyKind,
     );
     _turns[i] = updated;
     notifyListeners();

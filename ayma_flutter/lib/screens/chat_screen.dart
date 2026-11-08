@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -483,6 +484,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Timer? _highlightClearTimer;
 
   File? _pendingImage;
+
+  /// An earlier message the user swiped on to reply to — rendered as a quoted
+  /// preview above the composer and sent with that quoted context.
+  TranscriptTurn? _replyingToTurn;
+
+  void _onSwipeReply(TranscriptTurn turn) {
+    setState(() => _replyingToTurn = turn);
+    _composerFocus.requestFocus();
+  }
+
+  void _clearReply() => setState(() => _replyingToTurn = null);
 
   /// A report/person attached to the chat as an un-sent draft (from an "Ask
   /// Ayma" button that opens the chat rather than auto-sending). Rendered as a
@@ -1468,16 +1480,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         imagePath: m.audioPath,
         resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
       );
+      String text = m.text;
+      String replySubject = '';
+      String replySnippet = '';
+      String replyKind = '';
+      final replyMatch = RegExp(r'^\[Replying to ([^:]+): "(.*?)"\]\n(.*)$', dotAll: true).firstMatch(text);
+      if (replyMatch != null) {
+        replySubject = replyMatch.group(1)!;
+        replySnippet = replyMatch.group(2)!;
+        replyKind = replySubject == 'Ayma' ? 'message' : 'page';
+        text = replyMatch.group(3)!;
+      }
       turns.add(
         TranscriptTurn(
           role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
-          text: m.text,
+          text: text,
           source: audio == null ? TurnSource.text : TurnSource.voice,
           imageUrl: url,
           audioUrl: audio,
           tools: m.tools,
           subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
           createdAt: m.createdAt,
+          replySubject: replySubject,
+          replySnippet: replySnippet,
+          replyKind: replyKind,
         ),
       );
     }
@@ -2154,12 +2180,38 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _store.dropPending();
     }
 
+    final ownVoice = widget.askAymaContext != null ? _pttVoice : _voice;
+    final screenCtx = (ownVoice?.isActive ?? false) ? null : _activePageContext;
+    final replying = _replyingToTurn;
+
+    String replySubject = '';
+    String replySnippet = '';
+    String replyKind = '';
+
+    if (replying != null) {
+      replySubject = 'Ayma';
+      replySnippet = replying.text;
+      replyKind = 'message';
+    } else if (screenCtx != null) {
+      replySubject = screenCtx.label;
+      replySnippet = screenCtx.note.isNotEmpty
+          ? screenCtx.note
+          : (screenCtx.detail.isNotEmpty ? screenCtx.detail : '');
+      replyKind = 'page';
+    }
+
     final window = _store.wireTurns();
     setState(() {
       _sending = true;
       if (retry == null) {
         _composerController.clear();
         _pendingImage = null;
+        if (replying != null) {
+          _replyingToTurn = null;
+        }
+        if (screenCtx != null) {
+          _pageContext = null;
+        }
       }
     });
 
@@ -2184,6 +2236,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         message,
         TurnSource.text,
         imageFile: image,
+        replySubject: replySubject,
+        replySnippet: replySnippet,
+        replyKind: replyKind,
       );
     } else if (window.isNotEmpty &&
         window.last['role'] == 'user' &&
@@ -2236,7 +2291,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final wireMessage = message.isEmpty ? '(shared a photo)' : message;
+    final wireMessage = (replyKind == 'message' &&
+            replySubject.isNotEmpty &&
+            replySnippet.isNotEmpty)
+        ? '[Replying to $replySubject: "$replySnippet"]\n$message'
+        : (message.isEmpty ? '(shared a photo)' : message);
     _store.addPending('Thinking…');
     _backgroundedDuringSend = false;
     final knownAymaBeforeSend = _store.turns
@@ -2341,7 +2400,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final matchReportId = (askAyma?.matchReportId.isNotEmpty ?? false)
         ? askAyma!.matchReportId
         : _matchReportId;
-    final screenCtx = _activePageContext;
     // Voice-call state for this turn (founder directive 2026-11-07,
     // ledger 2cy): Ayma's text context must know whether a voice call is
     // live or just ended — without it she answered a typed "disconnect"
@@ -2355,7 +2413,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // ended (just-ended case). [_voice] is read only in plain mode: in
     // Ask-Ayma mode it must never be constructed (see dispose), and the
     // mode's own capture controller is [_pttVoice].
-    final ownVoice = widget.askAymaContext != null ? _pttVoice : _voice;
     var callState = (ownVoice?.isActive ?? false)
         ? const CallStateSnapshot.active()
         : VoiceSessionController.chatCallState();
@@ -3212,6 +3269,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 nowPlaying: _nowPlaying,
                                 initiallyFlagged: ThumbsDownStore.instance
                                     .isFlagged(t.text),
+                                onSwipeReply: (t.role == TurnRole.ayma &&
+                                        t.isFinal &&
+                                        t.text.isNotEmpty)
+                                    ? () => _onSwipeReply(t)
+                                    : null,
                                 onThumbsDown:
                                     (t.role == TurnRole.ayma &&
                                         t.isFinal &&
@@ -3338,6 +3400,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             pendingShared: _pendingShared,
                             onClearShared: () =>
                                 setState(() => _pendingShared = null),
+                            replyingToText: (!_voice.isActive &&
+                                    _replyingToTurn != null)
+                                ? _replyingToTurn!.text
+                                : null,
+                            onClearReply: _clearReply,
                             pageContextLabel:
                                 (!_voice.isActive &&
                                         (_activePageContext?.screen ?? '')
@@ -3667,6 +3734,7 @@ class _TranscriptLine extends StatefulWidget {
     this.api,
     this.initiallyFlagged = false,
     this.onThumbsDown,
+    this.onSwipeReply,
     this.clipPlayer,
     this.nowPlaying,
   });
@@ -3688,6 +3756,9 @@ class _TranscriptLine extends StatefulWidget {
 
   /// Non-null only for a finished Ayma line — fire-and-forget feedback.
   final Future<void> Function()? onThumbsDown;
+
+  /// Non-null only for a finished Ayma line — triggers swipe to reply.
+  final VoidCallback? onSwipeReply;
 
   @override
   State<_TranscriptLine> createState() => _TranscriptLineState();
@@ -3795,7 +3866,8 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     if (!isAyma) {
       // You — a right-aligned rounded bubble (Gemini style).
       final userClip = _clipRow(ac.onAccent, ac.onAccent.withValues(alpha: 0.85));
-      final showBubble = turn.text.isNotEmpty || userClip != null;
+      final hasReply = turn.replySubject.isNotEmpty;
+      final showBubble = turn.text.isNotEmpty || userClip != null || hasReply;
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Align(
@@ -3836,9 +3908,16 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                         ),
                       ),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (hasReply)
+                            _QuotedReplyCard(
+                              key: const ValueKey('quotedReplyCard'),
+                              subject: turn.replySubject,
+                              snippet: turn.replySnippet,
+                              kind: turn.replyKind,
+                            ),
                           if (userClip != null)
                             Padding(
                               padding: EdgeInsets.only(
@@ -3853,11 +3932,14 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                             ),
                           if (timeStr != null) ...[
                             const SizedBox(height: 2),
-                            Text(
-                              timeStr,
-                              style: AymaType.sans(
-                                size: 10.5,
-                                color: ac.onAccent.withValues(alpha: 0.72),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                timeStr,
+                                style: AymaType.sans(
+                                  size: 10.5,
+                                  color: ac.onAccent.withValues(alpha: 0.72),
+                                ),
                               ),
                             ),
                           ],
@@ -3905,7 +3987,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     // row for a finished turn.
     final aymaClip = turn.isFinal ? _clipRow(ac.accent, ac.fgMute) : null;
 
-    return Opacity(
+    final aymaTurn = Opacity(
       opacity: widget.latest || !turn.isFinal ? 1 : 0.62,
       child: Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 12),
@@ -4092,6 +4174,57 @@ class _TranscriptLineState extends State<_TranscriptLine> {
         ),
       ),
     );
+
+    if (widget.onSwipeReply != null) {
+      return Dismissible(
+        key: ValueKey('swipe-reply-${turn.hashCode}-${turn.createdAt?.millisecondsSinceEpoch ?? turn.text.hashCode}'),
+        direction: DismissDirection.horizontal,
+        dismissThresholds: const {
+          DismissDirection.horizontal: 0.2,
+          DismissDirection.startToEnd: 0.2,
+          DismissDirection.endToStart: 0.2,
+        },
+        confirmDismiss: (_) async {
+          HapticFeedback.lightImpact();
+          widget.onSwipeReply?.call();
+          return false;
+        },
+        background: Container(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.only(left: 16),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: ac.accentFaint,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.reply_rounded,
+              color: ac.accent,
+              size: 18,
+            ),
+          ),
+        ),
+        secondaryBackground: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 16),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: ac.accentFaint,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.reply_rounded,
+              color: ac.accent,
+              size: 18,
+            ),
+          ),
+        ),
+        child: aymaTurn,
+      );
+    }
+    return aymaTurn;
   }
 }
 
@@ -4370,6 +4503,85 @@ class _SharedRefCard extends StatelessWidget {
   }
 }
 
+/// A quoted reply card rendered above the user's message inside the bubble
+/// (WhatsApp style). Used for pinned page context (naming the real subject)
+/// or an earlier Ayma message quoted via swipe-to-reply.
+class _QuotedReplyCard extends StatelessWidget {
+  const _QuotedReplyCard({
+    super.key,
+    required this.subject,
+    required this.snippet,
+    required this.kind,
+  });
+
+  final String subject;
+  final String snippet;
+  final String kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final isPage = kind == 'page';
+    final icon = isPage ? Icons.push_pin_outlined : Icons.reply_rounded;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(8, 6, 10, 6),
+      decoration: BoxDecoration(
+        color: ac.onAccent.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: ac.onAccent,
+            width: 3.5,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 13,
+                color: ac.onAccent.withValues(alpha: 0.9),
+              ),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AymaType.sans(
+                    size: 12,
+                    color: ac.onAccent,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (snippet.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              snippet,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AymaType.sans(
+                size: 11,
+                color: ac.onAccent.withValues(alpha: 0.8),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// A face/body report rendered inline under an Ayma turn (§ report cards).
 /// Fetches the stored report + its analysed photo; renders nothing at all if
 /// there's no usable report to show. Tapping opens the same report full-screen.
@@ -4571,6 +4783,8 @@ class _Composer extends StatelessWidget {
     required this.onClearImage,
     required this.pendingShared,
     required this.onClearShared,
+    this.replyingToText,
+    this.onClearReply,
     this.pageContextLabel,
     required this.onClearPageContext,
     required this.voicePhase,
@@ -4605,6 +4819,10 @@ class _Composer extends StatelessWidget {
   final VoidCallback onClearImage;
   final _SharedDraft? pendingShared;
   final VoidCallback onClearShared;
+
+  /// The earlier Ayma message text being replied to via swipe; null when none.
+  final String? replyingToText;
+  final VoidCallback? onClearReply;
 
   /// The "you were looking at…" chip label (see [ChatScreen.pageContext] /
   /// `_ChatScreenState._pageContext`) — null hides the chip entirely.
@@ -4703,6 +4921,76 @@ class _Composer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (replyingToText != null && !voiceActive)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  child: Container(
+                    key: const ValueKey('composerReplyPreview'),
+                    padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+                    decoration: BoxDecoration(
+                      color: ac.bgElev,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: ac.lineSoft, width: 0.5),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 3,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: ac.accent,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.reply_rounded,
+                          size: 16,
+                          color: ac.accent,
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Replying to Ayma',
+                                style: AymaType.sans(
+                                  size: 11,
+                                  color: ac.accent,
+                                  weight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                replyingToText!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AymaType.sans(
+                                  size: 12,
+                                  color: ac.fgDim,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          onPressed: onClearReply,
+                          iconSize: 16,
+                          icon: const Icon(Icons.close),
+                          color: ac.fgMute,
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Cancel reply',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (pageContextLabel != null && !voiceActive)
               Align(
                 alignment: Alignment.centerLeft,
