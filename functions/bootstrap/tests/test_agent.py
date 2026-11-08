@@ -3322,6 +3322,91 @@ def test_relay_cascade_usage_meters_llm_turns(monkeypatch):
     assert recorded["session_id"] == "s-practice"
 
 
+def test_relay_cascade_usage_reads_model_from_llm_metrics_event(monkeypatch):
+    import token_ledger
+    from livekit.agents.metrics import LLMMetrics
+
+    recorded: dict = {}
+
+    def _fake_add(uid, feature, tokens, **kwargs):
+        recorded.update(
+            uid=uid, feature=feature, tokens=tokens,
+            model=kwargs.get("model"), session_id=kwargs.get("session_id"),
+        )
+
+    monkeypatch.setattr(token_ledger, "add", _fake_add)
+
+    handlers: dict = {}
+
+    class _FakeSession:
+        def on(self, name):
+            def _reg(fn):
+                handlers[name] = fn
+                return fn
+            return _reg
+
+    agent.relay_cascade_usage(
+        _FakeSession(), "viewer_uid", session_id="s-main", model="fallback-model",
+    )
+
+    class _Ev:
+        metrics = LLMMetrics(
+            type="llm_metrics", label="inference", request_id="r1",
+            timestamp=0.0, duration=0.1, ttft=0.05, cancelled=False,
+            completion_tokens=12, prompt_tokens=30, prompt_cached_tokens=0,
+            total_tokens=42, tokens_per_second=10.0,
+            metadata={"model_name": "google/gemini-2.5-flash"},
+        )
+
+    handlers["metrics_collected"](_Ev())
+    assert recorded["feature"] == token_ledger.FEATURE_VOICE
+    assert recorded["tokens"] == 42
+    assert recorded["model"] == "google/gemini-2.5-flash"
+    assert token_ledger.provider_for(recorded["feature"], recorded["model"]) == "livekit_inference"
+
+
+def test_relay_cascade_usage_practice_meta_attributes_to_meta(monkeypatch):
+    import token_ledger
+    from livekit.agents.metrics import LLMMetrics
+
+    recorded: dict = {}
+
+    def _fake_add(uid, feature, tokens, **kwargs):
+        recorded.update(
+            uid=uid, feature=feature, tokens=tokens,
+            model=kwargs.get("model"), session_id=kwargs.get("session_id"),
+        )
+
+    monkeypatch.setattr(token_ledger, "add", _fake_add)
+
+    handlers: dict = {}
+
+    class _FakeSession:
+        def on(self, name):
+            def _reg(fn):
+                handlers[name] = fn
+                return fn
+            return _reg
+
+    agent.relay_cascade_usage(
+        _FakeSession(), "viewer_uid", session_id="s-practice", model=CONFIG.meta_chat_model,
+    )
+
+    class _Ev:
+        metrics = LLMMetrics(
+            type="llm_metrics", label="meta", request_id="r1",
+            timestamp=0.0, duration=0.1, ttft=0.05, cancelled=False,
+            completion_tokens=10, prompt_tokens=20, prompt_cached_tokens=0,
+            total_tokens=30, tokens_per_second=10.0,
+        )
+
+    handlers["metrics_collected"](_Ev())
+    assert recorded["feature"] == token_ledger.FEATURE_VOICE
+    assert recorded["tokens"] == 30
+    assert recorded["model"] == CONFIG.meta_chat_model
+    assert token_ledger.provider_for(recorded["feature"], recorded["model"]) == "meta"
+
+
 # --- MAIN voice provider switch (LLM_PROVIDER_VOICE_MAIN, default gemini) --- #
 
 
@@ -3379,6 +3464,7 @@ def _drive_main_run_session(
     async def _fake_cascade_start(ctx, s, session, **k):
         calls["started"] = "cascade"
         calls["cascade_session"] = session
+        calls["brain_model"] = k.get("brain_model")
 
     async def _fake_gemini_start(ctx, s, **k):
         calls["started"] = "gemini"
@@ -3474,6 +3560,53 @@ def test_start_main_cascade_session_meters_and_opens(monkeypatch):
     assert used["opened"] is True
 
 
+def test_start_main_cascade_session_meters_gemini_cascade_model(monkeypatch):
+    """The main cascade start meters the actual Gemini brain model instead of
+    hardcoding Meta."""
+    used: dict = {}
+
+    def _fake_cascade_usage(session, uid, *, session_id="", model="",
+                            on_credits_exhausted=None):
+        used["model"] = model
+        used["cap"] = on_credits_exhausted is not None
+
+    monkeypatch.setattr(agent, "relay_cascade_usage", _fake_cascade_usage)
+    for name in (
+        "relay_transcripts", "relay_agent_state", "relay_mute_control",
+        "watch_for_idle", "_session_tools", "relay_voice_commands",
+    ):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+    async def _fake_open(*_a, **_k):
+        used["opened"] = True
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    monkeypatch.setattr(agent, "Agent", lambda **k: object())
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    session = _FakePracticeSession()
+    seed = agent.RoomSeed(
+        system_prompt="sys", uid="u1", session_id="s1",
+        brain_id="google/gemini-2.5-flash",
+    )
+
+    asyncio.run(
+        agent._start_main_cascade_session(
+            _practice_ctx(), seed, session, flush=_FakeFlush(), window=[],
+        )
+    )
+
+    assert session.started is True
+    assert used["model"] == "google/gemini-2.5-flash"
+    assert used["cap"] is True
+
+
 def test_voice_stack_seed_cascade_overrides_default_flag(monkeypatch):
     """A per-user cascade selection (§13.9) builds the cascade with the user's
     component ids even though the deploy default (gemini) would be realtime."""
@@ -3484,6 +3617,7 @@ def test_voice_stack_seed_cascade_overrides_default_flag(monkeypatch):
     )
     calls = _drive_main_run_session(monkeypatch, "gemini", seed=seed)
     assert calls["started"] == "cascade"
+    assert calls["brain_model"] == "google/gemini-3.7-flash"
     # build_cascade_session(brain, stt, tts, tts_voice, voice_language)
     assert calls["cascade_args"][:4] == (
         "google/gemini-3.7-flash", "deepgram/nova-3", "cartesia/sonic-3", "Olivia",
