@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../legal/biometric_consent_text.dart';
@@ -148,10 +147,36 @@ class _BiometricConsentPanelState extends State<BiometricConsentPanel> {
       decoration: TextDecoration.underline,
       fontWeight: FontWeight.w600,
     );
-    TextSpan link(String text, VoidCallback onTap) => TextSpan(
-          text: text,
-          style: linkStyle,
-          recognizer: TapGestureRecognizer()..onTap = onTap,
+    // Each legal link gets its OWN tap region: a real widget with padding
+    // around the word and a ~48dp-tall hit area, instead of a bare text
+    // span. A span's hit area is only its glyphs, so a tap a few pixels off
+    // the word fell through to the row and toggled the checkbox instead of
+    // opening the page (Scout NOTE 141), and a tap near a span boundary
+    // could fire the neighbouring link. The chip's own gesture wins over
+    // the row's, so a link tap opens its page and never changes consent;
+    // taps elsewhere on the row still toggle the checkbox, as before.
+    InlineSpan link({
+      required Key key,
+      required String text,
+      required VoidCallback onTap,
+    }) =>
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Semantics(
+            button: true,
+            label: text,
+            onTap: onTap,
+            child: GestureDetector(
+              key: key,
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 15),
+                child: Text(text, style: linkStyle),
+              ),
+            ),
+          ),
         );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -177,11 +202,19 @@ class _BiometricConsentPanelState extends State<BiometricConsentPanel> {
               text: "I'm 18 or older and I agree to the updated ",
               style: base,
               children: [
-                link('Terms', () => LegalLinks.openTerms(context)),
+                link(
+                  key: const Key('consent_terms_link'),
+                  text: 'Terms',
+                  onTap: () => LegalLinks.openTerms(context),
+                ),
                 const TextSpan(
                   text: ' (including use of my data for advertising) and ',
                 ),
-                link('Privacy Policy', () => LegalLinks.openPrivacy(context)),
+                link(
+                  key: const Key('consent_privacy_link'),
+                  text: 'Privacy Policy',
+                  onTap: () => LegalLinks.openPrivacy(context),
+                ),
                 const TextSpan(text: '.'),
               ],
             ),
