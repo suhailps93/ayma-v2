@@ -573,16 +573,16 @@ class _SignInScreenState extends State<SignInScreen> {
                     Text(
                       'AYMA',
                       textAlign: TextAlign.center,
-                      style: AymaType.mono(
-                        size: 12,
-                        color: ac.fgMute,
-                      ).copyWith(letterSpacing: 6),
+                      style: AymaType.serif(
+                        size: 40,
+                        color: ac.fg,
+                      ).copyWith(letterSpacing: 8),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Text(
                       'Your AI matchmaker',
                       textAlign: TextAlign.center,
-                      style: AymaType.serif(size: 26, color: ac.fg),
+                      style: AymaType.serif(size: 20, italic: true, color: ac.fg),
                     ),
                     const SizedBox(height: 24),
                     _ConsentBoxes(
