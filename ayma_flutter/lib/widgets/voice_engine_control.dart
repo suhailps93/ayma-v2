@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import 'ayma_toast.dart';
 import 'ayma_wing_loader.dart';
+import 'picker_info_label.dart';
 
 /// The voice STACK picker (ARCHITECTURE §13.9). Reads `GET /voice/engines` and
 /// lets the user choose:
@@ -533,7 +534,15 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       key: const ValueKey('voice-engine-control'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label(ac, 'MODE'),
+        const PickerInfoLabel(
+          label: 'MODE',
+          infoKey: 'picker-info-mode',
+          title: 'Mode',
+          explanation:
+              'How a voice call runs. Realtime is one model that hears '
+              'you and speaks back directly. Cascade splits the job: one '
+              'service listens, your Brain thinks, another one speaks.',
+        ),
         _dropdown<String>(
           ac,
           value: sel.mode,
@@ -567,17 +576,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             ),
           ),
         ],
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Text(
-            cat.source == 'livekit'
-                ? 'Options are pulled live from LiveKit Inference. A new '
-                      'voice starts on your next call.'
-                : 'Showing the built-in option list (live catalog '
-                      'unavailable). A new voice starts on your next call.',
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-          ),
-        ),
       ],
     );
   }
@@ -588,7 +586,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     VoiceSelection sel,
   ) {
     return [
-      _label(ac, 'REALTIME MODEL'),
+      const PickerInfoLabel(
+        label: 'REALTIME MODEL',
+        infoKey: 'picker-info-realtime-model',
+        title: 'Realtime model',
+        explanation:
+            'The model that hears you and talks back on a realtime '
+            'call \u2014 listening and speaking in one.',
+      ),
       Builder(
         builder: (_) {
           // Same rule as the cascade pickers: hide realtime models the user
@@ -631,7 +636,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
   ) {
     // No BRAIN (LLM) dropdown: the one Brain above is the cascade LLM too.
     return [
-      _label(ac, 'SPEECH-TO-TEXT'),
+      const PickerInfoLabel(
+        label: 'SPEECH-TO-TEXT',
+        infoKey: 'picker-info-stt',
+        title: 'Speech-to-text',
+        explanation:
+            'The service that turns your voice into words for the '
+            'Brain to read.',
+      ),
       _componentDropdown(
         ac,
         cat.stt,
@@ -639,7 +651,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         (v) => setState(() => _sel = sel.copyWith(sttId: v)),
       ),
       const SizedBox(height: 12),
-      _label(ac, 'TEXT-TO-SPEECH'),
+      const PickerInfoLabel(
+        label: 'TEXT-TO-SPEECH',
+        infoKey: 'picker-info-tts',
+        title: 'Text-to-speech',
+        explanation:
+            'The service that turns Ayma\u2019s words into the speech '
+            'you hear.',
+      ),
       _componentDropdown(ac, cat.tts, sel.ttsId, (v) {
         setState(() {
           _sel = sel.copyWith(ttsId: v);
@@ -660,7 +679,12 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label(ac, 'VOICE'),
+        const PickerInfoLabel(
+          label: 'VOICE',
+          infoKey: 'picker-info-voice',
+          title: 'Voice',
+          explanation: 'How Ayma sounds when she speaks on a call.',
+        ),
         Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -730,7 +754,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           ),
         ],
         const SizedBox(height: 12),
-        _label(ac, 'LANGUAGE'),
+        const PickerInfoLabel(
+          label: 'LANGUAGE',
+          infoKey: 'picker-info-language',
+          title: 'Language',
+          explanation:
+              'The language Ayma listens and speaks in on a call. She '
+              'still follows you if you switch languages mid-chat.',
+        ),
         _dropdown<String>(
           ac,
           value: langs.any((l) => l.code == sel.languageCode)
@@ -768,7 +799,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label(ac, 'ACCENT'),
+        const PickerInfoLabel(
+          label: 'ACCENT',
+          infoKey: 'picker-info-accent',
+          title: 'Accent',
+          explanation:
+              'Type how you want her to sound \u2014 Ayma speaks with '
+              'this accent from the first word of every call.',
+        ),
         TextField(
           key: const ValueKey('voice-accent-field'),
           controller: _accentCtrl,
@@ -797,11 +835,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
               borderSide: BorderSide(color: ac.lineSoft),
             ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Ayma speaks with this accent from the first word of every call.',
-          style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
       ],
     );
@@ -835,17 +868,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       onChanged: shown.isEmpty ? null : onChanged,
     );
   }
-
-  Widget _label(AymaTokens ac, String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Text(
-      text,
-      style: AymaType.mono(
-        size: 10,
-        color: ac.fgMute,
-      ).copyWith(letterSpacing: 1.5),
-    ),
-  );
 
   Widget _dropdown<T>(
     AymaTokens ac, {
