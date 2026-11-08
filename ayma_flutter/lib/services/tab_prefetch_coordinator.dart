@@ -93,6 +93,15 @@ class TabPrefetchCoordinator {
     return out;
   }
 
+  /// Discards any warmed Explore page and mini-profiles. Called on sign-out /
+  /// account switch (ghost-header teardown, R2-C6/R2-C7) so a previous
+  /// account's prefetched tabs never paint on the next account's Frame 1.
+  void clear() {
+    _warmExplore = null;
+    _warmExploreAt = null;
+    _warmMinis.clear();
+  }
+
   @visibleForTesting
   void debugSeed({ExplorePage? explore, Map<String, MiniProfile>? minis}) {
     _warmExplore = explore;

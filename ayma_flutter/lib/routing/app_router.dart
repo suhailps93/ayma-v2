@@ -7,6 +7,7 @@ import '../features/date_sim/date_sim_screen.dart';
 import '../features/practice_date/practice_debrief_screen.dart';
 import '../features/practice_date/practice_screen.dart';
 import '../services/api_client.dart';
+import '../services/auth_session_state.dart';
 import '../services/connection_heartbeat.dart';
 import '../services/deep_link_queue.dart';
 import '../services/meta_integrations.dart';
@@ -132,8 +133,13 @@ final appRouter = GoRouter(
   // Sign-in gate (§3.3): unauthenticated users can only reach the sign-in,
   // splash, terms and recovery screens; everything else bounces to sign-in.
   redirect: (context, state) {
+    // Read the router-facing [AuthSessionState] first (updated synchronously by
+    // the auth listener in main.dart), falling back to FirebaseAuth so the gate
+    // is correct even before the first listener tick. AuthSessionState is a pure
+    // ChangeNotifier, so this stays safe in Firebase-less test suites.
     final user = FirebaseAuth.instance.currentUser;
-    final signedIn = user != null && !user.isAnonymous;
+    final signedIn = AuthSessionState.instance.signedIn ||
+        (user != null && !user.isAnonymous);
     final loc = state.matchedLocation;
     const open = {
       SignInScreen.path,
@@ -171,6 +177,7 @@ final appRouter = GoRouter(
   refreshListenable: Listenable.merge([
     BiometricConsentState.instance,
     RecoveryRequiredState.instance,
+    AuthSessionState.instance,
   ]),
   routes: [
     GoRoute(

@@ -10,13 +10,13 @@ import 'package:logging/logging.dart';
 import 'core/app_recovery.dart';
 import 'core/dag/launch_intent_resolver.dart';
 import 'core/dag/startup_nodes.dart';
+import 'core/session_teardown.dart';
 import 'routing/app_router.dart';
 import 'services/accent_color_controller.dart';
 import 'services/auth_service.dart';
-import 'services/biometric_consent.dart';
+import 'services/auth_session_state.dart';
 import 'services/deep_link_queue.dart';
 import 'services/push_service.dart';
-import 'services/report_cache.dart';
 import 'services/revenuecat_service.dart';
 import 'services/theme_controller.dart';
 import 'services/ui_stall_watchdog.dart';
@@ -71,18 +71,27 @@ Future<void> main() async {
   String? lastKnownUid;
   FirebaseAuth.instance.authStateChanges().listen((user) {
     if (user == null) {
+      // Only tear down when a real session actually ended. On cold start
+      // `lastKnownUid` is null (the initial settling tick before KeyStore
+      // token decryption finishes), so legitimate users are never stranded on
+      // SignIn — see ghost-header spec §8.1. [teardownSession] handles the
+      // per-account gate/cache/RevenueCat clears that used to live here.
       if (lastKnownUid != null) {
-        unawaited(ReportCache.instance.clearForSignOut());
+        teardownSession(isSwitch: false);
       }
       lastKnownUid = null;
-      // Drop the per-account gates so a signed-out session never carries a
-      // stale "recovery/consent required" into the next sign-in (B9).
-      RecoveryRequiredState.instance.clear();
-      BiometricConsentState.instance.clear();
-      unawaited(RevenueCatService.instance.logOut());
+      AuthSessionState.instance.clear();
       AuthService.instance.notifyAuthSessionRestored(null);
     } else {
+      // A different account signed in while one was already active: tear the
+      // previous account's nav stack and singletons down before binding the
+      // new session (ghost-header spec §5.1).
+      final isSwitch = lastKnownUid != null && lastKnownUid != user.uid;
+      if (isSwitch) {
+        teardownSession(isSwitch: true);
+      }
       lastKnownUid = user.uid;
+      AuthSessionState.instance.update(signedIn: true, uid: user.uid);
       AuthService.instance.notifyAuthSessionRestored(user);
       unawaited(RevenueCatService.instance.logIn(user.uid));
       unawaited(push.syncToken());

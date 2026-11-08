@@ -31,6 +31,11 @@ class MatchReportCache {
   /// Drops the cached report for [matchId] (used by tests).
   void clear(String matchId) => _byId.remove(matchId);
 
+  /// Empties the whole cache on sign-out / account switch so one account's
+  /// opened match / compatibility reports never surface for the next account
+  /// (ghost-header teardown, R2-C6/R2-C7).
+  void clearAll() => _byId.clear();
+
   /// Empties the whole cache — for test isolation between cases that reuse a
   /// match id.
   @visibleForTesting

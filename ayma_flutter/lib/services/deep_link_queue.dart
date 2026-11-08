@@ -35,6 +35,13 @@ class DeepLinkQueue {
     await _navigationSettledCompleter.future;
   }
 
+  /// Drops any intent stashed for post-auth drain, so a link queued by a
+  /// signed-out account never drains into the next account (ghost-header
+  /// teardown, R2-C6/R2-C7). Leaves navigation-settled state untouched.
+  void clearPendingIntent() {
+    _pendingPostAuthIntent = null;
+  }
+
   @visibleForTesting
   void resetForTest() {
     _navigationSettledCompleter = Completer<void>();
