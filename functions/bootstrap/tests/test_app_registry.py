@@ -496,6 +496,8 @@ def test_settings_layout_matches_the_shipped_ui():
     assert dests["accent_color"]["found_on"] == "appearance_settings"
     assert dests["delete_account"]["found_on"] == "privacy_settings"
     assert dests["biometric_consent"]["found_on"] == "privacy_settings"
+    assert dests["terms"]["found_on"] == "privacy_settings"
+    assert dests["privacy"]["found_on"] == "privacy_settings"
     assert dests["voice_preference"]["found_on"] == "settings"
     assert dests["connect_agent"]["found_on"] == "settings"
 

@@ -269,7 +269,6 @@ and also `UI`:
 | Plan | `credits` |
 | Invite friends | `invite_friends` |
 | Send feedback | `feedback` |
-| Terms of Service / Privacy Policy | `terms` / `privacy` |
 | Sign out | COVERED `account_action sign_out` (explicit confirmation first; never via `ui_action`) |
 
 ## 12. Complete profile (`/complete-profile`)
@@ -351,6 +350,8 @@ and also `UI`:
 | Notification preferences row | Open notification prefs | COVERED `open_screen notification_settings` |
 | Face verified / Verify your face (in Privacy) | Start face verification | `UI` for entry; the selfie + consent are the user's |
 | Face matching consent row (in Privacy) | Open consent settings | COVERED `open_screen biometric_consent` (page only — withdrawing is `EXCLUDED`-class user-only) |
+| Terms of Service row (in Privacy) | Open Terms | COVERED `open_screen terms` |
+| Privacy Policy row (in Privacy) | Open Privacy Policy | COVERED `open_screen privacy` |
 | "How to use Ayma" / replay tour row (in Appearance) | Start the guided tour | COVERED `start_guided_tour` |
 | Theme (in Appearance) | Light/dark/system | COVERED `app_action` theme commands |
 | Build stamp (×7 taps) | Unlock the developer panel | `unavailable` by design (registry says how the user does it) |

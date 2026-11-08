@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/appearance_settings_screen.dart';
 import 'package:ayma_flutter/screens/privacy_settings_screen.dart';
 import 'package:ayma_flutter/screens/settings_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/legal_links.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -150,6 +151,8 @@ void main() {
       'Verify your face',
       'Face verified',
       'Face matching consent',
+      'Terms of Service',
+      'Privacy Policy',
       'Wipe what Ayma has learned',
       'Delete account',
       'Ayma’s settings',
@@ -202,6 +205,8 @@ void main() {
         'AI Avatar',
         'Verify your face',
         'Face matching consent',
+        'Terms of Service',
+        'Privacy Policy',
         'Wipe what Ayma has learned',
         'Delete account',
       ],
@@ -292,5 +297,42 @@ void main() {
     await tester.tap(find.text('Privacy'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Ayma’s settings'), findsNothing);
+  });
+
+  testWidgets(
+      'Terms of Service and Privacy Policy rows live inside Privacy and '
+      'open the hosted pages directly in the browser with no middle screen',
+      (tester) async {
+    final launched = <Uri>[];
+    LegalLinks.setLauncherForTesting((url) async {
+      launched.add(url);
+      return true;
+    });
+    addTearDown(() => LegalLinks.setLauncherForTesting(null));
+
+    await pumpRouted(tester);
+    await tester.tap(find.text('Privacy'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Terms of Service'), findsOneWidget);
+    expect(
+        find.text('How Ayma uses your photos and public information'),
+        findsOneWidget);
+    expect(find.text('Privacy Policy'), findsOneWidget);
+    expect(find.text('What we collect, why, and your choices'), findsOneWidget);
+
+    await tester.tap(find.text('Terms of Service'));
+    await tester.pumpAndSettle();
+    expect(launched, [Uri.parse(LegalLinks.termsUrl)]);
+    expect(find.byType(PrivacySettingsScreen), findsOneWidget);
+
+    await tester.tap(find.text('Privacy Policy'));
+    await tester.pumpAndSettle();
+    expect(launched, [
+      Uri.parse(LegalLinks.termsUrl),
+      Uri.parse(LegalLinks.privacyUrl),
+    ]);
+    expect(find.byType(PrivacySettingsScreen), findsOneWidget);
+    expect(find.textContaining('Opening the'), findsNothing);
   });
 }

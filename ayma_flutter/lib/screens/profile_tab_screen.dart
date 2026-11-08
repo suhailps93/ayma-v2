@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
-import '../services/legal_links.dart';
 import '../services/meta_integrations.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
@@ -154,18 +153,6 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Send feedback',
             hint: 'Report a bug or suggest a feature',
             onTap: () => context.push(FeedbackScreen.path),
-          ),
-          _Item(
-            icon: Icons.description_outlined,
-            label: 'Terms of Service',
-            hint: 'How Ayma uses your photos and public information',
-            onTap: () => LegalLinks.openTerms(context),
-          ),
-          _Item(
-            icon: Icons.privacy_tip_outlined,
-            label: 'Privacy Policy',
-            hint: 'What we collect, why, and your choices',
-            onTap: () => LegalLinks.openPrivacy(context),
           ),
           _Item(
             icon: Icons.logout,
