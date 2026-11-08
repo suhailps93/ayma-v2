@@ -329,7 +329,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _bubbleDone = false;
   String _bubbleFillText = '';
   int _bubbleFillRevision = 0;
-  bool _bubbleDictating = false;
   final Set<TranscriptTurn> _bubbleScanned = {};
 
   /// Auto-screenshot for the bubble: [_appShotKey] bounds the live
@@ -2665,7 +2664,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           setState(() {
             _bubbleFillText = text;
             _bubbleFillRevision++;
-            _bubbleDictating = false;
           });
         }
         continue;
@@ -2732,26 +2730,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _bubbleShotFile = shotFile;
       _bubbleShotPath = shotPath;
       _bubbleShotFailed = shotFailed;
-      _bubbleDictating = false;
     });
-  }
-
-  /// The bubble's Dictate button: reuse the chat's existing voice
-  /// machinery. In a live call the user just talks — the finalized
-  /// segment mirrors into the card. Otherwise tapping starts the call
-  /// the same way the composer mic does; the words land in the card
-  /// via the same mirror, never as a spoken interruption.
-  void _dictateForBubble() {
-    if (_voice.isActive) {
-      AymaToast.show(
-        context,
-        'Just say your feedback — it lands in the card.',
-      );
-      setState(() => _bubbleDictating = true);
-      return;
-    }
-    setState(() => _bubbleDictating = true);
-    unawaited(_toggleVoice());
   }
 
   Future<void> _getStarted() async {
@@ -3229,11 +3208,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     screenshotFile: _bubbleShotFile,
                                     screenshotPath: _bubbleShotPath,
                                     screenshotFailed: _bubbleShotFailed,
-                                    onDictate: _dictateForBubble,
-                                    dictating: _bubbleDictating,
                                     onDismiss: () => setState(() {
                                       _bubble = null;
-                                      _bubbleDictating = false;
                                       _bubbleShotFile = null;
                                       _bubbleShotPath = null;
                                       _bubbleShotFailed = false;
