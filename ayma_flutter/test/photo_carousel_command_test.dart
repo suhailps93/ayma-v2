@@ -164,6 +164,59 @@ void main() {
       expect(fake.page, 1);
     });
 
+    test('runCarouselPhotoConfirmed keeps a landed move a success',
+        () async {
+      final fake = _FakeCarousel(count: 3);
+      final svc = AppCommandService(photoCarousel: _registryWith(fake));
+      final out = await svc.runCarouselPhotoConfirmed({
+        'action': 'carousel_photo',
+        'op': 'goto',
+        'index': 3,
+      });
+      expect(out.ok, isTrue);
+      expect(out.currentPhoto, 3);
+      expect(fake.page, 2);
+    });
+
+    test('runCarouselPhotoConfirmed rewrites a move that never landed',
+        () async {
+      // A carousel whose controller is detached: animateToPage is
+      // called but the page never changes — the shape the header hits
+      // when its PageView has no clients. The raw result claims the
+      // new photo; the confirmed result must not.
+      var page = 0;
+      final registry = PhotoCarouselRegistry();
+      registry.register(PhotoCarouselHandle(
+        photoCount: () => 3,
+        currentPage: () => page,
+        animateToPage: (_) {},
+      ));
+      final svc = AppCommandService(photoCarousel: registry);
+      final out = await svc.runCarouselPhotoConfirmed({
+        'action': 'carousel_photo',
+        'op': 'goto',
+        'index': 2,
+      });
+      expect(out.ok, isFalse);
+      expect(out.reason, 'not_landed');
+      expect(out.photoCount, 3);
+      expect(out.currentPhoto, 1); // the photo really still showing
+    });
+
+    test('runCarouselPhotoConfirmed passes failures through untouched',
+        () async {
+      final fake = _FakeCarousel(count: 3);
+      final svc = AppCommandService(photoCarousel: _registryWith(fake));
+      final out = await svc.runCarouselPhotoConfirmed({
+        'action': 'carousel_photo',
+        'op': 'goto',
+        'index': 5,
+      });
+      expect(out.ok, isFalse);
+      expect(out.reason, 'out_of_range');
+      expect(out.photoCount, 3);
+    });
+
     test('handleCommand reports the same outcome as a bool', () {
       final fake = _FakeCarousel(count: 2);
       final svc = AppCommandService(photoCarousel: _registryWith(fake));
@@ -232,9 +285,16 @@ void main() {
         'id': 'cmd-photo-2',
         'ts': Timestamp.now(),
       });
-      await pumpEventQueue();
 
-      final ack2 = (await ack().get()).data();
+      // A landed move acks only after the landing confirmation has
+      // re-read the carousel (~500ms), so poll for this command's ack.
+      Map<String, dynamic>? ack2;
+      for (var i = 0; i < 40; i++) {
+        await pumpEventQueue();
+        ack2 = (await ack().get()).data();
+        if (ack2?['id'] == 'cmd-photo-2') break;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
       expect(ack2?['id'], 'cmd-photo-2');
       expect(ack2?['ok'], isTrue);
       expect(ack2?['photo_count'], 3);

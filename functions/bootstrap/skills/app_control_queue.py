@@ -88,7 +88,34 @@ async def _await_ack(
     on timeout. ``timeout`` overrides the default ``_ACK_TIMEOUT_SECONDS`` for
     a slower command (a scroll-to-end op repeats on the client for ~20s before
     it can ack). Firestore reads run in a thread so the LiveKit agent's event
-    loop (live audio) is never blocked by a poll."""
+    loop (live audio) is never blocked by a poll.
+
+    With the default window (``timeout=None``) a silent first window is
+    followed by ONE re-wait of the same length on the SAME command id before
+    giving up: the client's command watch can be down for ~10s while it
+    resubscribes after a stream error, or while the phone recovers from the
+    network churn around a dropped voice call, and the queued command stays
+    executable client-side for 90s, so its late ack still lands on this id.
+    This is the ONE ack wait every app command shares — the navigation tools
+    above, and the self-check's nav checks, which await through this helper
+    with no window of their own — so a real turn and a self-check judge a
+    navigation by exactly the same patience (founder, 2026-11-07: a
+    self-check passed every nav minutes before a real "open Explore" ask
+    failed, because the check privately waited twice as long as the tool).
+    Callers that pass an explicit timeout keep exactly that single window.
+    """
+    windows = 2 if timeout is None else 1
+    for _ in range(windows):
+        ack = await _await_ack_window(db, uid, cmd_id, timeout)
+        if ack is not None:
+            return ack
+    return None
+
+
+async def _await_ack_window(
+    db, uid: str, cmd_id: str, timeout: float | None
+) -> dict | None:
+    """One bounded poll window for ``cmd_id``'s ack (see :func:`_await_ack`)."""
     from skills import app_control  # deferred: the facade owns the knobs
 
     wait = app_control._ACK_TIMEOUT_SECONDS if timeout is None else timeout
