@@ -16,11 +16,9 @@ import 'ayma_wing_loader.dart';
 /// feedback" or when Ayma's handling frustrated them (see
 /// `feedback_bubble.dart` for the triggers and caps). Unlike the drafted
 /// `FeedbackDraftCard` — which confirms text Ayma already summarised —
-/// this bubble ASKS: an always-editable text field, a Dictate button
-/// (the caller wires it to the chat's voice machinery; whatever the
-/// user says in conversation while the bubble is up is also mirrored
-/// into the field via [fillText]/[fillRevision]), kind chips, Submit
-/// and Dismiss.
+/// this bubble ASKS: an always-editable text field, kind chips, Submit
+/// and Dismiss (whatever the user says in conversation while the bubble
+/// is up is also mirrored into the field via [fillText]/[fillRevision]).
 ///
 /// Nothing is filed until Submit, and then only through the existing
 /// product-feedback path: `POST /feedback/submit`, `source: 'chat_card'`
@@ -35,8 +33,6 @@ class FeedbackBubbleCard extends StatefulWidget {
     this.fillRevision = 0,
     this.screen = 'chat',
     this.api,
-    this.onDictate,
-    this.dictating = false,
     this.screenshotFile,
     this.screenshotPath,
     this.screenshotFailed = false,
@@ -59,15 +55,6 @@ class FeedbackBubbleCard extends StatefulWidget {
 
   final String screen;
   final ApiClient? api;
-
-  /// Dictate affordance — the caller starts the voice capture (live
-  /// call, voice note, or push-to-talk). The transcript reaches the
-  /// field through the conversation mirror ([fillText]). Null hides
-  /// the button (tests that do not exercise voice).
-  final VoidCallback? onDictate;
-
-  /// True while a dictation capture the caller started is live.
-  final bool dictating;
 
   /// The auto-captured screenshot of the app as it looked when the
   /// bubble opened (founder addendum, 2026-11-06): [screenshotFile] is
@@ -332,17 +319,6 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
                     ? const AymaWingLoader(size: 16, showLabel: false)
                     : const Text('Submit'),
               ),
-              if (widget.onDictate != null)
-                OutlinedButton.icon(
-                  key: const ValueKey('feedback-bubble-dictate'),
-                  onPressed: _sending ? null : widget.onDictate,
-                  icon: Icon(
-                    widget.dictating ? Icons.mic : Icons.mic_none_outlined,
-                    size: 16,
-                  ),
-                  label:
-                      Text(widget.dictating ? 'Listening…' : 'Dictate'),
-                ),
               TextButton(
                 key: const ValueKey('feedback-bubble-dismiss'),
                 onPressed: _sending ? null : _dismiss,
@@ -350,13 +326,11 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
               ),
             ],
           ),
-          if (widget.onDictate != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'You can also just tell Ayma — your words land here for review.',
-              style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
-            ),
-          ],
+          const SizedBox(height: 4),
+          Text(
+            'You can also just tell Ayma — your words land here for review.',
+            style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
+          ),
         ],
       ),
     );

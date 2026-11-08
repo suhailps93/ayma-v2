@@ -39,7 +39,6 @@ FeedbackBubbleCard _card(
   String initialText = '',
   String fillText = '',
   int fillRevision = 0,
-  VoidCallback? onDictate,
   VoidCallback? onDismiss,
   VoidCallback? onSent,
   File? screenshotFile,
@@ -54,7 +53,6 @@ FeedbackBubbleCard _card(
       api: _api(captured),
       appVersionOverride: '1.30.0',
       platformOverride: 'android',
-      onDictate: onDictate,
       onDismiss: onDismiss,
       onSent: onSent,
       screenshotFile: screenshotFile,
@@ -63,13 +61,9 @@ FeedbackBubbleCard _card(
     );
 
 void main() {
-  testWidgets('renders the ask: prompt, field, dictate, submit, dismiss',
+  testWidgets('renders the ask: prompt, field, submit, dismiss, tell-Ayma line',
       (tester) async {
-    var dictateTaps = 0;
-    await tester.pumpWidget(_wrap(_card(
-      [],
-      onDictate: () => dictateTaps++,
-    )));
+    await tester.pumpWidget(_wrap(_card([])));
 
     expect(find.text('What feedback would you like to share?'),
         findsOneWidget);
@@ -80,11 +74,11 @@ void main() {
     expect(find.byKey(const ValueKey('feedback-bubble-dismiss')),
         findsOneWidget);
     expect(find.byKey(const ValueKey('feedback-bubble-dictate')),
+        findsNothing);
+    expect(
+        find.text(
+            'You can also just tell Ayma — your words land here for review.'),
         findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('feedback-bubble-dictate')));
-    await tester.pump();
-    expect(dictateTaps, 1);
   });
 
   testWidgets('frustration trigger uses the softer prompt', (tester) async {
