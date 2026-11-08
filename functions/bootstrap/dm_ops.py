@@ -38,6 +38,10 @@ def ensure_thread(db, uid_a: str, uid_b: str) -> str:
                 "created_at": firestore.SERVER_TIMESTAMP,
                 "last_message_at": firestore.SERVER_TIMESTAMP,
                 "last_read_at": {},
+                # Per-participant delivery watermark for read receipts: the
+                # recipient's client stamps its own entry when it syncs the
+                # thread (see firestore.rules), mirroring last_read_at.
+                "last_delivered_at": {},
             }
         )
     return tid

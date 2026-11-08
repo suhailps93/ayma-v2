@@ -180,6 +180,19 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     _preferredLang = _deviceLanguage();
     _loadPreferredLang();
     _dm.markThreadRead(widget.threadId);
+    // Read receipts: follow the other participant's delivered/read
+    // watermarks so my bubbles can show WhatsApp-style ticks, live.
+    // Best-effort — a stream failure leaves the ticks at their last state.
+    try {
+      _receiptSub = _dm.watchReceiptWatermarks(widget.threadId).listen(
+        (w) {
+          if (mounted) setState(() => _receipts = w);
+        },
+        onError: (_) {},
+      );
+    } catch (_) {
+      // No Firestore behind the service (stub services in tests): no ticks.
+    }
   }
 
   /// The device's language tag ("en-US"), the fallback target for incoming
@@ -284,6 +297,39 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     });
   }
 
+  /// The other participant's delivered/read watermarks (read receipts),
+  /// kept current by the thread-doc subscription from [initState].
+  DmReceiptWatermarks _receipts = DmReceiptWatermarks.none;
+  StreamSubscription<DmReceiptWatermarks>? _receiptSub;
+
+  /// Id of the newest incoming message already marked delivered.
+  String? _markedDeliveredFor;
+
+  /// Read receipts, receiving side: once the messages stream delivers a
+  /// server-confirmed snapshot (never a cache one — the message has not
+  /// reached this device until the server says so) holding a message from
+  /// them, stamp my delivery watermark. Their bubbles flip to two ticks.
+  void _markDeliveredIfSynced(
+    FreshData<List<DmMessage>>? fresh,
+    List<DmMessage> msgs,
+  ) {
+    if (fresh == null || fresh.isFromCache || msgs.isEmpty) return;
+    DmMessage? lastIncoming;
+    for (final m in msgs.reversed) {
+      if (m.senderUid != _dm.uid) {
+        lastIncoming = m;
+        break;
+      }
+    }
+    if (lastIncoming == null || lastIncoming.id == _markedDeliveredFor) {
+      return;
+    }
+    _markedDeliveredFor = lastIncoming.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _dm.markThreadDelivered(widget.threadId);
+    });
+  }
+
   @override
   void reassertScreenContext() {
     final name = _other?.name.isNotEmpty ?? false
@@ -325,6 +371,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
 
   @override
   void dispose() {
+    _receiptSub?.cancel();
     _assistDebounce?.cancel();
     _listController
       ..removeListener(_onListScroll)
@@ -840,6 +887,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                 _oldestId = msgs.isEmpty ? null : msgs.first.id;
                 _tailFull = tail.length >= _historyPageSize;
                 _markReadIfIncoming(msgs);
+                _markDeliveredIfSynced(fresh, msgs);
                 // Refresh the coaching chips/tip as the conversation grows —
                 // debounced, and only on an actual message change (see
                 // `_scheduleAssist`). A transient stream error leaves the last
@@ -921,6 +969,12 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 final bubble = _Bubble(
                                   message: m,
                                   mine: mine,
+                                  // Read receipts: my bubbles carry the
+                                  // tick state derived from their
+                                  // delivered/read watermarks.
+                                  receipt: mine
+                                      ? _receipts.stateFor(m.createdAt)
+                                      : null,
                                   voicePlayer: _clipPlayer,
                                   nowPlaying: _nowPlaying,
                                   localVoiceFile: _localVoiceFiles[m.id],
@@ -1597,10 +1651,37 @@ class _DmVoiceBubbleState extends State<_DmVoiceBubble> {
   }
 }
 
+/// WhatsApp-style receipt ticks for one of my DM bubbles: one tick = sent,
+/// two ticks = delivered, two blue ticks = read. [color] is the resting ink
+/// (the bubble's time-label colour); read always renders in WhatsApp blue.
+class DmReceiptTicks extends StatelessWidget {
+  const DmReceiptTicks({super.key, required this.state, required this.color});
+
+  final DmReceiptState state;
+  final Color color;
+
+  /// The blue of a WhatsApp read tick (single source: [AymaColors.readTick]).
+  static const Color readColor = AymaColors.readTick;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, ink, label) = switch (state) {
+      DmReceiptState.sent => (Icons.done, color, 'Sent'),
+      DmReceiptState.delivered => (Icons.done_all, color, 'Delivered'),
+      DmReceiptState.read => (Icons.done_all, readColor, 'Read'),
+    };
+    return Semantics(
+      label: label,
+      child: Icon(icon, size: 14, color: ink),
+    );
+  }
+}
+
 class _Bubble extends StatelessWidget {
   const _Bubble({
     required this.message,
     required this.mine,
+    this.receipt,
     this.translate,
     this.autoTranslate = false,
     this.onDetected,
@@ -1612,6 +1693,10 @@ class _Bubble extends StatelessWidget {
   });
   final DmMessage message;
   final bool mine;
+
+  /// Read-receipt state for my own bubbles (null on incoming bubbles, which
+  /// never show ticks).
+  final DmReceiptState? receipt;
 
   /// Voice-note playback wiring (voice messages only): the shared player,
   /// the app-wide now-playing key, this bubble's local file while its
@@ -1701,10 +1786,14 @@ class _Bubble extends StatelessWidget {
     }
 
     // WhatsApp-style time label appended at the bottom-right of the bubble
-    // (display-only; shown when the message carries a createdAt).
+    // (display-only; shown when the message carries a createdAt). My own
+    // bubbles also carry the receipt ticks beside the time.
     final timeStr = message.createdAt != null
         ? formatMessageTime(message.createdAt!)
         : null;
+    final timeColor = (mine && !message.moderated)
+        ? ac.onAccent.withValues(alpha: 0.72)
+        : ac.fgMute;
     final withTime = timeStr == null
         ? content
         : Column(
@@ -1718,14 +1807,18 @@ class _Bubble extends StatelessWidget {
                   right: tight ? 4 : 0,
                   bottom: tight ? 2 : 0,
                 ),
-                child: Text(
-                  timeStr,
-                  style: AymaType.sans(
-                    size: 10.5,
-                    color: (mine && !message.moderated)
-                        ? ac.onAccent.withValues(alpha: 0.72)
-                        : ac.fgMute,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      timeStr,
+                      style: AymaType.sans(size: 10.5, color: timeColor),
+                    ),
+                    if (mine && receipt != null) ...[
+                      const SizedBox(width: 3),
+                      DmReceiptTicks(state: receipt!, color: timeColor),
+                    ],
+                  ],
                 ),
               ),
             ],

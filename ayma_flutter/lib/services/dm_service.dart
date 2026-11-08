@@ -14,6 +14,9 @@ class DmThread {
     required this.otherUid,
     required this.lastMessageAt,
     this.unread = 0,
+    this.otherLastReadAt,
+    this.otherLastDeliveredAt,
+    this.myLastDeliveredAt,
   });
   final String threadId;
   final String otherUid;
@@ -21,6 +24,61 @@ class DmThread {
 
   /// Messages from the other participant not yet seen by me.
   final int unread;
+
+  /// Read receipts (WhatsApp model): the OTHER participant's read watermark
+  /// — every message of mine stamped at or before it shows as read.
+  final DateTime? otherLastReadAt;
+
+  /// The OTHER participant's delivery watermark — every message of mine
+  /// stamped at or before it reached their device.
+  final DateTime? otherLastDeliveredAt;
+
+  /// MY delivery watermark — used to advance it only when a newer message
+  /// from them has actually synced to this device.
+  final DateTime? myLastDeliveredAt;
+}
+
+/// The three WhatsApp receipt states for a message I sent in a DM thread.
+enum DmReceiptState { sent, delivered, read }
+
+/// The other participant's delivered/read watermarks on one thread, as read
+/// from the thread doc. A message of mine is *read* once its stamp is at or
+/// before [otherReadAt], *delivered* once at or before [otherDeliveredAt],
+/// and only *sent* before both. Read is checked first: a read watermark
+/// ahead of the delivered one still shows read — the state never regresses.
+class DmReceiptWatermarks {
+  const DmReceiptWatermarks({this.otherReadAt, this.otherDeliveredAt});
+
+  static const DmReceiptWatermarks none = DmReceiptWatermarks();
+
+  final DateTime? otherReadAt;
+  final DateTime? otherDeliveredAt;
+
+  DmReceiptState stateFor(DateTime? messageCreatedAt) =>
+      dmReceiptState(
+        messageCreatedAt: messageCreatedAt,
+        deliveredAt: otherDeliveredAt,
+        readAt: otherReadAt,
+      );
+}
+
+/// Pure receipt derivation, shared by the watermark holder and the tests.
+/// A null [messageCreatedAt] (a local write the server has not stamped yet)
+/// can only be *sent*. A message stamped exactly at a watermark counts as
+/// covered by it.
+DmReceiptState dmReceiptState({
+  required DateTime? messageCreatedAt,
+  required DateTime? deliveredAt,
+  required DateTime? readAt,
+}) {
+  if (messageCreatedAt == null) return DmReceiptState.sent;
+  if (readAt != null && !messageCreatedAt.isAfter(readAt)) {
+    return DmReceiptState.read;
+  }
+  if (deliveredAt != null && !messageCreatedAt.isAfter(deliveredAt)) {
+    return DmReceiptState.delivered;
+  }
+  return DmReceiptState.sent;
 }
 
 class DmMessage {
@@ -187,11 +245,17 @@ class DmService {
         .map((d) {
       final data = d.data();
       final parts = (data['participants'] as List).cast<String>();
+      final other = parts.firstWhere((p) => p != me, orElse: () => '');
+      DateTime? watermark(String field, String who) =>
+          ((data[field] as Map?)?[who] as Timestamp?)?.toDate();
       return DmThread(
         threadId: d.id,
-        otherUid: parts.firstWhere((p) => p != me, orElse: () => ''),
+        otherUid: other,
         lastMessageAt: (data['last_message_at'] as Timestamp?)?.toDate(),
         unread: (((data['unread'] as Map?)?[me]) as num?)?.toInt() ?? 0,
+        otherLastReadAt: watermark('last_read_at', other),
+        otherLastDeliveredAt: watermark('last_delivered_at', other),
+        myLastDeliveredAt: watermark('last_delivered_at', me),
       );
     }).toList()
       ..sort((a, b) => (b.lastMessageAt ?? DateTime(0))
@@ -252,6 +316,39 @@ class DmService {
     } on FirebaseException {
       // Thread doc not created yet, or a transient failure: nothing to mark.
     }
+  }
+
+  /// Stamp my delivery watermark on [threadId]: this device has now synced
+  /// the thread from the server, so everything they sent up to now counts as
+  /// delivered (their bubbles show two ticks). Writes only my own entry
+  /// (see `firestore.rules`). Best-effort, like [markThreadRead] — an
+  /// offline write simply lands on the next sync.
+  Future<void> markThreadDelivered(String threadId) async {
+    final me = uid;
+    try {
+      await _db.doc('dm_threads/$threadId').update({
+        'last_delivered_at.$me': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      // Thread doc not created yet, offline, or no Firestore behind the
+      // service: the watermark simply lands on the next sync.
+    }
+  }
+
+  /// Live delivered/read watermarks of the OTHER participant on [threadId]
+  /// — the sender side of read receipts. A missing thread doc (no message
+  /// sent yet) reads as no watermarks, so my messages simply show *sent*.
+  Stream<DmReceiptWatermarks> watchReceiptWatermarks(String threadId) {
+    final other = otherUidOf(threadId);
+    return _db.doc('dm_threads/$threadId').snapshots().map((snap) {
+      final data = snap.data() ?? const <String, dynamic>{};
+      DateTime? watermark(String field) =>
+          ((data[field] as Map?)?[other] as Timestamp?)?.toDate();
+      return DmReceiptWatermarks(
+        otherReadAt: watermark('last_read_at'),
+        otherDeliveredAt: watermark('last_delivered_at'),
+      );
+    });
   }
 
   /// Mark every thread with unread messages read for me — the Messages

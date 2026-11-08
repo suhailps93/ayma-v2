@@ -161,6 +161,43 @@ def test_bad_type_rejected():
         dm_ops.post_message(FakeDb(), "a", "b", "hologram", "x")
 
 
+def test_new_thread_starts_with_empty_receipt_watermarks():
+    db = FakeDb()
+    tid = dm_ops.ensure_thread(db, "bob", "alice")
+    doc = db.docs[("dm_threads", tid)]
+    assert doc["last_read_at"] == {}
+    assert doc["last_delivered_at"] == {}
+
+
+def test_post_message_creates_thread_with_receipt_watermarks():
+    db = FakeDb()
+    dm_ops.post_message(db, "a", "b", "text", "hi")
+    doc = db.docs[("dm_threads", "a__b")]
+    assert doc["last_delivered_at"] == {}
+
+
+def test_post_message_never_touches_receipt_watermarks():
+    """Sending advances only last_message_at + the recipient unread counter;
+    the delivered/read watermarks belong to the recipient's client."""
+    db = FakeDb()
+    tid = dm_ops.ensure_thread(db, "a", "b")
+    doc = db.docs[("dm_threads", tid)]
+    doc["last_delivered_at"]["b"] = "t-delivered"
+    doc["last_read_at"]["b"] = "t-read"
+    dm_ops.post_message(db, "a", "b", "text", "hi")
+    doc = db.docs[("dm_threads", tid)]
+    assert doc["last_delivered_at"] == {"b": "t-delivered"}
+    assert doc["last_read_at"] == {"b": "t-read"}
+
+
+def test_ensure_thread_keeps_existing_watermarks():
+    db = FakeDb()
+    tid = dm_ops.ensure_thread(db, "a", "b")
+    db.docs[("dm_threads", tid)]["last_delivered_at"]["a"] = "t1"
+    assert dm_ops.ensure_thread(db, "a", "b") == tid
+    assert db.docs[("dm_threads", tid)]["last_delivered_at"] == {"a": "t1"}
+
+
 # --- /dm/{threadId}/messages endpoint --------------------------------------
 import main  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
