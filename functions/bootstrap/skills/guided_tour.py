@@ -301,10 +301,20 @@ _SLUG_TO_KEY = {
 
 
 def _landed_key(screen: str, route: str) -> str | None:
-    """The destination key a reported (screen slug, route) pair lands on."""
+    """The destination key a reported (screen slug, route) pair lands on.
+
+    Every bottom tab lives inside the shell at route `/`. When the reported
+    route resolves to the shell destination (key 'ayma', path '/'), the
+    screen slug decides the landing via the slug map. Pushed pages keep
+    route-first behavior because their routes are real.
+    """
     if route:
         dest = app_registry.destination_for_route(route)
-        if dest is not None:
+        if (
+            dest is not None
+            and dest.get("key") != "ayma"
+            and dest.get("path") != "/"
+        ):
             return str(dest.get("key") or "") or None
     return _SLUG_TO_KEY.get((screen or "").strip())
 

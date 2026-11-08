@@ -175,6 +175,8 @@ def _default_probe(store):
         step = steps[idx]
         expect = step.get("expect_screen")
         if expect:
+            if expect in _TAB_SLUGS:
+                return (_TAB_SLUGS[expect], "/")
             route = step.get("expect_route") or ""
             if not route:
                 for dest in app_registry.destinations():
@@ -828,11 +830,87 @@ def test_matching_landing_advances():
     _run(guided_tour._bind_start_guided_tour(db, "u1")())
     _tap(db, 0)
     _run(guided_tour._bind_advance_guided_tour(db, "u1")())
-    db.store.probe = ("explore", "/explore")  # landed on Explore
+    db.store.probe = ("explore", "/")  # landed on Explore tab inside shell
     _tap(db, 1)
     msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
     assert db.store[_STATE]["index"] == 2
     assert _steps()[2]["say"] in msg
+
+
+def test_tab_probe_reports_with_shell_route_match_tab_steps():
+    """Regression test: all bottom tabs live inside the shell at route `/`.
+    A probe reporting (screen explore/messages/profile_tab, route /) must
+    match its corresponding tab step and advance, never looping."""
+    db = _Db()
+    # Step 0: home_orb
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+
+    # Step 1: explore_tab (expect_screen: explore)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    # Probe reports screen: explore, route: / (real Flutter shell behavior)
+    db.store.probe = ("explore", "/")
+    _tap(db, 1)
+    msg1 = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 2
+    assert _steps()[2]["say"] in msg1
+
+    # Step 2: messages_tab (expect_screen: messages)
+    db.store.probe = ("messages", "/")
+    _tap(db, 2)
+    msg2 = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 3
+    assert _steps()[3]["say"] in msg2
+
+    # Step 3: profile_tab (expect_screen: profile)
+    db.store.probe = ("profile_tab", "/")
+    _tap(db, 3)
+    msg3 = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 4
+    assert _steps()[4]["say"] in msg3
+
+
+def test_landed_matches_tab_probes_and_pushed_pages_unit():
+    """Unit tests for _landed_key and _landed_matches:
+    1. Tab probes (explore, messages, profile_tab, profile) with route '/' resolve to slug.
+    2. Pushed-page probe matches by route.
+    3. Genuinely wrong landings fail the match.
+    """
+    steps = app_registry.guided_tour_steps()
+    explore_step = next(s for s in steps if s.get("expect_screen") == "explore")
+    messages_step = next(s for s in steps if s.get("expect_screen") == "messages")
+    profile_step = next(s for s in steps if s.get("expect_screen") == "profile")
+    settings_step = next(s for s in steps if s.get("expect_screen") == "settings")
+
+    # 1. Tab probes with route '/' match tab steps
+    assert guided_tour._landed_matches(explore_step, {"screen": "explore", "route": "/"})
+    assert guided_tour._landed_matches(messages_step, {"screen": "messages", "route": "/"})
+    assert guided_tour._landed_matches(profile_step, {"screen": "profile_tab", "route": "/"})
+    assert guided_tour._landed_matches(profile_step, {"screen": "profile", "route": "/"})
+
+    # 2. Pushed-page probe matches by route
+    assert guided_tour._landed_matches(settings_step, {"screen": "settings", "route": "/settings"})
+    # Even with mismatched or lagged slug, route decides for pushed pages:
+    assert guided_tour._landed_matches(settings_step, {"screen": "messages", "route": "/settings"})
+    assert guided_tour._landed_matches(settings_step, {"screen": "", "route": "/settings"})
+
+    # 3. Genuinely wrong landings fail the match
+    assert not guided_tour._landed_matches(messages_step, {"screen": "explore", "route": "/"})
+    assert not guided_tour._landed_matches(messages_step, {"screen": "ayma", "route": "/"})
+    assert not guided_tour._landed_matches(messages_step, {"screen": "profile_tab", "route": "/"})
+    assert not guided_tour._landed_matches(messages_step, {"screen": "random_slug", "route": "/"})
+    assert not guided_tour._landed_matches(messages_step, {"screen": "messages", "route": "/notifications"})
+
+    assert not guided_tour._landed_matches(explore_step, {"screen": "messages", "route": "/"})
+    assert not guided_tour._landed_matches(explore_step, {"screen": "ayma", "route": "/"})
+
+    assert not guided_tour._landed_matches(profile_step, {"screen": "messages", "route": "/"})
+    assert not guided_tour._landed_matches(profile_step, {"screen": "explore", "route": "/"})
+    assert not guided_tour._landed_matches(profile_step, {"screen": "ayma", "route": "/"})
+
+    assert not guided_tour._landed_matches(settings_step, {"screen": "settings", "route": "/"})
+    assert not guided_tour._landed_matches(settings_step, {"screen": "notifications", "route": "/notifications"})
 
 
 def test_unanswered_probe_falls_back_to_the_tap(monkeypatch):
