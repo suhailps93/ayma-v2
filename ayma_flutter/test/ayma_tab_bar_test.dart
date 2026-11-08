@@ -47,8 +47,8 @@ void main() {
     // but should now read as the row's clear visual anchor.
     expect(orb.size, greaterThanOrEqualTo(56));
     expect(orb.size, lessThanOrEqualTo(80));
-    // The nav-bar orb is scoped by the "Wing flutter in nav bar" setting —
-    // see `OrbAnimationSettings`.
+    // The nav-bar orb flutters like every other orb — there is no
+    // nav-bar stillness setting.
     expect(orb.navBarVariant, isTrue);
 
     final icons = tester.widgetList<Icon>(find.byType(Icon)).toList();

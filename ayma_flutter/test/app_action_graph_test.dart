@@ -38,8 +38,6 @@ void main() {
       'accent_color',
       'pause_matching',
       'resume_matching',
-      'wing_flutter',
-      'nav_bar_flutter',
       'sign_out',
     ]) {
       expect(graph, contains(name), reason: '$name missing from the graph');

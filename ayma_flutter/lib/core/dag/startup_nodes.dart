@@ -28,7 +28,6 @@ import '../../services/deep_link_queue.dart';
 import '../../services/dev_panel_session.dart';
 import '../../services/error_reporting.dart';
 import '../../services/meta_integrations.dart';
-import '../../services/orb_animation_settings.dart';
 import '../../services/push_service.dart';
 import '../../services/report_cache.dart';
 import '../../services/revenuecat_service.dart';
@@ -141,7 +140,6 @@ class StartupNodes {
             : await SharedPreferences.getInstance();
         themeControllerGlobal.loadFromPrefs(prefs);
         accentColorControllerGlobal.loadFromPrefs(prefs);
-        orbAnimationSettingsGlobal.loadFromPrefs(prefs);
         MetaIntegrations.loadFromPrefs(prefs);
         DebugCaptureIsolation.loadFromPrefs(prefs);
         ReportCache.instance.hydrateFromPrefs(prefs);

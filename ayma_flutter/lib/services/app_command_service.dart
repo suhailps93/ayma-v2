@@ -17,7 +17,6 @@ import 'guided_tour_controller.dart';
 import 'inbox_actions.dart';
 import 'navigation_history.dart';
 import 'notification_service.dart';
-import 'orb_animation_settings.dart';
 import 'pair_key.dart';
 import 'photo_carousel_registry.dart';
 import 'profile_service.dart';
@@ -125,7 +124,6 @@ class AppCommandService {
     ThemeController? themeController,
     ProfileService? profileService,
     AccentColorController? accentController,
-    OrbAnimationSettings? orbAnimationSettings,
     Future<void> Function()? clearPushToken,
     Future<UiActionResult> Function(Map<String, dynamic> cmd)? uiAction,
     bool Function()? chatPopupOpen,
@@ -171,7 +169,6 @@ class AppCommandService {
         _navigate = navigate ?? ((p) => navigateToRoute(p)),
         _go = go ?? appRouter.go,
         _theme = themeController ?? themeControllerGlobal,
-        _orbAnim = orbAnimationSettings ?? orbAnimationSettingsGlobal,
         _clearPushTokenOverride = clearPushToken,
         _profilesOverride = profileService;
 
@@ -226,7 +223,6 @@ class AppCommandService {
   final bool Function() _tourActive;
 
   final ThemeController _theme;
-  final OrbAnimationSettings _orbAnim;
   final Future<void> Function()? _clearPushTokenOverride;
   final Future<UiActionResult> Function(Map<String, dynamic> cmd) _uiAction;
 
@@ -1308,16 +1304,6 @@ class AppCommandService {
       case 'resume_matching':
         _profiles.setPaused(false).catchError((_) {});
         return true;
-      case 'wing_flutter':
-        final on = _onOff(value);
-        if (on == null) return false;
-        _orbAnim.setFlutterEnabled(on);
-        return true;
-      case 'nav_bar_flutter':
-        final on = _onOff(value);
-        if (on == null) return false;
-        _orbAnim.setNavBarFlutterEnabled(on);
-        return true;
       case 'sign_out':
         _afterAck = _signOut;
         return true;
@@ -1325,11 +1311,6 @@ class AppCommandService {
     return false;
   }
 
-  static bool? _onOff(String value) => switch (value) {
-    'on' => true,
-    'off' => false,
-    _ => null,
-  };
 
   /// The same steps as the You tab's "Sign out" row.
   Future<void> _signOut() async {

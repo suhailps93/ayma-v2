@@ -279,9 +279,8 @@ class AymaTabBar extends StatelessWidget {
                 // stays in its `thinking` connecting visual (see [_orbState])
                 // until the live state, then switches.
                 voiceLive: voice?.isListening ?? false,
-                // Scopes the user's "Wing flutter in nav bar"
-                // setting to exactly these orbs — see
-                // `OrbAnimationSettings`.
+                // Nav-bar orbs flutter like every other orb — there
+                // is no setting that stills them.
                 navBarVariant: true,
               ),
             )

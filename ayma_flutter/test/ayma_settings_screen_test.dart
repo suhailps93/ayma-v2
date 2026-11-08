@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/ayma_settings_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -24,9 +23,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  Widget host(ApiClient a, {OrbAnimationSettings? orbAnim}) => MaterialApp(
+  Widget host(ApiClient a) => MaterialApp(
         theme: AymaTheme.light,
-        home: AymaSettingsScreen(api: a, orbAnimationSettings: orbAnim),
+        home: AymaSettingsScreen(api: a),
       );
 
   testWidgets('the Ayma\'s voice row opens the voice preference screen',
@@ -78,51 +77,23 @@ void main() {
     expect(find.text('CONNECT SCREEN'), findsOneWidget);
   });
 
-  testWidgets('animation section renders both wing-flutter toggles, ON by '
-      'default', (tester) async {
-    final orbAnim = OrbAnimationSettings();
-    await tester.pumpWidget(host(_api((_) {}), orbAnim: orbAnim));
+  testWidgets('no Animation section and no wing-flutter toggles remain',
+      (tester) async {
+    await tester.pumpWidget(host(_api((_) {})));
     await tester.pumpAndSettle();
 
-    expect(find.text('Animation'), findsOneWidget);
-    final master = tester.widget<SwitchListTile>(find.ancestor(
-        of: find.text('Wing flutter animation'),
-        matching: find.byType(SwitchListTile)));
-    final nav = tester.widget<SwitchListTile>(find.ancestor(
-        of: find.text('Wing flutter in nav bar'),
-        matching: find.byType(SwitchListTile)));
-    expect(master.value, isTrue);
-    expect(nav.value, isTrue);
-    expect(nav.onChanged, isNotNull);
-  });
-
-  testWidgets('wing-flutter toggles write the settings and the nav sub-toggle '
-      'disables when everywhere is off', (tester) async {
-    final orbAnim = OrbAnimationSettings();
-    await tester.pumpWidget(host(_api((_) {}), orbAnim: orbAnim));
+    // Founder call (2026-11-07): the wing-flutter options are gone —
+    // the flutter is simply always on. No section, no switches.
+    expect(find.text('Animation'), findsNothing);
+    expect(find.text('Wing flutter animation'), findsNothing);
+    expect(find.text('Wing flutter in nav bar'), findsNothing);
+    expect(find.byType(SwitchListTile), findsNothing);
+    // The rest of the screen is intact.
+    expect(find.text('Connect an agent (MCP)'), findsOneWidget);
+    await tester.scrollUntilVisible(
+        find.text('Wipe what Ayma has learned'), 200);
     await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Wing flutter in nav bar'));
-    await tester.pumpAndSettle();
-    expect(orbAnim.navBarFlutterEnabled, isFalse);
-    expect(orbAnim.flutterEnabled, isTrue);
-
-    await tester.tap(find.text('Wing flutter animation'));
-    await tester.pumpAndSettle();
-    expect(orbAnim.flutterEnabled, isFalse);
-
-    // Everywhere-off wins: the scoped toggle is now disabled (inert).
-    final nav = tester.widget<SwitchListTile>(find.ancestor(
-        of: find.text('Wing flutter in nav bar'),
-        matching: find.byType(SwitchListTile)));
-    expect(nav.onChanged, isNull);
-    expect(find.text('Turn on “Wing flutter animation” first.'),
-        findsOneWidget);
-    final navOff = orbAnim.navBarFlutterEnabled;
-    await tester.tap(find.text('Wing flutter in nav bar'));
-    await tester.pumpAndSettle();
-    expect(orbAnim.navBarFlutterEnabled, navOff,
-        reason: 'a disabled sub-toggle must not change the setting');
+    expect(find.text('Wipe what Ayma has learned'), findsOneWidget);
   });
 
   testWidgets('wiki reset confirms then calls the endpoint', (tester) async {

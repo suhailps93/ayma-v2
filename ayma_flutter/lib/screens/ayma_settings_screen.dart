@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
-import '../services/orb_animation_settings.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -10,23 +9,20 @@ import 'connect_agent_screen.dart';
 import 'voice_preference_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
-/// Ayma's settings: the voice she speaks with, how her orb animates, and the
+/// Ayma's settings: the voice she speaks with,
 /// wiki reset (§14.2), and connecting your own AI agent (MCP). Reached from the "Ayma" group on the Profile tab.
 class AymaSettingsScreen extends StatefulWidget {
-  const AymaSettingsScreen({super.key, this.api, this.orbAnimationSettings});
+  const AymaSettingsScreen({super.key, this.api});
 
   static const path = '/settings/ayma';
 
   final ApiClient? api;
-  final OrbAnimationSettings? orbAnimationSettings;
 
   @override
   State<AymaSettingsScreen> createState() => _AymaSettingsScreenState();
 }
 
 class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
-  OrbAnimationSettings get _orbAnim =>
-      widget.orbAnimationSettings ?? orbAnimationSettingsGlobal;
   late final ApiClient _api = widget.api ?? ApiClient();
 
   bool _resetting = false;
@@ -103,50 +99,6 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(ConnectAgentScreen.path),
-          ),
-          Divider(color: ac.lineSoft),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-            child: Text('Animation',
-                style: AymaType.mono(size: 11, color: ac.fgMute)),
-          ),
-          AnimatedBuilder(
-            animation: _orbAnim,
-            builder: (context, _) => Column(
-              children: [
-                SwitchListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                  title: Text('Wing flutter animation',
-                      style: AymaType.sans(size: 15, color: ac.fg)),
-                  subtitle: Text(
-                      'The orb’s continuous petal motion. Off rests the '
-                      'petals everywhere — and saves battery.',
-                      style: AymaType.sans(
-                          size: 12, soft: true, color: ac.fgMute)),
-                  value: _orbAnim.flutterEnabled,
-                  onChanged: (v) => _orbAnim.setFlutterEnabled(v),
-                ),
-                SwitchListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                  title: Text('Wing flutter in nav bar',
-                      style: AymaType.sans(
-                          size: 15,
-                          color: _orbAnim.flutterEnabled ? ac.fg : ac.fgMute)),
-                  subtitle: Text(
-                      _orbAnim.flutterEnabled
-                          ? 'Off keeps only the small nav-bar orb still.'
-                          : 'Turn on “Wing flutter animation” first.',
-                      style: AymaType.sans(
-                          size: 12, soft: true, color: ac.fgMute)),
-                  value: _orbAnim.navBarFlutterEnabled,
-                  // Everywhere-off wins — the scoped toggle is inert then,
-                  // shown disabled rather than hidden.
-                  onChanged: _orbAnim.flutterEnabled
-                      ? (v) => _orbAnim.setNavBarFlutterEnabled(v)
-                      : null,
-                ),
-              ],
-            ),
           ),
           Divider(color: ac.lineSoft),
           ListTile(

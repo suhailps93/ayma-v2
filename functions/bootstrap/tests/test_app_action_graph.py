@@ -58,7 +58,7 @@ _NON_TOOL_NAMES = {
     "dm_assist", "plan_facts",
     "navigate", "open_dm_thread", "tour_end", "sign_out",
     "dark_mode", "light_mode", "system_theme", "accent_color",
-    "pause_matching", "wing_flutter", "nav_bar_flutter",
+    "pause_matching",
     # proposed in the GAP register, not yet built (GAP-3 / GAP-5)
     "play_voice_preview", "swipe",
     # the family name for the set_* stack tools

@@ -4,7 +4,6 @@ import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
 import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:ayma_flutter/services/app_context.dart';
-import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
@@ -258,29 +257,22 @@ void main() {
     });
   });
 
-  test('app_action toggles the orb animation settings', () {
-    final orb = OrbAnimationSettings();
-    final svc = AppCommandService(orbAnimationSettings: orb);
+  test('app_action no longer handles the removed wing-flutter settings',
+      () {
+    final svc = AppCommandService();
+    // The Settings › Animation toggles were removed (founder call,
+    // 2026-11-07) — wing flutter is always on, so these names are now
+    // unrecognised no-ops, like any other unknown app_action.
     expect(
         svc.handleCommand(
             {'action': 'app_action', 'name': 'wing_flutter', 'value': 'off'}),
-        isTrue);
-    expect(orb.flutterEnabled, isFalse);
-    expect(
-        svc.handleCommand(
-            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'on'}),
-        isTrue);
+        isFalse);
     expect(
         svc.handleCommand({
           'action': 'app_action',
           'name': 'nav_bar_flutter',
           'value': 'off',
         }),
-        isTrue);
-    expect(orb.navBarFlutterEnabled, isFalse);
-    expect(
-        svc.handleCommand(
-            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'maybe'}),
         isFalse);
   });
 
