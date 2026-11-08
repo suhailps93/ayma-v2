@@ -143,30 +143,59 @@ def test_generate_reply_without_tools_is_a_single_call(monkeypatch):
     assert len(sent) == 1
 
 
+def _web_search_decl_and_fn(monkeypatch, enabled):
+    """The web_search tool as production assembles it since the
+    2026-11-07 fix: the skills registry composition
+    (skills._web_search_skills), gated by the GEMINI_WEB_SEARCH switch
+    in config — no longer hand-appended inside gemini.py, which is why
+    voice never had the tool. Returns (declarations, fns) filtered to
+    just this tool so the gateway assertions stay exact."""
+    import config
+
+    monkeypatch.setattr(
+        config,
+        "CONFIG",
+        dataclasses.replace(config.CONFIG, gemini_web_search=enabled),
+    )
+    decls = [
+        d for d in skills.session_tool_declarations()
+        if d["name"] == "web_search"
+    ]
+    fns = {}
+    if decls:
+        from skills import web_search as _ws_skill
+
+        fns = {"web_search": _ws_skill.SKILL.bind(object(), "u1")}
+    return decls, fns
+
+
 def _tool_names(sent_kw):
     return [t["function"]["name"] for t in (sent_kw.get("tools") or [])]
 
 
 def test_web_search_tool_attached_when_enabled(monkeypatch):
     sent = _install_complete(monkeypatch, [_resp("the film is out friday")])
-    monkeypatch.setattr(
-        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
+    decls, fns = _web_search_decl_and_fn(monkeypatch, True)
+    asyncio.run(
+        gemini.generate_reply(
+            "when's the new dune out?",
+            system_prompt="p",
+            tool_declarations=decls,
+            tool_fns=fns,
+        )
     )
-    asyncio.run(gemini.generate_reply("when's the new dune out?", system_prompt="p"))
     assert _tool_names(sent[0]) == ["web_search"]
 
 
 def test_web_search_tool_sits_alongside_function_tools(monkeypatch):
     sent = _install_complete(monkeypatch, [_resp("ok")])
-    monkeypatch.setattr(
-        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
-    )
+    decls, fns = _web_search_decl_and_fn(monkeypatch, True)
     asyncio.run(
         gemini.generate_reply(
             "hi",
             system_prompt="p",
-            tool_declarations=[{"name": "add_followup_question"}],
-            tool_fns={"add_followup_question": lambda **k: "ok"},
+            tool_declarations=[{"name": "add_followup_question"}] + decls,
+            tool_fns={"add_followup_question": lambda **k: "ok", **fns},
         )
     )
     assert _tool_names(sent[0]) == ["add_followup_question", "web_search"]
@@ -174,24 +203,32 @@ def test_web_search_tool_sits_alongside_function_tools(monkeypatch):
 
 def test_web_search_tool_absent_when_disabled(monkeypatch):
     sent = _install_complete(monkeypatch, [_resp("hi")])
-    monkeypatch.setattr(
-        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    decls, fns = _web_search_decl_and_fn(monkeypatch, False)
+    assert decls == []  # the composition itself excludes it when off
+    asyncio.run(
+        gemini.generate_reply(
+            "hi", system_prompt="p", tool_declarations=decls, tool_fns=fns
+        )
     )
-    asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
     assert sent[0].get("tools") is None
 
 
 def test_reply_reports_a_web_search_label_when_the_tool_runs(monkeypatch):
     # Grounding itself is disabled with the kill, but the tool round-trip and
-    # its kicker label still work: the error result is reported to the model.
+    # its kicker label still work: the result is reported to the model.
     sent = _install_complete(monkeypatch, [
         _resp("", [_call("web_search", {"query": "dune release"})]),
         _resp("Out this Friday."),
     ])
-    monkeypatch.setattr(
-        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
+    decls, fns = _web_search_decl_and_fn(monkeypatch, True)
+    out = asyncio.run(
+        gemini.generate_reply(
+            "when's dune out?",
+            system_prompt="p",
+            tool_declarations=decls,
+            tool_fns=fns,
+        )
     )
-    out = asyncio.run(gemini.generate_reply("when's dune out?", system_prompt="p"))
     assert out.tools_used == ["Searched the web"]
     assert sent[1]["messages"][-1]["role"] == "tool"
 

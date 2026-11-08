@@ -206,7 +206,19 @@ def test_chat_web_search_tool_reports_unavailable_honestly_when_unconfigured(
     monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
     monkeypatch.setattr(token_ledger, "check", lambda uid: None)
 
-    out = asyncio.run(gemini.generate_reply("who won?", system_prompt="p"))
+    # The tool arrives via the skills registry composition (the caller
+    # passes its declaration + bound fn), as in production since the
+    # 2026-11-07 fix — gemini.py no longer hand-appends it.
+    from skills import web_search as _ws_skill
+
+    out = asyncio.run(
+        gemini.generate_reply(
+            "who won?",
+            system_prompt="p",
+            tool_declarations=[_ws_skill.DECLARATION],
+            tool_fns={"web_search": _ws_skill.SKILL.bind(object(), "u1")},
+        )
+    )
     assert [t["function"]["name"] for t in tools_seen["tools"]] == ["web_search"]
     tool_msg = tools_seen["sent"][1][-1]
     assert tool_msg["role"] == "tool"

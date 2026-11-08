@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 import inference_llm
 import llm_routing
 import token_ledger
-import web_search
 from config import CONFIG
 from tool_labels import NO_CHIP as _NO_CHIP
 from tool_labels import TOOL_LABELS as _TOOL_LABELS
@@ -113,46 +112,6 @@ async def warmup() -> None:
         logger.warning("inference warmup failed: %s", exc)
 
 
-_WEB_SEARCH_TOOL = {
-    "name": "web_search",
-    "description": (
-        "Search the live web. Use it for anything current or factual you "
-        "are unsure about — events, news, places, prices, schedules, what "
-        "is happening near the user — and include a place the user "
-        "mentioned or that is already in context when the question is "
-        "local. Returns search results (titles, snippets, links) for you "
-        "to answer from. Search has a daily free-quota cap: if the result "
-        "says it is used up for today, tell the user exactly that — never "
-        "present it as a glitch or a technical problem."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "What to look up, or the URL to read.",
-            }
-        },
-        "required": ["query"],
-    },
-}
-
-
-async def _web_search_tool(query: str, *, uid: str | None, feature: str) -> str:
-    """The chat `web_search` tool backend — the capped Programmable Search
-    path in :mod:`web_search` (founder restore, 2026-11-07).
-
-    Retrieval only: the LiveKit brain decides to search, the backend
-    fetches result links + snippets under the hard daily free-quota cap,
-    and the model answers from them. Direct-Google grounding stays
-    disabled — :func:`research` still raises for direct callers — and the
-    capped path reports its states honestly (paused at the cap,
-    unavailable when unconfigured) instead of an internal error.
-    """
-    outcome = await web_search.search(query)
-    return web_search.format_outcome(outcome, query)
-
-
 async def _reply_events_inference(
     message: str,
     system_prompt: str | None,
@@ -169,11 +128,10 @@ async def _reply_events_inference(
     caller — there is no fallback."""
     declarations = list(tool_declarations or [])
     fns = dict(tool_fns or {})
-    if CONFIG.gemini_web_search:
-        declarations.append(_WEB_SEARCH_TOOL)
-        fns["web_search"] = lambda query="", **_: _web_search_tool(
-            str(query), uid=uid, feature=feature
-        )
+    # The web_search tool arrives through the skills registry like every
+    # other tool (skills.web_search, gated by CONFIG.gemini_web_search in
+    # skills._web_search_skills) — it used to be hand-appended here, which
+    # is why the voice tool set never had it (founder bug 2026-11-07).
     tools = inference_llm.to_openai_tools(declarations) if declarations else None
     effort = (CONFIG.gemini_chat_thinking_level or "").strip().lower()
     effort = effort if effort in ("low", "medium", "high") else None

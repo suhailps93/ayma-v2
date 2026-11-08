@@ -62,7 +62,6 @@ _TIMEOUT_SECONDS = 15
 _RESULTS_PER_CALL = 10
 _CSE_API_URL = "https://www.googleapis.com/customsearch/v1"
 _SERPER_API_URL = "https://google.serper.dev/search"
-_RESERVE_ATTEMPTS = 3
 
 STATUS_OK = "ok"
 STATUS_PAUSED = "paused"
@@ -151,12 +150,6 @@ def _today_pt(now: datetime | None = None) -> str:
     return now.astimezone(_DAY_TZ).strftime("%Y-%m-%d")
 
 
-def _is_contention(exc: Exception) -> bool:
-    """Firestore transaction contention (aborted/conflict) is worth a
-    fresh transaction; anything else from the store fails closed."""
-    return type(exc).__name__ in ("Aborted", "Conflict")
-
-
 def _reserve(db, day: str, cap: int) -> bool:
     """Atomically count one search against ``day``'s cap.
 
@@ -166,37 +159,47 @@ def _reserve(db, day: str, cap: int) -> bool:
     one Firestore transaction, so concurrent instances cannot slip past
     the cap together. Raises :class:`SearchQuotaUnavailable` on any
     store failure: an unverifiable budget means no search (fail closed).
+
+    The transaction MUST run through ``firestore.transactional``: a
+    transaction object taken straight from ``db.transaction()`` is
+    never begun, and the client library (google-cloud-firestore 2.x)
+    raises "Transaction not in progress, cannot be used in API
+    requests." on the first read through it. That is exactly how the
+    2026-11-07 switch-on failed live: every reserve raised, the module
+    failed closed, and no search ever ran — while the unit tests stayed
+    green because their fake ignored transaction state. The decorator
+    also supplies the contention handling (it re-runs the unit on
+    Aborted up to the transaction's max attempts); any store failure
+    that still surfaces is wrapped as SearchQuotaUnavailable here.
     """
     if cap <= 0:
         return False
+    from google.cloud import firestore
+
     ref = db.collection(USAGE_COLLECTION).document(day)
-    last_exc: Exception | None = None
-    for _attempt in range(_RESERVE_ATTEMPTS):
-        txn = db.transaction()
-        try:
-            snap = ref.get(transaction=txn)
-            data = snap.to_dict() if snap.exists else None
-            count = int((data or {}).get("count", 0) or 0)
-            if count >= cap:
-                return False
-            if snap.exists:
-                txn.update(ref, {"count": count + 1})
-            else:
-                txn.set(ref, {"count": 1, "day": day, "cap": cap})
-            txn.commit()
-            logger.info(
-                "web search reserved (%d/%d for %s)", count + 1, cap, day
-            )
-            return True
-        except Exception as exc:  # noqa: BLE001 - classified just below
-            last_exc = exc
-            if not _is_contention(exc):
-                raise SearchQuotaUnavailable(
-                    f"web-search quota store failed: {exc}"
-                ) from exc
-    raise SearchQuotaUnavailable(
-        f"web-search quota store stayed contended: {last_exc}"
-    )
+
+    @firestore.transactional
+    def _attempt(transaction) -> tuple[bool, int]:
+        snap = ref.get(transaction=transaction)
+        data = snap.to_dict() if snap.exists else None
+        count = int((data or {}).get("count", 0) or 0)
+        if count >= cap:
+            return (False, count)
+        if snap.exists:
+            transaction.update(ref, {"count": count + 1})
+        else:
+            transaction.set(ref, {"count": 1, "day": day, "cap": cap})
+        return (True, count + 1)
+
+    try:
+        allowed, new_count = _attempt(db.transaction())
+    except Exception as exc:  # noqa: BLE001 - any store failure fails closed
+        raise SearchQuotaUnavailable(
+            f"web-search quota store failed: {exc}"
+        ) from exc
+    if allowed:
+        logger.info("web search reserved (%d/%d for %s)", new_count, cap, day)
+    return allowed
 
 
 def _google_cse_search(
