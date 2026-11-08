@@ -19,6 +19,7 @@ from fake_firestore import FakeDb
 
 VIEWER = "viewer_uid"
 MAYA = "demo_practice_maya"
+LEO = "demo_practice_leo"
 
 
 def _seeded_db() -> FakeDb:
@@ -409,3 +410,87 @@ def test_generate_text_delegates_to_practice_provider(monkeypatch):
     assert out == "delegated reply"
     assert seen["message"] == "hello"
     assert seen["feature"] == practice_llm.token_ledger.FEATURE_PRACTICE
+
+
+# --- voice-start session resume (bug 44RwY05T4hgzkP4HtAU8) ----------------- #
+# Every practice voice start used to mint a brand-new session, and the
+# client re-runs the voice start on its automatic retries — so the
+# debrief bound to the newest EMPTY session while the session holding
+# the voice transcript was orphaned, and the "voice session feedback"
+# came out about the text session instead.
+
+
+def test_voice_resume_reuses_open_session_and_keeps_turns():
+    db = _seeded_db()
+    first = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice"
+    )
+    practice_core.append_turns(
+        db,
+        VIEWER,
+        first,
+        [
+            {"role": practice_core.ROLE_USER, "text": "hi, ready when you are"},
+            {"role": practice_core.ROLE_MATCH, "text": "hey! glad we are doing this"},
+        ],
+    )
+    # The client's automatic retry re-runs the voice start, same target.
+    second = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice"
+    )
+    assert second == first
+    turns = practice_core._load_session(db, VIEWER, second)["turns"]
+    assert [t["text"] for t in turns] == [
+        "hi, ready when you are",
+        "hey! glad we are doing this",
+    ]
+    # The debrief renders exactly this turns list — the voice lines are
+    # what the feedback is generated from.
+    convo = practice_core._format_transcript(turns, "Maya")
+    assert "hi, ready when you are" in convo
+    assert "glad we are doing this" in convo
+
+
+def test_voice_resume_ignores_ended_session():
+    db = _seeded_db()
+    first = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice"
+    )
+    practice_core.end_session(db, VIEWER, first)
+    second = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice"
+    )
+    assert second != first
+
+
+def test_voice_resume_ignores_text_session():
+    db = _seeded_db()
+    text_sid = practice_date.start_session(db, VIEWER, MAYA)
+    voice_sid = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice"
+    )
+    assert voice_sid != text_sid
+
+
+def test_voice_resume_ignores_other_target():
+    db = _seeded_db()
+    first = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice"
+    )
+    other = practice_core.start_or_resume_session(
+        db, VIEWER, LEO, modality="voice"
+    )
+    assert other != first
+
+
+def test_voice_resume_ignores_stale_session():
+    import time as _time
+
+    db = _seeded_db()
+    first = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice"
+    )
+    second = practice_core.start_or_resume_session(
+        db, VIEWER, MAYA, modality="voice", now=_time.time() + 3600.0
+    )
+    assert second != first
