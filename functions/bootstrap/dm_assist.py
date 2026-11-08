@@ -126,6 +126,17 @@ def _format_messages(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _them_has_spoken(messages: list[dict]) -> bool:
+    """Whether the match has sent any text yet. Mirrors ``_format_messages``:
+    anyone who is not ``me`` is Them. A thread where only Me has written is
+    still coach mode, but it needs follow-up coaching, not fresh openers."""
+    return any(
+        str(m.get("from", "")).strip().lower() != "me"
+        and str(m.get("text", "")).strip()
+        for m in messages
+    )
+
+
 def _clean_chips(result: object) -> list[str]:
     chips = result.get("chips", []) if isinstance(result, dict) else []
     out: list[str] = []
@@ -245,6 +256,20 @@ async def assist(
             "are helping):\n"
             f"{_format_messages(messages) or '(none)'}"
         )
+        if not _them_has_spoken(messages):
+            # One-sided thread: Me has written (maybe more than once) and
+            # the match has not replied. Without this note the model treats
+            # the thread as brand new and offers first-ever greetings (the
+            # "only icebreakers" failure) instead of follow-up coaching.
+            contents += (
+                "\n\nNOTE: the match has not replied yet — every message "
+                "above is from Me, and Me has already said hello. Coach the "
+                "follow-up: chips should build on what Me already sent and "
+                "the shared ground above (pick up a thread from the "
+                "analysis, ask one easy question, or gently nudge), never "
+                "a first-ever greeting; the tip should speak to waiting on "
+                "a reply."
+            )
     else:
         contents = (
             "MODE: opener\n\n"
@@ -254,27 +279,53 @@ async def assist(
             f"{mine or '(none)'}"
         )
 
-    try:
-        # Unified Brain (§13.10): the user's chosen brain drives DM coaching
-        # (JSON openers/tips); Muse Spark has json, so it is honoured, else Gemini.
-        provider = llm_provider.get_user_brain_provider(uid, "dm_coach", needs="json")
-        result = await provider.generate_json(
-            contents,
-            system_prompt=_load_prompt(),
-            response_schema=_RESPONSE_SCHEMA,
-            uid=uid,
-            feature=token_ledger.FEATURE_ICEBREAKERS,
-            # DM assist is a nicety that must NEVER block the thread, so it is
-            # exempt from the credit CAP (like the Practice coach, see
-            # practice_llm): a zero-credit user still gets openers/coaching
-            # instead of a silently-empty bar. The spend is still metered —
-            # ``enforce_cap=False`` skips the cap check, not ``record``.
-            enforce_cap=False,
-        )
-    except Exception:  # noqa: BLE001 - DM assist is a nicety, never blocks
-        logger.exception(
-            "dm assist generation failed for %s", sorted_pair_key(uid, other)
-        )
+    # Generation fails intermittently in one specific way: the model pads
+    # its reply with filler until the completion budget runs out mid-string
+    # (finish_reason "length"), the truncated JSON never parses, and the
+    # call raises (the raw reply is logged in gemini.generate_json). One bad
+    # generation must not leave the bar empty or stuck on a stale result, so
+    # retry once before giving up: a fresh attempt almost always lands.
+    result: object = None
+    for attempt in (1, 2):
+        try:
+            # Unified Brain (§13.10): the user's chosen brain drives DM coaching
+            # (JSON openers/tips); Muse Spark has json, so it is honoured, else Gemini.
+            provider = llm_provider.get_user_brain_provider(uid, "dm_coach", needs="json")
+            result = await provider.generate_json(
+                contents,
+                system_prompt=_load_prompt(),
+                response_schema=_RESPONSE_SCHEMA,
+                uid=uid,
+                feature=token_ledger.FEATURE_ICEBREAKERS,
+                # DM assist is a nicety that must NEVER block the thread, so it is
+                # exempt from the credit CAP (like the Practice coach, see
+                # practice_llm): a zero-credit user still gets openers/coaching
+                # instead of a silently-empty bar. The spend is still metered:
+                # ``enforce_cap=False`` skips the cap check, not ``record``.
+                enforce_cap=False,
+                # Coaching is short creative writing, and at the 0.2
+                # default the JSON model falls into a repetition loop on
+                # this prompt: measured live, its tip ran on for hundreds
+                # of words (and sometimes past the whole completion
+                # budget) in nearly every reply, so the tip was dropped
+                # almost every time. At 0.7 the same prompt produced a
+                # clean one-sentence tip in about half of replies and the
+                # chips were unaffected.
+                temperature=0.7,
+            )
+            break
+        except Exception:  # noqa: BLE001 - DM assist is a nicety, never blocks
+            if attempt == 1:
+                logger.warning(
+                    "dm assist generation failed for %s - retrying once",
+                    sorted_pair_key(uid, other), exc_info=True,
+                )
+            else:
+                logger.exception(
+                    "dm assist generation failed for %s",
+                    sorted_pair_key(uid, other),
+                )
+    if result is None:
         return {
             "mode": mode, "chips": [], "tip": None, "safety": _silent_safety(),
         }

@@ -696,3 +696,31 @@ def test_warmup_pings_the_gateway_and_never_raises(monkeypatch):
 
     monkeypatch.setattr(inference_llm, "complete", boom)
     asyncio.run(gemini.warmup())  # best-effort: still must not raise
+
+
+def test_generate_json_logs_the_raw_reply_when_unparseable(monkeypatch, caplog):
+    """A model reply that fails to parse (e.g. filler padding that burned
+    the completion budget and truncated the JSON) must leave the raw reply
+    in the log — best-effort callers swallow the raise, so without this the
+    failure is undiagnosable."""
+    import json as _json
+    import logging as _logging
+
+    _cfg(monkeypatch)
+
+    async def fake_complete(**kw):
+        return _resp("{\"chips\": [\"this reply never ends", finish_reason="length")
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    with caplog.at_level(_logging.WARNING, logger="ayma.gemini"):
+        with pytest.raises(_json.JSONDecodeError):
+            asyncio.run(
+                gemini.generate_json(
+                    "c", "sys", {"type": "object"}, uid="u1",
+                    feature="icebreakers", enforce_cap=False,
+                )
+            )
+    assert "unparseable model reply" in caplog.text
+    assert "finish_reason=length" in caplog.text
+    assert "this reply never ends" in caplog.text
