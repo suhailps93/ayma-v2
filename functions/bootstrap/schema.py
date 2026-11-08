@@ -213,6 +213,7 @@ MEDIA_MODERATION_STATUS = "moderation_status"
 MEDIA_STATUS_APPROVED = "approved"
 MEDIA_STATUS_FLAGGED = "flagged"
 MEDIA_STATUS_PENDING = "pending"
+MEDIA_EMBEDDING_MISSING = "embedding_missing"
 
 # --- users/{uid}.face_verification (onboarding/settings verification selfie) --
 # A single small record on the user doc itself — deliberately NOT a

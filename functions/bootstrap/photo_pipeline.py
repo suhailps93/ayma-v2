@@ -159,16 +159,38 @@ async def _embed_and_attrs(image: bytes, mime: str, consented: bool, uid: str):
     attributes for one image, computed concurrently — they're independent, so
     the attribute Gemini call and the embedding call overlap instead of running
     back to back. Returns ``(embedding | None, attributes)``.
+
+    Both steps are non-fatal: face embedding and attribute extraction degrade
+    gracefully (returning None / blank attributes) on any error.
     """
 
     async def _embed():
         if not consented:
             return None
-        return await asyncio.to_thread(media_embed.embed_image_bytes, image, mime)
+        try:
+            return await asyncio.to_thread(media_embed.embed_image_bytes, image, mime)
+        except Exception:
+            logger.warning(
+                "photo_pipeline: face embedding failed for %s, continuing without embedding",
+                uid,
+                exc_info=True,
+            )
+            return None
+
+    async def _attrs():
+        try:
+            return await photo_attrs.extract_attributes(image, mime, uid=uid)
+        except Exception:
+            logger.warning(
+                "photo_pipeline: attribute extraction failed for %s, continuing with blank attributes",
+                uid,
+                exc_info=True,
+            )
+            return photo_attrs._blank()
 
     embedding, attributes = await asyncio.gather(
         _embed(),
-        photo_attrs.extract_attributes(image, mime, uid=uid),
+        _attrs(),
     )
     return embedding, attributes
 
@@ -331,24 +353,33 @@ async def process(
     # still moderated, described and stored, just never embedded. The embedding
     # and the attribute extraction are independent, so they run concurrently.
     consented = biometric_consent.has_consent_fresh(db, uid)
-    embedding, attributes = await _embed_and_attrs(image, mime, consented, uid)
+    try:
+        embedding, attributes = await _embed_and_attrs(image, mime, consented, uid)
+    except Exception:
+        logger.warning(
+            "photo_pipeline: embed/attrs step failed for %s; continuing without embedding",
+            uid,
+            exc_info=True,
+        )
+        embedding = None
+        attributes = photo_attrs._blank()
 
     doc = _media_col(db, uid).document()
-    doc.set(
-        {
-            "storage_path": storage_path,
-            "source": source,
-            "moderation_status": STATUS_APPROVED,
-            "moderation_reason": "",
-            **(
-                {"embedding": Vector(embedding), "dim": len(embedding)}
-                if embedding is not None
-                else {}
-            ),
-            "attributes": attributes,
-            "created_at": now,
-        }
-    )
+    doc_payload = {
+        "storage_path": storage_path,
+        "source": source,
+        "moderation_status": STATUS_APPROVED,
+        "moderation_reason": "",
+        "attributes": attributes,
+        "created_at": now,
+    }
+    if embedding is not None:
+        doc_payload["embedding"] = Vector(embedding)
+        doc_payload["dim"] = len(embedding)
+    else:
+        doc_payload[schema.MEDIA_EMBEDDING_MISSING] = True
+
+    doc.set(doc_payload)
 
     if source == "profile":
         db.collection("users").document(uid).collection("profile").document(
@@ -381,4 +412,5 @@ async def process(
         "attributes": attributes,
         "caption": caption,
         "embedding": list(embedding) if embedding is not None else None,
+        "embedding_missing": embedding is None,
     }

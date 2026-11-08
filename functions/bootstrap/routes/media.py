@@ -136,7 +136,8 @@ async def register_media(
             # the same turn.
             defer_enrichment=(req.context == "profile"),
         )
-    except Exception as exc:  # noqa: BLE001 - surface embed/storage failure
+    except Exception as exc:  # noqa: BLE001 - surface storage/fatal failure
+        logger.exception("media: pipeline failed for %s path=%s", uid, req.storage_path)
         raise HTTPException(
             status_code=502, detail=f"Media pipeline failed: {exc}"
         ) from exc

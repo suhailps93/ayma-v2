@@ -183,6 +183,86 @@ def test_dm_source_forces_ai_only(monkeypatch):
     assert forced == ["ai_only", "ai_only"]
 
 
+def test_embedding_failure_is_non_fatal_and_records_missing(monkeypatch):
+    """When face embedding raises (e.g. DirectGoogleDisabledError under LiveKit
+    inference rule), the pipeline continues, publishes as approved, and flags
+    embedding_missing on the media doc so it can be backfilled."""
+    import llm_routing
+
+    async def _mod(b, m, **_kw):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+    monkeypatch.setattr(
+        photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: True
+    )
+
+    def _broken_embed(b, m="image/jpeg"):
+        raise llm_routing.DirectGoogleDisabledError("direct vertex disabled")
+
+    monkeypatch.setattr(
+        photo_pipeline.media_embed, "embed_image_bytes", _broken_embed
+    )
+
+    db = _Db()
+    res = _run(photo_pipeline.process(db, "u1", "uploads/u1/p.jpg", "profile"))
+
+    assert res["published"] is True
+    assert res["moderation_status"] == "approved"
+    assert res["embedding"] is None
+    assert res["embedding_missing"] is True
+    doc = _media_doc(db)
+    assert doc["moderation_status"] == "approved"
+    assert doc.get("embedding_missing") is True
+    assert "embedding" not in doc and "dim" not in doc
+    assert res["attributes"]["hair_color"] == "brown"
+
+
+def test_attribute_extraction_failure_is_non_fatal(monkeypatch):
+    """When attribute extraction raises, the photo still publishes with blank
+    attributes instead of failing the pipeline."""
+    async def _mod(b, m, **_kw):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+
+    async def _failing_attrs(b, m, **_kw):
+        raise RuntimeError("model service crashed")
+
+    monkeypatch.setattr(photo_pipeline.photo_attrs, "extract_attributes", _failing_attrs)
+
+    db = _Db()
+    res = _run(photo_pipeline.process(db, "u1", "uploads/u1/p.jpg", "profile"))
+
+    assert res["published"] is True
+    assert res["moderation_status"] == "approved"
+    assert res["attributes"] == photo_pipeline.photo_attrs._blank()
+
+
+def test_moderation_flag_returns_reason(monkeypatch):
+    """A photo rejected by moderation records the real human reason and stops."""
+    async def _mod(b, m, **_kw):
+        return {
+            "allowed": False,
+            "reason": "That photo cannot be used - screenshots of text are not allowed.",
+            "categories": ["spam"],
+        }
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+
+    db = _Db()
+    res = _run(photo_pipeline.process(db, "u1", "uploads/u1/bad.jpg", "profile"))
+
+    assert res["published"] is False
+    assert res["moderation_status"] == "flagged"
+    assert res["reason"] == "That photo cannot be used - screenshots of text are not allowed."
+    doc = _media_doc(db)
+    assert doc["moderation_status"] == "flagged"
+    assert doc["moderation_reason"] == "That photo cannot be used - screenshots of text are not allowed."
+    assert "embedding" not in doc
+    assert doc.get("embedding_missing") is not True
+
+
 # --- _caption composer (name/context-aware gallery note) -------------------
 
 

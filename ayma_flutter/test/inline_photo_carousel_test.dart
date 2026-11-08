@@ -6,6 +6,7 @@
 // last-photo guard blocks removing the final public photo. These capabilities
 // migrated off the removed "Your photos" bottom sheet.
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
@@ -16,17 +17,31 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:image_picker/image_picker.dart';
 
 /// A [PhotoService] whose backend calls are recorded in-memory, so controller
 /// behaviour can be tested without Firebase or the network.
 class _FakePhotoService extends PhotoService {
-  _FakePhotoService(this._grid);
+  _FakePhotoService(this._grid, {this.batchResult, this.uploadError});
 
   final List<GridPhoto> _grid;
   final List<String> calls = [];
+  PhotoUploadBatch? batchResult;
+  Exception? uploadError;
 
   @override
   Future<List<GridPhoto>> loadGrid() async => List.of(_grid);
+
+  @override
+  Future<PhotoUploadBatch> uploadAndProcessAll(List<File> files) async {
+    if (uploadError != null) throw uploadError!;
+    return batchResult ??
+        PhotoUploadBatch(
+          mediaIds: files.map((f) => 'm_${f.path}').toList(),
+          storagePaths: files.map((f) => 'p_${f.path}').toList(),
+          rejected: const [],
+        );
+  }
 
   @override
   Future<void> remove(String mediaId) async => calls.add('remove:$mediaId');
@@ -42,6 +57,20 @@ class _FakePhotoService extends PhotoService {
   @override
   Future<void> deletePermanent(String mediaId) async =>
       calls.add('delete:$mediaId');
+}
+
+class _FakeImagePicker extends ImagePicker {
+  _FakeImagePicker([this.files = const []]);
+  final List<XFile> files;
+
+  @override
+  Future<List<XFile>> pickMultiImage({
+    double? maxWidth,
+    double? maxHeight,
+    int? imageQuality,
+    int? limit,
+    bool requestFullMetadata = true,
+  }) async => files;
 }
 
 GridPhoto _photo(String id) =>
@@ -113,6 +142,77 @@ void main() {
       expect(ok, isTrue);
       expect(c.photos.map((p) => p.mediaId), ['b']);
       expect(svc.calls, ['delete:a']);
+    });
+
+    test('pickAndAdd surfaces server moderation reason', () async {
+      final picker = _FakeImagePicker([XFile('p1.jpg')]);
+      final svc = _FakePhotoService(
+        [],
+        batchResult: const PhotoUploadBatch(
+          mediaIds: [],
+          storagePaths: [],
+          rejected: ['screenshots of text are not allowed'],
+        ),
+      );
+      final c = InlinePhotoController(service: svc, picker: picker);
+      final msg = await c.pickAndAdd();
+      expect(msg, 'That photo cannot be used - screenshots of text are not allowed.');
+    });
+
+    test('pickAndAdd humanizes capitalized sentence and adds trailing period', () async {
+      final picker = _FakeImagePicker([XFile('p1.jpg')]);
+      final svc = _FakePhotoService(
+        [],
+        batchResult: const PhotoUploadBatch(
+          mediaIds: [],
+          storagePaths: [],
+          rejected: ['Screenshots of text are not allowed'],
+        ),
+      );
+      final c = InlinePhotoController(service: svc, picker: picker);
+      final msg = await c.pickAndAdd();
+      expect(msg, 'That photo cannot be used - screenshots of text are not allowed.');
+    });
+
+    test('pickAndAdd suppresses internal codes and returns generic message', () async {
+      final picker = _FakeImagePicker([XFile('p1.jpg')]);
+      final svc = _FakePhotoService(
+        [],
+        batchResult: const PhotoUploadBatch(
+          mediaIds: [],
+          storagePaths: [],
+          rejected: ['moderation_error'],
+        ),
+      );
+      final c = InlinePhotoController(service: svc, picker: picker);
+      final msg = await c.pickAndAdd();
+      expect(msg, "That photo can't be used.");
+    });
+
+    test('pickAndAdd suppresses upload failed code and returns generic message', () async {
+      final picker = _FakeImagePicker([XFile('p1.jpg')]);
+      final svc = _FakePhotoService(
+        [],
+        batchResult: const PhotoUploadBatch(
+          mediaIds: [],
+          storagePaths: [],
+          rejected: ['upload failed'],
+        ),
+      );
+      final c = InlinePhotoController(service: svc, picker: picker);
+      final msg = await c.pickAndAdd();
+      expect(msg, "That photo can't be used.");
+    });
+
+    test('pickAndAdd catches upload exception and returns friendly message', () async {
+      final picker = _FakeImagePicker([XFile('p1.jpg')]);
+      final svc = _FakePhotoService(
+        [],
+        uploadError: const SocketException('connection reset'),
+      );
+      final c = InlinePhotoController(service: svc, picker: picker);
+      final msg = await c.pickAndAdd();
+      expect(msg, 'Upload failed. Please try again.');
     });
   });
 
@@ -222,6 +322,37 @@ void main() {
       await tester.pumpAndSettle();
       expect(c.photos.first.mediaId, 'b');
       expect(svc.calls, ['primary:b']);
+    });
+
+    testWidgets('tapping Add photo displays moderation reason in warning toast',
+        (tester) async {
+      final picker = _FakeImagePicker([XFile('bad.jpg')]);
+      final svc = _FakePhotoService(
+        [_photo('a'), _photo('b')],
+        batchResult: const PhotoUploadBatch(
+          mediaIds: [],
+          storagePaths: [],
+          rejected: ['screenshots of text are not allowed'],
+        ),
+      );
+      final controller = InlinePhotoController(service: svc, picker: picker);
+      await controller.load();
+      final api = ApiClient(
+          httpClient: mockHttp(), auth: MockFirebaseAuth(signedIn: true));
+      await tester.pumpWidget(MaterialApp(
+        home: MyPublicProfileScreen(
+            myUid: 'u1', apiClient: api, photoController: controller),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('inlinePhotoAddTile')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('That photo cannot be used - screenshots of text are not allowed.'),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 4)); // flush toast timer
     });
   });
 }

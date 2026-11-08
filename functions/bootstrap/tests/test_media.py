@@ -125,7 +125,7 @@ def test_media_reports_a_flagged_photo_without_publishing(monkeypatch):
             "media_id": "m-flag",
             "moderation_status": "flagged",
             "published": False,
-            "reason": "nudity",
+            "reason": "That photo cannot be used - screenshots of text are not allowed.",
             "attributes": None,
             "caption": "",
         }
@@ -141,7 +141,49 @@ def test_media_reports_a_flagged_photo_without_publishing(monkeypatch):
     body = resp.json()
     assert body["published"] is False
     assert body["moderation_status"] == "flagged"
-    assert body["reason"] == "nudity"
+    assert body["reason"] == "That photo cannot be used - screenshots of text are not allowed."
+
+
+def test_media_route_publishes_when_embedding_fails(monkeypatch):
+    """POST /media must not return 502 when embedding fails — it degrades gracefully,
+    publishes the photo, and adds it to the profile grid."""
+    import photo_ops
+
+    gridded = []
+
+    def _fake_add(db, uid, media_id):
+        gridded.append((uid, media_id))
+        return [{"media_id": media_id, "order": 0}]
+
+    monkeypatch.setattr(photo_ops, "add_photo", _fake_add)
+
+    async def _embed_failed_process(db, uid, storage_path, context, **kw):
+        return {
+            "media_id": "media-no-embed",
+            "moderation_status": "approved",
+            "published": True,
+            "reason": "",
+            "attributes": {"hair_color": "brown"},
+            "caption": "",
+            "embedding": None,
+            "embedding_missing": True,
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _embed_failed_process)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={"storage_path": "uploads/u-7/photo.jpg", "context": "profile"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["media_id"] == "media-no-embed"
+    assert body["published"] is True
+    assert body["moderation_status"] == "approved"
+    assert gridded == [("u-7", "media-no-embed")]
 
 
 def test_media_schedules_auto_analysis_for_a_chat_attachment(monkeypatch):
