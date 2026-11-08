@@ -1,5 +1,6 @@
 import 'package:ayma_flutter/services/feature_tour_store.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -66,6 +67,20 @@ void main() {
     expect(await store.loadSeen(), {'voice_dating'});
     await store.reset();
     expect(await store.loadSeen(), isEmpty);
+  });
+
+  test('removing an id via arrayRemove unsees only that feature', () async {
+    final db = FakeFirebaseFirestore();
+    final store = FeatureTourStore(profiles: _profiles(db));
+
+    await store.markSeen(['voice_dating', 'async_voice']);
+    expect(await store.loadSeen(), {'voice_dating', 'async_voice'});
+
+    // Unsee async_voice via arrayRemove (the exact reset_tour / triage operation)
+    await db.doc('users/me/profile/main').update({
+      'seen_tour_features': FieldValue.arrayRemove(['async_voice']),
+    });
+    expect(await store.loadSeen(), {'voice_dating'});
   });
 
   test('loadSeen swallows storage errors and returns empty (shows the tour)',
