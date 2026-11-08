@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Callable
 
 import app_registry
@@ -85,6 +86,72 @@ def _current_accent(db, uid: str) -> str:
     return hexcode or _DEFAULT_ACCENT
 
 
+# How long the accent change path keeps re-reading the saved accent after
+# the client's ack was lost, waiting to see whether the change landed
+# anyway. The client applies a queued command the moment it sees it, but
+# the ack can be missed (backgrounded app, stream hiccup) while the change
+# itself — and its Firestore mirror — still goes through; the founder
+# incident (2026-11-07) was exactly that shape: failure reported for a
+# change that HAD applied, and the default colour asserted as current
+# ever after. Module-level so tests can shrink them.
+_ACCENT_CONFIRM_SECONDS = 1.5
+_ACCENT_CONFIRM_POLL_SECONDS = 0.25
+
+
+def accent_color_context(db, uid: str) -> str:
+    """One labeled live fact for the system prompt: the app's CURRENT
+    accent colour, read fresh from the saved profile — the same read
+    ``get_accent_color`` reports. The persona and the ``app_action``
+    description name only the DEFAULT (Cherry Fuchsia); with no current
+    value standing in context, the model mistook the default for the
+    current colour and asserted it even right after changing it
+    (founder feedback, 2026-11-07). Never raises: ``_current_accent``
+    already falls back to the default on a failed read."""
+    if not uid:
+        return ""
+    current = _current_accent(db, uid)
+    if current == _DEFAULT_ACCENT:
+        now = f"currently {_DEFAULT_ACCENT_NAME} ({_DEFAULT_ACCENT}), the default"
+    else:
+        now = (
+            f"currently {current} — changed from the default "
+            f"({_DEFAULT_ACCENT_NAME} {_DEFAULT_ACCENT})"
+        )
+    return (
+        "App accent colour: " + now + ". If you mention the accent "
+        "colour, use the current value; the default is only the factory "
+        "colour, never the current one unless it is the value above."
+    )
+
+
+async def _accent_after_missed_ack(
+    db, uid: str, *, expected: str, before: str
+) -> str:
+    """The truthful result of an accent-colour change whose ack never
+    confirmed it. Re-reads the SAVED accent briefly: if it moved to
+    ``expected``, the change landed despite the lost ack and is reported
+    as done (the exact words a confirmed change gets); if it already WAS
+    ``expected``, the state is reported without claiming a change; only
+    when the saved value never moved is the change honestly reported as
+    not applied. A success or failure claim about the accent therefore
+    always rests on the ack or on the saved value — never on neither."""
+    deadline = time.monotonic() + _ACCENT_CONFIRM_SECONDS
+    stored = await asyncio.to_thread(_current_accent, db, uid)
+    while stored != expected and time.monotonic() < deadline:
+        await asyncio.sleep(_ACCENT_CONFIRM_POLL_SECONDS)
+        stored = await asyncio.to_thread(_current_accent, db, uid)
+    if stored != expected:
+        return _NOT_APPLIED
+    if stored == before:
+        return f"The app's accent colour is {expected}."
+    if expected == _DEFAULT_ACCENT:
+        return (
+            "Reset the app's accent colour to the default, "
+            f"{_DEFAULT_ACCENT_NAME} ({_DEFAULT_ACCENT})."
+        )
+    return f"Changed the app's accent colour to {expected}."
+
+
 def _normalise_value(setting: dict, value: str) -> str | None:
     """The canonical value for ``setting`` (``on``/``off``, an enum member, a
     ``#RRGGBB`` hex, ``"min-max"``), or ``None`` when ``value`` isn't one."""
@@ -156,7 +223,9 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
                 f"The app's current accent colour is {_current_accent(db, uid)}. "
                 f"The default accent is {_DEFAULT_ACCENT_NAME} "
                 f"({_DEFAULT_ACCENT}); app_action accent_color with value "
-                "'default' resets to it."
+                "'default' resets to it. Report the current colour above — "
+                "the default is only the factory colour, never describe it "
+                "as the current colour."
             )
         if a in _LEGACY_ACTIONS and (
             not value.strip() or a != _LEGACY_ACTIONS[a][0]
@@ -221,17 +290,33 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
             if isinstance(command, dict)
             else {"action": "app_action", "name": command, "value": v}
         )
-        cmd_id = _queue_command(db, uid, payload)
-        ack = await _await_ack(db, uid, cmd_id)
-        if not (ack and ack.get("ok")):
-            return _NOT_APPLIED
         if setting["kind"] == "hex":
+            # Accent colour: capture the saved value BEFORE queueing, so a
+            # lost ack can be reconciled against it (see
+            # _accent_after_missed_ack) instead of being reported as a
+            # failure for a change that may have landed.
+            before = await asyncio.to_thread(_current_accent, db, uid)
+            cmd_id = _queue_command(db, uid, payload)
+            ack = await _await_ack(db, uid, cmd_id)
+            if not (ack and ack.get("ok")):
+                return await _accent_after_missed_ack(
+                    db,
+                    uid,
+                    expected=(
+                        _DEFAULT_ACCENT if v == _ACCENT_RESET_VALUE else v
+                    ),
+                    before=before,
+                )
             if v == _ACCENT_RESET_VALUE:
                 return (
                     "Reset the app's accent colour to the default, "
                     f"{_DEFAULT_ACCENT_NAME} ({_DEFAULT_ACCENT})."
                 )
             return f"Changed the app's accent colour to {v}."
+        cmd_id = _queue_command(db, uid, payload)
+        ack = await _await_ack(db, uid, cmd_id)
+        if not (ack and ack.get("ok")):
+            return _NOT_APPLIED
         done = (setting.get("done") or {}).get(v)
         return done or f"Done: {setting['label']} turned {v}."
 

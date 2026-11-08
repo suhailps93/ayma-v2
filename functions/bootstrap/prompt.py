@@ -501,6 +501,7 @@ def compose_system_prompt(
     profile_progress: str = "",
     preferences_context: str = "",
     model_stack_context: str = "",
+    app_accent_context: str = "",
     story_context: str = "",
     shared_photo_note: str = "",
     questionnaire_note: str = "",
@@ -619,6 +620,13 @@ def compose_system_prompt(
     # never conflates the two brains or denies an enabled voice-brain option.
     if model_stack_context.strip():
         parts.append(model_stack_context.strip())
+
+    # The app's CURRENT accent colour as one live fact
+    # (skills.app_control.accent_color_context) — the persona names only
+    # the default, which the model otherwise reports as the current
+    # colour (founder feedback, 2026-11-07).
+    if app_accent_context.strip():
+        parts.append(app_accent_context.strip())
 
     # Active-mode nudge: where the questionnaire-completeness score is < 100,
     # the current score + the highest-priority nodes still to fill in.

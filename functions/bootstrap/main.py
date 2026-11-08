@@ -980,6 +980,7 @@ async def bootstrap(
             preferences_context=_preferences_context(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
             model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
+            app_accent_context=app_control_mod.accent_color_context(get_db(), uid),
             db=get_db(),
             summary_context=summary_text,
             # Voice persona variant (prompt.py `_persona_variant`): the Live
@@ -1729,6 +1730,7 @@ async def _prepare_chat(
         preferences_context=_preferences_context(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
         model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
+        app_accent_context=app_control_mod.accent_color_context(get_db(), uid),
         viewing_profile_context=public_profile_mod._viewing_profile_context(
             get_db(), uid, viewing_profile_uid
         ),

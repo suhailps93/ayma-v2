@@ -153,6 +153,7 @@ async def _compose_prompt(db, uid: str, mode: str, window: list[Turn]) -> str:
     import context_opt
     import prompt as prompt_module
     from prompt import compose_system_prompt
+    from skills import app_control as app_control_mod
     from skills import set_model_stack
     from wiki_query import read_wiki_context
 
@@ -183,6 +184,7 @@ async def _compose_prompt(db, uid: str, mode: str, window: list[Turn]) -> str:
         preferences_context=main._preferences_context(uid, mode),  # noqa: SLF001 - shared helper
         questionnaire_note=main._questionnaire_note(uid, mode),  # noqa: SLF001 - shared helper
         model_stack_context=set_model_stack.model_stack_context(db, uid),
+        app_accent_context=app_control_mod.accent_color_context(db, uid),
         db=db,
         summary_context=summary_text,
         variant="voice",
