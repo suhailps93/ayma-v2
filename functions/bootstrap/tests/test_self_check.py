@@ -182,8 +182,13 @@ def test_runner_pass_path_and_write_revert_restores():
     assert by_name["tool:deep_dive"].status == self_check.PROBE
     assert by_name["setting:theme"].status == self_check.PROBE
     assert h.bugs == []
-    assert "0 FAIL" in report
-    assert "SELF-CHECK" in report and "s-test" in report
+    # The run() return is the turn reply: the short summary line only,
+    # NOT the full raw report (founder screenshot 2026-11-07 ~18:30 —
+    # the full report now lives in the run's feedback record; see the
+    # reply regression tests below).
+    assert "0 failed" in report
+    assert "Self-check summary" in report
+    assert "SELF-CHECK" not in report
 
 
 # --- runner: FAIL path --------------------------------------------------------
@@ -206,7 +211,11 @@ def test_runner_failures_file_bugs_at_failure_time_with_context():
     assert "did NOT navigate" in nav_bug
     assert not any("check=tool:web_search" in b for b in h.bugs)
     assert by_name["nav:explore"].bug_id.startswith("bug-")
-    assert "1 FAIL" in report
+    # The reply is the short summary + the failure in plain words,
+    # not the raw report (see the reply regression tests below).
+    assert "1 failed" in report
+    assert "Nav to Explore" in report
+    assert "1 FAIL" not in report
 
     # Dedupe: filing the same check again in this run is a no-op.
     asyncio.run(runner._file_bug(by_name["nav:explore"]))
@@ -636,6 +645,72 @@ def test_zero_failure_run_posts_only_the_header_at_finish():
     assert finish[0].startswith("\U0001f9ea Self-check summary")
     assert "0 failed" in finish[0]
     assert "nothing failed" in finish[0]
+
+
+# --- turn reply: short summary only; full report in the record --------
+# Regression for the founder screenshot 2026-11-07 ~18:30 (run
+# 15ccce916d5f): run() used to return build_report verbatim, so the
+# /self-check turn reply was the whole raw report — header, PASSED:
+# list, raw check ids — under the short finish bubbles.
+
+
+def test_reply_clean_run_is_short_summary_no_raw_ids():
+    h = _Harness()
+    runner = h.runner()
+    reply = asyncio.run(runner.run())
+    assert not any(r.status == self_check.FAIL for r in runner.results)
+    # The reply IS the shared counts line (one formatter, no fork).
+    assert reply == runner._summary_header()
+    assert "\n" not in reply
+    assert "Self-check summary" in reply
+    assert "0 failed" in reply
+    # No raw check ids and no report list sections in the reply.
+    assert "nav:" not in reply and "tool:" not in reply
+    assert "PASSED:" not in reply
+    assert "PROBED" not in reply and "SKIPPED:" not in reply
+    assert "SELF-CHECK" not in reply
+
+
+def test_reply_failing_run_names_failures_in_plain_words():
+    h = _Harness(fail_nav={"explore"})
+    runner = h.runner()
+    reply = asyncio.run(runner.run())
+    lines = reply.split("\n")
+    assert lines[0] == runner._summary_header()
+    assert "1 failed" in lines[0]
+    # The failure is named the plain way the finish bubbles name it —
+    # never by its raw check id, and with no passed/probed lists.
+    assert any("Nav to Explore" in ln for ln in lines[1:])
+    assert "nav:explore" not in reply
+    assert "PASSED:" not in reply
+
+
+def test_full_report_filed_in_the_single_feedback_record():
+    h = _Harness(fail_nav={"explore"})
+    captured = []
+
+    def feedback_record(category, note, quote=""):
+        captured.append((category, note, quote))
+        return "noted"
+
+    runner = h.runner()
+    runner.deps.feedback_record = feedback_record
+    asyncio.run(runner.run())
+    # Still exactly ONE record for the whole run, tagged self-check,
+    # suggestions in the note exactly as before...
+    assert len(captured) == 1
+    category, note, quote = captured[0]
+    assert category == "self_check"
+    assert note.startswith("[self-check] run ")
+    assert "feature suggestions" in note
+    assert "Fix Nav to Explore" in note
+    # ...and the FULL build_report text preserved in the same record.
+    expected = self_check.build_report(
+        runner.results, runner.run_id, runner.session_id, runner.env_label
+    )
+    assert quote == expected
+    assert "SELF-CHECK" in quote and "s-test" in quote
+    assert "nav:explore" in quote  # raw detail lives here, not in chat
 
 
 def test_suggestions_never_treat_passes_as_gaps():

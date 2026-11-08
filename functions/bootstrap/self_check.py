@@ -1154,16 +1154,19 @@ class SelfCheckRunner:
         out += excluded_lines
         return out
 
-    async def _file_feedback(self, suggestions: list[str]) -> None:
-        """File the run suggestions as ONE feedback record.
+    async def _file_feedback(self, suggestions: list[str],
+                             report: str = "") -> None:
+        """File the run as ONE feedback record: suggestions + full report.
 
         Through the same bound record_feedback tool the session
         uses (feedback_ops, source ayma), tagged self-check in the
         note (the stored category taxonomy coerces to "other").
-        feedback_ops clips notes at 4000 chars, so the record
-        keeps as many suggestions as fit and counts the rest. Chat
-        carries only the counts and the failures, so this record is
-        where the full list lives.
+        feedback_ops clips each text field at 4000 chars, so the
+        note keeps as many suggestions as fit and counts the rest.
+        The full build_report text rides in the record's second
+        text field (``quote``) — chat carries only the counts and
+        the failures, and the turn reply is the short summary, so
+        this one record is where the full report lives now.
         """
         fn = self.deps.feedback_record
         if fn is None:
@@ -1177,14 +1180,22 @@ class SelfCheckRunner:
             if lines and size + len(s) + 3 > 3800:
                 lines.append(
                     f"- and {len(suggestions) - len(lines)} more "
-                    "(see the run summary in chat)"
+                    "(see the full report in this record)"
                 )
                 break
             lines.append(f"- {s}")
             size += len(s) + 3
         note = header + "\n" + "\n".join(lines)
         try:
-            out = fn("self_check", note)
+            if report:
+                try:
+                    out = fn("self_check", note, quote=report)
+                except TypeError:
+                    # A bound fn without the quote parameter: the
+                    # record still files, suggestions only.
+                    out = fn("self_check", note)
+            else:
+                out = fn("self_check", note)
             if inspect.isawaitable(out):
                 await out
         except Exception:  # noqa: BLE001 - feedback never breaks a run
@@ -1199,19 +1210,9 @@ class SelfCheckRunner:
         for chunk in chunk_lines(lines, limit=room):
             await self._announce(heading + "\n" + chunk)
 
-    async def _finish(self) -> None:
-        """End-of-run chat output: the counts, then failures only.
-
-        Founder, 2026-11-07 ~16:14: even grouped, the full readout
-        (header, failures, one bubble per category, suggestions)
-        landed as a wall of text, so chat now gets ONE header bubble
-        with the counts and then the failure lines only — packed
-        under MAX_BUBBLE_CHARS, split only on line boundaries. A run
-        with no failures posts the header alone, worded so it is
-        clear every check that ran passed. The full grouped detail
-        and the feature suggestions still go to the run's single
-        feedback record (_file_feedback) — they no longer post here.
-        """
+    def _summary_header(self) -> str:
+        """The one counts line — shared by the finish bubbles and the
+        turn reply, so the two can never drift into different formats."""
         counts = {PASS: 0, FAIL: 0, PROBE: 0, SKIP: 0, EXCLUDED: 0}
         for r in self.results:
             counts[r.status] = counts.get(r.status, 0) + 1
@@ -1224,16 +1225,49 @@ class SelfCheckRunner:
         )
         if counts[FAIL] == 0:
             header += " — nothing failed; every check that ran passed \u2705"
-        await self._announce(header)
-        failures = [r for r in self.results if r.status == FAIL]
-        if failures:
+        return header
+
+    def _failure_lines(self) -> list[str]:
+        """The failure lines in plain words — the same ``_line``
+        humanisation the finish bubbles post, reused for the reply."""
+        return [self._line(r) for r in self.results if r.status == FAIL]
+
+    def _reply_text(self) -> str:
+        """The /self-check turn reply: the counts line, plus the
+        failure lines when there are any — and nothing else.
+
+        The full raw report (build_report) is NOT the reply. It used
+        to be returned verbatim, so every run ended with a wall of
+        raw check ids under the short bubbles (founder screenshot
+        2026-11-07 ~18:30 PT, run 15ccce916d5f). The full report now
+        lives only in the run's feedback record (see _file_feedback).
+        """
+        return "\n".join([self._summary_header(), *self._failure_lines()])
+
+    async def _finish(self, report: str = "") -> None:
+        """End-of-run chat output: the counts, then failures only.
+
+        Founder, 2026-11-07 ~16:14: even grouped, the full readout
+        (header, failures, one bubble per category, suggestions)
+        landed as a wall of text, so chat now gets ONE header bubble
+        with the counts and then the failure lines only — packed
+        under MAX_BUBBLE_CHARS, split only on line boundaries. A run
+        with no failures posts the header alone, worded so it is
+        clear every check that ran passed. The full report and the
+        feature suggestions go to the run's single feedback record
+        (_file_feedback) — they no longer post here. The turn reply
+        (run()'s return value) is built from these same lines via
+        _reply_text — never the raw report.
+        """
+        await self._announce(self._summary_header())
+        failure_lines = self._failure_lines()
+        if failure_lines:
             await self._announce_bubbles(
                 "\u274c Failures — every failure from this run:",
-                [self._line(r) for r in failures],
+                failure_lines,
             )
         suggestions = self._suggestions()
-        if suggestions:
-            await self._file_feedback(suggestions)
+        await self._file_feedback(suggestions, report)
 
     async def run(self) -> str:
         deps = self.deps
@@ -1430,8 +1464,8 @@ class SelfCheckRunner:
 
         report = build_report(self.results, self.run_id, self.session_id,
                               self.env_label)
-        await self._finish()
-        return report
+        await self._finish(report)
+        return self._reply_text()
 
 
 def _env_label() -> str:
@@ -1491,8 +1525,10 @@ async def run_self_check(db, uid: str, *, session_id: str = "") -> str:
     Progress lines are appended to the chat history as checks complete
     (they land just before the persisted ``/self-check`` turn — a known
     cosmetic quirk of running inside ``_prepare_chat``, which executes
-    before the user turn is persisted). The full report is returned as
-    the turn's reply text.
+    before the user turn is persisted). The turn's reply text is the
+    short human summary only (counts line + any failures in plain
+    words); the full report is filed in the run's feedback record,
+    never returned as the reply.
     """
 
     def _progress(line: str) -> None:
