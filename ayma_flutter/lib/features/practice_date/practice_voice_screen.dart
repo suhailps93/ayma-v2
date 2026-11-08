@@ -169,7 +169,9 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                   ? AymaOrbState.thinking
                   : (speaking
                         ? AymaOrbState.speaking
-                        : AymaOrbState.listening),
+                        : (_voice.micYielded
+                              ? AymaOrbState.idle
+                              : AymaOrbState.listening)),
               _ => AymaOrbState.idle,
             };
             final status = switch (phase) {
@@ -180,7 +182,9 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                   ? 'Reconnecting…'
                   : (speaking
                         ? '$_personaName is speaking…'
-                        : (_voice.muted ? 'Muted' : 'Your turn — speak')),
+                        : (_voice.micYielded
+                              ? 'Mic yielded'
+                              : (_voice.muted ? 'Muted' : 'Your turn — speak'))),
               _ => '',
             };
             final amplitude =
@@ -269,11 +273,13 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                     children: [
                       _RoundButton(
                         key: const Key('practiceVoiceMuteButton'),
-                        icon: _voice.muted
+                        icon: (_voice.muted || _voice.micYielded)
                             ? Icons.mic_off_rounded
                             : Icons.mic_rounded,
-                        tint: _voice.muted ? ac.error : ac.bgElev,
-                        iconColor: _voice.muted
+                        tint: (_voice.muted || _voice.micYielded)
+                            ? ac.error
+                            : ac.bgElev,
+                        iconColor: (_voice.muted || _voice.micYielded)
                             ? AymaColors.onAccentFor(ac.error)
                             : ac.fgDim,
                         onTap: _voice.toggleMute,

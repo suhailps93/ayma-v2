@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'async_voice_queue.dart';
 import 'async_voice_recorder.dart';
 import 'ids.dart';
+import 'mic_yield_service.dart';
 import 'voice_note_controller.dart';
 
 /// What the async voice UI is doing right now.
@@ -31,12 +32,25 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
     AsyncVoiceRecorder? recorder,
     AsyncVoiceQueue? queue,
     Duration? capDuration,
+    MicYieldService? micYieldService,
   }) : _recorder = recorder ?? RecordPluginRecorder(),
        _queue = queue ?? AsyncVoiceQueue.instance,
-       _capDuration = capDuration ?? maxDuration;
+       _capDuration = capDuration ?? maxDuration,
+       _micYieldService = micYieldService ?? MicYieldService.instance {
+    _micYieldCallback = (reason) async {
+      if (_state == AsyncVoiceUiState.recording) {
+        debugPrint('[async_voice] yielding mic ($reason)');
+        _error = 'Microphone yielded to another app.';
+        await cancelRecording();
+      }
+    };
+    _micYieldService.addHandler(_micYieldCallback!);
+  }
 
   final AsyncVoiceRecorder _recorder;
   final AsyncVoiceQueue _queue;
+  final MicYieldService _micYieldService;
+  MicYieldCallback? _micYieldCallback;
 
   /// The cap this instance enforces — [maxDuration] in production,
   /// injectable so tests can reach the cap without waiting 120s.
@@ -161,6 +175,7 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
     _startedAt = DateTime.now();
     _elapsed = Duration.zero;
     _state = AsyncVoiceUiState.recording;
+    unawaited(_micYieldService.startMonitoring());
     _ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (_disposed || _startedAt == null) return;
       _elapsed = _effectiveElapsed();
@@ -379,6 +394,7 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
 
   void _resetToIdle() {
     _stopTimers();
+    unawaited(_micYieldService.stopMonitoring());
     _tempPath = null;
     _jobId = null;
     _heldClip = null;
@@ -402,6 +418,11 @@ class AsyncVoiceController extends ChangeNotifier implements VoiceNoteEngine {
   void dispose() {
     _disposed = true;
     _stopTimers();
+    if (_micYieldCallback != null) {
+      _micYieldService.removeHandler(_micYieldCallback!);
+      _micYieldCallback = null;
+    }
+    unawaited(_micYieldService.stopMonitoring());
     _queue.removeListener(_onQueueChanged);
     _recorder.dispose();
     super.dispose();

@@ -1906,17 +1906,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _pttVoice.relayRetrying ? 'Reconnecting…' : 'Connecting…',
         VoiceSessionPhase.waking => 'Waking Ayma…',
         _ =>
-          _pttVoice.muted
-              ? 'Muted'
-              : (_pttVoice.reconnecting
-                    ? 'Reconnecting…'
-                    : (_pttVoice.agentSpeaking
-                          ? 'Ayma is speaking…'
-                          // A cascade TTS error is recovering the voice — say
-                          // so honestly instead of a silent "Listening…".
-                          : (_pttVoice.voiceTrouble
-                                ? 'Reconnecting the voice…'
-                                : (_pttVoice.activeToolLabel ?? 'Listening…')))),
+          _pttVoice.micYielded
+              ? 'Mic yielded'
+              : (_pttVoice.muted
+                    ? 'Muted'
+                    : (_pttVoice.reconnecting
+                          ? 'Reconnecting…'
+                          : (_pttVoice.agentSpeaking
+                                ? 'Ayma is speaking…'
+                                // A cascade TTS error is recovering the voice — say
+                                // so honestly instead of a silent "Listening…".
+                                : (_pttVoice.voiceTrouble
+                                      ? 'Reconnecting the voice…'
+                                      : (_pttVoice.activeToolLabel ?? 'Listening…'))))),
       };
     }
     return SafeArea(
@@ -1933,7 +1935,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           onMicPressed: _onPttMicPressed,
           onStopPressed: _onPttVoiceStopPressed,
           onMuteTap: () => _pttVoice.toggleMute(),
-          muted: _pttVoice!.muted,
+          muted: _pttVoice!.muted || _pttVoice.micYielded,
           userAmplitude: _pttVoice.micLevel,
           aiAmplitude: _pttVoice.aymaLevel,
           statusLabel: voiceStatus,
@@ -3398,6 +3400,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             relayRetrying: _voice.relayRetrying,
                             reconnecting: _voice.reconnecting,
                             muted: _voice.muted,
+                            micYielded: _voice.micYielded,
                             aymaQuiet: _voice.aymaQuiet,
                             agentSpeaking: _voice.agentSpeaking,
                             activeToolLabel: _voice.activeToolLabel,
@@ -4775,6 +4778,7 @@ class _Composer extends StatelessWidget {
     this.relayRetrying = false,
     this.reconnecting = false,
     required this.muted,
+    this.micYielded = false,
     this.aymaQuiet = false,
     required this.agentSpeaking,
     this.activeToolLabel,
@@ -4826,6 +4830,7 @@ class _Composer extends StatelessWidget {
   /// instead of claiming she's listening over dead air.
   final bool reconnecting;
   final bool muted;
+  final bool micYielded;
 
   /// Ayma was told to "shut up" and is deliberately silent.
   final bool aymaQuiet;
@@ -4875,7 +4880,9 @@ class _Composer extends StatelessWidget {
               ? ComposerMode.connecting
               : (agentSpeaking
                     ? ComposerMode.aiSpeaking
-                    : ComposerMode.listening));
+                    : (micYielded
+                          ? ComposerMode.connecting
+                          : ComposerMode.listening)));
 
     String? statusLabel;
     if (voiceActive) {
@@ -4885,17 +4892,19 @@ class _Composer extends StatelessWidget {
           relayRetrying ? 'Reconnecting…' : 'Connecting…',
         VoiceSessionPhase.waking => 'Waking Ayma…',
         _ =>
-          muted
-              ? 'Muted'
-              : (reconnecting
-                    ? 'Reconnecting…'
-                    : (agentSpeaking
-                          ? 'Ayma is speaking…'
-                          : (activeToolLabel ??
-                                warmingNotice ??
-                                (awaitingFirstResponse
-                                    ? 'Connecting…'
-                                    : 'Listening…')))),
+          micYielded
+              ? 'Mic yielded'
+              : (muted
+                    ? 'Muted'
+                    : (reconnecting
+                          ? 'Reconnecting…'
+                          : (agentSpeaking
+                                ? 'Ayma is speaking…'
+                                : (activeToolLabel ??
+                                      warmingNotice ??
+                                      (awaitingFirstResponse
+                                          ? 'Connecting…'
+                                          : 'Listening…'))))),
       };
     }
 
@@ -5106,7 +5115,7 @@ class _Composer extends StatelessWidget {
               onStopPressed: () => onVoiceTap(),
               onMuteTap: () => onMuteTap(),
               onExpandTap: () => onExpandTap(),
-              muted: muted,
+              muted: muted || micYielded,
               userAmplitude: micLevel,
               aiAmplitude: aymaLevel,
               statusLabel: statusLabel,

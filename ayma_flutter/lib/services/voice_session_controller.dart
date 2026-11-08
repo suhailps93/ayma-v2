@@ -10,6 +10,7 @@ import 'app_context.dart';
 import 'screen_capture.dart';
 import 'call_permissions.dart';
 import 'error_reporting.dart';
+import 'mic_yield_service.dart';
 import 'transcript_store.dart';
 import 'voice_transport.dart';
 
@@ -56,8 +57,10 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? toolGuardTimeout,
     Duration? userIdleTimeout,
     ErrorReporter? errorReporter,
+    MicYieldService? micYieldService,
   })  : _store = transcriptStore,
         _reporter = errorReporter ?? ErrorReporter.instance,
+        _micYieldService = micYieldService ?? MicYieldService.instance,
         _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
         _userIdleTimeout = (userIdleTimeout == null ||
                 userIdleTimeout <= Duration.zero ||
@@ -83,7 +86,14 @@ class VoiceSessionController extends ChangeNotifier {
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport()),
         _commands = appCommandService ?? AppCommandService.shared,
-        _permissions = callPermissions ?? CallPermissions();
+        _permissions = callPermissions ?? CallPermissions() {
+    _micYieldCallback = (reason) async {
+      if (_micCaptured || (isConversationReady && !_muted && !_micYielded)) {
+        await yieldMic(reason);
+      }
+    };
+    _micYieldService.addHandler(_micYieldCallback!);
+  }
 
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`
   /// (no account) instead of `POST /bootstrap`.
@@ -378,6 +388,19 @@ class VoiceSessionController extends ChangeNotifier {
 
   bool _muted = false;
   bool get muted => _muted;
+
+  final MicYieldService _micYieldService;
+  MicYieldCallback? _micYieldCallback;
+
+  /// True when Ayma has yielded the microphone to another app (e.g. Gemini,
+  /// News, Google Assistant, or a phone call took audio focus / started recording).
+  /// While true, local mic audio is unpublished, and the UI reflects that
+  /// Ayma yielded. Tapping unmute or unyielding reclaims the mic.
+  bool _micYielded = false;
+  bool get micYielded => _micYielded;
+
+  String? _micYieldReason;
+  String? get micYieldReason => _micYieldReason;
 
   /// True while the agent has been told to "shut up" and is deliberately
   /// silent (server-side `MuteState`, authoritative: the agent re-publishes
@@ -1203,11 +1226,16 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> _syncMicCapture() async {
     final transport = _transport;
     if (transport == null) return;
-    final want = isConversationReady && !_muted;
+    final want = isConversationReady && !_muted && !_micYielded;
     if (want == _micCaptured) return;
     _micCaptured = want;
     try {
       await transport.setMicrophoneEnabled(want);
+      if (want) {
+        await _micYieldService.startMonitoring();
+      } else {
+        await _micYieldService.stopMonitoring();
+      }
     } catch (e, st) {
       if (!want) {
         // Releasing the mic must never throw its way out of a teardown.
@@ -1218,6 +1246,7 @@ class VoiceSessionController extends ChangeNotifier {
       // failed to publish): release everything and surface the same honest
       // error the old inline enable did, rather than a half-open call.
       _micCaptured = false;
+      await _micYieldService.stopMonitoring();
       _report(e, st, 'mic_permission');
       await _teardown();
       _fail('Ayma needs microphone access for voice.');
@@ -1609,15 +1638,58 @@ class VoiceSessionController extends ChangeNotifier {
         'background — turn it on in Settings, then try again.');
   }
 
+  /// Called when another app captures audio or requests audio focus:
+  /// releases the local mic track, updates UI state to show Ayma yielded,
+  /// and stops holding the microphone.
+  Future<void> yieldMic([String reason = 'audio_focus_loss']) async {
+    if (_micYielded) return;
+    if (_micCaptured || isConversationReady || isActive) {
+      debugPrint('[voice] yielding microphone to another app ($reason)');
+      _micYielded = true;
+      _micYieldReason = reason;
+      final transport = _transport;
+      if (transport != null && _micCaptured) {
+        try {
+          await transport.setMicrophoneEnabled(false);
+        } catch (e) {
+          debugPrint('[voice] yield mic release failed: $e');
+        }
+      }
+      _micCaptured = false;
+      micLevel.value = 0;
+      await _micYieldService.stopMonitoring();
+      notifyListeners();
+    }
+  }
+
+  /// Reclaims the microphone after a yield.
+  Future<void> unyieldMic() async {
+    if (!_micYielded) return;
+    _micYielded = false;
+    _micYieldReason = null;
+    _muted = false;
+    await _syncMicCapture();
+    notifyListeners();
+  }
+
   Future<void> toggleMute() async {
     // Only a genuinely ready call has a published mic to toggle — during
     // connecting/waking/warming there is nothing captured yet (mute is a no-op).
     if (!isConversationReady || _transport == null) return;
+    if (_micYielded) {
+      await unyieldMic();
+      return;
+    }
     _muted = !_muted;
     notifyListeners();
     try {
       await _transport!.setMicrophoneEnabled(!_muted);
       _micCaptured = !_muted; // keep the capture latch in step with the track
+      if (_micCaptured) {
+        await _micYieldService.startMonitoring();
+      } else {
+        await _micYieldService.stopMonitoring();
+      }
     } catch (_) {
       _muted = !_muted; // revert on failure
       notifyListeners();
@@ -1882,6 +1954,8 @@ class VoiceSessionController extends ChangeNotifier {
     _micLevelSub = null;
     _aymaLevelSub = null;
     _micCaptured = false;
+    _micYielded = false;
+    _micYieldReason = null;
     _transport = null;
 
     // Everything below is wrapped so the privacy-critical mic release in the
@@ -1893,6 +1967,7 @@ class VoiceSessionController extends ChangeNotifier {
     // 2026-11-03). Idempotent: a concurrent/second call sees null fields and
     // does nothing.
     try {
+      unawaited(_micYieldService.stopMonitoring());
       unawaited(WakelockPlus.disable().catchError(
           (e) => debugPrint('[voice] wakelock disable failed: $e')));
       await _stopScreenAwareness();
@@ -2055,6 +2130,10 @@ class VoiceSessionController extends ChangeNotifier {
     _userIdleTimer = null;
     _userIdleArmedAt = null;
     _userIdlePendingEnd = false;
+    if (_micYieldCallback != null) {
+      _micYieldService.removeHandler(_micYieldCallback!);
+      _micYieldCallback = null;
+    }
     unawaited(_teardown());
     super.dispose();
   }
