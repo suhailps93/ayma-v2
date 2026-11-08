@@ -1701,11 +1701,27 @@ class AymaOrbPainter extends CustomPainter {
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.008),
     );
     if (connectedGlow > 0.001) {
+      // The stroke lands on the sphere rim itself — the base gradient
+      // outer stop (the deepened tone below). Compact tiers paint with
+      // no blur and no screen blend (see [_glowStroke]), so they must
+      // be handed that backdrop to pre-blend against, exactly like the
+      // wing and teardrop glow sites already do with theirs. This call
+      // used to omit it, so at nav size the stroke painted the raw hot
+      // tone — saturation far past the accent own — as a solid band
+      // around the silhouette: the vivid cherry edge the founder
+      // photographed on the nav-bar orb at a terracotta accent
+      // (2026-11-07), where the big orb screen blend over the same
+      // rim lands soft and accent-true.
       canvas.drawCircle(
         center,
         radius,
-        _glowStroke(glowSphereHot.withValues(alpha: 0.95 * connectedGlow),
-            radius * 0.12, radius * 0.05, compact),
+        _glowStroke(
+          glowSphereHot.withValues(alpha: 0.95 * connectedGlow),
+          radius * 0.12,
+          radius * 0.05,
+          compact,
+          over: _richDeepen(material, 0.34),
+        ),
       );
     }
 
