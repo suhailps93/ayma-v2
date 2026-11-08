@@ -417,3 +417,115 @@ def test_grounded_profiles_paused_returns_none(monkeypatch):
 
     monkeypatch.setattr(web_search, "search", _paused)
     assert _run(pp._grounded_profiles("Dana Reis", "u1")) is None
+
+
+# --- the Serper provider ---------------------------------------------------
+
+
+def _stub_serper(monkeypatch, calls, results=None):
+    def _call(query, *, api_key, engine_id, num):
+        calls.append(query)
+        return list(results if results is not None else [RESULT])
+
+    monkeypatch.setitem(web_search._PROVIDERS, "serper", _call)
+
+
+def test_serper_payload_parsing_and_request_shape(monkeypatch):
+    payload = {
+        "organic": [
+            {"title": "A", "link": "https://a.example", "snippet": "sa"},
+            {"title": "B", "link": "", "snippet": "sb"},
+            {"title": "C", "link": "https://c.example"},
+        ]
+    }
+    seen = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps(payload).encode()
+
+    def _urlopen(req, timeout=None):
+        seen["req"] = req
+        return _Resp()
+
+    monkeypatch.setattr(web_search.urllib.request, "urlopen", _urlopen)
+    got = web_search._serper_search(
+        "dana reis", api_key="K", engine_id="", num=5
+    )
+    assert [r.url for r in got] == ["https://a.example", "https://c.example"]
+    req = seen["req"]
+    assert req.full_url == "https://google.serper.dev/search"
+    assert req.get_method() == "POST"
+    assert req.get_header("X-api-key") == "K"
+    assert json.loads(req.data) == {"q": "dana reis", "num": 5}
+
+
+def test_serper_missing_organic_is_empty_not_an_error(monkeypatch):
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    monkeypatch.setattr(
+        web_search.urllib.request, "urlopen", lambda req, timeout=None: _Resp()
+    )
+    assert (
+        web_search._serper_search("x", api_key="K", engine_id="", num=5) == []
+    )
+
+
+def test_serper_http_error_carries_its_code(monkeypatch):
+    def _urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", {}, None)
+
+    monkeypatch.setattr(web_search.urllib.request, "urlopen", _urlopen)
+    with pytest.raises(web_search._ProviderError) as excinfo:
+        web_search._serper_search("x", api_key="K", engine_id="", num=5)
+    assert excinfo.value.code == 429
+
+
+def test_serper_search_ok_and_empty_results(monkeypatch):
+    _settings(monkeypatch, key="serper-key", engine="", provider="serper")
+    db = _Db()
+    calls = []
+    _stub_serper(monkeypatch, calls, results=[])
+    outcome = _run(web_search.search("nothing", db=db, now=NOW))
+    assert outcome.status == web_search.STATUS_OK
+    assert outcome.results == []
+    assert calls == ["nothing"]
+
+
+def test_serper_cap_reached_pauses_before_any_call(monkeypatch):
+    _settings(monkeypatch, key="serper-key", engine="", cap=1, provider="serper")
+    db = _Db()
+    calls = []
+    _stub_serper(monkeypatch, calls)
+    first = _run(web_search.search("one", db=db, now=NOW))
+    second = _run(web_search.search("two", db=db, now=NOW))
+    assert first.status == web_search.STATUS_OK
+    assert second.status == web_search.STATUS_PAUSED
+    assert calls == ["one"]  # the capped call never reached Serper
+
+
+def test_serper_without_its_key_is_unconfigured_and_never_falls_back(monkeypatch):
+    # The image-search key belongs to the Google CSE account; Serper must
+    # not be handed it when WEB_SEARCH_API_KEY is unset.
+    _settings(monkeypatch, key="", engine="", provider="serper")
+    db = _Db()
+    calls = []
+    _stub_serper(monkeypatch, calls)
+    outcome = _run(web_search.search("anything", db=db, now=NOW))
+    assert outcome.status == web_search.STATUS_UNCONFIGURED
+    assert calls == []
+    assert db.docs == {}

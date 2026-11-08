@@ -259,7 +259,7 @@ class Config:
 
     gemini_web_search: bool
     """Offer the ``web_search`` function tool in **text** chat. The tool is
-    backed by the capped Programmable Search retrieval path
+    backed by the capped search-provider retrieval path
     (``web_search.py``, founder 2026-11-07): the LiveKit brain decides to
     search, the backend fetches results under a hard 100/day free-quota cap,
     and the model answers from them. Direct-Google grounding stays disabled
@@ -286,14 +286,17 @@ class Config:
 
     web_search_provider: str
     """Which search provider backs the ``web_search`` tool and the research
-    reports (``web_search.py``). ``"google_cse"`` today (Google Custom
-    Search JSON API); Google retires that API 2027-01-01 and the seam exists
-    so a Brave/Tavily swap is a small change. ``WEB_SEARCH_PROVIDER``."""
+    reports (``web_search.py``). ``"serper"`` on staging (founder decision
+    2026-11-07: new Programmable Search engines cannot search the whole
+    web, so staging search runs on Serper, which returns Google's results
+    from one key, no engine id). ``"google_cse"`` (Google Custom Search
+    JSON API) stays the default for environments still configured for it.
+    ``WEB_SEARCH_PROVIDER``."""
 
     web_search_api_key: str
-    """Provider API key for web search. Empty = fall back to
-    ``image_search_api_key`` (the same Programmable Search account).
-    ``WEB_SEARCH_API_KEY``."""
+    """Provider API key for web search. For ``google_cse``, an empty value
+    falls back to ``image_search_api_key`` (the same Programmable Search
+    account); other providers never see that key. ``WEB_SEARCH_API_KEY``."""
 
     web_search_cse_id: str
     """Provider engine id (``cx``) for web search. Empty = fall back to
