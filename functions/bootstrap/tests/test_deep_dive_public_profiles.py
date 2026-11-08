@@ -7,6 +7,7 @@ import deep_dive_images
 import deep_dive_public_profiles as pp
 import gemini
 import media_embed
+import web_search
 
 
 def _run(coro):
@@ -24,18 +25,26 @@ def _reply(*profiles):
     return json.dumps({"profiles": list(profiles)})
 
 
-def _stub_research(monkeypatch, text, calls=None):
-    async def _r(prompt, system_prompt=None, **kw):
+def _stub_search(monkeypatch, profiles, calls=None):
+    """Stub the capped web search (:mod:`web_search`) to return ``profiles``
+    as classified result URLs — the discovery source since the 2026-11-07
+    restore (it used to be one grounded ``gemini.research`` call)."""
+    async def _s(query, **kw):
         if calls is not None:
-            calls.append(prompt)
-        return text, []
+            calls.append(query)
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                p["platform"], p["url"], ""
+            ) for p in profiles],
+        )
 
-    monkeypatch.setattr(gemini, "research", _r)
+    monkeypatch.setattr(web_search, "search", _s)
 
 
 def test_flag_off_by_default_makes_no_calls(monkeypatch):
     calls = []
-    _stub_research(monkeypatch, _reply(), calls)
+    _stub_search(monkeypatch, [], calls)
     assert _run(pp.find_public_profile_images("Dana Reyes")) == []
     assert calls == []
 
@@ -64,12 +73,12 @@ def test_extract_profile_image_resolves_relative():
 def test_returns_candidates_with_platform_and_caches(monkeypatch):
     monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "true")
     calls = []
-    _stub_research(
+    _stub_search(
         monkeypatch,
-        _reply(
+        [
             {"platform": "github", "url": "https://github.com/dana"},
             {"platform": "linkedin", "url": "https://linkedin.com/in/dana"},
-        ),
+        ],
         calls,
     )
     monkeypatch.setattr(pp, "_robots_allows", lambda u: True)
@@ -94,8 +103,8 @@ def test_returns_candidates_with_platform_and_caches(monkeypatch):
 
 def test_robots_disallow_skips_fetch(monkeypatch):
     monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "1")
-    _stub_research(
-        monkeypatch, _reply({"platform": "github", "url": "https://github.com/d"})
+    _stub_search(
+        monkeypatch, [{"platform": "github", "url": "https://github.com/d"}]
     )
     monkeypatch.setattr(pp, "_robots_allows", lambda u: False)
 
@@ -109,10 +118,10 @@ def test_robots_disallow_skips_fetch(monkeypatch):
 def test_discovery_failure_falls_back_to_empty(monkeypatch):
     monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "1")
 
-    async def _r(*a, **k):
-        raise RuntimeError("vertex down")
+    async def _s(*a, **k):
+        raise RuntimeError("search down")
 
-    monkeypatch.setattr(gemini, "research", _r)
+    monkeypatch.setattr(web_search, "search", _s)
     assert _run(pp.find_public_profile_images("Dana Reyes")) == []
 
 

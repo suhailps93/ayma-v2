@@ -258,15 +258,16 @@ class Config:
     in on a native-audio model."""
 
     gemini_web_search: bool
-    """Let Ayma's **text** chat ground answers on live Google Search + read
-    URLs the user pastes (``google_search`` + ``url_context`` built-in tools,
-    alongside the session function tools). **Off by default** while grounded
-    research is disabled (direct-Google kill, 2026-11-04): the research
-    backend always raises ``DirectGoogleDisabledError``, so a
-    guaranteed-to-fail tool must not be offered — every call surfaced as an
-    internal error. Set ``GEMINI_WEB_SEARCH=true`` only once a LiveKit-routed
-    search backend exists. Voice is unaffected — the Live model wires search
-    separately."""
+    """Offer the ``web_search`` function tool in **text** chat. The tool is
+    backed by the capped Programmable Search retrieval path
+    (``web_search.py``, founder 2026-11-07): the LiveKit brain decides to
+    search, the backend fetches results under a hard 100/day free-quota cap,
+    and the model answers from them. Direct-Google grounding stays disabled
+    (2026-11-04 kill) — ``gemini.research()`` still raises. Set
+    ``GEMINI_WEB_SEARCH=true`` to offer the tool; search itself needs the
+    WEB_SEARCH_* (or IMAGE_SEARCH_*) key + engine configured, and reports an
+    honest paused/unavailable state when it cannot run. Voice is unaffected —
+    the Live model wires search separately."""
 
     gemini_maps_grounding: bool
     """INERT since the 2026-11-04 direct-Google kill (kept so existing envs
@@ -282,6 +283,27 @@ class Config:
     image_search_cse_id: str
     """The Programmable Search Engine id (``cx``) paired with
     ``image_search_api_key``. Empty = image step skipped."""
+
+    web_search_provider: str
+    """Which search provider backs the ``web_search`` tool and the research
+    reports (``web_search.py``). ``"google_cse"`` today (Google Custom
+    Search JSON API); Google retires that API 2027-01-01 and the seam exists
+    so a Brave/Tavily swap is a small change. ``WEB_SEARCH_PROVIDER``."""
+
+    web_search_api_key: str
+    """Provider API key for web search. Empty = fall back to
+    ``image_search_api_key`` (the same Programmable Search account).
+    ``WEB_SEARCH_API_KEY``."""
+
+    web_search_cse_id: str
+    """Provider engine id (``cx``) for web search. Empty = fall back to
+    ``image_search_cse_id``. ``WEB_SEARCH_CSE_ID``."""
+
+    web_search_daily_cap: int
+    """Hard daily cap on web-search provider calls — the free quota, 100.
+    Enforced atomically in Firestore by ``web_search.py`` BEFORE every call;
+    a value <= 0 pauses search entirely. There is no uncapped configuration.
+    ``WEB_SEARCH_DAILY_CAP``."""
 
     gemini_chat_thinking_level: str
     """Thinking effort for **text chat** replies (``generate_reply``) — chat is
@@ -1208,6 +1230,10 @@ def _load() -> Config:
         == "true",
         image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
         image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
+        web_search_provider=os.getenv("WEB_SEARCH_PROVIDER", "google_cse"),
+        web_search_api_key=os.getenv("WEB_SEARCH_API_KEY", ""),
+        web_search_cse_id=os.getenv("WEB_SEARCH_CSE_ID", ""),
+        web_search_daily_cap=int(os.getenv("WEB_SEARCH_DAILY_CAP", "100")),
         gemini_chat_thinking_level=os.getenv(
             "GEMINI_CHAT_THINKING_LEVEL", "low"
         ),

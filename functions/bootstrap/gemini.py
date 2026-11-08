@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 import inference_llm
 import llm_routing
 import token_ledger
+import web_search
 from config import CONFIG
 from tool_labels import NO_CHIP as _NO_CHIP
 from tool_labels import TOOL_LABELS as _TOOL_LABELS
@@ -115,9 +116,14 @@ async def warmup() -> None:
 _WEB_SEARCH_TOOL = {
     "name": "web_search",
     "description": (
-        "Search the live web and read pages. Use it for anything current or "
-        "factual you are unsure about, and to read a link the user pasted "
-        "(put the URL in the query). Returns a researched summary."
+        "Search the live web. Use it for anything current or factual you "
+        "are unsure about — events, news, places, prices, schedules, what "
+        "is happening near the user — and include a place the user "
+        "mentioned or that is already in context when the question is "
+        "local. Returns search results (titles, snippets, links) for you "
+        "to answer from. Search has a daily free-quota cap: if the result "
+        "says it is used up for today, tell the user exactly that — never "
+        "present it as a glitch or a technical problem."
     ),
     "parameters": {
         "type": "object",
@@ -133,16 +139,18 @@ _WEB_SEARCH_TOOL = {
 
 
 async def _web_search_tool(query: str, *, uid: str | None, feature: str) -> str:
-    """The chat `web_search` tool backend. Grounded search needs direct Google
-    grounding, which is disabled — :func:`research` raises, the tool wrapper
-    below turns it into an honest tool error, and the model tells the user
-    search is unavailable. The tool stays attached (rather than removed) so a
-    search request fails visibly instead of being answered from stale data."""
-    prose, sources = await research(query, uid=uid, feature=feature)
-    if sources:
-        listed = "; ".join(s["url"] for s in sources[:5])
-        return f"{prose}\n\nSources: {listed}"
-    return prose
+    """The chat `web_search` tool backend — the capped Programmable Search
+    path in :mod:`web_search` (founder restore, 2026-11-07).
+
+    Retrieval only: the LiveKit brain decides to search, the backend
+    fetches result links + snippets under the hard daily free-quota cap,
+    and the model answers from them. Direct-Google grounding stays
+    disabled — :func:`research` still raises for direct callers — and the
+    capped path reports its states honestly (paused at the cap,
+    unavailable when unconfigured) instead of an internal error.
+    """
+    outcome = await web_search.search(query)
+    return web_search.format_outcome(outcome, query)
 
 
 async def _reply_events_inference(
@@ -358,7 +366,14 @@ async def research(
     equivalent, so this raises instead of calling Google. Founder-decision
     item: restore only with a LiveKit-served equivalent or an explicit
     exception. The signature is kept so every caller keeps working unchanged
-    (each already treats a research failure as an honest, non-fatal error)."""
+    (each already treats a research failure as an honest, non-fatal error).
+
+    Founder exception granted 2026-11-07: web *search* is restored as
+    retrieval, not inference — the chat tool and the research reports fetch
+    result links + snippets through the capped Programmable Search path in
+    :mod:`web_search` (hard 100/day free-quota cap, fail closed) and hand
+    them to the LiveKit-routed model. Grounded synthesis through THIS
+    function stays disabled."""
     raise llm_routing.DirectGoogleDisabledError(
         "live web search is unavailable: grounded research needs direct "
         "Google grounding, which is disabled — all inference goes through "
