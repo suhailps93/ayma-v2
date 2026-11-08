@@ -501,7 +501,7 @@ testWidgets(
 
     testWidgets(
         'while holding, the mic bubbles up (scale + filled mic) and the '
-        'lock pill is compact', (tester) async {
+        'lock pill is 48x72', (tester) async {
       final engine = _FakeEngine();
       final note = VoiceNoteController(engine: engine);
       addTearDown(note.dispose);
@@ -519,10 +519,112 @@ testWidgets(
       );
       expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
       expect(
-        tester.getSize(find.byKey(const ValueKey('voiceNoteLockBubble')))
-            .width,
-        30,
+        tester.getSize(find.byKey(const ValueKey('voiceNoteLockBubble'))),
+        const Size(48, 72),
       );
+      await gesture.up();
+      await tester.pump();
+    });
+
+    testWidgets(
+        'lock pill icons breathe: chevron 8 from the top, lock 8 from '
+        'the bottom and at least 12 from either side', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(harness(note));
+      final gesture = await holdMic(tester);
+      final pill = find.byKey(const ValueKey('voiceNoteLockBubble'));
+      final pillRect = tester.getRect(pill);
+      expect(pillRect.size, const Size(48, 72));
+      final chevron = find.descendant(
+        of: pill,
+        matching: find.byIcon(Icons.keyboard_arrow_up_rounded),
+      );
+      final chevronRect = tester.getRect(chevron);
+      expect(chevronRect.size, const Size(20, 20));
+      // Exact internal padding: 8 above the chevron, 8 below the lock
+      // (the 1.2 border adds to the measured glyph clearance on top).
+      final paddings = tester
+          .widgetList<Padding>(
+            find.descendant(of: pill, matching: find.byType(Padding)),
+          )
+          .map((w) => w.padding)
+          .toList();
+      expect(paddings, contains(const EdgeInsets.only(top: 8)));
+      expect(paddings, contains(const EdgeInsets.only(bottom: 8)));
+      expect(chevronRect.top - pillRect.top, greaterThanOrEqualTo(8));
+      final lock = find.descendant(
+        of: pill,
+        matching: find.byIcon(Icons.lock_open_rounded),
+      );
+      final lockRect = tester.getRect(lock);
+      expect(lockRect.size, const Size(18, 18));
+      expect(pillRect.bottom - lockRect.bottom, greaterThanOrEqualTo(8));
+      expect(lockRect.left - pillRect.left, greaterThanOrEqualTo(12));
+      expect(pillRect.right - lockRect.right, greaterThanOrEqualTo(12));
+      await gesture.up();
+      await tester.pump();
+    });
+
+    testWidgets(
+        'in the DM composer layout the lock pill floats above the bar, '
+        'centered on the mic, clear of the thumb zone', (tester) async {
+      final engine = _FakeEngine();
+      final note = VoiceNoteController(engine: engine);
+      addTearDown(note.dispose);
+      addTearDown(engine.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomCenter,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      const Expanded(child: SizedBox(height: 48)),
+                      VoiceNoteMicButton(
+                        controller: note,
+                        background: Colors.grey.shade800,
+                        foreground: Colors.white,
+                      ),
+                    ],
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 56,
+                    bottom: 0,
+                    child: VoiceNoteRecordingBar(controller: note),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byIcon(Icons.mic_none_rounded)),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(note.phase, VoiceNotePhase.holding);
+      final barRect = tester.getRect(
+        find.byKey(const ValueKey('voiceNoteRecordingBar')),
+      );
+      final pillRect = tester.getRect(
+        find.byKey(const ValueKey('voiceNoteLockBubble')),
+      );
+      final micRect = tester.getRect(find.byIcon(Icons.mic_rounded));
+      // Bottom of the pill at least 16 above the top of the bar band.
+      expect(pillRect.bottom, lessThanOrEqualTo(barRect.top - 16 + 0.6));
+      // Centered on the mic button, and no overlap with it: the thumb
+      // holding the mic cannot cover the pill.
+      expect(pillRect.center.dx, closeTo(micRect.center.dx, 1.0));
+      expect(pillRect.overlaps(micRect), isFalse);
       await gesture.up();
       await tester.pump();
     });

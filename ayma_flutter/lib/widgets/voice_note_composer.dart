@@ -176,8 +176,9 @@ class _VoiceNoteMicButtonState extends State<VoiceNoteMicButton> {
 
 /// The WhatsApp-style lock bubble shown while holding to record
 /// (founder, 2026-11-06: "slide up to lock is not clear — make it more
-/// interactive"). A vertical pill at the right end of the recording bar:
-/// as the finger slides up it RISES and FILLS with accent, its chevron
+/// interactive"). A vertical pill that FLOATS above the mic button
+/// (positioned by the recording bar, out of its flow): as the finger
+/// slides up it RISES and FILLS with accent, its chevron
 /// and lock glyph light up, and at full progress the lock engages (the
 /// bar snaps to the locked controls). [progress] is 0 at rest and 1 at
 /// the lock threshold.
@@ -187,16 +188,18 @@ class VoiceNoteLockBubble extends StatelessWidget {
   /// Upward slide progress toward locking, 0..1.
   final double progress;
 
-  static const double _width = 30;
-  static const double _height = 52;
+  static const double _width = 48;
+  static const double _height = 72;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final p = progress.clamp(0.0, 1.0);
     final fillColor = Color.lerp(ac.bgElev, ac.accent, p * 0.85)!;
-    final borderColor = Color.lerp(ac.fgDim, ac.accent, p)!;
-    final iconColor = Color.lerp(ac.fgDim, ac.accent, p)!;
+    // Rest state must read clearly on the black recording bar: full
+    // foreground, never dim-on-dim (founder, 2026-11-07).
+    final borderColor = Color.lerp(ac.fg, ac.accent, p)!;
+    final iconColor = Color.lerp(ac.fg, ac.onAccent, p)!;
     return Transform.translate(
       // The bubble lifts toward the finger as the slide progresses.
       offset: Offset(0, -10 * p),
@@ -205,11 +208,19 @@ class VoiceNoteLockBubble extends StatelessWidget {
         width: _width,
         height: _height,
         decoration: BoxDecoration(
-          // Solid at rest - a small filled pill riding the bar's right
-          // end, never a big hollow oval (founder, 2026-11-06 ~19:51).
-          color: ac.bgCard,
+          // Solid elevated at rest, with a shadow, so the pill is
+          // visible from the first frame of the hold (founder,
+          // 2026-11-07: it was barely visible under the thumb).
+          color: ac.bgElev,
           borderRadius: BorderRadius.circular(_width / 2),
           border: Border.all(color: borderColor, width: 1.2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(_width / 2),
@@ -224,16 +235,24 @@ class VoiceNoteLockBubble extends StatelessWidget {
                   color: fillColor.withValues(alpha: 0.45 + 0.5 * p),
                 ),
               ),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Icon(
-                    Icons.keyboard_arrow_up_rounded,
-                    size: 15,
-                    color: iconColor,
+              // Full-width column: without this the column shrinks to
+              // the widest icon and the glyphs hug the left edge of
+              // the pill instead of centering (measured: lock glyph
+              // 2.2 from the left edge of the 48-wide pill).
+              Positioned.fill(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Icon(
+                      Icons.keyboard_arrow_up_rounded,
+                      size: 20,
+                      color: iconColor,
+                    ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
+                    padding: const EdgeInsets.only(bottom: 8),
                     child: Transform.scale(
                       scale: 1 + 0.3 * p,
                       child: Icon(
@@ -241,12 +260,13 @@ class VoiceNoteLockBubble extends StatelessWidget {
                         p >= 0.6
                             ? Icons.lock_rounded
                             : Icons.lock_open_rounded,
-                        size: 14,
+                        size: 18,
                         color: iconColor,
                       ),
                     ),
                   ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -341,13 +361,16 @@ class VoiceNoteRecordingBar extends StatelessWidget {
     // in the bar itself, not just in a label.
     final lean = (controller.dragOffset.dx < 0 ? controller.dragOffset.dx : 0.0)
         * 0.35;
-    return Container(
-      key: const ValueKey('voiceNoteRecordingBar'),
-      color: ac.bg,
-      constraints: const BoxConstraints(minHeight: 64),
-      child: Transform.translate(
-        offset: Offset(lean < -48 ? -48 : lean, 0),
-        child: Row(
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          key: const ValueKey('voiceNoteRecordingBar'),
+          color: ac.bg,
+          constraints: const BoxConstraints(minHeight: 64),
+          child: Transform.translate(
+            offset: Offset(lean < -48 ? -48 : lean, 0),
+            child: Row(
         children: [
           Expanded(
             child: Column(
@@ -429,12 +452,24 @@ class VoiceNoteRecordingBar extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          VoiceNoteLockBubble(progress: lockProgress),
-          const SizedBox(width: 2),
         ],
         ),
       ),
+        ),
+        // The lock pill floats ABOVE the mic (WhatsApp model), out of
+        // the recording bar flow, so the thumb holding the mic can
+        // never cover it. Geometry, on the 8pt grid: the bar is 64
+        // tall and the pill bottom sits 16 above its top (bottom: 80);
+        // in the DM composer the bar stops 56 short of the right edge
+        // and the 44-wide mic button is centered 34 past the bar right
+        // edge, so the 48-wide pill centered on the mic extends 58
+        // past that edge (right: -58).
+        Positioned(
+          right: -58,
+          bottom: 80,
+          child: VoiceNoteLockBubble(progress: lockProgress),
+        ),
+      ],
     );
   }
 }
