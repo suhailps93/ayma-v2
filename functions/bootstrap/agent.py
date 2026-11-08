@@ -1858,6 +1858,118 @@ def relay_voice_commands(
     # goes unconfirmed.
     gate = _CommandClaimGate(session)
     dedupe.outcome_observer = gate.observe
+
+    # --- analysis mode + voice self-check (founder 2026-11-08) --------
+    # Saying "analysis mode" in a call starts the same password gate the
+    # text lane runs (analysis_mode.py — one shared state machine,
+    # keyed by this call's session id, so the mode dies with the call
+    # and never carries into the next one). The gate's own turns are
+    # spoken verbatim by the agent with the model's narration for the
+    # turn suppressed (the claim gate's pattern); once the password
+    # passes, the analysis block — persona OFF, live diagnostics, the
+    # full core-memories pull — is swapped into the chat context as a
+    # tagged system item (the world-state refresher's pattern), so
+    # in-mode questions are answered by the model FROM that block.
+    # Saying "exit analysis mode" removes the item and closes the gate.
+    # Saying "self check" runs the real self-check runner and speaks
+    # its summary — the runner itself files its records as usual.
+    import analysis_mode as _analysis_flow
+
+    analysis_flow = {"suppress": False}
+
+    def _speak_verbatim(line: str) -> None:
+        try:
+            session.say(line)
+        except Exception:  # noqa: BLE001 - fall back like the claim gate
+            try:
+                session.generate_reply(
+                    instructions=load_voice_verbatim_line(line)
+                )
+            except Exception:  # noqa: BLE001 - never break the call
+                logger.exception("analysis flow could not speak its line")
+
+    async def _apply_analysis_ctx(active: bool) -> None:
+        try:
+            agent_obj = session.current_agent
+        except Exception:  # noqa: BLE001 - session not started yet
+            agent_obj = None
+        if agent_obj is None:
+            return
+        try:
+            from livekit.agents import llm as _llm
+
+            items = []
+            for item in agent_obj.chat_ctx.items:
+                content = item.content
+                texts = content if isinstance(content, list) else [content]
+                joined = " ".join(str(t) for t in texts)
+                if _analysis_flow.is_analysis_item_text(joined):
+                    continue
+                items.append(item)
+            if active:
+                block = await asyncio.to_thread(
+                    _analysis_flow.build_analysis_block, get_db(), uid
+                )
+                items.append(_llm.ChatMessage(role="system", content=[block]))
+            await agent_obj.update_chat_ctx(_llm.ChatContext(items))
+        except Exception:  # noqa: BLE001 - a ctx swap must never break the call
+            logger.exception("analysis mode ctx update failed")
+
+    async def _run_voice_self_check() -> None:
+        try:
+            import self_check as _voice_self_check
+
+            summary = await _voice_self_check.run_self_check(
+                get_db(), uid, session_id=session_id
+            )
+        except Exception:  # noqa: BLE001 - speak the failure honestly
+            logger.exception("voice self-check failed")
+            _speak_verbatim("The self-check could not run just now.")
+            return
+        for line in str(summary).splitlines():
+            if line.strip():
+                _speak_verbatim(line.strip())
+
+    def _analysis_step(transcript: str) -> bool:
+        """True when the analysis flow owns this finalized turn."""
+        try:
+            status = _analysis_flow.read_state(
+                get_db(), uid, session_id
+            )["status"]
+        except Exception:  # noqa: BLE001 - flow failures leave the turn alone
+            logger.exception("analysis flow state read failed")
+            return False
+        if status == _analysis_flow.STATUS_AWAITING:
+            entered, reply = _analysis_flow.attempt_password(
+                get_db(), uid, transcript, session_id
+            )
+            analysis_flow["suppress"] = True
+            if entered:
+                _speak_verbatim(_analysis_flow.ENTER_LINE)
+                asyncio.create_task(_apply_analysis_ctx(True))
+            else:
+                _speak_verbatim(reply)
+            return True
+        if status == _analysis_flow.STATUS_ACTIVE:
+            if _analysis_flow.is_exit_command(transcript):
+                reply = _analysis_flow.exit_mode(get_db(), uid, session_id)
+                analysis_flow["suppress"] = True
+                _speak_verbatim(reply)
+                asyncio.create_task(_apply_analysis_ctx(False))
+                return True
+            return False
+        trigger = _analysis_flow.detect_voice_trigger(transcript)
+        if trigger == "analysis":
+            reply = _analysis_flow.start_gate(get_db(), uid, session_id)
+            analysis_flow["suppress"] = True
+            _speak_verbatim(reply)
+            return True
+        if trigger == "self_check":
+            analysis_flow["suppress"] = True
+            _speak_verbatim("Running the self-check now.")
+            asyncio.create_task(_run_voice_self_check())
+            return True
+        return False
     # The teardown latch: ``note_turn`` retires the "end_call" claim on every
     # finalized turn, so a duplicated sign-off transcript would claim (and
     # run teardown) again — this keeps it to once per call, full stop.
@@ -1978,6 +2090,9 @@ def relay_voice_commands(
             return
         dedupe.note_turn()
         gate.note_turn()
+        analysis_flow["suppress"] = False
+        if _analysis_step(transcript):
+            return
         if interpret is None:
             _dispatch(detect_voice_command(transcript), transcript)
             return
@@ -1991,7 +2106,7 @@ def relay_voice_commands(
         # turn's only narration; on the silence latch there is no line at
         # all — the turn ends quietly and the continuation session speaks
         # once the reconnect lands.
-        if gate.failed or gate.silenced:
+        if gate.failed or gate.silenced or analysis_flow["suppress"]:
             ev.speech_handle.interrupt(force=True)
 
 
