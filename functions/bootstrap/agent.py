@@ -105,6 +105,7 @@ from tool_labels import NAV_CHIP_TOOLS as _NAV_CLAIM_TOOLS  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
+from practice_core import PracticePersistQueue  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
 

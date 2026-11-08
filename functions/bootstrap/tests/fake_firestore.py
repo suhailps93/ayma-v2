@@ -34,9 +34,16 @@ SERVER_TIMESTAMP = object()
 DELETE_FIELD = object()
 
 
-class Aborted(Exception):
+try:
+    from google.api_core.exceptions import Aborted as _GoogleAborted
+except ImportError:
+    _GoogleAborted = Exception
+
+
+class Aborted(_GoogleAborted):
     """Named like ``google.api_core.exceptions.Aborted`` so contention
-    handling that classifies by exception name sees it."""
+    handling that classifies by exception name sees it, and inheriting
+    from it so ``firestore.transactional`` retry loops catch it."""
 
 
 class FakeTransaction:
@@ -48,25 +55,78 @@ class FakeTransaction:
     ``commit`` applies the staged writes only if no read document
     changed since it was read — otherwise it raises :class:`Aborted`
     and applies nothing, so the caller can retry on a fresh read.
+
+    Faithful to google-cloud-firestore 2.x: a transaction handed out by
+    ``db.transaction()`` is NOT in progress until begun via
+    ``firestore.transactional`` (which calls ``_clean_up``, ``_begin``,
+    ``_commit`` / ``_rollback``). Any read or write through an un-begun
+    transaction raises ``ValueError: Transaction not in progress, cannot be
+    used in API requests.``
     """
 
-    def __init__(self, db):
+    def __init__(self, db, max_attempts: int = 5, read_only: bool = False):
         self._db = db
         self._reads: dict = {}
         self._writes: list = []
+        self.in_progress = False
+        self._id = None
+        self._read_only = read_only
+        self._max_attempts = max_attempts
+
+    # -- surface used by firestore.transactional ----------------------
+    def _clean_up(self):
+        self._writes = []
+        self._reads = {}
+        self.in_progress = False
+        self._id = None
+
+    def _begin(self, retry_id=None):
+        self._id = ("fake-txn", id(self), retry_id)
+        self.in_progress = True
+
+    def _commit(self):
+        self.commit()
+
+    def _rollback(self):
+        self._writes = []
+        self._reads = {}
+        self.in_progress = False
+
+    def _require_in_progress(self):
+        if not self.in_progress:
+            raise ValueError(
+                "Transaction not in progress, cannot be used in API requests."
+            )
+
+    @property
+    def id(self):
+        if not self.in_progress:
+            raise ValueError(
+                "Transaction not in progress, cannot be used in API requests."
+            )
+        return self._id
 
     def get(self, ref):
+        self._require_in_progress()
         with self._db._lock:
             self._reads[ref.key] = self._db._versions.get(ref.key, 0)
             return Snap(ref.key[-1], self._db.docs.get(ref.key), ref)
 
     def update(self, ref, data):
+        self._require_in_progress()
         self._writes.append(("update", ref.key, dict(data)))
 
     def set(self, ref, data, merge=False):
+        self._require_in_progress()
         self._writes.append(("set", ref.key, dict(data), merge))
 
+    def delete(self, ref):
+        self._require_in_progress()
+        self._writes.append(("delete", ref.key, None, False))
+
     def commit(self):
+        self._require_in_progress()
+        self.in_progress = False
         with self._db._lock:
             for key, version in self._reads.items():
                 if self._db._versions.get(key, 0) != version:
@@ -75,8 +135,10 @@ class FakeTransaction:
                 ref = DocRef(self._db, write[1])
                 if write[0] == "update":
                     ref.update(write[2])
-                else:
+                elif write[0] == "set":
                     ref.set(write[2], merge=write[3])
+                elif write[0] == "delete":
+                    ref.delete()
             self._writes = []
 
 
@@ -134,6 +196,10 @@ class DocRef:
 
     def get(self, transaction=None):
         if transaction is not None:
+            if not getattr(transaction, "in_progress", False):
+                raise ValueError(
+                    "Transaction not in progress, cannot be used in API requests."
+                )
             return transaction.get(self)
         return Snap(self.key[-1], self._store.docs.get(self.key), self)
 
@@ -289,7 +355,7 @@ class FakeDb:
     def get_all(self, refs):
         return [r.get() for r in refs]
 
-    def transaction(self):
+    def transaction(self, max_attempts: int = 5, read_only: bool = False):
         """Return a new optimistic-concurrency transaction (see
         :class:`FakeTransaction`)."""
-        return FakeTransaction(self)
+        return FakeTransaction(self, max_attempts=max_attempts, read_only=read_only)

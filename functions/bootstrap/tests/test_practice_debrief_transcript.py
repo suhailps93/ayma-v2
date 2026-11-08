@@ -379,3 +379,193 @@ def test_greeting_reuses_matching_count_without_second_call(monkeypatch):
     g2 = asyncio.run(main._practice_return_greeting(VIEWER, sid))
     assert "turns-1" in g1 and "turns-1" in g2
     assert calls == [1]
+
+
+# --- (E) faithful transaction: text & voice turn saves reach store and debrief - #
+
+
+def test_practice_text_turn_save_lands_and_debrief_sees_turns(monkeypatch):
+    """A practice text turn save through append_turns must land in the session
+    store against a faithful Firestore transaction, and POST /practice/debrief
+    must load those turns and debrief them."""
+    db = _mock_db(monkeypatch)
+    monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
+    sid = practice_core.start_or_resume_session(db, VIEWER, MAYA, modality="text")
+
+    saved = practice_core.append_turns(
+        db,
+        VIEWER,
+        sid,
+        [
+            {"role": "user", "text": "What do you like to do on weekends?"},
+            {"role": "match", "text": "I love hiking and exploring coffee shops."},
+        ],
+    )
+    assert len(saved) == 2
+
+    stored = _session_doc(db, sid)
+    assert [t["text"] for t in stored["turns"]] == [
+        "What do you like to do on weekends?",
+        "I love hiking and exploring coffee shops.",
+    ]
+
+    seen_turns: list = []
+
+    async def _capture_debrief(ctx, turns, *, uid):
+        seen_turns.extend(turns)
+        return {
+            "what_worked": ["great opening question"],
+            "suggested_next_lines": ["ask about favorite trail"],
+            "avoid": [],
+        }
+
+    monkeypatch.setattr(practice_date, "generate_debrief", _capture_debrief)
+    resp = client.post(
+        "/practice/debrief", json={"session_id": sid}, headers=_auth(monkeypatch)
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert not data.get("empty")
+    assert data["what_worked"] == ["great opening question"]
+    assert len(seen_turns) == 2
+    assert [t["text"] for t in seen_turns] == [
+        "What do you like to do on weekends?",
+        "I love hiking and exploring coffee shops.",
+    ]
+
+
+def test_practice_voice_turn_save_lands_and_debrief_sees_turns(monkeypatch):
+    """A practice voice turn save through PracticePersistQueue and append_turns
+    must land in the session store against a faithful Firestore transaction, and
+    POST /practice/debrief must load those turns and debrief them."""
+    db = _mock_db(monkeypatch)
+    monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
+    sid = practice_core.start_or_resume_session(db, VIEWER, MAYA, modality="voice")
+
+    async def _run():
+        queue = practice_core.PracticePersistQueue(db, VIEWER, sid)
+        queue.start()
+        await queue.enqueue({"role": "user", "text": "Hey Maya, how is your day?"})
+        await queue.enqueue({"role": "match", "text": "Hey! It is going really well."})
+        await queue.close()
+
+    asyncio.run(_run())
+
+    stored = _session_doc(db, sid)
+    assert [t["text"] for t in stored["turns"]] == [
+        "Hey Maya, how is your day?",
+        "Hey! It is going really well.",
+    ]
+    assert stored.get("transcript_final_at") is not None
+
+    seen_turns: list = []
+
+    async def _capture_debrief(ctx, turns, *, uid):
+        seen_turns.extend(turns)
+        return {
+            "what_worked": ["friendly tone"],
+            "suggested_next_lines": [],
+            "avoid": [],
+        }
+
+    monkeypatch.setattr(practice_date, "generate_debrief", _capture_debrief)
+    resp = client.post(
+        "/practice/debrief", json={"session_id": sid}, headers=_auth(monkeypatch)
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert not data.get("empty")
+    assert data["what_worked"] == ["friendly tone"]
+    assert len(seen_turns) == 2
+
+
+def test_practice_persist_queue_does_not_certify_final_on_append_failure(
+    monkeypatch, caplog
+):
+    """If queued appends failed, PracticePersistQueue must NOT mark the
+    transcript final, must emit an error-level log, and the debrief must return
+    honest-empty without certifying/caching."""
+    db = _mock_db(monkeypatch)
+    monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
+    _short_wait(monkeypatch)
+    sid = practice_core.start_or_resume_session(db, VIEWER, MAYA, modality="voice")
+
+    def _broken_append(*args, **kwargs):
+        raise RuntimeError("simulated firestore append failure")
+
+    monkeypatch.setattr(practice_core, "append_turns", _broken_append)
+
+    import logging
+
+    with caplog.at_level(logging.ERROR, logger="ayma.practice_date"):
+
+        async def _run():
+            queue = practice_core.PracticePersistQueue(db, VIEWER, sid)
+            queue.start()
+            await queue.enqueue({"role": "user", "text": "hello?"})
+            await queue.close()
+
+        asyncio.run(_run())
+
+    stored = _session_doc(db, sid)
+    assert not stored.get("turns")
+    assert stored.get("transcript_final_at") is None
+    # Error log verified
+    error_logs = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("failed" in r.message.lower() for r in error_logs)
+
+    # Debrief remains honest-empty
+    resp = client.post(
+        "/practice/debrief", json={"session_id": sid}, headers=_auth(monkeypatch)
+    )
+    assert resp.status_code == 200
+    assert resp.json()["empty"] is True
+
+
+def test_fake_transaction_requires_in_progress_like_real_firestore():
+    """FakeTransaction must raise ValueError when used without being started
+    via firestore.transactional — exactly as google-cloud-firestore 2.x does."""
+    import pytest
+    from google.cloud import firestore
+
+    db = FakeDb({("test_coll", "doc1"): {"count": 1}})
+    ref = db.collection("test_coll").document("doc1")
+
+    txn = db.transaction()
+
+    with pytest.raises(
+        ValueError,
+        match="Transaction not in progress, cannot be used in API requests.",
+    ):
+        ref.get(transaction=txn)
+
+    with pytest.raises(
+        ValueError,
+        match="Transaction not in progress, cannot be used in API requests.",
+    ):
+        txn.get(ref)
+
+    with pytest.raises(
+        ValueError,
+        match="Transaction not in progress, cannot be used in API requests.",
+    ):
+        txn.update(ref, {"count": 2})
+
+    with pytest.raises(
+        ValueError,
+        match="Transaction not in progress, cannot be used in API requests.",
+    ):
+        txn.commit()
+
+    @firestore.transactional
+    def _increment(transaction):
+        snap = ref.get(transaction=transaction)
+        val = snap.to_dict()["count"]
+        transaction.update(ref, {"count": val + 1})
+        return val + 1
+
+    result = _increment(db.transaction())
+    assert result == 2
+    assert ref.get().to_dict()["count"] == 2
+
+
