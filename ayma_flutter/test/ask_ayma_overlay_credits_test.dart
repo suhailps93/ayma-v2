@@ -45,6 +45,7 @@ class _FakeApi extends ApiClient {
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
     String clientMsgId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async* {
     // The sheet always tries the stream first — fail it so every call
     // exercises the plain `chat` path this test asserts on.
@@ -79,6 +80,7 @@ class _FakeApi extends ApiClient {
     String screenPreviousLabel = '',
     String clientMsgId = '',
     bool tourContinuation = false,
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async =>
       reply;
 }

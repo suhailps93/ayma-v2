@@ -5466,3 +5466,55 @@ def test_command_claim_gate_dead_client_end_to_end(monkeypatch):
         assert session.speech_created().interrupted is True
 
     asyncio.run(_run())
+
+
+# --- disconnect / hang-up sign-offs (founder directive 2026-11-07, 2cy) ---
+# "disconnect" ends the call from everywhere: the deterministic net routes
+# a whole-utterance disconnect to the same end_call teardown the goodbye
+# path runs, with the same strictness (no tails, no third-party talk, no
+# bare "bye").
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "disconnect",
+        "Disconnect.",
+        "DISCONNECT PLEASE",
+        "please disconnect",
+        "disconnect Ayma",
+        "hang up",
+        "hang up please",
+        "end the call",
+        "end this call",
+        "stop the call",
+        "goodbye",
+        "goodbye Ayma",
+        "bye Ayma",
+    ],
+)
+def test_detect_voice_command_disconnect_ends_call(phrase):
+    assert agent.detect_voice_command(phrase) == ("end_call", {})
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "bye",
+        "disconnect the wifi",
+        "I got disconnected yesterday",
+        "please disconnect me from this service",
+        "end call with Daniel",
+        "open my messages, disconnect",
+        "what does disconnect mean",
+    ],
+)
+def test_detect_voice_command_disconnect_strictness(phrase):
+    assert agent.detect_voice_command(phrase) is None
+
+
+def test_detect_disconnect_command_is_whole_utterance_only():
+    assert agent.detect_disconnect_command("disconnect") is True
+    assert agent.detect_disconnect_command("disconnect!") is True
+    assert agent.detect_disconnect_command("disconnect now") is False
+    assert agent.detect_disconnect_command("") is False

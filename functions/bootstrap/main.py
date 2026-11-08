@@ -699,6 +699,82 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "ayma-api", "version": CONFIG.version}
 
 
+class CallStateModel(_TruncatingModel):
+    """Voice-call state the client attaches to /chat, /chat/stream and
+    /bootstrap (founder directive 2026-11-07, ledger 2cy): whether the
+    user is on a live voice call with Ayma right now, or that a call just
+    ended (and how). Absent on older clients — every consumer treats
+    ``None`` as "no information" and says nothing about calls. The one
+    string field is truncated, never a 422 (see _TruncatingModel)."""
+
+    _truncate_caps: ClassVar[dict[str, int]] = {"end_reason": 32}
+
+    in_call: bool = False
+    # Seconds since the last call ended, when it ended recently. Clamped
+    # in the renderer, so an out-of-range value can never reject a send.
+    ended_seconds_ago: int | None = None
+    # One of the client VoiceSessionController disconnect reasons:
+    # user_stop, text_disconnect, client_idle_timeout, client_idle_guard,
+    # agent_idle_timeout, dropped, out_of_credits, error.
+    end_reason: str = Field(default="", max_length=32)
+
+
+_CALL_END_REASON_TEXT = {
+    "user_stop": "the user hung up",
+    "text_disconnect": (
+        "the user ended it by typing their disconnect request in the chat"
+    ),
+    "client_idle_timeout": "it ended after 30 seconds of silence",
+    "client_idle_guard": "it ended after a stretch of silence",
+    "agent_idle_timeout": "it ended after 30 seconds of silence",
+    "dropped": "the connection dropped",
+    "out_of_credits": "it ran out of credits",
+    "error": "it hit an error",
+}
+
+# Past half an hour, a finished call is history, not context.
+_CALL_JUST_ENDED_WINDOW_SECONDS = 1800
+
+
+def _call_state_context(call_state: CallStateModel | None) -> str:
+    """The prompt line carrying voice-call state (see CallStateModel).
+
+    Founder defect, 2026-11-07: his call ended by 30s of silence, he
+    typed "disconnect please", and Ayma answered that they were not on a
+    call — the text model had never been told a call existed. This line
+    is that knowledge, for both the /chat prompt and the voice seed.
+    """
+    if call_state is None:
+        return ""
+    if call_state.in_call:
+        return (
+            "Call state: you are on a live voice call with the user "
+            "right now — they are with you by voice and can also type "
+            "in the chat. If they ask you to disconnect or hang up, "
+            "the app ends the call; confirm that it is ending."
+        )
+    ago = call_state.ended_seconds_ago
+    if ago is None:
+        return ""
+    ago = max(0, min(int(ago), 86400))
+    if ago > _CALL_JUST_ENDED_WINDOW_SECONDS:
+        return ""
+    if ago < 10:
+        when = "just now"
+    elif ago < 90:
+        when = f"{ago} seconds ago"
+    else:
+        when = f"{ago // 60} minutes ago"
+    reason = _CALL_END_REASON_TEXT.get(call_state.end_reason, "it ended")
+    return (
+        f"Call state: a voice call with the user ended {when} "
+        f"({reason}). You WERE on that call with them. If they ask "
+        "you to disconnect, acknowledge that the call has already "
+        "ended — never say you were not on a call or that there is "
+        "nothing to disconnect."
+    )
+
+
 class BootstrapRequest(_TruncatingModel):
     _truncate_caps: ClassVar[dict[str, int]] = {
         "practice_return_session_id": 128,
@@ -713,6 +789,9 @@ class BootstrapRequest(_TruncatingModel):
     # room with greeting instructions that open the debrief ("How did it
     # go?"). Empty for every ordinary voice start.
     practice_return_session_id: str = Field(default="", max_length=128)
+    # Previous voice call (ledger 2cy): a call that just ended, so the
+    # new room's seed opens knowing it happened — see CallStateModel.
+    call_state: CallStateModel | None = None
 
 
 def _should_auto_dive(uid: str) -> bool:
@@ -980,6 +1059,9 @@ async def bootstrap(
             preferences_context=_preferences_context(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
             model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
+            call_state_context=_call_state_context(
+                req.call_state if req else None
+            ),
             db=get_db(),
             summary_context=summary_text,
             # Voice persona variant (prompt.py `_persona_variant`): the Live
@@ -1302,6 +1384,10 @@ class ChatRequest(_TruncatingModel):
     # narrates the next step). It is a tour-control signal, not a user utterance,
     # so NEITHER the ping message NOR the tour narration is persisted to history.
     tour_continuation: bool = Field(default=False)
+    # Voice-call state (founder directive 2026-11-07, ledger 2cy):
+    # a call is live, or just ended — so a typed disconnect after an
+    # idle-ended call gets an acknowledgment, never a denial.
+    call_state: CallStateModel | None = None
 
 
 _USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
@@ -1742,6 +1828,7 @@ async def _prepare_chat(
         or (_attached_photo_edit_context() if image is not None else ""),
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
+        call_state_context=_call_state_context(req.call_state),
         db=get_db(),
         summary_context=summary_text,
         # Phase 1 (cost program 2026-09-26): byte-stable prompt prefix for

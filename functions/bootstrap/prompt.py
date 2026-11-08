@@ -505,6 +505,7 @@ def compose_system_prompt(
     shared_photo_note: str = "",
     questionnaire_note: str = "",
     current_screen_context: str = "",
+    call_state_context: str = "",
     db=None,
     lessons_md_override: str | None = None,
     summary_context: str = "",
@@ -531,6 +532,11 @@ def compose_system_prompt(
     persona-evolution eval gate only: it renders the prompt against a
     candidate ``lessons.md`` that was never written to Firestore, so the
     "current" and "proposed" personas can be compared side by side.
+
+    ``call_state_context`` is the voice-call state line (main.py's
+    ``_call_state_context``): the user is on a live voice call with
+    Ayma right now, or a call just ended (and how). ``""`` (the
+    default) changes nothing.
 
     ``summary_context`` is the rolling conversation summary (context_opt,
     cost-program Phase 2) — everything older than the raw ``recent_turns``
@@ -636,6 +642,13 @@ def compose_system_prompt(
             "What the user is currently looking at in the app: "
             + current_screen_context.strip()
         )
+
+    # Voice-call state (founder directive 2026-11-07): a live call now,
+    # or a call that just ended — so a typed "disconnect" after an
+    # idle-ended call gets an acknowledgment, never a denial that no
+    # call existed.
+    if call_state_context.strip():
+        parts.append(call_state_context.strip())
 
     if not stable_prefix and wiki_context.strip():
         parts.append(wiki_context.strip())

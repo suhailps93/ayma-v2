@@ -1567,6 +1567,48 @@ _STACK_TOOL_KWARGS = {
 }
 
 
+#: Whole-utterance disconnect / hang-up requests (founder directive
+#: 2026-11-07: "disconnect" ends the call from everywhere). Matched
+#: against the NORMALIZED utterance only — the whole message must be the
+#: request, so talking about disconnecting something else, recounting a
+#: past drop, or a disconnect tail on a real request never ends the call.
+#: The typed-chat detector in the client
+#: (`VoiceSessionController.isDisconnectRequest`) applies the same
+#: whole-message strictness to typed sends; the sets differ where the
+#: surfaces do — voice also takes the goodbyes addressed to Ayma that
+#: the verdict path already covered. A bare "bye" is deliberately
+#: absent — one STT-confusable syllable (see prompts/voice_actions.md,
+#: end_call strictness).
+_DISCONNECT_PHRASES = frozenset({
+    "disconnect",
+    "disconnect please",
+    "please disconnect",
+    "disconnect ayma",
+    "ayma disconnect",
+    "hang up",
+    "hang up please",
+    "please hang up",
+    "end call",
+    "end the call",
+    "end this call",
+    "stop the call",
+    "goodbye",
+    "goodbye ayma",
+    "bye ayma",
+})
+
+
+def _normalize_utterance(text: str) -> str:
+    """Lowercase, collapse whitespace, drop trailing sentence punctuation."""
+    normalized = " ".join((text or "").lower().split())
+    return normalized.rstrip(".!?").strip()
+
+
+def detect_disconnect_command(transcript: str) -> bool:
+    """True when the whole utterance is a disconnect / hang-up request."""
+    return _normalize_utterance(transcript) in _DISCONNECT_PHRASES
+
+
 def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     """``(tool_name, kwargs)`` for a deterministic voice command, else ``None``.
 
@@ -1579,6 +1621,8 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     text = (transcript or "").strip()
     if not text:
         return None
+    if detect_disconnect_command(text):
+        return "end_call", {}
     stack_cmd = skills.set_model_stack.detect_stack_command(text)
     if stack_cmd is not None:
         name, value = stack_cmd

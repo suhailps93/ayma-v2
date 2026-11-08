@@ -302,6 +302,64 @@ List<Map<String, String>> clampRecentTurns(
         },
     ];
 
+/// A snapshot of the user's voice-call state, stamped onto `/chat`,
+/// `/chat/stream` and `/bootstrap` payloads as the nested `call_state`
+/// object (backend `CallStateModel`) so Ayma's context always knows
+/// whether a voice call is live or just ended (founder directive
+/// 2026-11-07, ledger 2cy: a call that ended by 30 s of silence was
+/// invisible to the text model, which answered a typed "disconnect"
+/// with "We aren't on a voice call right now" — as if the call had
+/// never happened). Produced by `VoiceSessionController` (its
+/// last-ended record); defined here so the wire client and the
+/// controller share one type without an import cycle.
+class CallStateSnapshot {
+  const CallStateSnapshot._(this.status, this.endedSecondsAgo, this.reason);
+
+  /// A voice call is live right now.
+  const CallStateSnapshot.active() : this._('active', null, '');
+
+  /// No live call, and none ended recently enough to matter.
+  const CallStateSnapshot.none() : this._('none', null, '');
+
+  /// A call ended [secondsAgo] ago for [reason] (a client disconnect
+  /// reason: `user_stop`, `text_disconnect`, `client_idle_timeout`,
+  /// `agent_idle_timeout`, `dropped`, `out_of_credits`, `error`, ...).
+  const CallStateSnapshot.justEnded({
+    required int secondsAgo,
+    required String reason,
+  }) : this._('just_ended', secondsAgo, reason);
+
+  /// `active`, `just_ended`, or `none`.
+  final String status;
+
+  /// Seconds since the call ended; set only for `just_ended`.
+  final int? endedSecondsAgo;
+
+  /// Why the call ended; set only for `just_ended`.
+  final String reason;
+
+  bool get isActive => status == 'active';
+  bool get isJustEnded => status == 'just_ended';
+
+  /// The `call_state` payload object, or null when there is nothing to
+  /// report — an absent field renders as no call context at all,
+  /// exactly like an older client.
+  Map<String, dynamic>? get wireJson {
+    switch (status) {
+      case 'active':
+        return {'in_call': true, 'end_reason': ''};
+      case 'just_ended':
+        return {
+          'in_call': false,
+          if (endedSecondsAgo != null) 'ended_seconds_ago': endedSecondsAgo,
+          'end_reason': reason,
+        };
+      default:
+        return null;
+    }
+  }
+}
+
 /// The clamped wire body shared by `POST /chat` and `POST /chat/stream`.
 /// The users own [message] is passed through untouched on purpose: it is
 /// their input, not context, and stays strict server-side.
@@ -333,6 +391,7 @@ Map<String, dynamic> buildChatRequestBody({
   String screenPreviousLabel = '',
   bool tourContinuation = false,
   bool includeTourContinuation = true,
+  CallStateSnapshot callState = const CallStateSnapshot.none(),
 }) =>
     {
       'message': message,
@@ -378,6 +437,11 @@ Map<String, dynamic> buildChatRequestBody({
           screenPreviousRoute, ChatContextCaps.screenPreviousRoute),
       'screen_previous_label': clampChatContext(
           screenPreviousLabel, ChatContextCaps.screenPreviousLabel),
+      // Voice-call state (founder directive 2026-11-07, ledger 2cy):
+      // the nested `call_state` object, present only when the caller
+      // computed a snapshot with something to report, so payloads from
+      // call sites that never did stay byte-identical to before.
+      if (callState.wireJson != null) 'call_state': callState.wireJson,
     };
 
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
@@ -517,6 +581,7 @@ class ApiClient {
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
     String practiceReturnSessionId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async {
     final isPracticeReturn = practiceReturnSessionId.isNotEmpty;
     // Refresh the ID token under a deadline. A hang here (flaky DNS reaching
@@ -579,6 +644,9 @@ class ApiClient {
               'recent_turns': clampRecentTurns(recentTurns),
               if (practiceReturnSessionId.isNotEmpty)
                 'practice_return_session_id': practiceReturnSessionId,
+              // Previous voice call, when one just ended (ledger 2cy) —
+              // same conditional shape as the practice-return id above.
+              if (callState.wireJson != null) 'call_state': callState.wireJson,
             }),
           )
           .timeout(isPracticeReturn ? longTimeout : _bootstrapPostTimeout);
@@ -2649,6 +2717,7 @@ class ApiClient {
     String screenPreviousLabel = '',
     String clientMsgId = '',
     bool tourContinuation = false,
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async {
     final http.Response response;
     try {
@@ -2660,6 +2729,7 @@ class ApiClient {
           sessionId: sessionId,
           clientMsgId: clientMsgId,
           tourContinuation: tourContinuation,
+          callState: callState,
           viewingProfileUid: viewingProfileUid,
           recentTurns: recentTurns,
           imagePath: imagePath,
@@ -2730,6 +2800,7 @@ class ApiClient {
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
     String clientMsgId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
@@ -2737,6 +2808,7 @@ class ApiClient {
         message: message,
         sessionId: sessionId,
         clientMsgId: clientMsgId,
+        callState: callState,
         viewingProfileUid: viewingProfileUid,
         recentTurns: recentTurns,
         imagePath: imagePath,

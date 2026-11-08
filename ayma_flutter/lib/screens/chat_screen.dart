@@ -2330,6 +2330,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ? askAyma!.matchReportId
         : _matchReportId;
     final screenCtx = _activePageContext;
+    // Voice-call state for this turn (founder directive 2026-11-07,
+    // ledger 2cy): Ayma's text context must know whether a voice call is
+    // live or just ended — without it she answered a typed "disconnect"
+    // after a silence-ended call with "We aren't on a voice call right
+    // now", as if the call never happened. A typed disconnect during a
+    // LIVE call ends it here, deterministically (the same teardown as
+    // the stop button), and this turn is then stamped just-ended so she
+    // acknowledges the call she was just on instead of denying it. The
+    // message still goes to the model either way — informed, it
+    // confirms the end (live case) or acknowledges the call already
+    // ended (just-ended case). [_voice] is read only in plain mode: in
+    // Ask-Ayma mode it must never be constructed (see dispose), and the
+    // mode's own capture controller is [_pttVoice].
+    final ownVoice = widget.askAymaContext != null ? _pttVoice : _voice;
+    var callState = (ownVoice?.isActive ?? false)
+        ? const CallStateSnapshot.active()
+        : VoiceSessionController.chatCallState();
+    final liveCall = (ownVoice?.isActive ?? false)
+        ? ownVoice
+        : (VoiceSessionController.active?.isActive ?? false)
+            ? VoiceSessionController.active
+            : null;
+    if (liveCall != null &&
+        VoiceSessionController.isDisconnectRequest(message)) {
+      unawaited(liveCall.stop());
+      callState = const CallStateSnapshot.justEnded(
+        secondsAgo: 0,
+        reason: 'text_disconnect',
+      );
+    }
     // The plain-`/chat` form of this send. Used as the in-band fallback when
     // the stream transport is unavailable, and by [_reconcilePendingSend] as
     // the idempotent re-ask after a dropped connection — same `client_msg_id`
@@ -2362,6 +2392,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenPreviousLabel:
               NavigationHistory.instance.previous?.label ?? '',
           clientMsgId: msgId,
+          callState: callState,
         );
 
     try {
@@ -2395,6 +2426,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenPreviousLabel:
               NavigationHistory.instance.previous?.label ?? '',
           clientMsgId: msgId,
+          callState: callState,
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
