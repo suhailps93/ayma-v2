@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:ayma_flutter/legal/biometric_consent_text.dart';
@@ -33,6 +34,9 @@ class _FakeAuth extends AuthService {
   /// When true, the next email sign-in succeeds with a mock credential.
   bool succeedSignIn = false;
 
+  /// When set, signInWithGoogle returns this future (for simulating in-flight/hung calls).
+  Future<UserCredential>? hangGoogle;
+
   Never _throwNext() {
     final e = nextError!;
     nextError = null;
@@ -42,6 +46,7 @@ class _FakeAuth extends AuthService {
   @override
   Future<UserCredential> signInWithGoogle() async {
     calls.add('google');
+    if (hangGoogle != null) return hangGoogle!;
     if (nextError != null) _throwNext();
     if (succeedSignIn) {
       succeedSignIn = false;
@@ -80,10 +85,23 @@ class _FakeAuth extends AuthService {
 /// Inert voice controller so the greeting orb never opens a real session.
 class _FakeVoice extends VoiceSessionController {
   _FakeVoice() : super(transcriptStore: TranscriptStore());
+  bool _active = false;
+  void setVoiceActive(bool v) {
+    _active = v;
+    notifyListeners();
+  }
   @override
-  Future<void> start({bool forceRelayFirst = false}) async {}
+  bool get isActive => _active;
   @override
-  Future<void> stop() async {}
+  Future<void> start({bool forceRelayFirst = false}) async {
+    _active = true;
+    notifyListeners();
+  }
+  @override
+  Future<void> stop() async {
+    _active = false;
+    notifyListeners();
+  }
 }
 
 /// Ticks the two required clickwrap boxes (Terms/Privacy, face recognition).
@@ -650,6 +668,201 @@ void main() {
 
     expect(find.byType(SnackBar), findsNothing);
     expect(find.textContaining('Google sign-in failed'), findsNothing);
+  });
+
+  testWidgets(
+      'cancelling Google sign-in (canceled code) clears busy state and allows tapping Email',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth);
+
+    auth.nextError = const GoogleSignInException(
+      code: GoogleSignInExceptionCode.canceled,
+    );
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.textContaining('Signing you in'), findsNothing);
+
+    // Tapping Email button immediately works and reveals the email stage
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    expect(find.text('Password'), findsOneWidget);
+    expect(find.byType(TextField), findsNWidgets(2));
+  });
+
+  testWidgets(
+      'cancelling Google sign-in (interrupted code) clears busy state without toast and allows tapping Email',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth);
+
+    auth.nextError = const GoogleSignInException(
+      code: GoogleSignInExceptionCode.interrupted,
+    );
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.textContaining('Signing you in'), findsNothing);
+
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    expect(find.text('Password'), findsOneWidget);
+  });
+
+  testWidgets(
+      'cancelling Google sign-in (PlatformException sign_in_canceled) clears busy state without toast and allows tapping Email',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth);
+
+    auth.nextError = PlatformException(
+      code: 'sign_in_canceled',
+      message: 'Sign in was canceled.',
+    );
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.textContaining('Signing you in'), findsNothing);
+
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    expect(find.text('Password'), findsOneWidget);
+  });
+
+  testWidgets(
+      'in-flight Google sign-in can be cancelled via Cancel button, re-enabling Email',
+      (tester) async {
+    final auth = _FakeAuth();
+    final completer = Completer<UserCredential>();
+    auth.hangGoogle = completer.future;
+    await _pump(tester, auth);
+
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    // Loader is visible with Cancel button
+    expect(find.textContaining('Signing you in'), findsOneWidget);
+    expect(find.byKey(const Key('signin_cancel_busy_btn')), findsOneWidget);
+
+    // Tap Cancel
+    await tester.tap(find.byKey(const Key('signin_cancel_busy_btn')));
+    await tester.pump();
+
+    // Busy loader is gone
+    expect(find.textContaining('Signing you in'), findsNothing);
+
+    // Email button is now clickable and opens the email form
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    expect(find.text('Password'), findsOneWidget);
+
+    // Late completion of the hung call does not navigate or throw
+    completer.complete(MockUserCredential(false));
+    await tester.pump();
+    expect(find.text('Password'), findsOneWidget);
+  });
+
+  testWidgets(
+      'in-flight Google sign-in cancelled via back-press (PopScope) re-enables Email',
+      (tester) async {
+    final auth = _FakeAuth();
+    final completer = Completer<UserCredential>();
+    auth.hangGoogle = completer.future;
+    await _pump(tester, auth);
+
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(find.textContaining('Signing you in'), findsOneWidget);
+
+    // Simulate system back button invocation via PopScope
+    final dynamic popScope =
+        tester.widget(find.byWidgetPredicate((w) => w is PopScope));
+    popScope.onPopInvokedWithResult(false, null);
+    await tester.pump();
+
+    expect(find.textContaining('Signing you in'), findsNothing);
+
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    expect(find.text('Password'), findsOneWidget);
+    completer.complete(MockUserCredential(false));
+    await tester.pump();
+  });
+
+  testWidgets(
+      'in-flight Google sign-in auto-resets busy state on app resume timeout',
+      (tester) async {
+    final auth = _FakeAuth();
+    final completer = Completer<UserCredential>();
+    auth.hangGoogle = completer.future;
+    await _pump(tester, auth);
+
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+
+    expect(find.textContaining('Signing you in'), findsOneWidget);
+
+    // Simulate app resume after picker dismissal
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    // Still busy during the 1500ms grace window
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(find.textContaining('Signing you in'), findsOneWidget);
+
+    // Expires at 1500ms
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.textContaining('Signing you in'), findsNothing);
+
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    expect(find.text('Password'), findsOneWidget);
+    completer.complete(MockUserCredential(false));
+    await tester.pump();
+  });
+
+  testWidgets(
+      'active voice session on sign-in screen does not block focusing or typing in email/password fields',
+      (tester) async {
+    final auth = _FakeAuth();
+    final voice = _FakeVoice();
+    voice.setVoiceActive(true);
+
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      home: SignInScreen(
+        auth: auth,
+        voiceController: voice,
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await _acceptConsents(tester);
+
+    // Open email stage
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    // Enter email and password while voice session is active
+    await tester.enterText(find.byType(TextField).first, 'test1@gmail.com');
+    await tester.enterText(find.byType(TextField).last, 'Test123');
+    await tester.pump();
+
+    expect(find.text('test1@gmail.com'), findsOneWidget);
+    expect(find.text('Test123'), findsOneWidget);
   });
 
   testWidgets(
