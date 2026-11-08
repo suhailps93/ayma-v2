@@ -126,6 +126,22 @@ void main() {
     expect(store.wireTurns().map((t) => t['text']), ['hi']);
   });
 
+  test('wireTurns includes reply context prefix naming You or Ayma for message replies', () {
+    final store = TranscriptStore();
+    store.addTurn(
+      TurnRole.user,
+      'Actually pizza sounds better',
+      TurnSource.text,
+      replySubject: 'You',
+      replySnippet: 'I want sushi tonight',
+      replyKind: 'message',
+    );
+    expect(
+      store.wireTurns().single['text'],
+      '[Replying to You: "I want sushi tonight"]\nActually pizza sounds better',
+    );
+  });
+
   test('addTurn with a local imageFile shows immediately, before any url', () {
     final store = TranscriptStore();
     final file = File('does_not_need_to_exist.jpg');

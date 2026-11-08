@@ -434,4 +434,197 @@ void main() {
       expect(find.byKey(const ValueKey('quotedReplyCard')), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'swipe to reply on user own message: swiping own message shows Replying to You preview in composer, cancel dismisses preview',
+    (tester) async {
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'user',
+            'text': 'I prefer Italian food for our dinner date.',
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsNothing);
+
+      // Swipe user's own sent message to reply
+      await tester.fling(
+        find.textContaining('I prefer Italian food'),
+        const Offset(-300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+
+      // Reply preview is now visible in the composer naming "You" honestly
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsOneWidget);
+      expect(find.text('Replying to You'), findsOneWidget);
+      expect(find.textContaining('I prefer Italian food'), findsNWidgets(2)); // in user bubble and in preview
+
+      // Tap Cancel reply
+      await tester.tap(find.byTooltip('Cancel reply'));
+      await tester.pumpAndSettle();
+
+      // Preview is gone
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'swipe to reply on user own message: sending sends message with quoted context on wire naming You and renders quoted reply card naming You as message quote, not page card',
+    (tester) async {
+      final yesterday = DateTime.now().subtract(const Duration(days: 1)).toIso8601String();
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'user',
+            'text': 'I am looking for someone who loves rock climbing.',
+            'created_at': yesterday,
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Swipe own message to reply
+      await tester.fling(
+        find.textContaining('loves rock climbing'),
+        const Offset(-300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsOneWidget);
+      expect(find.text('Replying to You'), findsOneWidget);
+
+      // Enter follow-up and send
+      await tester.enterText(find.byType(TextField), 'Especially bouldering at the gym!');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('composerSendButton')));
+      await tester.pumpAndSettle();
+
+      // Wire message carries the quoted text naming You honestly
+      expect(capture.requests, hasLength(1));
+      final sent1 = capture.requests.first;
+      expect(
+        sent1['message'],
+        '[Replying to You: "I am looking for someone who loves rock climbing."]\nEspecially bouldering at the gym!',
+      );
+
+      // In the thread: quoted reply card appears inside the new user message bubble naming "You"
+      expect(find.byKey(const ValueKey('quotedReplyCard')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.text('You'),
+        ),
+        findsOneWidget,
+      );
+      // Quoted reply card renders with reply icon, NEVER with page pin icon
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.byIcon(Icons.reply_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.byIcon(Icons.push_pin_outlined),
+        ),
+        findsNothing,
+      );
+      expect(find.text('I am looking for someone who loves rock climbing.'), findsNWidgets(2));
+      expect(find.text('Especially bouldering at the gym!'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'history restore: restored self-quote restores and renders as a message quote, never as a page card',
+    (tester) async {
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'user',
+            'text': 'I love bouldering in the gym.',
+            'created_at': DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
+          },
+          {
+            'role': 'user',
+            'text': '[Replying to You: "I love bouldering in the gym."]\nAnd outdoor sport climbing too!',
+            'created_at': DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(),
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Quoted reply card is restored from history
+      expect(find.byKey(const ValueKey('quotedReplyCard')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.text('You'),
+        ),
+        findsOneWidget,
+      );
+      // Must be a message quote with reply icon, NEVER a page card with pin icon
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.byIcon(Icons.reply_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.byIcon(Icons.push_pin_outlined),
+        ),
+        findsNothing,
+      );
+      expect(find.text('I love bouldering in the gym.'), findsNWidgets(2));
+      expect(find.text('And outdoor sport climbing too!'), findsOneWidget);
+    },
+  );
 }

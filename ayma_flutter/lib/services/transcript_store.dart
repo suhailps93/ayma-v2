@@ -108,8 +108,8 @@ class TranscriptTurn {
   final String feedbackTitle;
   final String feedbackBody;
 
-  /// When this turn quotes a page or an Ayma message: the subject name
-  /// (e.g. "Alex's profile", "Explore — \"hiking\"", "Ayma").
+  /// When this turn quotes a page or an Ayma/user message: the subject name
+  /// (e.g. "Alex's profile", "Explore — \"hiking\"", "Ayma", "You").
   final String replySubject;
 
   /// Quoted snippet / note / detail of what was replied to.

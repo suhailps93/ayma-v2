@@ -1488,7 +1488,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (replyMatch != null) {
         replySubject = replyMatch.group(1)!;
         replySnippet = replyMatch.group(2)!;
-        replyKind = replySubject == 'Ayma' ? 'message' : 'page';
+        final lowerSubject = replySubject.toLowerCase();
+        replyKind = (lowerSubject == 'ayma' || lowerSubject == 'you') ? 'message' : 'page';
         text = replyMatch.group(3)!;
       }
       turns.add(
@@ -2189,7 +2190,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String replyKind = '';
 
     if (replying != null) {
-      replySubject = 'Ayma';
+      replySubject = replying.role == TurnRole.user ? 'You' : 'Ayma';
       replySnippet = replying.text;
       replyKind = 'message';
     } else if (screenCtx != null) {
@@ -3269,8 +3270,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 nowPlaying: _nowPlaying,
                                 initiallyFlagged: ThumbsDownStore.instance
                                     .isFlagged(t.text),
-                                onSwipeReply: (t.role == TurnRole.ayma &&
-                                        t.isFinal &&
+                                onSwipeReply: (t.isFinal &&
                                         t.text.isNotEmpty)
                                     ? () => _onSwipeReply(t)
                                     : null,
@@ -3400,6 +3400,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             pendingShared: _pendingShared,
                             onClearShared: () =>
                                 setState(() => _pendingShared = null),
+                            replyingToSender: (!_voice.isActive &&
+                                    _replyingToTurn != null)
+                                ? (_replyingToTurn!.role == TurnRole.user
+                                    ? 'You'
+                                    : 'Ayma')
+                                : null,
                             replyingToText: (!_voice.isActive &&
                                     _replyingToTurn != null)
                                 ? _replyingToTurn!.text
@@ -3757,7 +3763,7 @@ class _TranscriptLine extends StatefulWidget {
   /// Non-null only for a finished Ayma line — fire-and-forget feedback.
   final Future<void> Function()? onThumbsDown;
 
-  /// Non-null only for a finished Ayma line — triggers swipe to reply.
+  /// Non-null for a finished line — triggers swipe to reply.
   final VoidCallback? onSwipeReply;
 
   @override
@@ -3863,12 +3869,13 @@ class _TranscriptLineState extends State<_TranscriptLine> {
         ? formatMessageTime(turn.createdAt!)
         : null;
 
+    final Widget turnWidget;
     if (!isAyma) {
       // You — a right-aligned rounded bubble (Gemini style).
       final userClip = _clipRow(ac.onAccent, ac.onAccent.withValues(alpha: 0.85));
       final hasReply = turn.replySubject.isNotEmpty;
       final showBubble = turn.text.isNotEmpty || userClip != null || hasReply;
-      return Padding(
+      turnWidget = Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Align(
           alignment: Alignment.centerRight,
@@ -3963,31 +3970,30 @@ class _TranscriptLineState extends State<_TranscriptLine> {
           ),
         ),
       );
-    }
+    } else {
+      // Ayma — full-width, no bubble; serif italic; markdown headers/lists.
+      // A finished turn carries a face/body report either as fields (skill fired
+      // from the Skills tab) or as a trailing `[face_report:id]` marker in the
+      // text (Ayma called the tool herself). Either way: strip the marker and
+      // render the report card inline. `[1]`-style citation noise is also removed.
+      final marker = turn.isFinal ? _reportMarker.firstMatch(turn.text) : null;
+      final reportKind = turn.reportKind.isNotEmpty
+          ? turn.reportKind
+          : (marker != null ? _reportKindOf(marker.group(1)!) : null);
+      final reportId = turn.reportId.isNotEmpty
+          ? turn.reportId
+          : marker?.group(2);
+      var displayText = marker != null
+          ? turn.text.replaceFirst(_reportMarker, '')
+          : turn.text;
+      if (reportKind != null) {
+        displayText = displayText.replaceAll(RegExp(r'\s*\[\d+\]'), '').trim();
+      }
+      // A pending ("Thinking…") turn never carries a clip — only resolve the
+      // row for a finished turn.
+      final aymaClip = turn.isFinal ? _clipRow(ac.accent, ac.fgMute) : null;
 
-    // Ayma — full-width, no bubble; serif italic; markdown headers/lists.
-    // A finished turn carries a face/body report either as fields (skill fired
-    // from the Skills tab) or as a trailing `[face_report:id]` marker in the
-    // text (Ayma called the tool herself). Either way: strip the marker and
-    // render the report card inline. `[1]`-style citation noise is also removed.
-    final marker = turn.isFinal ? _reportMarker.firstMatch(turn.text) : null;
-    final reportKind = turn.reportKind.isNotEmpty
-        ? turn.reportKind
-        : (marker != null ? _reportKindOf(marker.group(1)!) : null);
-    final reportId = turn.reportId.isNotEmpty
-        ? turn.reportId
-        : marker?.group(2);
-    var displayText = marker != null
-        ? turn.text.replaceFirst(_reportMarker, '')
-        : turn.text;
-    if (reportKind != null) {
-      displayText = displayText.replaceAll(RegExp(r'\s*\[\d+\]'), '').trim();
-    }
-    // A pending ("Thinking…") turn never carries a clip — only resolve the
-    // row for a finished turn.
-    final aymaClip = turn.isFinal ? _clipRow(ac.accent, ac.fgMute) : null;
-
-    final aymaTurn = Opacity(
+      turnWidget = Opacity(
       opacity: widget.latest || !turn.isFinal ? 1 : 0.62,
       child: Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 12),
@@ -4174,6 +4180,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
         ),
       ),
     );
+    }
 
     if (widget.onSwipeReply != null) {
       return Dismissible(
@@ -4221,10 +4228,10 @@ class _TranscriptLineState extends State<_TranscriptLine> {
             ),
           ),
         ),
-        child: aymaTurn,
+        child: turnWidget,
       );
     }
-    return aymaTurn;
+    return turnWidget;
   }
 }
 
@@ -4505,7 +4512,7 @@ class _SharedRefCard extends StatelessWidget {
 
 /// A quoted reply card rendered above the user's message inside the bubble
 /// (WhatsApp style). Used for pinned page context (naming the real subject)
-/// or an earlier Ayma message quoted via swipe-to-reply.
+/// or an earlier Ayma or user message quoted via swipe-to-reply.
 class _QuotedReplyCard extends StatelessWidget {
   const _QuotedReplyCard({
     super.key,
@@ -4521,7 +4528,7 @@ class _QuotedReplyCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final isPage = kind == 'page';
+    final isPage = kind == 'page' && subject != 'Ayma' && subject != 'You';
     final icon = isPage ? Icons.push_pin_outlined : Icons.reply_rounded;
 
     return Container(
@@ -4783,6 +4790,7 @@ class _Composer extends StatelessWidget {
     required this.onClearImage,
     required this.pendingShared,
     required this.onClearShared,
+    this.replyingToSender,
     this.replyingToText,
     this.onClearReply,
     this.pageContextLabel,
@@ -4820,7 +4828,10 @@ class _Composer extends StatelessWidget {
   final _SharedDraft? pendingShared;
   final VoidCallback onClearShared;
 
-  /// The earlier Ayma message text being replied to via swipe; null when none.
+  /// The earlier message sender being replied to ('Ayma' or 'You'); null when none.
+  final String? replyingToSender;
+
+  /// The earlier Ayma or user message text being replied to via swipe; null when none.
   final String? replyingToText;
   final VoidCallback? onClearReply;
 
@@ -4958,7 +4969,7 @@ class _Composer extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
-                                'Replying to Ayma',
+                                'Replying to ${replyingToSender ?? 'Ayma'}',
                                 style: AymaType.sans(
                                   size: 11,
                                   color: ac.accent,
