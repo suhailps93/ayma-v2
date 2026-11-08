@@ -103,6 +103,23 @@ class AymaColors {
         .withValues(alpha: tone.a);
   }
 
+  /// Screen-blend of [fg] over a backdrop of [bg], per channel — the colour
+  /// `BlendMode.screen` produces where [fg] is drawn over [bg], keeping
+  /// [fg]'s own alpha. The orb painter's compact (small-size) tiers cannot
+  /// use real screen blending (on Impeller those layers dropped out at
+  /// nav-bar size), so they paint this pre-blended colour with plain
+  /// srcOver instead — landing the same colours the big voice-screen orb's
+  /// real screen blend produces (see `AymaOrbPainter`).
+  static Color screenOver(Color fg, Color bg) {
+    double ch(double f, double b) => 1 - (1 - f) * (1 - b);
+    return Color.fromARGB(
+      (fg.a * 255).round(),
+      (ch(fg.r, bg.r) * 255).round(),
+      (ch(fg.g, bg.g) * 255).round(),
+      (ch(fg.b, bg.b) * 255).round(),
+    );
+  }
+
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);

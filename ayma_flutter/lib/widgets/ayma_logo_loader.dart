@@ -1,19 +1,25 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'ayma_orb.dart';
 
-/// The one branded loading indicator: the Ayma logo (the bundled orb mark)
-/// with a gentle, tasteful loading animation — a soft breathing pulse plus a
-/// halo glow that swells and fades. Used wherever the app is waiting on
-/// something the user is looking at: the voice wake/connect state (the mic row
-/// while the session is still being established) and the report / page loaders
-/// that used to show a bare [CircularProgressIndicator] or a static orb, so
-/// every "Ayma is working" moment reads the same.
+/// The one branded loading indicator: the Ayma logo — the canonical
+/// [AymaOrb] itself, painted live from the user's accent colour, never a
+/// bundled picture file (a static PNG can only ever show the accent it was
+/// rendered with, so the loader used to glow Cherry Fuchsia next to orbs in
+/// the user's own colour) — with a gentle, tasteful loading animation: a
+/// soft breathing pulse plus a halo glow that swells and fades. Used
+/// wherever the app is waiting on something the user is looking at: the
+/// voice wake/connect state (the mic row while the session is still being
+/// established) and the report / page loaders that used to show a bare
+/// [CircularProgressIndicator] or a static orb, so every "Ayma is working"
+/// moment reads the same.
 ///
 /// Founder ask ("the Ayma logo should have a loading animation"). Respects
 /// reduced motion: when [MediaQuery.disableAnimations] is on (or [reduceMotion]
-/// is forced), it renders the logo completely still — no pulse, no controller
-/// running — which still reads clearly as "loading" alongside its label.
+/// is forced), it renders the logo completely still — the static
+/// [AymaOrbMark], no pulse, no controller running — which still reads
+/// clearly as "loading" alongside its label.
 class AymaLogoLoader extends StatefulWidget {
   const AymaLogoLoader({
     super.key,
@@ -21,9 +27,6 @@ class AymaLogoLoader extends StatefulWidget {
     this.label,
     this.reduceMotion,
   });
-
-  /// The bundled Ayma orb mark, shared with the Appearance report card's logo.
-  static const asset = 'assets/icon/ayma_orb_ios.png';
 
   /// Diameter of the logo in logical pixels. The glow extends a little beyond
   /// it, so callers should leave a touch of breathing room.
@@ -73,19 +76,12 @@ class _AymaLogoLoaderState extends State<AymaLogoLoader>
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final logo = ClipOval(
-      child: SizedBox(
-        width: widget.size,
-        height: widget.size,
-        child: Image.asset(
-          AymaLogoLoader.asset,
-          fit: BoxFit.cover,
-          // Decode near the display size so a large source PNG isn't held at
-          // full resolution for a small loader.
-          cacheWidth: (widget.size * 3).round(),
-        ),
-      ),
-    );
+    // The canonical orb, live from the ambient accent: the thinking state
+    // while motion is allowed; the static mark (the same painter's rest
+    // frame) when reduced motion is in force, so nothing ticks at all.
+    final Widget logo = _reduceMotion
+        ? AymaOrbMark(size: widget.size)
+        : AymaOrb(size: widget.size, state: AymaOrbState.thinking);
 
     final controller = _controller;
     final Widget mark = (_reduceMotion || controller == null)

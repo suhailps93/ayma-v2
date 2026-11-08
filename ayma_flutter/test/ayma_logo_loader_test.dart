@@ -6,6 +6,7 @@
 // reduced motion — the latter matters because the voice-connect state must not
 // keep ticking when the user has asked the OS to reduce motion.
 import 'package:ayma_flutter/widgets/ayma_logo_loader.dart';
+import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -18,18 +19,27 @@ Widget _host(Widget child, {bool reduceMotion = false}) => MediaQuery(
     );
 
 void main() {
-  testWidgets('renders the Ayma logo image', (tester) async {
+  testWidgets('renders the canonical Ayma orb, not a picture file',
+      (tester) async {
     await tester.pumpWidget(_host(const AymaLogoLoader(size: 64)));
     await tester.pump();
 
     expect(find.byType(AymaLogoLoader), findsOneWidget);
-    // The orb mark itself is drawn as an Image inside the loader.
+    // The mark is the live AymaOrb widget (the single logo source) — a
+    // bundled PNG here would freeze the loader at the default accent.
+    expect(
+      find.descendant(
+        of: find.byType(AymaLogoLoader),
+        matching: find.byType(AymaOrb),
+      ),
+      findsOneWidget,
+    );
     expect(
       find.descendant(
         of: find.byType(AymaLogoLoader),
         matching: find.byType(Image),
       ),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
@@ -38,13 +48,14 @@ void main() {
     await tester.pump();
 
     // The breathing pulse / halo is driven by an AnimatedBuilder on a repeating
-    // controller — present only when motion is allowed.
+    // controller — present only when motion is allowed (the orb's own internal
+    // AnimatedBuilder rides along, so this is at-least-one, not exactly one).
     expect(
       find.descendant(
         of: find.byType(AymaLogoLoader),
         matching: find.byType(AnimatedBuilder),
       ),
-      findsOneWidget,
+      findsWidgets,
     );
     expect(tester.takeException(), isNull);
   });
@@ -56,13 +67,20 @@ void main() {
     );
     await tester.pump();
 
-    // Still shows the logo…
+    // Still shows the logo — as the static canonical mark…
+    expect(
+      find.descendant(
+        of: find.byType(AymaLogoLoader),
+        matching: find.byType(AymaOrbMark),
+      ),
+      findsOneWidget,
+    );
     expect(
       find.descendant(
         of: find.byType(AymaLogoLoader),
         matching: find.byType(Image),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     // …but with no animated pulse wrapper at all.
     expect(
