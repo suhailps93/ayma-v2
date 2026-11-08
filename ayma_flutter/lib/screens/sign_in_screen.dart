@@ -1,6 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -885,10 +884,36 @@ class _ConsentBoxes extends StatelessWidget {
       decoration: TextDecoration.underline,
       fontWeight: FontWeight.w600,
     );
-    TextSpan link(String text, VoidCallback onTap) => TextSpan(
-          text: text,
-          style: linkStyle,
-          recognizer: TapGestureRecognizer()..onTap = onTap,
+    // Each legal link gets its OWN tap region: a real widget with padding
+    // around the word and a ~48dp-tall hit area, instead of a bare text
+    // span. A span's hit area is only its glyphs, so a tap a few pixels off
+    // the word fell through to the row and toggled the checkbox instead of
+    // opening the page (Scout NOTE 141), and a tap near a span boundary
+    // could fire the neighbouring link. The chip's own gesture wins over
+    // the row's, so a link tap opens its page and never changes consent;
+    // taps elsewhere on the row still toggle the checkbox, as before.
+    InlineSpan link({
+      required Key key,
+      required String text,
+      required VoidCallback onTap,
+    }) =>
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Semantics(
+            button: true,
+            label: text,
+            onTap: onTap,
+            child: GestureDetector(
+              key: key,
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 15),
+                child: Text(text, style: linkStyle),
+              ),
+            ),
+          ),
         );
     Widget box({
       required Key key,
@@ -916,11 +941,19 @@ class _ConsentBoxes extends StatelessWidget {
             text: "I'm 18 or older and I agree to the ",
             style: base,
             children: [
-              link('Terms', () => LegalLinks.openTerms(context)),
+              link(
+                key: const Key('signin_terms_link'),
+                text: 'Terms',
+                onTap: () => LegalLinks.openTerms(context),
+              ),
               const TextSpan(
                 text: ' (including use of my data for advertising) and ',
               ),
-              link('Privacy Policy', () => LegalLinks.openPrivacy(context)),
+              link(
+                key: const Key('signin_privacy_link'),
+                text: 'Privacy Policy',
+                onTap: () => LegalLinks.openPrivacy(context),
+              ),
               const TextSpan(text: '.'),
             ],
           ),
@@ -933,8 +966,11 @@ class _ConsentBoxes extends StatelessWidget {
             text: 'I consent to face recognition. $kBiometricConsentSignInLine ',
             style: base,
             children: [
-              link('Biometric Information',
-                  () => context.push(BiometricInfoScreen.path)),
+              link(
+                key: const Key('signin_biometric_info_link'),
+                text: 'Biometric Information',
+                onTap: () => context.push(BiometricInfoScreen.path),
+              ),
             ],
           ),
         ),
