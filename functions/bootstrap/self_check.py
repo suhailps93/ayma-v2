@@ -1127,24 +1127,18 @@ class SelfCheckRunner:
         this tool sat probe-only behind "needs an open profile photo
         carousel fixture", so the failure class was invisible).
 
-        The check builds its own fixture through the production path:
-        open the counterpart's profile with the same bound
-        ``open_profile`` a real turn uses, then call the same bound
-        ``show_profile_photo`` and judge ONLY its confirmed outcome —
-        PASS when the app ack says the carousel is showing the asked
-        photo, FAIL when the open does not land (no ack, a missing
-        carousel on an open profile, or an out-of-range claim for a
-        photo that exists). A profile with a single photo cannot move,
-        so photo 1 is verified instead; a profile with no photos at
-        all is a SKIP — there is nothing to open.
+        In self-check, this runs immediately after ``open_profile``
+        while the counterpart profile is open and its carousel active.
+        It judges ONLY the confirmed outcome — PASS when the app ack
+        says the carousel is showing the asked photo, FAIL when the
+        open does not land (no ack, a missing carousel on an open
+        profile, or an out-of-range claim for a photo that exists).
+        A profile with a single photo cannot move, so photo 1 is
+        verified instead; a profile with no photos at all is a SKIP —
+        there is nothing to open.
         """
-        fns = self._tool_fns()
-        opener = fns.get("open_profile")
-        if opener is None:
-            return FAIL, "", "open_profile not bound — photo fixture unavailable"
-        out = str(await self._call(opener, _DM_COUNTERPART) or "")
-        if "did NOT" in out or "couldn't find" in out:
-            return FAIL, "", f"photo fixture failed: {out[:160]}"
+        if fn is None:
+            return self._unbound("show_profile_photo")
         out = str(await self._call(fn, op="goto", index=2) or "")
         if out.startswith("showing:"):
             return PASS, out[:120], ""
@@ -1405,12 +1399,33 @@ class SelfCheckRunner:
         # A run always leaves the user back in the chat.
         await self._return_to_chat(destinations)
 
-        # B. Parameterized opens.
-        await self._emit(
-            await self._timed(
-                "tool:open_profile", "tools", self._do_tool_run("open_profile")
-            )
+        # B. Parameterized opens + photo carousel sequencing.
+        # open_profile needs the navigation ack wait window (nav_timeout * 2 + 5),
+        # not the 10s default check_timeout.
+        open_res = await self._timed(
+            "tool:open_profile", "tools", self._do_tool_run("open_profile"),
+            timeout=self.nav_timeout * 2 + 5,
         )
+        await self._emit(open_res)
+
+        # Photo carousel check: executed immediately after open_profile while
+        # the profile is guaranteed to be open. If open_profile did not land,
+        # the check skips honestly citing the missing profile precondition.
+        if open_res.status == PASS:
+            await self._emit(
+                await self._timed(
+                    "tool:show_profile_photo", "tools",
+                    self._do_tool_run("show_profile_photo"),
+                    timeout=self.nav_timeout * 2 + 5,
+                )
+            )
+        else:
+            await self._emit(
+                CheckResult(
+                    "tool:show_profile_photo", "tools", SKIP,
+                    "profile open prerequisite failed — no carousel open",
+                )
+            )
         for name, reason in (
             ("open:message_thread", "needs an existing thread fixture"),
             ("open:match_report", "needs a scored-match fixture"),
@@ -1455,7 +1470,6 @@ class SelfCheckRunner:
             "find_fact_source",
             "read_dm_thread",
             "current_screen",
-            "show_profile_photo",
         ):
             await self._emit(
                 await self._timed(
