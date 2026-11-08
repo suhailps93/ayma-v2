@@ -152,6 +152,7 @@ void main() {
     await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.byKey(const ValueKey('voice-engine-save')));
     await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
     await tester.pumpAndSettle();
 
@@ -297,13 +298,16 @@ void main() {
     await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
     await tester.pumpAndSettle();
 
-    // Gemini Live is active and accent-capable: the supportive note shows.
-    expect(find.textContaining('from the first word'), findsOneWidget);
+    // Gemini Live is active and accent-capable: the accent field shows,
+    // and its explanation sits behind the accent eye, not under the field.
+    expect(find.byKey(const ValueKey('picker-info-accent')), findsOneWidget);
+    expect(find.textContaining('from the first word'), findsNothing);
 
     await tester.enterText(
       find.byKey(const ValueKey('voice-accent-field')),
       'a southern American accent',
     );
+    await tester.ensureVisible(find.byKey(const ValueKey('voice-engine-save')));
     await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
     await tester.pumpAndSettle();
 
@@ -322,7 +326,8 @@ void main() {
     // Default current selection is realtime Gemini Live (supports_accent=true).
     expect(find.byKey(const ValueKey('voice-accent-field')), findsOneWidget);
     expect(find.text('ACCENT'), findsOneWidget);
-    expect(find.textContaining('from the first word'), findsOneWidget);
+    expect(find.byKey(const ValueKey('picker-info-accent')), findsOneWidget);
+    expect(find.textContaining('from the first word'), findsNothing);
   });
 
   testWidgets(
@@ -400,6 +405,7 @@ void main() {
     expect(find.byKey(const ValueKey('voice-accent-field')), findsNothing);
 
     // Save while on the non-capable model.
+    await tester.ensureVisible(find.byKey(const ValueKey('voice-engine-save')));
     await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
     await tester.pumpAndSettle();
 
@@ -435,6 +441,7 @@ void main() {
     expect(find.byKey(const ValueKey('voice-accent-field')), findsNothing);
 
     // ACCENT-only save on the non-capable model: persisted, but NOT nudged.
+    await tester.ensureVisible(find.byKey(const ValueKey('voice-engine-save')));
     await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
     await tester.pumpAndSettle();
     expect(voice.notifyCalls, 0);
@@ -451,6 +458,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Spanish').last);
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('voice-engine-save')));
     await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
     await tester.pumpAndSettle();
 
@@ -471,6 +479,7 @@ void main() {
       find.byKey(const ValueKey('voice-accent-field')),
       'an Irish accent',
     );
+    await tester.ensureVisible(find.byKey(const ValueKey('voice-engine-save')));
     await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
     await tester.pumpAndSettle();
 
@@ -492,6 +501,7 @@ void main() {
 
     // Save without touching accent or language: posted, but the live call
     // is left alone (no pointless session rebuild).
+    await tester.ensureVisible(find.byKey(const ValueKey('voice-engine-save')));
     await tester.tap(find.byKey(const ValueKey('voice-engine-save')));
     await tester.pumpAndSettle();
 

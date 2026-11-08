@@ -87,13 +87,68 @@ Map<String, dynamic> _brainCatalog() => {
       'default': 'gemini',
     };
 
+Map<String, dynamic> _realtimeCatalog() => {
+      'modes': ['realtime', 'cascade'],
+      'source': 'livekit',
+      'realtime_models': [
+        {
+          'id': 'gemini-live',
+          'label': 'Gemini Live',
+          'provider': 'gemini',
+          'available': true,
+          'supports_accent': true,
+          'voices': [
+            {'id': 'Aoede', 'label': 'Aoede'},
+          ],
+          'languages': [
+            {'code': '', 'label': 'Default (English)'},
+          ],
+        },
+      ],
+      'brains': [
+        {'id': 'gemini', 'label': 'Gemini', 'available': true},
+      ],
+      'stt': [
+        {'id': 'deepgram/nova-3', 'label': 'deepgram/nova-3', 'available': true},
+      ],
+      'tts': [
+        {
+          'id': 'inworld/inworld-tts-1',
+          'label': 'inworld/inworld-tts-1',
+          'available': true,
+          'voices': [
+            {'id': 'Ashley', 'label': 'Ashley', 'description': 'bright'},
+          ],
+          'languages': [
+            {'code': '', 'label': 'Default (English)'},
+          ],
+        },
+      ],
+      'default': {
+        'mode': 'realtime',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'gemini',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'inworld/inworld-tts-1',
+      },
+      'current': {
+        'mode': 'realtime',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'gemini',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'inworld/inworld-tts-1',
+        'voice_id': 'Aoede',
+        'language_code': '',
+      },
+    };
+
 final List<Map<String, dynamic>> _posts = [];
 
-ApiClient _api() {
+ApiClient _api({Map<String, dynamic> Function()? voiceCatalog}) {
   _posts.clear();
   final mock = MockClient((req) async {
     if (req.url.path == '/voice/engines') {
-      return http.Response(jsonEncode(_cascadeCatalog()), 200,
+      return http.Response(jsonEncode((voiceCatalog ?? _cascadeCatalog)()), 200,
           headers: const {'content-type': 'application/json'});
     }
     if (req.url.path == '/brain/preference' && req.method == 'GET') {
@@ -204,5 +259,93 @@ void main() {
     expect(_posts, hasLength(1));
     final body = _posts.single['body'] as Map<String, dynamic>;
     expect(body['reconnect'], isTrue);
+  });
+
+  testWidgets('clean list: no sections or paragraphs, an eye per picker',
+      (tester) async {
+    _bigViewport(tester);
+    await tester.pumpWidget(_host());
+    await tester.pumpAndSettle();
+
+    // No Brain/Voice section headers and no always-visible paragraphs:
+    // not the section blurbs, not the intro, not the catalog footer.
+    expect(find.text('Brain'), findsNothing);
+    expect(find.text('Voice'), findsNothing);
+    expect(find.textContaining('The one LLM behind Ayma'), findsNothing);
+    expect(find.textContaining('How Ayma listens and speaks'), findsNothing);
+    expect(find.textContaining('Switch Ayma\u2019s model stack'), findsNothing);
+    expect(find.textContaining('Options are pulled live'), findsNothing);
+    expect(find.textContaining('Ayma speaks with this accent'), findsNothing);
+
+    // The small field labels stay, and so does the per-brain description
+    // line under the Brain dropdown.
+    for (final label in [
+      'BRAIN',
+      'MODE',
+      'SPEECH-TO-TEXT',
+      'TEXT-TO-SPEECH',
+      'VOICE',
+      'LANGUAGE',
+    ]) {
+      expect(find.text(label), findsOneWidget, reason: label);
+    }
+    expect(find.text('Google Gemini.'), findsOneWidget);
+
+    // One eye per picker in cascade mode; the realtime eye stays home.
+    for (final key in [
+      'picker-info-brain',
+      'picker-info-mode',
+      'picker-info-stt',
+      'picker-info-tts',
+      'picker-info-voice',
+      'picker-info-language',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsOneWidget, reason: key);
+    }
+    expect(find.byKey(const ValueKey('picker-info-realtime-model')),
+        findsNothing);
+    expect(find.byIcon(Icons.visibility_outlined), findsNWidgets(6));
+
+    // Tapping the Brain eye opens its explanation in a sheet.
+    await tester.tap(find.byKey(const ValueKey('picker-info-brain')));
+    await tester.pumpAndSettle();
+    expect(find.text('Brain'), findsOneWidget);
+    expect(
+      find.textContaining('The one brain behind everything Ayma does'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('realtime mode: realtime + accent eyes, no cascade eyes',
+      (tester) async {
+    _bigViewport(tester);
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: VoicePreferenceScreen(
+        api: _api(voiceCatalog: _realtimeCatalog),
+        voiceConnected: () => false,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('REALTIME MODEL'), findsOneWidget);
+    expect(find.text('SPEECH-TO-TEXT'), findsNothing);
+    expect(find.text('TEXT-TO-SPEECH'), findsNothing);
+    expect(find.byKey(const ValueKey('picker-info-realtime-model')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('picker-info-accent')), findsOneWidget);
+    expect(find.byKey(const ValueKey('picker-info-stt')), findsNothing);
+    expect(find.byKey(const ValueKey('picker-info-tts')), findsNothing);
+    // The accent explanation moved behind its eye \u2014 not a line under
+    // the field any more.
+    expect(find.textContaining('Ayma speaks with this accent'), findsNothing);
+
+    // Tapping the Accent eye opens its explanation in a sheet.
+    await tester.tap(find.byKey(const ValueKey('picker-info-accent')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Type how you want her to sound'),
+      findsOneWidget,
+    );
   });
 }

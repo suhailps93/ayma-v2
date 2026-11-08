@@ -9,6 +9,7 @@ import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import 'ayma_toast.dart';
 import 'ayma_wing_loader.dart';
+import 'picker_info_label.dart';
 
 /// The unified **Brain** picker (ARCHITECTURE §13.10). Reads
 /// `GET /brain/preference` and lets the user choose the ONE LLM that drives
@@ -242,7 +243,15 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
       key: const ValueKey('brain-selector-control'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label(ac, 'BRAIN'),
+        const PickerInfoLabel(
+          label: 'BRAIN',
+          infoKey: 'picker-info-brain',
+          title: 'Brain',
+          explanation:
+              'The one brain behind everything Ayma does \u2014 chat, '
+              'matches, DM tips, translation, and her voice on a call. '
+              'Image reading and web research always use Gemini.',
+        ),
         _dropdown(
           ac,
           value: selected,
@@ -285,13 +294,6 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
       ],
     );
   }
-
-  Widget _label(AymaTokens ac, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(text,
-            style: AymaType.mono(size: 10, color: ac.fgMute)
-                .copyWith(letterSpacing: 1.5)),
-      );
 
   Widget _dropdown(
     AymaTokens ac, {

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/voice_session_controller.dart';
-import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -10,14 +9,18 @@ import '../widgets/brain_selector_control.dart';
 import '../widgets/voice_engine_control.dart';
 
 /// Ayma's models screen (§13.3, §13.9, §13.10). ONE Brain picker drives both
-/// text chat and the voice LLM (there is no separate voice brain); the Voice
-/// section keeps mode, speech-to-text, text-to-speech, voice, and language &
+/// text chat and the voice LLM (there is no separate voice brain); the voice
+/// pickers keep mode, speech-to-text, text-to-speech, voice, and language &
 /// accent. ONE save button persists the whole screen in a single action
 /// (`POST /models/preference`): labelled "Save" when no voice session is
 /// connected, "Save and reconnect" when a voice call is active — saving
 /// mid-call persists, then reconnects the voice session on the new stack
 /// (the reconnect itself is silent; Ayma then says she's back, reconnected,
 /// with the new model).
+///
+/// The list is FLAT (founder, 2026-11-07): no Brain/Voice section headers
+/// and no explanation paragraphs — each picker's short explanation sits
+/// behind its eye icon (see `PickerInfoLabel`).
 class VoicePreferenceScreen extends StatefulWidget {
   const VoicePreferenceScreen({super.key, this.api, this.voiceConnected});
 
@@ -113,7 +116,6 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ac = context.ac;
     final connected = _voiceConnected;
     return Scaffold(
       appBar: AppBar(
@@ -124,36 +126,16 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
-          Text(
-            'Switch Ayma’s model stack — how she thinks, listens and speaks. '
-            'Your brain applies to text right away; a voice change starts '
-            'on your next call, or right away if you save and reconnect '
-            'during a call. She still follows you if you switch languages '
-            'mid-chat.',
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-          ),
-          const SizedBox(height: 20),
           // BRAIN — the ONE LLM that drives every text surface AND the
           // voice cascade (§13.10, one-brain ruling 2026-11-06).
-          _sectionHeader(ac, 'Brain',
-              'The one LLM behind Ayma — chat, matches, DM tips, '
-              'translation, and her voice on a call. Image reading and web '
-              'research always use Gemini.'),
-          const SizedBox(height: 12),
           BrainSelectorControl(
             api: _client,
             controller: _brainCtl,
             showSaveButton: false,
           ),
           const SizedBox(height: 24),
-          Divider(color: ac.lineSoft, height: 1),
-          const SizedBox(height: 24),
-          // VOICE — mode / STT / TTS / voice / language & accent (§13.9).
-          // No brain picker here any more: the Brain above is the voice LLM.
-          _sectionHeader(ac, 'Voice',
-              'How Ayma listens and speaks on a call. Her voice thinks '
-              'with the Brain above.'),
-          const SizedBox(height: 12),
+          // VOICE pickers — mode / STT / TTS / voice / language & accent
+          // (§13.9). No brain picker here: the Brain above is the voice LLM.
           VoiceEngineControl(
             api: _client,
             controller: _voiceCtl,
@@ -175,15 +157,4 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
       ),
     );
   }
-
-  Widget _sectionHeader(AymaTokens ac, String title, String subtitle) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title,
-              style: AymaType.sans(size: 18, weight: FontWeight.w600, color: ac.fg)),
-          const SizedBox(height: 4),
-          Text(subtitle,
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-        ],
-      );
 }
