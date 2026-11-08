@@ -152,6 +152,8 @@ from .app_control_queue import (
     queue_command,
 )
 from .app_control_settings import (
+    _ACCENT_CONFIRM_POLL_SECONDS,
+    _ACCENT_CONFIRM_SECONDS,
     _ACCENT_RESET_VALUE,
     _ACCENT_RESET_WORDS,
     _APP_ACTION,
@@ -167,6 +169,7 @@ from .app_control_settings import (
     _ON,
     _resolve_accent,
     _setting_line,
+    accent_color_context,
 )
 from .app_control_inbox import (
     _bind_clear_all_notifications,

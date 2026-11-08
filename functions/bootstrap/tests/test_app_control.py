@@ -1142,6 +1142,102 @@ def test_app_action_declaration_says_any_colour_and_lists_no_presets():
     assert "cherry_fuchsia" not in desc and "graphite" not in desc
 
 
+class _SilentApplyingStore(dict):
+    """A client whose ack never reaches the backend but which applies an
+    accent command anyway — the founder incident shape (2026-11-07): the
+    app changed the colour and saved it while the tool heard nothing."""
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if (
+            key == _PENDING
+            and isinstance(value, dict)
+            and value.get("name") == "accent_color"
+        ):
+            hexval = (
+                "#DA4B65" if value.get("value") == "default"
+                else value.get("value")
+            )
+            super().__setitem__(
+                ("users", "me", "profile", "main"),
+                {"ayma_accent_color": hexval},
+            )
+
+
+def _fast_confirm(monkeypatch, seconds=0.3):
+    monkeypatch.setattr(
+        "skills.app_control_settings._ACCENT_CONFIRM_SECONDS", seconds
+    )
+    monkeypatch.setattr(
+        "skills.app_control_settings._ACCENT_CONFIRM_POLL_SECONDS", 0.01
+    )
+
+
+def test_accent_context_reports_a_seeded_nondefault_as_the_current_colour():
+    db = _Db()
+    db.seed_profile("me", ayma_accent_color="#E07A5F")
+    ctx = app_control.accent_color_context(db, "me")
+    assert "#E07A5F" in ctx and "currently" in ctx
+    # The default is named only as what the current colour is not.
+    assert "Cherry Fuchsia" in ctx and "factory" in ctx
+
+
+def test_accent_context_names_the_default_when_nothing_is_saved():
+    ctx = app_control.accent_color_context(_Db(), "me")
+    assert "#DA4B65" in ctx and "the default" in ctx
+
+
+def test_accent_context_reaches_the_system_prompt():
+    import prompt as prompt_module
+
+    db = _Db()
+    db.seed_profile("me", ayma_accent_color="#E07A5F")
+    text = prompt_module.compose_system_prompt(
+        app_accent_context=app_control.accent_color_context(db, "me")
+    )
+    assert "#E07A5F" in text
+
+
+def test_app_action_accent_change_landed_despite_a_lost_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    _fast_confirm(monkeypatch)
+    db = _Db(_SilentApplyingStore())
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "#E07A5F"))
+    assert out == "Changed the app's accent colour to #E07A5F."
+    # The grounded read agrees with what the tool reported.
+    out2 = _run(app_control._bind_app_action(db, "me")("get_accent_color"))
+    assert "current accent colour is #E07A5F" in out2
+
+
+def test_app_action_accent_reset_landed_despite_a_lost_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    _fast_confirm(monkeypatch)
+    db = _Db(_SilentApplyingStore())
+    db.seed_profile("me", ayma_accent_color="#E07A5F")
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "default"))
+    assert "Cherry Fuchsia" in out and "#DA4B65" in out
+    assert out != app_control._NOT_APPLIED
+
+
+def test_app_action_accent_change_is_an_honest_failure_when_nothing_applies(monkeypatch):
+    _fast_acks(monkeypatch)
+    _fast_confirm(monkeypatch)
+    db = _Db()  # no client: no ack, and the saved accent never moves
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "#E07A5F"))
+    assert out == app_control._NOT_APPLIED
+
+
+def test_app_action_accent_change_reports_state_without_claiming_a_change(monkeypatch):
+    # The ack is lost AND the saved accent already equals the ask: the
+    # truthful reply states the colour; it does not claim a change.
+    _fast_acks(monkeypatch)
+    _fast_confirm(monkeypatch)
+    db = _Db()
+    db.seed_profile("me", ayma_accent_color="#E07A5F")
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "#E07A5F"))
+    assert out == "The app's accent colour is #E07A5F."
+
+
 # --- app_action: every registered setting ---------------------------------
 
 def test_app_action_client_settings_send_their_command():
