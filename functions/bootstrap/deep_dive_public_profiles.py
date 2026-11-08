@@ -3,8 +3,9 @@
 Replaces the closed Custom Search JSON API as a candidate source for
 :mod:`deep_dive_images`. Two steps, both strictly public and unauthenticated:
 
-1. **Discovery** — one Gemini call grounded with Google Search + URL context
-   (:func:`gemini.research`) lists public profile pages on major platforms.
+1. **Discovery** — the capped web search (:mod:`web_search`, hard 100/day
+   free-quota cap) lists public profile pages on major platforms; the
+   result URLs are classified locally, no model call.
 2. **Image extraction** — each listed page is fetched once with a plain,
    honest-User-Agent GET (robots.txt respected, no cookies, no login) and its
    ``og:image`` / ``twitter:image`` is the candidate image. Pages that answer
@@ -23,8 +24,8 @@ docs/DEEPDIVE_PUBLIC_PROFILES.md and docs/FEATURE_FLAGS.md. Both flags are read
 at call time (:mod:`feature_flags`), so rollback is a flip with no deploy.
 
 A second discovery source, Vertex AI Search over a public-website data store
-(:mod:`vertex_search`, flag ``vertex_ai_search``), runs alongside the grounded
-Gemini call; its results add platforms the model did not list and often carry
+(:mod:`vertex_search`, flag ``vertex_ai_search``), runs alongside the capped
+search; its results add platforms the search did not list and often carry
 the already-indexed profile image, so no page fetch is needed for them.
 """
 
@@ -46,6 +47,7 @@ import gemini
 import public_url
 import region_block
 import vertex_search
+import web_search
 from token_ledger import FEATURE_DEEPDIVE
 
 logger = logging.getLogger("ayma.deepdive.public_profiles")
@@ -253,20 +255,41 @@ def _personal_site(url: str) -> str:
 
 
 async def _grounded_profiles(who: str, uid: str | None) -> list[dict] | None:
-    """Discovery source 1: one Gemini call grounded with Google Search.
-    ``None`` when the call failed (the result must not be cached)."""
+    """Discovery source 1: the capped web search (:mod:`web_search`).
+
+    This used to be one Gemini call grounded with Google Search
+    (``gemini.research``, disabled 2026-11-04, so it always failed). Since
+    the founder's 2026-11-07 restore it is retrieval through the same
+    hard-capped Programmable Search path as the chat tool: the result URLs
+    are classified locally into ``[{platform, url}]`` — no model call, so
+    nothing here touches direct-Google inference. ``None`` whenever the
+    search did not run clean (paused, unconfigured, provider error — the
+    result must not be cached); ``[]`` when it ran and found no classifiable
+    profile pages.
+    """
     try:
-        text, _sources = await gemini.research(
-            f"Find the public profile pages of: {who}",
-            system_prompt=load_prompt_file(_PROMPT_PATH),
-            uid=uid,
-            feature=FEATURE_DEEPDIVE,
-            max_output_tokens=1024,
-        )
-        return parse_profiles(text)
+        outcome = await web_search.search(who)
     except Exception:  # noqa: BLE001
         logger.warning("public-profile discovery failed", exc_info=True)
         return None
+    if outcome.status != web_search.STATUS_OK:
+        logger.warning(
+            "public-profile discovery unavailable (%s) for %s",
+            outcome.status,
+            who,
+        )
+        return None
+    profiles: list[dict] = []
+    seen: set[str] = set()
+    for r in outcome.results:
+        platform = classify_platform(r.url) or _personal_site(r.url)
+        if not platform or platform in seen:
+            continue
+        seen.add(platform)
+        profiles.append({"platform": platform, "url": r.url})
+        if len(profiles) >= MAX_PROFILES:
+            break
+    return profiles
 
 
 async def find_public_profile_images(
@@ -280,7 +303,7 @@ async def find_public_profile_images(
 
     ``[]`` when the flag is off, the name is empty, or anything fails. Results
     (URLs only, never image bytes) are cached in-process for 24h. Costs one
-    grounded Gemini call, at most one Vertex AI Search query and at most
+    capped web search, at most one Vertex AI Search query and at most
     :data:`MAX_PROFILES` page fetches."""
     stats = stats if stats is not None else {}
     if not enabled(uid):

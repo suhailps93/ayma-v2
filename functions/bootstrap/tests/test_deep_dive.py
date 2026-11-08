@@ -6,6 +6,7 @@ import deep_dive_social
 import gemini
 import pytest
 import token_ledger
+import web_search
 from skills import make_session_tool_fns, session_tool_declarations
 
 
@@ -36,16 +37,20 @@ _DIGEST = {
 
 @pytest.fixture
 def _patch(monkeypatch):
-    async def _research(prompt, system_prompt=None, **kw):
-        assert "Dana" in prompt
-        return ("web notes about Dana…", [{"url": "https://oceanario.pt/team",
-                                           "title": "Team"}])
+    async def _search(query, **kw):
+        assert "Dana" in query
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                "Team", "https://oceanario.pt/team", "web notes about Dana…"
+            )],
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
         assert "RESEARCH NOTES" in contents
         return _DIGEST
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _search)
     monkeypatch.setattr(gemini, "generate_json", _json)
     # The image + social steps make their own HTTP calls — neutralise them for
     # the plain `run()` tests. Dedicated tests below exercise the real wiring
@@ -80,8 +85,13 @@ def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
         {"url": "https://ted.com/x", "title": "TEDx talk"},
     ]
 
-    async def _research(prompt, system_prompt=None, **kw):
-        return ("web notes about Dana…", sources)
+    async def _search(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                s["title"], s["url"], "web notes about Dana…"
+            ) for s in sources],
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
         return {
@@ -103,7 +113,7 @@ def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
             ],
         }
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _search)
     monkeypatch.setattr(gemini, "generate_json", _json)
     monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
     monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
@@ -124,21 +134,27 @@ def test_run_requires_a_name(_patch):
 
 def test_self_run_hands_a_known_linkedin_url_to_research(monkeypatch):
     """§ Your Story career timeline: when the user has given Ayma their own
-    LinkedIn URL, a self dive appends it to the research prompt so Gemini's
-    already-attached `url_context` tool can read that page directly — never a
-    scraper, never an unofficial API call."""
+    LinkedIn URL, a self dive carries it into the report as a known source
+    link — the digest pass sees it and can cite it — never a scraper, never
+    an unofficial API call. The old path handed it to Gemini's `url_context`
+    tool on the direct-Google call; that tool is gone with the 2026-11-04
+    kill, so the page itself is no longer read — and the known URL survives
+    even a paused search day (it costs no quota)."""
     import career_timeline
 
     seen = {}
 
-    async def _research(prompt, system_prompt=None, **kw):
-        seen["prompt"] = prompt
-        return ("notes", [])
+    async def _paused(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_PAUSED, message=web_search.PAUSED_MESSAGE
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
-        return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
+        seen["contents"] = contents
+        return {"summary": "", "confidence": "not_found",
+                "facts": [], "links": []}
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _paused)
     monkeypatch.setattr(gemini, "generate_json", _json)
     monkeypatch.setattr(
         career_timeline, "get_linkedin_url",
@@ -150,7 +166,7 @@ def test_self_run_hands_a_known_linkedin_url_to_research(monkeypatch):
     _run(deep_dive.run(
         "Dana Reis", db=object(), uid="u1", is_self=True,
     ))
-    assert "https://www.linkedin.com/in/dana-reis/" in seen["prompt"]
+    assert "https://www.linkedin.com/in/dana-reis/" in seen["contents"]
 
 
 def test_self_run_without_a_linkedin_url_never_mentions_one(monkeypatch):
@@ -158,31 +174,38 @@ def test_self_run_without_a_linkedin_url_never_mentions_one(monkeypatch):
 
     seen = {}
 
-    async def _research(prompt, system_prompt=None, **kw):
-        seen["prompt"] = prompt
-        return ("notes", [])
+    async def _paused(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_PAUSED, message=web_search.PAUSED_MESSAGE
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
+        seen["contents"] = contents
         return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _paused)
     monkeypatch.setattr(gemini, "generate_json", _json)
     monkeypatch.setattr(career_timeline, "get_linkedin_url", lambda db, uid: "")
     monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
     monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
 
     _run(deep_dive.run("Dana Reis", db=object(), uid="u1", is_self=True))
-    assert "linkedin" not in seen["prompt"].lower()
+    assert "linkedin" not in seen["contents"].lower()
 
 
 def test_run_wires_links_into_images_and_carries_social(monkeypatch):
-    async def _research(prompt, system_prompt=None, **kw):
-        return ("notes", [{"url": "https://oceanario.pt/team", "title": "T"}])
+    async def _search(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                "T", "https://oceanario.pt/team", "notes"
+            )],
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
         return _DIGEST
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _search)
     monkeypatch.setattr(gemini, "generate_json", _json)
 
     seen = {}
@@ -297,19 +320,21 @@ class _Ts:
 def test_run_reuses_a_recent_dive_without_searching(_patch, monkeypatch):
     import time as _t
 
-    calls = {"research": 0}
-    real_research = gemini.research
+    # One sweep per fresh run, none on a cache hit — counted at the sweep,
+    # the unit of search work since the 2026-11-07 capped-search restore.
+    calls = {"sweep": 0}
+    real_sweep = deep_dive._capped_sweep
 
-    async def _counting_research(*a, **k):
-        calls["research"] += 1
-        return await real_research(*a, **k)
+    async def _counting_sweep(*a, **k):
+        calls["sweep"] += 1
+        return await real_sweep(*a, **k)
 
-    monkeypatch.setattr(gemini, "research", _counting_research)
+    monkeypatch.setattr(deep_dive, "_capped_sweep", _counting_sweep)
 
     db = _CacheDb()
     # First run: searches + stores.
     d1 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", context="Lisbon"))
-    assert calls["research"] == 1
+    assert calls["sweep"] == 1
     assert d1.get("from_cache") is not True
     # make the stored created_at look ~10 days old
     key = deep_dive._cache_key("", "Dana Reis")
@@ -317,7 +342,7 @@ def test_run_reuses_a_recent_dive_without_searching(_patch, monkeypatch):
 
     # Second run: served from cache, no new search.
     d2 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", context="Lisbon"))
-    assert calls["research"] == 1
+    assert calls["sweep"] == 1
     assert d2["from_cache"] is True
     assert [f["claim"] for f in d2["facts"]] == [f["claim"] for f in d1["facts"]]
 
@@ -328,20 +353,20 @@ def test_run_never_reuses_the_cache_for_a_self_dive(_patch, monkeypatch):
     # else (or reopening the saved report) may read the cache.
     import time as _t
 
-    calls = {"research": 0}
-    real_research = gemini.research
+    calls = {"sweep": 0}
+    real_sweep = deep_dive._capped_sweep
 
-    async def _counting_research(*a, **k):
-        calls["research"] += 1
-        return await real_research(*a, **k)
+    async def _counting_sweep(*a, **k):
+        calls["sweep"] += 1
+        return await real_sweep(*a, **k)
 
-    monkeypatch.setattr(gemini, "research", _counting_research)
+    monkeypatch.setattr(deep_dive, "_capped_sweep", _counting_sweep)
 
     db = _CacheDb()
     key = deep_dive._cache_key("", "Dana Reis")
 
     d1 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
-    assert calls["research"] == 1
+    assert calls["sweep"] == 1
     assert d1.get("from_cache") is not True
     # A same-day cache entry (the fake db's SERVER_TIMESTAMP write needs a
     # real one for the age check — same trick as the other cache tests).
@@ -349,28 +374,28 @@ def test_run_never_reuses_the_cache_for_a_self_dive(_patch, monkeypatch):
 
     # Same-day cache, but is_self=True -> re-searches anyway.
     d2 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
-    assert calls["research"] == 2
+    assert calls["sweep"] == 2
     assert d2.get("from_cache") is not True
     db.store[key]["created_at"] = _Ts(_t.time() - 1 * 86400)
 
     # The fresh self dive still overwrites the same cache doc, so a later
     # lookup on this person by someone else reuses the newest copy.
     d3 = _run(deep_dive.run("Dana Reis", db=db, uid="u1"))
-    assert calls["research"] == 2
+    assert calls["sweep"] == 2
     assert d3["from_cache"] is True
 
 
 def test_run_ignores_a_stale_cache_and_respects_force(_patch, monkeypatch):
     import time as _t
 
-    calls = {"research": 0}
-    real = gemini.research
+    calls = {"sweep": 0}
+    real = deep_dive._capped_sweep
 
     async def _counting(*a, **k):
-        calls["research"] += 1
+        calls["sweep"] += 1
         return await real(*a, **k)
 
-    monkeypatch.setattr(gemini, "research", _counting)
+    monkeypatch.setattr(deep_dive, "_capped_sweep", _counting)
 
     db = _CacheDb()
     _run(deep_dive.run("Dana Reis", db=db, uid="u1"))
@@ -379,12 +404,12 @@ def test_run_ignores_a_stale_cache_and_respects_force(_patch, monkeypatch):
     # 70 days old -> past the 60-day window -> re-search.
     db.store[key]["created_at"] = _Ts(_t.time() - 70 * 86400)
     _run(deep_dive.run("Dana Reis", db=db, uid="u1"))
-    assert calls["research"] == 2
+    assert calls["sweep"] == 2
 
     # Fresh again, but force=True still re-searches.
     db.store[key]["created_at"] = _Ts(_t.time() - 1 * 86400)
     _run(deep_dive.run("Dana Reis", db=db, uid="u1", force=True))
-    assert calls["research"] == 3
+    assert calls["sweep"] == 3
 
 
 # --- one persistent report per SUBJECT, not per searcher -------------------
@@ -490,13 +515,13 @@ def test_subject_report_none_when_the_subject_has_no_report_at_all():
 def test_run_reuses_the_subjects_own_self_dive_without_searching(monkeypatch):
     # A searches B, who already has a self-dive report (possibly corrected).
     # No Gemini call at all — B's own report is shared back to A as-is.
-    calls = {"research": 0}
+    calls = {"search": 0}
 
-    async def _counting_research(*a, **k):
-        calls["research"] += 1
+    async def _counting_search(*a, **k):
+        calls["search"] += 1
         raise AssertionError("must not search — B already has a report")
 
-    monkeypatch.setattr(gemini, "research", _counting_research)
+    monkeypatch.setattr(web_search, "search", _counting_search)
     monkeypatch.setattr(
         deep_dive_images, "find_web_images", _no_web_images
     )
@@ -514,7 +539,7 @@ def test_run_reuses_the_subjects_own_self_dive_without_searching(monkeypatch):
     d = _run(deep_dive.run(
         "Dana Reis", db=db, uid="a1", target_uid="b1",
     ))
-    assert calls["research"] == 0
+    assert calls["search"] == 0
     assert d["is_self"] is False
     assert d["summary"] == "B's own corrected summary"
     # Mirrored to the shared, self-describing "uid_b1" doc — still under B's
@@ -1790,22 +1815,21 @@ def test_disputed_fact_is_picked_up_by_the_next_run_context(_patch, monkeypatch)
     key = _seed_self_report(db, "u1", "Dana Reis", facts)
     deep_dive.dispute_fact(db, "u1", key, "aaa111")
 
-    seen_context = {}
-
-    async def _research(prompt, system_prompt=None, **kw):
-        seen_context["prompt"] = prompt
-        return ("notes", [])
+    seen_contents = {}
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
+        seen_contents["contents"] = contents
         return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
 
-    monkeypatch.setattr(gemini, "research", _research)
     monkeypatch.setattr(gemini, "generate_json", _json)
 
     context = deep_dive.profile_dive_context(db, "u1", "Dana Reis")
     _run(deep_dive.run("Dana Reis", db=db, uid="u1", context=context, is_self=True))
-    assert "Went to MIT" in seen_context["prompt"]
-    assert "WRONG" in seen_context["prompt"]
+    # The dispute context reaches the digest synthesis (it used to ride the
+    # grounded-research prompt; the sweep now takes its query terms from it
+    # and the digest prompt carries the full context).
+    assert "Went to MIT" in seen_contents["contents"]
+    assert "WRONG" in seen_contents["contents"]
 
 
 # --- POST /deep-dive/{report_id}/facts/{fact_id}/dispute --------------------
@@ -2511,22 +2535,28 @@ class _ServerError(Exception):
 
 
 def test_run_completes_after_a_single_research_timeout(_patch, monkeypatch):
-    """A grounded-research call that times out ONCE then succeeds still
-    produces a complete dive. Pre-fix a single timeout failed the whole run."""
+    """A search sweep that times out ONCE then succeeds still produces a
+    complete dive. Pre-fix a single timeout failed the whole run."""
     attempts = {"n": 0}
 
-    async def _flaky(prompt, system_prompt=None, **kw):
+    async def _flaky(query, **kw):
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise asyncio.TimeoutError()
-        return ("web notes about Dana…",
-                [{"url": "https://oceanario.pt/team", "title": "Team"}])
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                "Team", "https://oceanario.pt/team", "web notes about Dana…"
+            )],
+        )
 
-    monkeypatch.setattr(gemini, "research", _flaky)
+    monkeypatch.setattr(web_search, "search", _flaky)
     monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
 
     d = _run(deep_dive.run("Dana Reis", uid="u1", context="Lisbon"))
-    assert attempts["n"] == 2  # timed out once, succeeded on the retry
+    # The first sweep died on its first query; the retry sweep ran all
+    # three queries.
+    assert attempts["n"] == 4
     assert d["name"] == "Dana Reis"
     assert d["confidence"] == "high"
 
@@ -2536,11 +2566,11 @@ def test_both_research_attempts_timeout_fails_the_run(monkeypatch):
     (honest failure), having tried exactly the bounded number of times."""
     attempts = {"n": 0}
 
-    async def _always_timeout(prompt, system_prompt=None, **kw):
+    async def _always_timeout(query, **kw):
         attempts["n"] += 1
         raise asyncio.TimeoutError()
 
-    monkeypatch.setattr(gemini, "research", _always_timeout)
+    monkeypatch.setattr(web_search, "search", _always_timeout)
     monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
 
     with pytest.raises(asyncio.TimeoutError):
@@ -2566,42 +2596,41 @@ def test_disabled_research_bills_nothing(monkeypatch):
     assert recorded["n"] == 0  # a call that never runs bills nothing
 
 
-def test_disabled_research_is_not_retried():
-    """The disabled error is deterministic (``code`` 400), so the dive's
-    retry classifier treats it like a bad request: one attempt, no retry."""
-    import llm_routing
-
+def test_paused_search_is_not_retried_and_degrades(monkeypatch):
+    """A paused day is terminal for the sweep (the cap resets tomorrow, not
+    on a retry): one attempt, no retry, and an empty sweep for the digest
+    to report honestly on."""
     attempts = {"n": 0}
-    real_research = gemini.research
 
-    async def _counting(*a, **k):
+    async def _paused(query, **kw):
         attempts["n"] += 1
-        return await real_research(*a, **k)
+        return web_search.SearchOutcome(
+            web_search.STATUS_PAUSED, message=web_search.PAUSED_MESSAGE
+        )
 
-    gemini.research = _counting
-    try:
-        with pytest.raises(llm_routing.DirectGoogleDisabledError):
-            _run(deep_dive._grounded_research("research Dana", uid="u1"))
-    finally:
-        gemini.research = real_research
-    assert attempts["n"] == 1  # no retry on a deterministic failure
+    monkeypatch.setattr(web_search, "search", _paused)
+    monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
+
+    got = _run(deep_dive._grounded_research("research Dana", uid="u1"))
+    assert got == ("", [])
+    assert attempts["n"] == 1  # no retry on a paused day
 
 
-def test_run_completes_when_grounded_research_is_disabled(monkeypatch):
-    """With grounded research killed (DirectGoogleDisabledError on every
-    call), run() must still complete honestly - an empty sweep digested
-    into a not_found report - instead of raising an internal error."""
-    import llm_routing
-
-    async def _disabled(prompt, system_prompt=None, **kw):
-        raise llm_routing.DirectGoogleDisabledError("research disabled")
+def test_run_completes_when_web_search_is_paused(monkeypatch):
+    """With the day's search quota used up (paused on every call), run()
+    must still complete honestly - an empty sweep digested into a
+    not_found report - instead of raising an internal error."""
+    async def _paused(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_PAUSED, message=web_search.PAUSED_MESSAGE
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
         assert "(the search returned little)" in contents
         return {"summary": "", "confidence": "not_found",
                 "facts": [], "links": [], "caveats": ""}
 
-    monkeypatch.setattr(gemini, "research", _disabled)
+    monkeypatch.setattr(web_search, "search", _paused)
     monkeypatch.setattr(gemini, "generate_json", _json)
     monkeypatch.setattr(
         deep_dive_images, "find_web_images", _no_web_images
@@ -2621,14 +2650,16 @@ def test_deterministic_bad_request_is_not_retried(monkeypatch):
     """A 4xx bad request would just fail again — it is raised, not retried."""
     attempts = {"n": 0}
 
-    async def _bad(prompt, system_prompt=None, **kw):
+    async def _bad(query, **kw):
         attempts["n"] += 1
-        raise _BadRequest()
+        return web_search.SearchOutcome(
+            web_search.STATUS_ERROR, message="bad request", error_code=400
+        )
 
-    monkeypatch.setattr(gemini, "research", _bad)
+    monkeypatch.setattr(web_search, "search", _bad)
     monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
 
-    with pytest.raises(_BadRequest):
+    with pytest.raises(deep_dive._SearchFailed):
         _run(deep_dive._grounded_research("research Dana", uid="u1"))
     assert attempts["n"] == 1  # no retry on a deterministic 4xx
 
@@ -2637,17 +2668,25 @@ def test_transient_server_error_is_retried(monkeypatch):
     """A transient 5xx gets one more attempt and can then succeed."""
     attempts = {"n": 0}
 
-    async def _flaky(prompt, system_prompt=None, **kw):
+    async def _flaky(query, **kw):
         attempts["n"] += 1
         if attempts["n"] == 1:
-            raise _ServerError()
-        return ("ok", [])
+            return web_search.SearchOutcome(
+                web_search.STATUS_ERROR, message="unavailable",
+                error_code=503,
+            )
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                "Ok", "https://ok.example", "ok"
+            )],
+        )
 
-    monkeypatch.setattr(gemini, "research", _flaky)
+    monkeypatch.setattr(web_search, "search", _flaky)
     monkeypatch.setattr(deep_dive.asyncio, "sleep", _no_sleep)
 
     prose, _sources = _run(deep_dive._grounded_research("research Dana", uid="u1"))
-    assert attempts["n"] == 2 and prose == "ok"
+    assert attempts["n"] >= 2 and "Ok" in prose
 
 
 # --- #28: natural-language provenance questions return the stored source -----
@@ -2929,8 +2968,13 @@ def _rich_mocks(monkeypatch):
     monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
     monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
 
-    async def _research(prompt, system_prompt=None, **kw):
-        return ("notes about Daniel", [{"url": "https://example.com/me", "title": "Me"}])
+    async def _search(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                "Me", "https://example.com/me", "notes about Daniel"
+            )],
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
         return {
@@ -2941,7 +2985,7 @@ def _rich_mocks(monkeypatch):
                        "is_them": "likely", "note": ""}],
         }
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _search)
     monkeypatch.setattr(gemini, "generate_json", _json)
 
 
@@ -2949,13 +2993,13 @@ def _empty_mocks(monkeypatch):
     monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
     monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
 
-    async def _research(prompt, system_prompt=None, **kw):
-        return ("", [])
+    async def _search(query, **kw):
+        return web_search.SearchOutcome(web_search.STATUS_OK, results=[])
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
         return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _search)
     monkeypatch.setattr(gemini, "generate_json", _json)
 
 
@@ -3028,8 +3072,13 @@ def _links_mock(monkeypatch, links, summary="Found results"):
     monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
     monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
 
-    async def _research(prompt, system_prompt=None, **kw):
-        return ("notes", [{"url": ln["url"], "title": ln.get("title", "")} for ln in links])
+    async def _search(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                ln.get("title", ""), ln["url"], "notes"
+            ) for ln in links],
+        )
 
     async def _json(contents, system_prompt, response_schema=None, **kw):
         return {
@@ -3039,7 +3088,7 @@ def _links_mock(monkeypatch, links, summary="Found results"):
             "links": links,
         }
 
-    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(web_search, "search", _search)
     monkeypatch.setattr(gemini, "generate_json", _json)
 
 

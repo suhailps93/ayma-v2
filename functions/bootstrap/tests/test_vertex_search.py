@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import deep_dive_public_profiles as pp
 import gemini
 import vertex_search
+import web_search
 
 PAYLOAD = {
     "results": [
@@ -99,13 +100,19 @@ def test_deep_dive_merges_vertex_results_with_grounded_ones(monkeypatch):
     monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "true")
     pp._cache.clear()
 
-    async def research(*a, **k):
-        return '{"profiles":[{"platform":"linkedin","url":"https://www.linkedin.com/in/dana"}]}', []
+    async def search_web(query, **kw):
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                "Dana Reyes — LinkedIn",
+                "https://www.linkedin.com/in/dana", "",
+            )],
+        )
 
     async def search(name, extra_terms="", stats=None):
         return vertex_search.parse_results(PAYLOAD, name)
 
-    monkeypatch.setattr(gemini, "research", research)
+    monkeypatch.setattr(web_search, "search", search_web)
     monkeypatch.setattr(vertex_search, "search_profiles", search)
     fetched = []
     monkeypatch.setattr(
@@ -125,13 +132,13 @@ def test_deep_dive_works_with_vertex_only_when_grounded_call_fails(monkeypatch):
     monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "true")
     pp._cache.clear()
 
-    async def research(*a, **k):
+    async def search_web(*a, **k):
         raise RuntimeError("down")
 
     async def search(name, extra_terms="", stats=None):
         return vertex_search.parse_results(PAYLOAD, name)
 
-    monkeypatch.setattr(gemini, "research", research)
+    monkeypatch.setattr(web_search, "search", search_web)
     monkeypatch.setattr(vertex_search, "search_profiles", search)
     monkeypatch.setattr(pp, "profile_image", lambda p: "")
     out = _run(pp.find_public_profile_images("Dana Reyes"))
@@ -142,13 +149,13 @@ def test_deep_dive_failure_of_both_sources_is_not_cached(monkeypatch):
     monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "true")
     pp._cache.clear()
 
-    async def research(*a, **k):
+    async def search_web(*a, **k):
         raise RuntimeError("down")
 
     async def search(name, extra_terms="", stats=None):
         return []
 
-    monkeypatch.setattr(gemini, "research", research)
+    monkeypatch.setattr(web_search, "search", search_web)
     monkeypatch.setattr(vertex_search, "search_profiles", search)
     assert _run(pp.find_public_profile_images("Dana Reyes")) == []
     assert pp._cache == {}
@@ -183,10 +190,16 @@ def test_public_profile_stats_record_counts(monkeypatch):
     monkeypatch.setenv("FLAG_VERTEX_AI_SEARCH", "true")
     pp._cache.clear()
 
-    async def research(*a, **k):
-        return '{"profiles":[]}', []
+    async def search_web(query, **kw):
+        # Ran clean but found no classifiable profile page.
+        return web_search.SearchOutcome(
+            web_search.STATUS_OK,
+            results=[web_search.SearchResult(
+                "A story about Dana", "https://news.example/story", ""
+            )],
+        )
 
-    monkeypatch.setattr(gemini, "research", research)
+    monkeypatch.setattr(web_search, "search", search_web)
     monkeypatch.setattr(
         vertex_search, "_search_sync",
         lambda q, n: vertex_search.parse_results(PAYLOAD, n),

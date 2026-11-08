@@ -184,9 +184,13 @@ def test_chat_inference_runs_a_tool_round_and_replays_the_assistant_turn(
     assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "c1"
 
 
-def test_chat_web_search_tool_fails_honestly_now_grounding_is_disabled(
+def test_chat_web_search_tool_reports_unavailable_honestly_when_unconfigured(
     monkeypatch,
 ):
+    # Since the 2026-11-07 capped-search restore the tool works when search
+    # is configured; with no key/engine configured it must still surface an
+    # honest "not available" tool result the model relays — the turn
+    # completes, and no provider call is ever attempted.
     _cfg(monkeypatch, gemini_web_search=True)
     tools_seen = {}
     call = inference_llm.FunctionCall(id="s1", name="web_search",
@@ -204,11 +208,10 @@ def test_chat_web_search_tool_fails_honestly_now_grounding_is_disabled(
 
     out = asyncio.run(gemini.generate_reply("who won?", system_prompt="p"))
     assert [t["function"]["name"] for t in tools_seen["tools"]] == ["web_search"]
-    # The disabled research backend surfaces as an honest tool error the model
-    # relays — the turn completes, it never touches Google.
     tool_msg = tools_seen["sent"][1][-1]
     assert tool_msg["role"] == "tool"
-    assert "unavailable" in tool_msg["content"]
+    assert "not available" in tool_msg["content"]
+    assert "internal error" not in tool_msg["content"].lower()
     assert out.text == "Search is unavailable right now."
     assert out.tools_used == ["Searched the web"]
 

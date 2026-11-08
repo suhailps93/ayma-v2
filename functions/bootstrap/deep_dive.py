@@ -40,6 +40,7 @@ import llm_routing
 import report_blocks as rb
 import schema
 import token_ledger
+import web_search
 from timefmt import iso_or_str
 from token_ledger import FEATURE_DEEPDIVE
 
@@ -1443,23 +1444,124 @@ def _research_error_retryable(exc: Exception) -> bool:
     return code >= 500
 
 
-async def _grounded_research(ask: str, *, uid: str | None) -> tuple[str, list]:
-    """Run the dive's grounded web-research call, retrying ONCE on an inference
-    TimeoutError (or a transient 5xx) — never on a deterministic bad request.
+class _SearchFailed(Exception):
+    """A capped-search provider failure, carrying the provider's HTTP
+    ``code`` so :func:`_research_error_retryable` classifies it exactly the
+    way it classified the old grounded-research errors."""
 
-    No double-charge: :func:`gemini.research` records the spend only after the
-    call returns, so a timed-out attempt (which raises before ``record``) bills
-    nothing; only the succeeding attempt is metered, exactly once."""
+    def __init__(self, message: str, *, code: int | None = None):
+        super().__init__(message)
+        self.code = code
+
+
+def _sweep_queries(name: str, context: str) -> list[str]:
+    """The dive's search sweep: a few focused Programmable Search queries
+    derived from the subject's name and caller context (the retrieval shape
+    that replaces the old single grounded prompt)."""
+    name = (name or "").strip()
+    ctx = " ".join((context or "").split()[:8]).strip()
+    queries = [name]
+    if ctx and ctx.lower() not in name.lower():
+        queries.append(f"{name} {ctx}".strip())
+    queries.append(f"{name} profile".strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in queries:
+        q = q.strip()
+        if q and q not in seen:
+            seen.add(q)
+            out.append(q)
+    return out[:3]
+
+
+async def _capped_sweep(
+    name: str,
+    context: str,
+    uid: str | None,
+    known_urls: tuple[tuple[str, str], ...] = (),
+) -> tuple[str, list]:
+    """Collect the dive's research notes through the capped search
+    (:mod:`web_search` — hard 100/day free-quota cap, fail closed).
+
+    Returns ``(notes, sources)`` in the shape the digest pass already
+    consumes. A paused or unconfigured search with nothing collected yet
+    degrades to an empty sweep (the digest then reports honestly that the
+    search returned little); a provider failure raises :class:`_SearchFailed`
+    so the retry loop in :func:`_grounded_research` applies unchanged.
+    Every query goes through the daily counter — there is no uncapped path.
+    """
+    results: list[web_search.SearchResult] = []
+    seen_urls: set[str] = set()
+    # URLs the caller already knows (a user's own LinkedIn page): they cost
+    # no search quota, so they seed the sweep as sources outright — the
+    # digest pass cites them like any other source link, and they survive a
+    # paused day.
+    for title, url in known_urls:
+        url = (url or "").strip()
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            results.append(web_search.SearchResult(title or url, url, ""))
+    for query in _sweep_queries(name, context):
+        outcome = await web_search.search(query)
+        if outcome.status == web_search.STATUS_OK:
+            for r in outcome.results:
+                if r.url and r.url not in seen_urls:
+                    seen_urls.add(r.url)
+                    results.append(r)
+            if len(results) >= 10:
+                break
+            continue
+        if outcome.status in (
+            web_search.STATUS_PAUSED,
+            web_search.STATUS_UNCONFIGURED,
+        ):
+            if not results:
+                logger.warning(
+                    "deep-dive search sweep unavailable (%s) for %s — "
+                    "continuing with an empty sweep",
+                    outcome.status,
+                    name,
+                )
+                return "", []
+            break  # keep what was collected before the cap was hit
+        raise _SearchFailed(
+            f"web search provider failed: {outcome.message}",
+            code=outcome.error_code,
+        )
+    notes = "\n".join(
+        f"- {r.title} ({r.url}): {r.snippet}" if r.snippet else f"- {r.title} ({r.url})"
+        for r in results
+    )
+    sources = [{"url": r.url, "title": r.title} for r in results]
+    return notes, sources
+
+
+async def _grounded_research(
+    ask: str,
+    *,
+    uid: str | None,
+    name: str = "",
+    context: str = "",
+    known_urls: tuple[tuple[str, str], ...] = (),
+) -> tuple[str, list]:
+    """Run the dive's web-research sweep through the capped search,
+    retrying ONCE on a timeout (or a transient 5xx) — never on a
+    deterministic bad request.
+
+    This used to call :func:`gemini.research` (direct-Google grounding,
+    disabled 2026-11-04, so it always raised). Since the founder's
+    2026-11-07 restore, the sweep is retrieval via :mod:`web_search`:
+    Programmable Search results are formatted as notes + sources and the
+    digest pass (LiveKit-routed ``gemini.generate_json``) synthesizes the
+    report from them — inference stays on LiveKit. ``ask`` is retained for
+    the name fallback: older callers pass only the composed prompt, whose
+    first line carries the subject's name."""
+    if not name:
+        first = (ask or "").splitlines()[0] if ask else ""
+        name = first.removeprefix("Full name:").strip()
     for attempt in range(_RESEARCH_ATTEMPTS):
         try:
-            return await gemini.research(
-                ask,
-                system_prompt=_RESEARCH_SYSTEM,
-                uid=uid,
-                feature=FEATURE_DEEPDIVE,
-                max_output_tokens=6000,
-                timeout=gemini.RESEARCH_TIMEOUT_SECONDS,
-            )
+            return await _capped_sweep(name, context, uid, known_urls)
         except Exception as exc:  # noqa: BLE001 - classified by _research_error_retryable
             last = attempt + 1 >= _RESEARCH_ATTEMPTS
             if not _research_error_retryable(exc) or last:
@@ -1523,10 +1625,13 @@ async def run(
     who = "yourself" if is_self else "this person"
     # If the user has given Ayma their own LinkedIn URL (their own consent,
     # their own public page — never scraped, never an unofficial API call),
-    # hand it straight to Gemini's `url_context` tool (already attached to
-    # this call, see gemini.research) so it reads that page directly as part
-    # of the same grounded research pass. § Your Story career timeline.
+    # it goes into the sweep as a known source: the digest pass sees the
+    # link and can cite it. The old path handed it to Gemini's `url_context`
+    # tool on the direct-Google call; that tool is gone with the 2026-11-04
+    # kill, so the page itself is no longer read — the URL is still carried
+    # as a source. § Your Story career timeline.
     linkedin_note = ""
+    linkedin_url = ""
     if is_self and db is not None and uid:
         try:
             import career_timeline
@@ -1546,14 +1651,22 @@ async def run(
         f"URLs inline.{linkedin_note}"
     )
     try:
-        prose, sources = await _grounded_research(ask, uid=uid)
+        prose, sources = await _grounded_research(
+            ask,
+            uid=uid,
+            name=name,
+            context=context,
+            known_urls=(("LinkedIn profile", linkedin_url),)
+            if linkedin_url
+            else (),
+        )
     except llm_routing.DirectGoogleDisabledError:
-        # Grounded research is disabled by the direct-Google kill
-        # (2026-11-04, LiveKit-only inference): gemini.research always
-        # raises. Degrade to an empty sweep instead of surfacing an
-        # internal error - the digest pass below turns empty prose into
-        # an honest not_found / low-confidence report and the image and
-        # social steps still run. Other exceptions still propagate.
+        # Retained guard: the sweep now runs on the capped search path and
+        # degrades on its own paused/unconfigured states, so this no longer
+        # fires in normal operation — but if a direct-Google call is ever
+        # reintroduced it must still degrade to an empty sweep instead of
+        # surfacing an internal error (the digest pass below turns empty
+        # prose into an honest not_found / low-confidence report).
         logger.warning(
             "deep-dive grounded research disabled (direct-Google kill); "
             "continuing with an empty sweep for %s",
