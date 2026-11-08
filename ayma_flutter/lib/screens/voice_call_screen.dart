@@ -82,7 +82,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                   ? AymaOrbState.thinking
                   : (speaking
                         ? AymaOrbState.speaking
-                        : AymaOrbState.listening),
+                        : (voice.micYielded
+                              ? AymaOrbState.idle
+                              : AymaOrbState.listening)),
               _ => AymaOrbState.idle,
             };
             final label = switch (phase) {
@@ -91,17 +93,19 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               VoiceSessionPhase.connecting =>
                 voice.relayRetrying ? 'Reconnecting…' : 'Connecting…',
               VoiceSessionPhase.waking => 'Waking Ayma…',
-              VoiceSessionPhase.live => voice.muted
-                  ? 'Muted'
-                  : (voice.reconnecting
-                        ? 'Reconnecting…'
-                        : (speaking
-                              ? 'Ayma is speaking…'
-                              : (voice.activeToolLabel ??
-                                    voice.warmingNotice ??
-                                    (voice.awaitingFirstResponse
-                                        ? 'Connecting…'
-                                        : 'Listening…')))),
+              VoiceSessionPhase.live => voice.micYielded
+                  ? 'Mic yielded'
+                  : (voice.muted
+                        ? 'Muted'
+                        : (voice.reconnecting
+                              ? 'Reconnecting…'
+                              : (speaking
+                                    ? 'Ayma is speaking…'
+                                    : (voice.activeToolLabel ??
+                                          voice.warmingNotice ??
+                                          (voice.awaitingFirstResponse
+                                              ? 'Connecting…'
+                                              : 'Listening…'))))),
               _ => '',
             };
             return Stack(
@@ -173,7 +177,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                   bottom: 28,
                   child: Center(
                     child: _MuteButton(
-                      muted: voice.muted,
+                      muted: voice.muted || voice.micYielded,
                       onTap: voice.toggleMute,
                     ),
                   ),

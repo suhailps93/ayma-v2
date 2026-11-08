@@ -269,7 +269,7 @@ class CallBackgroundService {
 
   Map<String, dynamic> _statusArgs() => {
         'status': _statusText(),
-        'muted': _voice.muted,
+        'muted': _voice.muted || _voice.micYielded,
         // Ayma told to "shut up": the notification adds an "Unmute Ayma"
         // action (distinct from "Mute mic", the user's own mic).
         'aymaQuiet': _voice.aymaQuiet,
@@ -289,6 +289,7 @@ class CallBackgroundService {
 
   String _statusText() {
     if (_voice.aymaQuiet) return quietStatus;
+    if (_voice.micYielded) return 'Mic yielded';
     return _voice.muted ? 'Mic muted' : 'Voice call';
   }
 

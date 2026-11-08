@@ -53,6 +53,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var pushChannel: MethodChannel? = null
+    private var micYieldManager: MicYieldManager? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -206,6 +207,17 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        micYieldManager = MicYieldManager(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger
+        ).also { it.attach() }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        micYieldManager?.detach()
+        micYieldManager = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     /**

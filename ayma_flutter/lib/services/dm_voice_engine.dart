@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import 'async_voice_controller.dart';
 import 'async_voice_recorder.dart';
+import 'mic_yield_service.dart';
 import 'voice_note_controller.dart';
 
 /// The DM chat's [VoiceNoteEngine]: record → hand the finished clip to
@@ -22,14 +25,27 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
     AsyncVoiceRecorder? recorder,
     required this.onSendClip,
     Duration? capDuration,
+    MicYieldService? micYieldService,
   }) : _recorder = recorder ?? RecordPluginRecorder(),
-       _capDuration = capDuration ?? AsyncVoiceController.maxDuration;
+       _capDuration = capDuration ?? AsyncVoiceController.maxDuration,
+       _micYieldService = micYieldService ?? MicYieldService.instance {
+    _micYieldCallback = (reason) async {
+      if (_recording) {
+        debugPrint('[dm_voice] yielding mic ($reason)');
+        _error = 'Microphone yielded to another app.';
+        await cancelRecording();
+      }
+    };
+    _micYieldService.addHandler(_micYieldCallback!);
+  }
 
   /// Called once per finished, sendable clip. Owns upload + posting; the
   /// engine is already back to idle when it runs.
   final Future<void> Function(File file) onSendClip;
 
   final AsyncVoiceRecorder _recorder;
+  final MicYieldService _micYieldService;
+  MicYieldCallback? _micYieldCallback;
 
   /// The cap this instance enforces — the shared 120s in production,
   /// injectable so tests can reach the cap without waiting.
@@ -121,6 +137,7 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
     _startedAt = DateTime.now();
     _elapsed = Duration.zero;
     _recording = true;
+    unawaited(_micYieldService.startMonitoring());
     _ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (_disposed || _startedAt == null) return;
       _elapsed = _effectiveElapsed();
@@ -268,6 +285,7 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
 
   void _resetToIdle() {
     _stopTimers();
+    unawaited(_micYieldService.stopMonitoring());
     _tempPath = null;
     _heldFile = null;
     _holdClipAtCap = false;
@@ -287,6 +305,11 @@ class DmVoiceNoteEngine extends VoiceNoteEngine {
   void dispose() {
     _disposed = true;
     _stopTimers();
+    if (_micYieldCallback != null) {
+      _micYieldService.removeHandler(_micYieldCallback!);
+      _micYieldCallback = null;
+    }
+    unawaited(_micYieldService.stopMonitoring());
     _recorder.dispose();
     super.dispose();
   }
