@@ -2,8 +2,9 @@
 // See `test/layout_matrix_test.dart`.
 import 'package:ayma_flutter/routing/app_router.dart';
 import 'package:ayma_flutter/screens/accent_color_screen.dart';
+import 'package:ayma_flutter/screens/privacy_settings_screen.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
-import 'package:ayma_flutter/screens/ayma_settings_screen.dart';
+import 'package:ayma_flutter/screens/appearance_settings_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
 import 'package:ayma_flutter/screens/biometric_info_screen.dart';
@@ -253,14 +254,11 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     AymaNotesScreen.path: () => shell(AymaNotesScreen(api: api, myUid: 'me')),
     FeedbackScreen.path: () => shell(FeedbackScreen(api: api)),
     AdminFeedbackScreen.path: () => shell(AdminFeedbackScreen(api: api)),
-    SettingsScreen.path: () => shell(
-      SettingsScreen(
-        controller: ThemeController(),
-        profileService: profiles,
-        api: api,
-      ),
-    ),
-    AymaSettingsScreen.path: () => shell(AymaSettingsScreen(api: api)),
+    SettingsScreen.path: () => shell(const SettingsScreen()),
+    AppearanceSettingsScreen.path: () =>
+        shell(AppearanceSettingsScreen(controller: ThemeController())),
+    PrivacySettingsScreen.path: () =>
+        shell(PrivacySettingsScreen(profileService: profiles, api: api)),
     SkillsScreen.path: () =>
         shell(SkillsScreen(profileService: profiles, api: api)),
     BiometricConsentScreen.path: () => BiometricConsentScreen(api: api),

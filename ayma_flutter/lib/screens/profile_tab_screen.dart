@@ -13,7 +13,6 @@ import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/completeness_ring.dart';
 import '../widgets/staggered.dart';
-import 'ayma_settings_screen.dart';
 import 'complete_profile_screen.dart';
 import 'my_public_profile_screen.dart';
 import 'story_editor_screen.dart';
@@ -27,7 +26,7 @@ import 'sign_in_screen.dart';
 
 /// Profile tab (§11.3, §14.3): a hub linking to the "You" items (public
 /// profile, story, details, web-research and Appearance reports, user
-/// settings), the "Ayma" items (her settings, plan) and account actions — grouped
+/// settings), the "Ayma" items (plan) and account actions — grouped
 /// into eyebrow-headed cards in the Ayma design language.
 class ProfileTabScreen extends StatelessWidget {
   const ProfileTabScreen({super.key, this.auth, this.apiClient});
@@ -110,7 +109,7 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => _openAppearance(context),
           ),
           _Item(
-            anchorId: TourAnchors.profileSettingsRow,
+            anchorId: TourAnchors.profileAymaSettingsRow,
             icon: Icons.settings_outlined,
             label: 'Settings',
             hint: 'Theme, matching, verification',
@@ -131,13 +130,6 @@ class ProfileTabScreen extends StatelessWidget {
       (
         label: 'Ayma',
         rows: [
-          _Item(
-            anchorId: TourAnchors.profileAymaSettingsRow,
-            icon: Icons.record_voice_over_outlined,
-            label: 'Ayma’s settings',
-            hint: 'Her voice, animation, and what she remembers',
-            onTap: () => context.push(AymaSettingsScreen.path),
-          ),
           _Item(
             anchorId: TourAnchors.profilePlanRow,
             icon: Icons.toll_rounded,

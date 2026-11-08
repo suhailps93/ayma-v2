@@ -103,7 +103,7 @@ superseding a brief same-day belt-and-suspenders prompt version):
 |---|---|---|
 | Delete account | Settings → Delete account (`/settings/delete-account`) | Open the page only |
 | Subscribe / buy / upgrade / start trial / buy credits / switch plan (any purchase control) | Plan (`/profile/plan`), trial paywall (`/profile/usage/trial`), out-of-credits upsells | Open the Plan page only |
-| Clear Ayma memory ("Wipe what Ayma has learned") | Ayma's settings (`/settings/ayma`) | Open the page only |
+| Clear Ayma memory ("Wipe what Ayma has learned") | Settings → Privacy (`/settings/privacy`) | Open the page only |
 | Delete everywhere (photo) | Photo viewer → Remove dialog (`/profile/photos`) | Nothing — she may only soft-hide via `delete_photo` (the Remove from public path) |
 | Block & report | Message thread menu | Nothing — she tells the user where it is |
 | Dismiss all (profile suggestions) | Profile suggestions (`/profile/suggestions`) | Dismiss suggestions one by one only |
@@ -266,7 +266,6 @@ and also `UI`:
 | Appearance | `my_appearance` |
 | Settings | `settings` |
 | Connect Instagram | (screen exists; connecting is `unavailable` in this version — registry says so honestly) |
-| Ayma's settings | `ayma_settings` |
 | Plan | `credits` |
 | Invite friends | `invite_friends` |
 | Send feedback | `feedback` |
@@ -344,23 +343,25 @@ and also `UI`:
 
 | Control | Does | Ayma |
 |---|---|---|
-| Plan row | Open Plan | COVERED `open_screen credits` |
-| Accent Color row | Open accent picker | COVERED `open_screen accent_color`; setting it is `app_action accent_color` |
-| Pause matching switch | Pause/resume matching | COVERED `app_action pause_matching` / `resume_matching` |
+| Plan and credits row | Open Plan | COVERED `open_screen credits` |
+| Appearance row | Open Appearance | COVERED `open_screen appearance_settings` |
+| Privacy row | Open Privacy | COVERED `open_screen privacy_settings` |
+| Accent Color row (in Appearance) | Open accent picker | COVERED `open_screen accent_color`; setting it is `app_action accent_color` |
+| Pause matching switch (in Privacy) | Pause/resume matching | COVERED `app_action pause_matching` / `resume_matching` |
 | Notification preferences row | Open notification prefs | COVERED `open_screen notification_settings` |
-| Face verified / Verify your face | Start face verification | `UI` for entry; the selfie + consent are the user's |
-| Face matching consent row | Open consent settings | COVERED `open_screen biometric_consent` (page only — withdrawing is `EXCLUDED`-class user-only) |
-| "How to use Ayma" / replay tour row | Start the guided tour | COVERED `start_guided_tour` |
-| Theme (in Ayma's settings / appearance area) | Light/dark/system | COVERED `app_action` theme commands |
+| Face verified / Verify your face (in Privacy) | Start face verification | `UI` for entry; the selfie + consent are the user's |
+| Face matching consent row (in Privacy) | Open consent settings | COVERED `open_screen biometric_consent` (page only — withdrawing is `EXCLUDED`-class user-only) |
+| "How to use Ayma" / replay tour row (in Appearance) | Start the guided tour | COVERED `start_guided_tour` |
+| Theme (in Appearance) | Light/dark/system | COVERED `app_action` theme commands |
 | Build stamp (×7 taps) | Unlock the developer panel | `unavailable` by design (registry says how the user does it) |
 
-## 20. Ayma's settings (`/settings/ayma`) — `ayma_settings_screen.dart`
+## 20. Settings — the Ayma line items & the wipe — `settings_screen.dart`, `privacy_settings_screen.dart`
 
 | Control | Does | Ayma |
 |---|---|---|
-| Models row | Open Ayma's models | COVERED `open_screen voice_preference` |
-| Connect an agent (MCP) row | Open Connect-agent | COVERED `open_screen connect_agent` |
-| **"Wipe what Ayma has learned" (+ confirm dialog)** | **Clear her memory** | **`EXCLUDED` clear_memory — user-only; she opens this page only** |
+| Ayma's models row (Settings top level, plain line item) | Open Ayma's models | COVERED `open_screen voice_preference` |
+| Connect an agent (MCP) row (Settings top level, plain line item) | Open Connect-agent | COVERED `open_screen connect_agent` |
+| **"Wipe what Ayma has learned" (+ confirm dialog)** — inside Privacy, directly above Delete account | **Clear her memory** | **`EXCLUDED` clear_memory — user-only; she opens the Privacy page only (`open_screen privacy_settings`)** |
 
 ## 21. Ayma's models (`voice_preference_screen.dart`, `brain_selector_control.dart`, `voice_engine_control.dart`)
 
@@ -561,7 +562,8 @@ client identifier fails.
   `add_followup_question`, `remember`, `recall`, `set_user_steering`,
   `find_fact_source`.
 * **Photos & reports**: `edit_photo`, `delete_photo`,
-  `update_photo_note`, `run_appearance_report`, `face_report`,
+  `update_photo_note`, `show_profile_photo`, `run_appearance_report`,
+  `face_report`,
   `body_report`, `analyze_physical_attributes`,
   `correct_appearance_item`, `clear_appearance_item`, `deep_dive`,
   `rerun_web_research`, `correct_deep_dive_item`,

@@ -124,8 +124,8 @@ def test_delete_withdraw_purchase_and_clear_memory_are_navigate_only():
     assert acts["withdraw_consent"]["destination"] == "biometric_consent"
     # Clear memory joined the navigate-only set with the ACTION PARITY
     # exclusions config (founder, 2026-11-06): Ayma never wipes what she
-    # has learned; she opens Ayma's settings and the user taps it.
-    assert acts["wipe_memory"]["destination"] == "ayma_settings"
+    # has learned; she opens the Privacy settings and the user taps it.
+    assert acts["wipe_memory"]["destination"] == "privacy_settings"
     for key in ("delete_account", "withdraw_consent", "wipe_memory"):
         assert acts[key]["handler"] == "navigate_only"
     assert {a["key"] for a in acts.values() if a["handler"] != "navigate_only"} == {
@@ -449,7 +449,7 @@ def test_open_tour_redirects_to_the_tour_skill_instead_of_denying_it():
 def test_models_page_resolves_distinctly_not_to_generic_settings():
     # Founder bug 2026-11-02: "open my models" opened the generic Settings page;
     # STT also garbles "Ayma's" to AMS/iMAS. Every natural phrasing (and the
-    # garbles) must land on voice_preference, never settings/ayma_settings.
+    # garbles) must land on voice_preference, never the generic settings page.
     for words in (
         "my models", "the models page", "models", "models page", "models screen",
         "your models", "ayma's models", "aymas models", "ayma models",
@@ -458,3 +458,69 @@ def test_models_page_resolves_distinctly_not_to_generic_settings():
     ):
         d = app_registry.find_destination(words)
         assert d and d["key"] == "voice_preference", f"{words!r} -> {d}"
+
+
+def test_settings_layout_matches_the_shipped_ui():
+    """Founder cleanup (2026-11-07): the Settings top level is four section
+    rows — Plan and credits, Appearance, Notification preferences, Privacy —
+    plus the plain Ayma's models / Connect an agent line items. There is NO
+    /settings/ayma page any more. This fails if the registry names a settings
+    location that no longer exists, or places a moved control (pause
+    matching, theme, the wipe, delete account, face matching consent,
+    accent colour) anywhere but its new section."""
+    import json
+
+    raw = (Path(app_registry.__file__).parent / "app_registry.json").read_text(
+        encoding="utf-8"
+    )
+    # (The tour anchor id profile_ayma_settings_row is a stable identifier,
+    # not a page — it stays, now carried by the Profile tab's Settings row.)
+    assert '"key": "ayma_settings"' not in raw
+    assert "open_screen ayma_settings" not in raw
+    assert "/settings/ayma" not in raw
+
+    dests = {d["key"]: d for d in app_registry.destinations()}
+    routes = _router_paths()
+    for key, path in (
+        ("appearance_settings", "/settings/appearance"),
+        ("privacy_settings", "/settings/privacy"),
+    ):
+        assert dests[key]["path"] == path
+        assert path in routes
+    for d in dests.values():
+        p = (d.get("path") or "").split("?")[0]
+        if p.startswith("/settings"):
+            assert p in routes, f"{d['key']} names dead settings path {p}"
+
+    # Where each moved control now lives, per the shipped UI.
+    assert dests["accent_color"]["found_on"] == "appearance_settings"
+    assert dests["delete_account"]["found_on"] == "privacy_settings"
+    assert dests["biometric_consent"]["found_on"] == "privacy_settings"
+    assert dests["voice_preference"]["found_on"] == "settings"
+    assert dests["connect_agent"]["found_on"] == "settings"
+
+    acts = {s["key"]: s for s in app_registry.settings()}
+    assert acts["pause_matching"]["found_on"] == "privacy_settings"
+    assert acts["theme"]["found_on"] == "appearance_settings"
+
+    acct = {a["key"]: a for a in app_registry.account_actions()}
+    # The wipe sits inside Privacy, directly above Delete account; the
+    # navigate-only exclusion still opens that page and nothing more.
+    assert acct["wipe_memory"]["destination"] == "privacy_settings"
+    assert acct["delete_account"]["found_on"] == "privacy_settings"
+
+    # The guided tour's models step spotlights the Profile tab's Settings
+    # row (the Ayma's models row lives on the page it opens) — the anchor
+    # must be a live TourAnchors constant actually used by that screen.
+    steps = app_registry.guided_tour_steps()
+    anchors = {s.get("anchor") for s in steps}
+    assert "profile_ayma_settings_row" in anchors
+    anchors_src = (_REPO / "ayma_flutter/lib/services/tour_anchors.dart").read_text(
+        encoding="utf-8"
+    )
+    assert "'profile_ayma_settings_row'" in anchors_src
+    profile_src = (
+        _REPO / "ayma_flutter/lib/screens/profile_tab_screen.dart"
+    ).read_text(encoding="utf-8")
+    assert "profileAymaSettingsRow" in profile_src
+    json.loads(raw)  # the registry still parses after every edit above

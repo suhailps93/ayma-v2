@@ -205,7 +205,6 @@ void main() {
       'Appearance',
       'Settings',
       'AYMA',
-      'Ayma’s settings',
       'Plan',
     ];
     final ys = [for (final t in order) tester.getTopLeft(find.text(t)).dy];
@@ -214,7 +213,7 @@ void main() {
     expect(find.text('Pause matching'), findsNothing);
   });
 
-  testWidgets('Settings, Ayma\'s settings and Plan tap through',
+  testWidgets('Settings and Plan tap through',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -222,7 +221,6 @@ void main() {
 
     for (final entry in const {
       'Settings': '/settings',
-      'Ayma’s settings': '/settings/ayma',
       'Plan': '/profile/plan',
     }.entries) {
       await tester.pumpWidget(_host(_api()));

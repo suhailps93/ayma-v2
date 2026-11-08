@@ -16,6 +16,7 @@ const notificationCategories = <String, String>{
   'skill_result': 'Deep dive & match results',
   'ayma_reply': 'Ayma replies',
   'profile_suggestions': 'Public profile updates',
+  'report_ready': 'Report ready',
 };
 
 /// DMs surface as the Messages tab's unread badge, never in the centre; this

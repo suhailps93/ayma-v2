@@ -129,7 +129,7 @@ const List<UiDenyRule> kUiDenyRules = [
   UiDenyRule(
     'clear_memory',
     r'\b(wipe what ayma has learned|clear (your |ayma )?memory|wipe (your )?memory|forget everything)\b',
-    "Clearing what Ayma has learned is something the user does themselves. Open Ayma's settings (open_screen ayma_settings) and tell them which button to tap.",
+    "Clearing what Ayma has learned is something the user does themselves. Open the Privacy settings (open_screen privacy_settings) and tell them which button to tap.",
   ),
   UiDenyRule(
     'block_report',

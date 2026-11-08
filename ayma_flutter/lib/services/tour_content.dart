@@ -118,7 +118,7 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   ),
   // The Profile walkthrough: tap the Profile tab to open it (press-through,
   // §11.2a), then sub-steps spotlight the real rows inside — Story, Appearance
-  // and Ayma's settings — top to bottom, each scrolled into view.
+  // and the Ayma group — top to bottom, each scrolled into view.
   TourFeature(
     featureId: 'profile_hub',
     headline: 'Your profile, your hub',
@@ -146,7 +146,7 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'ayma_models',
     headline: 'Ayma, your way',
-    subtitle: "Open Ayma's settings to choose her brain and her voice.",
+    subtitle: "Open Settings, then Ayma's models, to choose her brain and her voice.",
     icon: Icons.tune_rounded,
     anchorId: TourAnchors.profileAymaSettingsRow,
     tab: 3,
