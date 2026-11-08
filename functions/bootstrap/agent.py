@@ -1729,10 +1729,19 @@ class _CommandClaimGate:
                         _COMMAND_NOT_CONFIRMED_LINE
                     )
                 )
-            except Exception:  # noqa: BLE001 - never break the call
-                logger.exception(
-                    "command claim gate could not speak its line"
-                )
+            except Exception as exc:  # noqa: BLE001 - never break the call
+                if _session_gone_error(exc):
+                    # The call already ended, so the honest line has
+                    # nowhere to go - an expected end-of-call race, not
+                    # an error (AYMA-AGENT-2C/2D, Nov 6 2026: this exact
+                    # path filed two Sentry issues for one hang-up).
+                    logger.warning(
+                        "command claim gate line skipped: session already gone"
+                    )
+                else:
+                    logger.exception(
+                        "command claim gate could not speak its line"
+                    )
 
     def note_silence(self) -> None:
         """A reconnect was queued this turn: latch the suppression WITHOUT
@@ -3030,12 +3039,19 @@ async def _open_main_call(
         )
         try:
             await session.generate_reply(**reply_kwargs)
-        except Exception:  # noqa: BLE001 - a missed line shouldn't kill the call
-            logger.exception(
-                "reconnect announcement generate_reply ERRORED brain=%s "
-                "session=%s",
-                brain, seed.session_id or "?",
-            )
+        except Exception as exc:  # noqa: BLE001 - a missed line shouldn't kill the call
+            if _session_gone_error(exc):
+                logger.warning(
+                    "reconnect announcement skipped: session already gone "
+                    "brain=%s session=%s",
+                    brain, seed.session_id or "?",
+                )
+            else:
+                logger.exception(
+                    "reconnect announcement generate_reply ERRORED brain=%s "
+                    "session=%s",
+                    brain, seed.session_id or "?",
+                )
         else:
             logger.info(
                 "voice opener generate_reply COMPLETED kind=reconnect "
@@ -3053,11 +3069,18 @@ async def _open_main_call(
         )
         try:
             await session.generate_reply(**reply_kwargs)
-        except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
-            logger.exception(
-                "welcome greeting generate_reply ERRORED brain=%s session=%s",
-                brain, seed.session_id or "?",
-            )
+        except Exception as exc:  # noqa: BLE001 - a missed greeting shouldn't kill the call
+            if _session_gone_error(exc):
+                logger.warning(
+                    "welcome greeting skipped: session already gone "
+                    "brain=%s session=%s",
+                    brain, seed.session_id or "?",
+                )
+            else:
+                logger.exception(
+                    "welcome greeting generate_reply ERRORED brain=%s session=%s",
+                    brain, seed.session_id or "?",
+                )
         else:
             logger.info(
                 "voice opener generate_reply COMPLETED kind=greeting brain=%s "
@@ -3982,6 +4005,23 @@ def _profile_first_name(db, uid: str) -> str:
     return parts[0] if parts else ""
 
 
+def _session_gone_error(exc: object) -> bool:
+    """True when a speech failure is just the end-of-call race: the caller
+    hung up (or the session was torn down) while a line was being spoken,
+    so say()/generate_reply() refuse with "AgentSession isn't running" or
+    "AgentSession is closing, cannot use generate_reply()". Expected, not
+    a defect - callers log these below error level, without a traceback,
+    so they never file Sentry issues (AYMA-AGENT-29 and AYMA-AGENT-2C/2D,
+    Nov 6 2026)."""
+    text = str(exc).lower()
+    return (
+        "isn't running" in text
+        or "is closing" in text
+        or "not running" in text
+        or "session closed" in text
+    )
+
+
 async def _attempt_voice_say(
     session: AgentSession, text: str
 ) -> BaseException | None:
@@ -4155,6 +4195,16 @@ async def maybe_open_conversation(
             session, instructions=load_voice_verbatim_line(greeting)
         )
         if reply_error is not None:
+            if _session_gone_error(reply_error):
+                # The caller hung up during the grace window - the
+                # greeting simply has no call left to open (AYMA-AGENT-29,
+                # Nov 6 2026). A skip, not a failure.
+                logger.info(
+                    "voice opener SKIPPED kind=name_greeting brain=%s "
+                    "session=%s reason=session_already_closing",
+                    brain, seed.session_id or "?",
+                )
+                return False
             # logger.error, not logger.exception: the error usually
             # arrives via handle.exception(), outside any except block,
             # so there is no active traceback to attach - the carried
