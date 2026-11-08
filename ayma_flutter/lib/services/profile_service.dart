@@ -19,16 +19,21 @@ class ProfileService {
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
     FirebaseStorage? storage,
-  })  : _auth = auth ?? FirebaseAuth.instance,
+  })  : _authOverride = auth,
         _firestoreOverride = firestore,
         _storageOverride = storage;
 
-  final FirebaseAuth _auth;
+  final FirebaseAuth? _authOverride;
   final FirebaseFirestore? _firestoreOverride;
   final FirebaseStorage? _storageOverride;
 
-  // Lazy so a test subclass that overrides the data methods never trips over
-  // `FirebaseFirestore.instance` before `Firebase.initializeApp()`.
+  // Lazy so constructing the service never trips over a Firebase singleton
+  // before `Firebase.initializeApp()` has run. The Auth binding used to be
+  // eager, and the accent controller (built from the app widget's first
+  // build, via the global at accent_color_controller.dart) raced Firebase
+  // init and crashed with [core/no-app] (AYMA-FLUTTER-3E, builds
+  // 2308-2339). Firestore/Storage were already lazy for the same reason.
+  FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
   FirebaseFirestore get _firestore =>
       _firestoreOverride ?? FirebaseFirestore.instance;
   FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
