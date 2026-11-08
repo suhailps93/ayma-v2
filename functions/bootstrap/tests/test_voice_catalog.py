@@ -205,10 +205,13 @@ def test_default_credited_providers_are_the_union(monkeypatch):
     # live staging list (deepgram, elevenlabs, openai, google, cartesia,
     # inworld, fishaudio, rime, gradium) plus the previously committed
     # assemblyai — no entries dropped, so a deploy with no env override
-    # cannot regress the cascade TTS providers to unavailable.
+    # cannot regress the cascade TTS providers to unavailable. Extended
+    # 2026-11-07 with the LiveKit Inference brain providers (moonshotai,
+    # deepseek-ai, xai) so the new cascade LLM brains are available.
     assert set(vc.CONFIG.voice_credited_providers) == {
         "inworld", "deepgram", "fishaudio", "assemblyai", "rime",
         "gradium", "google", "elevenlabs", "openai", "cartesia",
+        "moonshotai", "deepseek-ai", "xai",
     }
 
 

@@ -53,7 +53,11 @@ def test_get_lists_both_brains_with_capabilities(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     ids = [b["id"] for b in body["brains"]]
-    assert ids == ["gemini", "meta"]
+    # Default config credits every wired vendor: Gemini, the LiveKit
+    # Inference brains in picker order, then Meta.
+    assert ids == [
+        "gemini", *llm_provider.LIVEKIT_BRAIN_VENDORS, "meta",
+    ]
     gemini = next(b for b in body["brains"] if b["id"] == "gemini")
     meta = next(b for b in body["brains"] if b["id"] == "meta")
     assert set(gemini["capabilities"]) == {"text", "json", "vision", "web", "tools"}

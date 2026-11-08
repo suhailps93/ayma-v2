@@ -41,6 +41,7 @@ from functools import lru_cache
 from typing import AsyncIterator
 
 import gemini
+import inference_llm
 import token_ledger
 from config import CONFIG
 from gemini import Reply
@@ -50,6 +51,54 @@ logger = logging.getLogger("ayma.llm_provider")
 PROVIDER_GEMINI = "gemini"
 PROVIDER_META = "meta"
 PROVIDER_OPEN_WEIGHTS = "open-weights"
+
+# LiveKit Inference Brain vendors (founder order 2026-11-07: "Wire all the
+# LiveKit models in"). Each is a Brain VENDOR id — never a model id; the
+# LiveKit Inference model id for each vendor lives in ``config.py``
+# (``CONFIG.livekit_brain_<vendor>_model``). Every one of these is served
+# ONLY through LiveKit Inference (``inference_llm.complete`` — the same
+# gateway + project LiveKit credentials Gemini already uses), so all of
+# them run on the funded LiveKit credits. ZAI GLM is deliberately absent:
+# it does not appear in the live LiveKit Inference LLM catalog
+# (docs.livekit.io/agents/models/llm, fetched 2026-11-07) and a guessed id
+# returns 404 from the gateway — never invent an id.
+PROVIDER_GEMMA = "gemma"
+PROVIDER_OPENAI = "openai"
+PROVIDER_OPENAI_CHAT = "openai-chat"
+PROVIDER_OPENAI_OSS = "openai-oss"
+PROVIDER_KIMI = "kimi"
+PROVIDER_DEEPSEEK = "deepseek"
+PROVIDER_GROK = "grok"
+
+#: The Brain vendors served through LiveKit Inference beyond Gemini
+#: itself, in picker order.
+LIVEKIT_BRAIN_VENDORS: tuple[str, ...] = (
+    PROVIDER_GEMMA,
+    PROVIDER_OPENAI,
+    PROVIDER_OPENAI_CHAT,
+    PROVIDER_OPENAI_OSS,
+    PROVIDER_KIMI,
+    PROVIDER_DEEPSEEK,
+    PROVIDER_GROK,
+)
+
+_LIVEKIT_BRAIN_MODEL_ATTR: dict[str, str] = {
+    PROVIDER_GEMMA: "livekit_brain_gemma_model",
+    PROVIDER_OPENAI: "livekit_brain_openai_model",
+    PROVIDER_OPENAI_CHAT: "livekit_brain_openai_chat_model",
+    PROVIDER_OPENAI_OSS: "livekit_brain_openai_oss_model",
+    PROVIDER_KIMI: "livekit_brain_kimi_model",
+    PROVIDER_DEEPSEEK: "livekit_brain_deepseek_model",
+    PROVIDER_GROK: "livekit_brain_grok_model",
+}
+
+
+def livekit_brain_model(vendor: str) -> str:
+    """The LiveKit Inference model id for a LiveKit Brain vendor, or ""
+    for anything else. The single mapping voice_catalog also uses, so a
+    unified Brain pick and the voice cascade brain can never drift."""
+    attr = _LIVEKIT_BRAIN_MODEL_ATTR.get((vendor or "").strip().lower())
+    return str(getattr(CONFIG, attr)) if attr else ""
 
 # The surfaces that can flip independently (``config.llm_provider_<surface>``).
 SURFACES = (
@@ -90,6 +139,27 @@ BRAIN_CAPABILITIES: dict[str, frozenset[str]] = {
     ),
     PROVIDER_META: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
     PROVIDER_OPEN_WEIGHTS: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
+    # LiveKit Inference brains (2026-11-07). Text + structured JSON were
+    # verified live through the gateway for every vendor below (the DM
+    # coach schema). Vision flags are what the LIVE serving path actually
+    # does, verified 2026-11-07 with a known-image probe: GPT-5, ChatGPT
+    # Latest and Kimi read the image correctly; Gemma 4 answered wrong on
+    # both probe images and Grok rejects image input (HTTP 422), so both
+    # are vision-less HERE and image jobs route to Gemini. GPT OSS 120B
+    # and DeepSeek are text-only models. No LiveKit brain has Gemini's web
+    # grounding, so web always routes to Gemini. Tool calling is granted
+    # only where the family is built for OpenAI-style function calling;
+    # GPT OSS uses a different native tool format, so tool turns route to
+    # Gemini for it (its catalog entry says so).
+    PROVIDER_GEMMA: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
+    PROVIDER_OPENAI: frozenset({CAP_TEXT, CAP_JSON, CAP_VISION, CAP_TOOLS}),
+    PROVIDER_OPENAI_CHAT: frozenset(
+        {CAP_TEXT, CAP_JSON, CAP_VISION, CAP_TOOLS}
+    ),
+    PROVIDER_OPENAI_OSS: frozenset({CAP_TEXT, CAP_JSON}),
+    PROVIDER_KIMI: frozenset({CAP_TEXT, CAP_JSON, CAP_VISION, CAP_TOOLS}),
+    PROVIDER_DEEPSEEK: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
+    PROVIDER_GROK: frozenset({CAP_TEXT, CAP_JSON, CAP_TOOLS}),
 }
 
 # User-facing Brain catalog for the "Ayma's models" screen: id (vendor) → short
@@ -112,6 +182,60 @@ BRAINS: dict[str, dict[str, object]] = {
         "and coaching. Image reading and web research fall back to Gemini.",
         "available": True,
     },
+    PROVIDER_GEMMA: {
+        "id": PROVIDER_GEMMA,
+        "label": "Gemma 4",
+        "description": "Google's Gemma 4 31B, hosted by LiveKit — open "
+        "reasoning for chat, matching and coaching. Image reading and web "
+        "research fall back to Gemini.",
+        "available": True,
+    },
+    PROVIDER_OPENAI: {
+        "id": PROVIDER_OPENAI,
+        "label": "GPT-5",
+        "description": "OpenAI's GPT-5 via LiveKit — deep reasoning, reads "
+        "images and uses tools. Web research falls back to Gemini.",
+        "available": True,
+    },
+    PROVIDER_OPENAI_CHAT: {
+        "id": PROVIDER_OPENAI_CHAT,
+        "label": "ChatGPT Latest",
+        "description": "OpenAI's latest ChatGPT model via LiveKit — reads "
+        "images and uses tools. Web research falls back to Gemini.",
+        "available": True,
+    },
+    PROVIDER_OPENAI_OSS: {
+        "id": PROVIDER_OPENAI_OSS,
+        "label": "GPT OSS 120B",
+        "description": "OpenAI's open-weight GPT OSS 120B via LiveKit — "
+        "chat and coaching. Image reading, tool use and web research fall "
+        "back to Gemini.",
+        "available": True,
+    },
+    PROVIDER_KIMI: {
+        "id": PROVIDER_KIMI,
+        "label": "Kimi K2.6",
+        "description": "Moonshot AI's Kimi K2.6 via LiveKit — long-context "
+        "reasoning, reads images and uses tools. Web research falls back "
+        "to Gemini.",
+        "available": True,
+    },
+    PROVIDER_DEEPSEEK: {
+        "id": PROVIDER_DEEPSEEK,
+        "label": "DeepSeek V4 Pro",
+        "description": "DeepSeek's V4 Pro via LiveKit — strong reasoning "
+        "for chat, matching and coaching. Image reading and web research "
+        "fall back to Gemini.",
+        "available": True,
+    },
+    PROVIDER_GROK: {
+        "id": PROVIDER_GROK,
+        "label": "Grok",
+        "description": "xAI's Grok via LiveKit — fast, direct reasoning "
+        "for chat, matching and coaching. Image reading and web research "
+        "fall back to Gemini.",
+        "available": True,
+    },
 }
 
 
@@ -119,11 +243,13 @@ def brain_is_credited(brain: str) -> bool:
     """Whether ``brain`` may be offered in a selection list or honoured as a
     saved preference on THIS deploy (``CONFIG.brain_credited_providers``).
 
-    Only Gemini runs on the funded LiveKit Inference credits; Meta Muse
-    Spark bills the Meta Model API directly. A deploy that is not credited
-    for a vendor (staging pins ``BRAIN_CREDITED_PROVIDERS=gemini``, founder
-    order 2026-11-07) must never list it or serve it. Gemini — the funded
-    default and the fallback of last resort — is always credited."""
+    The LiveKit Inference brains (Gemini and the ``LIVEKIT_BRAIN_VENDORS``)
+    run on the funded LiveKit credits; Meta Muse Spark bills the Meta
+    Model API directly and open-weights bills Modal. A deploy that is not
+    credited for a vendor (staging pins ``BRAIN_CREDITED_PROVIDERS`` to the
+    LiveKit set, founder orders 2026-11-07) must never list it or serve it.
+    Gemini — the funded default and the fallback of last resort — is always
+    credited."""
     b = (brain or "").strip().lower()
     return b == PROVIDER_GEMINI or b in CONFIG.brain_credited_providers
 
@@ -139,11 +265,12 @@ def brain_capabilities(brain: str) -> frozenset[str]:
 def available_brains() -> list[dict[str, object]]:
     """The Brain catalog for ``GET /brain/preference``: each brain plus the
     capabilities it has (so the UI can describe the Gemini fallback). Gemini
-    first, then Meta — the order they appear in the dropdown. Only CREDITED
-    brains are listed (:func:`brain_is_credited`): on staging the picker
-    offers Gemini alone."""
+    first, then the other LiveKit Inference brains, then Meta — the order
+    they appear in the dropdown. Only CREDITED brains are listed
+    (:func:`brain_is_credited`): a deploy whose credited set is ``gemini``
+    alone offers Gemini only."""
     out: list[dict[str, object]] = []
-    for bid in (PROVIDER_GEMINI, PROVIDER_META):
+    for bid in (PROVIDER_GEMINI, *LIVEKIT_BRAIN_VENDORS, PROVIDER_META):
         if not brain_is_credited(bid):
             continue
         entry = dict(BRAINS[bid])
@@ -1047,6 +1174,317 @@ class OpenWeightsProvider(LLMProvider):
         yield {"type": "reply", "text": text, "tools_used": used}
 
 
+# --- LiveKit Inference brains (Gemma / OpenAI / Kimi / DeepSeek / Grok) ---- #
+
+
+class LiveKitProvider(LLMProvider):
+    """One non-Gemini LiveKit Inference Brain vendor (``LIVEKIT_BRAIN_VENDORS``).
+
+    Every call goes through :func:`inference_llm.complete` — the exact
+    transport Gemini uses to reach LiveKit Inference (same gateway, same
+    JWT minted from the project ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET``)
+    — so these brains run entirely on the funded LiveKit credits. There is
+    NO direct provider API and NO provider key anywhere on this path, and
+    deliberately NO Gemini fallback on failure: a user who picked this
+    brain gets this brain, so a failed call raises (logged with the model
+    id) exactly like the open-weights provider, instead of silently serving
+    a different brain than the one selected. Capability gaps are a
+    different matter — they are routed by
+    :func:`get_user_brain_provider`'s capability map before a call is ever
+    made (web always, vision/tools where the flag says so).
+
+    ``complete`` is injectable so tests can serve canned responses without
+    the network; production passes ``inference_llm.complete``.
+    """
+
+    def __init__(self, vendor: str, *, complete=None) -> None:
+        vendor = (vendor or "").strip().lower()
+        if vendor not in LIVEKIT_BRAIN_VENDORS:
+            raise ValueError(f"not a LiveKit Inference brain vendor: {vendor!r}")
+        self.name = vendor
+        self.capabilities = BRAIN_CAPABILITIES[vendor]
+        self._complete = complete if complete is not None else inference_llm.complete
+
+    @property
+    def model(self) -> str:
+        """The LiveKit Inference model id for this vendor (config-only)."""
+        return livekit_brain_model(self.name)
+
+    def _budget_kwargs(self, budget: int) -> dict:
+        """Token-budget kwargs for this vendor's model. The GPT-5 family
+        rejects ``max_tokens`` at the gateway (HTTP 400, verified live
+        2026-11-07) and requires ``max_completion_tokens`` instead."""
+        if self.name in (PROVIDER_OPENAI, PROVIDER_OPENAI_CHAT):
+            return {"max_completion_tokens": budget}
+        return {"max_tokens": budget}
+
+    @staticmethod
+    def _messages(system_prompt: str | None, contents) -> list[dict]:
+        messages: list[dict] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": contents})
+        return messages
+
+    def _record(self, response, *, uid, feature, session_id="") -> None:
+        """Meter this call through the shared token ledger — the inference
+        response already duck-types the Gemini usage shape, exactly like
+        ``_MetaResponse`` does for Meta usage."""
+        try:
+            token_ledger.record(
+                uid, feature, response,
+                model=self.model, session_id=session_id or None,
+                provider=self.name,
+            )
+        except Exception:  # noqa: BLE001 - metering must never break a call
+            logger.debug("token ledger record failed", exc_info=True)
+
+    async def _call(self, *, messages, uid, feature, session_id="", **kwargs):
+        """One gateway call; a failure is logged WITH the model id and
+        re-raised — never swapped for a different brain."""
+        try:
+            response = await self._complete(
+                model=self.model, messages=messages, **kwargs
+            )
+        except Exception:
+            logger.error(
+                "LiveKit brain %s (model %s) call failed — no fallback; "
+                "the picked brain must be the one that serves or fails",
+                self.name, self.model, exc_info=True,
+            )
+            raise
+        self._record(response, uid=uid, feature=feature, session_id=session_id)
+        return response
+
+    async def generate_json(
+        self,
+        contents: str,
+        system_prompt: str,
+        response_schema: dict | None = None,
+        image: tuple[bytes, str] | None = None,
+        *,
+        images: list[tuple[bytes, str]] | None = None,
+        uid: str | None = None,
+        feature: str = "misc",
+        enforce_cap: bool = True,
+        temperature: float = 0.2,
+        session_id: str = "",
+    ) -> object:
+        media = list(images or ([] if image is None else [image]))
+        if media and CAP_VISION not in self.capabilities:
+            # Vision routing should have sent this to Gemini already; if a
+            # caller bypassed it, fail loudly rather than silently dropping
+            # the image and hallucinating a read (the Muse Spark rule).
+            raise RuntimeError(
+                f"brain {self.name} cannot process images; vision calls "
+                "must route to Gemini via the capability map"
+            )
+        content = (
+            _user_content(contents, media)
+            if media
+            else contents
+        )
+        messages = self._messages(system_prompt, content)
+        # Generous budget: at 4096 the gateway truncated schema JSON
+        # mid-string in live probing (2026-11-07); at 8192 the same calls
+        # completed. Matches the Gemini chat budget scale.
+        budget = self._budget_kwargs(8192)
+        last_error: Exception | None = None
+        for attempt in (1, 2):
+            response = await self._call(
+                messages=messages,
+                uid=uid, feature=feature, session_id=session_id,
+                response_schema=response_schema,
+                temperature=temperature,
+                **budget,
+            )
+            text = (getattr(response, "text", None) or "").strip()
+            if not text:
+                raise RuntimeError(
+                    f"LiveKit brain {self.name} (model {self.model}) "
+                    "returned an empty response."
+                )
+            try:
+                return _strip_keys(json.loads(_coerce_json_text(text)))
+            except json.JSONDecodeError as exc:
+                # Grok in particular intermittently returns truncated or
+                # garbled JSON through the gateway (finish_reason=stop with
+                # a cut document, observed repeatedly 2026-11-07). ONE
+                # retry of the same call on the same brain — never a swap
+                # to a different brain.
+                last_error = exc
+                logger.warning(
+                    "LiveKit brain %s (model %s) returned unparseable JSON "
+                    "(attempt %d/2): %s",
+                    self.name, self.model, attempt, exc,
+                )
+        assert last_error is not None
+        raise last_error
+
+    async def generate_reply(
+        self,
+        message: str,
+        system_prompt: str | None = None,
+        tool_declarations: list[dict] | None = None,
+        tool_fns: dict | None = None,
+        *,
+        image: tuple[bytes, str] | None = None,
+        uid: str | None = None,
+        feature: str = "misc",
+        session_id: str = "",
+    ) -> Reply:
+        events = self.generate_reply_events(
+            message,
+            system_prompt,
+            tool_declarations,
+            tool_fns,
+            image=image,
+            uid=uid,
+            feature=feature,
+            session_id=session_id,
+        )
+        try:
+            async for event in events:
+                if event.get("type") == "reply":
+                    return Reply(
+                        text=event["text"],
+                        tools_used=event.get("tools_used") or [],
+                    )
+            return Reply(text="(no reply)", tools_used=[])
+        finally:
+            await events.aclose()
+
+    async def generate_reply_events(
+        self,
+        message: str,
+        system_prompt: str | None = None,
+        tool_declarations: list[dict] | None = None,
+        tool_fns: dict | None = None,
+        *,
+        image: tuple[bytes, str] | None = None,
+        uid: str | None = None,
+        feature: str = "misc",
+        session_id: str = "",
+    ) -> AsyncIterator[dict]:
+        media = [] if image is None else [image]
+        if media and CAP_VISION not in self.capabilities:
+            raise RuntimeError(
+                f"brain {self.name} cannot process images; vision calls "
+                "must route to Gemini via the capability map"
+            )
+        declarations = tool_declarations or []
+        may_call = (
+            bool(declarations) and bool(tool_fns)
+            and CAP_TOOLS in self.capabilities
+        )
+        content = _user_content(message, media) if media else message
+        tools = (
+            inference_llm.to_openai_tools(declarations) if may_call else None
+        )
+        budget = CONFIG.inference_chat_max_tokens
+        messages = self._messages(system_prompt, content)
+
+        from tool_labels import tool_label as _tool_label
+        from tool_labels import working_label as _working_label
+
+        used: list[str] = []
+        seen: set[str] = set()
+
+        def _note(label: str) -> None:
+            if label not in seen:
+                seen.add(label)
+                used.append(label)
+
+        yield {"type": "status", "label": "Thinking…"}
+        response = await self._call(
+            messages=messages, uid=uid, feature=feature,
+            session_id=session_id,
+            tools=tools, temperature=0.9,
+            **self._budget_kwargs(budget),
+        )
+        text = (getattr(response, "text", None) or "").strip()
+        calls = list(getattr(response, "function_calls", None) or [])
+
+        finish = str(getattr(response, "finish_reason", None) or "").lower()
+        if finish in ("length", "max_tokens", "max_completion_tokens"):
+            # Truncated: one larger-budget retry, mirroring Gemini's path.
+            logger.warning(
+                "LiveKit brain %s (model %s) reply truncated "
+                "(finish_reason=%s) — retrying once with double budget",
+                self.name, self.model, finish,
+            )
+            response = await self._call(
+                messages=messages, uid=uid, feature=feature,
+                session_id=session_id,
+                tools=tools, temperature=0.9,
+                **self._budget_kwargs(budget * 2),
+            )
+            text = (getattr(response, "text", None) or "").strip()
+            calls = list(getattr(response, "function_calls", None) or [])
+
+        if calls and tool_fns:
+            # One function-calling round, mirroring the Meta path in this
+            # module: execute locally, feed results back, collect the
+            # model's follow-up text.
+            import inspect
+
+            tool_calls = []
+            for idx, call in enumerate(calls):
+                args = call.get("args") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (TypeError, ValueError):
+                        args = {}
+                call["args"] = args
+                tool_calls.append({
+                    "id": str(call.get("id") or f"call_{idx}"),
+                    "type": "function",
+                    "function": {
+                        "name": call.get("name") or "",
+                        "arguments": json.dumps(args),
+                    },
+                })
+            messages = list(messages) + [{
+                "role": "assistant",
+                "content": text or None,
+                "tool_calls": tool_calls,
+            }]
+            for call, tc in zip(calls, tool_calls):
+                name = call.get("name") or ""
+                _note(_tool_label(name))
+                yield {"type": "status", "label": _working_label(name)}
+                fn = tool_fns.get(name)
+                try:
+                    result = fn(**(call.get("args") or {})) if fn else "unknown tool"
+                    if inspect.isawaitable(result):
+                        result = await result
+                except Exception as tool_exc:  # noqa: BLE001 - report, don't crash
+                    result = f"error: {tool_exc}"
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": str(result),
+                })
+            yield {"type": "status", "label": "Writing…"}
+            follow_resp = await self._call(
+                messages=messages, uid=uid, feature=feature,
+                session_id=session_id,
+                temperature=0.9, **self._budget_kwargs(budget),
+            )
+            follow_text = (getattr(follow_resp, "text", None) or "").strip()
+            if follow_text:
+                text = follow_text
+
+        text = gemini.strip_inline_refs(text)
+        if not text:
+            raise RuntimeError(
+                f"LiveKit brain {self.name} (model {self.model}) returned "
+                "an empty response."
+            )
+        yield {"type": "reply", "text": text, "tools_used": used}
+
+
 # --- selection ------------------------------------------------------------ #
 
 
@@ -1074,8 +1512,11 @@ def get_llm_provider(surface: str) -> LLMProvider:
     Gemini fallback when ``config.llm_meta_fallback`` is on; ``open-weights``
     returns an :class:`OpenWeightsProvider`, which deliberately carries NO
     fallback (an unconfigured or failing cheap path raises instead of silently
-    billing a paid route); anything else (including an unknown value, logged
-    once) returns the Gemini default so a typo can never route traffic nowhere.
+    billing a paid route); a LiveKit Inference vendor (``gemma`` /
+    ``openai`` / ``openai-chat`` / ``openai-oss`` / ``kimi`` / ``deepseek``
+    / ``grok``) returns a :class:`LiveKitProvider`, also with NO fallback;
+    anything else (including an unknown value, logged once) returns the
+    Gemini default so a typo can never route traffic nowhere.
     """
     flag = _SURFACE_FLAG.get(surface)
     if flag is None:
@@ -1088,10 +1529,12 @@ def get_llm_provider(surface: str) -> LLMProvider:
         return MetaProvider(fallback=fallback)
     if choice == PROVIDER_OPEN_WEIGHTS:
         return OpenWeightsProvider()
+    if choice in LIVEKIT_BRAIN_VENDORS:
+        return LiveKitProvider(choice)
     if choice != PROVIDER_GEMINI:
         logger.warning(
-            "LLM_PROVIDER for %s is %r (not gemini|meta|open-weights) — "
-            "using gemini",
+            "LLM_PROVIDER for %s is %r (not gemini|meta|open-weights|a "
+            "LiveKit brain vendor) — using gemini",
             surface, choice,
         )
     return _gemini_singleton()
@@ -1125,15 +1568,18 @@ def get_vision_provider(surface: str) -> LLMProvider:
 
 def _provider_for_name(name: str) -> LLMProvider:
     """A provider instance for a vendor name (``gemini`` | ``meta`` |
-    ``open-weights``). ``meta`` carries the Gemini fallback when
-    ``llm_meta_fallback`` is on; ``open-weights`` carries none (its failures
-    stay explicit); anything else is the Gemini default."""
+    ``open-weights`` | a LiveKit Inference vendor). ``meta`` carries the
+    Gemini fallback when ``llm_meta_fallback`` is on; ``open-weights`` and
+    the LiveKit vendors carry none (their failures stay explicit); anything
+    else is the Gemini default."""
     normalized = (name or "").strip().lower()
     if normalized == PROVIDER_META:
         fallback = _gemini_singleton() if CONFIG.llm_meta_fallback else None
         return MetaProvider(fallback=fallback)
     if normalized == PROVIDER_OPEN_WEIGHTS:
         return OpenWeightsProvider()
+    if normalized in LIVEKIT_BRAIN_VENDORS:
+        return LiveKitProvider(normalized)
     return _gemini_singleton()
 
 

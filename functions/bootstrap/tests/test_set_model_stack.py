@@ -554,7 +554,10 @@ def test_open_weights_voice_brain_not_offered_when_disabled(monkeypatch):
         brain_id, reason = set_model_stack._resolve_voice_brain("open weights")
         assert brain_id is None
         offered = reason.rsplit("voice brains are:", 1)[-1]
-        assert "Llama" not in offered and "open" not in offered.lower()
+        # The open-WEIGHTS brain must not be offered. (A bare "open"
+        # substring check no longer works: the LiveKit catalog now lists
+        # openai/* inference brains, which are a different thing.)
+        assert "Llama" not in offered and "open-weights" not in offered.lower()
         ctx = set_model_stack.model_stack_context(_Db(), "u1")
         assert "Llama 3.1 8B" not in ctx
     finally:
