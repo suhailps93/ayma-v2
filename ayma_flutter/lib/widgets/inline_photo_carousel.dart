@@ -120,17 +120,29 @@ class InlinePhotoController extends ChangeNotifier {
         await load();
         final failed = batch.rejected.length + result.failed.length;
         if (failed > 0) {
-          return failed == 1
-              ? '1 photo could not be added.'
+          final reason = _humanRejectionReason(batch.rejected.firstOrNull);
+          if (failed == 1) {
+            return reason != null
+                ? '1 photo could not be added - $reason'
+                : '1 photo could not be added.';
+          }
+          return reason != null
+              ? '$failed photos could not be added - $reason'
               : '$failed photos could not be added.';
         }
         return note;
       }
-      return batch.rejected.length == 1
-          ? "That photo can't be used."
+      final reason = _humanRejectionReason(batch.rejected.firstOrNull);
+      if (batch.rejected.length == 1) {
+        return reason != null
+            ? 'That photo cannot be used - $reason'
+            : "That photo can't be used.";
+      }
+      return reason != null
+          ? 'Those photos cannot be used - $reason'
           : "Those photos can't be used.";
-    } catch (e) {
-      return 'Upload failed ($e).';
+    } catch (_) {
+      return 'Upload failed. Please try again.';
     } finally {
       _busy = false;
       notifyListeners();
@@ -480,3 +492,39 @@ class _AddTile extends StatelessWidget {
     );
   }
 }
+
+String? _humanRejectionReason(String? raw) {
+  if (raw == null) return null;
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  final lower = trimmed.toLowerCase();
+  // Filter out internal error codes, transport failures, and placeholders
+  if (lower == 'moderation_error' ||
+      lower == 'upload failed' ||
+      lower == "can't be used" ||
+      lower == "cannot be used" ||
+      lower.contains('_') ||
+      lower.startsWith('exception') ||
+      lower.startsWith('error') ||
+      lower.startsWith('failed') ||
+      lower.startsWith('http')) {
+    return null;
+  }
+  // Format human sentence: lowercase initial character if standard title/sentence casing,
+  // while preserving acronyms (e.g. AI, QR).
+  var text = trimmed;
+  if (text.length > 1 &&
+      text[0] == text[0].toUpperCase() &&
+      text[1] == text[1].toLowerCase()) {
+    text = text[0].toLowerCase() + text.substring(1);
+  } else if (text.length == 1) {
+    text = text.toLowerCase();
+  }
+  if (!text.endsWith('.')) {
+    text = '$text.';
+  }
+  return text;
+}
+
+@visibleForTesting
+String? debugHumanRejectionReason(String? raw) => _humanRejectionReason(raw);
