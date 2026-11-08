@@ -169,9 +169,16 @@ _VOICE_SELF_CHECK_PHRASES = frozenset({
 
 
 def is_analysis_mode_command(text: str) -> bool:
-    """True only for the bare slash command ``/analysis-mode`` (strict,
-    like ``/self-check``: a conversational mention never fires it)."""
-    return bool(_TRIGGER.match(text or ""))
+    """True for the bare slash command ``/analysis-mode`` or the bare
+    plain phrase ``analysis mode`` as the whole message (founder
+    2026-11-08: the typed plain phrase must start the gate too, not
+    only the slash form). Whole-message only, compared after
+    :func:`normalize_text` — case-insensitive, punctuation collapsed,
+    so a trailing "!" or "." still counts. A conversational mention
+    ("run analysis mode", "what is analysis mode?") never fires it."""
+    if _TRIGGER.match(text or ""):
+        return True
+    return normalize_text(text) == "analysis mode"
 
 
 def detect_voice_trigger(text: str) -> str | None:

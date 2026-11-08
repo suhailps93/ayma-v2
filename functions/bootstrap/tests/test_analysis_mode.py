@@ -47,14 +47,34 @@ def _db_with_memories():
 # --- triggers -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("text", ["/analysis-mode", "  /analysis-mode  ", "/ANALYSIS-MODE"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "/analysis-mode",
+        "  /analysis-mode  ",
+        "/ANALYSIS-MODE",
+        "analysis mode",
+        "Analysis Mode",
+        "  analysis mode  ",
+        "analysis mode.",
+        "analysis mode!",
+    ],
+)
 def test_text_trigger_matches_bare_slash_command(text):
     assert am.is_analysis_mode_command(text)
 
 
 @pytest.mark.parametrize(
     "text",
-    ["", "analysis mode", "run analysis mode", "/analysis-mode please", "please /analysis-mode", "/analysismode"],
+    [
+        "",
+        "run analysis mode",
+        "analysis mode please",
+        "what is analysis mode?",
+        "/analysis-mode please",
+        "please /analysis-mode",
+        "/analysismode",
+    ],
 )
 def test_text_trigger_rejects_conversation(text):
     assert not am.is_analysis_mode_command(text)
@@ -146,6 +166,14 @@ def test_gate_flow_wrong_then_correct_then_exit():
     # Exit phrase leaves the mode, back to normal character.
     reply = am.handle_chat_turn(db, UID, "exit analysis mode", SESSION)
     assert reply == am.EXIT_LINE
+    assert am.active_prompt_block(db, UID, SESSION) == ""
+
+
+def test_gate_flow_plain_phrase_trigger():
+    db = _db_with_memories()
+    # The typed plain phrase starts the same gate as the slash command.
+    reply = am.handle_chat_turn(db, UID, "analysis mode", SESSION)
+    assert reply == am.ASK_LINE
     assert am.active_prompt_block(db, UID, SESSION) == ""
 
 
