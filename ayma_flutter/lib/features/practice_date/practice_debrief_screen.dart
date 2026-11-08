@@ -129,37 +129,47 @@ class _PracticeDebriefScreenState extends State<PracticeDebriefScreen> {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         Text(
-          widget.name.isEmpty
-              ? 'Here is how that practice went.'
-              : 'Here is how your practice with ${widget.name} went.',
+          d.empty
+              ? 'No conversation was captured from that practice.'
+              : widget.name.isEmpty
+                  ? 'Here is how that practice went.'
+                  : 'Here is how your practice with ${widget.name} went.',
           style: AymaType.serif(size: 24, color: ac.fg),
         ),
         const SizedBox(height: 20),
-        _Section(
-          key: const Key('debriefWhatWorked'),
-          title: 'What worked',
-          icon: Icons.check_circle_outline,
-          tint: ac.success,
-          items: d.whatWorked,
-          emptyLabel: 'Nothing stood out yet — keep practising.',
-        ),
-        _Section(
-          key: const Key('debriefNextLines'),
-          title: 'Try saying next',
-          icon: Icons.chat_bubble_outline,
-          tint: ac.accent,
-          items: d.suggestedNextLines,
-          emptyLabel: 'No suggestions this time.',
-          quoted: true,
-        ),
-        _Section(
-          key: const Key('debriefAvoid'),
-          title: 'What to avoid',
-          icon: Icons.warning_amber_rounded,
-          tint: ac.warning,
-          items: d.avoid,
-          emptyLabel: 'Nothing to flag — nicely done.',
-        ),
+        if (d.empty)
+          Text(
+            'We didn\'t hear anything to review, so there\'s nothing to show yet. Try another round — your next practice will show up here.',
+            key: const Key('debriefEmpty'),
+            style: AymaType.sans(size: 15, color: ac.fgDim, height: 1.4),
+          )
+        else ...[
+          _Section(
+            key: const Key('debriefWhatWorked'),
+            title: 'What worked',
+            icon: Icons.check_circle_outline,
+            tint: ac.success,
+            items: d.whatWorked,
+            emptyLabel: 'Nothing stood out yet — keep practising.',
+          ),
+          _Section(
+            key: const Key('debriefNextLines'),
+            title: 'Try saying next',
+            icon: Icons.chat_bubble_outline,
+            tint: ac.accent,
+            items: d.suggestedNextLines,
+            emptyLabel: 'No suggestions this time.',
+            quoted: true,
+          ),
+          _Section(
+            key: const Key('debriefAvoid'),
+            title: 'What to avoid',
+            icon: Icons.warning_amber_rounded,
+            tint: ac.warning,
+            items: d.avoid,
+            emptyLabel: 'Nothing to flag — nicely done.',
+          ),
+        ],
         const SizedBox(height: 12),
         Center(
           child: FilledButton(

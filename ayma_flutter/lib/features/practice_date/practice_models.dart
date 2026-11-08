@@ -121,11 +121,18 @@ class PracticeDebrief {
     this.whatWorked = const [],
     this.suggestedNextLines = const [],
     this.avoid = const [],
+    this.empty = false,
   });
 
   final List<String> whatWorked;
   final List<String> suggestedNextLines;
   final List<String> avoid;
+
+  /// True when the practice captured no conversation to review — the
+  /// server returns empty sections instead of inventing feedback from
+  /// nothing. The screen says so plainly rather than showing blank
+  /// sections under a "here is how it went" header.
+  final bool empty;
 
   static List<String> _strings(dynamic v) =>
       (v as List?)?.map((e) => e.toString()).toList() ?? const [];
@@ -134,5 +141,6 @@ class PracticeDebrief {
         whatWorked: _strings(m['what_worked']),
         suggestedNextLines: _strings(m['suggested_next_lines']),
         avoid: _strings(m['avoid']),
+        empty: m['empty'] == true,
       );
 }

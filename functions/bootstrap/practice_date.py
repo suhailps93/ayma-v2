@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from firebase_admin import storage
@@ -71,6 +72,7 @@ from practice_core import (  # noqa: F401 - re-exported public surface
     persona_reply,
     start_or_resume_session,
     start_session,
+    store_debrief,
 )
 
 logger = logging.getLogger("ayma.practice_date")
@@ -219,6 +221,51 @@ async def practice_chat(
     return {"reply": reply, "coach_hint": hint, "simulation": True}
 
 
+#: How long POST /practice/debrief waits for a voice session's transcript
+#: to finalize (the worker marks it final after draining its persist
+#: queue at call end) before generating from whatever turns are stored.
+#: The client fetches the debrief immediately after disconnect, so
+#: without this the debrief is routinely generated from a partial
+#: transcript. Bounded: a worker that died mid-drain never blocks the
+#: request past this.
+_DEBRIEF_FINAL_WAIT_SECONDS = 5.0
+_DEBRIEF_FINAL_POLL_SECONDS = 0.25
+#: A voice session ended longer ago than this cannot still be draining —
+#: its transcript is as final as it will ever be, so no wait is owed.
+_DEBRIEF_FINAL_RECENT_SECONDS = 10.0
+
+
+def _needs_final_wait(data: dict) -> bool:
+    """Whether POST /practice/debrief should wait for this session's
+    transcript to finalize: a voice session whose worker has not marked
+    it final yet, and which ended recently enough that the worker may
+    still be draining (or has not ended at all). Text sessions persist
+    synchronously in the request handler, so they are always final."""
+    if data.get("modality") != "voice":
+        return False
+    if data.get("transcript_final_at"):
+        return False
+    ended_at = data.get("ended_at")
+    if ended_at:
+        try:
+            if time.time() - float(ended_at) >= _DEBRIEF_FINAL_RECENT_SECONDS:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+async def _wait_for_transcript_final(db, uid: str, session_id: str) -> dict:
+    """Reload the session until ``transcript_final_at`` appears or the
+    bounded wait expires; returns the latest session data either way."""
+    data = await asyncio.to_thread(_load_session, db, uid, session_id)
+    deadline = time.monotonic() + _DEBRIEF_FINAL_WAIT_SECONDS
+    while not data.get("transcript_final_at") and time.monotonic() < deadline:
+        await asyncio.sleep(_DEBRIEF_FINAL_POLL_SECONDS)
+        data = await asyncio.to_thread(_load_session, db, uid, session_id)
+    return data
+
+
 @router.post("/debrief", dependencies=[Depends(require_not_underage_uid)])
 async def practice_debrief(
     req: DebriefRequest, caller: Caller = Depends(require_caller)
@@ -234,13 +281,38 @@ async def practice_debrief(
     turns = list(data.get("turns") or [])
     if ctx is None:
         raise HTTPException(status_code=404, detail="No profile to practice with.")
+    # A voice session's transcript may still be draining when the client
+    # asks for the debrief right after disconnect: wait (bounded) for the
+    # worker to mark it final, so the debrief is generated from the whole
+    # conversation, not the partial transcript that happened to be stored.
+    if _needs_final_wait(data):
+        data = await _wait_for_transcript_final(db, caller.uid, req.session_id)
+        turns = list(data.get("turns") or [])
     # A debrief already generated for this session (the voice-return
     # greeting in /bootstrap generates one when Ayma's session resumes
-    # and caches it on the session doc) is reused verbatim — same
-    # transcript, same debrief, no second model call.
+    # and caches it on the session doc) is reused — but only when it was
+    # generated from exactly the turns the session holds now. A cached
+    # debrief with no turn count is a legacy doc: reuse it as before.
     stored = data.get("debrief")
-    if isinstance(stored, dict) and stored:
+    stored_count = data.get("debrief_turn_count")
+    if (
+        isinstance(stored, dict)
+        and stored
+        and (stored_count is None or stored_count == len(turns))
+    ):
         debrief = stored
+    elif not turns:
+        # No transcript to debrief: never ask the model to invent
+        # feedback from nothing. An honest empty outcome, and nothing
+        # cached for a later consumer to reuse.
+        end_session(db, caller.uid, req.session_id)
+        return {
+            "simulation": True,
+            "empty": True,
+            "what_worked": [],
+            "suggested_next_lines": [],
+            "avoid": [],
+        }
     else:
         try:
             debrief = await generate_debrief(ctx, turns, uid=caller.uid)
@@ -248,6 +320,12 @@ async def practice_debrief(
             raise HTTPException(status_code=402, detail="Out of credits.") from exc
         except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
             raise HTTPException(status_code=502, detail=f"Debrief failed: {exc}") from exc
+        try:
+            store_debrief(
+                db, caller.uid, req.session_id, debrief, turn_count=len(turns)
+            )
+        except Exception:  # noqa: BLE001 - the debrief itself is already in hand
+            logger.warning("practice debrief: caching the debrief failed", exc_info=True)
     end_session(db, caller.uid, req.session_id)
     return {"simulation": True, **debrief}
 
