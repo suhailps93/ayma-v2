@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:ayma_flutter/routing/app_router.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
-import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -89,7 +88,6 @@ void main() {
       for (final cmd in samples) {
         final svc = AppCommandService(
           themeController: ThemeController(),
-          orbAnimationSettings: OrbAnimationSettings(),
         );
         expect(svc.handleCommand(cmd), isTrue, reason: '$cmd');
       }

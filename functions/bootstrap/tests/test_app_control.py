@@ -1298,8 +1298,6 @@ def test_app_action_client_settings_send_their_command():
         ("pause_matching", "on", "pause_matching", None),
         ("pause_matching", "off", "resume_matching", None),
         ("resume_matching", "", "resume_matching", None),
-        ("wing_flutter", "off", "wing_flutter", "off"),
-        ("nav bar animation", "on", "nav_bar_flutter", "on"),
     ):
         db = _acking_db()
         out = _run(app_control._bind_app_action(db, "me")(action, value))
@@ -1311,7 +1309,7 @@ def test_app_action_client_settings_send_their_command():
 
 def test_app_action_rejects_a_bad_value_without_queueing():
     db = _Db()
-    out = _run(app_control._bind_app_action(db, "me")("wing_flutter", "purple"))
+    out = _run(app_control._bind_app_action(db, "me")("pause_matching", "purple"))
     assert "on or off" in out
     assert _PENDING not in db.store
 

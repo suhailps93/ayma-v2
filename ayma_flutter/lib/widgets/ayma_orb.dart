@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 
-import '../services/orb_animation_settings.dart';
 import '../theme.dart';
 
 /// What Ayma is doing — drives the orb's internal liquid motion.
@@ -54,7 +53,6 @@ class AymaOrb extends StatefulWidget {
     this.showGlow = true,
     this.voiceLive = false,
     this.navBarVariant = false,
-    this.animationSettings,
   });
 
   /// Diameter in logical pixels. Breakpoints per the Ayma Sol spec:
@@ -84,18 +82,11 @@ class AymaOrb extends StatefulWidget {
   /// leaves [state]'s motion untouched.
   final bool voiceLive;
 
-  /// True for the nav-bar tab orbs (`AymaTabBar`) — scopes the user's
-  /// "Wing flutter in nav bar" setting (see [OrbAnimationSettings]) to just
-  /// them, leaving big orbs (chat header, voice call screen) animating.
+  /// True for the nav-bar tab orbs (`AymaTabBar`). A placement
+  /// marker only: the wing flutter runs on every orb, nav-bar
+  /// orbs included — there is no setting that stills them.
   final bool navBarVariant;
 
-  /// The animation preferences this orb obeys — injectable for tests;
-  /// defaults to [orbAnimationSettingsGlobal]. When the effective flag for
-  /// this placement is off, the continuous wing flutter/pulse motion stops
-  /// (petals rest at the reduced-motion calm pose — see
-  /// [AymaOrbPainter.wingMotion]) and, once settled, the ticker stops
-  /// entirely; state transitions and the voice-live glow are untouched.
-  final OrbAnimationSettings? animationSettings;
 
   @override
   State<AymaOrb> createState() => _AymaOrbState();
@@ -137,17 +128,6 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   bool get _reducedMotion =>
       MediaQuery.maybeOf(context)?.disableAnimations ?? false;
 
-  OrbAnimationSettings get _animSettings =>
-      widget.animationSettings ?? orbAnimationSettingsGlobal;
-
-  /// The user's effective "wing flutter" answer for this orb's placement —
-  /// the master toggle everywhere, further scoped by the nav-bar toggle for
-  /// [AymaOrb.navBarVariant] orbs. When false the painter renders the
-  /// reduced-motion calm pose ([AymaOrbPainter.wingMotion]) and no longer
-  /// reads the clock at all, so [_syncMotion] keeps the ticker stopped —
-  /// the flag is a perf lever, not just cosmetic.
-  bool get _wingMotionEnabled =>
-      _animSettings.flutterEnabledFor(navBar: widget.navBarVariant);
 
   @override
   void initState() {
@@ -155,21 +135,12 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     _toState = _effectiveState;
     _fromState = _toState;
     _transition.addStatusListener(_onTransitionStatus);
-    _animSettings.addListener(_onAnimSettingsChanged);
   }
 
   AymaOrbState get _effectiveState =>
       widget.state ??
       (widget.active ? AymaOrbState.listening : AymaOrbState.idle);
 
-  /// A settings toggle flipped (possibly from the Settings screen while this
-  /// orb is visible elsewhere): repaint with the new flag and start/stop the
-  /// ticker to match — live, no restart.
-  void _onAnimSettingsChanged() {
-    if (!mounted) return;
-    setState(() {});
-    _syncMotion();
-  }
 
   @override
   void didChangeDependencies() {
@@ -180,12 +151,6 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   @override
   void didUpdateWidget(AymaOrb old) {
     super.didUpdateWidget(old);
-    if (!identical(
-        old.animationSettings ?? orbAnimationSettingsGlobal, _animSettings)) {
-      (old.animationSettings ?? orbAnimationSettingsGlobal)
-          .removeListener(_onAnimSettingsChanged);
-      _animSettings.addListener(_onAnimSettingsChanged);
-    }
     final next = _effectiveState;
     if (next != _toState) {
       _fromState = _toState;
@@ -251,14 +216,14 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   /// state, or a state transition still animating (including one INTO idle —
   /// the ticker keeps feeding it until [_onTransitionStatus] publishes the
   /// final resting frame and stops it). A settled idle orb has no ticker at
-  /// all, not just a withheld republish. With the user's wing-flutter flag
-  /// off for this placement the painter never reads the clock (it's handed
-  /// `t: 0`, same as reduced motion), so the ticker stays stopped in every
-  /// state — transitions still animate via [_transition], which has its own
+  /// all, not just a withheld republish. The wing flutter is always
+  /// on — there is no setting that stills it; only the OS
+  /// reduced-motion preference rests the wings (the painter is handed
+  /// `t: 0` then, and the ticker stays stopped in every state —
+  /// transitions still animate via [_transition], which has its own
   /// vsync.
   void _syncMotion() {
     final wanted = !_reducedMotion &&
-        _wingMotionEnabled &&
         (_toState != AymaOrbState.idle ||
             _transition.isAnimating ||
             widget.voiceLive);
@@ -282,7 +247,6 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _animSettings.removeListener(_onAnimSettingsChanged);
     _ticker.dispose();
     _transition.dispose();
     _t.dispose();
@@ -296,7 +260,6 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final reduced = _reducedMotion;
-    final wingMotion = _wingMotionEnabled;
     final listenable = widget.amplitudeListenable;
     final merged = Listenable.merge([
       _t,
@@ -316,10 +279,10 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
             _smoothedAmp = _smoothedAmp * 0.82 + target * 0.18;
             return CustomPaint(
               painter: AymaOrbPainter(
-                // With wing motion off the painter's clock-driven terms must
-                // sit at the same calm rest reduced motion uses — hand it
+                // Under reduced motion the painter's clock-driven terms
+                // must sit at the calm rest — hand it the same frozen clock.
                 // the same frozen clock.
-                t: reduced || !wingMotion ? 0 : _t.value,
+                t: reduced ? 0 : _t.value,
                 fromState: _fromState,
                 toState: _toState,
                 transitionT: Curves.easeOutCubic.transform(_transition.value),
@@ -328,7 +291,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
                 reducedMotion: reduced,
                 showGlow: widget.showGlow,
                 voiceLive: widget.voiceLive,
-                wingMotion: wingMotion,
+                wingMotion: true, // Always on — no setting stills the wings.
               ),
             );
           },
@@ -576,14 +539,16 @@ class AymaOrbPainter extends CustomPainter {
   final bool reducedMotion;
   final bool showGlow;
 
-  /// False when the user turned the continuous petal/wing flutter off for
-  /// this orb's placement (Settings › Animation — see
-  /// [OrbAnimationSettings]). The petals then hold the exact calm resting
-  /// pose reduced motion already renders (same damped idle-drift math, and
-  /// the widget hands in the same frozen `t: 0`), while everything reduced
-  /// motion additionally suppresses — animated state transitions, the
-  /// amplitude-substitute sphere scale — stays untouched: this flag stops
-  /// the wings' continuous motion, nothing else.
+  /// Whether the continuous petal/wing flutter runs. The widget
+  /// always passes true — wing flutter is not a user setting (the
+  /// Settings › Animation toggles were removed, founder call
+  /// 2026-11-07); the flag stays on the painter so tests can pin
+  /// the calm resting pose it renders when false: the exact pose
+  /// reduced motion renders (same damped idle-drift math, same
+  /// frozen `t: 0`), while everything reduced motion additionally
+  /// suppresses — animated state transitions, the
+  /// amplitude-substitute sphere scale — stays untouched: this flag
+  /// stops the wings' continuous motion, nothing else.
   final bool wingMotion;
 
   /// True for an orb representing a currently-live voice call — see
@@ -1379,7 +1344,7 @@ class AymaOrbPainter extends CustomPainter {
     // overlapping near the top — see `_rightWing`/`_leftWing`/`_wingPath`.
     //
     // The wings' continuous-motion terms rest exactly the way reduced motion
-    // rests them when the user's wing-flutter toggle is off ([wingMotion]) —
+    // rests them when [wingMotion] is off —
     // one shared calm pose, not a second nearly-identical one.
     final restingWings = reducedMotion || !wingMotion;
     final circulation = restingWings ? p.circulation * 0.08 : p.circulation;

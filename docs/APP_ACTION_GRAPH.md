@@ -58,7 +58,7 @@ form of the tools above) are: `navigate`, `search_explore`,
 `reconnect_voice`, `ui_action`, `tour_step`, `tour_end`,
 `play_voice_clip`. The `app_action` names it executes are `dark_mode`,
 `light_mode`, `system_theme`, `accent_color`, `pause_matching`,
-`resume_matching`, `wing_flutter`, `nav_bar_flutter`, `sign_out`.
+`resume_matching`, `sign_out`.
 
 tool descriptions are generated from `app_registry.json`, so the registry
 — and now this graph — are what she knows.
@@ -360,8 +360,6 @@ and also `UI`:
 |---|---|---|
 | Models row | Open Ayma's models | COVERED `open_screen voice_preference` |
 | Connect an agent (MCP) row | Open Connect-agent | COVERED `open_screen connect_agent` |
-| Wing flutter switch | Toggle orb animation | COVERED `app_action wing_flutter` |
-| Wing flutter in nav bar switch | Toggle nav-bar animation | COVERED `app_action nav_bar_flutter` |
 | **"Wipe what Ayma has learned" (+ confirm dialog)** | **Clear her memory** | **`EXCLUDED` clear_memory — user-only; she opens this page only** |
 
 ## 21. Ayma's models (`voice_preference_screen.dart`, `brain_selector_control.dart`, `voice_engine_control.dart`)
