@@ -377,6 +377,57 @@ def test_open_screen_confirms_when_the_ack_arrives_mid_wait(monkeypatch):
     assert out.startswith("navigated: screen=matches")
 
 
+def test_open_screen_confirms_when_the_ack_lands_in_the_rewait_window(
+    monkeypatch,
+):
+    # Founder, 2026-11-07: a real "open Explore" ask failed while a
+    # self-check minutes earlier had passed every nav — the check
+    # waited a second window on the same command, the tool did not.
+    # The re-wait now lives in the shared _await_ack: an ack that
+    # lands after the first (0.3s) window but inside the second still
+    # confirms the SAME queued command.
+    _fast_acks(monkeypatch, timeout=0.3, poll=0.01)
+    db = _Db()
+    cmd_id_seen = []
+
+    async def _scenario():
+        task = asyncio.ensure_future(
+            app_control._bind_open_screen(db, "me")("matches")
+        )
+        await asyncio.sleep(0.45)  # first window (0.3s) already silent
+        cmd_id = db.store[_PENDING]["id"]
+        cmd_id_seen.append(cmd_id)
+        db.store[_ACK] = {"id": cmd_id, "ok": True}
+        return await task
+
+    out = _run(_scenario())
+    assert out.startswith("navigated: screen=matches")
+    # The pending doc still holds the FIRST command id: the re-wait
+    # confirmed the same queued command, never a re-queue.
+    assert db.store[_PENDING]["id"] == cmd_id_seen[0]
+
+
+def test_await_ack_with_an_explicit_timeout_does_not_rewait(monkeypatch):
+    # Callers that name their own window (scroll, playback, inbox…)
+    # keep exactly that single window — the re-wait belongs only to
+    # the shared default.
+    _fast_acks(monkeypatch, timeout=0.3, poll=0.01)
+    from skills import app_control_queue as acq
+
+    db = _Db()
+    db.store[_PENDING] = {"id": "cmd-x", "action": "navigate"}
+
+    async def _scenario():
+        task = asyncio.ensure_future(
+            acq._await_ack(db, "me", "cmd-x", timeout=0.2)
+        )
+        await asyncio.sleep(0.35)  # past the explicit 0.2s window
+        db.store[_ACK] = {"id": "cmd-x", "ok": True}
+        return await task
+
+    assert _run(_scenario()) is None
+
+
 def test_open_screen_rejects_an_unknown_screen():
     db = _Db()
     out = _run(app_control._bind_open_screen(db, "me")("spaceship"))
@@ -2340,6 +2391,13 @@ def test_show_profile_photo_goto_without_an_index_asks_which():
     ("previous photo", ("previous", None)),
     ("go to the previous picture", ("previous", None)),
     ("show the last photo", ("last", None)),
+    ("tap the third photo", ("goto", 3)),
+    # Founder, 2026-11-07 ~21:56: "Can you tap on her photo?" — verb +
+    # singular noun, no number: a photo ask with the target missing,
+    # routed to the tool so it asks WHICH photo instead of the model
+    # improvising a refusal.
+    ("can you tap on her photo", ("goto", None)),
+    ("show her photo", ("goto", None)),
 ])
 def test_detect_photo_command_matches_clear_asks(phrase, expected):
     assert app_control.detect_photo_command(phrase) == expected
@@ -2356,6 +2414,13 @@ def test_detect_photo_command_matches_clear_asks(phrase, expected):
 ])
 def test_detect_photo_command_leaves_ordinary_chat_alone(phrase):
     assert app_control.detect_photo_command(phrase) is None
+
+
+def test_run_photo_command_without_a_target_asks_which_photo():
+    db = _carousel_db()
+    out = _run(app_control.run_photo_command(db, "me", "goto", None))
+    assert out == "Which photo should I show? Give me its number."
+    assert _PENDING not in db.store  # nothing was queued
 
 
 def test_run_photo_command_translates_success_and_out_of_range():

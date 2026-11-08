@@ -21,9 +21,15 @@ Design notes (spec: ``Ayma Self-Check Skill — Spec.md`` in the goal
 files):
 
 * Navigation checks reuse the exact app-control ack path the
-  ``open_screen`` tool uses (``_queue_command`` + ``_await_ack``), so a
-  missing ack is a real FAIL — the failure class behind the founder's
-  Nov 6 voice-navigation bug reports.
+  ``open_screen`` tool uses (``_queue_command`` + ``_await_ack`` with the
+  production default window), so a missing ack is a real FAIL — the
+  failure class behind the founder's Nov 6 voice-navigation bug reports.
+  The check passes NO window of its own: the shared ``_await_ack`` (one
+  window + one same-command re-wait) is the whole wait, for a real turn
+  and for the check alike (founder, 2026-11-07: a run passed every nav
+  minutes before a real "open Explore" ask failed, because the check
+  then waited a second window the tool never got — the re-wait now
+  lives in the shared helper, not in the check).
 * Write checks write through the tool's own bound callable, read the
   stored value back, revert, and read back again. No original value to
   restore -> SKIP; a self-check never leaves a test value behind.
@@ -70,9 +76,9 @@ files):
   feedback record). The destinations that need the user present —
   Photos (the photo upload/edit page) and Terms/Privacy (they open
   the browser) — run as real checks at the very END of the run, in
-  that order, with a longer 30s ack window (FINAL_NAV_TIMEOUT) so he
-  can respond to them while they run. Privacy goes last: it leaves
-  the app sitting in the browser.
+  that order, each through the same production ack wait as every
+  other nav check. Privacy goes last: it leaves the app sitting in
+  the browser.
 """
 
 from __future__ import annotations
@@ -164,7 +170,6 @@ PROBE_TOOLS: dict[str, str] = {
     "edit_story_entry": "write+revert candidate on a dedicated test section",
     "remove_story_entry": "soft-remove has no un-remove tool",
     "search_explore": "run candidate with a neutral probe query, pending bench verification",
-    "show_profile_photo": "needs an open profile photo carousel fixture",
     "open_message_thread": "needs an existing thread fixture",
     "open_notification": "needs a live notification fixture",
     "open_match_report": "needs a scored-match fixture",
@@ -202,6 +207,7 @@ RUN_TOOLS = (
     "read_dm_thread",
     "current_screen",
     "open_profile",
+    "show_profile_photo",
     "go_back",
 )
 
@@ -235,9 +241,8 @@ _DIRECT_GOOGLE_DISABLED = "DirectGoogleDisabledError"
 # lands on the photo upload/edit page, Terms and Privacy open his
 # browser — so they run as real checks at the very END of the run, in
 # this order (Privacy last: it leaves the app sitting in the
-# browser), with a longer ack window so he has time to respond.
+# browser). Their ack wait is the production one, like every nav.
 FINAL_NAV_KEYS = ("photos", "terms", "privacy")
-FINAL_NAV_TIMEOUT = 30.0
 
 # Bug filing de-dupes against identical failures filed this recently.
 _BUG_DEDUPE_WINDOW = timedelta(hours=24)
@@ -541,10 +546,13 @@ class SelfCheckRunner:
         *,
         session_id: str = "",
         env_label: str = "",
-        # Matches the production nav tool's ack window (raised there
-        # from 3s after the 2026-11-01 founder bug: healthy acks on a
-        # laggy app can miss 3s). _do_nav waits a second window on
-        # the same command before failing - see its comment.
+        # The production nav tool's SINGLE ack window
+        # (skills.app_control._ACK_TIMEOUT_SECONDS, raised there from
+        # 3s after the 2026-11-01 founder bug: healthy acks on a laggy
+        # app can miss 3s). The check itself awaits through the shared
+        # _await_ack with no window of its own (see _do_nav); this
+        # value only budgets the check-level timeout in _nav_check at
+        # two windows + slack, mirroring that shared wait.
         nav_timeout: float = 6.0,
         check_timeout: float = 10.0,
         deps: _Deps | None = None,
@@ -862,51 +870,44 @@ class SelfCheckRunner:
         except Exception:  # noqa: BLE001 - return-to-chat never breaks a run
             logger.exception("self-check return-to-chat queue failed")
 
-    async def _do_nav(self, dest: dict, timeout: float | None = None):
-        window = self.nav_timeout if timeout is None else timeout
+    async def _do_nav(self, dest: dict):
         if self.deps.nav_fn is not None:
             ok, error = await self.deps.nav_fn(dest)
             return (PASS, dest.get("label", ""), "") if ok else (FAIL, "", error)
+        from skills import app_control
         from skills.app_control_queue import _await_ack
 
         cmd_id, label = await asyncio.to_thread(self._queue_nav_command, dest)
-        ack = await _await_ack(self.db, self.uid, cmd_id, timeout=window)
-        if ack is None:
-            # One re-wait on the SAME command before failing: the
-            # client's command watch can be down for ~10s while it
-            # resubscribes after a stream error, and the queued
-            # command stays executable for 90s client-side, so its
-            # late ack still lands on this id. Founder run
-            # 2026-11-07: four consecutive navs (registry order)
-            # failed inside one such ~14s gap at the old single
-            # 3s window; acks before and after the gap flowed.
-            ack = await _await_ack(
-                self.db, self.uid, cmd_id, timeout=window
-            )
+        # The production ack wait, unchanged: no timeout of the check's
+        # own, so the shared helper's default window (one window + one
+        # same-command re-wait) is exactly what a real open_screen turn
+        # gets. A check that is privately more patient than the tool
+        # green-lights the conditions real asks fail in (founder,
+        # 2026-11-07 — see the module docstring).
+        ack = await _await_ack(self.db, self.uid, cmd_id)
         if ack and ack.get("ok"):
             return PASS, label, ""
+        total = app_control._ACK_TIMEOUT_SECONDS * 2
         return (
             FAIL,
             "",
-            f"The app did NOT navigate (no ack within {window * 2:g}s)",
+            f"The app did NOT navigate (no ack within {total:g}s)",
         )
 
-    async def _nav_check(self, dest: dict, *,
-                         timeout: float | None = None) -> None:
+    async def _nav_check(self, dest: dict) -> None:
         """Run one navigation check for ``dest`` and emit the result.
 
-        ``timeout`` overrides the ack window (the final nav group
-        passes FINAL_NAV_TIMEOUT). A no-ack timeout that follows an
-        external open or an earlier unheard command is a check
-        artifact — the app was backgrounded and could not hear — so
-        it is reported not-run, never a failure, never a bug.
+        The ack wait is the production one (see ``_do_nav``) for every
+        destination, the final group included. A no-ack timeout that
+        follows an external open or an earlier unheard command is a
+        check artifact — the app was backgrounded and could not
+        hear — so it is reported not-run, never a failure, never a bug.
         """
         key = str(dest.get("key") or "")
-        window = self.nav_timeout if timeout is None else timeout
         nav_result = await self._timed(
             f"nav:{key}", "navigation",
-            self._do_nav(dest, timeout=window),
-            timeout=window * 2 + 5,
+            self._do_nav(dest),
+            timeout=self.nav_timeout * 2 + 5,
         )
         if nav_result.status == FAIL and _is_no_ack_error(nav_result.error):
             if self._external_seen or self._nav_unheard:
@@ -1097,6 +1098,8 @@ class SelfCheckRunner:
             if "did NOT" in out:
                 return FAIL, "", out[:200]
             return PASS, out[:120], ""
+        if name == "show_profile_photo":
+            return await self._do_show_profile_photo(fn)
         if name == "go_back":
             out = str(await self._call(fn) or "")
             if "did NOT" in out:
@@ -1114,6 +1117,55 @@ class SelfCheckRunner:
         if text.lower().startswith("error"):
             return FAIL, "", text[:200]
         return PASS, text[:120], ""
+
+    async def _do_show_profile_photo(self, fn):
+        """Execute the photo-open check for real (founder, 2026-11-07
+        ~21:56: "open her third picture" was refused in a live voice
+        session minutes after a self-check run reported no failures —
+        this tool sat probe-only behind "needs an open profile photo
+        carousel fixture", so the failure class was invisible).
+
+        The check builds its own fixture through the production path:
+        open the counterpart's profile with the same bound
+        ``open_profile`` a real turn uses, then call the same bound
+        ``show_profile_photo`` and judge ONLY its confirmed outcome —
+        PASS when the app ack says the carousel is showing the asked
+        photo, FAIL when the open does not land (no ack, a missing
+        carousel on an open profile, or an out-of-range claim for a
+        photo that exists). A profile with a single photo cannot move,
+        so photo 1 is verified instead; a profile with no photos at
+        all is a SKIP — there is nothing to open.
+        """
+        fns = self._tool_fns()
+        opener = fns.get("open_profile")
+        if opener is None:
+            return FAIL, "", "open_profile not bound — photo fixture unavailable"
+        out = str(await self._call(opener, _DM_COUNTERPART) or "")
+        if "did NOT" in out or "couldn't find" in out:
+            return FAIL, "", f"photo fixture failed: {out[:160]}"
+        out = str(await self._call(fn, op="goto", index=2) or "")
+        if out.startswith("showing:"):
+            return PASS, out[:120], ""
+        if out.startswith("out_of_range:"):
+            m = re.search(r"only (\d+)", out)
+            count = int(m.group(1)) if m else -1
+            if count == 1:
+                one = str(await self._call(fn, op="goto", index=1) or "")
+                if one.startswith("showing:"):
+                    return PASS, "profile has 1 photo; opening it verified", ""
+                return FAIL, "", one[:200]
+            if count == 0:
+                return SKIP, "the fixture profile has no photos to open", ""
+            return FAIL, "", (
+                f"photo 2 reported out of range on a {count}-photo "
+                f"profile: {out[:140]}"
+            )
+        if out.startswith("no_carousel:"):
+            return FAIL, "", (
+                "profile open but no photo carousel registered — "
+                "a photo open cannot land"
+            )
+        return FAIL, "", out[:200]
 
     # -- the run ---------------------------------------------------------
 
@@ -1401,6 +1453,7 @@ class SelfCheckRunner:
             "find_fact_source",
             "read_dm_thread",
             "current_screen",
+            "show_profile_photo",
         ):
             await self._emit(
                 await self._timed(
@@ -1478,11 +1531,11 @@ class SelfCheckRunner:
             )
 
         # Final navigation group — photos, terms, privacy, in that
-        # order, each with the longer ack window (FINAL_NAV_TIMEOUT).
-        # They land the user somewhere he may need to act — the photo
-        # upload/edit page, then his browser — so they run only when
-        # nothing else remains. Privacy is last because it leaves the
-        # app sitting in the browser.
+        # order, each through the same production ack wait as every
+        # other nav check. They land the user somewhere he may need
+        # to act — the photo upload/edit page, then his browser — so
+        # they run only when nothing else remains. Privacy is last
+        # because it leaves the app sitting in the browser.
         final_ran = False
         for key in FINAL_NAV_KEYS:
             dest = final_dests.get(key)
@@ -1495,7 +1548,7 @@ class SelfCheckRunner:
                                 "founder-excluded — never exercised")
                 )
                 continue
-            await self._nav_check(dest, timeout=FINAL_NAV_TIMEOUT)
+            await self._nav_check(dest)
         if final_ran:
             # Line up a return to the chat, as after the main nav
             # section. After Privacy the app sits in the browser, so

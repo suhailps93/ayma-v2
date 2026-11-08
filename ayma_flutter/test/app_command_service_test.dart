@@ -172,6 +172,92 @@ void main() {
     expect(nav, ['/complete-profile']);
   });
 
+  group('openDestination — the landing the nav acks now wait for', () {
+    test('closes the popup first, then navigates, and reports true',
+        () async {
+      final events = <String>[];
+      var popupOpen = true;
+      var current = '/matches';
+      final svc = AppCommandService(
+        navigate: (p) {
+          events.add('push $p');
+          current = p;
+        },
+        currentPath: () => current,
+        chatPopupOpen: () => popupOpen,
+        closeChatPopup: () async {
+          events.add('close');
+          popupOpen = false;
+        },
+      );
+      expect(await svc.openDestination('/explore'), isTrue);
+      expect(events, ['close', 'push /explore']);
+    });
+
+    test('a sheet still up after the close reports false — the old '
+        'dispatch-only ack called this a success', () async {
+      var current = '/matches';
+      final svc = AppCommandService(
+        navigate: (p) => current = p,
+        currentPath: () => current,
+        chatPopupOpen: () => true,
+        closeChatPopup: () async {}, // completes, but the sheet stays up
+      );
+      expect(await svc.openDestination('/explore'), isFalse);
+    });
+
+    test('a popup dismissal that throws reports false', () async {
+      final svc = AppCommandService(
+        navigate: (_) {},
+        currentPath: () => '/matches',
+        chatPopupOpen: () => true,
+        closeChatPopup: () async => throw StateError('no sheet host'),
+      );
+      expect(await svc.openDestination('/explore'), isFalse);
+    });
+
+    test('already on the page with the sheet up: closes it, no push, '
+        'reports true', () async {
+      final events = <String>[];
+      var popupOpen = true;
+      final svc = AppCommandService(
+        navigate: (p) => events.add('push $p'),
+        currentPath: () => '/explore',
+        chatPopupOpen: () => popupOpen,
+        closeChatPopup: () async {
+          events.add('close');
+          popupOpen = false;
+        },
+      );
+      expect(await svc.openDestination('/explore'), isTrue);
+      expect(events, ['close']);
+    });
+
+    test('already on the page, nothing covering it: true, no navigation',
+        () async {
+      final svc = AppCommandService(
+        navigate: (_) => fail('must not navigate'),
+        currentPath: () => '/explore',
+        chatPopupOpen: () => false,
+      );
+      expect(await svc.openDestination('/explore'), isTrue);
+    });
+
+    test('a query-form destination counts as landed on its bare path',
+        () async {
+      var current = '/';
+      final svc = AppCommandService(
+        navigate: (p) => current = '/profile/me/public',
+        currentPath: () => current,
+        chatPopupOpen: () => false,
+      );
+      expect(
+        await svc.openDestination('/profile/me/public?edit=photos'),
+        isTrue,
+      );
+    });
+  });
+
   test('app_action toggles the orb animation settings', () {
     final orb = OrbAnimationSettings();
     final svc = AppCommandService(orbAnimationSettings: orb);

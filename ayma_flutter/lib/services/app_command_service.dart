@@ -512,15 +512,51 @@ class AppCommandService {
       _runTourStep(snap.reference, data, id);
       return;
     }
+    if (_navigationActions.contains(data['action'])) {
+      // Owns its ack (like go_back / ui_action): the ack is written only
+      // once the open has actually landed — destination current, no
+      // sheet left covering it — never on dispatch alone.
+      unawaited(_runNavigationCommand(snap.reference, data, id));
+      return;
+    }
     var ok = false;
     try {
       ok = handleCommand(data);
     } catch (_) {
       ok = false; // ack the failure honestly rather than crash the stream
     }
-    // Ack first (the backend tool is polling for this id right now), then
-    // clear the pending doc.
-    final acked = snap.reference.parent
+    _settleCommand(snap.reference, data, id, ok);
+  }
+
+  /// The page-opening commands (the registry destinations and the
+  /// person / thread / notification opens). They own their acks: an
+  /// ack written on dispatch alone can claim success for a page that
+  /// never became visible, so these route to [_runNavigationCommand].
+  static const _navigationActions = <String>{
+    'navigate',
+    'search_explore',
+    'open_profile',
+    'open_dm_thread',
+    'open_notification',
+  };
+
+  /// How long a page-opening command may take to land before it acks
+  /// `false` (a sheet dismissal that never completes must not hold the
+  /// ack — and the backend's wait — hostage).
+  static const _navigationAckCap = Duration(seconds: 10);
+
+  /// Ack [id] with the command's real outcome, clear the pending doc
+  /// and run any after-ack action — the tail every command path shares
+  /// (the sync dispatcher above and the ack-owning runners). The ack is
+  /// written first (the backend tool is polling for this id right now),
+  /// then the pending doc is cleared.
+  void _settleCommand(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> data,
+    String id,
+    bool ok,
+  ) {
+    final acked = ref.parent
         .doc('ack')
         .set(<String, dynamic>{
           'id': id,
@@ -531,14 +567,41 @@ class AppCommandService {
     if (ok && id.isNotEmpty && data['action'] == 'search_explore') {
       _awaitingExploreId = id;
       _awaitingExploreQuery = (data['query'] as String? ?? '').trim();
-      _listenForExploreReport(snap.reference.parent.doc('ack'));
+      _listenForExploreReport(ref.parent.doc('ack'));
     }
-    final cleared = _deleteIfStillCommand(snap.reference, id);
+    final cleared = _deleteIfStillCommand(ref, id);
     final after = _afterAck;
     _afterAck = null;
     if (after != null) {
       unawaited(Future.wait([acked, cleared]).then((_) => after()));
     }
+  }
+
+  /// Run one page-opening command and ack its REAL outcome: resolve the
+  /// target with [_navigationTarget], open it through [openDestination]
+  /// (which reports whether the destination actually ended up visible)
+  /// and ack that — so a sheet dismissal that failed, or a push that
+  /// never landed, acks `ok:false` and Ayma says so honestly, instead
+  /// of the old dispatch-only ack claiming success for an invisible
+  /// page (the ack path the self-check's nav checks also judge by).
+  Future<void> _runNavigationCommand(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> cmd,
+    String id,
+  ) async {
+    var ok = false;
+    try {
+      final target = _navigationTarget(cmd);
+      if (target != null) {
+        ok = await openDestination(target).timeout(
+          _navigationAckCap,
+          onTimeout: () => false,
+        );
+      }
+    } catch (_) {
+      ok = false; // ack the failure honestly rather than crash the stream
+    }
+    _settleCommand(ref, cmd, id, ok);
   }
 
   /// Move the open profile's photo carousel, then ack with the outcome
@@ -548,7 +611,7 @@ class AppCommandService {
   /// there are only 3 — the carousel itself never moved.
   Future<void> _runCarouselPhoto(DocumentReference<Map<String, dynamic>> ref,
       Map<String, dynamic> cmd, String id) async {
-    final out = runCarouselPhoto(cmd);
+    final out = await runCarouselPhotoConfirmed(cmd);
     await ref.parent.doc('ack').set(<String, dynamic>{
       'id': id,
       'ok': out.ok,
@@ -560,6 +623,49 @@ class AppCommandService {
       'ts': FieldValue.serverTimestamp(),
     }).catchError((_) {});
     await _deleteIfStillCommand(ref, id);
+  }
+
+  /// The ack delay before a carousel move is re-read for the landing
+  /// confirmation: the header animates a page change over 250ms, so the
+  /// re-read waits comfortably past the animation.
+  static const _carouselConfirmDelay = Duration(milliseconds: 500);
+
+  /// [runCarouselPhoto] plus a landing confirmation, so the ack means
+  /// the photo is actually SHOWING — the same standard the navigation
+  /// commands hold (founder, 2026-11-07: an open counts only when it
+  /// lands). The registry reports a move the moment the page animation
+  /// is DISPATCHED; if the controller was detached the header silently
+  /// keeps the old page while the result claims the new one. After the
+  /// animation window the live page is re-read: a mismatch (or the
+  /// carousel having vanished) rewrites the outcome to
+  /// `ok: false, reason: not_landed` with the page that is really
+  /// showing, so Ayma reports the failure honestly instead of claiming
+  /// a photo that never appeared.
+  @visibleForTesting
+  Future<PhotoCarouselResult> runCarouselPhotoConfirmed(
+      Map<String, dynamic> cmd) async {
+    final out = runCarouselPhoto(cmd);
+    if (!out.ok) return out;
+    await Future<void>.delayed(_carouselConfirmDelay);
+    final handle = _photoCarousel.active;
+    if (handle == null) {
+      return PhotoCarouselResult(
+        ok: false,
+        photoCount: out.photoCount,
+        currentPhoto: out.currentPhoto,
+        requestedPhoto: out.requestedPhoto,
+        reason: 'not_landed',
+      );
+    }
+    final landed = handle.currentPage() + 1;
+    if (landed == out.currentPhoto) return out;
+    return PhotoCarouselResult(
+      ok: false,
+      photoCount: out.photoCount,
+      currentPhoto: landed,
+      requestedPhoto: out.requestedPhoto,
+      reason: 'not_landed',
+    );
   }
 
   /// Runs one `carousel_photo` command against the registered carousel;
@@ -951,65 +1057,29 @@ class AppCommandService {
         .catchError((_) {});
   }
 
-  /// Route one command; true when it actually executed a navigation/action
-  /// (what the ack's `ok` reports back to the waiting backend tool). Split
-  /// out so it's testable without Firestore.
+  /// Route one command synchronously; true when it executed the
+  /// action (for the non-navigation commands, what the ack's `ok`
+  /// reports back to the waiting backend tool — the page-opening
+  /// family acks through [_runNavigationCommand] instead, which
+  /// awaits the actual landing). Split out so it's testable without
+  /// Firestore.
   @visibleForTesting
   bool handleCommand(Map<String, dynamic> cmd) {
     switch (cmd['action'] as String? ?? '') {
       case 'navigate':
-        // The backend resolved this from the registry
-        // (functions/bootstrap/app_registry.json); test/app_registry_test.dart
-        // checks every registered path against the real router.
-        final path = (cmd['path'] as String? ?? '').trim();
-        if (!path.startsWith('/')) return false;
-        _open(path);
-        return true;
       case 'search_explore':
-        final query = (cmd['query'] as String? ?? '').trim();
-        AppContext.instance.pendingExploreQuery = query;
-        // Also publish live: an Explore screen already built/visible must
-        // run this search now, not only on its next build (founder,
-        // 2026-11-06 - Ayma-driven changes update the visible UI live;
-        // ported to staging 2026-11-07 per founder order).
-        AppContext.instance.liveExploreQuery.value = query;
-        // Through [_open], not a bare push, like every other navigation
-        // command: the destination must be visible, never left underneath
-        // a still-open chat popup. (Staging adaptation of f5ac63c9: the
-        // v2 original used _navigate; staging routes through _open.)
-        _open(ExploreScreen.path);
-        return true;
       case 'open_profile':
-        final uid = (cmd['uid'] as String? ?? '').trim();
-        if (uid.isEmpty) return false;
-        _open('/profile/user/$uid');
-        return true;
       case 'open_dm_thread':
-        final uid = (cmd['uid'] as String? ?? '').trim();
-        if (uid.isEmpty) return false;
-        final me = _auth.currentUser?.uid;
-        if (me == null || me.isEmpty) return false;
-        // Through [_open], not a bare push (founder feedback item 6,
-        // 2026-11-06: the opened conversation bounced straight back to the
-        // conversations page): a bare push stacks the thread ON TOP of
-        // Ayma's still-open chat popup, and the next popup-close pop —
-        // which pops the top route assuming it is the popup — kills the
-        // thread route instead. [_open] closes the popup first and skips
-        // the push when the user is already on this thread, exactly like
-        // the `navigate` and `open_notification` cases.
-        _open('/dm/${sortedPairKey(me, uid)}');
-        return true;
       case 'open_notification':
-        // The backend already picked the latest unread notification and hands
-        // over its `deep_link`; route it exactly like a notification-centre
-        // tap (same `deepLinkToRoute`, same popup-close-then-push). Read
-        // state stays the backend's job: it marks it read only once this
-        // open acks (§ L6: one ask opens the destination directly).
-        final link = (cmd['deep_link'] as String? ?? '').trim();
-        if (link.isEmpty) return false;
-        final self = _auth.currentUser?.uid;
-        if (self == null || self.isEmpty) return false;
-        _open(deepLinkToRoute(link, myUid: self));
+        // The page-opening family: [_navigationTarget] resolves (and
+        // validates) the route, [_open] dispatches it. The Firestore
+        // listener routes these commands to [_runNavigationCommand]
+        // instead, so their ack waits until the destination is
+        // actually visible; this sync dispatch stays for direct
+        // callers and tests.
+        final target = _navigationTarget(cmd);
+        if (target == null) return false;
+        _open(target);
         return true;
       case 'carousel_photo':
         // The Firestore listener intercepts this action before
@@ -1056,6 +1126,114 @@ class AppCommandService {
         return true;
     }
     return false;
+  }
+
+  /// The route a page-opening command wants opened, or null when the
+  /// command is malformed and must ack `false` (no route path, an empty
+  /// uid, nobody signed in). Performs the command's non-navigation side
+  /// effects (Explore's search publishing) exactly as the dispatcher
+  /// always has. Shared by the sync [handleCommand] and the ack-owning
+  /// [_runNavigationCommand], so both resolve a command identically.
+  String? _navigationTarget(Map<String, dynamic> cmd) {
+    switch (cmd['action'] as String? ?? '') {
+      case 'navigate':
+        // The backend resolved this from the registry
+        // (functions/bootstrap/app_registry.json); test/app_registry_test.dart
+        // checks every registered path against the real router.
+        final path = (cmd['path'] as String? ?? '').trim();
+        return path.startsWith('/') ? path : null;
+      case 'search_explore':
+        final query = (cmd['query'] as String? ?? '').trim();
+        AppContext.instance.pendingExploreQuery = query;
+        // Also publish live: an Explore screen already built/visible must
+        // run this search now, not only on its next build (founder,
+        // 2026-11-06 - Ayma-driven changes update the visible UI live;
+        // ported to staging 2026-11-07 per founder order).
+        AppContext.instance.liveExploreQuery.value = query;
+        // Through [_open] / [openDestination], not a bare push, like
+        // every other navigation command: the destination must be
+        // visible, never left underneath a still-open chat popup.
+        // (Staging adaptation of f5ac63c9: the v2 original used
+        // _navigate; staging routes through _open.)
+        return ExploreScreen.path;
+      case 'open_profile':
+        final uid = (cmd['uid'] as String? ?? '').trim();
+        return uid.isEmpty ? null : '/profile/user/$uid';
+      case 'open_dm_thread':
+        final uid = (cmd['uid'] as String? ?? '').trim();
+        if (uid.isEmpty) return null;
+        final me = _auth.currentUser?.uid;
+        if (me == null || me.isEmpty) return null;
+        // Through [_open], not a bare push (founder feedback item 6,
+        // 2026-11-06: the opened conversation bounced straight back to
+        // the conversations page): a bare push stacks the thread ON TOP
+        // of Ayma's still-open chat popup, and the next popup-close
+        // pop — which pops the top route assuming it is the popup —
+        // kills the thread route instead. [_open] closes the popup
+        // first and skips the push when the user is already on this
+        // thread, exactly like the `navigate` and `open_notification`
+        // cases.
+        return '/dm/${sortedPairKey(me, uid)}';
+      case 'open_notification':
+        // The backend already picked the latest unread notification and
+        // hands over its `deep_link`; route it exactly like a
+        // notification-centre tap (same `deepLinkToRoute`, same
+        // popup-close-then-push). Read state stays the backend's job:
+        // it marks it read only once this open acks (§ L6: one ask
+        // opens the destination directly).
+        final link = (cmd['deep_link'] as String? ?? '').trim();
+        if (link.isEmpty) return null;
+        final self = _auth.currentUser?.uid;
+        if (self == null || self.isEmpty) return null;
+        return deepLinkToRoute(link, myUid: self);
+    }
+    return null;
+  }
+
+  /// Open [path] and report whether the destination actually ended up
+  /// VISIBLE — the awaited, verified form of [_open] (same dispatch:
+  /// close the chat sheet first, skip the push when already there, and
+  /// a same-page open still dismisses an open sheet without recording
+  /// a navigation). Visible means: the router is on the destination
+  /// (compared by bare path, so query forms and router-normalized
+  /// paths count) or a navigation to it was dispatched during this
+  /// call, AND no chat sheet is left covering it. A sheet dismissal
+  /// that throws, or a destination still covered afterwards, reports
+  /// false. The page-opening commands ack this result (see
+  /// [_runNavigationCommand]): the old dispatch-only ack claimed
+  /// success the moment the open was STARTED, so neither a real turn
+  /// nor the self-check could tell a landed open from an invisible one.
+  @visibleForTesting
+  Future<bool> openDestination(String path) async {
+    final target = path.split('?').first;
+    var dispatched = false;
+    try {
+      if (_currentPath() != path) {
+        if (_chatPopupOpen()) {
+          await _closeChatPopup();
+        }
+        if (_currentPath() != path) {
+          _navigate(path);
+          _history.visit(path);
+          dispatched = true;
+        }
+      } else if (_chatPopupOpen()) {
+        await _closeChatPopup();
+      }
+    } catch (e) {
+      debugPrint('Ayma navigation to $path failed: $e');
+      return false;
+    }
+    if (_destinationVisible(target, dispatched)) return true;
+    // One settle beat: a just-dispatched navigation can report its
+    // route a frame after the call returns.
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    return _destinationVisible(target, dispatched);
+  }
+
+  bool _destinationVisible(String targetPath, bool dispatched) {
+    if (_chatPopupOpen()) return false;
+    return _currentPath() == targetPath || dispatched;
   }
 
   /// Push [path] unless the user is already there, closing Ayma's chat

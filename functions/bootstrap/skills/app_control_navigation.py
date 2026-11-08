@@ -844,7 +844,7 @@ def _bind_show_profile_photo(db, uid: str) -> Callable[..., str]:
 
 _PHOTO_NOUN = re.compile(r"\b(?:photos?|pictures?|pics?|images?)\b", re.IGNORECASE)
 _PHOTO_VERB = re.compile(
-    r"\b(?:click|show|open|go|jump|display|switch|move|swipe|bring|pull|view|see|look)\b",
+    r"\b(?:click|tap|show|open|go|jump|display|switch|move|swipe|bring|pull|view|see|look)\b",
     re.IGNORECASE,
 )
 _PHOTO_NEXT = re.compile(r"\bnext\b", re.IGNORECASE)
@@ -874,9 +874,12 @@ def detect_photo_command(message: str) -> tuple[str, int | None] | None:
 
     ``op`` is ``goto`` (``index`` is the 1-based photo as spoken),
     ``next``, ``previous`` or ``last`` (``index`` is ``None`` for those).
-    Strict by design, like the other detectors here: a photo noun plus
-    a target, and a command verb for goto/last — so chat *about* photos
-    stays with the model.
+    A command verb plus a SINGULAR photo noun with no number ("tap on
+    her photo") also returns ``goto`` with ``index`` ``None`` — the
+    tool then asks which photo, instead of the model improvising a
+    refusal. Strict by design, like the other detectors here: a photo
+    noun plus a target, and a command verb for goto/last — so chat
+    *about* photos stays with the model.
     """
     m = (message or "").strip()
     if not m or len(m) > 200:
@@ -897,6 +900,11 @@ def detect_photo_command(message: str) -> tuple[str, int | None] | None:
     number = _PHOTO_NUMBER.search(m)
     if number:
         return "goto", int(number.group(1))
+    noun = _PHOTO_NOUN.search(m)
+    if noun and not noun.group(0).lower().endswith("s"):
+        # Verb + singular photo noun, no target ("tap on her photo"):
+        # a photo ask with the number missing — the tool asks which.
+        return "goto", None
     return None
 
 

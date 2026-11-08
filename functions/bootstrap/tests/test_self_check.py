@@ -66,6 +66,7 @@ class _Harness:
         self.filter_fail = filter_fail  # 1-based call number to fail, or None
         self.filter_no_marker = filter_no_marker
         self.record_feedback_calls = []
+        self.photo_outcomes = []
 
     async def nav_fn(self, dest):
         if dest["key"] in self.fail_nav:
@@ -135,9 +136,18 @@ class _Harness:
                 "recall": lambda topic="": "recalled",
                 "open_profile": open_profile,
                 "go_back": go_back,
+                "show_profile_photo": self._show_profile_photo,
             }
         )
         return fns
+
+    async def _show_profile_photo(self, op="goto", index=0):
+        # Healthy-app stub: the carousel is open with 3 photos and the
+        # asked photo lands. Tests override photo_outcome(s) to model
+        # the failure shapes.
+        if self.photo_outcomes:
+            return self.photo_outcomes.pop(0)
+        return "showing: photo 2 of 3 — the carousel now shows photo 2."
 
     def runner(self) -> SelfCheckRunner:
         return SelfCheckRunner(
@@ -189,6 +199,60 @@ def test_runner_pass_path_and_write_revert_restores():
     assert "0 failed" in report
     assert "Self-check summary" in report
     assert "SELF-CHECK" not in report
+
+
+# --- photo-open check (executed for real; founder 2026-11-07 ~21:56) --------
+
+def test_runner_executes_show_profile_photo_and_passes():
+    h = _Harness()
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    result = by_name["tool:show_profile_photo"]
+    # Executed through the production binding — never a probe.
+    assert result.status == self_check.PASS
+    assert "photo 2 of 3" in result.detail
+
+
+def test_photo_check_fails_when_the_app_never_confirms():
+    h = _Harness()
+    h.photo_outcomes = [
+        "The app did NOT change the photo — tell the user it didn't work"
+    ]
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:show_profile_photo"].status == self_check.FAIL
+    # The failure filed a bug record at failure time, like every FAIL.
+    assert h.bugs
+    assert any("photo" in str(b).lower() for b in h.bugs)
+
+
+def test_photo_check_single_photo_profile_verifies_photo_one():
+    h = _Harness()
+    h.photo_outcomes = [
+        "out_of_range: that profile has only 1 photo — there is no "
+        "photo 2. Tell the user there are only 1 photo; the carousel "
+        "did not move (still on photo 1).",
+        "showing: photo 1 of 1 — the carousel now shows photo 1.",
+    ]
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:show_profile_photo"].status == self_check.PASS
+
+
+def test_photo_check_fails_when_no_carousel_on_an_open_profile():
+    h = _Harness()
+    h.photo_outcomes = [
+        "no_carousel: no profile photo carousel is open right now. "
+        "Tell the user to open a profile first (open_profile can do "
+        "that), then ask again."
+    ]
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:show_profile_photo"].status == self_check.FAIL
 
 
 # --- runner: FAIL path --------------------------------------------------------
@@ -503,7 +567,12 @@ def test_suggestions_from_fails_and_skips_filed_exactly_once():
     assert "Add Point at something on a shared screen to this build" in note
 
 
-# --- nav cluster: window + same-command re-wait ----------------------------
+# --- nav cluster: the production ack wait, shared with the tool -----------
+# The check used to wait a second window the production tool never got,
+# so it passed navs real asks failed (founder, 2026-11-07). The re-wait
+# now lives in skills.app_control_queue._await_ack itself; _do_nav awaits
+# through it with NO window of its own (its coverage sits with the tool's
+# tests in test_app_control.py).
 
 
 def test_nav_default_window_matches_production_six_seconds():
@@ -536,27 +605,29 @@ def _patched_nav(monkeypatch, ack_outcomes):
     return calls
 
 
-def test_nav_rewaits_once_on_the_same_command(monkeypatch):
-    # First window silent (client watch gap), ack lands in the second:
-    # the check PASSES and only ONE command was ever queued.
-    calls = _patched_nav(monkeypatch, [None, {"ok": True}])
+def test_nav_awaits_through_the_production_ack_wait(monkeypatch):
+    # _do_nav hands the ack wait to the shared _await_ack with NO
+    # timeout of its own — the production default (one window + one
+    # same-command re-wait inside the helper) decides, exactly as it
+    # does for a real open_screen turn. One command, one await call.
+    calls = _patched_nav(monkeypatch, [{"ok": True}])
     runner = SelfCheckRunner(object(), "u1", deps=_Deps(tool_fns={}))
     status, detail, error = asyncio.run(
         runner._do_nav({"key": "explore", "label": "Explore"})
     )
     assert status == self_check.PASS
-    assert calls == {"queue": 1, "ack": 2}
+    assert calls == {"queue": 1, "ack": 1}
 
 
-def test_nav_fails_only_after_both_windows(monkeypatch):
-    calls = _patched_nav(monkeypatch, [None, None])
+def test_nav_fails_when_the_production_wait_gets_no_ack(monkeypatch):
+    calls = _patched_nav(monkeypatch, [None])
     runner = SelfCheckRunner(object(), "u1", deps=_Deps(tool_fns={}))
     status, detail, error = asyncio.run(
         runner._do_nav({"key": "explore", "label": "Explore"})
     )
     assert status == self_check.FAIL
-    assert "12s" in error  # two 6s windows, honestly reported
-    assert calls == {"queue": 1, "ack": 2}
+    assert "12s" in error  # the production total: two 6s windows
+    assert calls == {"queue": 1, "ack": 1}
 
 
 # --- readability + stranding fixes (founder, 2026-11-07 ~15:53) ---------
@@ -860,7 +931,7 @@ def test_final_group_first_timeout_still_fails_and_files_bug():
     assert by_name["nav:privacy"].status == self_check.PASS
 
 
-def test_final_group_uses_the_longer_nav_timeout(monkeypatch):
+def test_final_group_uses_the_same_production_ack_wait(monkeypatch):
     import skills.app_control_navigation as acn
     import skills.app_control_queue as acq
 
@@ -907,12 +978,13 @@ def test_final_group_uses_the_longer_nav_timeout(monkeypatch):
         ),
     )
     asyncio.run(runner.run())
-    assert self_check.FINAL_NAV_TIMEOUT == 30.0
-    # Main-section destinations keep the standard 6s window; every
-    # final-group destination gets the longer 30s window. (The
+    # Every destination — main section and final group alike — awaits
+    # through the production ack wait: no explicit timeout anywhere,
+    # so the shared helper's default window (with its one re-wait)
+    # decides for a check exactly as it does for a real turn. (The
     # return-to-chat lineups queue a command but never await an ack,
     # so they do not appear here.)
-    assert timeouts == [6.0, 6.0, 30.0, 30.0, 30.0]
+    assert timeouts == [None, None, None, None, None]
     by_name = {r.name: r for r in runner.results}
     for key in ("photos", "terms", "privacy"):
         assert by_name[f"nav:{key}"].status == self_check.PASS
