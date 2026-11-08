@@ -31,68 +31,70 @@ Future<TasteMatchLoad> loadTasteMatch(ApiClient api, String otherUid) async {
 
 /// "Taste match" — the overlap score, summary, shared tastes
 /// and date ideas. Shown under the date-sim compatibility read and as a section
-/// in the match report. While [load] is pending it shows a muted "comparing"
-/// line; when there's a match with real overlap substance it shows that. When
-/// there's NO taste content to show — one side has no public Taste page, the
-/// The taste lookup failed / degraded, OR the pair's graphs simply don't overlap
-/// (a 200 with no per-domain bars / shared favourites / tags / date ideas, only
-/// a bare score + "quite different taste graphs" line) — the card is simply
-/// ABSENT (an empty [SizedBox]), never a bare/blank card: Taste is an optional
-/// enrichment, not something whose absence the user needs told about (§ founder
-/// BUG A — a 200 "no taste data" was being turned into a "Taste match
-/// unavailable right now." error card; § founder: a 200 with no overlap was
-/// painting a blank/near-empty card on the sim screen).
+/// in the match report. When there's a match with real overlap substance it
+/// shows that. While [load] is pending (outcome is unknown) or when there's NO
+/// taste content to show — feature off / disabled, one side has no public
+/// Taste page, the lookup failed / degraded, OR the pair's graphs simply don't
+/// overlap (a 200 with no per-domain bars / shared favourites / tags / date
+/// ideas, only a bare score + "quite different taste graphs" line) — the card
+/// is simply ABSENT (an empty [SizedBox]), never a bare/blank card and never a
+/// brief "Comparing" spinner that vanishes (§ founder: Taste is optional
+/// enrichment, so when off or absent the user is never shown a transitory
+/// comparing state or error card).
 class TasteMatchCard extends StatelessWidget {
-  const TasteMatchCard({super.key, required this.load});
+  const TasteMatchCard({
+    super.key,
+    required this.load,
+    this.topSpacing = 0.0,
+  }) : initialData = null;
 
   /// For data already resolved (e.g. embedded in the match report payload):
   /// renders immediately, no pending state.
   TasteMatchCard.resolved(TasteMatchLoad value, {super.key})
-      : load = Future<TasteMatchLoad>.value(value);
+      : load = Future<TasteMatchLoad>.value(value),
+        initialData = value,
+        topSpacing = 0.0;
 
   final Future<TasteMatchLoad> load;
+  final TasteMatchLoad? initialData;
+  final double topSpacing;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     return FutureBuilder<TasteMatchLoad>(
       future: load,
+      initialData: initialData,
       builder: (context, snap) {
         final m = snap.data?.match;
         // Resolved with nothing substantive to show — no Taste page, a failure,
         // or a 200 whose graphs don't overlap (no bars/shared/tags/ideas, just a
-        // bare score + summary) → the card is absent, not a blank/error card.
-        // Only a still-pending load keeps the card up, for its "comparing" line.
+        // bare score + summary) — OR still pending while the outcome is unknown
+        // → the card is absent (never a blank/error card, and never a brief
+        // comparing/spinner state while disabled or without taste data).
         final show = m != null && m.hasOverlap;
-        if (snap.connectionState == ConnectionState.done && !show) {
+        if (!show) {
           return const SizedBox.shrink();
         }
-        return Container(
-          key: const Key('tasteMatchCard'),
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: ac.bgCard,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: ac.lineSoft, width: 0.5),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _header(ac, sample: m?.isSample == true),
-              const SizedBox(height: 12),
-              // Reached only when pending (m == null → the comparing line) or
-              // with a substantive match (the `!show` guard above returned for
-              // a resolved-but-empty one), so a non-null m here always renders.
-              if (m != null)
-                ..._body(ac, m)
-              else
-                Text(
-                  'Comparing your tastes…',
-                  key: const Key('tasteMatchLoading'),
-                  style: AymaType.sans(size: 13.5, color: ac.fgMute),
-                ),
-            ],
+        return Padding(
+          padding: EdgeInsets.only(top: topSpacing),
+          child: Container(
+            key: const Key('tasteMatchCard'),
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: ac.bgCard,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: ac.lineSoft, width: 0.5),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _header(ac, sample: m.isSample == true),
+                const SizedBox(height: 12),
+                ..._body(ac, m),
+              ],
+            ),
           ),
         );
       },

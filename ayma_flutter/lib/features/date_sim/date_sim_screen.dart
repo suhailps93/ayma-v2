@@ -127,6 +127,10 @@ class _DateSimScreenState extends State<DateSimScreen> {
   /// The taste match, fetched once when the simulation completes.
   Future<TasteMatchLoad>? _taste;
 
+  /// Cached no-taste outcome for this screen instance so re-entering the
+  /// same result (or continuing) does not fire a fresh taste request.
+  bool _noTaste = false;
+
   static const _min = 2;
   static const _max = 20;
 
@@ -239,6 +243,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
       _simMissing = false;
       _messages = const [];
       _taste = null;
+      _noTaste = false;
     });
     _simSub = _service.watchSim(simId).listen(_onSim, onError: _onListenError);
     _msgSub = _service
@@ -299,7 +304,19 @@ class _DateSimScreenState extends State<DateSimScreen> {
       _simMissing = false;
       // A user-stopped run produces no result to present: no score is written
       // (see the backend finalize) and no taste card is loaded under it.
-      if (finished && !sim.stopped) _taste = loadTasteMatch(_api, widget.uid);
+      // Cached for this screen instance: if taste already yielded no usable
+      // data, re-entering the result does not fire a fresh request.
+      if (finished && !sim.stopped && !_noTaste && _taste == null) {
+        _taste = loadTasteMatch(_api, widget.uid)..then((res) {
+          if (!mounted) return;
+          if (res.match == null || !res.match!.hasOverlap) {
+            setState(() {
+              _noTaste = true;
+              _taste = null;
+            });
+          }
+        });
+      }
     });
     _scrollToEnd();
   }
@@ -449,6 +466,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
         _simMissing = false;
         _messages = const [];
         _taste = null;
+        _noTaste = false;
         _simId = null;
       });
     } on ApiException {
@@ -648,10 +666,8 @@ class _DateSimScreenState extends State<DateSimScreen> {
                 summary: sim.summary,
               ),
             ],
-            if (_taste != null) ...[
-              const SizedBox(height: 16),
-              TasteMatchCard(load: _taste!),
-            ],
+            if (_taste != null)
+              TasteMatchCard(load: _taste!, topSpacing: 16),
           ],
         ],
       ),

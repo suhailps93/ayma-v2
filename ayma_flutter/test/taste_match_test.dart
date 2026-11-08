@@ -333,8 +333,10 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    // The card is up with its comparing line while the fetch is pending.
-    expect(find.text('Comparing your tastes…'), findsOneWidget);
+    // While the fetch is pending, no card or comparing line is shown (outcome
+    // is unknown and taste may be disabled).
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text('Comparing your tastes…'), findsNothing);
     // Past the bounded wait (longTimeout + margin) the hang degrades to
     // absent — never stuck.
     await tester.pump(const Duration(seconds: 6));
@@ -345,6 +347,217 @@ void main() {
     // The date-sim result itself is intact and usable.
     expect(find.byKey(const Key('dateSimScore')), findsOneWidget);
     expect(find.byKey(const Key('dateSimDoneButton')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'taste feature off (404 no_taste) never renders card or comparing line, '
+      'even while pending', (tester) async {
+    final tasteCompleter = Completer<http.Response>();
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/date-sim/estimate') {
+          return _json({'credits_by_messages': {'6': 60}});
+        }
+        if (req.url.path == '/taste/pair') {
+          return tasteCompleter.future;
+        }
+        return http.Response('no', 404);
+      }),
+    );
+
+    final auth = MockFirebaseAuth(signedIn: true);
+    final fs = FakeFirebaseFirestore();
+    final sim = fs
+        .collection('users')
+        .doc(auth.currentUser!.uid)
+        .collection('date_sims')
+        .doc('sim1');
+    await sim.set({
+      'status': 'done',
+      'persona': {'name': 'Maya'},
+      'banner': 'Simulated — not sent to Maya.',
+      'verdict': {
+        'score': 70,
+        'score_label': 'Worth a shot',
+        'summary': 'A promising start.',
+      },
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: DateSimScreen(
+        uid: 'her',
+        name: 'Maya',
+        api: api,
+        simId: 'sim1',
+        service: DateSimService(auth: auth, firestore: fs),
+        profiles: ProfileService(auth: auth, firestore: fs),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // While pending: NO Taste match card, NO "Comparing your tastes…" line.
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text('Comparing your tastes…'), findsNothing);
+    expect(find.text('Taste match'), findsNothing);
+
+    // Now complete with 404 no_taste (as returned when qloo_enabled is off).
+    tasteCompleter.complete(_json({
+      'detail': {'code': 'no_taste', 'message': 'Add a taste page'}
+    }, 404));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // After resolving: card is still completely absent.
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text('Comparing your tastes…'), findsNothing);
+    expect(find.text('Taste match'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'caches no-taste outcome for the screen instance so re-entering does not '
+      'fire a fresh taste request', (tester) async {
+    var tasteCallCount = 0;
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/date-sim/estimate') {
+          return _json({'credits_by_messages': {'6': 60}});
+        }
+        if (req.url.path.endsWith('/continue')) {
+          return http.Response(
+            '{"status":"done"}',
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }
+        if (req.url.path == '/taste/pair') {
+          tasteCallCount++;
+          return _json({
+            'detail': {'code': 'no_taste', 'message': 'Add a taste page'}
+          }, 404);
+        }
+        return http.Response('no', 404);
+      }),
+    );
+
+    final auth = MockFirebaseAuth(signedIn: true);
+    final fs = FakeFirebaseFirestore();
+    final sim = fs
+        .collection('users')
+        .doc(auth.currentUser!.uid)
+        .collection('date_sims')
+        .doc('sim1');
+    await sim.set({
+      'status': 'done',
+      'persona': {'name': 'Maya'},
+      'banner': 'Simulated — not sent to Maya.',
+      'verdict': {
+        'score': 70,
+        'score_label': 'Worth a shot',
+        'summary': 'A promising start.',
+      },
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: DateSimScreen(
+        uid: 'her',
+        name: 'Maya',
+        api: api,
+        simId: 'sim1',
+        service: DateSimService(auth: auth, firestore: fs),
+        profiles: ProfileService(auth: auth, firestore: fs),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tasteCallCount, 1);
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+
+    // Re-enter the result state: e.g. continuation turn that finishes.
+    await sim.update({'status': 'running'});
+    await tester.pump(const Duration(milliseconds: 50));
+    await sim.update({'status': 'done'});
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Taste request was NOT fired again (call count is still 1).
+    expect(tasteCallCount, 1);
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'renders real taste match when feature is on, but nothing while pending',
+      (tester) async {
+    final tasteCompleter = Completer<http.Response>();
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/date-sim/estimate') {
+          return _json({'credits_by_messages': {'6': 60}});
+        }
+        if (req.url.path == '/taste/pair') {
+          return tasteCompleter.future;
+        }
+        return http.Response('no', 404);
+      }),
+    );
+
+    final auth = MockFirebaseAuth(signedIn: true);
+    final fs = FakeFirebaseFirestore();
+    final sim = fs
+        .collection('users')
+        .doc(auth.currentUser!.uid)
+        .collection('date_sims')
+        .doc('sim1');
+    await sim.set({
+      'status': 'done',
+      'persona': {'name': 'Maya'},
+      'banner': 'Simulated — not sent to Maya.',
+      'verdict': {
+        'score': 70,
+        'score_label': 'Worth a shot',
+        'summary': 'A promising start.',
+      },
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: DateSimScreen(
+        uid: 'her',
+        name: 'Maya',
+        api: api,
+        simId: 'sim1',
+        service: DateSimService(auth: auth, firestore: fs),
+        profiles: ProfileService(auth: auth, firestore: fs),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // While pending: NOTHING shown.
+    expect(find.byKey(const Key('tasteMatchCard')), findsNothing);
+    expect(find.text('Comparing your tastes…'), findsNothing);
+
+    // Complete with real match.
+    tasteCompleter.complete(_json(_taste()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // Now rendered with score and categories!
+    expect(find.byKey(const Key('tasteMatchCard')), findsOneWidget);
+    expect(find.text('Taste match'), findsOneWidget);
+    expect(find.byKey(const Key('tasteMatchScore')), findsOneWidget);
+    expect(find.text('Strong overlap'), findsOneWidget);
+    expect(find.text('Comparing your tastes…'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
