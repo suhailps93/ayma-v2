@@ -5729,6 +5729,18 @@ async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
     lang_text = str(prof.get(_voices.PF_AYMA_VOICE_LANGUAGE, "")).strip()
     lang_code = (_voices.bcp47_hint(lang_text) or "") if lang_text else ""
     accent_text = str(prof.get(_voices.PF_AYMA_VOICE_ACCENT, "")).strip()
+    # Founder rule (2026-11-07): never report a current voice the selected
+    # model does not support. Resolve the saved voice against the active
+    # stack's own list; when it fell back, say so (voice_fell_back +
+    # saved_voice_id) so the picker can tell the user instead of silently
+    # showing a wrong voice.
+    saved_voice_id = voice_id
+    voice_id, voice_fell_back = voice_catalog.resolve_stack_voice(
+        mode=mode,
+        realtime_model_id=realtime_id,
+        tts_id=tts_id,
+        voice_id=voice_id,
+    )
     return {
         **cat,
         "current": {
@@ -5738,6 +5750,8 @@ async def voice_engines(uid: str = Depends(require_uid)) -> dict[str, object]:
             "stt_id": stt_id,
             "tts_id": tts_id,
             "voice_id": voice_id,
+            "voice_fell_back": voice_fell_back,
+            "saved_voice_id": saved_voice_id if voice_fell_back else "",
             "language_code": lang_code if voice_catalog.is_valid_language(lang_code) else "",
             # Dedicated free-text ACCENT (§13.9), separate from the language
             # selector above — HOW Ayma sounds, honoured only by accent-capable
@@ -6053,15 +6067,18 @@ async def voice_preview_endpoint(
     voice_name: str, uid: str = Depends(require_uid)
 ) -> dict[str, str]:
     """A short spoken "Hi, I'm Ayma…" sample in ``voice_name`` for the settings
-    picker (§13.3). Generated once per preset via Gemini TTS, then cached in
-    Storage — subsequent calls just return the cached clip's URL."""
-    import voices
+    picker (§13.3): the recorded clip for any catalog voice, served from the
+    cached preview library in Storage."""
     import voice_preview
 
-    if not voices.is_valid_voice(voice_name):
-        raise HTTPException(status_code=404, detail="Unknown voice preset.")
+    if not voice_preview.is_previewable_voice(voice_name):
+        raise HTTPException(status_code=404, detail="Unknown voice.")
     try:
         url = await voice_preview.preview_url(voice_name)
+    except voice_preview.PreviewNotRecordedError:
+        raise HTTPException(
+            status_code=404, detail="No preview recorded for this voice yet."
+        )
     except Exception as exc:  # noqa: BLE001 - surface TTS/storage failure as 502
         logger.exception("voice preview failed for %s", voice_name)
         raise HTTPException(

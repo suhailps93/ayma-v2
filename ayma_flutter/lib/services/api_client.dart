@@ -5811,6 +5811,8 @@ class VoiceSelection {
     this.voiceId = '',
     this.languageCode = '',
     this.accent = '',
+    this.voiceFellBack = false,
+    this.savedVoiceId = '',
   });
   final String mode; // 'realtime' | 'cascade'
   final String realtimeModelId;
@@ -5824,6 +5826,13 @@ class VoiceSelection {
   /// language selector. Honoured only by accent-capable voice models.
   final String accent;
 
+  /// Server-reported (only meaningful on a catalog's `current`): the saved
+  /// voice was not supported by the active model, so [voiceId] is the
+  /// model's supported default instead. [savedVoiceId] is what was saved.
+  /// Never sent back — [toMap] keeps the documented POST body shape.
+  final bool voiceFellBack;
+  final String savedVoiceId;
+
   factory VoiceSelection.fromMap(Map m) => VoiceSelection(
         mode: m['mode'] as String? ?? 'realtime',
         realtimeModelId: m['realtime_model_id'] as String? ?? '',
@@ -5833,6 +5842,8 @@ class VoiceSelection {
         voiceId: m['voice_id'] as String? ?? '',
         languageCode: m['language_code'] as String? ?? '',
         accent: m['accent'] as String? ?? '',
+        voiceFellBack: m['voice_fell_back'] as bool? ?? false,
+        savedVoiceId: m['saved_voice_id'] as String? ?? '',
       );
 
   Map<String, dynamic> toMap() => {
@@ -5865,6 +5876,8 @@ class VoiceSelection {
         voiceId: voiceId ?? this.voiceId,
         languageCode: languageCode ?? this.languageCode,
         accent: accent ?? this.accent,
+        voiceFellBack: voiceFellBack,
+        savedVoiceId: savedVoiceId,
       );
 }
 
