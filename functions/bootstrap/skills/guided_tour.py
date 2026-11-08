@@ -22,10 +22,16 @@ the end (the Nov 5 failure). Now the tour LOOKS before it highlights:
   client confirms the user IS on its screen but the control is genuinely
   absent (``reason='anchor_absent'`` — a gated feature), or when the step
   can't be done in the current mode (``skip_in_voice``).
-* After the user's tap, ``advance`` RE-READS the screen (a ``tour_probe``
-  command whose ack carries the current screen/route) and moves on only when
-  the landing matches the step's ``expect_screen``/``expect_route``. A wrong
-  landing re-guides: the same step is presented again, never skipped past.
+
+ACTION-DRIVEN STEPS (founder, 2026-11-08): nothing guesses where a tap landed
+any more. A step with a ``command`` in the registry is performed by Ayma: the
+client intercepts the tap on the highlight (it never reaches the real control),
+runs that command through the app-command handlers and reports the confirmed
+outcome on ``tour_event`` — ``performed``, or ``action_failed`` (the tour stays
+on the step, says so plainly and the user can tap again). The tour is
+USER-PACED: a performed step does NOT advance. It waits for the user's go (Next
+on the card, or a spoken/typed "next"), with no timed advance anywhere. On a
+live call the go is spoken only, so nothing ever needs a tap near the orb.
 
 Turn-taking (why several tools, one step per call): Ayma must say each step's
 line in her OWN voice between steps, in BOTH text and voice, so a single
@@ -34,11 +40,11 @@ blocking call that drove the whole tour could never narrate per step:
 * ``start_guided_tour`` begins the tour, spotlights step 0 and returns its
   line for Ayma to speak;
 * ``advance_guided_tour`` WAITS (bounded) for the user's response to the
-  currently spotlighted step — a real tap on the control (``tapped``), the
-  card's Next (``skip``), a card/back signal (``back``) or ``stop`` — then
-  presents the next step and returns its line;
-* ``skip_guided_tour`` moves past the current step WITHOUT a tap (the user's
-  spoken/typed "next" / "skip");
+  currently spotlighted step: a performed or failed action (reported once,
+  the step stays), a tap on a step with nothing to perform (``tapped``), the
+  card's Next (``skip``), a card/back signal (``back``) or ``stop``;
+* ``skip_guided_tour`` moves past the current step (the user's spoken/typed
+  "next" / "skip" — the go after a performed step, or a move on without it);
 * ``back_guided_tour`` returns to the previous step;
 * ``stop_guided_tour`` ends the tour on request (state inactive server-side).
 
@@ -60,6 +66,7 @@ from typing import Callable
 import app_registry
 
 from ._base import Skill
+from .app_control_navigation import _resolve_path
 from .app_control_queue import (
     _await_ack,
     _prompt,
@@ -75,10 +82,6 @@ logger = logging.getLogger("ayma.guided_tour")
 # plain navigate; still bounded, so a dead client never hangs the turn.
 _SPOTLIGHT_ACK_TIMEOUT_SECONDS = 10.0
 
-# How long to wait for a tour_probe ack (the post-tap screen re-read). Short:
-# the client only reports its current screen/route, no navigation involved.
-_PROBE_ACK_TIMEOUT_SECONDS = 6.0
-
 # How many times one step presentation may navigate-and-retry after a
 # 'not_on_screen' report before giving up honestly (never skipping).
 _NAV_RETRIES = 1
@@ -93,6 +96,15 @@ _TAP_TIMEOUT_SECONDS = 110.0  # voice: the long quiet wait (no cap pressure)
 # reports honestly and the next advance resumes, so nothing is lost.
 _TAP_TIMEOUT_SYNC_SECONDS = 25.0
 _TAP_POLL_SECONDS = 0.4
+# Once a step's action has been performed and reported, there is nothing left
+# to wait on but the user's go, which reaches the backend on its own (the
+# skip tool, or Next's event + kick). An ``advance`` then only checks briefly
+# for a Next already on its way, instead of holding a turn open.
+_GO_CHECK_SECONDS = 3.0
+
+# The client's report of a step's command: consumed once per attempt, and the
+# step stays where it is.
+_OUTCOME_EVENTS = ("performed", "action_failed")
 
 # How long a tour state counts as live. ``tour_state`` kept ``active:true``
 # forever across app kills, so a later ``advance`` polled a dead overlay for
@@ -219,6 +231,31 @@ def _clear_event(db, uid: str) -> None:
         pass
 
 
+def _outcome_reported(db, uid: str, event: dict) -> bool:
+    """Whether this ``performed``/``action_failed`` attempt was already handed
+    to Ayma. The event doc is left in place (deleting it could swallow a Next
+    written in the same instant), so without this she would narrate it again
+    on every ``advance``."""
+    state = _read_state(db, uid)
+    return (
+        "reported_attempt" in state
+        and event.get("attempt") == state.get("reported_attempt")
+    )
+
+
+def _mark_outcome_reported(db, uid: str, event: dict) -> None:
+    """Record the attempt on the state, leaving ``updated_at`` alone: that is
+    the presentation timestamp ``_is_event_fresh`` compares the user's go
+    against, and the TTL's clock."""
+    _state_doc(db, uid).set(
+        {
+            "reported_attempt": event.get("attempt"),
+            "performed": event.get("event") == "performed",
+        },
+        merge=True,
+    )
+
+
 _UNSET = object()
 
 
@@ -226,8 +263,10 @@ async def _await_tour_event(
     db, uid: str, index: int, timeout: float, state_updated_at: object = _UNSET
 ) -> dict | None:
     """Poll the ``tour_event`` doc until the client reports the user's
-    response to THIS ``index`` — ``tapped`` (the real control), ``skip``
-    (the card's Next), ``back`` or ``stop`` — or the bounded wait runs out.
+    response to THIS ``index`` — ``performed`` / ``action_failed`` (the step's
+    command ran, or didn't; each attempt counts once), ``tapped`` (a step with
+    nothing to perform), ``skip`` (the card's Next), ``back`` or ``stop`` — or
+    the bounded wait runs out.
     Returns the event dict or ``None`` on timeout. Reads run off the event
     loop so live audio is never blocked.
 
@@ -250,6 +289,10 @@ async def _await_tour_event(
             and _index_of(data) == index
             and data.get("event")
             and _is_event_fresh(data, state_updated_at)
+            and not (
+                data.get("event") in _OUTCOME_EVENTS
+                and await asyncio.to_thread(_outcome_reported, db, uid, data)
+            )
         ):
             return data
         if time.monotonic() >= deadline:
@@ -264,7 +307,9 @@ def _steps() -> list[dict]:
     return app_registry.guided_tour_steps()
 
 
-def _step_payload(index: int, total: int, step: dict) -> dict:
+def _step_payload(
+    index: int, total: int, step: dict, command: dict | None = None
+) -> dict:
     return {
         "action": "tour_step",
         "index": index,
@@ -275,6 +320,7 @@ def _step_payload(index: int, total: int, step: dict) -> dict:
         "screen": step.get("screen"),
         "headline": str(step.get("headline") or ""),
         "say": str(step.get("say") or ""),
+        "command": command,
     }
 
 
@@ -285,71 +331,21 @@ def _destination(key: str) -> dict | None:
     return None
 
 
-# The client reports its screen as an AppContext slug or a route; both are
-# normalized to a registry destination key for landing checks.
-_SLUG_TO_KEY = {
-    "ayma": "ayma",
-    "explore": "explore",
-    "messages": "messages",
-    "dm": "messages",
-    "profile_tab": "profile",
-    "profile": "profile",
-    "story": "story",
-    "matches": "matches",
-    "skills": "skills",
-}
-
-
-def _landed_key(screen: str, route: str) -> str | None:
-    """The destination key a reported (screen slug, route) pair lands on.
-
-    The route wins when it names a real page — EXCEPT the shell route
-    '/': the shell's four tabs share that one route (an IndexedStack,
-    not router navigation), so '/' carries no tab information and the
-    screen slug is the only signal saying which tab the user is on.
-    Trusting '/' over the slug made every tab step re-guide forever:
-    the probe after tapping Messages reports ('messages', '/'), '/'
-    resolves to the Ayma destination, and the landing never matched
-    'messages' (founder report 2026-11-08).
-    """
-    if route:
-        dest = app_registry.destination_for_route(route)
-        if dest is not None and str(dest.get("path") or "") != "/":
-            return str(dest.get("key") or "") or None
-    return _SLUG_TO_KEY.get((screen or "").strip())
-
-
-def _landed_matches(step: dict, landed: dict) -> bool:
-    """Whether the screen the user actually landed on (a ``tour_probe``
-    report: ``{screen, route}``) is where this step's tap was supposed to
-    take them (the step's ``expect_screen`` / ``expect_route``)."""
-    expect_screen = str(step.get("expect_screen") or "")
-    expect_route = str(step.get("expect_route") or "")
-    if not expect_screen and not expect_route:
-        return True
-    route = str(landed.get("route") or "")
-    key = _landed_key(str(landed.get("screen") or ""), route)
-    if expect_screen and key == expect_screen:
-        return True
-    if expect_route and route.startswith(expect_route):
-        return True
-    if expect_screen:
-        # Some destinations share a landing page (the appearance / web-research
-        # reports resolve to the Skills page when no report exists yet): the
-        # expected destination's own registry path IS a valid landing.
-        dest = _destination(expect_screen)
-        if dest is not None and route and route == str(dest.get("path") or ""):
-            return True
-    return False
-
-
-def _expected_label(step: dict) -> str:
-    """The spoken name of where a step's tap should land."""
-    key = str(step.get("expect_screen") or "")
-    dest = _destination(key) if key else None
-    if dest is not None:
-        return str(dest.get("label") or key)
-    return key or "the next page"
+def _step_command(db, uid: str, step: dict) -> dict | None:
+    """The app command Ayma performs for this step, or ``None`` when there is
+    nothing to perform. A ``navigate`` names a destination key and takes its
+    path from the same resolver ``open_screen`` uses, so the rows that open
+    the user's latest report land exactly where the real row would."""
+    command = step.get("command")
+    if not isinstance(command, dict):
+        return None
+    if command.get("action") != "navigate":
+        return dict(command)
+    dest = _destination(str(command.get("screen") or ""))
+    if dest is None:
+        return None
+    path, _ = _resolve_path(db, uid, dest)
+    return {"action": "navigate", "screen": dest["key"], "path": path}
 
 
 # --- screen reads + navigation (the look before the highlight) ------------------
@@ -364,24 +360,11 @@ async def _spotlight(
     is then up, at the anchor's measured rect); ``ok=false`` carries
     ``reason`` ('not_on_screen' / 'anchor_absent') plus where the user
     actually is. Returns ``None`` when the client never acked (timeout)."""
-    cmd_id = _queue_command(db, uid, _step_payload(index, total, step))
+    command = await asyncio.to_thread(_step_command, db, uid, step)
+    cmd_id = _queue_command(db, uid, _step_payload(index, total, step, command))
     return await _await_ack(
         db, uid, cmd_id, timeout=_SPOTLIGHT_ACK_TIMEOUT_SECONDS
     )
-
-
-async def _probe_screen(db, uid: str) -> dict | None:
-    """Re-read the user's CURRENT screen: queue a ``tour_probe`` and return
-    its ack (``{screen, route, …}``), or ``None`` when un-acked. No UI is
-    shown for a probe — it is purely the look."""
-    cmd_id = _queue_command(db, uid, {"action": "tour_probe"})
-    ack = await _await_ack(db, uid, cmd_id, timeout=_PROBE_ACK_TIMEOUT_SECONDS)
-    if ack is None or not ack.get("ok"):
-        return None
-    return {
-        "screen": str(ack.get("screen") or ""),
-        "route": str(ack.get("route") or ""),
-    }
 
 
 async def _navigate_to_step_screen(db, uid: str, step: dict) -> bool:
@@ -535,33 +518,52 @@ def _say_directive(index: int, total: int, step: dict) -> str:
         f"Guided tour — step {index + 1} of {total} is now spotlighted with its callout card. "
         f"Say ONLY this to the user, warmly and in your own voice, about THIS "
         f"highlighted control (don't mention any other feature yet): "
-        f"\"{step['say']}\" Then call advance_guided_tour — it waits until they "
-        "actually TAP the highlighted control and moves on ONLY then (after a tap "
-        "it re-checks the screen and re-guides if they didn't land where the tap "
-        "should have taken them). "
-        "If they say 'next' or 'skip', call skip_guided_tour to move past this "
-        "step without a tap. "
+        f"\"{step['say']}\" Then call advance_guided_tour — it waits for them "
+        "and tells you what happened. "
+        "If they say 'next' or 'skip', call skip_guided_tour to move on. "
         "If they say 'back' or 'previous', call back_guided_tour to return to "
         "the previous step. "
         "Only call stop_guided_tour if they ask to stop or quit."
     )
 
 
-def _reguide_directive(
-    index: int, total: int, step: dict, landed: dict
-) -> str:
-    """The user tapped the highlighted control but the screen re-read says
-    they are NOT where that tap should have taken them. The same step has
-    been re-presented (its spotlight is up again); Ayma says so honestly and
-    invites the tap again — the tour has NOT advanced."""
-    where = str(landed.get("route") or landed.get("screen") or "another page")
+def _go_prompt(voice: bool) -> str:
+    return "say next" if voice else "tap Next"
+
+
+def _performed_directive(index: int, total: int, step: dict, voice: bool) -> str:
+    """The step's command ran and is confirmed. The tour stays here until the
+    user's go — it never moves on by itself."""
+    headline = str(step.get("headline") or "that")
     return (
-        f"Guided tour — the user tapped, but they are on {where!r}, not "
-        f"{_expected_label(step)} yet, so the tour has NOT moved on. "
-        f"Step {index + 1} of {total} is highlighted again. Gently tell them "
-        f"they're not on {_expected_label(step)} yet and to tap the "
-        "highlighted control — then call advance_guided_tour again. "
-        "If they say 'next' or 'skip', call skip_guided_tour instead."
+        f"Guided tour — step {index + 1} of {total}: {headline!r} is now open, "
+        "confirmed by the app. The tour has NOT moved on. In one short line, "
+        f"invite them to have a look and to {_go_prompt(voice)} when they're "
+        "ready. Do NOT call advance_guided_tour now — wait for them. When they "
+        "say 'next' or 'skip', call skip_guided_tour."
+    )
+
+
+def _action_failed_directive(index: int, step: dict, voice: bool) -> str:
+    """The step's command did not run: stay, and say so plainly."""
+    headline = str(step.get("headline") or "that")
+    return (
+        f"Guided tour — step {index + 1}: {headline!r} did NOT open; the app "
+        "reported the action failed. The tour has NOT moved on and the "
+        "highlight is still up. Tell them plainly it didn't open, do not "
+        "guess why, and invite them to tap the highlight to try again or "
+        f"to {_go_prompt(voice)} to move on. Do NOT call advance_guided_tour "
+        "now — wait for them."
+    )
+
+
+def _waiting_for_go(index: int) -> str:
+    """Nothing new since the performed step was reported."""
+    return (
+        f"Still on step {index + 1} — it is open and the tour is waiting for "
+        "the user's go. Do not repeat yourself; say nothing unless they speak. "
+        "Do not call advance_guided_tour again. When they say 'next' or "
+        "'skip', call skip_guided_tour."
     )
 
 
@@ -680,19 +682,24 @@ def _bind_advance_guided_tour(
     db, uid: str, voice: bool = False, tap_timeout: float | None = None
 ) -> Callable[..., object]:
     async def advance_guided_tour() -> str:
-        # Waits for the user's response to the CURRENT step: a real tap on
-        # the spotlighted control (the only event that counts as completing
-        # the step — and only after the post-tap screen re-read confirms the
-        # landing), the card's Next ('skip'), a 'back' signal, or 'stop'.
+        # Waits for the user's response to the CURRENT step. A step's command
+        # being performed (or failing) is reported to Ayma but never moves the
+        # tour: only the user's go does — Next ('skip'), a tap on a step with
+        # nothing to perform ('tapped'), or the spoken go via skip_guided_tour.
         steps = _steps()
         state, current, error = await _gate(db, uid)
         if error is not None:
             return error
         wait = _TAP_TIMEOUT_SECONDS if tap_timeout is None else tap_timeout
+        performed = bool(state.get("performed"))
+        if performed:
+            wait = min(wait, _GO_CHECK_SECONDS)
         event = await _await_tour_event(
             db, uid, current, wait, state_updated_at=state.get("updated_at")
         )
         if event is None:
+            if performed:
+                return _waiting_for_go(current)
             step = steps[current]
             control = str(step.get("headline") or "the highlighted control")
             return (
@@ -713,30 +720,16 @@ def _bind_advance_guided_tour(
             return await _present_previous(db, uid, current, voice)
         if kind == "skip":
             return await _present_next(db, uid, current, voice)
-        # 'tapped': the step completes only when the re-read confirms the
-        # landing (tap steps that navigate carry an expectation; 'look'
-        # steps and stay-here steps have none and complete on the tap).
-        step = steps[current]
-        if step.get("action", "tap") == "tap" and (
-            step.get("expect_screen") or step.get("expect_route")
-        ):
-            landed = await _probe_screen(db, uid)
-            if landed is not None and not _landed_matches(step, landed):
-                status, shown = await _present_step(db, uid, current, voice)
-                if status == "shown" and shown is not None:
-                    return _reguide_directive(
-                        current, len(steps), shown, landed
-                    )
-                return _still_waiting(current, steps)
-            if landed is None:
-                # The re-read itself went un-acked (an old client without
-                # tour_probe, or a dead one): the tap was real, so don't
-                # strand the tour on it — but never claim verification.
-                logger.warning(
-                    "guided tour: step %d landing probe un-acked — "
-                    "advancing on the tap alone",
-                    current,
+        if kind in _OUTCOME_EVENTS:
+            await asyncio.to_thread(_mark_outcome_reported, db, uid, event)
+            if kind == "performed":
+                return _performed_directive(
+                    current, len(steps), steps[current], voice
                 )
+            return _action_failed_directive(current, steps[current], voice)
+        # 'tapped': a step with nothing to perform completes on the tap. An
+        # older client still sends it for a step it pressed through to, so the
+        # tour moves on, claiming nothing about where the user landed.
         return await _present_next(db, uid, current, voice)
 
     return advance_guided_tour
@@ -749,9 +742,9 @@ def _bind_skip_guided_tour(
     db, uid: str, voice: bool = False
 ) -> Callable[..., object]:
     async def skip_guided_tour() -> str:
-        # The user's "next" / "skip": move past the current step WITHOUT a
-        # tap and without any landing check (founder, 2026-11-07 — supersedes
-        # the 2026-11-03 no-skip rule).
+        # The user's "next" / "skip": move past the current step, whether or
+        # not its action was performed (founder, 2026-11-07 — supersedes the
+        # 2026-11-03 no-skip rule).
         state, current, error = await _gate(db, uid)
         if error is not None:
             return error
@@ -826,9 +819,7 @@ def _bind_stop_guided_tour(db, uid: str) -> Callable[..., object]:
 def _directive_reply(result: str, state: dict) -> str:
     """Translate a bound tool's model directive into the user-facing reply
     for a deterministic text turn."""
-    if result.startswith("Guided tour — step") or result.startswith(
-        "Guided tour — the user tapped"
-    ):
+    if result.startswith("Guided tour — step"):
         say = str(state.get("say") or "").strip()
         if say:
             return say

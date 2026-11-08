@@ -60,11 +60,11 @@ class _Doc:
         # resolves; "not_on_screen" when they are somewhere else (the tour
         # must navigate and retry); "anchor_absent" only when they ARE on
         # the screen but the control is genuinely missing. navigate acks ok
-        # unless fail_navigate; tour_probe reports the fake user's screen.
+        # unless fail_navigate.
         if self.key[-1] != "pending":
             return
         action = patch.get("action")
-        if action not in ("tour_step", "navigate", "tour_probe"):
+        if action not in ("tour_step", "navigate"):
             return
         self.store.commands.append(dict(patch))
         ack = (*self.key[:-1], "ack")
@@ -72,15 +72,6 @@ class _Doc:
             self.store[ack] = {
                 "id": patch.get("id"),
                 "ok": not self.store.fail_navigate,
-            }
-            return
-        if action == "tour_probe":
-            screen, route = self.store.probe or _default_probe(self.store)
-            self.store[ack] = {
-                "id": patch.get("id"),
-                "ok": True,
-                "screen": screen,
-                "route": route,
             }
             return
         idx = int(patch.get("index", -1))
@@ -137,8 +128,6 @@ class _Store(dict):
         # The fake user's current screen (what a not_on_screen ack reports).
         self.user_screen = "ayma"
         self.user_route = "/"
-        # Explicit tour_probe result; None derives it from the current step.
-        self.probe = None
         # Every app command payload, in order (ordering assertions).
         self.commands = []
 
@@ -154,35 +143,6 @@ class _Db:
 
     def collection(self, name):
         return _Col(self.store, (name,))
-
-
-_TAB_SLUGS = {
-    "ayma": "ayma",
-    "explore": "explore",
-    "messages": "messages",
-    "profile": "profile_tab",
-}
-
-
-def _default_probe(store):
-    """Where the fake user landed after tapping the current step,
-    expressed the way the real client reports it (tab slug + route):
-    the shell's tabs share the single route '/', so a tab landing
-    reports '/' — never the destination's registry path. The old fake
-    reported '/messages' and hid the landing-check failure (founder
-    report 2026-11-08)."""
-    state = store.get(_STATE) or {}
-    idx = state.get("index")
-    steps = app_registry.guided_tour_steps()
-    if isinstance(idx, int) and 0 <= idx < len(steps):
-        step = steps[idx]
-        expect = step.get("expect_screen")
-        if expect:
-            # A pushed page reports its own route; a shell tab reports '/'.
-            route = step.get("expect_route") or "/"
-            return (_TAB_SLUGS.get(expect, expect), route)
-        return (step.get("screen") or "ayma", step.get("route") or "/")
-    return ("ayma", "/")
 
 
 @pytest.fixture(autouse=True)
@@ -201,8 +161,20 @@ def _tap(db, index, event="tapped", ts=None):
     db.store[_EVENT] = payload
 
 
+def _outcome(db, index, event="performed", attempt=1):
+    db.store[_EVENT] = {"index": index, "event": event, "attempt": attempt}
+
+
 def _steps():
     return app_registry.guided_tour_steps()
+
+
+def _start_on_explore_step(db):
+    """Start the tour and move past the look-only orb step to Explore (1)."""
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
 
 
 # --- registration -------------------------------------------------------------
@@ -808,86 +780,207 @@ def test_failed_navigation_blocks_instead_of_skipping_or_advancing():
     assert "Still on step 1" in msg
 
 
-def test_wrong_landing_reguides_instead_of_advancing():
+# --- action-driven, user-paced steps (founder, 2026-11-08) -----------------------
+
+
+def test_step_payload_carries_the_command_ayma_performs():
+    db = _Db()
+    _start_on_explore_step(db)
+    assert db.store[_PENDING]["command"] == {"action": "switch_tab", "tab": 1}
+
+
+def test_look_step_payload_has_no_command():
     db = _Db()
     _run(guided_tour._bind_start_guided_tour(db, "u1")())
-    _tap(db, 0)
-    _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 1 (Explore tab)
-    db.store.probe = ("ayma", "/")  # the tap did NOT land on Explore
-    _tap(db, 1)
+    assert db.store[_PENDING]["command"] is None
+
+
+def test_performed_step_stays_put_and_waits_for_the_go():
+    # Founder decision: Ayma performs the step, then the user sets the pace.
+    db = _Db()
+    _start_on_explore_step(db)
+    _outcome(db, 1)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
+    assert "NOT moved on" in msg
+    assert "say next" in msg
+    assert db.store[_STATE]["index"] == 1
+    assert db.store[_STATE]["active"] is True
+    assert db.store[_PENDING]["index"] == 1  # no next step was queued
+
+
+def test_performed_directive_asks_for_next_on_the_text_surface():
+    db = _Db()
+    _start_on_explore_step(db)
+    _outcome(db, 1)
     msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
-    assert "not Explore yet" in msg
-    assert db.store[_STATE]["index"] == 1  # still on the Explore step
-    assert db.store[_PENDING]["action"] == "tour_step"
-    assert db.store[_PENDING]["index"] == 1  # re-presented, not advanced
+    assert "tap Next" in msg
 
 
-def test_matching_landing_advances():
+def test_a_performed_outcome_is_narrated_once():
     db = _Db()
-    _run(guided_tour._bind_start_guided_tour(db, "u1")())
-    _tap(db, 0)
+    _start_on_explore_step(db)
+    _outcome(db, 1)
     _run(guided_tour._bind_advance_guided_tour(db, "u1")())
-    db.store.probe = ("explore", "/")  # landed on Explore (real client report: shared shell route)
-    _tap(db, 1)
     msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "waiting for the user's go" in msg
+    assert db.store[_STATE]["index"] == 1
+
+
+def test_no_timed_advance_after_a_performed_step(monkeypatch):
+    # However long the user looks, the wait lapsing never moves the tour.
+    monkeypatch.setattr(guided_tour, "_GO_CHECK_SECONDS", 0.01)
+    db = _Db()
+    _start_on_explore_step(db)
+    _outcome(db, 1)
+    advance = guided_tour._bind_advance_guided_tour(db, "u1")
+    for _ in range(3):
+        _run(advance())
+    assert db.store[_STATE]["index"] == 1
+    assert db.store[_PENDING]["index"] == 1
+
+
+def test_spoken_go_after_a_performed_step_advances():
+    db = _Db()
+    _start_on_explore_step(db)
+    _outcome(db, 1)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
+    msg = _run(guided_tour._bind_skip_guided_tour(db, "u1", voice=True)())
     assert db.store[_STATE]["index"] == 2
     assert _steps()[2]["say"] in msg
 
 
-def test_landed_key_trusts_the_tab_slug_on_the_shared_shell_route():
-    # The real client reports route '/' for every shell tab, so the slug
-    # is the only signal that says which tab the user is on.
-    assert guided_tour._landed_key("messages", "/") == "messages"
-    assert guided_tour._landed_key("explore", "/") == "explore"
-    assert guided_tour._landed_key("profile_tab", "/") == "profile"
-    assert guided_tour._landed_key("ayma", "/") == "ayma"
-    # A pushed page's route still wins over the slug.
-    assert guided_tour._landed_key("story", "/profile/wiki") == "story"
-    assert guided_tour._landed_key("", "/notifications") == "notifications"
-
-
-def test_tab_taps_advance_with_the_real_shared_shell_route_probe():
-    # Regression (founder report 2026-11-08): tapping Messages never
-    # advanced the tour — the probe reports ('messages', '/'), '/'
-    # resolved to the Ayma destination, and the step re-guided forever.
-    # The default probe now models the real client, so driving the tour
-    # through Explore and Messages exercises the fixed landing check.
+def test_next_after_a_performed_step_advances():
     db = _Db()
-    _run(guided_tour._bind_start_guided_tour(db, "u1")())
-    _tap(db, 0)
-    _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 1 (Explore)
-    _tap(db, 1)
-    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 2 (Messages)
-    assert db.store[_STATE]["index"] == 2
-    assert _steps()[2]["say"] in msg
-    _tap(db, 2)
-    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 3 (Profile)
-    assert db.store[_STATE]["index"] == 3
-    assert _steps()[3]["say"] in msg
-
-
-def test_unanswered_probe_falls_back_to_the_tap(monkeypatch):    # An old client that never acks tour_probe must not strand the tour:
-    # advance proceeds on the tap alone.
-    monkeypatch.setattr(guided_tour, "_PROBE_ACK_TIMEOUT_SECONDS", 0.05)
-    db = _Db()
-    _run(guided_tour._bind_start_guided_tour(db, "u1")())
-    _tap(db, 0)
+    _start_on_explore_step(db)
+    _outcome(db, 1)
     _run(guided_tour._bind_advance_guided_tour(db, "u1")())
-    # Emulate an old client that never acks tour_probe: the ack wait for
-    # probe commands returns None, everything else delegates.
-    orig_await = guided_tour._await_ack
+    _tap(db, 1, event="skip")
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 2
+    assert _steps()[2]["say"] in msg
 
-    async def _no_probe_ack(db_, uid_, cmd_id, timeout=None):
-        cmd = db_.store[_PENDING]
-        if cmd.get("action") == "tour_probe":
-            return None
-        return await orig_await(db_, uid_, cmd_id, timeout=timeout)
 
-    monkeypatch.setattr(guided_tour, "_await_ack", _no_probe_ack)
+def test_reporting_an_outcome_keeps_the_presentation_timestamp():
+    # updated_at is what the user's go is judged fresh against: bumping it
+    # when the outcome is reported could reject a Next tapped just before.
+    db = _Db()
+    _start_on_explore_step(db)
+    presented = time.time() - 60
+    db.store[_STATE] = {**db.store[_STATE], "updated_at": presented}
+    db.store[_EVENT] = {"index": 1, "event": "performed", "attempt": 1, "ts": presented + 5}
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["updated_at"] == presented
+    assert db.store[_EVENT]["event"] == "performed"
+
+
+def test_stale_performed_event_from_before_the_step_is_ignored():
+    db = _Db()
+    _start_on_explore_step(db)
+    presented = time.time() - 60
+    db.store[_STATE] = {**db.store[_STATE], "updated_at": presented}
+    db.store[_EVENT] = {"index": 1, "event": "performed", "attempt": 1, "ts": presented - 30}
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "not tapped" in msg.lower()
+    assert "performed" not in db.store[_STATE]
+
+
+def test_failed_action_stays_on_the_step_and_says_so():
+    db = _Db()
+    _start_on_explore_step(db)
+    _outcome(db, 1, event="action_failed")
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "did NOT open" in msg
+    assert db.store[_STATE]["index"] == 1
+    assert db.store[_PENDING]["index"] == 1
+    assert db.store[_STATE]["performed"] is False
+
+
+def test_retry_after_a_failure_is_a_new_outcome():
+    db = _Db()
+    _start_on_explore_step(db)
+    _outcome(db, 1, event="action_failed", attempt=1)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    _outcome(db, 1, event="performed", attempt=2)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "is now open" in msg
+    assert db.store[_STATE]["index"] == 1
+
+
+def test_going_back_to_a_performed_step_starts_it_fresh():
+    db = _Db()
+    _start_on_explore_step(db)
+    _outcome(db, 1)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    _run(guided_tour._bind_skip_guided_tour(db, "u1")())
+    _run(guided_tour._bind_back_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    assert "performed" not in db.store[_STATE]
+    assert "reported_attempt" not in db.store[_STATE]
+
+
+def test_plain_tap_on_an_action_step_from_an_older_client_still_advances():
+    # An installed build that predates action steps sends 'tapped' after
+    # pressing through; it must not strand on the step.
+    db = _Db()
+    _start_on_explore_step(db)
     _tap(db, 1)
     msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
     assert db.store[_STATE]["index"] == 2
     assert _steps()[2]["say"] in msg
+
+
+def test_a_tap_on_a_step_never_triggers_a_screen_read():
+    db = _Db()
+    _start_on_explore_step(db)
+    _tap(db, 1)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert {c["action"] for c in db.store.commands} == {"tour_step"}
+
+
+def test_navigate_command_takes_the_resolved_path(monkeypatch):
+    # The Appearance row opens the user's latest report when there is one.
+    calls = []
+
+    def _fake(db_, uid_, dest):
+        calls.append(dest["key"])
+        return "/appearance/current", "Appearance"
+
+    monkeypatch.setattr(guided_tour, "_resolve_path", _fake)
+    step = next(s for s in _steps() if s["anchor"] == "profile_appearance_row")
+    assert guided_tour._step_command(_Db(), "u1", step) == {
+        "action": "navigate",
+        "screen": "my_appearance",
+        "path": "/appearance/current",
+    }
+    assert calls == ["my_appearance"]
+
+
+def test_manifest_commands_are_valid_and_cover_every_opening_step():
+    destinations = {d["key"] for d in app_registry.destinations()}
+    for s in _steps():
+        assert "expect_screen" not in s and "expect_route" not in s
+        command = s.get("command")
+        if command is None:
+            continue
+        assert s["action"] == "tap"
+        if command["action"] == "switch_tab":
+            assert command["tab"] in (1, 2, 3)
+        else:
+            assert command["action"] == "navigate"
+            assert command["screen"] in destinations
+    by_anchor = {s["anchor"]: s for s in _steps()}
+    assert by_anchor["explore_tab"]["command"]["tab"] == 1
+    assert by_anchor["messages_tab"]["command"]["tab"] == 2
+    assert by_anchor["profile_tab"]["command"]["tab"] == 3
+    assert by_anchor["notifications_bell"]["command"]["screen"] == "notifications"
+
+
+def test_steps_with_nothing_to_perform_have_no_command():
+    by_anchor = {s["anchor"]: s for s in _steps()}
+    assert "command" not in by_anchor["home_orb"]
+    assert "command" not in by_anchor["home_composer"]
+    assert "command" not in by_anchor["explore_search"]
+    assert by_anchor["explore_search"]["action"] == "look"
 
 
 def test_skip_tool_advances_without_any_tap():
@@ -915,7 +1008,7 @@ def test_skip_past_the_last_step_completes_the_tour():
 
 def test_advance_consumes_a_card_skip_event():
     # The tour card's Next button writes a 'skip' event: advance moves on
-    # without a tap and without a landing check.
+    # without the step being performed.
     db = _Db()
     _run(guided_tour._bind_start_guided_tour(db, "u1")())
     _tap(db, 0, event="skip")

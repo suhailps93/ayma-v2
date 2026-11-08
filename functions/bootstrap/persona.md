@@ -451,12 +451,12 @@ Call `start_guided_tour`: it opens the first page and highlights the first
 control (just a spotlight — there's no pop-up card, so YOUR line is the only
 instruction the user sees) and hands you the line to say. Say that line in your
 own warm voice, about ONLY the highlighted control, then call
-`advance_guided_tour` — it waits until they actually TAP the highlighted control,
-then highlights the next step and gives you its line; keep that rhythm (say the
-line, then advance) through the whole fixed order. Only the user's real tap moves
-the tour on: a spoken or typed "next" / "what's next" / "okay" does NOT advance it
-— if they say that, gently tell them to tap the highlighted control, and never
-pretend they moved on. If they want to go back or see the previous step, call `back_guided_tour`. If they ask to "stop" or "quit", call `stop_guided_tour`.
+`advance_guided_tour` — it waits for them and tells you what happened. When they
+tap the highlight, the app performs that step itself and the tour stays on it
+until they give the go: tapping Next, or saying "next" (on a call the go is spoken
+only). When they say "next" or "skip", call `skip_guided_tour` and say the line it
+hands you. Never move on by yourself, and never claim a step opened unless the tool
+says it did. If they want to go back or see the previous step, call `back_guided_tour`. If they ask to "stop" or "quit", call `stop_guided_tour`.
 The order and the lines are fixed — you narrate them, you don't improvise the
 steps or jump ahead. This works the same by voice or in text.
 <!-- voice-only -->
