@@ -65,19 +65,63 @@ class _Snap:
 
 
 class _Txn:
-    """Buffers writes and applies them on commit, like the real client."""
+    """Mirrors the real client's transaction contract (google-cloud-
+    firestore 2.x): a transaction handed out by db.transaction() is NOT
+    in progress, and any read or write through it raises "Transaction
+    not in progress, cannot be used in API requests." until it has been
+    begun — which in the real client only the firestore.transactional
+    machinery does (via _clean_up/_begin/_commit/_rollback).
+
+    The pre-fix fake ignored transaction state entirely, so the unit
+    tests stayed green while production web search failed closed on
+    every single call on 2026-11-07: web_search._reserve used a
+    hand-rolled transaction that was never begun, its first read
+    raised, and the module (by design) turned that into a failed
+    search. Chat and the deep-dive sweep both died on it.
+    """
 
     def __init__(self, db):
         self._db = db
         self._writes = []
+        self.in_progress = False
+        self._id = None
+        self._read_only = False
+        self._max_attempts = 5
+
+    # -- surface used by firestore.transactional ----------------------
+    def _clean_up(self):
+        self._writes = []
+        self.in_progress = False
+
+    def _begin(self, retry_id=None):
+        self._id = ("txn", id(self))
+        self.in_progress = True
+
+    def _commit(self):
+        self.commit()
+
+    def _rollback(self):
+        self._writes = []
+        self.in_progress = False
+
+    # -- write surface --------------------------------------------------
+    def _require_in_progress(self):
+        if not self.in_progress:
+            raise ValueError(
+                "Transaction not in progress, cannot be used in API requests."
+            )
 
     def set(self, ref, data, merge=False):
+        self._require_in_progress()
         self._writes.append((ref.key, dict(data)))
 
     def update(self, ref, data):
+        self._require_in_progress()
         self._writes.append((ref.key, dict(data)))
 
     def commit(self):
+        self._require_in_progress()
+        self.in_progress = False
         if self._db.fail_commit is not None:
             raise self._db.fail_commit
         for key, data in self._writes:
@@ -93,6 +137,10 @@ class _Ref:
         self.key = key
 
     def get(self, transaction=None):
+        if transaction is not None and not transaction.in_progress:
+            raise ValueError(
+                "Transaction not in progress, cannot be used in API requests."
+            )
         if self._db.fail_get is not None:
             raise self._db.fail_get
         return _Snap(self._db.docs.get(self.key))
@@ -170,6 +218,27 @@ def test_calls_1_to_100_go_through_and_101_is_blocked_before_any_call(
     assert outcomes[100].status == web_search.STATUS_PAUSED
     assert len(calls) == 100  # the 101st search never reached the provider
     assert db.docs[("web_search_usage", "2026-11-07")]["count"] == 100
+
+
+def test_search_succeeds_against_a_client_faithful_transaction(monkeypatch):
+    """Regression for the 2026-11-07 live failure. The quota reserve ran
+    its read-check-increment on a hand-rolled Firestore transaction that
+    the real client library never begins, so the first read raised
+    "Transaction not in progress" and EVERY search failed closed — the
+    founder's chat ask and his research-report rerun both died while the
+    old fake (which ignored transaction state) kept the suite green.
+    The fake now enforces the real contract, so this only passes when
+    the reserve runs inside a properly begun transaction."""
+    _settings(monkeypatch, key="serper-key", engine="", provider="serper")
+    db = _Db()
+    calls = []
+    _stub_serper(monkeypatch, calls)
+    first = _run(web_search.search("one", db=db, now=NOW))
+    second = _run(web_search.search("two", db=db, now=NOW))
+    assert first.status == web_search.STATUS_OK
+    assert second.status == web_search.STATUS_OK
+    assert calls == ["one", "two"]
+    assert db.docs[("web_search_usage", "2026-11-07")]["count"] == 2
 
 
 def test_counter_read_failure_fails_closed(monkeypatch):
@@ -293,6 +362,14 @@ def test_google_cse_http_error_carries_its_code(monkeypatch):
 # --- the chat tool ---------------------------------------------------------
 
 
+def _bound_tool():
+    """The web_search tool as both surfaces receive it: the registry
+    skill bound to a session (db, uid)."""
+    from skills import web_search as web_search_skill
+
+    return web_search_skill.SKILL.bind(_Db(), "u1")
+
+
 def test_chat_tool_uses_capped_search_not_research(monkeypatch):
     async def _fake_search(query, **kw):
         return _outcome(web_search.STATUS_OK, [RESULT])
@@ -302,9 +379,7 @@ def test_chat_tool_uses_capped_search_not_research(monkeypatch):
 
     monkeypatch.setattr(web_search, "search", _fake_search)
     monkeypatch.setattr(gemini, "research", _boom)
-    out = _run(
-        gemini._web_search_tool("who is Dana Reis", uid="u1", feature="chat")
-    )
+    out = _run(_bound_tool()("who is Dana Reis"))
     assert "https://example.com/dana" in out
     assert "Dana Reis — profile" in out
 
@@ -316,9 +391,42 @@ def test_chat_tool_reports_a_pause_honestly(monkeypatch):
         )
 
     monkeypatch.setattr(web_search, "search", _paused)
-    out = _run(gemini._web_search_tool("news today", uid="u1", feature="chat"))
+    out = _run(_bound_tool()("news today"))
     assert "used up for today" in out
     assert "internal error" not in out.lower()
+
+
+def test_web_search_tool_in_both_surfaces_only_when_switch_on(monkeypatch):
+    """Regression for the 2026-11-07 voice gap: web_search used to be
+    hand-appended to the TEXT tool set inside gemini.py, so the voice
+    tool set (built from this same registry composition) never had it —
+    asked to search mid voice call, Ayma had no search tool at all.
+    The tool must now ride the shared composition both surfaces draw
+    from, and only while the GEMINI_WEB_SEARCH switch is on."""
+    import dataclasses
+
+    import config
+    import skills
+
+    monkeypatch.setattr(
+        config,
+        "CONFIG",
+        dataclasses.replace(config.CONFIG, gemini_web_search=True),
+    )
+    assert "web_search" in {
+        d["name"] for d in skills.session_tool_declarations()
+    }
+    assert skills._web_search_skills(), "voice composition lost the tool"
+
+    monkeypatch.setattr(
+        config,
+        "CONFIG",
+        dataclasses.replace(config.CONFIG, gemini_web_search=False),
+    )
+    assert "web_search" not in {
+        d["name"] for d in skills.session_tool_declarations()
+    }
+    assert skills._web_search_skills() == []
 
 
 def test_research_itself_still_raises_direct_google_disabled():

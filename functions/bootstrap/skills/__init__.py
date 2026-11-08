@@ -63,6 +63,7 @@ from . import (
     remember,
     report_bug,
     rerun_web_research,
+    web_search,
     run_appearance_report,
     set_model_stack,
     set_profile_field,
@@ -86,6 +87,20 @@ def _recall_skills() -> list[Skill]:
     import context_opt
 
     return [recall.SKILL] if context_opt.recall_enabled() else []
+
+
+def _web_search_skills() -> list[Skill]:
+    """The ``web_search`` tool, present only when the web-search switch
+    (``GEMINI_WEB_SEARCH``) is on in this process — the same gate that
+    used to hand-append the tool to the text tool set inside gemini.py,
+    which is why voice never had it (founder bug 2026-11-07: asked to
+    search the web mid voice call, Ayma had no search tool at all).
+    Checked per call, not at import, so the flag flips without a
+    restart. Composed into both surfaces: session_tool_declarations /
+    make_session_tool_fns (text) and make_livekit_tools (voice)."""
+    from config import CONFIG
+
+    return [web_search.SKILL] if CONFIG.gemini_web_search else []
 
 _REGISTRY: list[Skill] = [
     followup.SKILL,
@@ -204,7 +219,7 @@ def session_tool_declarations(
     tool; ``deep_dive=True`` adds the web-search-report correct/remove tools;
     ``appearance=True`` adds the Appearance-report correct/clear tools."""
     reg = (
-        list(_REGISTRY) + _recall_skills() + _TEXT_ONLY_REGISTRY
+        list(_REGISTRY) + _recall_skills() + _web_search_skills() + _TEXT_ONLY_REGISTRY
         + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
     )
     if story:
@@ -266,7 +281,7 @@ def make_session_tool_fns(
     Every other skill binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
-    for s in (_REGISTRY + _recall_skills()):
+    for s in (_REGISTRY + _recall_skills() + _web_search_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name == "find_fact_source" and deep_dive_ctx:
@@ -601,7 +616,7 @@ def make_livekit_tools(
 
     tools = []
     for s in (
-        _REGISTRY + _recall_skills() + _STORY_MANAGE_REGISTRY
+        _REGISTRY + _recall_skills() + _web_search_skills() + _STORY_MANAGE_REGISTRY
         + app_control.VOICE_SKILLS
     ):
         description = s.declaration["description"]
