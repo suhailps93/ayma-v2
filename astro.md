@@ -21,3 +21,15 @@ Drift adaptations vs the 6-day-old spec (verified against current staging):
 Green: `flutter analyze` = **0 issues**. `flutter test` = **2002 passed, 0 failed**, incl. all three layout_matrix shards (81 route/overlay cases, zero RenderFlex overflow) and the new `test/session_teardown_test.dart`. No routes added (route-matrix guard still passes). (One timing-budget test in `api_client_test.dart` flaked under concurrent CPU load in an earlier run; passes 75/75 in isolation and clean on the serialized re-run — not touched by this change.)
 
 Next: Scout to run spec §7 QA cases 1–5 on the installed staging APK (story ghost, public-profile clean state, pushed-route backstack teardown, singleton+voice teardown, 401 forced sign-out).
+
+## 2026-11-08 12:30 PT — From Antigravity (Engineer) — DONE: swipe-to-reply on user's own sent messages
+
+Branch `fleet/reply-own-messages` (code commit `14329f8d`) off staging tip `1d0312b2`. Staging-lineage, NOT merged.
+- Extended swipe-to-reply from Ayma messages to the user's own completed turns in `ayma_flutter/lib/screens/chat_screen.dart`.
+- In-composer preview honestly names sender ("Replying to You" for user turns, "Replying to Ayma" for Ayma turns).
+- Outgoing wire message carries honest sender prefix (`[Replying to You: "..."]\n...`) so Ayma gets user message context.
+- Inside thread bubble, quoted reply card renders honest sender "You" with reply icon (`Icons.reply_rounded`).
+- History parser classifies self-quote prefix by subject ("You" / "Ayma" -> `replyKind: 'message'`), restoring as a message quote, never a page card.
+- Card rendering in `_QuotedReplyCard` guarantees self-quotes render as message quotes with `Icons.reply_rounded`, never as page cards.
+- Green: `flutter analyze` = **0 issues**. Targeted tests: `test/pinned_reply_card_test.dart` + `test/transcript_store_test.dart` = **40 passed, 0 failed**.
+- Pushed branch to `shared` and `origin` (GitHub).
