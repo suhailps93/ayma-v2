@@ -714,13 +714,15 @@ class CallStateModel(_TruncatingModel):
     # in the renderer, so an out-of-range value can never reject a send.
     ended_seconds_ago: int | None = None
     # One of the client VoiceSessionController disconnect reasons:
-    # user_stop, text_disconnect, client_idle_timeout, client_idle_guard,
-    # agent_idle_timeout, dropped, out_of_credits, error.
+    # user_stop, user_goodbye, text_disconnect, client_idle_timeout,
+    # client_idle_guard, agent_idle_timeout, dropped, out_of_credits,
+    # error.
     end_reason: str = Field(default="", max_length=32)
 
 
 _CALL_END_REASON_TEXT = {
     "user_stop": "the user hung up",
+    "user_goodbye": "the user said goodbye and hung up",
     "text_disconnect": (
         "the user ended it by typing their disconnect request in the chat"
     ),
@@ -734,6 +736,25 @@ _CALL_END_REASON_TEXT = {
 
 # Past half an hour, a finished call is history, not context.
 _CALL_JUST_ENDED_WINDOW_SECONDS = 1800
+
+
+def _just_ended_call_sentence(call_state: CallStateModel) -> str:
+    """The "a voice call with the user ended …" clause for a finished
+    call, or "" when there is nothing recent enough to report."""
+    ago = call_state.ended_seconds_ago
+    if ago is None:
+        return ""
+    ago = max(0, min(int(ago), 86400))
+    if ago > _CALL_JUST_ENDED_WINDOW_SECONDS:
+        return ""
+    if ago < 10:
+        when = "just now"
+    elif ago < 90:
+        when = f"{ago} seconds ago"
+    else:
+        when = f"{ago // 60} minutes ago"
+    reason = _CALL_END_REASON_TEXT.get(call_state.end_reason, "it ended")
+    return f"a voice call with the user ended {when} ({reason})"
 
 
 def _call_state_context(call_state: CallStateModel | None) -> str:
@@ -753,25 +774,41 @@ def _call_state_context(call_state: CallStateModel | None) -> str:
             "in the chat. If they ask you to disconnect or hang up, "
             "the app ends the call; confirm that it is ending."
         )
-    ago = call_state.ended_seconds_ago
-    if ago is None:
+    ended = _just_ended_call_sentence(call_state)
+    if not ended:
         return ""
-    ago = max(0, min(int(ago), 86400))
-    if ago > _CALL_JUST_ENDED_WINDOW_SECONDS:
-        return ""
-    if ago < 10:
-        when = "just now"
-    elif ago < 90:
-        when = f"{ago} seconds ago"
-    else:
-        when = f"{ago // 60} minutes ago"
-    reason = _CALL_END_REASON_TEXT.get(call_state.end_reason, "it ended")
     return (
-        f"Call state: a voice call with the user ended {when} "
-        f"({reason}). You WERE on that call with them. If they ask "
+        f"Call state: {ended}. You WERE on that call with them. If they ask "
         "you to disconnect, acknowledge that the call has already "
         "ended — never say you were not on a call or that there is "
         "nothing to disconnect."
+    )
+
+
+def _voice_call_state_context(call_state: CallStateModel | None) -> str:
+    """The call-state lines for a VOICE seed (`/bootstrap`).
+
+    The seed is composed for the room the user is about to talk in: by
+    the time Ayma speaks, that call IS live, so the seed must say so
+    outright. The client can only report the PREVIOUS call there (its
+    own new call has not started when it asks for the seed), so a seed
+    rendered with :func:`_call_state_context` alone stays silent — or,
+    worse, repeats the previous call's just-ended line — and the voice
+    model can answer a spoken "disconnect" as if no call were active
+    (founder defect, 2026-11-07, second occurrence). The previous call,
+    when the client reported one, is still named — as the previous
+    call, never as this one.
+    """
+    live = _call_state_context(CallStateModel(in_call=True))
+    if call_state is None or call_state.in_call:
+        return live
+    ended = _just_ended_call_sentence(call_state)
+    if not ended:
+        return live
+    return (
+        live
+        + f"\nPrevious call: {ended}. You were on that call with them too; "
+        "it is over — this is a new call."
     )
 
 
@@ -1059,7 +1096,7 @@ async def bootstrap(
             preferences_context=_preferences_context(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
             model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
-            call_state_context=_call_state_context(
+            call_state_context=_voice_call_state_context(
                 req.call_state if req else None
             ),
             app_accent_context=app_control_mod.accent_color_context(get_db(), uid),

@@ -37,6 +37,15 @@ void main() {
       'stop the call',
       'disconnect now',
       'please hang up',
+      // Question forms (founder, 2026-11-07: he typed "Can you
+      // disconnect?" on a live call and the call never ended — the
+      // model could only claim it was disconnecting).
+      'Can you disconnect?',
+      'can you disconnect',
+      'could you hang up',
+      'Can you end the call?',
+      'can you please disconnect',
+      'could you stop the call please',
     ]) {
       test('matches "$text"', () {
         expect(VoiceSessionController.isDisconnectRequest(text), isTrue);
@@ -54,6 +63,11 @@ void main() {
       'bye',
       'please end the call now and tell me a story',
       'we got disconnected yesterday',
+      // Question forms stay whole-message strict too.
+      'can you disconnect the wifi',
+      'can you disconnect my account',
+      'could you hang up my jacket',
+      'can you end the call and order pizza',
     ]) {
       test('does not match "$text"', () {
         expect(VoiceSessionController.isDisconnectRequest(text), isFalse);
