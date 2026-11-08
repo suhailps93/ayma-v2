@@ -35,6 +35,7 @@ silent (``none``) safety assessment. The spend is still metered under the
 
 from __future__ import annotations
 
+import json
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -54,6 +55,20 @@ _MAX_FLAGS = 6
 # A coaching ``tip`` is ONE short sentence. Anything longer than this is a
 # rambling paragraph, not a tip, and is dropped rather than shown.
 _TIP_MAX_CHARS = 180
+# A one-sided thread where the model returns no usable tip still gets one:
+# the user is waiting on a reply, so the honest nudge is to wait. Used only
+# when generation produced no tip at all — never overrides a real tip.
+_ONE_SIDED_FALLBACK_TIP = (
+    "Give them a little room to reply — no need to send another message yet."
+)
+# DM assist replies are short by construction (at most 4 chips, one tip, a
+# small safety block): a legit reply is a few hundred tokens. Cap the
+# completion budget well above that so a runaway field (see
+# ``_salvage_partial``) is cut off cheaply instead of burning the whole
+# 4096-token budget.
+_DM_MAX_TOKENS = 1024
+
+
 # Substrings that mark leaked raw JSON or model chain-of-thought — none can
 # occur in a genuine one-sentence coaching tip, so a tip containing any of them
 # is dropped. The UI must NEVER surface the model's reasoning or raw JSON.
@@ -221,6 +236,118 @@ def _clean_safety(result: object) -> dict[str, object]:
     return {"level": level, "reason": reason, "flags": flags[:_MAX_FLAGS]}
 
 
+def _scan_json_string(text: str, start: int) -> tuple[str, int] | None:
+    """The JSON string starting at ``text[start] == '"'`` as ``(value, end)``
+    with ``end`` just past the closing quote — or ``None`` when the string
+    runs off the end of ``text`` (a budget-truncated reply)."""
+    if start >= len(text) or text[start] != '"':
+        return None
+    out: list[str] = []
+    i = start + 1
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            if i + 1 >= len(text):
+                return None
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if ch == '"':
+            # Decode properly (\n, \uXXXX, ...) instead of trusting the
+            # hand-rolled escape handling above — fall back to it only when
+            # the span itself will not parse.
+            try:
+                return json.loads(text[start:i + 1]), i + 1
+            except Exception:  # noqa: BLE001 - salvage path
+                return "".join(out), i + 1
+        out.append(ch)
+        i += 1
+    return None
+
+
+def _salvage_partial(text: str) -> dict[str, object] | None:
+    """Recover the completed fields of a truncated JSON reply.
+
+    The model writes ``chips`` first, then ``tip`` — and the observed failure
+    is the tip running on to the token budget, cutting the JSON mid-string
+    (measured live Nov 7: two attempts cut at 4081/4082 output tokens on the
+    Alexander one-sided thread). The chips are complete in the text even
+    then, and the tip's first sentence usually is too, so a truncated reply
+    still yields a usable bar instead of an empty one. Returns ``None`` when
+    no complete chip survives.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    chips: list[str] = []
+    chips_at = text.find('"chips"')
+    if chips_at >= 0:
+        bracket = text.find("[", chips_at)
+        if bracket >= 0:
+            i = bracket + 1
+            while i < len(text):
+                ch = text[i]
+                if ch == "]":
+                    break
+                if ch == '"':
+                    scanned = _scan_json_string(text, i)
+                    if scanned is None:
+                        break
+                    value, i = scanned
+                    if value.strip():
+                        chips.append(value.strip())
+                    continue
+                i += 1
+    if not chips:
+        return None
+    tip: str | None = None
+    tip_at = text.find('"tip"')
+    if tip_at >= 0:
+        colon = text.find(":", tip_at)
+        quote = text.find('"', colon) if colon >= 0 else -1
+        if quote >= 0:
+            scanned = _scan_json_string(text, quote)
+            if scanned is not None:
+                tip = scanned[0]
+            else:
+                # Cut mid-string: take what is there — _clean_tip keeps only
+                # a short first sentence, so a run-on tail never surfaces.
+                tip = text[quote + 1:]
+    safety: dict[str, object] = _silent_safety()
+    safety_at = text.find('"safety"')
+    if safety_at >= 0:
+        brace = text.find("{", safety_at)
+        if brace >= 0:
+            depth = 0
+            in_str = False
+            esc = False
+            for j in range(brace, len(text)):
+                c = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif c == "\\":
+                        esc = True
+                    elif c == '"':
+                        in_str = False
+                    continue
+                if c == '"':
+                    in_str = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            parsed = json.loads(text[brace:j + 1])
+                        except Exception:  # noqa: BLE001 - partial text
+                            parsed = None
+                        if isinstance(parsed, dict):
+                            # _clean_safety reads result["safety"].
+                            safety = _clean_safety({"safety": parsed})
+                        break
+    return {"chips": chips[:_MAX_CHIPS], "tip": tip, "safety": safety}
+
+
 async def assist(
     db, uid: str, other: str, messages: list[dict] | None = None
 ) -> dict[str, object]:
@@ -282,9 +409,12 @@ async def assist(
     # Generation fails intermittently in one specific way: the model pads
     # its reply with filler until the completion budget runs out mid-string
     # (finish_reason "length"), the truncated JSON never parses, and the
-    # call raises (the raw reply is logged in gemini.generate_json). One bad
-    # generation must not leave the bar empty or stuck on a stale result, so
-    # retry once before giving up: a fresh attempt almost always lands.
+    # call raises. The failure lives in the ``tip`` field — the chips are
+    # already complete in the text — so a truncated reply is salvaged, not
+    # retried: a retry runs the same prompt into the same attractor and pads
+    # again (measured live Nov 7: both attempts cut at 4081/4082 output
+    # tokens on the Alexander one-sided thread). Only a reply with no
+    # recoverable chips gets the one retry.
     result: object = None
     for attempt in (1, 2):
         try:
@@ -300,7 +430,7 @@ async def assist(
                 # DM assist is a nicety that must NEVER block the thread, so it is
                 # exempt from the credit CAP (like the Practice coach, see
                 # practice_llm): a zero-credit user still gets openers/coaching
-                # instead of a silently-empty bar. The spend is still metered:
+                # instead of a silently-empty bar. The spend is still metered —
                 # ``enforce_cap=False`` skips the cap check, not ``record``.
                 enforce_cap=False,
                 # Coaching is short creative writing, and at the 0.2
@@ -312,9 +442,21 @@ async def assist(
                 # clean one-sentence tip in about half of replies and the
                 # chips were unaffected.
                 temperature=0.7,
+                max_tokens=_DM_MAX_TOKENS,
             )
             break
-        except Exception:  # noqa: BLE001 - DM assist is a nicety, never blocks
+        except Exception as exc:  # noqa: BLE001 - DM assist is a nicety, never blocks
+            raw = getattr(exc, "text", None)
+            salvaged = (
+                _salvage_partial(raw) if isinstance(raw, str) else None
+            )
+            if salvaged is not None:
+                logger.warning(
+                    "dm assist generation truncated for %s - salvaged %d chips",
+                    sorted_pair_key(uid, other), len(salvaged["chips"]),
+                )
+                result = salvaged
+                break
             if attempt == 1:
                 logger.warning(
                     "dm assist generation failed for %s - retrying once",
@@ -331,6 +473,11 @@ async def assist(
         }
 
     tip = _clean_tip(result) if coach else None
+    if tip is None and coach and not _them_has_spoken(messages):
+        # One-sided thread, no usable tip from the model (empty, dropped as
+        # a run-on, or lost to a truncated reply): the user is waiting on a
+        # reply, so the bar still shows the honest nudge instead of nothing.
+        tip = _ONE_SIDED_FALLBACK_TIP
     # Safety is only meaningful once the other person has said something;
     # opener mode has no 'Them' messages to judge, so it is always silent.
     safety = _clean_safety(result) if coach else _silent_safety()
