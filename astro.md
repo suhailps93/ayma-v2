@@ -21,3 +21,10 @@ Drift adaptations vs the 6-day-old spec (verified against current staging):
 Green: `flutter analyze` = **0 issues**. `flutter test` = **2002 passed, 0 failed**, incl. all three layout_matrix shards (81 route/overlay cases, zero RenderFlex overflow) and the new `test/session_teardown_test.dart`. No routes added (route-matrix guard still passes). (One timing-budget test in `api_client_test.dart` flaked under concurrent CPU load in an earlier run; passes 75/75 in isolation and clean on the serialized re-run — not touched by this change.)
 
 Next: Scout to run spec §7 QA cases 1–5 on the installed staging APK (story ghost, public-profile clean state, pushed-route backstack teardown, singleton+voice teardown, 401 forced sign-out).
+
+## 2026-11-08 12:20 PT — From Antigravity (Engineer) — DONE: tour tab landing loop fix
+
+Branch `fleet/tour-tab-landing` off staging tip `1d0312b2` (commit `71beb5d3`).
+Fixed `_landed_key` in `functions/bootstrap/skills/guided_tour.py`: when reported route resolves to shell destination (key `ayma`, path `/`), screen slug decides landing via slug map; pushed pages keep route-first behavior.
+Added regression tests for tab probes (explore/messages/profile_tab with route `/`), pushed-page probes matching by route, and wrong landings failing match.
+Subset tests passing: 156/156 pytest (`test_guided_tour.py`, `test_app_registry.py`), 23/23 flutter test (`guided_tour_test.dart`, `app_registry_test.dart`). Total: 179 passed. Not merged (hourly sweep owns merges).
