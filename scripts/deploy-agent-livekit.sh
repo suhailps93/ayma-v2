@@ -9,7 +9,7 @@
 #   scripts/deploy-agent-livekit.sh update-secrets   # rotate secrets only
 #
 # Target environment: prod by default. For the STAGING agent
-# (ayma-lk-staging, which must write to the ayma-staging Firestore):
+# (ayma-lk-stg, which must write to the ayma-staging Firestore):
 #
 #   AGENT_TARGET_ENV=staging scripts/deploy-agent-livekit.sh update-secrets
 #
@@ -43,7 +43,7 @@ AGENT_TARGET_ENV="${AGENT_TARGET_ENV:-prod}"
 if [[ "$AGENT_TARGET_ENV" == "staging" ]]; then
   TARGET_FIRESTORE_PROJECT="${TARGET_FIRESTORE_PROJECT:-ayma-staging}"
   TARGET_SA_SECRET="${TARGET_SA_SECRET:-LK_AGENT_FIRESTORE_SA_STAGING}"
-  TARGET_AGENT_NAME="${TARGET_AGENT_NAME:-ayma-lk-staging}"
+  TARGET_AGENT_NAME="${TARGET_AGENT_NAME:-ayma-lk-stg}"
   TARGET_ROOM_PREFIX="${TARGET_ROOM_PREFIX:-ayma-staging-}"
   TARGET_SENTRY_ENV="${TARGET_SENTRY_ENV:-staging}"
 else

@@ -29,7 +29,7 @@
 #   ayma-api-staging    (--source build, like prod ayma-api)
 #   ayma-agent-staging  RETIRED - deleted 2026-11-06 (founder order).
 #                       Staging voice is served by the hosted LiveKit worker
-#                       (ayma-lk-staging) only; this script never deploys the
+#                       (ayma-lk-stg) only; this script never deploys the
 #                       Cloud Run agent (deploying it would recreate it).
 #
 # Secrets: staging-only values live in *-staging Secret Manager secrets
@@ -144,7 +144,7 @@ CARTESIA_CREDITED_PROVIDERS="inworld,deepgram,fishaudio,assemblyai,rime,gradium,
 # secret, mounted as WEB_SEARCH_API_KEY in API_SECRETS below. The
 # 100/day free cap is enforced in code (Firestore counter, fail
 # closed); these pins only select and configure the provider.
-API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=livekit,AGENT_NAME_LIVEKIT=ayma-lk-staging,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini,VOICE_CREDITED_PROVIDERS=${CARTESIA_CREDITED_PROVIDERS},BRAIN_CREDITED_PROVIDERS=gemini,gemma,openai,openai-chat,openai-oss,kimi,deepseek,grok,GEMINI_WEB_SEARCH=true,WEB_SEARCH_PROVIDER=serper"
+API_ENV_BASE="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${DATA_PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${STORAGE_BUCKET},GOOGLE_IMPORT_CLIENT_ID=235381544962-3u4bvacg15bhr6sfmr5bqat4p7heu6so.apps.googleusercontent.com,CONTEXT_OPT_LEVEL=3,CONTEXT_OPT_MEASURE=true,LIVEKIT_PROJECT_ID=p_4jk3pqz7u9r,LIVEKIT_ROOM_PREFIX=ayma-staging-,SENTRY_ENVIRONMENT=staging,VOICE_AGENT_CLOUD_DEFAULT=livekit,AGENT_NAME_LIVEKIT=ayma-lk-stg,OPEN_WEIGHTS_BASE_URL=${OPEN_WEIGHTS_BASE_URL},LLM_PROVIDER=gemini,LLM_PROVIDER_CHAT=gemini,LLM_PROVIDER_MATCHING=gemini,LLM_PROVIDER_REPORTS=gemini,LLM_PROVIDER_PRACTICE=gemini,LLM_PROVIDER_DM_COACH=gemini,LLM_PROVIDER_TRANSLATE=gemini,VOICE_CREDITED_PROVIDERS=${CARTESIA_CREDITED_PROVIDERS},BRAIN_CREDITED_PROVIDERS=gemini,gemma,openai,openai-chat,openai-oss,kimi,deepseek,grok,GEMINI_WEB_SEARCH=true,WEB_SEARCH_PROVIDER=serper"
 
 # Cloud image variants (Perf Phase 2 PREP chunk A, staging-only): enabled ONLY
 # when the staging data plane is the staging Firebase project. A staging
@@ -240,7 +240,7 @@ deploy_api() {
 
 deploy_agent() {
   echo "ERROR: deploy_agent is retired - $AGENT_SERVICE was deleted 2026-11-06 (founder order)." >&2
-  echo "Staging voice runs on the hosted LiveKit worker (ayma-lk-staging)." >&2
+  echo "Staging voice runs on the hosted LiveKit worker (ayma-lk-stg)." >&2
   return 1
   echo ">> building agent image ($AGENT_IMAGE)"
   ( cd "$SRC" && gcloud builds submit --project "$PROJECT" \
@@ -276,7 +276,7 @@ fi
 if $AGENT_ONLY; then
   echo "ERROR: --agent-only is retired: $AGENT_SERVICE was deleted 2026-11-06" >&2
   echo "(founder order). Staging voice runs on the hosted LiveKit worker" >&2
-  echo "(ayma-lk-staging); there is no Cloud Run agent to deploy." >&2
+  echo "(ayma-lk-stg); there is no Cloud Run agent to deploy." >&2
   exit 1
 fi
 
@@ -290,7 +290,7 @@ if ! $API_ONLY; then
   # ayma-agent-staging deleted 2026-11-06 (founder order) - staging voice is
   # hosted-LiveKit-only, exactly like prod. deploy_agent() is kept above for
   # history but must never run again: it would recreate the service.
-  echo ">> skipping $AGENT_SERVICE deploy (retired 2026-11-06; hosted worker ayma-lk-staging serves staging voice)"
+  echo ">> skipping $AGENT_SERVICE deploy (retired 2026-11-06; hosted worker ayma-lk-stg serves staging voice)"
 fi
 
 if $FULL && ! $API_ONLY && ! $AGENT_ONLY; then
