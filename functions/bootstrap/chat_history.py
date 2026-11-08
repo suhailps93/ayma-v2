@@ -215,6 +215,7 @@ def _collect(db, uid: str) -> list[dict]:
     newest-first is *not* guaranteed here — the caller sorts."""
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
+    seen_long: list[tuple[str, str]] = []
 
     # chat_messages first — they own the real per-turn timestamp + image path.
     try:
@@ -241,8 +242,14 @@ def _collect(db, uid: str) -> list[dict]:
             image_url = _generated_image_url(image_path)
         # de-dup keys against the raw_turns pass: the bare text, and the text
         # with a photo marker (that's how _persist_session records image turns).
-        seen.add((role, text.strip()))
-        seen.add((role, _strip_photo_marker(text)))
+        cleaned_text = text.strip()
+        stripped_text = _strip_photo_marker(text)
+        seen.add((role, cleaned_text))
+        seen.add((role, stripped_text))
+        if len(cleaned_text) >= 500:
+            seen_long.append((role, cleaned_text))
+        if len(stripped_text) >= 500:
+            seen_long.append((role, stripped_text))
         out.append({
             "ts": ts,
             "role": role,
@@ -309,6 +316,23 @@ def _collect(db, uid: str) -> list[dict]:
                 # on its next `/bootstrap`/`/chat` call, the duplication
                 # re-entered `raw_turns` and compounded release over release
                 # instead of ever self-correcting.
+            # Long turn clamped to TurnModel cap (4000) or client budget:
+            # chat_messages stores up to _MAX_TEXT (8000), while raw_turns
+            # stores recent_turns clamped to ~4000 (clampRecentTurns /
+            # TurnModel._truncate_caps in main.py). Prefix-match against seen
+            # long turns so an over-long turn does not evade deduplication and
+            # resurrect with a synthetic timestamp that displaces user sends
+            # (ledger 2cw / Scout NOTE 140).
+            if len(text) >= 500 and any(
+                r == role and (s.startswith(text) or text.startswith(s))
+                for r, s in seen_long
+            ):
+                continue
+            if len(stripped) >= 500 and any(
+                r == role and (s.startswith(stripped) or stripped.startswith(s))
+                for r, s in seen_long
+            ):
+                continue
             if not stripped:
                 continue  # a bare "shared a photo" — the chat_messages row owns it
             # Recorded *before* the append below so a second/third copy of the
@@ -319,6 +343,10 @@ def _collect(db, uid: str) -> list[dict]:
             # next session's seeded history.
             seen.add((role, text))
             seen.add((role, stripped))
+            if len(text) >= 500:
+                seen_long.append((role, text))
+            if len(stripped) >= 500:
+                seen_long.append((role, stripped))
             text = stripped
             ts = (base - timedelta(seconds=(n - i))) if base else None
             out.append({
