@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'api_client.dart' show kInteractiveTimeout;
+import 'api_client.dart' show kStartupFlagRefreshTimeout;
 
 final _log = Logger('meta_integrations');
 
@@ -73,18 +73,30 @@ class MetaIntegrations {
 
   /// Fetches the Firestore flag and caches it for the next launch. Never
   /// throws; a failure leaves the cached value untouched.
-  static Future<void> refresh(FirebaseFirestore db) async {
-    try {
-      final snap = await db
-          .collection(collection)
-          .doc(docId)
-          .get()
-          .timeout(kInteractiveTimeout);
-      final value = parse(snap.data());
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_kEnabled, value);
-    } catch (e) {
-      _log.warning('flag refresh failed: $e');
+  static Future<void> refresh(
+    FirebaseFirestore db, {
+    Duration timeout = kStartupFlagRefreshTimeout,
+    int maxRetries = 2,
+    Duration retryDelay = const Duration(seconds: 1),
+  }) async {
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final snap = await db
+            .collection(collection)
+            .doc(docId)
+            .get()
+            .timeout(timeout);
+        final value = parse(snap.data());
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_kEnabled, value);
+        return;
+      } catch (e) {
+        if (attempt >= maxRetries) {
+          _log.warning('flag refresh failed: $e');
+        } else {
+          await Future<void>.delayed(retryDelay);
+        }
+      }
     }
   }
 }

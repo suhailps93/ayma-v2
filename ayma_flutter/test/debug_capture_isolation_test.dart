@@ -1,12 +1,75 @@
+// ignore_for_file: subtype_of_sealed_class
+
 import 'dart:async';
 
 import 'package:ayma_flutter/core/dag/startup_dag.dart';
 import 'package:ayma_flutter/core/dag/startup_nodes.dart';
 import 'package:ayma_flutter/services/debug_capture_isolation.dart';
 import 'package:ayma_flutter/services/voice_transport.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+class _DelayedDocRef implements DocumentReference<Map<String, dynamic>> {
+  final DocumentReference<Map<String, dynamic>> _inner;
+  final Duration delay;
+  final void Function(String path)? onGet;
+
+  _DelayedDocRef(this._inner, {this.delay = Duration.zero, this.onGet});
+
+  @override
+  String get path => _inner.path;
+
+  @override
+  String get id => _inner.id;
+
+  @override
+  Future<void> set(Map<String, dynamic> data, [SetOptions? options]) =>
+      _inner.set(data, options);
+
+  @override
+  Future<DocumentSnapshot<Map<String, dynamic>>> get([GetOptions? options]) async {
+    if (delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
+    onGet?.call(path);
+    return _inner.get(options);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _DelayedCollectionRef implements CollectionReference<Map<String, dynamic>> {
+  final CollectionReference<Map<String, dynamic>> _inner;
+  final Duration delay;
+  final void Function(String path)? onGet;
+
+  _DelayedCollectionRef(this._inner, {this.delay = Duration.zero, this.onGet});
+
+  @override
+  DocumentReference<Map<String, dynamic>> doc([String? path]) {
+    final d = _inner.doc(path);
+    return _DelayedDocRef(d, delay: delay, onGet: onGet);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _DelayedFirestore extends FakeFirebaseFirestore {
+  final Duration delay;
+  final void Function(String path)? onGet;
+
+  _DelayedFirestore({this.delay = Duration.zero, this.onGet});
+
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String collectionPath) {
+    final inner = super.collection(collectionPath);
+    return _DelayedCollectionRef(inner, delay: delay, onGet: onGet);
+  }
+}
 
 /// Reads one named constraint out of the `optional` list the SDK emits in
 /// [AudioCaptureOptions.toMediaConstraintsMap].
@@ -279,6 +342,71 @@ void main() {
 
       // Value remains intact (not reverted or cleared)
       expect(DebugCaptureIsolation.disabled.value, isTrue);
+    });
+
+    testWidgets(
+        'startup N19 remote sync hydrates flag when network readiness takes 9s '
+        '(regression: legacy 8s budget timed out before readiness on cold start)',
+        (tester) async {
+      DebugCaptureIsolation.disabled.value = false;
+      final db = _DelayedFirestore(delay: const Duration(seconds: 9));
+      await db
+          .collection('app_config')
+          .doc('debug_capture_isolation')
+          .set({'enabled': true});
+
+      final ctx = DAGContext();
+      ctx.put<dynamic>('auth_user', null);
+
+      final n19 = StartupNodes.createRemoteSyncNode(firestore: db);
+      final syncFuture = n19.action(ctx);
+
+      // Advance past 9s to let the read complete under the new budget:
+      await tester.pump(const Duration(seconds: 10));
+      await syncFuture;
+
+      expect(DebugCaptureIsolation.disabled.value, isTrue,
+          reason:
+              'Flag should be hydrated to true despite 9s network readiness delay');
+    });
+
+    testWidgets(
+        'startup refresh retries and hydrates flag if first attempt times out '
+        'before network is ready (regression: single attempt aborted on timeout)',
+        (tester) async {
+      DebugCaptureIsolation.disabled.value = false;
+      var captureIsolationAttempts = 0;
+      final db = _DelayedFirestore(
+        delay: Duration.zero,
+        onGet: (path) {
+          if (path.contains('debug_capture_isolation')) {
+            captureIsolationAttempts++;
+            if (captureIsolationAttempts == 1) {
+              throw TimeoutException(
+                  'Simulated 8s timeout before ProviderInstaller finished');
+            }
+          }
+        },
+      );
+      await db
+          .collection('app_config')
+          .doc('debug_capture_isolation')
+          .set({'enabled': true});
+
+      final ctx = DAGContext();
+      ctx.put<dynamic>('auth_user', null);
+
+      final n19 = StartupNodes.createRemoteSyncNode(firestore: db);
+      final syncFuture = n19.action(ctx);
+
+      // Advance time to allow retry delay to pass and retry to execute:
+      await tester.pump(const Duration(seconds: 5));
+      await syncFuture;
+
+      expect(captureIsolationAttempts, greaterThanOrEqualTo(2),
+          reason: 'Should have retried after initial timeout');
+      expect(DebugCaptureIsolation.disabled.value, isTrue,
+          reason: 'Flag should be hydrated on retry');
     });
   });
 }
