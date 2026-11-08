@@ -165,9 +165,12 @@ _TAB_SLUGS = {
 
 
 def _default_probe(store):
-    """Where the fake user landed after tapping the current step: the
-    step's expected destination, expressed the way the client reports it
-    (tab slug + route)."""
+    """Where the fake user landed after tapping the current step,
+    expressed the way the real client reports it (tab slug + route):
+    the shell's tabs share the single route '/', so a tab landing
+    reports '/' — never the destination's registry path. The old fake
+    reported '/messages' and hid the landing-check failure (founder
+    report 2026-11-08)."""
     state = store.get(_STATE) or {}
     idx = state.get("index")
     steps = app_registry.guided_tour_steps()
@@ -175,12 +178,8 @@ def _default_probe(store):
         step = steps[idx]
         expect = step.get("expect_screen")
         if expect:
-            route = step.get("expect_route") or ""
-            if not route:
-                for dest in app_registry.destinations():
-                    if dest.get("key") == expect:
-                        route = dest.get("path") or ""
-                        break
+            # A pushed page reports its own route; a shell tab reports '/'.
+            route = step.get("expect_route") or "/"
             return (_TAB_SLUGS.get(expect, expect), route)
         return (step.get("screen") or "ayma", step.get("route") or "/")
     return ("ayma", "/")
@@ -828,15 +827,46 @@ def test_matching_landing_advances():
     _run(guided_tour._bind_start_guided_tour(db, "u1")())
     _tap(db, 0)
     _run(guided_tour._bind_advance_guided_tour(db, "u1")())
-    db.store.probe = ("explore", "/explore")  # landed on Explore
+    db.store.probe = ("explore", "/")  # landed on Explore (real client report: shared shell route)
     _tap(db, 1)
     msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
     assert db.store[_STATE]["index"] == 2
     assert _steps()[2]["say"] in msg
 
 
-def test_unanswered_probe_falls_back_to_the_tap(monkeypatch):
-    # An old client that never acks tour_probe must not strand the tour:
+def test_landed_key_trusts_the_tab_slug_on_the_shared_shell_route():
+    # The real client reports route '/' for every shell tab, so the slug
+    # is the only signal that says which tab the user is on.
+    assert guided_tour._landed_key("messages", "/") == "messages"
+    assert guided_tour._landed_key("explore", "/") == "explore"
+    assert guided_tour._landed_key("profile_tab", "/") == "profile"
+    assert guided_tour._landed_key("ayma", "/") == "ayma"
+    # A pushed page's route still wins over the slug.
+    assert guided_tour._landed_key("story", "/profile/wiki") == "story"
+    assert guided_tour._landed_key("", "/notifications") == "notifications"
+
+
+def test_tab_taps_advance_with_the_real_shared_shell_route_probe():
+    # Regression (founder report 2026-11-08): tapping Messages never
+    # advanced the tour — the probe reports ('messages', '/'), '/'
+    # resolved to the Ayma destination, and the step re-guided forever.
+    # The default probe now models the real client, so driving the tour
+    # through Explore and Messages exercises the fixed landing check.
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 1 (Explore)
+    _tap(db, 1)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 2 (Messages)
+    assert db.store[_STATE]["index"] == 2
+    assert _steps()[2]["say"] in msg
+    _tap(db, 2)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 3 (Profile)
+    assert db.store[_STATE]["index"] == 3
+    assert _steps()[3]["say"] in msg
+
+
+def test_unanswered_probe_falls_back_to_the_tap(monkeypatch):    # An old client that never acks tour_probe must not strand the tour:
     # advance proceeds on the tap alone.
     monkeypatch.setattr(guided_tour, "_PROBE_ACK_TIMEOUT_SECONDS", 0.05)
     db = _Db()
