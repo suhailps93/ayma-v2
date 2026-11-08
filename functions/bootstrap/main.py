@@ -5892,7 +5892,9 @@ async def set_brain_preference(
     from firebase_admin import firestore
 
     brain = body.brain.strip().lower()
-    if brain not in llm_provider.BRAINS:
+    if brain not in llm_provider.BRAINS or not llm_provider.brain_is_credited(brain):
+        # Unknown — or not credited on this deploy (Meta on staging): from
+        # the client's side it is simply not an available brain here.
         raise HTTPException(status_code=422, detail="Unknown brain.")
     try:
         import voice_catalog as _vc_brain

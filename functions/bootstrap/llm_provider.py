@@ -115,6 +115,19 @@ BRAINS: dict[str, dict[str, object]] = {
 }
 
 
+def brain_is_credited(brain: str) -> bool:
+    """Whether ``brain`` may be offered in a selection list or honoured as a
+    saved preference on THIS deploy (``CONFIG.brain_credited_providers``).
+
+    Only Gemini runs on the funded LiveKit Inference credits; Meta Muse
+    Spark bills the Meta Model API directly. A deploy that is not credited
+    for a vendor (staging pins ``BRAIN_CREDITED_PROVIDERS=gemini``, founder
+    order 2026-11-07) must never list it or serve it. Gemini — the funded
+    default and the fallback of last resort — is always credited."""
+    b = (brain or "").strip().lower()
+    return b == PROVIDER_GEMINI or b in CONFIG.brain_credited_providers
+
+
 def brain_capabilities(brain: str) -> frozenset[str]:
     """Capabilities of ``brain`` (a provider vendor). Unknown → Gemini's set, so
     a typo is treated as the fully-capable default rather than crashing."""
@@ -126,9 +139,13 @@ def brain_capabilities(brain: str) -> frozenset[str]:
 def available_brains() -> list[dict[str, object]]:
     """The Brain catalog for ``GET /brain/preference``: each brain plus the
     capabilities it has (so the UI can describe the Gemini fallback). Gemini
-    first, then Meta — the order they appear in the dropdown."""
+    first, then Meta — the order they appear in the dropdown. Only CREDITED
+    brains are listed (:func:`brain_is_credited`): on staging the picker
+    offers Gemini alone."""
     out: list[dict[str, object]] = []
     for bid in (PROVIDER_GEMINI, PROVIDER_META):
+        if not brain_is_credited(bid):
+            continue
         entry = dict(BRAINS[bid])
         entry["capabilities"] = sorted(BRAIN_CAPABILITIES[bid])
         out.append(entry)
@@ -1149,7 +1166,10 @@ def get_user_brain_provider(
 
     * The user's saved ``ayma_brain_model`` picks the brain; with none saved the
       per-surface env flag (:func:`get_llm_provider`) is the default — production
-      is unchanged until a user actually chooses a brain.
+      is unchanged until a user actually chooses a brain. A saved brain this
+      deploy is not credited for (:func:`brain_is_credited` — e.g. Meta on
+      staging) resolves to Gemini instead: never the uncredited vendor,
+      never an error.
     * If ``needs`` is given and the chosen brain does NOT have that capability
       (see :data:`BRAIN_CAPABILITIES`), the call resolves to **Gemini** instead.
       So ``needs="web"`` and ``needs="vision"`` always land on Gemini (Muse has
@@ -1168,8 +1188,17 @@ def get_user_brain_provider(
         )
 
     chosen = read_brain_pref(uid)
-    if chosen in BRAIN_CAPABILITIES:
+    if chosen in BRAIN_CAPABILITIES and brain_is_credited(chosen):
         provider = _provider_for_name(chosen)
+    elif chosen in BRAIN_CAPABILITIES:
+        # A saved brain this deploy is NOT credited for (e.g. ``meta`` on
+        # staging, where only LiveKit-credit inference may run): serve
+        # Gemini — never the uncredited vendor, never an error.
+        logger.info(
+            "saved brain %s is not credited on this deploy — using Gemini",
+            chosen,
+        )
+        provider = _gemini_singleton()
     else:
         # No saved brain (or an unknown value) → the surface's env-flag default.
         provider = get_llm_provider(surface)
