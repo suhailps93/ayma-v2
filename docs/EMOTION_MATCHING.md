@@ -214,3 +214,50 @@ To enable on staging after deploy:
 `python3 scripts/flags.py set emotion_matching=true --yes`
 (against the staging project) or `FLAG_EMOTION_MATCHING=1` on the
 staging services. Scout verifies with the companion test script.
+
+## Addendum — 2026-11-07 (founder: "the voices have no emotion… it
+should match the vibe of the user")
+
+Founder feedback on build 2362: the voices still sounded flat and
+robotic, and the delivery must match the user's vibe — never happy and
+chirpy when the user is low. Audit of why, verified against the live
+flag stores: **the whole system above was built but never switched
+on.** `emotion_matching` was absent from the `config/feature_flags`
+doc in BOTH projects (ayma-staging and ayma-ai) and no
+`FLAG_EMOTION_MATCHING` env was pinned, so it resolved to the registry
+default OFF everywhere — no guidance in any prompt, no read, no
+delivery control, on any path.
+
+What this pass changed:
+
+- **Activation (staging only):** `scripts/flags.py set
+  emotion_matching=true --yes` against the ayma-staging project. Prod
+  (ayma-ai) deliberately untouched — the registry default stays OFF.
+- **Reply-tone direction (emotion.py):** `reply_tone()` classifies
+  Ayma's own reply text (somber / tender / celebratory / playful /
+  neutral; conservative phrase cues, somber checked before
+  celebratory). `effective_cartesia_delivery()` keeps the precedence
+  structural: distress, then any non-neutral user state (the
+  vibe-matching mapping), and only a neutral user read falls through
+  to the reply's tone. A low user can therefore never receive a bright
+  delivery, whatever the reply text says — pinned by tests.
+- **Fish Audio S2 legs now carry real delivery control.** Fish S2 /
+  S2.1-Pro interprets square-bracket cues in the text (Fish Audio
+  Emotion Control docs). `_EmotionAgent.tts_node` prepends ONE cue
+  from `emotion.fish_tag()` (same precedence as Cartesia) to the
+  TTS-bound stream only, after buffering just the reply's first
+  sentence (or 160 chars) so the cue can account for the reply's own
+  opening tone. Transcripts/history keep the clean text. This covers
+  the Meta-cascade default TTS (`fishaudio/s2.1-pro`), which
+  previously had NO delivery control at all.
+- **Still no control to apply (unchanged, restated):** Inworld /
+  Rime / Gradium legs via `inference.TTS` expose no emotion or style
+  parameter in our construction — their delivery is shaped only
+  through the reply text the brain writes under the guidance. The
+  realtime paths (Gemini Live native affective dialogue; OpenAI
+  Realtime) take the seed guidance; there is no per-reply delivery
+  parameter on a speech-to-speech model.
+- **Verification still owed by ear:** activation + wiring are proven
+  in code and unit tests (tests/test_emotion.py, 46 tests); whether
+  it FEELS human is a live-call judgement — Scout/founder ears on the
+  shipped staging build are the final check.

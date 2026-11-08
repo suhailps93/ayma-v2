@@ -3428,21 +3428,74 @@ class _EmotionAgent(Agent):
     unreachable there (see the mute-control block comment above); the
     realtime path gets the standing guidance through the session seed
     instead, plus Gemini 3.8 Live's always-on native affective dialogue.
+
+    ``tts_node`` adds the Fish Audio leg's delivery control: Fish S2
+    takes direction as an in-text cue (``emotion.fish_tag``), so on a
+    ``fishaudio`` leg the TTS-bound text stream gets one cue prepended
+    (see :func:`_fish_tagged_text`). The transform touches ONLY the
+    stream bound for the TTS leg — transcripts, history and the client
+    keep the clean reply text. Every other leg passes through untouched
+    (Cartesia is driven via ``update_options`` instead, and LiveKit
+    Inference TTS exposes no delivery control to apply).
     """
 
     def __init__(
-        self, *, emotion_state: emotion_mod.EmotionState, **kwargs
+        self,
+        *,
+        emotion_state: emotion_mod.EmotionState,
+        tts_provider: str = "",
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._emotion_state = emotion_state
+        self._tts_provider = tts_provider
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # noqa: ANN001 - SDK hook signature
         line = emotion_mod.context_line(self._emotion_state)
         if line:
             turn_ctx.add_message(role="system", content=line)
 
+    def tts_node(self, text, model_settings):  # noqa: ANN001 - SDK hook signature
+        if self._tts_provider == "fishaudio":
+            text = _fish_tagged_text(text, self._emotion_state)
+        return Agent.default.tts_node(self, text, model_settings)
 
-def _apply_cartesia_emotion(session: AgentSession, state: emotion_mod.EmotionState) -> None:
+
+async def _fish_tagged_text(text, state):  # noqa: ANN001 - stream of str chunks
+    """The TTS-bound text stream with the Fish Audio emotion cue
+    prepended (:func:`emotion.fish_tag`).
+
+    Buffers until the reply's first sentence (or a solid prefix) is in
+    hand — the cue is chosen from the user's current state plus the
+    reply's own opening tone, and a Fish cue colours what FOLLOWS it,
+    so the choice must be made before the first words are synthesised.
+    The rest of the stream passes through untouched, and cue selection
+    failing degrades to the untagged stream: delivery is additive,
+    never fatal.
+    """
+    iterator = text.__aiter__()
+    buffered = ""
+    ended = False
+    while not emotion_mod.tts_prefix_ready(buffered, stream_ended=ended):
+        try:
+            buffered += await iterator.__anext__()
+        except StopAsyncIteration:
+            ended = True
+    try:
+        tag = emotion_mod.fish_tag(state, buffered)
+    except Exception:  # noqa: BLE001 - a cue must never break synthesis
+        logger.exception("emotion: fish tag selection failed")
+        tag = None
+    yield emotion_mod.with_fish_tag(buffered, tag)
+    async for chunk in iterator:
+        yield chunk
+
+
+def _apply_cartesia_emotion(
+    session: AgentSession,
+    state: emotion_mod.EmotionState,
+    last_reply_text: str = "",
+) -> None:
     """Push the state's Cartesia delivery (emotion + speed) onto the
     session's TTS leg when that leg is the Cartesia plugin.
 
@@ -3450,10 +3503,13 @@ def _apply_cartesia_emotion(session: AgentSession, state: emotion_mod.EmotionSta
     replies synthesised afterwards use the new settings. Duck-typed so
     every other TTS leg (LiveKit Inference TTS has no emotion control)
     is a silent no-op — those legs get emotion only through the reply
-    text the brain shapes under the injected guidance. A ``(None, None)``
-    mapping (neutral) leaves the current settings untouched: Sonic's
-    own text-inferred delivery is the neutral behaviour."""
-    emo, speed = emotion_mod.cartesia_delivery(state)
+    text the brain shapes under the injected guidance. The delivery is
+    :func:`emotion.effective_cartesia_delivery`: the user's state wins
+    whenever it says anything; only a neutral user read falls through
+    to the tone of Ayma's last reply. A ``(None, None)`` result leaves
+    the current settings untouched: Sonic's own text-inferred delivery
+    is the neutral behaviour."""
+    emo, speed = emotion_mod.effective_cartesia_delivery(state, last_reply_text)
     if emo is None and speed is None:
         return
     tts_obj = getattr(session, "tts", None)
@@ -3556,12 +3612,18 @@ async def _start_main_cascade_session(
 
     # Emotion matching (2026-11-06): a session-scoped state fed by the
     # emotion read folded into the voice-actions verdict (on_emotion
-    # below). It drives the per-turn context injection (_EmotionAgent)
-    # and the Cartesia TTS delivery (_apply_cartesia_emotion). Flag-off:
-    # no state, no callback, no agent subclass — behaviour identical to
-    # before the feature.
+    # below). It drives the per-turn context injection (_EmotionAgent),
+    # the Cartesia TTS delivery (_apply_cartesia_emotion) and — on a
+    # Fish Audio TTS leg — the in-text cue the _EmotionAgent's tts_node
+    # prepends (2026-11-07). Flag-off: no state, no callback, no agent
+    # subclass — behaviour identical to before the feature.
     emotion_on = _emotion_matching_on(seed.uid)
     emotion_state = emotion_mod.EmotionState() if emotion_on else None
+    emotion_tts_provider = (
+        _provider_of(seed.tts_id or CONFIG.meta_cascade_tts_model)
+        if emotion_on
+        else ""
+    )
 
     def _on_emotion(read: emotion_mod.EmotionRead) -> None:
         if emotion_state is None:
@@ -3571,7 +3633,18 @@ async def _start_main_cascade_session(
             "emotion: read label=%s intensity=%s distress=%s session=%s",
             read.label, read.intensity, read.distress, seed.session_id or "?",
         )
-        _apply_cartesia_emotion(session, emotion_state)
+        # The last Ayma reply in the session window: with a neutral
+        # user read, its tone still steers the Cartesia delivery
+        # (emotion.effective_cartesia_delivery).
+        last_reply = next(
+            (
+                t.text
+                for t in reversed(window)
+                if t.role == ROLE_AYMA and t.text.strip()
+            ),
+            "",
+        )
+        _apply_cartesia_emotion(session, emotion_state, last_reply)
 
     # Voice-actions skill first, deterministic net as the interim backstop: a
     # clear command in a finalized user turn executes through the session's
@@ -3609,7 +3682,11 @@ async def _start_main_cascade_session(
     if cascade_ctx is not None:
         agent_kwargs["chat_ctx"] = cascade_ctx
     if emotion_on and emotion_state is not None:
-        agent = _EmotionAgent(emotion_state=emotion_state, **agent_kwargs)
+        agent = _EmotionAgent(
+            emotion_state=emotion_state,
+            tts_provider=emotion_tts_provider,
+            **agent_kwargs,
+        )
     else:
         agent = Agent(**agent_kwargs)
     await session.start(
