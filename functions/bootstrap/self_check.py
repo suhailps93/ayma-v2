@@ -49,12 +49,16 @@ files):
   is SKIP - the capability is not part of this build, so its absence
   is not a defect and files no bug. Declared-but-unbound IS a FAIL:
   the build claims the tool and cannot produce it.
-* ``web_search`` runs for real, but its known-off failure is not a
-  bug: ``gemini.research()`` raises ``DirectGoogleDisabledError`` by
-  design (live web search off since the 2026-11-04 billing kill;
-  restore plan pending a founder decision). Any check failing with
-  that error is reported SKIP (off by design), files no bug, and the
-  suggestions carry one restore-plan line instead of a fix line.
+* ``web_search`` runs for real through the restored capped path
+  (:mod:`web_search` -- the founder-approved restore of 2026-11-07:
+  Programmable Search behind the 100/day free-quota counter). An
+  ``ok`` outcome is a PASS; ``paused`` (today's free searches used
+  up) is a SKIP, not a bug; ``unconfigured`` and ``error`` are real
+  FAILs and file a bug. The dead direct-Google path
+  (``gemini.research()``) is never called from here; if an injected
+  search fn still raises ``DirectGoogleDisabledError`` the check
+  stays a known-off SKIP and the suggestions carry the restore line
+  instead of a fix line.
 * Readability + stranding (founder, 2026-11-07 ~15:53, after two runs
   on his phone): the end-of-run output is posted as short bubbles —
   never a bubble over 1500 chars, split only on line boundaries (long
@@ -229,6 +233,10 @@ WEB_SEARCH_OFF_SUGGESTION = (
     "on the founder decision in the restore plan."
 )
 _DIRECT_GOOGLE_DISABLED = "DirectGoogleDisabledError"
+WEB_SEARCH_PAUSED_DETAIL = (
+    "Web search is on \u2014 today's 100 free searches are used up "
+    "(the count resets at midnight Pacific)"
+)
 
 # -- final navigation group (founder, 2026-11-07 ~16:14) --------------
 # These destinations need the user present while they run — Photos
@@ -1022,12 +1030,26 @@ class SelfCheckRunner:
         if self.deps.web_search_fn is not None:
             await self.deps.web_search_fn()
             return PASS, "web search answered", ""
-        import gemini
+        # The restored path (founder decision 2026-11-07): one capped
+        # Programmable Search lookup through web_search.search -- the
+        # same path the chat tool uses, behind the 100/day free-quota
+        # counter. The dead direct-Google gemini.research() is never
+        # called. Outcomes map honestly: results = PASS; today's free
+        # quota used up = SKIP (the feature is on, nothing is broken);
+        # not set up on this server, or the lookup failed = FAIL (a
+        # bug, filed like any other).
+        import web_search
 
-        await gemini.research(
-            "Ayma self-check probe", uid=self.uid, feature="self_check"
+        outcome = await web_search.search(
+            "Ayma self-check probe", db=self.db
         )
-        return PASS, "web search answered", ""
+        if outcome.status == web_search.STATUS_OK:
+            return PASS, "web search answered", ""
+        if outcome.status == web_search.STATUS_PAUSED:
+            return SKIP, WEB_SEARCH_PAUSED_DETAIL, ""
+        if outcome.status == web_search.STATUS_UNCONFIGURED:
+            return FAIL, "", "web search is not set up on this server yet"
+        return FAIL, "", "web search did not go through this time"
 
     async def _do_tool_run(self, name: str):
         fns = self._tool_fns()
@@ -1121,7 +1143,7 @@ class SelfCheckRunner:
                 elif r.category == "scoped":
                     if plain not in scoped_names:
                         scoped_names.append(plain)
-                elif detail == BACKGROUNDED_SKIP_DETAIL:
+                elif detail in (BACKGROUNDED_SKIP_DETAIL, WEB_SEARCH_PAUSED_DETAIL):
                     continue  # by design — not a gap, no suggestion
                 else:
                     other_skips.append(

@@ -49,6 +49,7 @@ class _Harness:
         *,
         fail_nav=(),
         web_search_fails=False,
+        use_search_fn=True,
         location="San Jose",
         filter_state="all",
         filter_fail=None,
@@ -58,6 +59,7 @@ class _Harness:
         self.bugs = []
         self.fail_nav = set(fail_nav)
         self.web_search_fails = web_search_fails
+        self.use_search_fn = use_search_fn
         # The notification-filter fake mimics the client protocol: it
         # keeps the filter in memory (client-only state) and reports the
         # filter it replaced in the ack line ("... (was: <key>)").
@@ -150,7 +152,7 @@ class _Harness:
                 read_fn=self.read_fn,
                 profile_read=self.profile_read,
                 tool_fns=self.tool_fns(),
-                web_search_fn=self.web_search_fn,
+                web_search_fn=self.web_search_fn if self.use_search_fn else None,
                 bug_record=self.bug_record,
                 destinations=[
                     {"key": "ayma", "label": "Chat"},
@@ -857,6 +859,85 @@ def test_any_check_failing_with_disabled_error_is_known_off():
     assert result.status == self_check.SKIP
     assert result.detail == self_check.WEB_SEARCH_OFF_DETAIL
     assert result.error == ""
+
+
+# D2. web search default path -- the restored capped search (2026-11-07)
+
+def _fake_search(outcome):
+    async def fake(query, **kwargs):
+        return outcome
+
+    return fake
+
+
+def test_web_search_default_path_ok_passes(monkeypatch):
+    import web_search
+
+    monkeypatch.setattr(
+        web_search,
+        "search",
+        _fake_search(
+            web_search.SearchOutcome(
+                web_search.STATUS_OK,
+                results=[web_search.SearchResult("T", "https://x", "s")],
+            )
+        ),
+    )
+    h = _Harness(use_search_fn=False)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:web_search"].status == self_check.PASS
+    assert not any("check=tool:web_search" in b for b in h.bugs)
+
+
+def test_web_search_default_path_paused_skips_without_bug(monkeypatch):
+    import web_search
+
+    monkeypatch.setattr(
+        web_search,
+        "search",
+        _fake_search(web_search.SearchOutcome(web_search.STATUS_PAUSED)),
+    )
+    h = _Harness(use_search_fn=False)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:web_search"].status == self_check.SKIP
+    assert by_name["tool:web_search"].detail == self_check.WEB_SEARCH_PAUSED_DETAIL
+    assert not any("check=tool:web_search" in b for b in h.bugs)
+    assert not any(s.startswith("Fix Web search") for s in runner._suggestions())
+
+
+def test_web_search_default_path_unconfigured_fails_and_files_bug(monkeypatch):
+    import web_search
+
+    monkeypatch.setattr(
+        web_search,
+        "search",
+        _fake_search(web_search.SearchOutcome(web_search.STATUS_UNCONFIGURED)),
+    )
+    h = _Harness(use_search_fn=False)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:web_search"].status == self_check.FAIL
+    assert any("check=tool:web_search" in b for b in h.bugs)
+
+
+def test_web_search_default_path_error_fails(monkeypatch):
+    import web_search
+
+    monkeypatch.setattr(
+        web_search,
+        "search",
+        _fake_search(web_search.SearchOutcome(web_search.STATUS_ERROR)),
+    )
+    h = _Harness(use_search_fn=False)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:web_search"].status == self_check.FAIL
 
 
 # E. bug-filing de-dupe (24h)
