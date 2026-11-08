@@ -63,6 +63,7 @@ import agent_wake  # noqa: E402
 import emotion as emotion_mod  # noqa: E402
 import feedback_bubble as feedback_bubble_mod  # noqa: E402
 import self_check as self_check_mod  # noqa: E402
+import analysis_mode as analysis_mode_mod  # noqa: E402
 import feature_flags  # noqa: E402
 import gemini  # noqa: E402
 from llm_provider import get_user_brain_provider  # noqa: E402
@@ -1692,6 +1693,19 @@ async def _prepare_chat(
     if not req.image_path.strip() and not req.photo_url.strip():
         # F3: Mid-tour questions must not trigger navigation that hijacks the tour
         if not tour_active:
+            # Deterministic analysis mode (founder 2026-11-08): the
+            # /analysis-mode trigger, its password gate, and the exit
+            # phrase are handled BEFORE the model, like the self-check
+            # below — entering a diagnostic mode, or failing its
+            # password, is never the model's to improvise. An in-mode
+            # question returns None here and falls through to the model
+            # with the analysis prompt block appended at compose time.
+            analysis_reply = analysis_mode_mod.handle_chat_turn(
+                get_db(), uid, req.message, session_id=req.session_id
+            )
+            if analysis_reply is not None:
+                return ({"reply": analysis_reply, "analysis_mode": True}, None)
+
             # Deterministic self-check (founder 2026-11-06): the bare
             # slash command /self-check runs the real capability runner
             # BEFORE the model — a self-check is never the model’s to
@@ -1917,6 +1931,17 @@ async def _prepare_chat(
     system_prompt = emotion_mod.apply_to_prompt(
         system_prompt, enabled=_emotion_matching_enabled(uid)
     )
+    # Analysis mode (founder 2026-11-08): while this session is in the
+    # password-gated diagnostic mode, the block — persona OFF, live
+    # diagnostics, and the FULL core-memories pull for this signed-in
+    # user — rides on top of the composed prompt. Out of mode it is
+    # empty and the prompt is byte-identical to before.
+    analysis_block = analysis_mode_mod.active_prompt_block(
+        get_db(), uid, session_id=req.session_id,
+        extra_context=_call_state_context(req.call_state),
+    )
+    if analysis_block:
+        system_prompt += "\n\n" + analysis_block
     if tour_active and not req.tour_continuation:
         current = skills.guided_tour._index_of(tour_state)
         steps = skills.guided_tour._steps()
