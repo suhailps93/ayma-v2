@@ -894,6 +894,8 @@ No separate matching-scoped memory copy. A dedicated agent skill reads two users
 
 Firebase Auth with **Google, Apple, Phone, and Email/Password** — all offered at signup, none mandatory beyond picking one to link. Apple Sign-In is required for iOS App Store compliance given the other third-party options. Phone is optional, not a forced step.
 
+**Sign-in busy state and modal resilience.** When third-party sign-in flows (such as Google or Apple) launch external system dialogs or bottom sheets (e.g. Android Credential Manager), dismissing the native picker via system Back or gesture can sometimes drop platform channel completion callbacks. To guarantee the sign-in screen never gets permanently wedged in a busy/loading state: (1) `SignInScreen` implements `WidgetsBindingObserver` to auto-clear `_busy` via a resume timer (1500ms) if the app returns to the foreground without an auth callback resolving; (2) cancellation exceptions (`canceled`, `interrupted`, or code containing `'cancel'`) immediately reset the busy state without showing false errors; (3) in-flight cancellation via a `PopScope` back-interceptor and an explicit "Cancel" button below the loader allows the user to dismiss the busy state manually, scoped so inputs are re-enabled while preserving the successful sign-in navigation path.
+
 ### 3.2 Identity model
 
 Three separate documents per user, not one merged doc:

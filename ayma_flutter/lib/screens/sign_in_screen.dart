@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -65,7 +67,8 @@ class SignInScreen extends StatefulWidget {
 
 enum _Stage { pick, email, phone }
 
-class _SignInScreenState extends State<SignInScreen> {
+class _SignInScreenState extends State<SignInScreen>
+    with WidgetsBindingObserver {
   late final AuthService _auth = widget.auth ?? AuthService();
 
   late final TranscriptStore _transcript = TranscriptStore();
@@ -75,6 +78,28 @@ class _SignInScreenState extends State<SignInScreen> {
 
   _Stage _stage = _Stage.pick;
   bool _busy = false;
+
+  /// Monotonically increasing counter for tracking in-flight sign-in
+  /// operations. If an operation is cancelled (e.g. user taps Cancel or Back,
+  /// or app resumes after dismissed picker), the epoch advances so late async
+  /// callbacks from the abandoned flow never navigate or leak state.
+  int _runEpoch = 0;
+
+  /// Safety timer that clears the busy guard if the app resumes from an OAuth
+  /// picker without a callback delivering (the Android CredentialManager
+  /// dismissal bug where back-press leaves the platform Future pending).
+  Timer? _resumeTimer;
+
+  void _cancelBusy() {
+    _resumeTimer?.cancel();
+    _runEpoch++;
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _sendingReset = false;
+      });
+    }
+  }
 
   /// True only while [_forgotPassword]'s reset-email send is the in-flight
   /// op — label state only, so the busy line below names the real work.
@@ -149,6 +174,7 @@ class _SignInScreenState extends State<SignInScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.startInCreateAccountMode) {
       _stage = _Stage.email;
       _createMode = true;
@@ -203,6 +229,25 @@ class _SignInScreenState extends State<SignInScreen> {
     }
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _busy && _stage == _Stage.pick) {
+      // If the app resumes while an OAuth/picker flow is marked busy, give the
+      // native credential callback a short window (1500 ms) to complete the
+      // Firebase exchange. If nothing completes (the user dismissed the native
+      // picker with Back, but CredentialManager failed to fire the cancellation
+      // callback), auto-reset the busy state so the user is never stuck
+      // with a frozen loader.
+      _resumeTimer?.cancel();
+      _resumeTimer = Timer(const Duration(milliseconds: 1500), () {
+        if (!mounted || !_busy) return;
+        _cancelBusy();
+      });
+    } else if (state == AppLifecycleState.paused) {
+      _resumeTimer?.cancel();
+    }
+  }
+
   Future<void> _stopVoice() async {
     _voice.removeListener(_onVoice);
     _voice.transcript.removeListener(_onTranscript);
@@ -213,6 +258,8 @@ class _SignInScreenState extends State<SignInScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _resumeTimer?.cancel();
     _voice.removeListener(_onVoice);
     _voice.transcript.removeListener(_onTranscript);
     if (widget.voiceController == null) {
@@ -245,18 +292,24 @@ class _SignInScreenState extends State<SignInScreen> {
     Future<bool> Function(FirebaseAuthException e)? onAuthError,
   }) async {
     if (_busy || !_consentsGiven) return;
+    final currentEpoch = ++_runEpoch;
+    _resumeTimer?.cancel();
     setState(() => _busy = true);
     try {
       await action();
+      if (!mounted || currentEpoch != _runEpoch) return;
       await _stopVoice();
-      if (!mounted) return;
+      if (!mounted || currentEpoch != _runEpoch) return;
       context.go(SplashScreen.path);
     } on FirebaseAuthException catch (e) {
+      if (currentEpoch != _runEpoch) return;
       if (onAuthError == null || !await onAuthError(e)) {
         _snack(_friendly(e), kind: AymaToastKind.error);
       }
     } on GoogleSignInException catch (e) {
-      if (e.code != GoogleSignInExceptionCode.canceled) {
+      if (currentEpoch != _runEpoch) return;
+      if (e.code != GoogleSignInExceptionCode.canceled &&
+          e.code != GoogleSignInExceptionCode.interrupted) {
         final detail = e.description != null && e.description!.isNotEmpty
             ? ': ${e.description}'
             : ' (${e.code.name})';
@@ -264,22 +317,30 @@ class _SignInScreenState extends State<SignInScreen> {
             kind: AymaToastKind.error);
       }
     } on SignInWithAppleAuthorizationException catch (e) {
+      if (currentEpoch != _runEpoch) return;
       if (e.code != AuthorizationErrorCode.canceled) {
         _snack('Apple sign-in isn’t set up yet.', kind: AymaToastKind.warning);
       }
     } on PlatformException catch (e) {
-      if (e.code != 'sign_in_canceled' &&
-          e.code != 'canceled' &&
-          e.code != '12501') {
+      if (currentEpoch != _runEpoch) return;
+      final code = e.code.toLowerCase();
+      if (code != 'sign_in_canceled' &&
+          code != 'canceled' &&
+          code != '12501' &&
+          !code.contains('cancel')) {
         final msg = e.message != null && e.message!.isNotEmpty
             ? e.message!
             : 'Sign-in failed. Try again.';
         _snack(msg, kind: AymaToastKind.error);
       }
     } catch (e) {
+      if (currentEpoch != _runEpoch) return;
       _snack('Sign-in failed. Try again.', kind: AymaToastKind.error);
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _resumeTimer?.cancel();
+      if (mounted && currentEpoch == _runEpoch) {
+        setState(() => _busy = false);
+      }
     }
   }
 
@@ -496,10 +557,15 @@ class _SignInScreenState extends State<SignInScreen> {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Scaffold(
-      body: SafeArea(
-        child: AbsorbPointer(
-          absorbing: _busy,
+    return PopScope(
+      canPop: !_busy,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _busy) {
+          _cancelBusy();
+        }
+      },
+      child: Scaffold(
+        body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
               // iOS has no keyboard-dismiss key — dragging the form away is
@@ -603,21 +669,41 @@ class _SignInScreenState extends State<SignInScreen> {
                     // hit-room inside the consent rows; the overlay is gone,
                     // so the full gap lives here again).
                     const SizedBox(height: 24),
-                    _ConsentBoxes(
-                      termsAccepted: _termsAccepted,
-                      biometricAccepted: _biometricAccepted,
-                      onTerms: (v) => setState(() => _termsAccepted = v),
-                      onBiometric: _setBiometric,
+                    AbsorbPointer(
+                      absorbing: _busy,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _ConsentBoxes(
+                            termsAccepted: _termsAccepted,
+                            biometricAccepted: _biometricAccepted,
+                            onTerms: (v) => setState(() => _termsAccepted = v),
+                            onBiometric: _setBiometric,
+                          ),
+                          const SizedBox(height: 16),
+                          if (_stage == _Stage.pick) ..._pick(ac),
+                          if (_stage == _Stage.email) ..._emailForm(ac),
+                          if (_stage == _Stage.phone) ..._phoneForm(ac),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 16),
-                    if (_stage == _Stage.pick) ..._pick(ac),
-                    if (_stage == _Stage.email) ..._emailForm(ac),
-                    if (_stage == _Stage.phone) ..._phoneForm(ac),
                     const SizedBox(height: 24),
-                    if (_busy)
+                    if (_busy) ...[
                       Center(
                         child: AymaWingLoader(size: 56, lines: _busyLines),
-                      )
+                      ),
+                      const SizedBox(height: 12),
+                      Center(
+                        child: TextButton(
+                          key: const Key('signin_cancel_busy_btn'),
+                          onPressed: _cancelBusy,
+                          child: Text(
+                            'Cancel',
+                            style: AymaType.sans(size: 14, color: ac.fgMute),
+                          ),
+                        ),
+                      ),
+                    ]
                     else if (_stage != _Stage.pick)
                       TextButton(
                         onPressed: () => setState(() {

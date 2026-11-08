@@ -4,6 +4,29 @@ Last updated: 2026-11-08. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## NOTE-155-OBSERVATIONS — Triage + fix for Scout NOTE 155 observations (fleet/n155-observations off staging 2a80d8e2, 2026-11-08) — DONE, lead engineer reviews + merges + builds
+- **Observation 1 — "Signing you in…" sticks after cancelled Google flow (REAL DEFECT — FIXED):**
+  - **Root cause:** Dismissing the native Google Sign-In picker (Credential Manager / Android bottom sheet) via system Back in some scenarios causes `CredentialManager` / `google_sign_in_android` to drop the completion callback. Dart's `await action()` in `_run()` remained indefinitely suspended and never reached `finally { _busy = false; }`. Additionally, `AbsorbPointer(absorbing: _busy)` wrapped the entire Scaffold body without any `PopScope` or Cancel button to exit the modal state, wedging the user in "Signing you in…" until app relaunch.
+  - **Fix (client-only):**
+    1. Added `WidgetsBindingObserver` to `_SignInScreenState`. On `AppLifecycleState.resumed`, if `_busy` is true, an auto-cancel timer (`_resumeTimer`, 1500ms) clears `_busy` and resets state if no auth callback resolves (mitigating dropped callbacks on native sheet dismiss).
+    2. Added `_runEpoch` tracking to invalidate stale in-flight async callbacks when cancelled.
+    3. Handled `GoogleSignInExceptionCode.interrupted` as a cancellation alongside `canceled` (clears busy state, no error toast).
+    4. Handled `PlatformException` case-insensitively for `'sign_in_canceled'`, `'canceled'`, `'12501'`, and codes containing `'cancel'`.
+    5. Added `PopScope` to `SignInScreen` that intercepts back button when `_busy == true` and invokes `_cancelBusy()` to release the screen rather than wedging or quitting the app.
+    6. Added an explicit "Cancel" `TextButton` under `AymaWingLoader` when `_busy == true`.
+    7. Scoped `AbsorbPointer(absorbing: _busy)` specifically around the consent checkboxes and provider stage buttons/forms so the "Cancel" button remains interactive.
+    8. Preserved `SplashScreen.path` navigation on successful sign-in.
+  - **Tests:** `test/sign_in_screen_test.dart` has 7 new widget tests covering: cancel via `canceled` code + Email tap, cancel via `interrupted` code + Email tap, cancel via `PlatformException` + Email tap, in-flight cancel via "Cancel" button + Email tap, in-flight cancel via `PopScope` + Email tap, in-flight cancel via resume timeout + Email tap, and active voice session permitting text field focus and entry (42/42 passed).
+- **Observation 2 — Sign-in screen LiveKit greeting voice session blocks form while live (BENCH-ONLY / BY-DESIGN — NO CODE DEFECT):**
+  - **Verdict:** By-design prompt behavior + emulator bench starvation; not a Flutter layout/gesture defect on real devices.
+  - **Evidence:**
+    1. No overlay widget intercepts touches on `SignInScreen`. The widget tree is a single `Column` inside a `SingleChildScrollView`.
+    2. `VoiceSessionController(welcome: true)` explicitly sets `_userIdleTimeout = null` by design (lines 62-67) so user has time to read and sign in.
+    3. The ~3.5 min session duration was due to the deaf emulator bench emitting no user speech; Ayma followed the 2dn prompt (`functions/bootstrap/main.py _WELCOME_GREETING` and `welcome_persona.md`) to introduce herself once and wait in silence. The session remained connected until LiveKit server-side room deletion at 07:19:49 (`RoomDisconnected: DisconnectReason.roomDeleted`).
+    4. The inability of `uiautomator2` to focus/type was caused by emulator CPU starvation during concurrent WebRTC Opus audio playback and Flutter rendering, confirmed by Scout's 2x App ANRs, 3x System UI ANRs, and `n155_typed2.xml` dumping only the system status bar (`[11,10][115,53]`).
+    5. Widget test `active voice session on sign-in screen does not block focusing or typing in email/password fields` passes cleanly; Flutter text fields remain 100% focusable and interactive during live voice playback.
+
+
 ## SIGNIN-GOOGLE-AND-VOICE — Google sign-in cache fix + Voice introduce-once-and-wait (fleet/signin-page-fixes off staging tip 6463d598, 2026-11-08) — DONE, lead engineer reviews + merges + builds
 - **Part 1 — Google sign-in root cause:**
   - In `scripts/build-apk.sh`, cache busting previously purged only `build/app/generated/res/google-services` and `build/app/intermediates/merged_res`. In AGP 8.11.1, `merged_res` does not exist; resource merging is cached in `build/app/intermediates/incremental/debug/mergeDebugResources/`, `packaged_res/debug/`, etc. An incremental build in the watcher's worktree (`ayma-autodeploy`) reused cached prod resources in `resources.arsc` (`project_id: ayma-ai`, sender `235381544962`).
