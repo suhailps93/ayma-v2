@@ -6,6 +6,7 @@ import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/biometric_consent.dart';
+import 'package:ayma_flutter/services/legal_links.dart';
 import 'package:ayma_flutter/widgets/biometric_consent_panel.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -327,7 +328,12 @@ void main() {
       isNull,
       reason: 'the updated Terms must be accepted too',
     );
-    await tester.tap(find.byKey(const Key('consent_terms_checkbox')));
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('consent_terms_checkbox')),
+        matching: find.byType(Checkbox),
+      ),
+    );
     await tester.pump();
     await tester.tap(find.byKey(const Key('biometric_consent_agree')));
     await tester.pumpAndSettle();
@@ -386,4 +392,148 @@ void main() {
       expect(find.text('screen:signin'), findsOneWidget);
     },
   );
+
+  group('consent legal links (NOTE 141 tap targets)', () {
+    final opened = <Uri>[];
+
+    setUp(() {
+      opened.clear();
+      LegalLinks.setLauncherForTesting((url) async {
+        opened.add(url);
+        return true;
+      });
+    });
+
+    tearDown(() => LegalLinks.setLauncherForTesting(null));
+
+    bool termsChecked(WidgetTester tester) =>
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const Key('consent_terms_checkbox')))
+            .value ==
+        true;
+    bool biometricChecked(WidgetTester tester) =>
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const Key('biometric_consent_checkbox')))
+            .value ==
+        true;
+
+    // The centre of the link chip, then points just inside each edge and
+    // corner. The edge points sit inside the chip's padded hit region but
+    // outside the word's glyphs, where a bare text span used to drop the
+    // tap onto the row and toggle consent (or fire the neighbouring link).
+    List<Offset> spotsFor(WidgetTester tester, Finder link) => [
+          tester.getCenter(link),
+          tester.getTopLeft(link) + const Offset(2, 2),
+          tester.getTopRight(link) + const Offset(-2, 2),
+          tester.getBottomLeft(link) + const Offset(2, -2),
+          tester.getBottomRight(link) + const Offset(-2, -2),
+          tester.getRect(link).centerLeft + const Offset(2, 0),
+          tester.getRect(link).centerRight + const Offset(-2, 0),
+        ];
+
+    Future<void> pumpPanel(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final rec = _Recorded((_) async => _json({'ok': true}));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: BiometricConsentPanel(
+                api: rec.api,
+                requireTerms: true,
+                onAgreed: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('Terms link opens the Terms page from its centre and edges, '
+        'and never toggles a checkbox', (tester) async {
+      await pumpPanel(tester);
+
+      final link = find.byKey(const Key('consent_terms_link'));
+      expect(link, findsOneWidget);
+      // The hit region is a padded chip about 48dp tall, not glyph-tight.
+      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
+
+      for (final spot in spotsFor(tester, link)) {
+        await tester.tapAt(spot);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 10));
+        expect(termsChecked(tester), isFalse,
+            reason: 'a Terms tap must never tick the Terms checkbox');
+        expect(biometricChecked(tester), isFalse,
+            reason: 'a Terms tap must never tick the biometric checkbox');
+      }
+      expect(opened, hasLength(7));
+      expect(opened, everyElement(Uri.parse(LegalLinks.termsUrl)));
+    });
+
+    testWidgets('Privacy link opens the Privacy page from its centre and '
+        'edges, and never toggles a checkbox', (tester) async {
+      await pumpPanel(tester);
+
+      final link = find.byKey(const Key('consent_privacy_link'));
+      expect(link, findsOneWidget);
+      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
+
+      for (final spot in spotsFor(tester, link)) {
+        await tester.tapAt(spot);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 10));
+        expect(termsChecked(tester), isFalse,
+            reason: 'a Privacy tap must never tick the Terms checkbox');
+        expect(biometricChecked(tester), isFalse,
+            reason: 'a Privacy tap must never tick the biometric checkbox');
+      }
+      expect(opened, hasLength(7));
+      expect(opened, everyElement(Uri.parse(LegalLinks.privacyUrl)));
+    });
+
+    testWidgets('tapping the checkbox itself still toggles consent, and '
+        'opens nothing', (tester) async {
+      await pumpPanel(tester);
+
+      final box = find.descendant(
+        of: find.byKey(const Key('consent_terms_checkbox')),
+        matching: find.byType(Checkbox),
+      );
+      expect(box, findsOneWidget);
+
+      await tester.tap(box);
+      await tester.pump();
+      expect(termsChecked(tester), isTrue);
+      expect(opened, isEmpty);
+
+      await tester.tap(box);
+      await tester.pump();
+      expect(termsChecked(tester), isFalse);
+      expect(opened, isEmpty);
+    });
+
+    testWidgets('tapping elsewhere on the terms row still toggles consent, '
+        'and opens nothing', (tester) async {
+      await pumpPanel(tester);
+
+      final tile = find.byKey(const Key('consent_terms_checkbox'));
+      // Tap near the top-right of the tile, far from the link chips.
+      final spot = tester.getTopRight(tile) + const Offset(-10, 10);
+
+      await tester.tapAt(spot);
+      await tester.pump();
+      expect(termsChecked(tester), isTrue);
+      expect(opened, isEmpty);
+
+      await tester.tapAt(spot);
+      await tester.pump();
+      expect(termsChecked(tester), isFalse);
+      expect(opened, isEmpty);
+    });
+  });
 }
