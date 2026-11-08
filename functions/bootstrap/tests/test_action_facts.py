@@ -59,7 +59,7 @@ def test_deny_list_filters_pages_too(monkeypatch):
     """The Delete account page — a destination that exists solely as
     an excluded control's own page — never renders as a permitted
     page, while the general pages exclusions merely live on (Plan,
-    Ayma's settings) stay listed: she may open them, just not act."""
+    Privacy settings) stay listed: she may open them, just not act."""
     block = action_facts.action_facts()
     assert "Plan (your plan and credits)" in block
     # Excluding a destination in config removes it at build time.

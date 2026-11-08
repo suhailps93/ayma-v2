@@ -1,9 +1,8 @@
 import 'dart:convert';
 
-import 'package:ayma_flutter/screens/settings_screen.dart';
+import 'package:ayma_flutter/screens/privacy_settings_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
-import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -73,8 +72,7 @@ ApiClient _api({int verifyStatusCode = 200, Map<String, dynamic>? verifyBody}) {
 
 Widget _host(ProfileService p, ApiClient a, ImagePicker picker) => MaterialApp(
       theme: AymaTheme.light,
-      home: SettingsScreen(
-        controller: ThemeController(initial: ThemeMode.dark),
+      home: PrivacySettingsScreen(
         profileService: p,
         api: a,
         imagePicker: picker,

@@ -63,8 +63,10 @@ String? navPageLabelForPath(String rawPath) {
       return 'Notification preferences';
     case '/settings':
       return 'Settings';
-    case '/settings/ayma':
-      return "Ayma's settings";
+    case '/settings/appearance':
+      return 'Appearance';
+    case '/settings/privacy':
+      return 'Privacy';
     case '/settings/voice':
       return "Ayma's models";
     case '/settings/profile':

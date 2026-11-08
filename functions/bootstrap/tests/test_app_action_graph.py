@@ -138,7 +138,7 @@ def test_exclusions_config_is_complete_and_enforced():
     # Clear memory: wipe_memory is navigate-only and a deny rule refuses
     # the control itself.
     assert acts["wipe_memory"]["handler"] == "navigate_only"
-    assert acts["wipe_memory"]["destination"] == "ayma_settings"
+    assert acts["wipe_memory"]["destination"] == "privacy_settings"
     assert "clear_memory" in deny_keys
     # Founder-confirmed 2026-11-06 (19:41 PT): the three proposed
     # exclusions are wired the same way — each names a deny rule that

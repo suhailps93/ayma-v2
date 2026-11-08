@@ -92,7 +92,7 @@ def excluded_destination_keys() -> set[str]:
     """Destination keys the exclusions config keeps out of the prompt's
     permitted-pages list: a destination that exists solely as an
     excluded control's own page (the Delete account page). General
-    pages an exclusion merely lives on (Plan, Ayma's settings) are NOT
+    pages an exclusion merely lives on (Plan, Privacy settings) are NOT
     listed — she may still open those; she just cannot act there."""
     out: set[str] = set()
     for item in exclusions():

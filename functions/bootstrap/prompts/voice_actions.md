@@ -92,7 +92,7 @@ The Models page — "Ayma's models", her brain / voice / mode settings — is it
 own destination: the `voice_preference` key, the `/settings/voice` page. An
 ask for the models page ("open the models page", "open up the AMA models
 page", "take me to Ayma's models") resolves to `voice_preference` DIRECTLY.
-Never to Settings, never to Ayma's settings — those are its parents, not the
+Never to Settings — Settings is its parent, not the
 page itself.
 
 ### end_call strictness

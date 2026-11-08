@@ -42,7 +42,9 @@ class TourAnchors {
   /// The "Appearance" row inside the Profile tab.
   static const profileAppearanceRow = 'profile_appearance_row';
 
-  /// The "Ayma's settings" row inside the Profile tab (her brain + voice).
+  /// The Settings row inside the Profile tab — the tour's models steps
+  /// spotlight it: Ayma's models (her brain + voice) is a row on the
+  /// Settings page this row opens.
   static const profileAymaSettingsRow = 'profile_ayma_settings_row';
 
   /// The notification bell in the nav bar.

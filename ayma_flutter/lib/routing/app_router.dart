@@ -20,7 +20,7 @@ import '../screens/biometric_consent_settings_screen.dart';
 import '../screens/biometric_info_screen.dart';
 import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
-import '../screens/ayma_settings_screen.dart';
+import '../screens/appearance_settings_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/complete_profile_screen.dart';
 import '../screens/deep_dive_report_screen.dart';
@@ -44,6 +44,7 @@ import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
 import '../screens/profile_tab_screen.dart';
 import '../screens/story_editor_screen.dart';
+import '../screens/privacy_settings_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
@@ -458,9 +459,14 @@ final appRouter = GoRouter(
       builder: (context, state) => const NavBarShell(child: SettingsScreen()),
     ),
     GoRoute(
-      path: AymaSettingsScreen.path,
+      path: AppearanceSettingsScreen.path,
       builder: (context, state) =>
-          const NavBarShell(child: AymaSettingsScreen()),
+          const NavBarShell(child: AppearanceSettingsScreen()),
+    ),
+    GoRoute(
+      path: PrivacySettingsScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: PrivacySettingsScreen()),
     ),
     GoRoute(
       path: SkillsScreen.path,

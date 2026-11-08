@@ -624,7 +624,8 @@ def test_open_screen_covers_every_nested_profile_and_settings_screen():
     # Profile hub and Settings must be a valid destination now.
     for screen in (
         "ayma", "explore", "messages", "profile", "matches", "story",
-        "settings", "ayma_settings", "profile_details", "photos", "skills",
+        "settings", "appearance_settings", "privacy_settings",
+        "profile_details", "photos", "skills",
         "voice_preference", "credits", "accent_color", "notifications",
         "notification_settings", "feedback", "terms", "privacy",
         "release_notes",
@@ -1427,7 +1428,7 @@ def test_account_action_voice_needs_time_for_the_spoken_yes(monkeypatch):
 def test_account_action_wipe_memory_is_navigate_only(monkeypatch):
     # ACTION PARITY exclusions (founder, 2026-11-06): clearing what Ayma
     # has learned is user-only. Even a confirmed account_action never
-    # runs the wipe — it only opens Ayma's settings.
+    # runs the wipe — it only opens the Privacy settings.
     import knowledge_wipe
 
     wiped = []
@@ -1438,9 +1439,9 @@ def test_account_action_wipe_memory_is_navigate_only(monkeypatch):
     db = _acking_db()
     act = app_control._bind_account_action(db, "me")
     out = _run(act("wipe_memory"))
-    _navigated_only(db, out, "/settings/ayma")
+    _navigated_only(db, out, "/settings/privacy")
     out = _run(act("wipe_memory", True))
-    _navigated_only(db, out, "/settings/ayma")
+    _navigated_only(db, out, "/settings/privacy")
     assert wiped == []
 
 
@@ -1704,7 +1705,17 @@ def test_describe_names_any_route_and_includes_the_live_capture():
 
 def test_describe_lists_what_sits_on_settings_like_the_you_tab():
     out = app_control._describe({"screen": "", "route": "/settings"})
-    assert "Delete account" in out and "Accent colour" in out
+    # Founder cleanup 2026-11-07: the Settings top level names the four
+    # sections and the Ayma line items; Delete account and Accent colour
+    # sit one level down and are described from their sections.
+    assert "Appearance settings" in out and "Privacy settings" in out
+    assert "Connect an agent" in out
+    out_privacy = app_control._describe(
+        {"screen": "", "route": "/settings/privacy"})
+    assert "Delete account" in out_privacy
+    out_appearance = app_control._describe(
+        {"screen": "", "route": "/settings/appearance"})
+    assert "Accent colour" in out_appearance
 
 
 def test_describe_keeps_the_slug_line_for_known_screens():

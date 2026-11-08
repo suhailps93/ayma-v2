@@ -64,7 +64,10 @@ void main() {
         .cast<Map<String, dynamic>>();
     final wipe = acts.singleWhere((a) => a['key'] == 'wipe_memory');
     expect(wipe['handler'], 'navigate_only');
-    expect(wipe['destination'], 'ayma_settings');
+    // Destination is Privacy settings: the founder spec (Nov 7, 2026)
+    // put what Ayma has learned in Privacy and deleted the Ayma
+    // Settings screen, so ayma_settings no longer exists.
+    expect(wipe['destination'], 'privacy_settings');
     // And the graph marks them EXCLUDED.
     final graph = _graph();
     expect(graph, contains('EXCLUDED'));
