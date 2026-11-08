@@ -60,6 +60,12 @@ plausible, natural continuation of THIS conversation — grounded in both the
 compatibility analysis and what has actually been said. Offer a little variety
 (e.g. one that asks, one that shares, one that moves things forward).
 
+If `Them` has not replied yet (every message so far is from `Me`), coach the
+follow-up instead: `Me` has already said hello, so never offer a first-ever
+greeting. Build on what `Me` already sent and the shared ground — pick up a
+thread from the analysis, ask one easy question, or gently nudge — and let
+the `tip` speak to waiting on a reply.
+
 Each suggested line:
 - Reads like the user texting in the moment — relaxed, warm, specific to the
   last thing `Them` said. Not a fresh opener, not a topic change out of nowhere.
@@ -70,6 +76,9 @@ Each suggested line:
 `tip` is ONE short coaching nudge for the user — the kind a good friend would
 whisper: what's working, or a small adjustment for how they're showing up.
 - A single sentence, specific to what just happened in the thread.
+- At most about 20 words. Never show your working in the `tip`: no
+  checklists, no reminders, no restating these rules — the field holds only
+  the nudge itself.
 - Examples of the shape: "You're asking a lot of questions — try sharing
   something about yourself too." / "Nice, you opened up there — keep that going."
 - Never generic praise, never nitpicky about word choice or punctuation.

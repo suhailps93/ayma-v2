@@ -421,7 +421,21 @@ async def _generate_json_inference(
     )
     if not response.text.strip():
         raise RuntimeError("Gemini returned an empty JSON response.")
-    return _parse_json_text(response.text)
+    try:
+        return _parse_json_text(response.text)
+    except Exception:
+        # A reply that fails to parse is undiagnosable without the raw
+        # text: best-effort callers swallow this raise and return something
+        # empty. Log the shape of the reply (finish reason, plus both ends
+        # of the text — a budget-truncated reply is cut at the tail),
+        # then re-raise unchanged.
+        logger.warning(
+            "generate_json: unparseable model reply "
+            "(finish_reason=%s, chars=%d) head=%r tail=%r",
+            response.finish_reason, len(response.text),
+            response.text[:600], response.text[-400:],
+        )
+        raise
 
 
 async def generate_json(

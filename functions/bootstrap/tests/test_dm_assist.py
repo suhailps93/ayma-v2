@@ -497,3 +497,108 @@ def test_endpoint_coach_passes_messages(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"mode": "coach", "chips": ["nice"], "tip": "keep going"}
+
+
+# --- one-sided coach threads + generation retry (founder bug, 2026-11-07) - #
+
+
+def test_coach_one_sided_thread_asks_for_followup_coaching(monkeypatch):
+    """The founder case: Me has written (Hi, two voice notes, hello) and the
+    match has not replied. Coach mode must be told the match has not replied
+    yet, so the model coaches a follow-up instead of offering first-ever
+    greetings as if the thread were brand new."""
+    doc = {
+        "ai_explanation": "Both love the outdoors.",
+        "user_explanation": {"aaa": "You both love hiking."},
+    }
+    provider = _patch_provider(
+        monkeypatch,
+        _FakeProvider(
+            {
+                "chips": ["No rush at all, just wanted to say hi."],
+                "tip": "Give them some room to reply before sending more.",
+            }
+        ),
+    )
+    messages = [
+        {"from": "me", "text": "Hi"},
+        {"from": "me", "text": "[voice message]"},
+        {"from": "me", "text": "[voice message]"},
+        {"from": "me", "text": "hello"},
+    ]
+    out = _run(dm_assist.assist(_MatchDb(doc), "aaa", "bbb", messages))
+    assert out["mode"] == "coach"
+    assert out["chips"] == ["No rush at all, just wanted to say hi."]
+    assert out["tip"] == "Give them some room to reply before sending more."
+    sent = provider.calls[0][0]
+    assert "MODE: coach" in sent
+    assert "the match has not replied yet" in sent
+    assert "never a first-ever greeting" in sent
+    # Coaching runs at 0.7: at the 0.2 default the model repetition-loops
+    # its tip into a run-on that hygiene then has to drop (measured live).
+    assert provider.calls[0][1]["temperature"] == 0.7
+
+
+def test_coach_two_sided_thread_has_no_one_sided_note(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {"aaa": "y"}}
+    provider = _patch_provider(
+        monkeypatch, _FakeProvider({"chips": ["nice"], "tip": ""})
+    )
+    messages = [
+        {"from": "me", "text": "hey!"},
+        {"from": "them", "text": "hey, just got back from climbing"},
+    ]
+    out = _run(dm_assist.assist(_MatchDb(doc), "aaa", "bbb", messages))
+    assert out["mode"] == "coach"
+    assert "the match has not replied yet" not in provider.calls[0][0]
+
+
+class _FlakyProvider:
+    """Raises on the first call (the truncated-JSON failure surfacing from
+    generate_json), then returns a good result — the intermittent shape the
+    retry exists for."""
+
+    def __init__(self, result, failures=1):
+        self._result = result
+        self._failures = failures
+        self.calls = []
+
+    async def generate_json(self, contents, **kwargs):
+        self.calls.append((contents, kwargs))
+        if len(self.calls) <= self._failures:
+            raise ValueError("Unterminated string starting at: line 7")
+        return self._result
+
+
+def test_coach_retries_once_when_generation_fails(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {}}
+    provider = _patch_provider(
+        monkeypatch,
+        _FlakyProvider({"chips": ["tell me more"], "tip": "keep going"}),
+    )
+    out = _run(
+        dm_assist.assist(
+            _MatchDb(doc), "aaa", "bbb", [{"from": "me", "text": "hello"}]
+        )
+    )
+    assert out["mode"] == "coach"
+    assert out["chips"] == ["tell me more"]
+    assert out["tip"] == "keep going"
+    assert len(provider.calls) == 2
+
+
+def test_coach_gives_up_after_two_generation_failures(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {}}
+    provider = _patch_provider(
+        monkeypatch, _FlakyProvider(None, failures=99)
+    )
+    out = _run(
+        dm_assist.assist(
+            _MatchDb(doc), "aaa", "bbb", [{"from": "me", "text": "hello"}]
+        )
+    )
+    assert out == {
+        "mode": "coach", "chips": [], "tip": None,
+        "safety": {"level": "none", "reason": "", "flags": []},
+    }
+    assert len(provider.calls) == 2  # one attempt + exactly one retry
