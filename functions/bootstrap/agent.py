@@ -666,7 +666,12 @@ def build_cascade_session(
             ),
         )
         _warm_open_weights_endpoint()
-    return AgentSession(**session_kwargs)
+    session = AgentSession(**session_kwargs)
+    try:
+        session.brain = brain
+    except Exception:
+        pass
+    return session
 
 
 def _voice_isolation_filter(provider: str | None = None):
@@ -777,14 +782,16 @@ def relay_cascade_usage(
     model: str = "",
     on_credits_exhausted: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
-    """Meter the Meta voice cascade's LLM turns against the user's token ledger.
+    """Meter the voice cascade's LLM turns against the user's token ledger.
 
     A cascade emits per-component ``LLMMetrics`` / ``STTMetrics`` / ``TTSMetrics``
     rather than the single ``RealtimeModelMetrics`` a Gemini Live session emits
     (which :func:`relay_token_usage` records), so the lifetime credit cap would
-    otherwise never see a Meta-cascade call. This records the Muse Spark LLM
-    tokens under ``FEATURE_VOICE`` so the cap stays honest. Best-effort — a
-    failed write never affects the call. (Real-dollar pricing for the Meta model
+    otherwise never see a cascade call. This records the cascade LLM
+    tokens under ``FEATURE_VOICE`` so the cap stays honest, attributing usage
+    to the actual model that served the turn (LiveKit Inference / Google for
+    Gemini cascade, Meta only for real Meta sessions). Best-effort — a failed
+    write never affects the call. (Real-dollar pricing for the Meta model
     is a separate Deliverable-A gap; tokens still drive the cap regardless.)
 
     ``on_credits_exhausted``, when given (the MAIN voice cascade passes it;
@@ -810,9 +817,24 @@ def relay_cascade_usage(
         total = int(getattr(m, "total_tokens", 0) or 0) or (in_tok + out_tok)
         if total <= 0:
             return
+        ev_meta = getattr(m, "metadata", None)
+        ev_model = (
+            getattr(m, "model", None)
+            or getattr(m, "model_name", None)
+            or getattr(ev_meta, "model_name", None)
+            or (ev_meta.get("model_name") if isinstance(ev_meta, dict) else None)
+            or (ev_meta.get("model") if isinstance(ev_meta, dict) else None)
+        )
+        actual_model = (
+            ev_model
+            or model
+            or getattr(getattr(session, "llm", None), "model", None)
+            or getattr(getattr(session, "brain", None), "model", None)
+            or ""
+        )
         logger.info(
             "cascade-usage uid=%s session=%s model=%s in=%d out=%d total=%d",
-            uid, session_id or "?", model or "?", in_tok, out_tok, total,
+            uid, session_id or "?", actual_model or "?", in_tok, out_tok, total,
         )
         token_ledger.add(
             uid,
@@ -820,7 +842,7 @@ def relay_cascade_usage(
             total,
             input_tokens=in_tok,
             output_tokens=out_tok,
-            model=model or None,
+            model=actual_model or None,
             session_id=session_id,
         )
 
@@ -3078,8 +3100,16 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
                 flush=flush, window=window, route=route,
                 use_inference=use_inference, voice_provider=voice_provider,
             )
+            route_model = voice_catalog.brain_route(brain_id)
+            brain_model = (
+                (route_model[1] if route_model else "")
+                or getattr(getattr(session, "llm", None), "model", None)
+                or getattr(getattr(session, "brain", None), "model", None)
+                or (brain_id if "/" in brain_id else "")
+            )
             await _start_main_cascade_session(
                 ctx, seed, session, flush=flush, window=window,
+                brain_model=brain_model,
             )
             return
     elif seed.realtime_model_id == voice_catalog.REALTIME_OPENAI:
@@ -3657,8 +3687,9 @@ async def _start_main_cascade_session(
     *,
     flush: SessionFlush,
     window: list[Turn],
+    brain_model: str = "",
 ) -> None:
-    """Start the normal Ayma voice call on the Meta cascade (Deliverable A).
+    """Start the normal Ayma voice call on the cascade (STT + LLM + TTS pipeline).
 
     Wires the same session-agnostic relays the Gemini Live path uses — transcript
     relay into the raw_turns ``window`` (so memory persistence, barge-in, the
@@ -3672,6 +3703,23 @@ async def _start_main_cascade_session(
     flush is NOT started on an ERROR close here — the runtime fallback continues
     the call on a fresh Gemini Live session on the same window, which flushes at
     its own close."""
+    import voice_catalog
+
+    resolved_brain_model = (
+        brain_model
+        or getattr(getattr(session, "llm", None), "model", None)
+        or getattr(getattr(session, "brain", None), "model", None)
+    )
+    if not resolved_brain_model:
+        brain_id = seed.brain_id or voice_catalog.BRAIN_META
+        route_model = voice_catalog.brain_route(brain_id)
+        if route_model:
+            resolved_brain_model = route_model[1]
+        elif brain_id and "/" in brain_id:
+            resolved_brain_model = brain_id
+        elif brain_id == voice_catalog.BRAIN_META:
+            resolved_brain_model = CONFIG.meta_chat_model
+
     tour_gate = TourNarrationGate()
     dedupe = skills.VoiceTurnDedupe()
     relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
@@ -3684,7 +3732,7 @@ async def _start_main_cascade_session(
         session,
         seed.uid,
         session_id=seed.session_id,
-        model=CONFIG.meta_chat_model,
+        model=resolved_brain_model,
         on_credits_exhausted=lambda: end_call_out_of_credits(
             ctx, session, seed.uid, flush.run
         ),
