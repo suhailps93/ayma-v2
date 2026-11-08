@@ -419,6 +419,71 @@ void main() {
       expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'Default voice resolves to catalog defaultSelection voiceId when specified in Cascade mode',
+    (tester) async {
+      final player = _FakePreviewPlayer();
+      final cat = _catalog();
+      cat['default'] = {
+        'mode': 'cascade',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'google/gemini-3.7-flash',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'fishaudio/s2.1-pro',
+        'voice_id': 'speaker1',
+      };
+      cat['current'] = {
+        'mode': 'cascade',
+        'realtime_model_id': 'gemini-live',
+        'brain_id': 'google/gemini-3.7-flash',
+        'stt_id': 'deepgram/nova-3',
+        'tts_id': 'fishaudio/s2.1-pro',
+        'voice_id': '',
+        'language_code': '',
+        'accent': '',
+      };
+
+      final mock = MockClient((req) async {
+        if (req.url.path == '/voice/engines') {
+          return http.Response(
+            jsonEncode(cat),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }
+        if (req.url.path == '/voice/preview/speaker1') {
+          return http.Response(
+            jsonEncode({'url': 'https://example.test/speaker1.wav'}),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('unexpected ${req.url.path}', 404);
+      });
+      final api = ApiClient(httpClient: mock, auth: MockFirebaseAuth(signedIn: true));
+
+      await tester.pumpWidget(
+        _host(VoiceEngineControl(api: api, previewPlayer: player)),
+      );
+      await tester.pumpAndSettle();
+
+      // In Cascade mode with fishaudio, effective voice id is empty ("Default voice")
+      expect(find.text('Default voice'), findsOneWidget);
+
+      // Button is enabled
+      final btn = tester.widget<IconButton>(_previewButton());
+      expect(btn.onPressed, isNotNull);
+
+      // Tap preview
+      await tester.tap(_previewButton());
+      await tester.pumpAndSettle();
+
+      // Resolved to catalog defaultSelection voiceId ('speaker1') and played
+      expect(player.played, ['https://example.test/speaker1.wav']);
+      expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
+    },
+  );
 }
 
 /// Records preview playback instead of touching platform audio.

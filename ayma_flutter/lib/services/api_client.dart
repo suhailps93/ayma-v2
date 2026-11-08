@@ -5879,6 +5879,32 @@ class VoiceSelection {
         voiceFellBack: voiceFellBack,
         savedVoiceId: savedVoiceId,
       );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VoiceSelection &&
+          runtimeType == other.runtimeType &&
+          mode == other.mode &&
+          realtimeModelId == other.realtimeModelId &&
+          brainId == other.brainId &&
+          sttId == other.sttId &&
+          ttsId == other.ttsId &&
+          voiceId == other.voiceId &&
+          languageCode == other.languageCode &&
+          accent == other.accent;
+
+  @override
+  int get hashCode => Object.hash(
+        mode,
+        realtimeModelId,
+        brainId,
+        sttId,
+        ttsId,
+        voiceId,
+        languageCode,
+        accent,
+      );
 }
 
 /// The full `/voice/engines` catalog.

@@ -228,9 +228,20 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       }
     }
 
-    // Per-TTS fallback from catalog definition:
+    // If the catalog default selection specifies a voice for this stack:
+    final cat = _cat;
     final sel = _sel;
-    if (sel != null && sel.mode == 'cascade') {
+    if (cat != null && sel != null && sel.mode == 'cascade') {
+      if (cat.defaultSelection.mode == 'cascade' &&
+          cat.defaultSelection.ttsId == sel.ttsId &&
+          cat.defaultSelection.voiceId.isNotEmpty) {
+        for (final v in voices) {
+          if (v.id == cat.defaultSelection.voiceId) {
+            return v.id;
+          }
+        }
+      }
+
       final ttsId = sel.ttsId.toLowerCase();
       if (ttsId.contains('inworld')) {
         for (final v in voices) {
@@ -254,6 +265,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
 
     // Tapping again while playing or busy loading cancels/stops immediately.
     if (_previewingVoiceId != null || _previewBusy) {
+      debugPrint('[voice_preview] Stopping preview');
       _previewToken++;
       await _previewPlayer.stop();
       if (mounted) {
@@ -267,6 +279,10 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
 
     final voiceId = _resolvePreviewVoiceId();
     if (voiceId.isEmpty) {
+      debugPrint(
+        '[voice_preview] No preview recorded for voice "${_effectiveVoiceId.isEmpty ? 'default' : _effectiveVoiceId}" '
+        '(mode: ${_sel?.mode}, tts: ${_sel?.ttsId})',
+      );
       AymaToast.show(
         context,
         'No preview recorded for this voice yet.',
@@ -275,6 +291,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       return;
     }
 
+    debugPrint('[voice_preview] Requesting preview for voice "$voiceId"');
     final token = ++_previewToken;
     setState(() {
       _previewingVoiceId = _effectiveVoiceId;
@@ -286,6 +303,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       if (token != _previewToken) return;
       if (!mounted) return;
       if (url.isEmpty) throw ApiException('voice preview failed.');
+      debugPrint('[voice_preview] Playing preview url: $url');
       await _previewPlayer.play(url);
       if (token != _previewToken) return;
       if (!mounted) return;
@@ -293,6 +311,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         _previewBusy = false;
       });
     } catch (e) {
+      debugPrint('[voice_preview] Preview failed for voice "$voiceId": $e');
       if (token != _previewToken) return;
       if (!mounted) return;
       setState(() {
@@ -584,10 +603,13 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             for (final m in cat.modes)
               DropdownMenuItem(value: m, child: Text(_modeLabel(m))),
           ],
-          onChanged: (m) => setState(() {
-            _sel = sel.copyWith(mode: m);
-            _resetPreview();
-          }),
+          onChanged: (m) {
+            setState(() {
+              _sel = sel.copyWith(mode: m);
+              _resetPreview();
+            });
+            widget.controller?._changed();
+          },
         ),
         const SizedBox(height: 16),
         if (sel.mode == 'realtime')
@@ -656,6 +678,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
                       _reconcileVoice();
                       _resetPreview();
                     });
+                    widget.controller?._changed();
                   },
           );
         },
@@ -682,7 +705,10 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         ac,
         cat.stt,
         sel.sttId,
-        (v) => setState(() => _sel = sel.copyWith(sttId: v)),
+        (v) {
+          setState(() => _sel = sel.copyWith(sttId: v));
+          widget.controller?._changed();
+        },
       ),
       const SizedBox(height: 12),
       const PickerInfoLabel(
@@ -699,6 +725,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           _reconcileVoice();
           _resetPreview();
         });
+        widget.controller?._changed();
       }),
     ];
   }
@@ -743,10 +770,13 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
                 ],
                 onChanged: voices.isEmpty
                     ? null
-                    : (v) => setState(() {
-                        _sel = sel.copyWith(voiceId: v);
-                        _resetPreview();
-                      }),
+                    : (v) {
+                        setState(() {
+                          _sel = sel.copyWith(voiceId: v);
+                          _resetPreview();
+                        });
+                        widget.controller?._changed();
+                      },
               ),
             ),
             const SizedBox(width: 8),
@@ -792,8 +822,10 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           ],
           onChanged: langs.isEmpty
               ? null
-              : (v) =>
-                    setState(() => _sel = sel.copyWith(languageCode: v ?? '')),
+              : (v) {
+                  setState(() => _sel = sel.copyWith(languageCode: v ?? ''));
+                  widget.controller?._changed();
+                },
         ),
         // §13.9: show the ACCENT card ONLY when the active component (the
         // realtime model, or the cascade TTS) can honour a free-text accent.
@@ -838,7 +870,10 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
           // selection that already carries the typed accent — otherwise a
           // sibling dropdown's stale closure would overwrite it (§13.9
           // hide-don't-delete). The controller keeps the caret across rebuilds.
-          onChanged: (v) => setState(() => _sel = sel.copyWith(accent: v)),
+          onChanged: (v) {
+            setState(() => _sel = sel.copyWith(accent: v));
+            widget.controller?._changed();
+          },
           style: AymaType.sans(size: 15, color: ac.fg),
           decoration: InputDecoration(
             isDense: true,
