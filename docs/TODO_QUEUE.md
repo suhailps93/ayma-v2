@@ -4,6 +4,27 @@ Last updated: 2026-11-08. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## NOTE-156-TOUR-TRIGGER-TRIAGE — Voice messages tour popup trigger triage (fleet/tour-trigger-triage off staging 2a80d8e2, 2026-11-08) — DONE
+- **Triage Finding: BY-DESIGN SHOW-ONCE BEHAVIOR — NO DEFECT.**
+- **Root Cause & Forensic Analysis:**
+  1. **Two different tour mechanisms:**
+     - The **passive coach-mark tour** (`lib/services/tour_content.dart`, `coach_mark_overlay.dart`, `feature_tour_store.dart`) stores seen feature IDs on the user's Firestore profile doc (`users/{uid}/profile/main.seen_tour_features`).
+     - The **backend-driven guided tour** (`skills/guided_tour.py`, `app_commands/tour_state`) stores transient step state in `users/{uid}/app_commands/tour_state`. Scout inspected `tour_state`, which is only for the live voice/chat guided tour ("walk me through the app"), not the passive coach-mark card.
+  2. **NOTE 151 vs NOTE 156 lifecycle:**
+     - In build 2299, `async_voice` ("Voice messages") was added to `tourFeatures` in `tour_content.dart`.
+     - In NOTE 151, Daniel (`demo-test1`) had not seen `async_voice`. `decideTour` saw an existing user with an unseen feature and returned `spotlight: true, features: [async_voice]`. The card appeared with "NEW", "Got it", and "Skip tour".
+     - In NOTE 151, Scout dismissed the popup via system Back. `TourController.skipFromBack()` executed `store.markSeen(['async_voice'])`, persisting `'async_voice'` to `users/demo-test1/profile/main.seen_tour_features` in Cloud Firestore (verified: 18 items including `async_voice`).
+     - In NOTE 156, Daniel re-signed in. `decideTour` read `seen_tour_features`, found 0 unseen features (`unseen.isEmpty`), and returned `show: false`.
+     - Clearing app data (`pm clear`) removes only local client storage; since `seen_tour_features` lives in Cloud Firestore, re-signing in restores the seen array immediately. This is intentional show-once behavior so users are not repeatedly nagged.
+- **Re-trigger tool for QA/Scout (`scripts/reset_tour.py`):**
+  - Re-trigger single feature spotlight (`async_voice`): `GOOGLE_CLOUD_PROJECT=ayma-staging python3 scripts/reset_tour.py --uid demo-test1 --unsee async_voice` (already executed; `async_voice` is unseeded on staging for `demo-test1`).
+  - Re-trigger full first-run walkthrough: `GOOGLE_CLOUD_PROJECT=ayma-staging python3 scripts/reset_tour.py --uid demo-test1 --reset-all`
+  - Inspect seen features: `GOOGLE_CLOUD_PROJECT=ayma-staging python3 scripts/reset_tour.py --uid demo-test1 --inspect`
+- **Tests:**
+  - `ayma_flutter/test/feature_tour_gate_test.dart`: 7/7 passed (+2 new tests verifying returning user seen status & unseeing `async_voice`).
+  - `ayma_flutter/test/feature_tour_seen_state_test.dart`: 7/7 passed (+1 new test verifying arrayRemove unsee).
+  - `flutter analyze ayma_flutter`: clean (0 issues, ran in 28.7s).
+
 ## SIGNIN-GOOGLE-AND-VOICE — Google sign-in cache fix + Voice introduce-once-and-wait (fleet/signin-page-fixes off staging tip 6463d598, 2026-11-08) — DONE, lead engineer reviews + merges + builds
 - **Part 1 — Google sign-in root cause:**
   - In `scripts/build-apk.sh`, cache busting previously purged only `build/app/generated/res/google-services` and `build/app/intermediates/merged_res`. In AGP 8.11.1, `merged_res` does not exist; resource merging is cached in `build/app/intermediates/incremental/debug/mergeDebugResources/`, `packaged_res/debug/`, etc. An incremental build in the watcher's worktree (`ayma-autodeploy`) reused cached prod resources in `resources.arsc` (`project_id: ayma-ai`, sender `235381544962`).

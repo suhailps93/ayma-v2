@@ -44,6 +44,23 @@ void main() {
     expect(d.show, isFalse);
   });
 
+  test('returning user with all tour features seen does not show tour', () {
+    final seen = allTourFeatureIds();
+    final d = decideTour(seen);
+    expect(d.show, isFalse);
+    expect(d.features, isEmpty);
+  });
+
+  test('unseeing async_voice re-triggers the exact single-feature spotlight', () {
+    final seen = allTourFeatureIds()..remove('async_voice');
+    final d = decideTour(seen);
+    expect(d.show, isTrue);
+    expect(d.spotlight, isTrue);
+    expect(d.features.length, 1);
+    expect(d.features.first.featureId, 'async_voice');
+    expect(d.features.first.headline, 'Voice messages');
+  });
+
   test('the live tour content is non-empty and has unique feature ids', () {
     final ids = tourFeatures.map((f) => f.featureId).toList();
     expect(ids, isNotEmpty);
