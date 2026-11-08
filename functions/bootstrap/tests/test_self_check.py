@@ -862,8 +862,9 @@ def test_any_check_failing_with_disabled_error_is_known_off():
 # E. bug-filing de-dupe (24h)
 
 class _BugDoc:
-    def __init__(self, data):
+    def __init__(self, data, doc_id="bug-old"):
         self._data = data
+        self.id = doc_id
 
     def to_dict(self):
         return self._data
@@ -877,6 +878,7 @@ class _BugQuery:
         return self
 
     def limit(self, n):
+        self._docs = self._docs[:n]
         return self
 
     def stream(self):
@@ -900,18 +902,19 @@ class _BugDb:
         return _BugCollection(self._docs)
 
 
-def _filed_doc(error, *, hours_ago=1):
+def _filed_doc(error, *, hours_ago=1, doc_id="bug-old", check="nav:explore"):
     return _BugDoc(
         {
             "uid": "u1",
             "description": (
-                "[self-check] check=nav:explore category=navigation "
+                f"[self-check] check={check} category=navigation "
                 f"session=s-old run=oldrun env=test-env error={error}"
             ),
             "status": "new",
             "created_at": datetime.now(timezone.utc)
             - timedelta(hours=hours_ago),
-        }
+        },
+        doc_id=doc_id,
     )
 
 
@@ -972,3 +975,68 @@ def test_bug_filing_dedupe_query_failure_never_blocks_filing():
         )
     )
     assert len(filed) == 1
+
+
+# E2. bug-filing de-dupe reporting (ledger 2d1, Scout NOTE 142) ---------------
+
+
+def test_bug_filing_suppression_points_at_existing_report():
+    """A de-dupe suppression is not a filing failure: the result points
+    at the existing report, and the built report line shows its id
+    instead of "bug filing failed"."""
+    filed = []
+    runner = _dedupe_runner(_BugDb([_filed_doc("boom", doc_id="bug-old")]), filed)
+    result = CheckResult("nav:explore", "navigation", self_check.FAIL, "", "boom")
+    asyncio.run(runner._file_bug(result))
+    assert filed == []
+    assert result.bug_id == "bug-old"
+    assert "already filed" in result.detail
+    report = self_check.build_report([result], "run-x", "s-x", "test-env")
+    assert "— bug bug-old" in report
+    assert "bug filing failed" not in report
+
+
+def test_bug_filing_undated_doc_never_suppresses():
+    """A matching doc with no usable created_at cannot prove recency,
+    so it must not suppress a genuinely new filing."""
+    filed = []
+    doc = _BugDoc(
+        {
+            "uid": "u1",
+            "description": (
+                "[self-check] check=nav:explore category=navigation "
+                "session=s-old run=oldrun env=test-env error=boom"
+            ),
+            "status": "new",
+            "created_at": None,
+        },
+        doc_id="bug-undated",
+    )
+    runner = _dedupe_runner(_BugDb([doc]), filed)
+    result = CheckResult("nav:explore", "navigation", self_check.FAIL, "", "boom")
+    asyncio.run(runner._file_bug(result))
+    assert len(filed) == 1
+    assert result.bug_id == "bug-new"
+
+
+def test_bug_filing_dedupe_sees_docs_beyond_first_fifty():
+    """The de-dupe fetch must cover the user's whole recent set: with 60
+    prior reports and the identical one at position 55, the old
+    limit(50) fetch missed it and filed a duplicate."""
+    filed = []
+    docs = [
+        _filed_doc("other", hours_ago=1, doc_id=f"bug-filler-{i}",
+                   check=f"nav:other{i}")
+        for i in range(55)
+    ]
+    docs.append(_filed_doc("boom", doc_id="bug-match"))
+    docs += [
+        _filed_doc("other", hours_ago=1, doc_id=f"bug-tail-{i}",
+                   check=f"nav:tail{i}")
+        for i in range(4)
+    ]
+    runner = _dedupe_runner(_BugDb(docs), filed)
+    result = CheckResult("nav:explore", "navigation", self_check.FAIL, "", "boom")
+    asyncio.run(runner._file_bug(result))
+    assert filed == []
+    assert result.bug_id == "bug-match"

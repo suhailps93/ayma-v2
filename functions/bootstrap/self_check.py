@@ -241,6 +241,11 @@ FINAL_NAV_TIMEOUT = 30.0
 
 # Bug filing de-dupes against identical failures filed this recently.
 _BUG_DEDUPE_WINDOW = timedelta(hours=24)
+# How many of the user's bug_reports rows the de-dupe fetch pulls. Must
+# cover the whole recent set: the fetch has no ordering (no composite
+# index exists for (uid, created_at)), so a limit below the user's total
+# silently drops recent rows and the de-dupe misses them.
+_BUG_DEDUPE_FETCH_LIMIT = 200
 
 
 def _is_external_destination(dest: dict) -> bool:
@@ -707,11 +712,15 @@ class SelfCheckRunner:
         await self._announce(self._line(result))
 
     def _recent_bug_docs(self) -> list:
-        """Best-effort recent bug_reports docs for this user.
+        """Best-effort recent bug_reports docs for this user, newest first.
 
         Any handle or query failure returns an empty list — a filing
         query failure must never break a run or block a real filing.
+        The fetch has no server-side ordering (no composite index
+        exists for (uid, created_at)), so the newest-first order is
+        applied here in memory.
         """
+        docs: list = []
         try:
             query = self.db.collection("bug_reports")
             try:
@@ -719,19 +728,40 @@ class SelfCheckRunner:
             except Exception:  # noqa: BLE001 - unfiltered fallback
                 pass
             try:
-                query = query.limit(50)
+                query = query.limit(_BUG_DEDUPE_FETCH_LIMIT)
             except Exception:  # noqa: BLE001 - limit is best-effort
                 pass
             if hasattr(query, "stream"):
-                return list(query.stream())
-            if hasattr(query, "get"):
-                return list(query.get())
+                docs = list(query.stream())
+            elif hasattr(query, "get"):
+                docs = list(query.get())
         except Exception:  # noqa: BLE001 - de-dupe is best-effort
             logger.exception("self-check bug de-dupe query failed")
-        return []
+            return []
 
-    def _already_filed_recently(self, result: CheckResult) -> bool:
-        """True when an identical check+error was filed within 24h."""
+        def _sort_key(doc):
+            try:
+                data = doc.to_dict() or {}
+            except Exception:  # noqa: BLE001 - undated docs sort last
+                return (1, 0.0)
+            created = data.get("created_at")
+            if isinstance(created, datetime):
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                return (0, -created.timestamp())
+            return (1, 0.0)
+
+        docs.sort(key=_sort_key)
+        return docs
+
+    def _already_filed_recently(self, result: CheckResult) -> str:
+        """Id of the existing report for an identical check+error filed
+        within 24h, else "".
+
+        A doc whose created_at is missing or unparseable never counts
+        as a match: recency cannot be verified, and suppressing on it
+        would hide a genuinely new failure forever.
+        """
         needle = f"check={result.name} "
         want_error = (result.error or result.detail or "").strip()
         now = datetime.now(timezone.utc)
@@ -748,20 +778,28 @@ class SelfCheckRunner:
                 if filed_error != want_error:
                     continue
             created = data.get("created_at")
-            if isinstance(created, datetime):
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
-                if now - created > _BUG_DEDUPE_WINDOW:
-                    continue
-            return True
-        return False
+            if not isinstance(created, datetime):
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if now - created > _BUG_DEDUPE_WINDOW:
+                continue
+            return getattr(doc, "id", "") or ""
+        return ""
 
     async def _file_bug(self, result: CheckResult) -> None:
         """File this failure once per run, at the moment it happened."""
         if result.name in self._filed:
             return
         self._filed.add(result.name)
-        if self._already_filed_recently(result):
+        existing_id = self._already_filed_recently(result)
+        if existing_id:
+            # The failure already has a live report from the last 24h:
+            # point at it instead of filing a duplicate. bug_id must be
+            # set here — build_report reads "bug filing failed" off an
+            # empty bug_id, which is how these suppressions were
+            # misreported as filing failures in NOTE 142.
+            result.bug_id = existing_id
             result.detail = (
                 result.detail + " (already filed in the last 24h)"
             ).strip()
