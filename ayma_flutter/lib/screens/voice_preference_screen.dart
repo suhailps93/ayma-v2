@@ -20,7 +20,7 @@ import '../widgets/voice_engine_control.dart';
 ///
 /// The list is FLAT (founder, 2026-11-07): no Brain/Voice section headers
 /// and no explanation paragraphs — each picker's short explanation sits
-/// behind its eye icon (see `PickerInfoLabel`).
+/// behind its info icon (see `PickerInfoLabel`).
 class VoicePreferenceScreen extends StatefulWidget {
   const VoicePreferenceScreen({super.key, this.api, this.voiceConnected});
 

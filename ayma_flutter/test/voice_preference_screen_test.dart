@@ -261,7 +261,7 @@ void main() {
     expect(body['reconnect'], isTrue);
   });
 
-  testWidgets('clean list: no sections or paragraphs, an eye per picker',
+  testWidgets('clean list: no sections or paragraphs, an info icon per picker',
       (tester) async {
     _bigViewport(tester);
     await tester.pumpWidget(_host());
@@ -277,8 +277,8 @@ void main() {
     expect(find.textContaining('Options are pulled live'), findsNothing);
     expect(find.textContaining('Ayma speaks with this accent'), findsNothing);
 
-    // The small field labels stay, and so does the per-brain description
-    // line under the Brain dropdown.
+    // The small field labels stay; the per-brain description line under the
+    // Brain dropdown is removed (Nov 8 founder order).
     for (final label in [
       'BRAIN',
       'MODE',
@@ -289,9 +289,9 @@ void main() {
     ]) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
-    expect(find.text('Google Gemini.'), findsOneWidget);
+    expect(find.text('Google Gemini.'), findsNothing);
 
-    // One eye per picker in cascade mode; the realtime eye stays home.
+    // One info icon per picker in cascade mode; the realtime info icon stays home.
     for (final key in [
       'picker-info-brain',
       'picker-info-mode',
@@ -304,9 +304,10 @@ void main() {
     }
     expect(find.byKey(const ValueKey('picker-info-realtime-model')),
         findsNothing);
-    expect(find.byIcon(Icons.visibility_outlined), findsNWidgets(6));
+    expect(find.byIcon(Icons.info_outline), findsNWidgets(6));
+    expect(find.byIcon(Icons.visibility_outlined), findsNothing);
 
-    // Tapping the Brain eye opens its explanation in a sheet.
+    // Tapping the Brain info icon opens its explanation in a sheet.
     await tester.tap(find.byKey(const ValueKey('picker-info-brain')));
     await tester.pumpAndSettle();
     expect(find.text('Brain'), findsOneWidget);
@@ -314,9 +315,20 @@ void main() {
       find.textContaining('The one brain behind everything Ayma does'),
       findsOneWidget,
     );
+
+    // Dismiss the Brain sheet and tap the Voice info icon.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('picker-info-voice')));
+    await tester.pumpAndSettle();
+    expect(find.text('Voice'), findsOneWidget);
+    expect(
+      find.textContaining('How Ayma sounds when she speaks on a call'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('realtime mode: realtime + accent eyes, no cascade eyes',
+  testWidgets('realtime mode: realtime + accent info icons, no cascade info icons',
       (tester) async {
     _bigViewport(tester);
     await tester.pumpWidget(MaterialApp(
@@ -336,11 +348,11 @@ void main() {
     expect(find.byKey(const ValueKey('picker-info-accent')), findsOneWidget);
     expect(find.byKey(const ValueKey('picker-info-stt')), findsNothing);
     expect(find.byKey(const ValueKey('picker-info-tts')), findsNothing);
-    // The accent explanation moved behind its eye \u2014 not a line under
+    // The accent explanation moved behind its info icon \u2014 not a line under
     // the field any more.
     expect(find.textContaining('Ayma speaks with this accent'), findsNothing);
 
-    // Tapping the Accent eye opens its explanation in a sheet.
+    // Tapping the Accent info icon opens its explanation in a sheet.
     await tester.tap(find.byKey(const ValueKey('picker-info-accent')));
     await tester.pumpAndSettle();
     expect(

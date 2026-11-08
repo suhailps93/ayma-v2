@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// A picker field label with a small eye icon beside it (founder,
-/// 2026-11-07): the Models screen stays clean — no section headers, no
+/// A picker field label with a small info icon beside it (founder,
+/// 2026-11-07, updated 2026-11-08): the Models screen stays clean — no section headers, no
 /// always-visible explanation paragraphs — and each picker's short
-/// explanation lives behind its eye. Tapping the eye opens a small sheet
+/// explanation lives behind its info icon. Tapping the info icon opens a small sheet
 /// saying what changing that setting does.
 class PickerInfoLabel extends StatelessWidget {
   const PickerInfoLabel({
@@ -19,7 +19,7 @@ class PickerInfoLabel extends StatelessWidget {
   /// The small mono field label, e.g. 'BRAIN'.
   final String label;
 
-  /// Key for the eye button, e.g. 'picker-info-brain'.
+  /// Key for the info button, e.g. 'picker-info-brain'.
   final String infoKey;
 
   /// Sheet title, e.g. 'Brain'.
@@ -35,15 +35,17 @@ class PickerInfoLabel extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          Text(
-            label,
-            style: AymaType.mono(size: 10, color: ac.fgMute)
-                .copyWith(letterSpacing: 1.5),
+          Expanded(
+            child: Text(
+              label,
+              style: AymaType.mono(size: 10, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.5),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          const Spacer(),
           IconButton(
             key: ValueKey(infoKey),
-            icon: const Icon(Icons.visibility_outlined, size: 18),
+            icon: const Icon(Icons.info_outline, size: 18),
             color: ac.fgMute,
             tooltip: 'What does this do?',
             visualDensity: VisualDensity.compact,
@@ -61,7 +63,7 @@ class PickerInfoLabel extends StatelessWidget {
   }
 }
 
-/// The small sheet behind a picker's eye icon: the picker's name and what
+/// The small sheet behind a picker's info icon: the picker's name and what
 /// changing it does, in one or two short plain sentences.
 void showPickerExplanation(
   BuildContext context, {

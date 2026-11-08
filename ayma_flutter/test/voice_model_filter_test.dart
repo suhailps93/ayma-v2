@@ -152,7 +152,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('switching the realtime model replaces the list and falls back with a note',
+  testWidgets('switching the realtime model replaces the list and falls back without showing a note',
       (tester) async {
     final controller = VoiceEngineController();
     await tester.pumpWidget(_host(
@@ -160,6 +160,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(controller.selection?.voiceId, 'Charon');
     expect(find.byKey(const ValueKey('voice-fallback-note')), findsNothing);
+    expect(find.textContaining('Hear a short sample of the voice before you save'), findsNothing);
 
     // Switch the realtime model: Gemini Live -> Acme Live.
     await tester.tap(find.byType(DropdownButton<String>).at(1));
@@ -167,12 +168,10 @@ void main() {
     await tester.tap(find.text('Acme Live').last);
     await tester.pumpAndSettle();
 
-    // Charon is not an Acme voice: fell back to its first voice, WITH a note.
+    // Charon is not an Acme voice: fell back to its first voice, with NO note rendered.
     expect(controller.selection?.voiceId, 'Nova');
-    final note = find.byKey(const ValueKey('voice-fallback-note'));
-    expect(note, findsOneWidget);
-    expect(find.textContaining('Charon'), findsWidgets);
-    expect(find.textContaining('Nova'), findsWidgets);
+    expect(find.byKey(const ValueKey('voice-fallback-note')), findsNothing);
+    expect(find.textContaining('not available with this model'), findsNothing);
 
     // The open list now offers exactly the Acme voices.
     await _openVoiceMenu(tester);
@@ -182,12 +181,11 @@ void main() {
     await tester.tap(find.text('Orbit').last);
     await tester.pumpAndSettle();
 
-    // A manual pick clears the note.
     expect(controller.selection?.voiceId, 'Orbit');
     expect(find.byKey(const ValueKey('voice-fallback-note')), findsNothing);
   });
 
-  testWidgets('switching the cascade TTS replaces the list and falls back with a note',
+  testWidgets('switching the cascade TTS replaces the list and falls back without showing a note',
       (tester) async {
     final controller = VoiceEngineController();
     await tester.pumpWidget(_host(VoiceEngineControl(
@@ -204,9 +202,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.selection?.voiceId, 'hex-hannah');
-    expect(find.byKey(const ValueKey('voice-fallback-note')), findsOneWidget);
-    expect(find.textContaining('Hades'), findsWidgets);
-    expect(find.textContaining('Hannah'), findsWidgets);
+    expect(find.byKey(const ValueKey('voice-fallback-note')), findsNothing);
+    expect(find.textContaining('not available with this model'), findsNothing);
 
     await _openVoiceMenu(tester);
     expect(find.text('Hannah'), findsWidgets);
@@ -217,7 +214,7 @@ void main() {
     expect(find.byKey(const ValueKey('voice-fallback-note')), findsNothing);
   });
 
-  testWidgets('a server-reported fallback shows the note at load',
+  testWidgets('a server-reported fallback switches voice at load without showing a note',
       (tester) async {
     final controller = VoiceEngineController();
     await tester.pumpWidget(_host(VoiceEngineControl(
@@ -232,13 +229,13 @@ void main() {
     await tester.pumpAndSettle();
 
     // The server already resolved the unsupported saved voice (a Fish Audio
-    // voice on the Inworld stack) to the stack default; the UI says so.
-    final note = find.byKey(const ValueKey('voice-fallback-note'));
-    expect(note, findsOneWidget);
-    expect(find.textContaining('Hannah'), findsWidgets);
-    expect(find.textContaining('not available with this model'), findsWidgets);
+    // voice on the Inworld stack) to the stack default; no note is shown under the dropdown.
+    expect(controller.selection?.voiceId, '');
+    expect(find.byKey(const ValueKey('voice-fallback-note')), findsNothing);
+    expect(find.textContaining('not available with this model'), findsNothing);
+    expect(find.textContaining('Hear a short sample of the voice before you save'), findsNothing);
 
-    // Picking a voice by hand clears the note.
+    // Picking a voice by hand updates the selection cleanly.
     await _openVoiceMenu(tester);
     await tester.tap(find.text('Ashley — bright').last);
     await tester.pumpAndSettle();

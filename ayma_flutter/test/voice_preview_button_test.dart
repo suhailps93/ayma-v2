@@ -72,13 +72,27 @@ Map<String, dynamic> _catalog() => {
       'available': true,
       'supports_accent': false,
       'voices': [
-        {'id': '', 'label': 'Default voice'},
+        {'id': '', 'label': 'Default (Ashley)'},
         {'id': 'Ashley', 'label': 'Ashley', 'description': 'bright'},
         {'id': 'Hades', 'label': 'Hades', 'description': 'deep'},
       ],
       'languages': [
         {'code': '', 'label': 'Default (English)'},
         {'code': 'es-ES', 'label': 'Spanish'},
+      ],
+    },
+    {
+      'id': 'fishaudio/s2.1-pro',
+      'label': 'fishaudio/s2.1-pro',
+      'provider': 'fishaudio',
+      'available': true,
+      'supports_accent': false,
+      'voices': [
+        {'id': '', 'label': 'Default voice'},
+        {'id': 'speaker1', 'label': 'Speaker 1'},
+      ],
+      'languages': [
+        {'code': '', 'label': 'Default (English)'},
       ],
     },
   ],
@@ -125,7 +139,7 @@ ApiClient _api() {
     }
     if (req.url.path.startsWith('/voice/preview/')) {
       final name = Uri.decodeComponent(req.url.pathSegments.last);
-      if (name == 'Aoede' || name == 'Charon') {
+      if (name == 'Aoede' || name == 'Charon' || name == 'Ashley') {
         return http.Response(
           jsonEncode({'url': 'https://example.test/$name.wav'}),
           200,
@@ -251,7 +265,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Cascade mode → the Inworld voices, which have no recorded samples.
+    // Cascade mode → the Inworld voices.
     await tester.tap(find.byType(DropdownButton<String>).first); // mode
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
@@ -259,7 +273,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('voice-dropdown')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Ashley — bright').last);
+    await tester.tap(find.text('Hades — deep').last);
     await tester.pumpAndSettle();
 
     await tester.tap(_previewButton());
@@ -323,6 +337,88 @@ void main() {
     expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
     expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
   });
+
+  testWidgets(
+    'Default voice entry shows an enabled preview button whose tap plays and second tap stops',
+    (tester) async {
+      final player = _FakePreviewPlayer();
+      await tester.pumpWidget(
+        _host(VoiceEngineControl(api: _api(), previewPlayer: player)),
+      );
+      await tester.pumpAndSettle();
+
+      // Switch to Cascade mode
+      await tester.tap(find.byType(DropdownButton<String>).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
+      await tester.pumpAndSettle();
+
+      // For inworld-tts-1, default voice is Default (Ashley) (id: "")
+      // Neither helper text nor fallback note is displayed anywhere
+      expect(
+        find.textContaining('Hear a short sample of the voice'),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('voice-fallback-note')), findsNothing);
+
+      // Verify button is enabled
+      final btn = tester.widget<IconButton>(_previewButton());
+      expect(btn.onPressed, isNotNull);
+
+      // Tap preview on Default voice entry
+      await tester.tap(_previewButton());
+      await tester.pumpAndSettle();
+
+      // Default voice resolved to Ashley and played
+      expect(player.played, ['https://example.test/Ashley.wav']);
+      expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
+
+      // Second tap stops playback
+      await tester.tap(_previewButton());
+      await tester.pumpAndSettle();
+      expect(player.stopCalls, greaterThanOrEqualTo(1));
+      expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Default voice entry with unidentified default leaves button enabled and tap shows honest toast',
+    (tester) async {
+      final player = _FakePreviewPlayer();
+      await tester.pumpWidget(
+        _host(VoiceEngineControl(api: _api(), previewPlayer: player)),
+      );
+      await tester.pumpAndSettle();
+
+      // Switch to Cascade mode
+      await tester.tap(find.byType(DropdownButton<String>).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cascade (brain + STT + TTS)').last);
+      await tester.pumpAndSettle();
+
+      // Switch TTS to fishaudio/s2.1-pro
+      await tester.tap(
+        find.widgetWithText(DropdownButton<String>, 'inworld/inworld-tts-1'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('fishaudio/s2.1-pro').last);
+      await tester.pumpAndSettle();
+
+      // The voice dropdown now has Default voice (unidentified vendor default)
+      final btn = tester.widget<IconButton>(_previewButton());
+      expect(btn.onPressed, isNotNull);
+
+      await tester.tap(_previewButton());
+      await tester.pumpAndSettle();
+
+      expect(player.played, isEmpty);
+      expect(
+        find.text('No preview recorded for this voice yet.'),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+    },
+  );
 }
 
 /// Records preview playback instead of touching platform audio.
