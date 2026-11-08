@@ -11,6 +11,7 @@ import '../services/date_sim_service.dart';
 import '../services/match_activity.dart';
 import '../services/photo_carousel_registry.dart';
 import '../services/tab_request.dart';
+import '../services/tour_anchors.dart';
 import '../theme.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_chat_modal.dart';
@@ -1163,79 +1164,97 @@ class _Actions extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _RailButton(
-          active: liked,
-          onPressed: liking ? null : () => liked ? onUnlike(p) : onLike(p),
-          icon: AymaHeartGlyph(accent: accent, filled: liked),
+        TourAnchorScope(
+          id: TourAnchors.publicProfileLike,
+          child: _RailButton(
+            active: liked,
+            onPressed: liking ? null : () => liked ? onUnlike(p) : onLike(p),
+            icon: AymaHeartGlyph(accent: accent, filled: liked),
+          ),
         ),
         const SizedBox(height: 16),
-        _RailButton(
-          // `p.threadId` is a bare deterministic pair id present for any
-          // non-self profile — it exists whether or not they've ever
-          // actually spoken. Only `hasChatted` (a real message sent either
-          // way) should light this up.
-          active: p.hasChatted,
-          onPressed: p.threadId == null
-              ? null
-              : () => context.push('/dm/${p.threadId}'),
-          icon: AymaChatGlyph(accent: accent, filled: p.hasChatted),
+        TourAnchorScope(
+          id: TourAnchors.publicProfileMessage,
+          child: _RailButton(
+            // `p.threadId` is a bare deterministic pair id present for any
+            // non-self profile — it exists whether or not they've ever
+            // actually spoken. Only `hasChatted` (a real message sent either
+            // way) should light this up.
+            active: p.hasChatted,
+            onPressed: p.threadId == null
+                ? null
+                : () => context.push('/dm/${p.threadId}'),
+            icon: AymaChatGlyph(accent: accent, filled: p.hasChatted),
+          ),
         ),
         const SizedBox(height: 16),
-        _RailButton(
-          active: p.deepDiveId.isNotEmpty,
-          // Tapping opens the report screen, which shows the existing report or
-          // the never-run empty state with its own "Run web search" button —
-          // tapping the icon itself starts no search.
-          onPressed: () {
-            final id = p.deepDiveId.isNotEmpty ? p.deepDiveId : 'uid_${p.uid}';
-            context.push('/deep-dive/${Uri.encodeComponent(id)}');
-          },
-          icon: AymaSearchGlyph(
-              accent: accent, filled: p.deepDiveId.isNotEmpty),
+        TourAnchorScope(
+          id: TourAnchors.publicProfileWebResearch,
+          child: _RailButton(
+            active: p.deepDiveId.isNotEmpty,
+            // Tapping opens the report screen, which shows the existing report or
+            // the never-run empty state with its own "Run web search" button —
+            // tapping the icon itself starts no search.
+            onPressed: () {
+              final id = p.deepDiveId.isNotEmpty ? p.deepDiveId : 'uid_${p.uid}';
+              context.push('/deep-dive/${Uri.encodeComponent(id)}');
+            },
+            icon: AymaSearchGlyph(
+                accent: accent, filled: p.deepDiveId.isNotEmpty),
+          ),
         ),
         const SizedBox(height: 16),
         // Listens to MatchActivity so the button flips live when a recalc
         // kicked off elsewhere lands.
-        ValueListenableBuilder<Set<String>>(
-          valueListenable: MatchActivity.instance.recalculating,
-          builder: (context, active, _) {
-            final recalculating = active.contains(p.threadId);
-            final hasScore = score != null;
-            final busy = scoring || recalculating;
-            return _RailButton(
-              active: hasScore,
-              onPressed: busy ? null : () => onRunMatch(p),
-              icon: busy
-                  // Compatibility scoring (or its recalc poll) in flight.
-                  ? const AymaWingLoader(size: 18, showLabel: false)
-                  : AymaMatchGlyph(accent: accent, filled: hasScore),
-            );
-          },
+        TourAnchorScope(
+          id: TourAnchors.publicProfileMatch,
+          child: ValueListenableBuilder<Set<String>>(
+            valueListenable: MatchActivity.instance.recalculating,
+            builder: (context, active, _) {
+              final recalculating = active.contains(p.threadId);
+              final hasScore = score != null;
+              final busy = scoring || recalculating;
+              return _RailButton(
+                active: hasScore,
+                onPressed: busy ? null : () => onRunMatch(p),
+                icon: busy
+                    // Compatibility scoring (or its recalc poll) in flight.
+                    ? const AymaWingLoader(size: 18, showLabel: false)
+                    : AymaMatchGlyph(accent: accent, filled: hasScore),
+              );
+            },
+          ),
         ),
         const SizedBox(height: 16),
         // Practice Date (hackathon deliverable B): rehearse talking to this
         // person against a simulated persona built only from their public
         // profile. Opens the clearly-labelled simulator.
-        _RailButton(
-          key: const Key('profilePracticeButton'),
-          active: false,
-          onPressed: () => context.push(
-            '/practice/${p.uid}',
-            extra: p.name,
+        TourAnchorScope(
+          id: TourAnchors.publicProfilePractice,
+          child: _RailButton(
+            key: const Key('profilePracticeButton'),
+            active: false,
+            onPressed: () => context.push(
+              '/practice/${p.uid}',
+              extra: p.name,
+            ),
+            icon: Icon(Icons.model_training_outlined, color: accent),
           ),
-          icon: Icon(Icons.model_training_outlined, color: accent),
         ),
         const SizedBox(height: 16),
         // AI Date Simulation (hackathon flagship): watch your AI and theirs
         // feel each other out before messaging — a preview conversation plus a
         // compatibility read. Nothing is sent to this person.
-        _RailButton(
-          key: const Key('profileDateSimButton'),
-          active: false,
-          // Reopens the last completed sim with this person when one exists,
-          // otherwise opens the setup form (see [onDateSim]).
-          onPressed: () => onDateSim(p),
-          icon: Icon(Icons.auto_awesome_outlined, color: accent),
+        TourAnchorScope(
+          id: TourAnchors.publicProfileDateSim,
+          child: _RailButton(
+            key: const Key('profileDateSimButton'),
+            active: false,
+            // Reopens the last completed sim with this person when one exists,
+            // otherwise opens the setup form (see [onDateSim]).
+            onPressed: () => onDateSim(p),
+            icon: Icon(Icons.auto_awesome_outlined, color: accent),
+          ),
         ),
       ],
     );

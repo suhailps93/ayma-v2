@@ -1,0 +1,1 @@
+Still on step {{NUMBER}} — the item is highlighted and the explanation is waiting for the user's spoken go. Do not repeat yourself; say nothing unless they speak. Do not call advance_guided_tour again. When they say 'next' or 'skip', call skip_guided_tour.

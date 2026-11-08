@@ -1,0 +1,1 @@
+The app didn't highlight anything on this page, so the explanation did not start. Tell them so plainly in one short line and do not guess why. You can call current_screen and describe only what it reports.

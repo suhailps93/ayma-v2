@@ -1126,3 +1126,247 @@ def test_manifest_is_main_features_first_and_every_anchor_exists():
     ).read_text()
     for s in steps:
         assert s["anchor"] in anchors_src
+
+
+# --- page explainer (founder, 2026-11-08; ARCHITECTURE §11.2c) -----------------
+
+_MIRROR = ("users", "u1", "voice_context", "current")
+_PROFILE_ROUTE = "/profile/user/:uid"
+
+
+def _on_page(db, screen, route, updated_at=None):
+    db.store[_MIRROR] = {
+        "screen": screen,
+        "route": route,
+        "updated_at": updated_at or datetime.now(timezone.utc),
+    }
+
+
+def _explain(db):
+    return _run(guided_tour._bind_explain_this_page(db, "u1")())
+
+
+def _profile_items():
+    return app_registry.page_explainer_steps("other_user_profile")
+
+
+def _tour_steps_sent(db):
+    return [c for c in db.store.commands if c.get("action") == "tour_step"]
+
+
+def test_explain_highlights_the_first_item_of_the_page_the_user_is_on():
+    db = _Db()
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    msg = _explain(db)
+    sent = _tour_steps_sent(db)
+    assert len(sent) == 1
+    assert sent[0]["anchor"] == "public_profile_like"
+    assert sent[0]["explainer"] is True
+    assert sent[0]["route"] == _PROFILE_ROUTE
+    assert _profile_items()[0]["say"] in msg
+    assert db.store[_STATE]["explainer"] == "other_user_profile"
+
+
+def test_explainer_covers_the_founders_profile_example():
+    anchors = {s["anchor"] for s in _profile_items()}
+    assert {
+        "public_profile_like",
+        "public_profile_message",
+        "public_profile_date_sim",
+    } <= anchors
+
+
+def test_explainer_never_carries_a_command(monkeypatch):
+    # Even a registry item that names a command can't get one through.
+    original = app_registry.registry()
+    patched = dict(original)
+    page = {
+        "key": "p",
+        "route": "/x",
+        "screen": "x",
+        "items": [{
+            "anchor": "a",
+            "headline": "h",
+            "say": "s",
+            "command": {"action": "navigate", "screen": "explore"},
+        }],
+    }
+    patched["page_explainer"] = {"pages": [page]}
+    monkeypatch.setattr(app_registry, "registry", lambda: patched)
+    db = _Db()
+    _on_page(db, "x", "/x")
+    _explain(db)
+    sent = _tour_steps_sent(db)[0]
+    assert sent["command"] is None
+    assert not [c for c in db.store.commands if c.get("action") == "navigate"]
+
+
+def test_every_explainer_step_sends_no_command_and_never_navigates():
+    db = _Db()
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    _explain(db)
+    skip = guided_tour._bind_skip_guided_tour(db, "u1", voice=True)
+    for _ in _profile_items():
+        _run(skip())
+    assert all(c.get("command") is None for c in _tour_steps_sent(db))
+    assert {c.get("action") for c in db.store.commands} <= {
+        "tour_step",
+        "tour_end",
+    }
+
+
+def test_spoken_next_walks_the_page_and_the_last_one_completes():
+    db = _Db()
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    _explain(db)
+    items = _profile_items()
+    skip = guided_tour._bind_skip_guided_tour(db, "u1", voice=True)
+    for i in range(1, len(items)):
+        msg = _run(skip())
+        assert items[i]["say"] in msg
+        assert db.store[_STATE]["index"] == i
+        assert db.store[_STATE]["explainer"] == "other_user_profile"
+    msg = _run(skip())
+    assert "complete" in msg
+    assert db.store[_STATE]["active"] is False
+
+
+def test_back_returns_within_the_page():
+    db = _Db()
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    _explain(db)
+    _run(guided_tour._bind_skip_guided_tour(db, "u1", voice=True)())
+    msg = _run(guided_tour._bind_back_guided_tour(db, "u1", voice=True)())
+    assert _profile_items()[0]["say"] in msg
+    assert db.store[_STATE]["index"] == 0
+
+
+def test_stop_ends_the_explainer():
+    db = _Db()
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    _explain(db)
+    _run(guided_tour._bind_stop_guided_tour(db, "u1")())
+    assert db.store[_STATE]["active"] is False
+    assert "explainer" not in db.store[_STATE]
+
+
+def test_advance_on_an_explainer_only_checks_and_never_moves():
+    db = _Db()
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    _explain(db)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
+    assert msg.startswith("Still on step 1")
+    assert "tap" not in msg.lower()
+    assert db.store[_STATE]["index"] == 0
+
+
+def test_explainer_does_not_navigate_when_the_user_left_the_page():
+    db = _Db(off_screen_once={1})
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    _explain(db)
+    msg = _run(guided_tour._bind_skip_guided_tour(db, "u1", voice=True)())
+    assert not [c for c in db.store.commands if c.get("action") == "navigate"]
+    assert "no longer on that page" in msg
+    assert db.store[_STATE]["active"] is False
+
+
+def test_explainer_skips_an_item_absent_on_the_page():
+    db = _Db(absent={0})
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    msg = _explain(db)
+    assert _profile_items()[1]["say"] in msg
+    assert db.store[_STATE]["index"] == 1
+
+
+def test_explainer_on_a_page_with_no_items_is_honest():
+    db = _Db()
+    _on_page(db, "messages", "/")
+    msg = _explain(db)
+    assert "no item-by-item" in msg
+    assert db.store.commands == []
+    assert _STATE not in db.store
+
+
+def test_explainer_with_a_stale_mirror_highlights_nothing():
+    db = _Db()
+    _on_page(
+        db, "profile", _PROFILE_ROUTE,
+        updated_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    msg = _explain(db)
+    assert "no item-by-item" in msg
+    assert db.store.commands == []
+
+
+def test_explainer_reports_honestly_when_nothing_could_be_highlighted():
+    db = _Db(absent=set(range(len(_profile_items()))))
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    msg = _explain(db)
+    assert "didn't highlight" in msg
+    assert db.store[_STATE]["active"] is False
+
+
+def test_explainer_does_not_hijack_a_running_tour():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    before = len(db.store.commands)
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    msg = _explain(db)
+    assert "still running" in msg
+    assert len(db.store.commands) == before
+    assert "explainer" not in db.store[_STATE]
+
+
+def test_starting_the_tour_replaces_an_explainer_from_step_zero():
+    db = _Db()
+    _on_page(db, "profile", _PROFILE_ROUTE)
+    _explain(db)
+    _run(guided_tour._bind_skip_guided_tour(db, "u1", voice=True)())
+    msg = _run(guided_tour._bind_start_guided_tour(db, "u1", voice=True)())
+    assert _steps()[0]["say"] in msg
+    assert db.store[_STATE]["index"] == 0
+    assert "explainer" not in db.store[_STATE]
+
+
+def test_page_matching_uses_route_for_pushed_pages_and_slug_for_tabs():
+    match = app_registry.page_explainer_page
+    assert match("profile", _PROFILE_ROUTE)["key"] == "other_user_profile"
+    assert match("explore", "/")["key"] == "explore"
+    assert match("", "/settings")["key"] == "settings"
+    assert match("ayma", "/") is None
+    # A tab slug left behind on a pushed route isn't that tab.
+    assert match("explore", "/notifications") is None
+
+
+def test_explain_is_voice_only():
+    voice = {s.name for s in guided_tour.VOICE_SKILLS}
+    assert voice == {"explain_this_page"}
+    text = {d["name"] for d in skills.session_tool_declarations()}
+    assert "explain_this_page" not in text
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "What does each item on this page do?",
+        "Hey Ayma, what do these buttons do",
+        "explain this page",
+        "Walk me through this page please",
+    ],
+)
+def test_detect_page_explainer_matches_clear_asks(phrase):
+    assert guided_tour.detect_page_explainer(phrase) == "explain_this_page"
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "",
+        "explain this to me",
+        "what does he do for work",
+        "walk me through the app",
+        "what does the heart do",
+    ],
+)
+def test_detect_page_explainer_leaves_everything_else_alone(phrase):
+    assert guided_tour.detect_page_explainer(phrase) is None

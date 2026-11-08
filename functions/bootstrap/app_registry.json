@@ -149,6 +149,59 @@
       {"key": "dismiss_all_suggestions", "label": "Dismiss all (profile suggestions)", "found_on": "profile_suggestions", "account_actions": [], "deny_keys": ["dismiss_all"], "destinations": [], "via": "the ui_action dismiss_all deny rule refuses the Dismiss all button; per-suggestion Dismiss stays operable"}
     ]
   },
+  "page_explainer": {
+    "_doc": "Voice-only, page-scoped explainer (ARCHITECTURE \u00a711.2c): on a call, 'what does each item on this page do' runs the guided tour's highlight sequence over THIS page's controls only. Explain-only by construction: an item carries just 'anchor', 'headline' and 'say' (app_registry.page_explainer_steps drops anything else, so nothing can ever be performed), the tap is consumed before it reaches the real control, and the sequence never navigates. A page names a shell 'tab' + 'screen' slug, or a pushed 'route' pattern; it is matched against the live screen mirror. A page with no entry gets an honest 'no items here'. Overlay-only: no route of its own, like guided_tour.",
+    "key": "page_explainer",
+    "label": "Explain this page",
+    "aliases": ["what does each item on this page do", "what does each item here do", "what does everything on this page do", "what does everything here do", "what does each thing on this page do", "what does each button do", "what do these buttons do", "what do all these buttons do", "what do the buttons on this page do", "explain this page", "explain everything on this page", "explain whats on this page", "walk me through this page", "show me what each item on this page does", "show me what everything on this page does"],
+    "pages": [
+      {
+        "key": "other_user_profile",
+        "route": "/profile/user/:uid",
+        "screen": "profile",
+        "items": [
+          {"anchor": "public_profile_like", "headline": "Like", "say": "The heart is your like. If they like you back, it's mutual and you can say hi."},
+          {"anchor": "public_profile_message", "headline": "Message", "say": "This opens your direct messages with them."},
+          {"anchor": "public_profile_web_research", "headline": "Web research", "say": "This opens the report on what the public web says about them. If there isn't one yet, you can choose to run it from there."},
+          {"anchor": "public_profile_match", "headline": "Match", "say": "This works out how compatible the two of you are, then opens the match report."},
+          {"anchor": "public_profile_practice", "headline": "Practice Date", "say": "This lets you rehearse talking to them, against a simulated persona built only from their public profile."},
+          {"anchor": "public_profile_date_sim", "headline": "AI Date Simulation", "say": "This runs a simulation: your AI and theirs have a preview conversation, then you get a compatibility read. Nothing is sent to them."}
+        ]
+      },
+      {
+        "key": "explore",
+        "tab": 1,
+        "screen": "explore",
+        "items": [
+          {"anchor": "explore_search", "headline": "Search Explore", "say": "This is the search. Describe who you're looking for: a name, a place, a vibe."},
+          {"anchor": "explore_filters", "headline": "Filters", "say": "These filters narrow the feed: people you liked, people who liked you, mutual matches, and the ones I have scored for you."}
+        ]
+      },
+      {
+        "key": "profile_tab",
+        "tab": 3,
+        "screen": "profile_tab",
+        "items": [
+          {"anchor": "profile_public_profile_row", "headline": "My public profile", "say": "This shows you yourself the way everyone else sees you."},
+          {"anchor": "profile_story_row", "headline": "Your Story", "say": "This is your Story: everything I learn about you, in your words, for you to read or edit."},
+          {"anchor": "profile_details_row", "headline": "Profile details", "say": "This is where you change the basics: your name, who you want to meet, distance and age range."},
+          {"anchor": "profile_web_research_row", "headline": "Web research", "say": "This is the report on what the public web says about you."},
+          {"anchor": "profile_appearance_row", "headline": "Appearance", "say": "This is a private, honest read across your photos, just for you."},
+          {"anchor": "profile_ayma_settings_row", "headline": "Settings", "say": "This has the app-wide switches, and Ayma's models, where you choose my brain and my voice."},
+          {"anchor": "profile_plan_row", "headline": "Your plan", "say": "This shows your plan, your credits and what they have been spent on."}
+        ]
+      },
+      {
+        "key": "settings",
+        "route": "/settings",
+        "screen": "settings",
+        "items": [
+          {"anchor": "settings_notifications_row", "headline": "Notification preferences", "say": "This is where you choose exactly what I can nudge you about."},
+          {"anchor": "settings_accent_row", "headline": "Accent Color", "say": "This is the colour the app wears for you: the orb, the highlights, all of it."}
+        ]
+      }
+    ]
+  },
   "guided_tour": {
     "_doc": "Ayma-DRIVEN interactive tour (ARCHITECTURE \\u00a711.2b, rewired 2026-11-07): a predefined, PRIORITIZED walkthrough Ayma narrates step by step \u2014 the main features first (nav orb, the tabs, the bell), then each screen's own controls. Every step is a stop in the manifest below: 'anchor' (a tour_anchors.dart id), 'screen' (the destination key of the screen the control lives on \u2014 where Ayma navigates first when the user is not there), 'tab' (the shell IndexedStack index the anchor lives on) or 'route' (for anchors on a pushed page), 'action' ('tap' = the highlight is live; 'look' = just look), 'command' (what Ayma performs when the user taps the highlight: {action, ...args}, either 'switch_tab' with the shell tab or 'navigate' with a destination key; the client runs it through the app-command handlers and reports the confirmed outcome on tour_event, and the tour then WAITS for the user's go, Next or a spoken next; a step without one completes on the tap or Next), 'headline' and 'say' (the line Ayma speaks). LOOK-BEFORE-HIGHLIGHT: the client acks a step ok:true only when the user is actually on the step's screen and the anchor is mounted there; ok:false reason 'not_on_screen' makes the backend navigate and retry the SAME step \u2014 a step is skipped only when the client confirms the user IS on its screen but the control is genuinely absent (reason 'anchor_absent'). Started/driven by skills/guided_tour.py (start/advance/skip/back/stop) via AppCommandService 'tour_step'/'tour_end' commands + GuidedTourController. Overlay-only: no route of its own, deliberately NOT a destination/non_navigable entry \u2014 key/label/aliases below let open_screen and the deterministic matchers route 'walk me through the app' to start_guided_tour. The passive coach-mark list (tour_content.dart) is a separate first-run/new-feature mechanism and is NOT the tour.",
     "key": "guided_tour",

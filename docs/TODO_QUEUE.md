@@ -4,10 +4,13 @@ Last updated: 2026-11-08. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## TOUR-PAGE-EXPLAINER — Page-scoped voice explainer (fleet/tour-page-explainer on top of fleet/tour-action-driven, 2026-11-08) — DONE, merges after tour-action-driven, awaiting device test
+- On a call, "what does each item on this page do" highlights that page's items one by one and explains them, performing nothing. See ARCHITECTURE §11.2c.
+- Covered pages: another member's profile, Explore, the You tab, Settings. Other pages answer honestly that nothing is set up.
+
 ## TOUR-ACTION-DRIVEN — Guided tour redesign (fleet/tour-action-driven off staging ac75fa1e, 2026-11-08) — DONE, awaiting staging sweep and device test
 - Ayma performs each step when the user taps the highlight, and the tour waits for the user's go (Next, or spoken on a call). See ARCHITECTURE §11.2b.
 - **Open, founder's call:** the `explore_search` narration still says "Tap the search and tell me who", but that step now only completes on the tap. The performed stage absorbs taps, so the user can look at an opened page but not scroll it.
-- **Follow-on, not built:** page-scoped voice explainer — on voice, "what does each item on this page do" runs the highlight sequence for that page only, explaining and performing nothing (founder, 2026-11-08). Branch on top of this one.
 
 ## NOTE-155-OBSERVATIONS — Triage + fix for Scout NOTE 155 observations (fleet/n155-observations off staging 2a80d8e2, 2026-11-08) — DONE, lead engineer reviews + merges + builds
 - **Observation 1 — "Signing you in…" sticks after cancelled Google flow (REAL DEFECT — FIXED):**

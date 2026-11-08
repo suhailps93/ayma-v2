@@ -48,6 +48,12 @@ blocking call that drove the whole tour could never narrate per step:
 * ``back_guided_tour`` returns to the previous step;
 * ``stop_guided_tour`` ends the tour on request (state inactive server-side).
 
+PAGE EXPLAINER (founder, 2026-11-08; ARCHITECTURE §11.2c): ``explain_this_page``
+(voice only) runs the same sequence over the current page's items from the
+registry's ``page_explainer``. ``tour_state.explainer`` names the page, so the
+skip/back/stop tools work unchanged. Every item is look-only and the sequence
+never navigates.
+
 Reuses the shared app-command loop (``_queue_command`` / ``_await_ack`` over
 ``users/{uid}/app_commands/{pending,ack}``); the user's response comes back
 on a dedicated ``tour_event`` doc; the current step index is held on a
@@ -66,6 +72,7 @@ from typing import Callable
 import app_registry
 
 from ._base import Skill
+from .app_control_mirror import _is_fresh, _voice_context_doc
 from .app_control_navigation import _resolve_path
 from .app_control_queue import (
     _await_ack,
@@ -219,6 +226,8 @@ def _write_state(
         doc["headline"] = str(step.get("headline") or "")
         doc["say"] = str(step.get("say") or "")
         doc["screen"] = str(step.get("screen") or "")
+        if step.get("explainer"):
+            doc["explainer"] = step["explainer"]
     _state_doc(db, uid).set(doc)
 
 
@@ -307,6 +316,13 @@ def _steps() -> list[dict]:
     return app_registry.guided_tour_steps()
 
 
+def _tour_steps(state: dict) -> list[dict]:
+    """The step list this tour state is walking: its page's items for a page
+    explainer, otherwise the guided tour."""
+    page = state.get("explainer")
+    return app_registry.page_explainer_steps(str(page)) if page else _steps()
+
+
 def _step_payload(
     index: int, total: int, step: dict, command: dict | None = None
 ) -> dict:
@@ -321,6 +337,7 @@ def _step_payload(
         "headline": str(step.get("headline") or ""),
         "say": str(step.get("say") or ""),
         "command": command,
+        "explainer": bool(step.get("explainer")),
     }
 
 
@@ -394,7 +411,8 @@ def _skip_in_voice(step: dict, voice: bool) -> bool:
 
 
 async def _present_step(
-    db, uid: str, index: int, voice: bool = False
+    db, uid: str, index: int, voice: bool = False,
+    steps: list[dict] | None = None,
 ) -> tuple[str, dict | None]:
     """Present exactly ONE step, looking before highlighting:
 
@@ -405,9 +423,10 @@ async def _present_step(
       ONLY case a step may be skipped;
     * ``("blocked", None)`` — the step could not be shown and must NOT be
       skipped past: the client never acked, or it reported the user on a
-      different screen and the get-there navigation did not land.
+      different screen and the get-there navigation did not land (a page
+      explainer never navigates, so for it a different screen is blocked).
     """
-    steps = _steps()
+    steps = _steps() if steps is None else steps
     total = len(steps)
     step = steps[index]
     for attempt in range(_NAV_RETRIES + 1):
@@ -439,8 +458,10 @@ async def _present_step(
                 ack.get("route"),
                 step.get("screen"),
             )
-            if attempt < _NAV_RETRIES and await _navigate_to_step_screen(
-                db, uid, step
+            if (
+                not step.get("explainer")
+                and attempt < _NAV_RETRIES
+                and await _navigate_to_step_screen(db, uid, step)
             ):
                 continue
             logger.warning(
@@ -459,7 +480,8 @@ async def _present_step(
 
 
 async def _present_from(
-    db, uid: str, start: int, voice: bool = False
+    db, uid: str, start: int, voice: bool = False,
+    steps: list[dict] | None = None,
 ) -> tuple[int, dict | None]:
     """Present the first showable step at or after ``start`` — skipping only
     steps that can't be done in the current mode (``skip_in_voice``) or whose
@@ -467,7 +489,7 @@ async def _present_from(
     on success, ``(-2, None)`` when a step was blocked (un-acked or the
     get-there navigation failed — the caller must not move past it), or
     ``(-1, None)`` when no further step can be shown."""
-    steps = _steps()
+    steps = _steps() if steps is None else steps
     total = len(steps)
     i = start
     while 0 <= i < total:
@@ -475,7 +497,7 @@ async def _present_from(
             logger.info("guided tour: step %d not available in voice — skipping", i)
             i += 1
             continue
-        status, step = await _present_step(db, uid, i, voice)
+        status, step = await _present_step(db, uid, i, voice, steps)
         if status == "shown":
             return i, step
         if status == "absent":
@@ -514,6 +536,11 @@ def _say_directive(index: int, total: int, step: dict) -> str:
     """The tool result handed back to the model: the script line to speak (in
     her own voice) plus what to do next. Operational directive, not script copy
     — the copy itself comes from the registry (``step['say']``)."""
+    if step.get("explainer"):
+        return _prompt(
+            "page_explainer_step",
+            NUMBER=str(index + 1), TOTAL=str(total), SAY=str(step["say"]),
+        )
     return (
         f"Guided tour — step {index + 1} of {total} is now spotlighted with its callout card. "
         f"Say ONLY this to the user, warmly and in your own voice, about THIS "
@@ -591,6 +618,8 @@ _COMPLETE = (
 
 def _still_waiting(current: int, steps: list[dict]) -> str:
     step = steps[current] if 0 <= current < len(steps) else {}
+    if step.get("explainer"):
+        return _prompt("page_explainer_waiting", NUMBER=str(current + 1))
     control = str(step.get("headline") or "the highlighted control")
     return (
         f"Still on step {current + 1} — waiting for {control!r}. "
@@ -607,8 +636,8 @@ async def _gate(db, uid: str) -> tuple[dict, int, str | None]:
     """Validate the tour state for a move: returns ``(state, current,
     error)`` — ``error`` is a ready model directive when the move can't
     happen (no tour / expired / bad index)."""
-    steps = _steps()
     state = await asyncio.to_thread(_read_state, db, uid)
+    steps = _tour_steps(state)
     if not state.get("active"):
         return state, -1, _NO_TOUR
     if _state_expired(state):
@@ -621,12 +650,19 @@ async def _gate(db, uid: str) -> tuple[dict, int, str | None]:
     return state, current, None
 
 
-async def _present_next(db, uid: str, current: int, voice: bool) -> str:
+async def _present_next(
+    db, uid: str, current: int, voice: bool, steps: list[dict]
+) -> str:
     """Present the step after ``current`` (shared by advance and skip):
     completes the tour after the last showable step, stays put when a step
-    is blocked, otherwise returns the next step's say directive."""
-    steps = _steps()
-    index, step = await _present_from(db, uid, current + 1, voice)
+    is blocked, otherwise returns the next step's say directive. A blocked
+    page explainer ends instead: the user left the page, and it never
+    navigates them back."""
+    explainer = bool(steps[current].get("explainer"))
+    index, step = await _present_from(db, uid, current + 1, voice, steps)
+    if index == -2 and explainer:
+        await _end(db, uid)
+        return _prompt("page_explainer_left_page")
     if index == -2:
         # A step was blocked — do NOT move past it; stay on the current step.
         await asyncio.to_thread(
@@ -635,7 +671,7 @@ async def _present_next(db, uid: str, current: int, voice: bool) -> str:
         return _still_waiting(current, steps)
     if step is None:
         await _end(db, uid)
-        return _COMPLETE
+        return _prompt("page_explainer_complete") if explainer else _COMPLETE
     return _say_directive(index, len(steps), step)
 
 
@@ -650,7 +686,11 @@ def _bind_start_guided_tour(db, uid: str, voice: bool = False) -> Callable[..., 
         state = await asyncio.to_thread(_read_state, db, uid)
         # F4: If a tour is already active, "next" / calling start continues from
         # the current step rather than restarting at step 0.
-        if state.get("active") and not _state_expired(state):
+        if (
+            state.get("active")
+            and not _state_expired(state)
+            and not state.get("explainer")
+        ):
             current = _index_of(state)
             if 0 <= current < len(steps):
                 index, step = await _present_from(db, uid, current, voice)
@@ -686,18 +726,21 @@ def _bind_advance_guided_tour(
         # being performed (or failing) is reported to Ayma but never moves the
         # tour: only the user's go does — Next ('skip'), a tap on a step with
         # nothing to perform ('tapped'), or the spoken go via skip_guided_tour.
-        steps = _steps()
         state, current, error = await _gate(db, uid)
         if error is not None:
             return error
+        steps = _tour_steps(state)
         wait = _TAP_TIMEOUT_SECONDS if tap_timeout is None else tap_timeout
-        performed = bool(state.get("performed"))
+        explainer = bool(steps[current].get("explainer"))
+        performed = bool(state.get("performed")) or explainer
         if performed:
             wait = min(wait, _GO_CHECK_SECONDS)
         event = await _await_tour_event(
             db, uid, current, wait, state_updated_at=state.get("updated_at")
         )
         if event is None:
+            if explainer:
+                return _still_waiting(current, steps)
             if performed:
                 return _waiting_for_go(current)
             step = steps[current]
@@ -717,9 +760,9 @@ def _bind_advance_guided_tour(
                 "them know they can ask for it again anytime."
             )
         if kind == "back":
-            return await _present_previous(db, uid, current, voice)
+            return await _present_previous(db, uid, current, voice, steps)
         if kind == "skip":
-            return await _present_next(db, uid, current, voice)
+            return await _present_next(db, uid, current, voice, steps)
         if kind in _OUTCOME_EVENTS:
             await asyncio.to_thread(_mark_outcome_reported, db, uid, event)
             if kind == "performed":
@@ -730,7 +773,7 @@ def _bind_advance_guided_tour(
         # 'tapped': a step with nothing to perform completes on the tap. An
         # older client still sends it for a step it pressed through to, so the
         # tour moves on, claiming nothing about where the user landed.
-        return await _present_next(db, uid, current, voice)
+        return await _present_next(db, uid, current, voice, steps)
 
     return advance_guided_tour
 
@@ -748,7 +791,7 @@ def _bind_skip_guided_tour(
         state, current, error = await _gate(db, uid)
         if error is not None:
             return error
-        return await _present_next(db, uid, current, voice)
+        return await _present_next(db, uid, current, voice, _tour_steps(state))
 
     return skip_guided_tour
 
@@ -756,19 +799,20 @@ def _bind_skip_guided_tour(
 # --- back ---------------------------------------------------------------------
 
 
-async def _present_previous(db, uid: str, current: int, voice: bool) -> str:
+async def _present_previous(
+    db, uid: str, current: int, voice: bool, steps: list[dict]
+) -> str:
     """Present the step before ``current`` (exactly that step — a blocked or
     absent previous step never jumps forward past the current one)."""
-    steps = _steps()
     if current <= 0:
-        status, step = await _present_step(db, uid, 0, voice)
+        status, step = await _present_step(db, uid, 0, voice, steps)
         if status == "shown" and step is not None:
             return _say_directive(0, len(steps), step)
         return _still_waiting(current, steps)
     prev = current - 1
     while prev > 0 and _skip_in_voice(steps[prev], voice):
         prev -= 1
-    status, step = await _present_step(db, uid, prev, voice)
+    status, step = await _present_step(db, uid, prev, voice, steps)
     if status == "shown" and step is not None:
         return _say_directive(prev, len(steps), step)
     # Couldn't show the previous step — the recorded position stays put.
@@ -785,7 +829,9 @@ def _bind_back_guided_tour(
         state, current, error = await _gate(db, uid)
         if error is not None:
             return error
-        return await _present_previous(db, uid, current, voice)
+        return await _present_previous(
+            db, uid, current, voice, _tour_steps(state)
+        )
 
     return back_guided_tour
 
@@ -805,6 +851,54 @@ def _bind_stop_guided_tour(db, uid: str) -> Callable[..., object]:
         )
 
     return stop_guided_tour
+
+
+# --- page explainer -------------------------------------------------------------
+
+
+def _mirrored_screen(db, uid: str) -> tuple[str, str] | None:
+    """``(screen slug, route)`` from the fresh voice-call screen mirror, or
+    ``None`` when there is no live mirror to trust."""
+    try:
+        snap = _voice_context_doc(db, uid).get()
+        data = snap.to_dict() if getattr(snap, "exists", False) else None
+    except Exception:  # noqa: BLE001 - unreadable reads as "don't know"
+        return None
+    if not data or not _is_fresh(data.get("updated_at")):
+        return None
+    return str(data.get("screen") or "").strip(), str(data.get("route") or "").strip()
+
+
+def _bind_explain_this_page(db, uid: str) -> Callable[..., object]:
+    async def explain_this_page() -> str:
+        state = await asyncio.to_thread(_read_state, db, uid)
+        if (
+            state.get("active")
+            and not _state_expired(state)
+            and not state.get("explainer")
+        ):
+            return _prompt("page_explainer_tour_running")
+        mirrored = await asyncio.to_thread(_mirrored_screen, db, uid)
+        page = app_registry.page_explainer_page(*mirrored) if mirrored else None
+        steps = app_registry.page_explainer_steps(page["key"]) if page else []
+        if not steps:
+            return _prompt("page_explainer_no_items")
+        index, step = await _present_from(db, uid, 0, True, steps)
+        if step is None:
+            await _end(db, uid)
+            return _prompt("page_explainer_not_shown")
+        return _say_directive(index, len(steps), step)
+
+    return explain_this_page
+
+
+def detect_page_explainer(message: str) -> str | None:
+    """A clear "what does everything on this page do" → the
+    ``"explain_this_page"`` tool name, else ``None``."""
+    m = (message or "").strip()
+    if not m or len(m) > 200 or not app_registry.asks_to_explain_page(m):
+        return None
+    return "explain_this_page"
 
 
 # --- deterministic text runners (no model in the loop) -------------------------
@@ -1020,6 +1114,18 @@ STOP_GUIDED_TOUR = Skill(
     },
     bind=_bind_stop_guided_tour,
 )
+
+EXPLAIN_THIS_PAGE = Skill(
+    declaration={
+        "name": "explain_this_page",
+        "description": _prompt("explain_this_page"),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    bind=_bind_explain_this_page,
+)
+
+# On a call only: the page comes from the voice screen mirror.
+VOICE_SKILLS: list[Skill] = [EXPLAIN_THIS_PAGE]
 
 SKILLS: list[Skill] = [
     START_GUIDED_TOUR,

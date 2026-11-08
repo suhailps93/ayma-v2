@@ -524,3 +524,36 @@ def test_settings_layout_matches_the_shipped_ui():
     ).read_text(encoding="utf-8")
     assert "profileAymaSettingsRow" in profile_src
     json.loads(raw)  # the registry still parses after every edit above
+
+
+def test_every_page_explainer_anchor_is_attached_to_a_real_widget():
+    # §11.2c: an item is only useful if its id is a live TourAnchors constant
+    # that some screen actually mounts.
+    anchors_src = (_REPO / "ayma_flutter/lib/services/tour_anchors.dart").read_text(
+        encoding="utf-8"
+    )
+    constants = dict(
+        re.findall(r"static const (\w+) = '([a-z_]+)';", anchors_src)
+    )
+    by_id = {value: name for name, value in constants.items()}
+    screens = "".join(
+        p.read_text(encoding="utf-8") for p in _SCREENS.glob("*.dart")
+    )
+    pages = app_registry.registry()["page_explainer"]["pages"]
+    for page in pages:
+        assert page["items"], page["key"]
+        for item in page["items"]:
+            name = by_id.get(item["anchor"])
+            assert name, f"{item['anchor']} is not a TourAnchors constant"
+            assert f"TourAnchors.{name}" in screens, name
+            assert set(item) == {"anchor", "headline", "say"}, item
+
+
+def test_page_explainer_routes_are_real_routes():
+    paths = {d["path"] for d in app_registry.destinations()}
+    parameterized = {
+        str(e.get("route") or "") for e in app_registry.registry()["parameterized"]
+    }
+    for page in app_registry.registry()["page_explainer"]["pages"]:
+        if page.get("route"):
+            assert page["route"] in paths | parameterized, page["key"]

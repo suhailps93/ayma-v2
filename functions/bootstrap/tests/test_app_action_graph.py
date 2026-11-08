@@ -81,6 +81,7 @@ def _tool_names() -> set[str]:
         )
     }
     names |= {s.name for s in app_control.VOICE_SKILLS}
+    names |= {s.name for s in skills.guided_tour.VOICE_SKILLS}
     names |= {s.name for s in app_control.COMMAND_SKILLS}
     # recall is flag-gated (context_opt) so the declarations above only
     # carry it when the flag is on; it is a real tool either way.

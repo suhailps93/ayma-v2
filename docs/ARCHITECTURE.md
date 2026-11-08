@@ -1822,6 +1822,42 @@ sequenceDiagram
 - **Android Auto Backup.** Left enabled (manifest default). Excluding Firebase Auth's persisted state by sharedpref name is version-fragile and disabling backup wholesale is a product change, so the in-app sign-out-on-decrypt-failure above is the primary (and backup-agnostic) guard; revisit a targeted `dataExtractionRules` exclusion if the symptom recurs.
 - Covered by `test/splash_timeout_test.dart` (token timeout → Retry not sign-in; `AuthSessionException` → sign-out + sign-in, not retry; watchdog → Retry when bootstrap hangs; plus the originals) and `test/startup_guard_test.dart` (`guardStartupStep` always returns), and the layout matrix (the error state is a synthetic matrix target).
 
+
+### 11.2c Page-scoped voice explainer (founder, 2026-11-08)
+
+On a live call, "what does each item on this page do" runs the §11.2b highlight sequence over the page the user is already on: each actionable item in turn, explained and never performed.
+
+- **Trigger (voice only).** `explain_this_page` in `skills/guided_tour.py` is registered through `guided_tour.VOICE_SKILLS`, so it reaches the voice tool set and not text. It fires from the model tool call, the voice-actions verdict `explain_page`, or the deterministic net (`detect_page_explainer`, from the registry's aliases).
+- **The page comes from the live mirror.** The tool reads `users/{uid}/voice_context/current`, then `app_registry.page_explainer_page` matches a pushed page by route pattern and a shell tab by screen slug. A stale mirror or a page with no entry gets an honest "nothing set up here" and highlights nothing.
+- **Items are data.** `page_explainer.pages[]` in `app_registry.json` lists each page's `{anchor, headline, say}`. Covered: another member's profile (like, message, web research, match, Practice Date, AI Date Simulation), Explore, the You tab, Settings.
+- **Explain-only, by construction.** `page_explainer_steps` builds each step field by field, so a registry item cannot carry a `command`. The client also drops any `command` on a `tour_step` with `explainer: true`, and never treats one as a typing step. The overlay consumes the tap on the highlight, so a like or message cannot fire.
+- **Same state machine.** `tour_state.explainer` names the page; `_tour_steps(state)` picks the step list, so `skip_guided_tour`, `back_guided_tour` and `stop_guided_tour` work unchanged.
+- **User-paced and voice-safe.** No timer. On a call Next is hidden and a tap is not the go; the go is spoken. The overlay absorbs every tap outside the card, so the orb cannot be hit. `advance_guided_tour` only checks briefly and never moves an explainer on its own.
+- **Never navigates.** `_present_step` skips the get-there navigation for an explainer step. If the user has left the page, the next step is blocked and the explainer ends, saying so.
+- **Anchors on a screen that can stack.** One profile can be pushed over another, and a shared `GlobalKey` would collide, so the profile rail uses `TourAnchorScope`: each instance owns its key and the anchor resolves to the newest mounted copy.
+- **A running guided tour is not hijacked.** The explainer declines until the tour is stopped; starting the tour replaces an explainer.
+
+```mermaid
+sequenceDiagram
+    participant U as User (on a call)
+    participant A as Ayma (agent)
+    participant S as skills/guided_tour.py
+    participant F as Firestore
+    participant C as Client (overlay)
+    U->>A: "what does each item on this page do?"
+    A->>S: explain_this_page()
+    S->>F: read voice_context/current (screen, route)
+    S->>F: tour_step{index:0, anchor, explainer:true, command:null}
+    F->>C: highlight the item
+    C->>F: ack ok:true
+    S-->>A: "say: <line>, then wait"
+    A-->>U: explains the item
+    U->>C: taps the highlight (absorbed, nothing fires)
+    U->>A: "next"
+    A->>S: skip_guided_tour()
+    S->>F: tour_step{index:1, explainer:true}
+```
+
 ### 11.2a-story Story editor: one surface, not three tabs (as built, 2026-10-27)
 
 `StoryEditorScreen` (`/profile/wiki`, `lib/screens/story_editor_screen.dart`) used to be a three-tab screen — **Story / Public view / Ayma's notes**. It is now a **single, non-tabbed** surface showing only the private **"Your Story"** (`story_private`): the narrative Living Report, cover stats, the photo gallery, the merged Appearance card, "Beyond our conversations" (web findings), and the Career & Education timeline. The tab bar is gone (no lone tab).

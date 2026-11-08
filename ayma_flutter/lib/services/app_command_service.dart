@@ -912,7 +912,11 @@ class AppCommandService {
           (cur.route.isEmpty || cur.route == '/');
     }
 
-    final command = (cmd['command'] as Map?)?.cast<String, dynamic>();
+    // A page explainer step (§11.2c) only explains: it never carries an
+    // action to run, whatever the command says.
+    final explainer = cmd['explainer'] == true;
+    final command =
+        explainer ? null : (cmd['command'] as Map?)?.cast<String, dynamic>();
     final guided = GuidedTourController.instance;
     var attempt = 0;
     var inFlight = false;
@@ -956,7 +960,7 @@ class AppCommandService {
           // The composer step is the text box the user is meant to type in; it
           // must stay focusable for the whole step instead of advancing on every
           // tap inside the spotlight (Scout note 118 leg 4).
-          typingAllowed: anchor == TourAnchors.homeComposer,
+          typingAllowed: !explainer && anchor == TourAnchors.homeComposer,
         ),
         index: index,
         total: total,

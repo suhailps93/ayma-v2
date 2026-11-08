@@ -25,7 +25,7 @@ The verdict is executed by the EXISTING deterministic executors: agent.py
 maps it to the same ``(tool_name, kwargs)`` the shipped ``detect_voice_
 command`` net returns (``open_screen``, ``open_profile``,
 ``open_practice_date`` / ``open_date_sim``, the stack setters,
-``set_voice_preference``, ``start_guided_tour``), the partner-less
+``set_voice_preference``, ``start_guided_tour``, ``explain_this_page``), the partner-less
 "who with?" clarification, or the call teardown for ``end_call`` —
 claim-first in the call's ``VoiceTurnDedupe``, exactly once. Outcomes are
 only execute, clarify, or none: there is no refusal anywhere in this design
@@ -65,6 +65,7 @@ ACTIONS = (
     "set_stack",
     "set_voice",
     "start_tour",
+    "explain_page",
     "end_call",
     "clarify",
     "none",
@@ -95,7 +96,7 @@ RESPONSE_SCHEMA: dict = {
             "description": (
                 "Exactly one intent: navigate, open_profile, "
                 "launch_practice, launch_sim, set_stack, set_voice, "
-                "start_tour, end_call, clarify (a launch with no partner), "
+                "start_tour, explain_page, end_call, clarify (a launch with no partner), "
                 "or none (pure conversation)."
             ),
         },
@@ -470,6 +471,8 @@ def verdict_to_command(verdict: Verdict) -> tuple[str, dict] | None:
         return None
     if action == "start_tour":
         return "start_guided_tour", {}
+    if action == "explain_page":
+        return "explain_this_page", {}
     if action == "end_call":
         return "end_call", {}
     if action == "clarify":

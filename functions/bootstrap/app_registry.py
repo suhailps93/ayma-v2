@@ -127,6 +127,55 @@ def guided_tour_steps() -> list[dict]:
     return list(guided_tour().get("steps") or [])
 
 
+def page_explainer_page(screen: str, route: str) -> dict | None:
+    """The explainer page the user is on (ARCHITECTURE §11.2c), or ``None``.
+    A pushed page is matched by its route pattern; a shell tab shares route
+    ``/``, so it is matched by its screen slug."""
+    pages = (registry().get("page_explainer") or {}).get("pages") or []
+    for page in pages:
+        if page.get("route"):
+            if route == page["route"]:
+                return dict(page)
+        elif screen == page.get("screen") and route in ("", "/"):
+            return dict(page)
+    return None
+
+
+def page_explainer_steps(key: str) -> list[dict]:
+    """The look-only tour steps for explainer page ``key``. Built field by
+    field so an item can never carry a command for the tour to perform."""
+    pages = (registry().get("page_explainer") or {}).get("pages") or []
+    page = next((p for p in pages if p.get("key") == key), None)
+    if page is None:
+        return []
+    return [
+        {
+            "anchor": item.get("anchor"),
+            "headline": item.get("headline"),
+            "say": item.get("say"),
+            "screen": page.get("screen"),
+            "tab": page.get("tab"),
+            "route": page.get("route"),
+            "action": "look",
+            "explainer": key,
+        }
+        for item in page.get("items") or []
+    ]
+
+
+def asks_to_explain_page(text: str) -> bool:
+    """Whether ``text`` contains one of the explainer's phrasings as whole
+    words. Page words are kept here (unlike :func:`normalise`): without them
+    "explain this page" would shrink to "explain this" and catch any topic."""
+    def words(value: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9]+", " ", value.lower().replace("'", ""))
+        return f" {cleaned.strip()} "
+
+    aliases = (registry().get("page_explainer") or {}).get("aliases") or []
+    want = words(text)
+    return any(words(alias) in want for alias in aliases)
+
+
 def navigation_actions() -> list[str]:
     """The session navigation actions Ayma can run (feedback item 15) —
     currently just ``go_back``. The client keeps the history itself
