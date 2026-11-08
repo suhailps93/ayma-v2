@@ -1,7 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -585,10 +585,11 @@ class _SignInScreenState extends State<SignInScreen> {
                       textAlign: TextAlign.center,
                       style: AymaType.serif(size: 20, italic: true, color: ac.fg),
                     ),
-                    // 6 here + the consent rows' own 18dp overlay room
-                    // (see _ConsentBoxesState._kOverlayTopRoom) = the 24dp
-                    // this gap has always rendered as.
-                    const SizedBox(height: 6),
+                    // The 24dp gap above the consent rows, as it has always
+                    // rendered (it used to be 6dp here + 18dp of overlay
+                    // hit-room inside the consent rows; the overlay is gone,
+                    // so the full gap lives here again).
+                    const SizedBox(height: 24),
                     _ConsentBoxes(
                       termsAccepted: _termsAccepted,
                       biometricAccepted: _biometricAccepted,
@@ -902,177 +903,48 @@ class _ConsentSegment {
   bool get isLink => linkKey != null;
 }
 
-/// State for [_ConsentBoxes]: lays the two rows out under one overlay
-/// stack and positions the legal links' tap targets over their words.
+/// State for [_ConsentBoxes]: the legal links are ordinary text spans with
+/// their own tap recognizers, so each link's tap target IS its visible word.
 ///
 /// The links used to be [WidgetSpan] chips with 15dp of vertical padding
 /// inside the sentences (the NOTE 141 tap-target fix, build 2345): a
 /// ~48dp-tall chip stretches every line it sits on, so the consent text
 /// rendered with uneven, gappy spacing, the closing full stop wrapped
 /// onto a line of its own, and the tile centred each checkbox beside the
-/// middle of the inflated block. The labels are plain text spans again,
-/// so every line keeps its natural height, and the tiles align their
-/// checkboxes with the top of the label — the box sits beside the first
-/// line. Each link keeps its 48dp tap target as an invisible overlay rect
-/// positioned from the laid-out text (see [_measureLinkTargets]): it can
-/// reach past the word without moving any layout, and because the overlay
-/// spans both rows, a target that extends past its own row stays
-/// tappable instead of being swallowed by the neighbouring row. The
-/// overlay's own gesture wins over the row's, so a link tap still opens
-/// its page and never changes consent, and taps elsewhere on a row still
-/// toggle its checkbox — exactly the NOTE 141 behaviour.
+/// middle of the inflated block. The labels went back to plain text spans,
+/// with each link's 48dp tap target as an invisible overlay rect positioned
+/// from the laid-out text (build 2349) — but the overlay was measured once
+/// after the first layout and never re-measured, so any later reflow of the
+/// text left the rects ~one line above the visible words and taps on the
+/// words did nothing (NOTE 147, build 2361). A recognizer lives in the text
+/// itself, so it can never go stale: the link opens exactly where its word
+/// is, at any scale, after any reflow. The tap target is the word itself
+/// rather than a padded 48dp box — the word is what a finger aims at, and
+/// the row still toggles consent on taps anywhere else. The recognizer wins
+/// over the row's tap the same way the overlay's gesture did (deepest in
+/// the hit-test path), so a link tap still opens its page and never changes
+/// consent.
 class _ConsentBoxesState extends State<_ConsentBoxes> {
-  /// The height of a link tap target (the Material minimum touch target).
-  static const double _kTapTargetHeight = 48;
-
-  /// Hit-room above the first row, so a target reaching past the top of
-  /// its row stays inside the overlay and tappable. The room comes out of
-  /// the gap the screen leaves above the consent rows (24dp there, 6dp
-  /// now that 18dp lives here), so the rendered spacing is unchanged.
-  static const double _kOverlayTopRoom = 18;
-
-  final GlobalKey _stackKey = GlobalKey();
-  final List<GlobalKey> _textKeys = [GlobalKey(), GlobalKey()];
-
-  /// The rows' sentences, rebuilt on every build (fresh tap closures);
-  /// [_measureLinkTargets] reads the latest copy after layout.
-  List<List<_ConsentSegment>> _rowSegments = const [];
-
-  /// Tap-target rects per link key, in stack coordinates. Filled in once
-  /// the labels have been laid out; empty on the very first frame.
-  Map<Key, List<Rect>> _linkTargets = const {};
-  double? _measuredWidth;
+  /// One tap recognizer per link, kept across builds (a recognizer must be
+  /// disposed, never rebuilt per frame) and re-pointed at the current tap
+  /// closure on every build.
+  final Map<Key, TapGestureRecognizer> _recognizers = {};
 
   @override
-  void initState() {
-    super.initState();
-    _scheduleMeasure();
+  void dispose() {
+    for (final recognizer in _recognizers.values) {
+      recognizer.dispose();
+    }
+    super.dispose();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // A text-scale or theme change can reflow the labels at the same width.
-    _scheduleMeasure();
-  }
-
-  void _scheduleMeasure() {
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _measureLinkTargets());
-  }
-
-  /// Measures where each link word landed in its laid-out label and turns
-  /// those rects into 48dp-tall tap targets in stack coordinates.
-  void _measureLinkTargets() {
-    if (!mounted) return;
-    final stackBox = _stackKey.currentContext?.findRenderObject();
-    if (stackBox is! RenderBox || !stackBox.hasSize) return;
-    _measuredWidth = stackBox.size.width;
-    final stackOrigin = stackBox.localToGlobal(Offset.zero);
-    final targets = <Key, List<Rect>>{};
-    for (var row = 0; row < _rowSegments.length; row++) {
-      final paragraph = _textKeys[row].currentContext?.findRenderObject();
-      if (paragraph is! RenderParagraph || !paragraph.hasSize) continue;
-      _measureRow(paragraph, stackOrigin, stackBox.size,
-          _rowSegments[row], targets);
-    }
-    if (!_sameTargets(targets, _linkTargets)) {
-      setState(() => _linkTargets = targets);
-    }
-  }
-
-  void _measureRow(
-    RenderParagraph paragraph,
-    Offset stackOrigin,
-    Size stackSize,
-    List<_ConsentSegment> segments,
-    Map<Key, List<Rect>> targets,
-  ) {
-    // Locate every link word in the laid-out paragraph.
-    final links = <_ConsentSegment, List<Rect>>{};
-    var offset = 0;
-    for (final segment in segments) {
-      final start = offset;
-      offset += segment.text.length;
-      if (!segment.isLink) continue;
-      final boxes = paragraph.getBoxesForSelection(
-        TextSelection(baseOffset: start, extentOffset: offset),
-      );
-      links[segment] = [for (final box in boxes) box.toRect()];
-    }
-    // A target is centred on its word, but the vertical midline between
-    // two stacked link words bounds how far each may reach toward the
-    // other, so two links' targets never overlap and a tap can never land
-    // on the neighbouring link's territory.
-    final centers = [
-      for (final rects in links.values)
-        if (rects.isNotEmpty) rects.first.center.dy,
-    ];
-    var linkIndex = -1;
-    for (final entry in links.entries) {
-      if (entry.value.isEmpty) continue;
-      linkIndex++;
-      final aboveMid = linkIndex > 0
-          ? (centers[linkIndex - 1] + centers[linkIndex]) / 2
-          : double.negativeInfinity;
-      final belowMid = linkIndex < centers.length - 1
-          ? (centers[linkIndex] + centers[linkIndex + 1]) / 2
-          : double.infinity;
-      final rects = <Rect>[];
-      for (final word in entry.value) {
-        var top = word.center.dy - _kTapTargetHeight / 2;
-        if (top + _kTapTargetHeight > belowMid) {
-          top = belowMid - _kTapTargetHeight;
-        }
-        if (top < aboveMid) top = aboveMid;
-        // (Link words closer together than a full target cannot both be
-        // honoured; the target then rests on the upper midline.)
-        final local =
-            Rect.fromLTWH(word.left, top, word.width, _kTapTargetHeight);
-        final topLeft = paragraph.localToGlobal(local.topLeft) - stackOrigin;
-        rects.add(_fitInside(
-          Rect.fromLTWH(
-              topLeft.dx, topLeft.dy, local.width, local.height),
-          Offset.zero & stackSize,
-        ));
-      }
-      targets[entry.key.linkKey!] = rects;
-    }
-  }
-
-  /// Shifts [rect] the smallest amount that puts it inside [bounds]; a
-  /// target bigger than the overlay itself is clipped to the overlay.
-  static Rect _fitInside(Rect rect, Rect bounds) {
-    var dx = 0.0;
-    if (rect.width <= bounds.width) {
-      if (rect.left < bounds.left) {
-        dx = bounds.left - rect.left;
-      } else if (rect.right > bounds.right) {
-        dx = bounds.right - rect.right;
-      }
-    }
-    var dy = 0.0;
-    if (rect.height <= bounds.height) {
-      if (rect.top < bounds.top) {
-        dy = bounds.top - rect.top;
-      } else if (rect.bottom > bounds.bottom) {
-        dy = bounds.bottom - rect.bottom;
-      }
-    }
-    final shifted = rect.shift(Offset(dx, dy));
-    return shifted.overlaps(bounds) ? shifted.intersect(bounds) : shifted;
-  }
-
-  static bool _sameTargets(Map<Key, List<Rect>> a, Map<Key, List<Rect>> b) {
-    if (a.length != b.length) return false;
-    for (final entry in a.entries) {
-      final other = b[entry.key];
-      if (other == null || other.length != entry.value.length) return false;
-      for (var i = 0; i < entry.value.length; i++) {
-        if (entry.value[i] != other[i]) return false;
-      }
-    }
-    return true;
+  TapGestureRecognizer _recognizerFor(_ConsentSegment segment) {
+    final recognizer = _recognizers.putIfAbsent(
+      segment.linkKey!,
+      () => TapGestureRecognizer(),
+    );
+    recognizer.onTap = segment.onTap;
+    return recognizer;
   }
 
   @override
@@ -1109,10 +981,8 @@ class _ConsentBoxesState extends State<_ConsentBoxes> {
         onTap: () => context.push(BiometricInfoScreen.path),
       ),
     ];
-    _rowSegments = [termsSegments, biometricSegments];
 
     Widget tile({
-      required int row,
       required Key key,
       required bool value,
       required ValueChanged<bool> onChanged,
@@ -1139,66 +1009,31 @@ class _ConsentBoxesState extends State<_ConsentBoxes> {
                 TextSpan(
                   text: segment.text,
                   style: segment.isLink ? linkStyle : null,
+                  recognizer:
+                      segment.isLink ? _recognizerFor(segment) : null,
                 ),
             ],
           ),
-          key: _textKeys[row],
         ),
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (_measuredWidth != constraints.maxWidth) _scheduleMeasure();
-        return Stack(
-          key: _stackKey,
-          clipBehavior: Clip.none,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: _kOverlayTopRoom),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  tile(
-                    row: 0,
-                    key: const Key('signin_terms_checkbox'),
-                    value: widget.termsAccepted,
-                    onChanged: widget.onTerms,
-                    segments: termsSegments,
-                  ),
-                  tile(
-                    row: 1,
-                    key: const Key('signin_biometric_checkbox'),
-                    value: widget.biometricAccepted,
-                    onChanged: widget.onBiometric,
-                    segments: biometricSegments,
-                  ),
-                ],
-              ),
-            ),
-            for (final segments in _rowSegments)
-              for (final segment in segments)
-                if (segment.isLink)
-                  for (var i = 0;
-                      i < (_linkTargets[segment.linkKey]?.length ?? 0);
-                      i++)
-                    Positioned.fromRect(
-                      rect: _linkTargets[segment.linkKey]![i],
-                      child: Semantics(
-                        button: true,
-                        label: segment.text,
-                        onTap: segment.onTap,
-                        child: GestureDetector(
-                          key: i == 0 ? segment.linkKey : null,
-                          behavior: HitTestBehavior.opaque,
-                          onTap: segment.onTap,
-                          child: const SizedBox.expand(),
-                        ),
-                      ),
-                    ),
-          ],
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        tile(
+          key: const Key('signin_terms_checkbox'),
+          value: widget.termsAccepted,
+          onChanged: widget.onTerms,
+          segments: termsSegments,
+        ),
+        tile(
+          key: const Key('signin_biometric_checkbox'),
+          value: widget.biometricAccepted,
+          onChanged: widget.onBiometric,
+          segments: biometricSegments,
+        ),
+      ],
     );
   }
 }
