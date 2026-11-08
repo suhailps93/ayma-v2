@@ -6,11 +6,12 @@ write+revert restoration guarantee, the exclusion guard, and manifest
 integrity against the real session tool declarations."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 import self_check
-from self_check import SelfCheckRunner, _Deps
+from self_check import CheckResult, SelfCheckRunner, _Deps
 
 
 # --- trigger ---------------------------------------------------------------
@@ -194,21 +195,22 @@ def test_runner_failures_file_bugs_at_failure_time_with_context():
 
     by_name = {r.name: r for r in runner.results}
     assert by_name["nav:explore"].status == self_check.FAIL
-    assert by_name["tool:web_search"].status == self_check.FAIL
-    assert "DirectGoogleDisabledError" in by_name["tool:web_search"].error
-    # Exactly one bug per failing check, filed during the run.
-    assert len(h.bugs) == 2
+    # Web search failing with DirectGoogleDisabledError is known-off
+    # (deliberately disabled 2026-11-04), not a bug: SKIP, no filing.
+    assert by_name["tool:web_search"].status == self_check.SKIP
+    assert by_name["tool:web_search"].detail == self_check.WEB_SEARCH_OFF_DETAIL
+    # Exactly one bug: the genuine nav failure, filed during the run.
+    assert len(h.bugs) == 1
     nav_bug = [b for b in h.bugs if "check=nav:explore" in b][0]
     assert "session=s-test" in nav_bug and "run=" in nav_bug
     assert "did NOT navigate" in nav_bug
-    web_bug = [b for b in h.bugs if "check=tool:web_search" in b][0]
-    assert "DirectGoogleDisabledError" in web_bug
+    assert not any("check=tool:web_search" in b for b in h.bugs)
     assert by_name["nav:explore"].bug_id.startswith("bug-")
-    assert "2 FAIL" in report
+    assert "1 FAIL" in report
 
     # Dedupe: filing the same check again in this run is a no-op.
     asyncio.run(runner._file_bug(by_name["nav:explore"]))
-    assert len(h.bugs) == 2
+    assert len(h.bugs) == 1
 
 
 def test_missing_probe_tool_is_a_fail_not_a_silent_skip():
@@ -397,9 +399,11 @@ def test_progress_bubbles_plain_names_marks_no_raw_ids():
     asyncio.run(runner.run())
     # A start bubble posts before any check result.
     assert lines[0].startswith("Self-check started")
-    # Every result bubbles exactly once, in plain names with marks:
-    # start + one per result + summary + suggestions.
-    assert len(lines) == 1 + len(runner.results) + 2
+    # Every result bubbles exactly once as it finishes, in plain names
+    # with marks: start + one per result, then the finish bubbles.
+    result_lines = lines[1:1 + len(runner.results)]
+    assert len(result_lines) == len(runner.results)
+    assert len(lines) > 1 + len(runner.results) + 2
     assert "\u2705 Nav to Explore" not in lines  # explore fails here
     assert "\u2705 Nav to Chat" in lines
     fail_lines = [ln for ln in lines if ln.startswith("\u274c Nav to Explore")]
@@ -414,19 +418,24 @@ def test_progress_bubbles_plain_names_marks_no_raw_ids():
         for raw in ("nav:", "tool:", "wr:", "read:", "setting:",
                     "excluded:", "open:"):
             assert raw not in ln, (raw, ln)
-    # The summary is ONE bubble listing every result, with counts.
-    summary = [ln for ln in lines if ln.startswith("\U0001f9ea Self-check summary")]
-    assert len(summary) == 1
-    summary = summary[0]
-    assert f"{len(runner.results)} checks" in summary
-    marked = [
-        ln
-        for ln in summary.split("\n")
-        if ln[:1] in ("\u2705", "\u274c", "\u23ed")
+    # The finish is grouped bubbles, none over the readability cap:
+    # a header bubble with the counts, a failures bubble, then one
+    # bubble per check category. Every result line appears in them.
+    assert all(len(ln) <= self_check.MAX_BUBBLE_CHARS for ln in lines)
+    headers = [
+        ln for ln in lines if ln.startswith("\U0001f9ea Self-check summary")
     ]
-    assert len(marked) == len(runner.results)
+    assert len(headers) == 1
+    assert f"{len(runner.results)} checks" in headers[0]
+    failure_bubbles = [
+        ln for ln in lines if ln.startswith("\u274c Failures")
+    ]
+    assert len(failure_bubbles) == 1
+    assert "Nav to Explore" in failure_bubbles[0]
+    assert any(ln.startswith("Navigation — ") for ln in lines)
+    joined = "\n".join(lines)
     for r in runner.results:
-        assert runner._line(r) in summary
+        assert runner._line(r) in joined
 
 
 # --- feature suggestions + consolidated feedback record -------------------
@@ -459,13 +468,28 @@ def test_suggestions_from_fails_and_skips_filed_exactly_once():
         ),
     )
     asyncio.run(runner.run())
-    bubble = [ln for ln in lines if ln.startswith("\U0001f4a1 Feature ideas")]
-    assert len(bubble) == 1
-    bubble = bubble[0]
+    bubbles = [ln for ln in lines if ln.startswith("\U0001f4a1 Feature ideas")]
+    assert bubbles
+    joined = "\n".join(bubbles)
     # Derived from THIS run: the explore FAIL and the copilot SKIP both
     # become concrete, plain-language suggestions.
-    assert "Fix Nav to Explore" in bubble
-    assert "Add Point at something on a shared screen to this build" in bubble
+    assert "Fix Nav to Explore" in joined
+    assert "Add Point at something on a shared screen to this build" in joined
+    # The two repetitive families collapse to ONE grouped line each.
+    suggestions = runner._suggestions()
+    scoped = [
+        s for s in suggestions
+        if s.startswith("Bring these into the main chat")
+    ]
+    assert len(scoped) == 1
+    assert "Edit a Story passage" in scoped[0]
+    assert "Set passage privacy" in scoped[0]
+    probe = [
+        s for s in suggestions
+        if s.startswith("Checked for wiring only, never run for real")
+    ]
+    assert len(probe) == 1
+    assert "Deep-dive web research" in probe[0]
     # One consolidated record for the whole run, never one per gap.
     assert len(h.record_feedback_calls) == 1
     category, note = h.record_feedback_calls[0]
@@ -528,3 +552,288 @@ def test_nav_fails_only_after_both_windows(monkeypatch):
     assert status == self_check.FAIL
     assert "12s" in error  # two 6s windows, honestly reported
     assert calls == {"queue": 1, "ack": 2}
+
+
+# --- readability + stranding fixes (founder, 2026-11-07 ~15:53) ---------
+# After two runs on his phone: the output was unreadable (one packed
+# summary bubble, truncated mid-word), the nav section threw him into
+# the browser (Terms) and onto the photo page and never brought him
+# back, and two of the three "failures" were the check itself.
+
+
+def _runner_with(h, destinations, nav_fn=None):
+    return SelfCheckRunner(
+        object(),
+        "u1",
+        session_id="s-test",
+        env_label="test-env",
+        deps=_Deps(
+            nav_fn=nav_fn or h.nav_fn,
+            read_fn=h.read_fn,
+            profile_read=h.profile_read,
+            tool_fns=h.tool_fns(),
+            web_search_fn=h.web_search_fn,
+            bug_record=h.bug_record,
+            destinations=destinations,
+            settings_keys=["theme", "notify_all"],
+        ),
+    )
+
+
+# A. chunking
+
+def test_chunk_lines_never_exceeds_limit_or_splits_a_line():
+    lines = [f"result {i} " + "x" * 40 for i in range(60)]
+    bubbles = self_check.chunk_lines(lines, limit=200)
+    assert bubbles and all(len(b) <= 200 for b in bubbles)
+    rejoined = []
+    for b in bubbles:
+        rejoined.extend(b.split("\n"))
+    assert rejoined == lines
+
+
+def test_chunk_lines_wraps_a_grouped_line_at_its_separators():
+    names = "; ".join(f"Check number {i}" for i in range(40))
+    line = "Checked for wiring only, never run for real: " + names
+    bubbles = self_check.chunk_lines([line], limit=300)
+    assert len(bubbles) > 1
+    assert all(len(b) <= 300 for b in bubbles)
+    joined = "\n".join(bubbles)
+    # Every name survives whole — no mid-word or mid-name split.
+    for i in range(40):
+        assert f"Check number {i}" in joined
+    assert joined.count("Check number") == 40
+
+
+def test_finish_bubbles_grouped_by_category_none_over_limit():
+    h = _Harness(fail_nav={"explore"})
+    lines = []
+    runner = h.runner()
+    runner.deps.progress = lines.append
+    asyncio.run(runner.run())
+    assert all(len(ln) <= self_check.MAX_BUBBLE_CHARS for ln in lines)
+    headings = [ln.split("\n")[0] for ln in lines]
+    assert any(x.startswith("Navigation — ") for x in headings)
+    assert any(x.startswith("Tools — ") for x in headings)
+    assert any(x.startswith("\u274c Failures") for x in headings)
+
+
+def test_suggestions_never_treat_passes_as_gaps():
+    h = _Harness()
+    runner = h.runner()
+    asyncio.run(runner.run())
+    suggestions = runner._suggestions()
+    excluded_results = [
+        r for r in runner.results if r.status == self_check.EXCLUDED
+    ]
+    off_limits = [s for s in suggestions if "off-limits by your rule" in s]
+    assert len(off_limits) == len(excluded_results)
+    # nav:ayma passed in this run — it must not appear as any gap.
+    assert not any("Nav to Chat" in s for s in suggestions)
+
+
+# B + C. external destinations, backgrounding artifacts, return-to-chat
+
+def test_registry_flags_terms_and_privacy_external():
+    import app_registry
+
+    dests = {d["key"]: d for d in app_registry.destinations()}
+    assert dests["terms"].get("external") is True
+    assert dests["privacy"].get("external") is True
+    assert self_check._is_external_destination(dests["terms"])
+    assert not self_check._is_external_destination(dests["explore"])
+
+
+def test_external_nav_skipped_and_later_timeout_is_not_a_failure():
+    h = _Harness(fail_nav={"matches"})
+    calls = []
+
+    async def nav_fn(dest):
+        calls.append(dest["key"])
+        return await h.nav_fn(dest)
+
+    runner = _runner_with(
+        h,
+        [
+            {"key": "ayma", "label": "Chat"},
+            {"key": "terms", "label": "Terms of Service", "external": True},
+            {"key": "matches", "label": "Matches"},
+        ],
+        nav_fn=nav_fn,
+    )
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    # Terms is never live-navigated: SKIP, no nav command queued.
+    assert "terms" not in calls
+    assert by_name["nav:terms"].status == self_check.SKIP
+    assert by_name["nav:terms"].detail == self_check.EXTERNAL_SKIP_DETAIL
+    # The matches timeout follows the external open: a check artifact,
+    # reported not-run — never a failure, never a bug.
+    assert by_name["nav:matches"].status == self_check.SKIP
+    assert by_name["nav:matches"].detail == (
+        self_check.BACKGROUNDED_SKIP_DETAIL
+    )
+    assert h.bugs == []
+    # The run ends by queueing a return to the chat.
+    assert calls == ["ayma", "matches", "ayma"]
+
+
+def test_genuine_foregrounded_nav_timeout_still_fails():
+    h = _Harness(fail_nav={"matches", "explore"})
+    runner = _runner_with(
+        h,
+        [
+            {"key": "ayma", "label": "Chat"},
+            {"key": "matches", "label": "Matches"},
+            {"key": "explore", "label": "Explore"},
+        ],
+    )
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    # No external open before it: the first unheard nav is a real FAIL
+    # and files its bug.
+    assert by_name["nav:matches"].status == self_check.FAIL
+    assert len([b for b in h.bugs if "check=nav:matches" in b]) == 1
+    # Once a nav command has gone unheard, a later timeout in the same
+    # run is the same artifact — not-run, no second bug.
+    assert by_name["nav:explore"].status == self_check.SKIP
+    assert not any("check=nav:explore" in b for b in h.bugs)
+
+
+# D. web search known-off
+
+def test_web_search_known_off_suggestion_wording():
+    h = _Harness(web_search_fails=True)
+    runner = h.runner()
+    asyncio.run(runner.run())
+    suggestions = runner._suggestions()
+    assert self_check.WEB_SEARCH_OFF_SUGGESTION in suggestions
+    assert not any(s.startswith("Fix Web search") for s in suggestions)
+
+
+def test_any_check_failing_with_disabled_error_is_known_off():
+    h = _Harness()
+    runner = h.runner()
+
+    async def boom():
+        raise RuntimeError("DirectGoogleDisabledError: live web search is unavailable")
+
+    result = asyncio.run(runner._timed("tool:deep_dive", "tools", boom()))
+    assert result.status == self_check.SKIP
+    assert result.detail == self_check.WEB_SEARCH_OFF_DETAIL
+    assert result.error == ""
+
+
+# E. bug-filing de-dupe (24h)
+
+class _BugDoc:
+    def __init__(self, data):
+        self._data = data
+
+    def to_dict(self):
+        return self._data
+
+
+class _BugQuery:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def where(self, *args):
+        return self
+
+    def limit(self, n):
+        return self
+
+    def stream(self):
+        return iter(self._docs)
+
+
+class _BugCollection:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def where(self, *args):
+        return _BugQuery(self._docs)
+
+
+class _BugDb:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def collection(self, name):
+        assert name == "bug_reports"
+        return _BugCollection(self._docs)
+
+
+def _filed_doc(error, *, hours_ago=1):
+    return _BugDoc(
+        {
+            "uid": "u1",
+            "description": (
+                "[self-check] check=nav:explore category=navigation "
+                f"session=s-old run=oldrun env=test-env error={error}"
+            ),
+            "status": "new",
+            "created_at": datetime.now(timezone.utc)
+            - timedelta(hours=hours_ago),
+        }
+    )
+
+
+def _dedupe_runner(db, filed):
+    def record(db_, uid, description):
+        filed.append(description)
+        return "bug-new"
+
+    return SelfCheckRunner(
+        db, "u1", deps=_Deps(bug_record=record, tool_fns={})
+    )
+
+
+def test_bug_filing_dedupes_identical_failure_within_24h():
+    filed = []
+    runner = _dedupe_runner(_BugDb([_filed_doc("boom")]), filed)
+    result = CheckResult("nav:explore", "navigation", self_check.FAIL,
+                         "", "boom")
+    asyncio.run(runner._file_bug(result))
+    assert filed == []
+    assert "already filed" in result.detail
+
+
+def test_bug_filing_still_files_new_or_stale_failures():
+    # A different error is a different failure: filed.
+    filed = []
+    runner = _dedupe_runner(_BugDb([_filed_doc("boom")]), filed)
+    asyncio.run(
+        runner._file_bug(
+            CheckResult("nav:explore", "navigation", self_check.FAIL,
+                        "", "different")
+        )
+    )
+    assert len(filed) == 1
+    # The same failure filed more than 24h ago: filed again.
+    filed2 = []
+    runner2 = _dedupe_runner(_BugDb([_filed_doc("boom", hours_ago=30)]), filed2)
+    asyncio.run(
+        runner2._file_bug(
+            CheckResult("nav:explore", "navigation", self_check.FAIL,
+                        "", "boom")
+        )
+    )
+    assert len(filed2) == 1
+
+
+def test_bug_filing_dedupe_query_failure_never_blocks_filing():
+    class _BadDb:
+        def collection(self, name):
+            raise RuntimeError("down")
+
+    filed = []
+    runner = _dedupe_runner(_BadDb(), filed)
+    asyncio.run(
+        runner._file_bug(
+            CheckResult("nav:explore", "navigation", self_check.FAIL,
+                        "", "boom")
+        )
+    )
+    assert len(filed) == 1

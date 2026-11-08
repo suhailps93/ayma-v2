@@ -49,10 +49,23 @@ files):
   is SKIP - the capability is not part of this build, so its absence
   is not a defect and files no bug. Declared-but-unbound IS a FAIL:
   the build claims the tool and cannot produce it.
-* ``web_search`` runs for real and is EXPECTED to fail today:
-  ``gemini.research()`` raises ``DirectGoogleDisabledError`` by design
-  (LiveKit-only inference, founder 2026-11-04). The runner reports that
-  honestly and files the bug — it never routes around it.
+* ``web_search`` runs for real, but its known-off failure is not a
+  bug: ``gemini.research()`` raises ``DirectGoogleDisabledError`` by
+  design (live web search off since the 2026-11-04 billing kill;
+  restore plan pending a founder decision). Any check failing with
+  that error is reported SKIP (off by design), files no bug, and the
+  suggestions carry one restore-plan line instead of a fix line.
+* Readability + stranding (founder, 2026-11-07 ~15:53, after two runs
+  on his phone): the summary and suggestions are posted as short
+  grouped bubbles — header counts, a failures bubble, then one bubble
+  per check category — never a bubble over 1500 chars, split only on
+  line boundaries (long bubbles were truncated mid-word in chat).
+  Destinations that leave the app for the browser (Terms, Privacy)
+  are never live-navigated in a run, a nav timeout after an external
+  open counts as not-run rather than failed (a backgrounded app
+  cannot hear nav commands), the nav section always queues a return
+  to the chat at the end, and bug filing de-dupes against the last
+  24h so repeat runs do not file the same failure twice.
 """
 
 from __future__ import annotations
@@ -65,6 +78,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 import app_registry
@@ -186,6 +200,94 @@ RUN_TOOLS = (
 
 _TEST_LOCATION = "Self Check Test City"
 _DM_COUNTERPART = "Sofia Marino"
+
+# -- readability + stranding fixes (founder, 2026-11-07 ~15:53) --------
+# No chat bubble the runner posts at finish may exceed this: longer
+# bubbles are truncated mid-word by chat persistence (NOTE 137).
+MAX_BUBBLE_CHARS = 1500
+
+# Destinations that leave the app for the external browser. Flagged
+# ``external`` in app_registry.json; this literal set is the fallback
+# so Terms/Privacy keep the treatment even if the flag is lost.
+EXTERNAL_DESTINATION_KEYS = {"terms", "privacy"}
+
+EXTERNAL_SKIP_DETAIL = "opens your browser \u2014 not run during a check"
+BACKGROUNDED_SKIP_DETAIL = (
+    "the app was in your browser \u2014 this check could not be heard"
+)
+WEB_SEARCH_OFF_DETAIL = "Web search is off by design \u2014 restore plan pending"
+WEB_SEARCH_OFF_SUGGESTION = (
+    "Web search \u2014 off by design since Nov 4; restoring it waits "
+    "on the founder decision in the restore plan."
+)
+_DIRECT_GOOGLE_DISABLED = "DirectGoogleDisabledError"
+
+# Bug filing de-dupes against identical failures filed this recently.
+_BUG_DEDUPE_WINDOW = timedelta(hours=24)
+
+
+def _is_external_destination(dest: dict) -> bool:
+    """True when navigating to ``dest`` leaves the app (browser)."""
+    if not isinstance(dest, dict):
+        return False
+    if dest.get("external"):
+        return True
+    return str(dest.get("key") or "") in EXTERNAL_DESTINATION_KEYS
+
+
+def _is_no_ack_error(error: str) -> bool:
+    """True for nav failures that mean the app never heard the command."""
+    text = (error or "").lower()
+    return (
+        "no ack" in text
+        or "did not navigate" in text
+        or text.startswith("timeout after")
+    )
+
+
+def _wrap_long_line(line: str, limit: int) -> list[str]:
+    """Wrap one over-limit line at its ``; `` separators (never mid-word)."""
+    if len(line) <= limit:
+        return [line]
+    parts = line.split("; ")
+    out: list[str] = []
+    current = ""
+    for part in parts:
+        candidate = part if not current else current + "; " + part
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            if current:
+                out.append(current)
+            current = part
+    if current:
+        out.append(current)
+    return out or [line]
+
+
+def chunk_lines(lines, limit: int = MAX_BUBBLE_CHARS) -> list[str]:
+    """Pack ``lines`` into bubble texts of at most ``limit`` chars.
+
+    Splits only between lines \u2014 never mid-line, never mid-word. A
+    single line longer than the limit (a grouped suggestion entry) is
+    first wrapped at its ``; `` separators, still never mid-word.
+    """
+    wrapped: list[str] = []
+    for line in lines:
+        wrapped.extend(_wrap_long_line(str(line), limit))
+    bubbles: list[str] = []
+    current = ""
+    for line in wrapped:
+        if not current:
+            current = line
+        elif len(current) + 1 + len(line) <= limit:
+            current += "\n" + line
+        else:
+            bubbles.append(current)
+            current = line
+    if current:
+        bubbles.append(current)
+    return bubbles
 
 _TRIGGER = re.compile(r"^\s*/self-check\s*$", re.IGNORECASE)
 
@@ -379,6 +481,19 @@ def _title_label(label) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
+# Headings for the per-category summary bubbles (founder, 2026-11-07
+# ~15:53: results grouped by section, not one packed blob).
+_CATEGORY_TITLES = {
+    "navigation": "Navigation",
+    "read": "Reading",
+    "write_revert": "Write and revert",
+    "tools": "Tools",
+    "settings": "Settings",
+    "scoped": "Screen-only tools",
+    "excluded": "Off-limits \u2014 never run",
+}
+
+
 @dataclass
 class CheckResult:
     name: str
@@ -439,6 +554,11 @@ class SelfCheckRunner:
         self._tool_fns_cache: dict | None = None
         self._declared_cache: set | None = None
         self._labels: dict[str, str] = {}
+        # Nav stranding guards: an external destination was reached
+        # earlier in this run, or a nav command already went unheard —
+        # either means later nav timeouts may be check artifacts.
+        self._external_seen = False
+        self._nav_unheard = False
 
     # -- plumbing ------------------------------------------------------
 
@@ -526,6 +646,11 @@ class SelfCheckRunner:
             )
         except Exception as exc:  # noqa: BLE001 - a check error IS the result
             status, detail, error = FAIL, "", f"{type(exc).__name__}: {exc}"
+        if status == FAIL and _DIRECT_GOOGLE_DISABLED in (error or ""):
+            # Known-off, not a bug: live web search was deliberately
+            # disabled 2026-11-04 and its restore waits on a founder
+            # decision. Report not-run, file nothing.
+            status, detail, error = SKIP, WEB_SEARCH_OFF_DETAIL, ""
         return CheckResult(
             name=name,
             category=category,
@@ -577,11 +702,66 @@ class SelfCheckRunner:
             await self._file_bug(result)
         await self._announce(self._line(result))
 
+    def _recent_bug_docs(self) -> list:
+        """Best-effort recent bug_reports docs for this user.
+
+        Any handle or query failure returns an empty list — a filing
+        query failure must never break a run or block a real filing.
+        """
+        try:
+            query = self.db.collection("bug_reports")
+            try:
+                query = query.where("uid", "==", self.uid)
+            except Exception:  # noqa: BLE001 - unfiltered fallback
+                pass
+            try:
+                query = query.limit(50)
+            except Exception:  # noqa: BLE001 - limit is best-effort
+                pass
+            if hasattr(query, "stream"):
+                return list(query.stream())
+            if hasattr(query, "get"):
+                return list(query.get())
+        except Exception:  # noqa: BLE001 - de-dupe is best-effort
+            logger.exception("self-check bug de-dupe query failed")
+        return []
+
+    def _already_filed_recently(self, result: CheckResult) -> bool:
+        """True when an identical check+error was filed within 24h."""
+        needle = f"check={result.name} "
+        want_error = (result.error or result.detail or "").strip()
+        now = datetime.now(timezone.utc)
+        for doc in self._recent_bug_docs():
+            try:
+                data = doc.to_dict() or {}
+            except Exception:  # noqa: BLE001 - skip unreadable docs
+                continue
+            description = str(data.get("description") or "")
+            if needle not in description:
+                continue
+            if want_error and " error=" in description:
+                filed_error = description.rsplit(" error=", 1)[-1].strip()
+                if filed_error != want_error:
+                    continue
+            created = data.get("created_at")
+            if isinstance(created, datetime):
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if now - created > _BUG_DEDUPE_WINDOW:
+                    continue
+            return True
+        return False
+
     async def _file_bug(self, result: CheckResult) -> None:
         """File this failure once per run, at the moment it happened."""
         if result.name in self._filed:
             return
         self._filed.add(result.name)
+        if self._already_filed_recently(result):
+            result.detail = (
+                result.detail + " (already filed in the last 24h)"
+            ).strip()
+            return
         description = (
             f"[self-check] check={result.name} category={result.category} "
             f"session={self.session_id or '?'} run={self.run_id} "
@@ -601,20 +781,52 @@ class SelfCheckRunner:
 
     # -- individual checks ----------------------------------------------
 
-    async def _do_nav(self, dest: dict):
-        if self.deps.nav_fn is not None:
-            ok, error = await self.deps.nav_fn(dest)
-            return (PASS, dest.get("label", ""), "") if ok else (FAIL, "", error)
-        from skills.app_control_navigation import _resolve_path
-        from skills.app_control_queue import _await_ack, _queue_command
+    def _queue_nav_command(self, dest: dict):
+        """Resolve + queue one navigate command; returns (cmd_id, label).
 
-        path, label = await asyncio.to_thread(_resolve_path, self.db, self.uid, dest)
-        cmd_id = await asyncio.to_thread(
-            _queue_command,
+        No ack is awaited here — callers decide whether to wait.
+        """
+        from skills.app_control_navigation import _resolve_path
+        from skills.app_control_queue import _queue_command
+
+        path, label = _resolve_path(self.db, self.uid, dest)
+        cmd_id = _queue_command(
             self.db,
             self.uid,
             {"action": "navigate", "screen": dest["key"], "path": path},
         )
+        return cmd_id, label
+
+    async def _return_to_chat(self, destinations) -> None:
+        """Queue a navigate back to the chat, best-effort.
+
+        Runs at the end of the nav section so a run always leaves the
+        user back in the chat instead of stranded on whatever page the
+        checks opened last. Ack is not required and this never becomes
+        a check result.
+        """
+        chat = {"key": "ayma", "path": "/", "label": "the chat with Ayma"}
+        for dest in destinations or []:
+            if str(dest.get("key") or "") == "ayma":
+                chat = dest
+                break
+        try:
+            if self.deps.nav_fn is not None:
+                out = self.deps.nav_fn(chat)
+                if inspect.isawaitable(out):
+                    await out
+                return
+            await asyncio.to_thread(self._queue_nav_command, chat)
+        except Exception:  # noqa: BLE001 - return-to-chat never breaks a run
+            logger.exception("self-check return-to-chat queue failed")
+
+    async def _do_nav(self, dest: dict):
+        if self.deps.nav_fn is not None:
+            ok, error = await self.deps.nav_fn(dest)
+            return (PASS, dest.get("label", ""), "") if ok else (FAIL, "", error)
+        from skills.app_control_queue import _await_ack
+
+        cmd_id, label = await asyncio.to_thread(self._queue_nav_command, dest)
         ack = await _await_ack(self.db, self.uid, cmd_id, timeout=self.nav_timeout)
         if ack is None:
             # One re-wait on the SAME command before failing: the
@@ -834,50 +1046,74 @@ class SelfCheckRunner:
     def _suggestions(self) -> list[str]:
         """Feature gaps from THIS run, in plain language.
 
-        Every FAIL, SKIP, probe-only tool and excluded action is a
-        candidate gap (founder, 2026-11-07); each becomes one
-        concrete suggestion line. Ordered most-actionable first
-        (failures, then missing-in-build, then probe-only, then
-        excluded) so the consolidated feedback record - whose note
-        is clipped by feedback_ops - holds the important ones.
+        Failures and not-in-this-build adds stay individual lines.
+        The two repetitive families collapse into ONE grouped line
+        each (founder, 2026-11-07 ~15:53: the one-line-per-gap list
+        was unreadable): every screen-scoped "bring into the main
+        chat" item is named in a single line, and every probe-only
+        item is named in a single line. By-design skips (external
+        destinations, backgrounded nav, web search off) are not gaps.
+        Ordered most-actionable first so the consolidated feedback
+        record — whose note is clipped by feedback_ops — holds the
+        important ones.
         """
-        rank = {FAIL: 0, SKIP: 1, PROBE: 2, EXCLUDED: 3}
-        gaps = [r for r in self.results if r.status in rank]
-        gaps.sort(key=lambda r: rank[r.status])
-        out: list[str] = []
-        for r in gaps:
+        failures: list[str] = []
+        build_adds: list[str] = []
+        other_skips: list[str] = []
+        scoped_names: list[str] = []
+        probe_names: list[str] = []
+        excluded_lines: list[str] = []
+        web_search_line = ""
+        for r in self.results:
             plain = self._display(r)
             if r.status == FAIL:
                 reason = (r.error or r.detail or "").strip()
                 if reason:
-                    out.append(f"Fix {plain} — it failed ({reason[:80]}).")
+                    failures.append(f"Fix {plain} — it failed ({reason[:80]}).")
                 else:
-                    out.append(f"Fix {plain} — it failed in this run.")
+                    failures.append(f"Fix {plain} — it failed in this run.")
             elif r.status == SKIP:
-                if "not part of this build" in (r.detail or ""):
-                    out.append(
+                detail = r.detail or ""
+                if detail == WEB_SEARCH_OFF_DETAIL:
+                    web_search_line = WEB_SEARCH_OFF_SUGGESTION
+                elif "not part of this build" in detail:
+                    build_adds.append(
                         f"Add {plain} to this build — not wired up here yet."
                     )
                 elif r.category == "scoped":
-                    out.append(
-                        f"Bring {plain} into the main chat — it only "
-                        "works inside a specific screen today."
-                    )
+                    if plain not in scoped_names:
+                        scoped_names.append(plain)
+                elif detail in (EXTERNAL_SKIP_DETAIL, BACKGROUNDED_SKIP_DETAIL):
+                    continue  # by design — not a gap, no suggestion
                 else:
-                    out.append(
+                    other_skips.append(
                         f"Make {plain} runnable in a self-check — "
-                        f"skipped ({(r.detail or '')[:60]})."
+                        f"skipped ({detail[:60]})."
                     )
             elif r.status == PROBE:
-                out.append(
-                    f"Exercise {plain} for real in self-checks — "
-                    "probe-only today (checked for wiring, never run)."
-                )
-            else:  # EXCLUDED
-                out.append(
+                if plain not in probe_names:
+                    probe_names.append(plain)
+            elif r.status == EXCLUDED:
+                excluded_lines.append(
                     f"{plain} — off-limits by your rule; never run, "
                     "listed so the gap is visible."
                 )
+            # PASS is not a gap — no suggestion.
+        out = list(failures)
+        if web_search_line:
+            out.append(web_search_line)
+        out += build_adds + other_skips
+        if scoped_names:
+            out.append(
+                "Bring these into the main chat (they only work inside "
+                "a specific screen today): " + "; ".join(scoped_names)
+            )
+        if probe_names:
+            out.append(
+                "Checked for wiring only, never run for real: "
+                + "; ".join(probe_names)
+            )
+        out += excluded_lines
         return out
 
     async def _file_feedback(self, suggestions: list[str]) -> None:
@@ -915,33 +1151,62 @@ class SelfCheckRunner:
         except Exception:  # noqa: BLE001 - feedback never breaks a run
             logger.exception("self-check feedback filing failed")
 
+    async def _announce_bubbles(self, heading: str, lines: list[str]) -> None:
+        """Post ``lines`` under ``heading`` in bubbles of at most
+        MAX_BUBBLE_CHARS (heading repeated on each chunk)."""
+        if not lines:
+            return
+        room = MAX_BUBBLE_CHARS - len(heading) - 1
+        for chunk in chunk_lines(lines, limit=room):
+            await self._announce(heading + "\n" + chunk)
+
     async def _finish(self) -> None:
-        """Summary bubble, suggestion bubble, one feedback record."""
+        """Grouped summary bubbles, suggestion bubbles, one record.
+
+        Structure (founder, 2026-11-07 ~15:53): a header bubble with
+        the counts, a failures bubble listing every failure, then one
+        bubble per check category — never a bubble over
+        MAX_BUBBLE_CHARS, split only on line boundaries.
+        """
         counts = {PASS: 0, FAIL: 0, PROBE: 0, SKIP: 0, EXCLUDED: 0}
         for r in self.results:
             counts[r.status] = counts.get(r.status, 0) + 1
         not_run = counts[PROBE] + counts[SKIP] + counts[EXCLUDED]
-        lines = [
+        header = (
             f"\U0001f9ea Self-check summary — {len(self.results)} checks: "
             f"{_MARKS[PASS]} {counts[PASS]} passed · "
             f"{_MARKS[FAIL]} {counts[FAIL]} failed · "
             f"{_MARKS[SKIP]} {not_run} not run"
-        ]
-        lines.extend(self._line(r) for r in self.results)
-        await self._announce("\n".join(lines))
+        )
+        await self._announce(header)
+        failures = [r for r in self.results if r.status == FAIL]
+        if failures:
+            await self._announce_bubbles(
+                "\u274c Failures — every failure from this run:",
+                [self._line(r) for r in failures],
+            )
+        grouped: dict[str, list[CheckResult]] = {}
+        for r in self.results:
+            grouped.setdefault(r.category, []).append(r)
+        for category, rs in grouped.items():
+            title = _CATEGORY_TITLES.get(category) or _humanise(category)
+            passed = sum(1 for r in rs if r.status == PASS)
+            await self._announce_bubbles(
+                f"{title} — {passed} of {len(rs)}",
+                [self._line(r) for r in rs],
+            )
         suggestions = self._suggestions()
         if suggestions:
-            bubble = (
+            await self._announce_bubbles(
                 "\U0001f4a1 Feature ideas from this run — what would "
-                "help Ayma do more, better:\n"
-                + "\n".join(f"• {s}" for s in suggestions)
+                "help Ayma do more, better:",
+                [f"• {s}" for s in suggestions],
             )
         else:
-            bubble = (
+            await self._announce(
                 "\U0001f4a1 Feature ideas from this run: nothing to "
                 "suggest — everything in this build ran."
             )
-        await self._announce(bubble)
         if suggestions:
             await self._file_feedback(suggestions)
 
@@ -975,12 +1240,38 @@ class SelfCheckRunner:
                                 "founder-excluded — never exercised")
                 )
                 continue
-            await self._emit(
-                await self._timed(
-                    f"nav:{key}", "navigation", self._do_nav(dest),
-                    timeout=self.nav_timeout * 2 + 5,
+            if _is_external_destination(dest):
+                # External destinations throw the user into the
+                # browser (Terms/Privacy open the hosted page there
+                # since build 2343): never live-navigate them in a
+                # run — the app backgrounds, the user is stranded,
+                # and later nav checks cannot be heard.
+                self._external_seen = True
+                await self._emit(
+                    CheckResult(f"nav:{key}", "navigation", SKIP,
+                                EXTERNAL_SKIP_DETAIL)
                 )
+                continue
+            nav_result = await self._timed(
+                f"nav:{key}", "navigation", self._do_nav(dest),
+                timeout=self.nav_timeout * 2 + 5,
             )
+            if nav_result.status == FAIL and _is_no_ack_error(nav_result.error):
+                if self._external_seen or self._nav_unheard:
+                    # The app could not hear this command — it was
+                    # backgrounded (browser) or already unheard — so
+                    # the timeout is a check artifact, not a failure.
+                    nav_result = CheckResult(
+                        nav_result.name, nav_result.category, SKIP,
+                        BACKGROUNDED_SKIP_DETAIL, "",
+                        duration_ms=nav_result.duration_ms,
+                    )
+                else:
+                    self._nav_unheard = True
+            await self._emit(nav_result)
+
+        # A run always leaves the user back in the chat.
+        await self._return_to_chat(destinations)
 
         # B. Parameterized opens.
         await self._emit(
