@@ -693,12 +693,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _startDraftAbout(k);
     } else if (k.kind == 'discuss_topic') {
       await _runDiscussTopic(k);
+    } else if (k.kind == 'guided_tour') {
+      await _runGuidedTour(k);
     } else if (k.kind == 'draft_text') {
       _composerController.text = k.draftBody;
       _composerController.selection =
           TextSelection.collapsed(offset: k.draftBody.length);
       _composerFocus.requestFocus();
     }
+  }
+
+  /// A guided-tour kickoff (Settings → "How to use Ayma"): seed the ask
+  /// as a user turn and send it — the backend's deterministic tour routing
+  /// starts the live guided tour; Ayma drives it from there.
+  Future<void> _runGuidedTour(ChatKickoff k) async {
+    if (_sending) return;
+    const seed = 'Walk me through the app';
+    _store.addTurn(TurnRole.user, seed, TurnSource.text);
+    await _send(retry: seed, skipUserTurn: true);
   }
 
   /// A "draft about this" kickoff (e.g. "Ask Ayma" on a Web-research report):

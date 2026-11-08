@@ -550,7 +550,7 @@ client identifier fails.
   `clear_all_notifications`, `set_notification_filter`,
   `mark_all_conversations_read`.
 * **Guided tour**: `start_guided_tour`, `advance_guided_tour`,
-  `back_guided_tour`, `stop_guided_tour`.
+  `skip_guided_tour`, `back_guided_tour`, `stop_guided_tour`.
 * **Her own stack & voice**: `set_brain`, `set_voice_brain`,
   `set_voice_mode`, `set_realtime_model`, `set_stt`, `set_tts`,
   `reconnect_voice`, `set_voice_preference`.

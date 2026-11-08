@@ -52,6 +52,33 @@ class TourAnchors {
   /// an async voice message.
   static const asyncVoiceMic = 'async_voice_mic';
 
+  /// The Explore search field ("describe who you're looking for").
+  static const exploreSearch = 'explore_search';
+
+  /// The Explore filter chip row (Everyone / Your likes / Liked me / ...).
+  static const exploreFilters = 'explore_filters';
+
+  /// The "My public profile" row inside the Profile tab.
+  static const profilePublicProfileRow = 'profile_public_profile_row';
+
+  /// The "Profile details" row inside the Profile tab.
+  static const profileDetailsRow = 'profile_details_row';
+
+  /// The "Search the web about me" row inside the Profile tab.
+  static const profileWebResearchRow = 'profile_web_research_row';
+
+  /// The "Settings" row inside the Profile tab.
+  static const profileSettingsRow = 'profile_settings_row';
+
+  /// The "Plan" row inside the Profile tab.
+  static const profilePlanRow = 'profile_plan_row';
+
+  /// The "Notification preferences" row inside Settings.
+  static const settingsNotificationsRow = 'settings_notifications_row';
+
+  /// The "Accent Color" row inside Settings.
+  static const settingsAccentRow = 'settings_accent_row';
+
   static final Map<String, GlobalKey> _keys = <String, GlobalKey>{};
 
   /// The stable [GlobalKey] for [id] — the same instance on every call, so a

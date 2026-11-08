@@ -60,6 +60,7 @@ class CoachMarkOverlay extends StatefulWidget {
     this.onAnchorShown,
     this.onAnchorAbsent,
     this.onAnchorTapped,
+    this.onSkipPressed,
     this.onStopPressed,
     this.hideNextButton = false,
     this.chromeless = false,
@@ -117,6 +118,12 @@ class CoachMarkOverlay extends StatefulWidget {
   /// widget still acted (it was never blocked); the driver records the tap and
   /// the backend sends the next step. When null, a hole-tap advances the list.
   final VoidCallback? onAnchorTapped;
+
+  /// Driven tours only: the callout card's Next button moves past the step
+  /// WITHOUT a tap on the highlighted control (a 'skip' the backend
+  /// consumes). When null, Next falls back to [onAnchorTapped] / the local
+  /// advance, as before.
+  final VoidCallback? onSkipPressed;
 
   /// What "Skip tour" does in driven mode — end the whole guided tour (the
   /// driver signals the backend). When null, Skip finishes the local tour as
@@ -488,12 +495,17 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
       total: effectiveTotal,
       isLast: effectiveIsLast,
       finishing: _finishing,
-      onNext: widget.onAnchorTapped != null
+      onNext: widget.onSkipPressed != null
           ? () {
               FocusManager.instance.primaryFocus?.unfocus();
-              widget.onAnchorTapped!();
+              widget.onSkipPressed!();
             }
-          : _advance,
+          : widget.onAnchorTapped != null
+              ? () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  widget.onAnchorTapped!();
+                }
+              : _advance,
       // Driven mode: "Skip tour" ends the whole guided tour via the driver;
       // otherwise it finishes the local tour (writing seen-state) as before.
       onSkip: widget.onStopPressed ?? _finish,

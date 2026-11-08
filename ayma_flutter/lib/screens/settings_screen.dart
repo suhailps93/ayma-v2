@@ -10,7 +10,8 @@ import '../dev_mode.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
-import '../services/tour_request.dart';
+import '../services/tour_anchors.dart';
+import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -261,7 +262,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
-          ListTile(
+          KeyedSubtree(
+            key: TourAnchors.keyFor(TourAnchors.settingsAccentRow),
+            child: ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             leading: Icon(Icons.palette_outlined, color: ac.accent),
             title: Text('Accent Color',
@@ -270,6 +273,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(AccentColorScreen.path),
+            ),
           ),
           Divider(color: ac.lineSoft),
           Padding(
@@ -300,7 +304,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Text('Notifications',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
-          ListTile(
+          KeyedSubtree(
+            key: TourAnchors.keyFor(TourAnchors.settingsNotificationsRow),
+            child: ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const ValueKey('settings-notifications'),
             leading: Icon(Icons.notifications_outlined, color: ac.fgDim),
@@ -310,6 +316,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(NotificationPrefsScreen.path),
+            ),
           ),
           Divider(color: ac.lineSoft),
           Padding(
@@ -397,15 +404,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: Icon(Icons.explore_outlined, color: ac.fgDim),
             title: Text('How to use Ayma',
                 style: AymaType.sans(size: 15, color: ac.fg)),
-            subtitle: Text('Replay the feature tour any time.',
+            subtitle: Text('Have Ayma walk you through the app, live.',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
-            // Full replay on demand (not a spotlight): the interactive
-            // coach-mark tour runs over the live shell, so return to it and ask
-            // it to run the full walkthrough (re-marks every feature seen —
-            // harmless, they've now seen them again).
+            // The guided tour is Ayma-driven (rewire, founder 2026-11-07):
+            // route into the Ayma chat and seed the ask — she runs the live
+            // tour herself, screen by screen. This tile no longer replays
+            // the passive coach-mark tour (that content is help, not a tour).
             onTap: () {
-              TourRequest.instance.requestFull();
+              ChatInbox.instance.push(ChatKickoff.guidedTour());
               context.go(MainShellScreen.path);
             },
           ),

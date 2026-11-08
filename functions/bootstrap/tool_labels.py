@@ -102,6 +102,7 @@ TOOL_LABELS = {
     # Guided tour (skills/guided_tour.py)
     "start_guided_tour": "Started the tour",
     "advance_guided_tour": "Moved to the next step",
+    "skip_guided_tour": "Skipped to the next step",
     "stop_guided_tour": "Ended the tour",
     "back_guided_tour": "Moved to the previous step",
 }
@@ -117,7 +118,7 @@ def tool_label(name: str) -> str:
 # "This is where you and I talk. Tap the message box…" was saved as a chat
 # turn). Both surfaces detect a tour turn through these.
 GUIDED_TOUR_TOOLS = frozenset(
-    "start_guided_tour advance_guided_tour stop_guided_tour back_guided_tour".split()
+    "start_guided_tour advance_guided_tour skip_guided_tour stop_guided_tour back_guided_tour".split()
 )
 # The past-tense labels those tools contribute to a turn's ``tools_used`` (what
 # the text path sees at the persist point).
@@ -235,6 +236,7 @@ WORKING_LABELS = {
     # Guided tour (skills/guided_tour.py)
     "start_guided_tour": "Starting the tour…",
     "advance_guided_tour": "Moving to the next step…",
+    "skip_guided_tour": "Skipping to the next step…",
     "stop_guided_tour": "Ending the tour…",
     "back_guided_tour": "Moving to the previous step…",
 }

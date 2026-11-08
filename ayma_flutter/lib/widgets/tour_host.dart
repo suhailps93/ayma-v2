@@ -115,6 +115,19 @@ class TourHost extends StatelessWidget {
   /// [CoachMarkOverlay] with callout card (headline, say text, counter, Skip
   /// tour and Next CTAs). Keyed by the step's token so each pushed step gets a
   /// fresh measure.
+  /// Prepare for a DRIVEN step: deliberately NO navigation. The rewire
+  /// (founder, 2026-11-07) makes the backend + client verify the user is
+  /// already on the step's screen BEFORE the step is shown (the tour_step
+  /// ack), so the host must not pop routes or switch tabs on the tour's
+  /// behalf — that blind navigation was the old tour's core flaw. Only
+  /// drop focus so the spotlight reads clean (never for the composer
+  /// step, where the user may be typing).
+  static void _prepareDrivenStep(TourFeature feature) {
+    if (!feature.typingAllowed) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+  }
+
   Widget _drivenOverlay(GuidedTourStep step) {
     return CoachMarkOverlay(
       key: ValueKey('guided-tour-${step.token}'),
@@ -122,11 +135,12 @@ class TourHost extends StatelessWidget {
       stepIndex: step.index,
       stepTotal: step.total,
       chromeless: false,
-      onPrepareStep: _prepareStep,
+      onPrepareStep: _prepareDrivenStep,
       onFinish: GuidedTourController.instance.endSession,
       onAnchorShown: step.onShown,
       onAnchorAbsent: step.onAbsent,
       onAnchorTapped: step.onTapped,
+      onSkipPressed: step.onSkip,
       onStopPressed: step.onStop,
     );
   }

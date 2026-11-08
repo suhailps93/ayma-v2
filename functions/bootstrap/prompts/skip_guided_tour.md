@@ -1,0 +1,3 @@
+Skip the current step of the Ayma-driven guided tour and move to the next one WITHOUT the user tapping the highlighted control. Call this when the user says "next", "skip", "next one" or "move on" during an active guided tour (started with start_guided_tour), in chat or on a call.
+
+It opens and highlights the next step and returns its line for you to say. It never waits for a tap and never checks where the user landed — skipping is the user's own choice to move on. If the current step was the last one, it ends the tour and tells you to wrap up. Takes no arguments. If no tour is running, it says so — don't pretend a tour moved.

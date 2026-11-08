@@ -11,6 +11,7 @@ import '../services/chat_inbox.dart';
 import '../services/paged_fresh_data.dart';
 import '../services/report_cache.dart';
 import '../services/tab_prefetch_coordinator.dart';
+import '../services/tour_anchors.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -433,7 +434,9 @@ class ExploreScreenState extends State<ExploreScreen> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: TextField(
+              child: KeyedSubtree(
+                key: TourAnchors.keyFor(TourAnchors.exploreSearch),
+                child: TextField(
                 controller: _searchController,
                 textInputAction: TextInputAction.search,
                 onChanged: _onSearchChanged,
@@ -457,13 +460,16 @@ class ExploreScreenState extends State<ExploreScreen> {
                       : null,
                   isDense: true,
                 ),
+                ),
               ),
             ),
             SizedBox(
               // The chip row's height follows the text size, so large text
               // never squeezes the chips' labels.
               height: MediaQuery.textScalerOf(context).scale(14) + 24,
-              child: ListView(
+              child: KeyedSubtree(
+                key: TourAnchors.keyFor(TourAnchors.exploreFilters),
+                child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
@@ -488,6 +494,7 @@ class ExploreScreenState extends State<ExploreScreen> {
                       ),
                     ),
                 ],
+                ),
               ),
             ),
             if (_feed.refreshing && _feed.hasData)

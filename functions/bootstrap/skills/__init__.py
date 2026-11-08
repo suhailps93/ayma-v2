@@ -134,7 +134,7 @@ _PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_int
 # is the call bar, not a text box, during a voice call — §11.2b, founder
 # 2026-11-03). ``stop_guided_tour`` needs no surface. Bound with voice=True in
 # make_livekit_tools (voice) and voice=False in make_session_tool_fns (text).
-_GUIDED_TOUR_VOICE_NAMES = {"start_guided_tour", "advance_guided_tour", "back_guided_tour"}
+_GUIDED_TOUR_VOICE_NAMES = {"start_guided_tour", "advance_guided_tour", "skip_guided_tour", "back_guided_tour"}
 
 
 from . import edit_profile_section, photo_edit, story_edit, story_manage, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
