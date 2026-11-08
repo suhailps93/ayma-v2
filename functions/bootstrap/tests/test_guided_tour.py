@@ -55,14 +55,63 @@ class _Doc:
     def set(self, patch, merge=False):
         cur = self.store.get(self.key) if merge else None
         self.store[self.key] = {**(cur or {}), **patch}
-        # Simulate the client acking every spotlight command: ok unless this
-        # step's index is in the store's "absent anchor" set.
-        if self.key[-1] == "pending" and patch.get("action") == "tour_step":
-            if int(patch.get("index", -1)) in getattr(self.store, "unacked", set()):
-                return
-            ack = (*self.key[:-1], "ack")
-            ok = int(patch.get("index", -1)) not in self.store.absent
-            self.store[ack] = {"id": patch.get("id"), "ok": ok}
+        # Simulate the rewired client (founder 2026-11-07): a tour_step is
+        # acked ok ONLY when the user is on the step's screen and the anchor
+        # resolves; "not_on_screen" when they are somewhere else (the tour
+        # must navigate and retry); "anchor_absent" only when they ARE on
+        # the screen but the control is genuinely missing. navigate acks ok
+        # unless fail_navigate; tour_probe reports the fake user's screen.
+        if self.key[-1] != "pending":
+            return
+        action = patch.get("action")
+        if action not in ("tour_step", "navigate", "tour_probe"):
+            return
+        self.store.commands.append(dict(patch))
+        ack = (*self.key[:-1], "ack")
+        if action == "navigate":
+            self.store[ack] = {
+                "id": patch.get("id"),
+                "ok": not self.store.fail_navigate,
+            }
+            return
+        if action == "tour_probe":
+            screen, route = self.store.probe or _default_probe(self.store)
+            self.store[ack] = {
+                "id": patch.get("id"),
+                "ok": True,
+                "screen": screen,
+                "route": route,
+            }
+            return
+        idx = int(patch.get("index", -1))
+        if idx in self.store.unacked:
+            return
+        steps = app_registry.guided_tour_steps()
+        step = steps[idx] if 0 <= idx < len(steps) else {}
+        if idx in self.store.absent:
+            self.store[ack] = {
+                "id": patch.get("id"),
+                "ok": False,
+                "reason": "anchor_absent",
+                "screen": step.get("screen"),
+                "route": step.get("route") or "",
+            }
+        elif idx in self.store.off_screen_once and idx not in self.store.off_seen:
+            self.store.off_seen.add(idx)
+            self.store[ack] = {
+                "id": patch.get("id"),
+                "ok": False,
+                "reason": "not_on_screen",
+                "screen": self.store.user_screen,
+                "route": self.store.user_route,
+            }
+        else:
+            self.store[ack] = {
+                "id": patch.get("id"),
+                "ok": True,
+                "screen": step.get("screen"),
+                "route": step.get("route") or "",
+            }
 
     def delete(self):
         self.store.pop(self.key, None)
@@ -77,18 +126,64 @@ class _Col:
 
 
 class _Store(dict):
-    def __init__(self, absent=(), unacked=()):
+    def __init__(self, absent=(), unacked=(), off_screen_once=(), fail_navigate=False):
         super().__init__()
         self.absent = set(absent)
         self.unacked = set(unacked)
+        # Steps whose FIRST presentation finds the user on another screen.
+        self.off_screen_once = set(off_screen_once)
+        self.off_seen = set()
+        self.fail_navigate = fail_navigate
+        # The fake user's current screen (what a not_on_screen ack reports).
+        self.user_screen = "ayma"
+        self.user_route = "/"
+        # Explicit tour_probe result; None derives it from the current step.
+        self.probe = None
+        # Every app command payload, in order (ordering assertions).
+        self.commands = []
 
 
 class _Db:
-    def __init__(self, absent=(), unacked=()):
-        self.store = _Store(absent=absent, unacked=unacked)
+    def __init__(self, absent=(), unacked=(), off_screen_once=(), fail_navigate=False):
+        self.store = _Store(
+            absent=absent,
+            unacked=unacked,
+            off_screen_once=off_screen_once,
+            fail_navigate=fail_navigate,
+        )
 
     def collection(self, name):
         return _Col(self.store, (name,))
+
+
+_TAB_SLUGS = {
+    "ayma": "ayma",
+    "explore": "explore",
+    "messages": "messages",
+    "profile": "profile_tab",
+}
+
+
+def _default_probe(store):
+    """Where the fake user landed after tapping the current step: the
+    step's expected destination, expressed the way the client reports it
+    (tab slug + route)."""
+    state = store.get(_STATE) or {}
+    idx = state.get("index")
+    steps = app_registry.guided_tour_steps()
+    if isinstance(idx, int) and 0 <= idx < len(steps):
+        step = steps[idx]
+        expect = step.get("expect_screen")
+        if expect:
+            route = step.get("expect_route") or ""
+            if not route:
+                for dest in app_registry.destinations():
+                    if dest.get("key") == expect:
+                        route = dest.get("path") or ""
+                        break
+            return (_TAB_SLUGS.get(expect, expect), route)
+        return (step.get("screen") or "ayma", step.get("route") or "/")
+    return ("ayma", "/")
 
 
 @pytest.fixture(autouse=True)
@@ -116,9 +211,19 @@ def _steps():
 
 def test_tour_tools_registered_in_both_surfaces():
     names = {s.name for s in skills.all_skills()}
-    assert {"start_guided_tour", "advance_guided_tour", "stop_guided_tour"} <= names
+    assert {
+        "start_guided_tour",
+        "advance_guided_tour",
+        "skip_guided_tour",
+        "stop_guided_tour",
+    } <= names
     text = {d["name"] for d in skills.session_tool_declarations()}
-    assert {"start_guided_tour", "advance_guided_tour", "stop_guided_tour"} <= text
+    assert {
+        "start_guided_tour",
+        "advance_guided_tour",
+        "skip_guided_tour",
+        "stop_guided_tour",
+    } <= text
 
 
 # --- start --------------------------------------------------------------------
@@ -136,30 +241,36 @@ def test_start_spotlights_step_0_and_returns_its_line():
     assert "step 1 of" in msg and _steps()[0]["say"] in msg
 
 
-def test_text_start_spotlights_the_composer_step_first():
-    # In TEXT mode the composer is a real text box, so step 0 (the composer) is
-    # shown normally.
+def test_text_walk_includes_the_composer_step():
+    # In TEXT mode the composer is a real text box, so the walk presents the
+    # composer step (skip_in_voice) like any other.
+    steps = _steps()
+    composer = next(i for i, s in enumerate(steps) if s.get("skip_in_voice"))
     db = _Db()
     _run(guided_tour._bind_start_guided_tour(db, "u1", voice=False)())
+    for _ in range(composer):
+        _tap(db, db.store[_STATE]["index"])
+        _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=False)())
+    assert db.store[_STATE]["index"] == composer
     assert db.store[_PENDING]["anchor"] == "home_composer"
-    assert db.store[_STATE]["index"] == 0
 
 
-def test_voice_start_skips_the_composer_step():
+def test_voice_walk_skips_the_composer_step():
     # Founder 2026-11-03: in a VOICE session the composer is the call bar (no
     # text box), so the "tap the message box to type" step must be skipped —
     # the tour must never instruct an action that can't be done in this mode.
     steps = _steps()
-    assert steps[0]["anchor"] == "home_composer" and steps[0].get("skip_in_voice")
+    composer = next(i for i, s in enumerate(steps) if s.get("skip_in_voice"))
+    assert steps[composer]["anchor"] == "home_composer"
     db = _Db()
-    msg = _run(guided_tour._bind_start_guided_tour(db, "u1", voice=True)())
-    # Step 0 (composer) was skipped; the first spotlight is step 1 (Explore),
-    # and that is where the tour state sits.
-    assert db.store[_PENDING]["anchor"] == steps[1]["anchor"]  # explore_tab
-    assert db.store[_STATE]["index"] == 1
-    assert steps[1]["say"] in msg
-    # The composer was never queued.
-    assert db.store[_PENDING]["anchor"] != "home_composer"
+    _run(guided_tour._bind_start_guided_tour(db, "u1", voice=True)())
+    seen = [db.store[_STATE]["index"]]
+    for _ in range(composer):
+        _tap(db, db.store[_STATE]["index"])
+        _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
+        seen.append(db.store[_STATE]["index"])
+    assert composer not in seen
+    assert seen[-1] == composer + 1
 
 
 def test_voice_skip_is_registered_in_the_voice_tool_set_with_voice_true():
@@ -443,35 +554,35 @@ def test_advance_consumes_fresh_tap_event_and_advances():
 
 
 def test_unconsumed_event_from_prior_session_not_consumed_by_later_tour():
-    # Scout live scenario: an unconsumed tap at step 1 (Explore) persisted across
-    # sessions. A new voice tour started (which skips step 0 composer and starts
-    # at step 1 Explore). Previously, advance consumed the old tap and auto-advanced
-    # past Explore without the user tapping.
+    # Scout live scenario: an unconsumed tap at a step persisted across
+    # sessions. A new tour started at that same step. Previously, advance
+    # consumed the old tap and auto-advanced past the step without the user
+    # tapping.
     db = _Db()
     prior_session_ts = datetime.now(timezone.utc) - timedelta(minutes=10)
-    # Stale unconsumed event at index 1 left behind in Firestore
-    _tap(db, 1, ts=prior_session_ts)
+    # Stale unconsumed event at index 0 left behind in Firestore
+    _tap(db, 0, ts=prior_session_ts)
 
-    # Tour 2 starts now in voice mode
+    # Tour 2 starts now in voice mode, at step 0.
     msg_start = _run(guided_tour._bind_start_guided_tour(db, "u1", voice=True)())
-    assert "explore" in msg_start.lower() or _steps()[1]["say"] in msg_start
-    assert db.store[_STATE]["index"] == 1
+    assert _steps()[0]["say"] in msg_start
+    assert db.store[_STATE]["index"] == 0
     now = datetime.now(timezone.utc)
     db.store[_STATE]["updated_at"] = now
 
-    # Advance runs: the stale tap at index 1 is IGNORED, not consumed
+    # Advance runs: the stale tap at index 0 is IGNORED, not consumed
     msg_advance = _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
     assert "not tapped" in msg_advance.lower()
-    assert db.store[_STATE]["index"] == 1  # STILL on step 1 Explore!
-    assert db.store[_PENDING]["index"] == 1
+    assert db.store[_STATE]["index"] == 0  # STILL on step 0!
+    assert db.store[_PENDING]["index"] == 0
 
-    # User now actually taps Explore:
-    _tap(db, 1, ts=now + timedelta(seconds=2))
+    # User now actually taps the highlighted control:
+    _tap(db, 0, ts=now + timedelta(seconds=2))
     msg_advance2 = _run(guided_tour._bind_advance_guided_tour(db, "u1", voice=True)())
-    # Now it advances to step 2!
-    assert db.store[_STATE]["index"] == 2
-    assert db.store[_PENDING]["index"] == 2
-    assert _steps()[2]["say"] in msg_advance2
+    # Now it advances to step 1!
+    assert db.store[_STATE]["index"] == 1
+    assert db.store[_PENDING]["index"] == 1
+    assert _steps()[1]["say"] in msg_advance2
 
 
 def test_stale_stop_event_does_not_abort_later_tour():
@@ -650,3 +761,245 @@ def test_open_screen_blocked_during_active_tour():
     assert "The guided tour is currently active" in res
     assert _PENDING not in db.store
 
+
+
+# --- rewire (founder 2026-11-07): look first, verify landing, voice control ---
+#
+# The new spec: (a) a stop whose target is not on the current screen
+# produces NO highlight and triggers the get-there-first path; (b) the tour
+# advances only when the post-tap screen read matches the expected landing
+# — a wrong landing re-guides; (c) skip/next works without a tap, in voice
+# and text; (d) the manifest is main-features-first.
+
+
+def test_not_on_screen_step_navigates_before_any_highlight():
+    db = _Db(off_screen_once={2})
+    db.store.user_screen = "explore"  # the user wandered off the home tab
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 1
+    _tap(db, 1)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 2
+    assert db.store[_STATE]["index"] == 2
+    assert _steps()[2]["say"] in msg
+    cmds = db.store.commands
+    step2 = [
+        i
+        for i, c in enumerate(cmds)
+        if c.get("action") == "tour_step" and c.get("index") == 2
+    ]
+    navs = [i for i, c in enumerate(cmds) if c.get("action") == "navigate"]
+    # The step was presented twice: once blind (refused), once after the
+    # navigation landed — get there FIRST, then highlight.
+    assert len(step2) == 2 and len(navs) == 1
+    assert step2[0] < navs[0] < step2[1]
+    assert cmds[navs[0]]["screen"] == _steps()[2]["screen"]
+
+
+def test_failed_navigation_blocks_instead_of_skipping_or_advancing():
+    # The Nov 5 failure, inverted: when the tour cannot get the user to
+    # the step's screen, it STAYS on the current step — it never skips
+    # ahead and never runs off the end of the tour.
+    db = _Db(off_screen_once={1}, fail_navigate=True)
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 0
+    assert db.store[_STATE]["active"] is True
+    assert "Still on step 1" in msg
+
+
+def test_wrong_landing_reguides_instead_of_advancing():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())  # -> step 1 (Explore tab)
+    db.store.probe = ("ayma", "/")  # the tap did NOT land on Explore
+    _tap(db, 1)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert "not Explore yet" in msg
+    assert db.store[_STATE]["index"] == 1  # still on the Explore step
+    assert db.store[_PENDING]["action"] == "tour_step"
+    assert db.store[_PENDING]["index"] == 1  # re-presented, not advanced
+
+
+def test_matching_landing_advances():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    db.store.probe = ("explore", "/explore")  # landed on Explore
+    _tap(db, 1)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 2
+    assert _steps()[2]["say"] in msg
+
+
+def test_unanswered_probe_falls_back_to_the_tap(monkeypatch):
+    # An old client that never acks tour_probe must not strand the tour:
+    # advance proceeds on the tap alone.
+    monkeypatch.setattr(guided_tour, "_PROBE_ACK_TIMEOUT_SECONDS", 0.05)
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    # Emulate an old client that never acks tour_probe: the ack wait for
+    # probe commands returns None, everything else delegates.
+    orig_await = guided_tour._await_ack
+
+    async def _no_probe_ack(db_, uid_, cmd_id, timeout=None):
+        cmd = db_.store[_PENDING]
+        if cmd.get("action") == "tour_probe":
+            return None
+        return await orig_await(db_, uid_, cmd_id, timeout=timeout)
+
+    monkeypatch.setattr(guided_tour, "_await_ack", _no_probe_ack)
+    _tap(db, 1)
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 2
+    assert _steps()[2]["say"] in msg
+
+
+def test_skip_tool_advances_without_any_tap():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    assert _EVENT not in db.store  # no tap ever happened
+    msg = _run(guided_tour._bind_skip_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    assert _steps()[1]["say"] in msg
+    msg = _run(guided_tour._bind_skip_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 2
+    assert _steps()[2]["say"] in msg
+
+
+def test_skip_past_the_last_step_completes_the_tour():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    msg = ""
+    for _ in range(len(_steps())):
+        msg = _run(guided_tour._bind_skip_guided_tour(db, "u1")())
+    assert "complete" in msg.lower()
+    assert db.store[_STATE]["active"] is False
+    assert db.store[_PENDING]["action"] == "tour_end"
+
+
+def test_advance_consumes_a_card_skip_event():
+    # The tour card's Next button writes a 'skip' event: advance moves on
+    # without a tap and without a landing check.
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0, event="skip")
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    assert _steps()[1]["say"] in msg
+
+
+def test_advance_consumes_a_back_event():
+    db = _Db()
+    _run(guided_tour._bind_start_guided_tour(db, "u1")())
+    _tap(db, 0)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    _tap(db, 1)
+    _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 2
+    _tap(db, 2, event="back")
+    msg = _run(guided_tour._bind_advance_guided_tour(db, "u1")())
+    assert db.store[_STATE]["index"] == 1
+    assert _steps()[1]["say"] in msg
+
+
+@pytest.mark.parametrize("phrase,expected", [
+    ("next", "skip"),
+    ("Next!", "skip"),
+    ("skip", "skip"),
+    ("skip this", "skip"),
+    ("next one", "skip"),
+    ("move on", "skip"),
+    ("continue", "skip"),
+    ("back", "back"),
+    ("go back", "back"),
+    ("previous", "back"),
+    ("previous step", "back"),
+    ("stop", "stop"),
+    ("stop the tour", "stop"),
+    ("end tour", "stop"),
+    ("quit", "stop"),
+])
+def test_detect_tour_control_matches_bare_controls(phrase, expected):
+    assert guided_tour.detect_tour_control(phrase) == expected
+
+
+@pytest.mark.parametrize("phrase", [
+    "what's next on the tour",
+    "skip the line at the store",
+    "go back to sleep",
+    "next please tell me a joke",
+    "stop by the store",
+    "tell me about the tour",
+    "",
+])
+def test_detect_tour_control_leaves_ordinary_speech_alone(phrase):
+    assert guided_tour.detect_tour_control(phrase) is None
+
+
+@pytest.mark.parametrize("phrase,expected", [
+    ("next", "skip"),
+    ("skip", "skip"),
+    ("previous step", "back"),
+    ("stop the tour", "stop"),
+    ("end tour", "stop"),
+    # Bare generic words are NOT claimed on the voice surface.
+    ("stop", None),
+    ("continue", None),
+    ("back", None),
+    ("go back", None),
+    ("quit", None),
+])
+def test_detect_tour_control_voice_surface_is_restricted(phrase, expected):
+    assert guided_tour.detect_tour_control(phrase, bare_ok=False) == expected
+
+
+def test_deterministic_runners_drive_the_tour():
+    # The text path's deterministic routing (main.py) speaks exactly the
+    # presented step's line and moves the same state the tools move.
+    db = _Db()
+    reply = _run(guided_tour.run_start_tour_command(db, "u1"))
+    assert reply == _steps()[0]["say"]
+    reply = _run(guided_tour.run_tour_control_command(db, "u1", "skip"))
+    assert reply == _steps()[1]["say"]
+    assert db.store[_STATE]["index"] == 1
+    reply = _run(guided_tour.run_tour_control_command(db, "u1", "back"))
+    assert reply == _steps()[0]["say"]
+    assert db.store[_STATE]["index"] == 0
+    reply = _run(guided_tour.run_tour_control_command(db, "u1", "stop"))
+    assert "ended" in reply.lower()
+    assert db.store[_STATE]["active"] is False
+    # No tour running: honest, no crash.
+    reply = _run(guided_tour.run_tour_control_command(db, "u1", "skip"))
+    assert "no tour running" in reply.lower()
+
+
+def test_manifest_is_main_features_first_and_every_anchor_exists():
+    steps = _steps()
+    assert [s["anchor"] for s in steps[:5]] == [
+        "home_orb",
+        "explore_tab",
+        "messages_tab",
+        "profile_tab",
+        "notifications_bell",
+    ]
+    assert len(steps) >= 15
+    for s in steps:
+        assert s.get("screen") and s.get("headline") and s.get("say")
+        assert s.get("action") in ("tap", "look")
+    from pathlib import Path
+
+    anchors_src = (
+        Path(__file__).resolve().parents[3]
+        / "ayma_flutter"
+        / "lib"
+        / "services"
+        / "tour_anchors.dart"
+    ).read_text()
+    for s in steps:
+        assert s["anchor"] in anchors_src

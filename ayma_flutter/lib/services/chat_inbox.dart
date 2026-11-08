@@ -137,6 +137,12 @@ class ChatKickoff {
   factory ChatKickoff.draftText(String text) =>
       ChatKickoff._('draft_text', draftBody: text);
 
+  /// Start the Ayma-driven guided tour: the chat seeds a "Walk me through
+  /// the app" user turn and sends it; the backend runs the live tour
+  /// (rewire, founder 2026-11-07). Used by Settings → "How to use Ayma",
+  /// which no longer replays the passive coach-mark tour.
+  factory ChatKickoff.guidedTour() => ChatKickoff._('guided_tour');
+
   /// Route the user into the Ayma chat to talk through one profile-completeness
   /// topic (a questionnaire node). [nodeId] is the question-tree node id,
   /// [label] its human name, [prompt] the one-line hint of what Ayma should

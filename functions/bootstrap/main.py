@@ -1654,6 +1654,29 @@ async def _prepare_chat(
         await skills.guided_tour._end(get_db(), uid)
         return ({"reply": "Ended the guided tour."}, None)
 
+    # Deterministic tour routing (rewire, founder 2026-11-07): a clear tour
+    # intent in text is executed BEFORE the model, like the other app
+    # commands, so "walk me through the app" can never be answered with
+    # help prose instead of the tour itself — and a bare next / skip /
+    # back / stop mid-tour moves the tour, not the conversation. The
+    # continuation pings are excluded (they carry their own signal).
+    if not req.tour_continuation:
+        try:
+            if tour_active:
+                tour_control = skills.guided_tour.detect_tour_control(req.message)
+                if tour_control is not None:
+                    reply = await skills.guided_tour.run_tour_control_command(
+                        get_db(), uid, tour_control
+                    )
+                    return ({"reply": reply}, None)
+            elif skills.guided_tour.detect_tour_command(req.message):
+                reply = await skills.guided_tour.run_start_tour_command(
+                    get_db(), uid
+                )
+                return ({"reply": reply}, None)
+        except Exception:  # noqa: BLE001 - a tour hiccup never fails the turn
+            logger.exception("deterministic tour routing failed for %s", uid)
+
     # Deterministic model-stack switch (§13.9/§13.10): a clear "change my brain /
     # voice mode / realtime model to X" is executed BEFORE the model, so it works
     # regardless of which brain is active. Needed because when the active Brain is
@@ -1902,7 +1925,8 @@ async def _prepare_chat(
             "If they ask a question, answer their question inline warmly and concisely. "
             "Do NOT navigate away or open other screens. "
             "Remind them that they can continue the tour by tapping the highlighted control "
-            "(or Next on the card), or say stop to end it."
+            "(or Next on the card), say next or skip to move past a step, back for the "
+            "previous step, or stop to end it."
         )
     # Phase 0 measurement (cost program 2026-09-26): per-component prompt-size
     # breakdown for this turn — logged always, persisted to `token_turns` when

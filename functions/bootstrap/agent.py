@@ -1643,6 +1643,13 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     if launch_cmd is not None:
         name, partner = launch_cmd
         return name, {"name": partner or ""}
+    tour_control = skills.guided_tour.detect_tour_control(text, bare_ok=False)
+    if tour_control is not None:
+        return {
+            "skip": "skip_guided_tour",
+            "back": "back_guided_tour",
+            "stop": "stop_guided_tour",
+        }[tour_control], {}
     tour_tool = skills.guided_tour.detect_tour_command(text)
     if tour_tool is not None:
         return tour_tool, {}

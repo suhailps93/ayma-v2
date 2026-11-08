@@ -1,4 +1,5 @@
 import 'package:ayma_flutter/services/app_command_service.dart';
+import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/guided_tour_controller.dart';
 import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
@@ -331,6 +332,7 @@ void main() {
                         onAnchorShown: step.onShown,
                         onAnchorAbsent: step.onAbsent,
                         onAnchorTapped: step.onTapped,
+                        onSkipPressed: step.onSkip,
                         onStopPressed: step.onStop,
                       ),
                     ),
@@ -350,6 +352,7 @@ void main() {
 
     setUp(() async {
       GuidedTourController.instance.endSession();
+      AppContext.instance.current.value = const ScreenContext();
       VoiceSessionController.active = null; // no live call → text bridge path
       fake = FakeFirebaseFirestore();
       tourPings = <int>[];
@@ -468,8 +471,8 @@ void main() {
       expect(stopPings, [2]);
     });
 
-    testWidgets('tapping Next on callout card advances guided tour (triggers onAnchorTapped)',
-        (tester) async {
+    testWidgets('tapping Next on callout card writes a skip event (rewire: '
+        'Next moves on WITHOUT a tap)', (tester) async {
       tester.view.physicalSize = const Size(800, 600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -492,8 +495,90 @@ void main() {
       await settle(tester);
       final ev = (await fake.doc('users/u1/app_commands/tour_event').get()).data();
       expect(ev!['index'], 1);
-      expect(ev['event'], 'tapped');
+      expect(ev['event'], 'skip');
       expect(tourPings, [1]);
+    });
+
+    testWidgets('a tour_step for another screen acks not_on_screen and '
+        'shows NO highlight (rewire: look before highlighting)',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(controllerHost());
+      // The user is on the Messages tab; the step lives on Explore.
+      AppContext.instance.current.value =
+          const ScreenContext(screen: 'messages', route: '/');
+      final cmd = <String, dynamic>{
+        'action': 'tour_step',
+        'id': 'c5',
+        'index': 1,
+        'total': 19,
+        'anchor': TourAnchors.exploreTab,
+        'tab': 1,
+        'screen': 'ayma',
+        'headline': 'Explore',
+        'say': 'Tap Explore.',
+      };
+      await pending.set(cmd);
+      svc.runTourStep(pending, cmd, id: 'c5');
+      // The refusal settles after a short screen-state grace period.
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final ack = (await fake.doc('users/u1/app_commands/ack').get()).data();
+      expect(ack, isNotNull);
+      expect(ack!['id'], 'c5');
+      expect(ack['ok'], isFalse);
+      expect(ack['reason'], 'not_on_screen');
+      expect(ack['screen'], 'messages');
+      // Nothing was ever highlighted and no tour session started.
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsNothing);
+      expect(GuidedTourController.instance.sessionActive, isFalse);
+    });
+
+    testWidgets('a tour_step on the CURRENT screen still shows and acks ok',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(controllerHost());
+      AppContext.instance.current.value =
+          const ScreenContext(screen: 'explore', route: '/');
+      final cmd = <String, dynamic>{
+        'action': 'tour_step',
+        'id': 'c6',
+        'index': 1,
+        'total': 19,
+        'anchor': TourAnchors.homeOrb,
+        'tab': 1,
+        'screen': 'ayma',
+        'headline': 'Explore',
+        'say': 'This is Explore.',
+      };
+      await pending.set(cmd);
+      svc.runTourStep(pending, cmd, id: 'c6');
+      await settle(tester);
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+      final ack = (await fake.doc('users/u1/app_commands/ack').get()).data();
+      expect(ack!['ok'], isTrue);
+      expect(ack['screen'], 'explore');
+    });
+
+    testWidgets('tour_probe acks the current screen and route, no UI',
+        (tester) async {
+      await tester.pumpWidget(controllerHost());
+      AppContext.instance.current.value =
+          const ScreenContext(screen: 'profile_tab', route: '/');
+      svc.runTourProbe(pending, id: 'p1');
+      await settle(tester);
+      final ack = (await fake.doc('users/u1/app_commands/ack').get()).data();
+      expect(ack, isNotNull);
+      expect(ack!['id'], 'p1');
+      expect(ack['ok'], isTrue);
+      expect(ack['screen'], 'profile_tab');
+      expect(ack['route'], '/');
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsNothing);
     });
 
     testWidgets('tour_end dismisses the overlay and acks ok', (tester) async {

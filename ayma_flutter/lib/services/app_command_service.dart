@@ -508,6 +508,13 @@ class AppCommandService {
       _runTourStep(snap.reference, data, id);
       return;
     }
+    if (data['action'] == 'tour_probe') {
+      // The tour's post-tap re-read (rewire): ack the CURRENT screen/route
+      // so the backend can verify the tap landed where it should before
+      // advancing. Owns its ack, like tour_step.
+      _runTourProbe(snap.reference, id);
+      return;
+    }
     if (_navigationActions.contains(data['action'])) {
       // Owns its ack (like go_back / ui_action): the ack is written only
       // once the open has actually landed — destination current, no
@@ -845,18 +852,24 @@ class AppCommandService {
     final total = (cmd['total'] as num?)?.toInt() ?? 0;
     final anchor = (cmd['anchor'] as String?)?.trim();
     final tab = (cmd['tab'] as num?)?.toInt();
+    final stepRoute = (cmd['route'] as String? ?? '').trim();
     final headline = (cmd['headline'] as String? ?? '').trim();
     final say = (cmd['say'] as String? ?? '').trim();
     final commands = ref.parent; // users/{uid}/app_commands
     final ackRef = commands.doc('ack');
     final eventRef = commands.doc('tour_event');
 
-    Future<void> ack(bool ok) async {
+    Future<void> ack(bool ok, {String? reason}) async {
+      final cur = AppContext.instance.current.value;
       await ackRef
           .set(<String, dynamic>{
             'id': id,
             'ok': ok,
-            if (!ok) 'reason': 'anchor_absent',
+            if (!ok) 'reason': reason ?? 'anchor_absent',
+            // Where the user actually is — read back by the backend when
+            // it decides how to get them to the step's screen.
+            'screen': cur.screen,
+            'route': cur.route,
             'ts': FieldValue.serverTimestamp(),
           })
           .catchError((_) {});
@@ -882,12 +895,33 @@ class AppCommandService {
           });
     }
 
-    // Starting a driven tour takes over the screen — close any passive
-    // coach-mark tour that happens to be up (e.g. a first-run walkthrough) so
-    // the two never fight over the overlay.
-    TourController.instance.finish();
-    final guided = GuidedTourController.instance;
-    guided.show(
+    // LOOK BEFORE HIGHLIGHTING (rewire, founder 2026-11-07): the step is
+    // shown ONLY when the user is on the step's screen right now — a tab
+    // step needs its tab in front, a pushed-page step needs its route in
+    // front, a shell-level step (orb, bell) needs the shell uncovered. An
+    // unknown screen (pre-capture) falls through to the anchor, which
+    // still gates the ack through the overlay's measure.
+    bool onStepScreen() {
+      final cur = AppContext.instance.current.value;
+      final slug = cur.screen;
+      if (slug.isEmpty) return true;
+      if (tab != null) {
+        const slugs = ['ayma', 'explore', 'messages', 'profile_tab'];
+        return tab >= 0 && tab < slugs.length && slug == slugs[tab];
+      }
+      if (stepRoute.isNotEmpty) return cur.route == stepRoute;
+      const tabSlugs = {'ayma', 'explore', 'messages', 'profile_tab'};
+      return tabSlugs.contains(slug) &&
+          (cur.route.isEmpty || cur.route == '/');
+    }
+
+    void showStep() {
+      // Starting a driven tour takes over the screen — close any passive
+      // coach-mark tour that happens to be up (e.g. a first-run
+      // walkthrough) so the two never fight over the overlay.
+      TourController.instance.finish();
+      final guided = GuidedTourController.instance;
+      guided.show(
       GuidedTourStep(
         token: id,
         feature: TourFeature(
@@ -928,8 +962,67 @@ class AppCommandService {
           guided.endSession();
           _kickTourStop(index);
         },
+        // The card's Next button: move on WITHOUT a tap — a 'skip' event
+        // the backend consumes exactly like a spoken "next".
+        onSkip: () {
+          event('skip');
+          guided.clearStep();
+          _kickTourAdvance(index);
+        },
       ),
-    );
+      );
+    }
+
+    if (onStepScreen()) {
+      showStep();
+      return;
+    }
+    // Not on the step's screen: give the screen state a brief moment to
+    // catch up (a step can land a frame after the navigation that brought
+    // the user here), then refuse honestly — the backend navigates the
+    // user to the step's screen and retries the SAME step. Nothing is
+    // ever highlighted blind.
+    unawaited(() async {
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        if (onStepScreen()) {
+          showStep();
+          return;
+        }
+      }
+      await ack(false, reason: 'not_on_screen');
+    }());
+  }
+
+  /// Answer one `tour_probe` command (§11.2b rewire): ack the screen the
+  /// user is on right now (slug + route from [AppContext]) — the tour's
+  /// post-tap re-read. No UI is shown for a probe.
+  @visibleForTesting
+  void runTourProbe(
+    DocumentReference<Map<String, dynamic>> ref, {
+    required String id,
+  }) {
+    _runTourProbe(ref, id);
+  }
+
+  void _runTourProbe(
+    DocumentReference<Map<String, dynamic>> ref,
+    String id,
+  ) {
+    final cur = AppContext.instance.current.value;
+    unawaited(() async {
+      await ref.parent
+          .doc('ack')
+          .set(<String, dynamic>{
+            'id': id,
+            'ok': true,
+            'screen': cur.screen,
+            'route': cur.route,
+            'ts': FieldValue.serverTimestamp(),
+          })
+          .catchError((_) {});
+      await _deleteIfStillCommand(ref, id);
+    }());
   }
 
   /// Execute one `go_back` command and ack it with the outcome: `ok`,

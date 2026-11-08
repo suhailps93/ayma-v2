@@ -74,6 +74,7 @@ class ProfileTabScreen extends StatelessWidget {
         label: 'You',
         rows: [
           _Item(
+            anchorId: TourAnchors.profilePublicProfileRow,
             icon: Icons.person_outline,
             label: 'My public profile',
             hint: 'Exactly what others see when they open your profile',
@@ -88,12 +89,14 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(StoryEditorScreen.path),
           ),
           _Item(
+            anchorId: TourAnchors.profileDetailsRow,
             icon: Icons.tune,
             label: 'Profile details',
             hint: 'Name, birthdate, who you want to meet',
             onTap: () => context.push(ProfileSettingsScreen.path),
           ),
           _Item(
+            anchorId: TourAnchors.profileWebResearchRow,
             icon: Icons.travel_explore,
             label: 'Search the web about me',
             hint: 'Your latest web-research report, or run a new one',
@@ -107,6 +110,7 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => _openAppearance(context),
           ),
           _Item(
+            anchorId: TourAnchors.profileSettingsRow,
             icon: Icons.settings_outlined,
             label: 'Settings',
             hint: 'Theme, matching, verification',
@@ -135,6 +139,7 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(AymaSettingsScreen.path),
           ),
           _Item(
+            anchorId: TourAnchors.profilePlanRow,
             icon: Icons.toll_rounded,
             label: 'Plan',
             hint: 'Your plan, credits left and where they went',

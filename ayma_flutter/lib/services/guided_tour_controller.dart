@@ -14,6 +14,8 @@ import 'tour_content.dart';
 ///  * [onAbsent]  — the anchor isn't on this build (ack `ok:false` → backend
 ///                  skips the step honestly);
 ///  * [onTapped]  — the user tapped the highlighted control (the tour advances);
+///  * [onSkip]    — the user pressed Next on the card (move on WITHOUT a tap;
+///                  optional — steps built outside the service may omit it);
 ///  * [onStop]    — the user pressed "Skip tour" (the whole tour ends).
 @immutable
 class GuidedTourStep {
@@ -26,6 +28,7 @@ class GuidedTourStep {
     required this.onAbsent,
     required this.onTapped,
     required this.onStop,
+    this.onSkip,
   });
 
   /// A per-command id; the overlay is keyed by it so every pushed step gets a
@@ -43,6 +46,7 @@ class GuidedTourStep {
   final VoidCallback onAbsent;
   final VoidCallback onTapped;
   final VoidCallback onStop;
+  final VoidCallback? onSkip;
 }
 
 /// App-wide controller for the Ayma-driven tour's current step. A singleton like
