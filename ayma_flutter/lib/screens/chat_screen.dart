@@ -51,7 +51,7 @@ import '../widgets/feedback_bubble_card.dart';
 import '../widgets/feedback_draft_card.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
-import '../widgets/markdown_text.dart';
+import '../widgets/collapsible_message_text.dart';
 import '../widgets/message_timestamp.dart';
 import '../widgets/ayma_quiet_chip.dart';
 import '../widgets/chat_composer.dart';
@@ -3974,9 +3974,13 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 ],
               )
             else if (displayText.isNotEmpty)
+              // Over-long Ayma turns (e.g. the 5,728-char self-check
+              // report) collapse to a preview: laying the whole text
+              // out on every store rebuild wedged the UI thread into
+              // multi-second frames and ANRs (NOTE 144/145).
               CopyOnLongPress(
                 text: displayText,
-                child: MarkdownText(
+                child: CollapsibleMessageText(
                   displayText,
                   style: AymaType.message(color: ac.fg),
                   linkColor: ac.accent,
