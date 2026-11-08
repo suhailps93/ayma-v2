@@ -431,6 +431,13 @@ def test_welcome_token_needs_no_auth_and_seeds_a_greeting(monkeypatch):
     assert room.startswith(f"{CONFIG.livekit_room_prefix}welcome-")
     assert "greeting_instructions" in seed_json
     assert "sign in" in seed_json
+    assert "stay completely silent and wait" in seed_json
+
+
+def test_welcome_greeting_instructs_introduce_once_and_wait():
+    assert "introduce yourself once" in main._WELCOME_GREETING
+    assert "stay completely silent and wait for them to reply" in main._WELCOME_GREETING
+    assert "do not reprompt, ask again, or nag to log in" in main._WELCOME_GREETING
 
 
 def test_welcome_token_no_longer_wakes_the_scale_to_zero_agent(monkeypatch):

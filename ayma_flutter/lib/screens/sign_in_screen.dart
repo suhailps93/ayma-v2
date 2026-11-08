@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -256,12 +257,24 @@ class _SignInScreenState extends State<SignInScreen> {
       }
     } on GoogleSignInException catch (e) {
       if (e.code != GoogleSignInExceptionCode.canceled) {
-        _snack('Google sign-in failed (${e.code.name}).',
+        final detail = e.description != null && e.description!.isNotEmpty
+            ? ': ${e.description}'
+            : ' (${e.code.name})';
+        _snack('Google sign-in failed$detail.',
             kind: AymaToastKind.error);
       }
     } on SignInWithAppleAuthorizationException catch (e) {
       if (e.code != AuthorizationErrorCode.canceled) {
         _snack('Apple sign-in isn’t set up yet.', kind: AymaToastKind.warning);
+      }
+    } on PlatformException catch (e) {
+      if (e.code != 'sign_in_canceled' &&
+          e.code != 'canceled' &&
+          e.code != '12501') {
+        final msg = e.message != null && e.message!.isNotEmpty
+            ? e.message!
+            : 'Sign-in failed. Try again.';
+        _snack(msg, kind: AymaToastKind.error);
       }
     } catch (e) {
       _snack('Sign-in failed. Try again.', kind: AymaToastKind.error);

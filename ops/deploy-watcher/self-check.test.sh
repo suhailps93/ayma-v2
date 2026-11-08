@@ -18,6 +18,9 @@ printf 'pkg 1:187469876115:android end\n' > "$TMP/staging.apk"
 head -c 2000000 /dev/urandom >> "$TMP/staging.apk"
 printf 'pkg 1:235381544962:android end\n' > "$TMP/prod.apk"
 head -c 2000000 /dev/urandom >> "$TMP/prod.apk"
+# An APK contaminated with both staging and prod must be rejected.
+printf 'pkg 1:187469876115:android and 1:235381544962:android end\n' > "$TMP/hybrid.apk"
+head -c 2000000 /dev/urandom >> "$TMP/hybrid.apk"
 
 fail=0
 if apk_verifies_staging "$TMP/staging.apk"; then
@@ -29,6 +32,11 @@ if apk_verifies_staging "$TMP/prod.apk"; then
   echo "FAIL: prod APK verified (should not)"; fail=1
 else
   echo "PASS: prod APK rejected"
+fi
+if apk_verifies_staging "$TMP/hybrid.apk"; then
+  echo "FAIL: hybrid APK verified (should not)"; fail=1
+else
+  echo "PASS: hybrid APK rejected"
 fi
 
 # --- cycle-lock lifecycle (with_cycle_lock uses $STATE; point it at TMP) --- #

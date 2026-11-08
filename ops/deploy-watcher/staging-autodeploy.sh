@@ -131,8 +131,13 @@ ensure_worktree() {
 # --- post-build self-check: the APK must carry the staging number ------- #
 # Single grep, never a strings|grep -q pipeline: with pipefail set, grep -q's
 # early exit SIGPIPEs strings and the pipeline fails even when it matches.
+# It must carry staging (187469876115) and MUST NOT carry prod (235381544962).
 apk_verifies_staging() { # $1=apk path
-  grep -a -q "187469876115" "$1" 2>/dev/null
+  if unzip -p "$1" resources.arsc 2>/dev/null | grep -a -q "187469876115"; then
+    ! unzip -p "$1" resources.arsc 2>/dev/null | grep -a -q "235381544962"
+  else
+    grep -a -q "187469876115" "$1" 2>/dev/null && ! grep -a -q "235381544962" "$1" 2>/dev/null
+  fi
 }
 
 # --- install the last-built apk to the Pixel; echoes a result string ------- #
@@ -198,6 +203,10 @@ cycle_inner() {
       local APK RES
       APK="$(read_state last_apk)"
       log "phone install retry for $(short "$LAST_STAGING")"
+      if [[ -z "$APK" || ! -f "$APK" ]] || ! apk_verifies_staging "$APK"; then
+        log "phone install retry aborted: APK missing or does not verify as staging ($APK)"
+        exit 0
+      fi
       if RES="$(install_to_pixel "$APK")"; then
         write_state last_phone "$LAST_STAGING"
         {
@@ -249,8 +258,9 @@ cycle_inner() {
       BUILD_RES="success (dev apk -> staging API)"
       write_state last_apk "$APK"
     else
-      BUILD_RES="FAILED (APK did not verify as staging: project number 187469876115 not found)"
-      log "apk staging self-check FAILED (project number 187469876115 missing from APK)"
+      BUILD_RES="FAILED (APK did not verify as staging: project number 187469876115 not found or prod config present)"
+      log "apk staging self-check FAILED (staging config missing or prod config present in APK)"
+      rm -f "$STAGING_APK" "$STATE/last_apk" 2>/dev/null || true
     fi
   else
     BUILD_RES="FAILED (see $LOGDIR/build-$(short "$NEW").log)"

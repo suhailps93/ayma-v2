@@ -1,8 +1,30 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-11-02. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-11-08. Update this file whenever an item changes; commit and push to main.
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
+
+## SIGNIN-GOOGLE-AND-VOICE — Google sign-in cache fix + Voice introduce-once-and-wait (fleet/signin-page-fixes off staging tip 6463d598, 2026-11-08) — DONE, lead engineer reviews + merges + builds
+- **Part 1 — Google sign-in root cause:**
+  - In `scripts/build-apk.sh`, cache busting previously purged only `build/app/generated/res/google-services` and `build/app/intermediates/merged_res`. In AGP 8.11.1, `merged_res` does not exist; resource merging is cached in `build/app/intermediates/incremental/debug/mergeDebugResources/`, `packaged_res/debug/`, etc. An incremental build in the watcher's worktree (`ayma-autodeploy`) reused cached prod resources in `resources.arsc` (`project_id: ayma-ai`, sender `235381544962`).
+  - At 06:14 PST on build 6463d598, the staging self-check `apk_verifies_staging` caught this and marked `BUILD_RES=FAILED`, skipping the immediate install. However, `staging-autodeploy.sh` still advanced `last_staging="6463d598"`.
+  - At 06:17 PST, the watcher's catch-up loop saw `NEW == LAST_STAGING` and `LAST_PHONE != LAST_STAGING`. It read `last_apk` (which pointed to the overwritten `app-debug.apk`) and installed it to the founder's Pixel *without running `apk_verifies_staging`*.
+  - The installed APK was signed with `ayma-staging-debug.keystore` (SHA-1 `0daa766d4f17e3bb07662ee1330d3031262ff3c2`, registered on `ayma-staging`), but its native `resources.arsc` pointed to `ayma-ai`. Google Play services rejected auth because that staging SHA-1 is not registered in prod `ayma-ai`.
+  - Fixes applied:
+    1. `scripts/build-apk.sh`: purge entire `build/app/intermediates/` alongside `build/app/generated/res/google-services` on staging builds so AGP 8 always re-merges resources.
+    2. `ops/deploy-watcher/staging-autodeploy.sh`: updated `apk_verifies_staging()` to verify `resources.arsc` directly contains `187469876115` and does NOT contain `235381544962`; enforce `apk_verifies_staging` in catch-up install path; delete `$STAGING_APK` and `$STATE/last_apk` if self-check fails.
+    3. `ayma_flutter/lib/screens/sign_in_screen.dart`: enhance error handling on `signInWithGoogle` to surface `GoogleSignInException.description` and non-canceled `PlatformException`s so failures never result in a silent dead tap.
+- **Part 2 — Sign-in voice introduce once, then wait:**
+  - Client side (`VoiceSessionController(welcome: true)`) already sets `_userIdleTimeout = null` (no client reprompt timer).
+  - The repeated prompting came from backend prompt instructions: `_WELCOME_GREETING` in `main.py` and `welcome_persona.md` instructing the model to steer back to sign-in and keep under a minute, which Gemini Live interpreted as an active loop to reprompt into silence.
+  - Fixes applied:
+    1. `functions/bootstrap/main.py`: updated `_WELCOME_GREETING` instructing Ayma to introduce herself once, then stay completely silent and wait for the user to reply without reprompting or nagging to log in.
+    2. `functions/bootstrap/welcome_persona.md`: added strict turn-taking rule to introduce once on arrival, wait in complete silence, do not constantly ask to log in or reprompt into silence or on a timer; continue normally once the user speaks; preserved all legal/consent capabilities (Terms, Privacy, Biometrics, 18+, public web face matching, ad data).
+- **Tests:**
+  - `ayma_flutter`: `flutter test test/sign_in_screen_test.dart` (35 passed, including new Google error surfacing tests), `flutter test test/sign_in_voice_test.dart` (6 passed), `flutter test test/layout_matrix_test.dart` (28 passed).
+  - `flutter analyze`: clean (0 issues, ran in 48.1s).
+  - `deploy-watcher`: `bash ops/deploy-watcher/self-check.test.sh` (11 passed, including new hybrid APK rejection test).
+  - `backend`: `pytest functions/bootstrap/tests/test_prompt.py` (56 passed), `pytest functions/bootstrap/tests/test_bootstrap.py -k welcome` (5 passed).
 
 ## INFER-CHATBUDGET — Ask-Ayma "Sorry — I couldn't finish that just now." on most starts (fix/inference-chat-max-tokens off staging, 2026-11-03) — DONE, merged to staging
 - **Confirmed root cause (log-backed, verified in code):** chat on LiveKit Inference uses a *thinking* model (`google/gemini-3.7-flash`) whose `completion_tokens` also counts reasoning tokens (`inference_llm._usage`, lines 146-149). The chat call hardcoded `max_tokens=1024` (`gemini.py:253-257`); against Ask-Ayma's ~17-18k-token prompt the model spent the whole 1024-token budget on reasoning and emitted empty `content`, so `gemini.py:325-327` raised `RuntimeError("Gemini returned an empty response.")` → user-facing `_CHAT_INCOMPLETE_REPLY` (`main.py:1964`). NOT a transport error — it correctly stayed on LiveKit (bypassed `_InferenceUnavailable`). Pre-existing since c6749c14; reproduced on STAGING (chat → inference for demo-test1); prod currently routes chat to vertex so prod did not hit it.
