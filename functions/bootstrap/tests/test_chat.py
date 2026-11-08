@@ -414,6 +414,49 @@ def test_chat_screen_context_skipped_when_profile_already_briefed(monkeypatch):
     assert "looking at Alex's profile" not in seen["prompt"]
 
 
+def test_chat_with_pinned_screen_tells_ayma_pin_exists(monkeypatch):
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="I see Explore is pinned.")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what is pinned?",
+            "screen": "explore",
+            "screen_note": "hiking",
+        },
+    )
+    assert resp.status_code == 200
+    assert "The user is on the Explore screen, searching for 'hiking'." in seen["prompt"]
+    assert "A pin exists for this page context and you can refer to it as pinned." in seen["prompt"]
+
+
+def test_chat_without_pinned_screen_does_not_claim_pin(monkeypatch):
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="Nothing pinned.")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what is pinned?",
+            "screen": "",
+        },
+    )
+    assert resp.status_code == 200
+    assert "A pin exists" not in seen["prompt"]
+    assert "currently looking at" not in seen["prompt"]
+
+
 # --- Match report chat: unlike Story/deep-dive/Appearance, the score itself
 # can't be edited, but a disputed fact behind it should be corrected via
 # Ayma's existing profile/questionnaire tools, then picked up by a

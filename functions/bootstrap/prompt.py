@@ -647,8 +647,9 @@ def compose_system_prompt(
     # screens) — a short line, not a full briefing.
     if current_screen_context.strip():
         parts.append(
-            "What the user is currently looking at in the app: "
+            "What the user is currently looking at in the app (pinned page context): "
             + current_screen_context.strip()
+            + " A pin exists for this page context and you can refer to it as pinned."
         )
 
     # Voice-call state (founder directive 2026-11-07): a live call now,

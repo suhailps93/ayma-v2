@@ -2399,10 +2399,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenRoute: screenCtx?.route ?? '',
           screenDetail: screenCtx?.detail ?? '',
           screenVisible: screenCtx?.visible ?? '',
-          screenPreviousRoute:
-              NavigationHistory.instance.previous?.path ?? '',
-          screenPreviousLabel:
-              NavigationHistory.instance.previous?.label ?? '',
+          screenPreviousRoute: screenCtx != null
+              ? (NavigationHistory.instance.previous?.path ?? '')
+              : '',
+          screenPreviousLabel: screenCtx != null
+              ? (NavigationHistory.instance.previous?.label ?? '')
+              : '',
           clientMsgId: msgId,
           callState: callState,
         );
@@ -2433,10 +2435,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenRoute: screenCtx?.route ?? '',
           screenDetail: screenCtx?.detail ?? '',
           screenVisible: screenCtx?.visible ?? '',
-          screenPreviousRoute:
-              NavigationHistory.instance.previous?.path ?? '',
-          screenPreviousLabel:
-              NavigationHistory.instance.previous?.label ?? '',
+          screenPreviousRoute: screenCtx != null
+              ? (NavigationHistory.instance.previous?.path ?? '')
+              : '',
+          screenPreviousLabel: screenCtx != null
+              ? (NavigationHistory.instance.previous?.label ?? '')
+              : '',
           clientMsgId: msgId,
           callState: callState,
         )) {
@@ -3335,9 +3339,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             onClearShared: () =>
                                 setState(() => _pendingShared = null),
                             pageContextLabel:
-                                (_activePageContext?.screen ?? '').isNotEmpty
-                                ? _activePageContext!.label
-                                : null,
+                                (!_voice.isActive &&
+                                        (_activePageContext?.screen ?? '')
+                                            .isNotEmpty)
+                                    ? _activePageContext!.label
+                                    : null,
                             onClearPageContext: _clearPageContext,
                             voicePhase: _voice.phase,
                             relayRetrying: _voice.relayRetrying,
@@ -4697,7 +4703,7 @@ class _Composer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (pageContextLabel != null)
+            if (pageContextLabel != null && !voiceActive)
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
