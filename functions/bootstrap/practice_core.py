@@ -626,6 +626,98 @@ def start_session(db, uid: str, target_uid: str) -> str:
     return session_id
 
 
+#: How long after creation a still-open voice practice session may be
+#: resumed by a later voice start for the same target (seconds). The
+#: client's automatic retries (relay retry, no-join retry) re-run the
+#: voice start within seconds of a drop; half an hour also covers a
+#: user who backs out of a failed start and immediately tries again.
+_VOICE_RESUME_WINDOW_SECONDS = 1800.0
+
+
+def find_open_session(
+    db,
+    uid: str,
+    target_uid: str,
+    *,
+    modality: str | None = None,
+    within_seconds: float = _VOICE_RESUME_WINDOW_SECONDS,
+    now: float | None = None,
+) -> str | None:
+    """Id of the caller's newest still-open practice session for
+    ``target_uid``, or ``None``.
+
+    "Open" means never ended (``ended_at`` falsy) and created within
+    ``within_seconds``. When ``modality`` is given, only sessions
+    stamped with that modality match — voice starts stamp ``"voice"``;
+    text sessions carry no stamp, so a voice start never resumes one.
+    """
+    now = time.time() if now is None else now
+    best_id: str | None = None
+    best_created = -1.0
+    coll = (
+        db.collection("users")
+        .document(uid)
+        .collection(PRACTICE_SESSIONS_COLLECTION)
+    )
+    for snap in coll.stream():
+        data = snap.to_dict() or {}
+        if str(data.get("target_uid") or "") != target_uid:
+            continue
+        if data.get("ended_at"):
+            continue
+        if modality is not None and data.get("modality") != modality:
+            continue
+        try:
+            created = float(data.get("created_at") or 0)
+        except (TypeError, ValueError):
+            continue
+        if now - created > within_seconds:
+            continue
+        if created > best_created:
+            best_id, best_created = snap.id, created
+    return best_id
+
+
+def start_or_resume_session(
+    db,
+    uid: str,
+    target_uid: str,
+    *,
+    modality: str | None = None,
+    within_seconds: float = _VOICE_RESUME_WINDOW_SECONDS,
+    now: float | None = None,
+) -> str:
+    """Resume the caller's open session for ``target_uid`` when one is
+    still live, else start (and modality-stamp) a fresh one.
+
+    Bug (founder report 44RwY05T4hgzkP4HtAU8, 2026-11-06): every
+    practice VOICE start minted a brand-new session, and the client
+    re-runs the voice start on its automatic retries — so after any
+    retry the debrief (the debrief screen and the voice-return
+    greeting) bound to the newest, EMPTY session, while the session
+    holding the actual voice transcript was orphaned (never debriefed,
+    never ended). The "voice session feedback" therefore contained
+    nothing from the voice session and fell back to the text session.
+    Resuming the open session keeps ONE transcript per practice arc,
+    so every debrief consumer binds to the session that holds the
+    conversation.
+    """
+    existing = find_open_session(
+        db,
+        uid,
+        target_uid,
+        modality=modality,
+        within_seconds=within_seconds,
+        now=now,
+    )
+    if existing:
+        return existing
+    session_id = start_session(db, uid, target_uid)
+    if modality is not None:
+        _session_ref(db, uid, session_id).update({"modality": modality})
+    return session_id
+
+
 def _load_session(db, uid: str, session_id: str) -> dict:
     snap = _session_ref(db, uid, session_id).get()
     if not getattr(snap, "exists", False):

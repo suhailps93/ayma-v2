@@ -69,6 +69,7 @@ from practice_core import (  # noqa: F401 - re-exported public surface
     generate_debrief,
     persona_context_for_coach,
     persona_reply,
+    start_or_resume_session,
     start_session,
 )
 
@@ -286,7 +287,14 @@ async def practice_voice_start(
     if not CONFIG.livekit_url:
         raise HTTPException(status_code=503, detail="LIVEKIT_URL is not configured.")
 
-    session_id = start_session(db, caller.uid, target_uid)
+    # Resume the caller's still-open voice session for this target when
+    # one exists (bug 44RwY05T4hgzkP4HtAU8): the client re-runs this
+    # start on its automatic retries, and minting a fresh session per
+    # attempt left the debrief bound to the newest empty session while
+    # the session holding the voice transcript was orphaned.
+    session_id = start_or_resume_session(
+        db, caller.uid, target_uid, modality="voice"
+    )
     room = room_name_for(caller.uid)
     try:
         token = mint_access_token(caller.uid, room)

@@ -312,7 +312,9 @@ def _practice_env(monkeypatch, stored=None):
         practice_date.token_ledger, "check", lambda _uid: None
     )
     monkeypatch.setattr(
-        practice_date, "start_session", lambda _db, _uid, _target: "sess-1"
+        practice_date,
+        "start_or_resume_session",
+        lambda _db, _uid, _target, **_kw: "sess-1",
     )
     monkeypatch.setattr(
         practice_date, "_caller_first_name", lambda _db, _uid: "Sam"
