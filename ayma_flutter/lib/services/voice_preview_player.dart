@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 /// Plays the short voice-preset preview clips on the voice-preference screen
@@ -15,6 +18,9 @@ abstract class VoicePreviewPlayer {
 
   /// Release native resources. The instance is unusable afterwards.
   void dispose();
+
+  /// Callback fired when playback completes naturally.
+  VoidCallback? onComplete;
 }
 
 /// [VoicePreviewPlayer] backed by `just_audio`.
@@ -23,8 +29,24 @@ abstract class VoicePreviewPlayer {
 /// await a superseded call aborts without touching the player, so the latest
 /// request always wins.
 class JustAudioPreviewPlayer implements VoicePreviewPlayer {
+  JustAudioPreviewPlayer() {
+    _sub = _player.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.completed) {
+        // just_audio keeps `playing` true after a clip finishes naturally until
+        // stop()/pause() is called (see async_voice_player.dart). Stop the
+        // player so its native state matches, and notify listeners.
+        _player.stop().catchError((Object _) {});
+        onComplete?.call();
+      }
+    });
+  }
+
   final AudioPlayer _player = AudioPlayer();
   int _token = 0;
+  StreamSubscription<PlayerState>? _sub;
+
+  @override
+  VoidCallback? onComplete;
 
   @override
   Future<void> play(String url) async {
@@ -53,6 +75,7 @@ class JustAudioPreviewPlayer implements VoicePreviewPlayer {
   @override
   void dispose() {
     _token++;
+    _sub?.cancel();
     _player.dispose();
   }
 }

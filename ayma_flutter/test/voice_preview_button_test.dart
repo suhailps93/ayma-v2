@@ -272,6 +272,57 @@ void main() {
     );
     expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
   });
+
+  testWidgets('preview tap-again while loading cancels and stops playback', (
+    tester,
+  ) async {
+    final player = _FakePreviewPlayer();
+    await tester.pumpWidget(
+      _host(VoiceEngineControl(api: _api(), previewPlayer: player)),
+    );
+    await tester.pumpAndSettle();
+
+    // Tap play
+    await tester.tap(_previewButton());
+    // Pump one frame so the request begins and UI marks busy
+    await tester.pump();
+
+    // Tap again immediately (e.g. at +1s while loading / playing)
+    await tester.tap(_previewButton());
+    await tester.pumpAndSettle();
+
+    // Stop must have been called on the player
+    expect(player.stopCalls, greaterThanOrEqualTo(1));
+    // Icon must be back to play
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+    expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+  });
+
+  testWidgets('the preview icon auto-reverts to play when playback ends', (
+    tester,
+  ) async {
+    final player = _FakePreviewPlayer();
+    await tester.pumpWidget(
+      _host(VoiceEngineControl(api: _api(), previewPlayer: player)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+
+    await tester.tap(_previewButton());
+    await tester.pumpAndSettle();
+
+    // Playing: shows stop icon
+    expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
+
+    // Audio finishes playing naturally (sample clip ends)
+    player.onComplete?.call();
+    await tester.pump();
+
+    // Button icon must auto-revert to play outline without requiring a manual tap
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+    expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+  });
 }
 
 /// Records preview playback instead of touching platform audio.
@@ -279,6 +330,9 @@ class _FakePreviewPlayer implements VoicePreviewPlayer {
   final List<String> played = [];
   int stopCalls = 0;
   bool disposed = false;
+
+  @override
+  VoidCallback? onComplete;
 
   @override
   Future<void> play(String url) async {
