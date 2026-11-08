@@ -269,3 +269,172 @@ def cartesia_delivery(
     if read.distress:
         return _DISTRESS_DELIVERY
     return _CARTESIA_DELIVERY[read.label][read.intensity]
+
+
+# --- Reply-tone direction (2026-11-07) ---------------------------------------
+#
+# The Cartesia mapping above keys off the USER's state (vibe matching).
+# When the user reads neutral there is no user-side direction — but the
+# reply itself still has a tone, and a condolence and a celebration
+# should not be delivered identically. ``reply_tone`` classifies AYMA's
+# own reply text with conservative phrase cues so a direction can still
+# be attached to the spoken delivery. It is deliberately weak: it fires
+# only on clear markers; everything else stays neutral and the TTS
+# engine's own text inference does what it already does.
+#
+# Precedence is the safety property, and it is structural: distress and
+# ANY non-neutral user state always win over the reply tone. A user who
+# is low while discussing good news still gets the soft delivery — the
+# reply tone can never make Ayma chirpy at a down user (founder,
+# 2026-11-07: "when the user is all low and down, it should not be
+# happy and chirpy and annoying").
+
+TONES = ("celebratory", "playful", "somber", "tender", "neutral")
+
+# Checked in order: somber/tender before celebratory, so a mixed reply
+# ("I'm so sorry — but congratulations on the baby") takes the soft
+# delivery, never the bright one.
+_SOMBER_CUES = (
+    "sorry for your loss", "condolences", "passed away", "funeral",
+    "grieving", "grief", "heartbreaking", "devastating", "diagnosed",
+    "in the hospital", "so sorry to hear", "i am so sorry",
+    "really hard time", "such a hard time", "tough time you",
+)
+_TENDER_CUES = (
+    "here for you", "take your time", "one step at a time",
+    "not alone", "makes sense", "be kind to yourself", "rest up",
+    "get some rest", "feel better soon",
+)
+_CELEBRATORY_CUES = (
+    "congratulations", "congrats", "amazing news", "great news",
+    "wonderful news", "fantastic news", "exciting news", "you did it",
+    "you got it", "nailed it", "proud of you", "so proud", "you won",
+    "new job", "got accepted", "got the job", "got promoted",
+)
+_PLAYFUL_CUES = (
+    "haha", "just kidding", "plot twist", "guess what", "silly",
+    "goofy", "teasing you",
+)
+
+
+def reply_tone(text: str) -> str:
+    """The tone of Ayma's reply text itself — one of :data:`TONES`.
+
+    Phrase-cue based and conservative by design: no clear marker means
+    ``neutral`` (no direction attached). Somber and tender cues are
+    checked before celebratory ones so mixed news resolves soft.
+    """
+    t = " " + " ".join(str(text or "").lower().split()) + " "
+    if any(cue in t for cue in _SOMBER_CUES):
+        return "somber"
+    if any(cue in t for cue in _TENDER_CUES):
+        return "tender"
+    if any(cue in t for cue in _CELEBRATORY_CUES):
+        return "celebratory"
+    if any(cue in t for cue in _PLAYFUL_CUES):
+        return "playful"
+    return "neutral"
+
+
+_REPLY_TONE_CARTESIA: dict[str, tuple[str | None, float | None]] = {
+    "somber": ("Sympathetic", 0.94),
+    "tender": ("Sympathetic", 0.96),
+    "celebratory": ("Content", 1.04),
+    "playful": ("Happy", 1.04),
+    "neutral": (None, None),
+}
+
+
+def effective_cartesia_delivery(
+    state: EmotionState | EmotionRead,
+    last_reply_text: str = "",
+) -> tuple[str | None, float | None]:
+    """The Cartesia delivery for the next synthesis.
+
+    The user's state wins whenever it says anything at all (distress
+    first, then any non-neutral label — the full vibe-matching mapping
+    in :func:`cartesia_delivery`). Only a NEUTRAL user read falls
+    through to the tone of Ayma's last reply, so the delivery still
+    follows what is being said when the user gives no signal.
+    """
+    read = state.current() if isinstance(state, EmotionState) else state
+    if read.distress or read.label != "neutral":
+        return cartesia_delivery(read)
+    return _REPLY_TONE_CARTESIA[reply_tone(last_reply_text)]
+
+
+# --- Fish Audio S2 delivery (in-text cues) ------------------------------------
+#
+# Fish Audio S2 / S2.1-Pro (``fishaudio/s2.1-pro`` — the Meta-cascade
+# default TTS and a selectable cascade leg) takes delivery direction
+# INSIDE the text: square-bracket cues the model interprets as
+# performance direction and does not speak (Fish Audio, "Emotion
+# Control" docs: ``[happy]``, ``[sad]``, free-form cues, best placed at
+# the start of a sentence). The cues ride the TTS-bound text only —
+# agent.py's ``tts_node`` transform prepends one cue to the stream
+# bound for the TTS leg; transcripts and history keep the clean reply.
+#
+# Same precedence as Cartesia: distress and the user's state win, the
+# reply tone only fills a neutral read, and no upbeat cue can ever be
+# produced while the user reads sad / anxious / frustrated / tired.
+
+_FISH_STATE_TAGS: dict[str, str] = {
+    "upbeat": "[happy]",
+    "playful": "[playful, light]",
+    "frustrated": "[calm, steady]",
+    "sad": "[soft, empathetic]",
+    "anxious": "[calm, gentle]",
+    "tired": "[soft, gentle]",
+}
+
+_FISH_DISTRESS_TAG = "[soft, gentle]"
+
+_FISH_TONE_TAGS: dict[str, str | None] = {
+    "somber": "[soft, empathetic]",
+    "tender": "[warm, gentle]",
+    "celebratory": "[happy]",
+    "playful": "[playful, light]",
+    "neutral": None,
+}
+
+
+def fish_tag(
+    state: EmotionState | EmotionRead,
+    reply_text: str = "",
+) -> str | None:
+    """The Fish Audio cue to prepend to the next spoken reply, or
+    ``None`` to leave the text exactly as the brain wrote it."""
+    read = state.current() if isinstance(state, EmotionState) else state
+    if read.distress:
+        return _FISH_DISTRESS_TAG
+    if read.label != "neutral":
+        return _FISH_STATE_TAGS[read.label]
+    return _FISH_TONE_TAGS[reply_tone(reply_text)]
+
+
+# How much reply text the ``tts_node`` transform may buffer before it
+# must choose a cue: the first sentence, or this many characters,
+# whichever comes first. A Fish cue colours what FOLLOWS it, so the
+# decision has to be made before the first words are synthesised —
+# but buffering a whole reply would kill streaming, so the decision
+# uses the opening sentence (or a solid prefix) plus the session state.
+TTS_PREFIX_MAX_CHARS = 160
+
+_SENTENCE_ENDS = (". ", "! ", "? ", ".\n", "!\n", "?\n")
+
+
+def tts_prefix_ready(buffered: str, *, stream_ended: bool = False) -> bool:
+    """True when ``buffered`` holds enough of the reply to pick a cue."""
+    if stream_ended or len(buffered) >= TTS_PREFIX_MAX_CHARS:
+        return True
+    return any(mark in buffered for mark in _SENTENCE_ENDS)
+
+
+def with_fish_tag(text: str, tag: str | None) -> str:
+    """``text`` with the Fish cue prepended — returned unchanged when
+    there is no tag, when the text is empty, or when the reply already
+    opens with a bracketed cue of its own (never stack two cues)."""
+    stripped = text.strip()
+    if not tag or not stripped or stripped.startswith("["):
+        return text
+    return f"{tag} {stripped}"

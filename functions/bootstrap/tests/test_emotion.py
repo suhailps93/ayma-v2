@@ -233,3 +233,182 @@ def test_emotion_matching_flag_env_override(monkeypatch):
     value, source = feature_flags.resolve("emotion_matching")
     assert value is True
     assert source == "env"
+
+
+# --- Reply tone (2026-11-07) ------------------------------------------------------
+
+
+def test_reply_tone_somber_reply():
+    assert emotion.reply_tone("I am so sorry for your loss. She sounded wonderful.") == "somber"
+
+
+def test_reply_tone_tender_reply():
+    assert emotion.reply_tone("Take your time with it — I am here for you.") == "tender"
+
+
+def test_reply_tone_celebratory_reply():
+    assert emotion.reply_tone("Congratulations, you got the job! That is huge.") == "celebratory"
+
+
+def test_reply_tone_playful_reply():
+    assert emotion.reply_tone("Haha, plot twist — guess what happened next?") == "playful"
+
+
+def test_reply_tone_plain_reply_is_neutral():
+    assert emotion.reply_tone("Your appointment is on Tuesday at three.") == "neutral"
+    assert emotion.reply_tone("") == "neutral"
+
+
+def test_reply_tone_mixed_resolves_soft():
+    # Somber cues are checked before celebratory ones: mixed news takes
+    # the soft delivery, never the bright one.
+    assert (
+        emotion.reply_tone("I am so sorry to hear that. Congratulations on the baby, though.")
+        == "somber"
+    )
+
+
+# --- Effective Cartesia delivery: user state beats reply tone ---------------------
+
+
+def test_effective_delivery_low_user_never_chirpy():
+    # THE founder pin (2026-11-07): a user who is low and down must
+    # never get a happy/chirpy delivery, even when the reply text
+    # itself carries good news.
+    state = emotion.EmotionState()
+    state.update(emotion.normalize_read("sad", "high"))
+    emo, speed = emotion.effective_cartesia_delivery(
+        state, "Congratulations, you got the job!"
+    )
+    assert emo == "Sympathetic"
+    assert speed < 1.0
+
+
+def test_effective_delivery_negative_states_never_bright():
+    for label in ("sad", "anxious", "frustrated", "tired"):
+        state = emotion.EmotionState()
+        state.update(emotion.normalize_read(label, "medium"))
+        emo, speed = emotion.effective_cartesia_delivery(
+            state, "Amazing news — congratulations, you won!"
+        )
+        assert emo not in ("Excited", "Happy", "Content")
+        assert speed <= 1.0
+
+
+def test_effective_delivery_neutral_user_somber_reply():
+    emo, speed = emotion.effective_cartesia_delivery(
+        emotion.EmotionState(), "I am so sorry for your loss."
+    )
+    assert emo == "Sympathetic"
+    assert speed < 1.0
+
+
+def test_effective_delivery_neutral_user_celebratory_reply():
+    emo, speed = emotion.effective_cartesia_delivery(
+        emotion.EmotionState(), "Congratulations, you got the job!"
+    )
+    assert emo == "Content"
+    assert speed > 1.0
+
+
+def test_effective_delivery_neutral_user_plain_reply_defers():
+    assert emotion.effective_cartesia_delivery(
+        emotion.EmotionState(), "Your appointment is on Tuesday at three."
+    ) == (None, None)
+
+
+def test_effective_delivery_state_wins_over_reply():
+    state = emotion.EmotionState()
+    state.update(emotion.normalize_read("upbeat", "medium"))
+    emo, _speed = emotion.effective_cartesia_delivery(
+        state, "I am so sorry for your loss."
+    )
+    assert emo == "Content"
+
+
+def test_effective_delivery_distress_wins_over_everything():
+    emo, speed = emotion.effective_cartesia_delivery(
+        emotion.normalize_read("playful", "high", True),
+        "Congratulations, you got the job!",
+    )
+    assert emo == "Sympathetic"
+    assert speed <= 0.9
+
+
+# --- Fish Audio in-text cues --------------------------------------------------------
+
+
+def test_fish_tag_low_user_never_bright():
+    # Same founder pin on the Fish leg: a sad user discussing good
+    # news still gets the soft cue, never [happy] / [excited].
+    state = emotion.EmotionState()
+    state.update(emotion.normalize_read("sad", "medium"))
+    assert (
+        emotion.fish_tag(state, "Congratulations, you got the job!")
+        == "[soft, empathetic]"
+    )
+
+
+def test_fish_tag_negative_states_are_grounding():
+    for label, tag in (
+        ("frustrated", "[calm, steady]"),
+        ("anxious", "[calm, gentle]"),
+        ("tired", "[soft, gentle]"),
+    ):
+        state = emotion.EmotionState()
+        state.update(emotion.normalize_read(label, "medium"))
+        assert emotion.fish_tag(state, "Congratulations!") == tag
+
+
+def test_fish_tag_upbeat_state_and_celebratory_reply():
+    state = emotion.EmotionState()
+    state.update(emotion.normalize_read("upbeat", "medium"))
+    assert emotion.fish_tag(state, "Okay.") == "[happy]"
+    assert (
+        emotion.fish_tag(emotion.EmotionState(), "Congratulations, you got the job!")
+        == "[happy]"
+    )
+
+
+def test_fish_tag_neutral_plain_reply_is_none():
+    assert emotion.fish_tag(emotion.EmotionState(), "It is on Tuesday.") is None
+
+
+def test_fish_tag_neutral_somber_reply_is_soft():
+    assert (
+        emotion.fish_tag(emotion.EmotionState(), "I am so sorry for your loss.")
+        == "[soft, empathetic]"
+    )
+
+
+def test_fish_tag_distress_is_soft():
+    assert (
+        emotion.fish_tag(emotion.normalize_read("playful", "high", True), "Haha!")
+        == "[soft, gentle]"
+    )
+
+
+# --- TTS prefix buffering helpers -----------------------------------------------------
+
+
+def test_tts_prefix_ready_waits_for_a_sentence():
+    assert emotion.tts_prefix_ready("") is False
+    assert emotion.tts_prefix_ready("I am so sorry") is False
+    assert emotion.tts_prefix_ready("I am so sorry. ") is True
+    assert emotion.tts_prefix_ready("Really? ") is True
+
+
+def test_tts_prefix_ready_caps_buffering():
+    assert emotion.tts_prefix_ready("x" * emotion.TTS_PREFIX_MAX_CHARS) is True
+    assert emotion.tts_prefix_ready("short", stream_ended=True) is True
+
+
+def test_with_fish_tag_prepends_once():
+    assert (
+        emotion.with_fish_tag("I am so sorry.", "[soft, empathetic]")
+        == "[soft, empathetic] I am so sorry."
+    )
+    assert emotion.with_fish_tag("Plain reply.", None) == "Plain reply."
+    assert emotion.with_fish_tag("", "[happy]") == ""
+    # Never stack a second cue on a reply that opens with its own.
+    assert emotion.with_fish_tag("[whispering] A secret.", "[happy]") == "[whispering] A secret."
