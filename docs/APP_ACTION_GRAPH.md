@@ -216,7 +216,7 @@ undone.)
 | Run match / match-report entry | Open the match report | COVERED `open_match_report` |
 | Practice Date entry | Open a Practice Date with them | COVERED `open_practice_date` |
 | Agent Date / sim entry | Open the date sim with them | COVERED `open_date_sim` |
-| Photo carousel | Cycle photos | `UI` |
+| Photo carousel | Cycle photos / show a numbered photo ("show the third picture") | COVERED `show_profile_photo`; also `UI` |
 | Ask Ayma (page-context) | Chat about this person | `UI` — opens her own chat |
 
 ## 8. Match report (`/match/:matchId`), match request (`/match-request/:matchId`)
