@@ -503,6 +503,85 @@ class VoiceSessionController extends ChangeNotifier {
   /// start until the next start clears it).
   static VoiceSessionController? active;
 
+  /// When the most recent real voice call ended, and why — class-level on
+  /// purpose: the record must outlive the controller that ran the call
+  /// ([active] is already null by the time the user types their next
+  /// message) and stay readable from any screen. Set by [_recordCallEnd]
+  /// on every genuine end path; read by [chatCallState] /
+  /// [previousCallState]. Deliberately NOT cleared by [start]: a fresh
+  /// call reports `active`, which outranks the stale record, and clearing
+  /// would race the very sends this record exists to inform.
+  static DateTime? _lastCallEndedAt;
+  static String? _lastCallEndReason;
+
+  /// How long after a call ends it still counts as "just ended" for
+  /// context purposes. Long enough to cover "the call dropped, the user
+  /// reopens chat and asks about it"; short enough that a call from this
+  /// morning never colours an unrelated evening conversation.
+  static const Duration justEndedWindow = Duration(minutes: 15);
+
+  /// The call state to stamp on an outgoing text turn: `active` while any
+  /// call is live, else `just_ended` while the last call is inside
+  /// [justEndedWindow], else `none`.
+  static CallStateSnapshot chatCallState({DateTime? now}) {
+    final current = active;
+    if (current != null && current.isActive) {
+      return const CallStateSnapshot.active();
+    }
+    return previousCallState(now: now);
+  }
+
+  /// The just-ended half of [chatCallState] on its own — what a NEW voice
+  /// session's `/bootstrap` carries, so the agent opening the next call
+  /// knows the previous one happened and how it ended.
+  static CallStateSnapshot previousCallState({DateTime? now}) {
+    final endedAt = _lastCallEndedAt;
+    final reason = _lastCallEndReason;
+    if (endedAt == null || reason == null) {
+      return const CallStateSnapshot.none();
+    }
+    final ago = (now ?? DateTime.now()).difference(endedAt);
+    if (ago.isNegative || ago > justEndedWindow) {
+      return const CallStateSnapshot.none();
+    }
+    return CallStateSnapshot.justEnded(
+      secondsAgo: ago.inSeconds,
+      reason: reason,
+    );
+  }
+
+  /// True when [text] is, as a WHOLE message, a request to end the voice
+  /// call ("disconnect", "hang up please", "end the call", ...).
+  /// Deliberately conservative — the whole trimmed message must be the
+  /// request, so ordinary sentences that merely contain the words ("I
+  /// feel disconnected", "don't disconnect", "disconnect the wifi")
+  /// never end a call.
+  static bool isDisconnectRequest(String text) {
+    final normalized = text
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[.!?\s]+$'), '');
+    return _disconnectRequestPattern.hasMatch(normalized);
+  }
+
+  static final RegExp _disconnectRequestPattern = RegExp(
+    r'^(please\s+)?(disconnect|hang\s?up|hangup|end\s+(the|this)\s+call|stop\s+(the|this)\s+call)(\s+(please|now))?$',
+  );
+
+  /// Test hooks for the last-ended record (same pattern as
+  /// [userIdleTimeoutForTest]): seed or clear it without a real call.
+  @visibleForTesting
+  static void debugSetLastCallEnd(DateTime endedAt, String reason) {
+    _lastCallEndedAt = endedAt;
+    _lastCallEndReason = reason;
+  }
+
+  @visibleForTesting
+  static void debugClearLastCallEnd() {
+    _lastCallEndedAt = null;
+    _lastCallEndReason = null;
+  }
+
   /// The Ayma session a live Practice Date call displaced, if any (founder
   /// rule, 2026-11-06): armed in [start]'s single-active-session exclusion
   /// when a practice call tears down a live Ayma session, and consumed when
@@ -789,6 +868,13 @@ class VoiceSessionController extends ChangeNotifier {
         debugPrint('[voice] start(): calling /bootstrap');
         final resumeNote = _pendingResumeNote;
         _pendingResumeNote = null;
+        // The previous call's end rides along so the agent opening this
+        // call knows the last one happened and how it ended (see
+        // [previousCallState]) — except on the practice-debrief return,
+        // whose seed already covers the practice call.
+        final prevCall = _practiceReturnSessionId.isEmpty
+            ? previousCallState()
+            : const CallStateSnapshot.none();
         final session = await _api.bootstrap(
           sessionId: sessionId,
           recentTurns: [
@@ -797,6 +883,7 @@ class VoiceSessionController extends ChangeNotifier {
               {'role': 'ayma', 'text': resumeNote},
           ],
           practiceReturnSessionId: _practiceReturnSessionId,
+          callState: prevCall,
         );
         if (session.usageCapped) {
           _cappedError = true;
@@ -1262,6 +1349,7 @@ class VoiceSessionController extends ChangeNotifier {
     _agentSpeaking = false;
     _muted = false;
     _disconnectReason = disconnectReason;
+    _recordCallEnd();
     _endNotice = notice ?? 'Call ended after 30 seconds of silence';
     _setPhase(VoiceSessionPhase.idle);
   }
@@ -1415,8 +1503,21 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   /// End the current voice session and return to [VoiceSessionPhase.idle].
+  /// Record that a real call just ended, so the next text turn (and the
+  /// next voice session's seed) knows it happened — see [chatCallState].
+  /// Only a session that actually went live counts: a start that failed
+  /// before the agent joined ("Ayma didn't pick up") was never a call,
+  /// and a Practice Date call is a conversation with a match's avatar,
+  /// not a call with Ayma.
+  void _recordCallEnd() {
+    if (!_wentLive || isPractice) return;
+    _lastCallEndedAt = DateTime.now();
+    _lastCallEndReason = _disconnectReason ?? 'user_stop';
+  }
+
   Future<void> stop() async {
     _disconnectReason ??= 'user_stop';
+    _recordCallEnd();
     if (active == this) { active = null; _syncActiveNotifier(); }
     _disposeSessionLifecycle();
     await _teardown();
@@ -1647,6 +1748,7 @@ class VoiceSessionController extends ChangeNotifier {
   void _fail(String message) {
     _errorMessage = message;
     _disconnectReason ??= 'error';
+    _recordCallEnd();
     // Guarantee the mic is released and the session fully torn down on EVERY
     // failure path (idempotent — callers that already tore down hit a no-op).
     // Closes paths that previously reached `error` with a still-held mic, e.g.

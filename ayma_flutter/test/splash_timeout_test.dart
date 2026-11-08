@@ -271,6 +271,7 @@ class _BootstrapThrows extends ApiClient {
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
     String practiceReturnSessionId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async =>
       throw error;
 }
@@ -289,6 +290,7 @@ class _BootstrapHangs extends ApiClient {
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
     String practiceReturnSessionId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) =>
       Completer<BootstrapResult>().future;
 }
@@ -311,6 +313,7 @@ class _BootstrapColdStart extends ApiClient {
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
     String practiceReturnSessionId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async {
     calls++;
     if (calls <= failures) {

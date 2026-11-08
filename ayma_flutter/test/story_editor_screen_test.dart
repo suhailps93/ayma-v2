@@ -305,6 +305,7 @@ class _FakeApi extends ApiClient {
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
     String clientMsgId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async* {
     chatCalls.add({
       'message': message,
@@ -344,6 +345,7 @@ class _FakeApi extends ApiClient {
     String screenPreviousLabel = '',
     String clientMsgId = '',
     bool tourContinuation = false,
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
   }) async {
     chatCalls.add({
       'message': message,

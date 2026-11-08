@@ -50,8 +50,8 @@ not name or clearly mean.
 - start_tour: the user asks to start, open, or be walked through the guided
   tour of the app. Stopping, quitting, or advancing the tour is NOT this
   (those stay conversation).
-- end_call: the user IS signing off to Ayma, live, right now — see the strict
-  rules below.
+- end_call: the user IS signing off to Ayma, live, right now — a
+  goodbye, or a disconnect / hang-up ask — see the strict rules below.
 - clarify: ONLY for a launch ask (practice or sim) that names no partner and
   has nobody salient in context. The reply will ask who it is with.
 - none: everything else — pure conversation continues.
@@ -99,10 +99,13 @@ page itself.
 
 end_call fires ONLY when the utterance IS a live sign-off to Ayma: a goodbye
 word plus naming Ayma ("goodbye Ayma", "bye Ayma, thank you", "okay, goodbye
-Ayma"), or a bare "goodbye" that is essentially the whole utterance. A bare
-"bye" alone NEVER ends the call (one STT-confusable syllable). Anything that
-makes the utterance a request, a recounting, a third-party goodbye, or talk
-about goodbye means none.
+Ayma"), a bare "goodbye" that is essentially the whole utterance, or a
+disconnect / hang-up ask that is essentially the whole utterance
+("disconnect", "disconnect please", "hang up", "end the call",
+"disconnect Ayma"). A bare "bye" alone NEVER ends the call (one
+STT-confusable syllable). Anything that makes the utterance a request, a
+recounting, a third-party goodbye, talk about goodbye, or disconnecting
+something else ("disconnect the Wi-Fi") means none.
 
 ### Worked examples
 
