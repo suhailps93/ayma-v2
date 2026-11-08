@@ -381,6 +381,26 @@ async def research(
     )
 
 
+class UnparseableReplyError(RuntimeError, json.JSONDecodeError):
+    """A model reply that is not parseable JSON, carrying the raw text.
+
+    The usual cause is a budget-truncated reply (``finish_reason="length"``):
+    the model ran on inside one field and the JSON was cut mid-string. The
+    completed fields are still in the text — a best-effort caller can salvage
+    them instead of treating the whole call as lost. It subclasses both
+    :class:`RuntimeError` and :class:`json.JSONDecodeError`, so existing
+    handlers (``except Exception`` and ``except json.JSONDecodeError`` alike)
+    see the same failure as before.
+    """
+
+    def __init__(self, text: str, finish_reason: str | None = None) -> None:
+        json.JSONDecodeError.__init__(
+            self, "Model reply is not parseable JSON.", text, 0
+        )
+        self.text = text
+        self.finish_reason = finish_reason
+
+
 def _parse_json_text(text: str) -> object:
     text = text.strip()
     if text.startswith("```"):
@@ -399,6 +419,7 @@ async def _generate_json_inference(
     feature: str,
     temperature: float,
     session_id: str,
+    max_tokens: int = 4096,
 ) -> object:
     user_content: object = contents
     if photo_parts:
@@ -414,7 +435,7 @@ async def _generate_json_inference(
         ],
         response_schema=response_schema,
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=max_tokens,
     )
     token_ledger.record(
         uid, feature, response, model=model, session_id=session_id or None,
@@ -427,15 +448,19 @@ async def _generate_json_inference(
         # A reply that fails to parse is undiagnosable without the raw
         # text: best-effort callers swallow this raise and return something
         # empty. Log the shape of the reply (finish reason, plus both ends
-        # of the text — a budget-truncated reply is cut at the tail),
-        # then re-raise unchanged.
+        # of the text — a budget-truncated reply is cut at the tail), then
+        # raise carrying the raw text so a caller that can use the completed
+        # fields (dm_assist's salvage) can recover them instead of losing
+        # the whole call.
         logger.warning(
             "generate_json: unparseable model reply "
             "(finish_reason=%s, chars=%d) head=%r tail=%r",
             response.finish_reason, len(response.text),
             response.text[:600], response.text[-400:],
         )
-        raise
+        raise UnparseableReplyError(
+            response.text, response.finish_reason
+        ) from None
 
 
 async def generate_json(
@@ -450,6 +475,7 @@ async def generate_json(
     enforce_cap: bool = True,
     temperature: float = 0.2,
     session_id: str = "",
+    max_tokens: int = 4096,
 ) -> object:
     """Run a structured Gemini call and return the parsed JSON value. Pass
     ``image=(bytes, mime)`` for a single-image vision call (photo-attribute
@@ -465,7 +491,11 @@ async def generate_json(
     gateway failure raises, there is no direct-Google fallback.
 
     Raises on an empty or unparseable response so callers can treat it as
-    best-effort.
+    best-effort; an unparseable reply raises :class:`UnparseableReplyError`
+    carrying the raw text. ``max_tokens`` caps the completion budget
+    (default 4096) — a caller whose reply is short by construction passes a
+    smaller cap so a runaway field is cut off cheaply instead of burning
+    the whole budget.
     """
     if enforce_cap:
         token_ledger.check(uid)
@@ -480,7 +510,7 @@ async def generate_json(
     return await _generate_json_inference(
         contents, system_prompt, response_schema, photo_parts,
         uid=uid, feature=feature, temperature=temperature,
-        session_id=session_id,
+        session_id=session_id, max_tokens=max_tokens,
     )
 
 

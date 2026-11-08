@@ -1,6 +1,10 @@
 import asyncio
 
 import dm_assist
+import gemini
+import gemini
+import gemini
+import gemini
 import main
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
@@ -602,3 +606,182 @@ def test_coach_gives_up_after_two_generation_failures(monkeypatch):
         "safety": {"level": "none", "reason": "", "flags": []},
     }
     assert len(provider.calls) == 2  # one attempt + exactly one retry
+
+
+# --- Leg 3 (NOTE 145): truncated replies are salvaged, one-sided tip ---- #
+# Fixtures are the real truncated replies from the staging logs, Nov 7:
+# two dm_assist generations cut at 4081/4082 output tokens on the
+# Alexander one-sided thread (finish_reason "length"). Both have complete
+# chips and a tip that runs on into filler until the budget cuts it.
+
+
+_TRUNCATED_A = """{"chips": ["how's your week shaping up so far?", "curious what brought you to the app", "no rush on this, just curious how your week is going"], "tip": "Give them a beat to reply to your opener before sending another message, or keep it super low-pressure if you do reach out again soon. Taking your time here makes sense anyway given the mismatch flags you noticed earlier on their profile, so there is no rush at all to push things forward right now anyway in this thread currently today at all indeed truly so just sit tight and relax for now buddy you got this entirely fine naturally without wor"""
+
+_TRUNCATED_B = """{
+  "chips": [
+    "How's your week treating you so far?",
+    "Curious what you usually get up to on weekends around here.",
+    "No rush on this, just thought I'd say a proper hello."
+  ],
+  "tip": "Give it a little time before sending anything else — let them respond first if they want to chat naturally so the conversation stays low-pressure and balanced without overwhelming their inbox right off the bat today either way really nicely played so far though honestly you did great with that simple opener already just relax for now and see what happens naturally here today cheers to you friend """
+
+_ONE_SIDED_MSGS = [{"from": "me", "text": "hey alex, Daniel here. good to see the thread live."}]
+
+
+class _TruncatingProvider:
+    """Raises UnparseableReplyError carrying a truncated reply for the first
+    N calls (like live gemini.generate_json on a budget-truncated reply),
+    then returns ``result``."""
+
+    def __init__(self, texts, result=None):
+        self._texts = list(texts)
+        self._result = result
+        self.calls = []
+
+    async def generate_json(self, contents, **kwargs):
+        self.calls.append((contents, kwargs))
+        if len(self.calls) <= len(self._texts):
+            raise gemini.UnparseableReplyError(
+                self._texts[len(self.calls) - 1], "length"
+            )
+        return self._result
+
+
+def test_salvage_recovers_chips_from_truncated_reply():
+    out = dm_assist._salvage_partial(_TRUNCATED_A)
+    assert out is not None
+    assert out["chips"] == [
+        "how's your week shaping up so far?",
+        "curious what brought you to the app",
+        "no rush on this, just curious how your week is going",
+    ]
+    # The tip's first sentence is the intended nudge; the run-on tail is
+    # still in the raw string and _clean_tip trims it away.
+    assert dm_assist._clean_tip(out) == (
+        "Give them a beat to reply to your opener before sending another "
+        "message, or keep it super low-pressure if you do reach out again soon."
+    )
+
+
+def test_salvage_recovers_chips_from_pretty_truncated_reply():
+    out = dm_assist._salvage_partial(_TRUNCATED_B)
+    assert out is not None
+    assert out["chips"] == [
+        "How's your week treating you so far?",
+        "Curious what you usually get up to on weekends around here.",
+        "No rush on this, just thought I'd say a proper hello.",
+    ]
+    # This tip never reaches a sentence break before the cut, so hygiene
+    # drops it — the one-sided fallback (tested below) supplies the nudge.
+    assert dm_assist._clean_tip(out) is None
+
+
+def test_salvage_returns_none_when_chips_truncated():
+    # No complete chip survives the cut: nothing to salvage.
+    assert dm_assist._salvage_partial('{"chips": ["tw') is None
+    assert dm_assist._salvage_partial("") is None
+    assert dm_assist._salvage_partial('{"chips": []') is None
+    # One complete chip before the cut IS recovered — that is the point.
+    out = dm_assist._salvage_partial('{"chips": ["one", "tw')
+    assert out is not None and out["chips"] == ["one"]
+
+
+def test_salvage_keeps_complete_safety():
+    out = dm_assist._salvage_partial(
+        '{"chips": ["a"], "tip": "t.", "safety": {"level": "caution", '
+        '"reason": "pushing to meet", "flags": ["meet"]}}'
+    )
+    assert out is not None
+    assert out["safety"]["level"] == "caution"
+    # A safety block cut mid-object is not trusted — stay silent.
+    cut = dm_assist._salvage_partial(
+        '{"chips": ["a"], "tip": "t.", "safety": {"level": "caution", "re'
+    )
+    assert cut["safety"]["level"] == "none"
+
+
+def test_truncated_reply_is_salvaged_without_retry(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {"aaa": "y"}}
+    provider = _patch_provider(
+        monkeypatch, _TruncatingProvider([_TRUNCATED_A])
+    )
+    out = _run(
+        dm_assist.assist(_MatchDb(doc), "aaa", "bbb", _ONE_SIDED_MSGS)
+    )
+    assert out["mode"] == "coach"
+    assert out["chips"] == [
+        "how's your week shaping up so far?",
+        "curious what brought you to the app",
+        "no rush on this, just curious how your week is going",
+    ]
+    assert out["tip"] == (
+        "Give them a beat to reply to your opener before sending another "
+        "message, or keep it super low-pressure if you do reach out again soon."
+    )
+    # No retry spent: the salvage already recovered the bar.
+    assert len(provider.calls) == 1
+
+
+def test_truncated_reply_with_unusable_tip_gets_fallback_tip(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {"aaa": "y"}}
+    provider = _patch_provider(
+        monkeypatch, _TruncatingProvider([_TRUNCATED_B])
+    )
+    out = _run(
+        dm_assist.assist(_MatchDb(doc), "aaa", "bbb", _ONE_SIDED_MSGS)
+    )
+    assert out["chips"][0] == "How's your week treating you so far?"
+    assert out["tip"] == dm_assist._ONE_SIDED_FALLBACK_TIP
+    assert len(provider.calls) == 1
+
+
+def test_unrecoverable_truncation_retries_once_then_gives_up(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {"aaa": "y"}}
+    provider = _patch_provider(
+        monkeypatch, _TruncatingProvider(['{"chips": ["on', '{"chips": ["tw'])
+    )
+    out = _run(
+        dm_assist.assist(_MatchDb(doc), "aaa", "bbb", _ONE_SIDED_MSGS)
+    )
+    assert out["chips"] == []
+    # Total failure keeps the pinned contract (tip None) — the one-sided
+    # fallback covers landed generations, not a wholly failed call.
+    assert out["tip"] is None
+    assert len(provider.calls) == 2  # one attempt + exactly one retry
+
+
+def test_one_sided_empty_tip_gets_fallback(monkeypatch):
+    out = _coach_out(
+        monkeypatch,
+        {"chips": ["follow up gently"], "tip": ""},
+        messages=_ONE_SIDED_MSGS,
+    )
+    assert out["tip"] == dm_assist._ONE_SIDED_FALLBACK_TIP
+
+
+def test_two_sided_empty_tip_stays_empty(monkeypatch):
+    out = _coach_out(monkeypatch, {"chips": ["nice"], "tip": ""})
+    assert out["tip"] is None
+
+
+def test_dm_assist_caps_completion_budget(monkeypatch):
+    doc = {"ai_explanation": "x", "user_explanation": {"aaa": "y"}}
+    provider = _patch_provider(
+        monkeypatch, _FakeProvider({"chips": ["ok"], "tip": "keep going"})
+    )
+    _run(
+        dm_assist.assist(
+            _MatchDb(doc), "aaa", "bbb", [{"from": "them", "text": "hey"}]
+        )
+    )
+    assert provider.calls[0][1]["temperature"] == 0.7
+    assert provider.calls[0][1]["max_tokens"] == 1024
+
+
+def test_prompt_carves_out_one_sided_chip_rule():
+    prompt = dm_assist._load_prompt()
+    assert "When `Them` has not replied yet there is no last thing `Them` said" in prompt
+    assert "never re-greet" in prompt
+    assert "Did that come through all right?" in prompt
+    assert "build on `Me`'s message itself" in prompt
+    assert "the `tip` is never empty" in prompt

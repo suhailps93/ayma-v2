@@ -69,6 +69,17 @@ the `tip` speak to waiting on a reply.
 Each suggested line:
 - Reads like the user texting in the moment — relaxed, warm, specific to the
   last thing `Them` said. Not a fresh opener, not a topic change out of nowhere.
+- When `Them` has not replied yet there is no last thing `Them` said, so this
+  rule still binds but the anchor changes: build on what `Me` already sent —
+  refer back to `Me`'s own words, ask one small easy question, or nudge the
+  thread forward. If the analysis gives no shared ground (a mismatch, a
+  near-empty profile), build on `Me`'s message itself, never on the analysis.
+  And never re-greet: no "How's your week", no "what do you like to do on
+  weekends", no "Hope you're having a good week", no hello again — `Me`
+  already said hello.
+  Good one-sided chips pick up `Me`'s own opener instead of greeting
+  again — for example: "Did that come through all right?", "What first
+  caught your eye about my profile?", "Happy to go first — ask me anything."
 - 4 to 20 words. No exclamation-mark energy, no pickup lines, no compliments
   about looks, no quoting the analysis.
 - First person, addressed to the match.
@@ -82,6 +93,9 @@ whisper: what's working, or a small adjustment for how they're showing up.
 - Examples of the shape: "You're asking a lot of questions — try sharing
   something about yourself too." / "Nice, you opened up there — keep that going."
 - Never generic praise, never nitpicky about word choice or punctuation.
+- In coach mode the `tip` is never empty: when `Them` has not replied yet,
+  say so in one sentence (give them room to reply, no need to send another
+  message yet).
 - If the user is doing fine and needs no adjustment, either a light,
   genuine encouragement or an empty string — never an invented critique.
 
