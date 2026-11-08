@@ -438,3 +438,62 @@ def test_reply_for_client_id_finds_the_finished_turn_only():
     }
     assert chat_history.reply_for_client_id(db, "u1", "cm-other") is None
     assert chat_history.reply_for_client_id(db, "u1", "") is None
+
+
+def test_recent_dedupes_overlong_turn_truncated_in_raw_turns():
+    """Ledger 2cw (Scout NOTE 140): a turn longer than TurnModel cap (4000)
+    lives in chat_messages at full length (e.g. 6,995 chars), but in raw_turns
+    clamped to 4000 (clampRecentTurns / TurnModel._truncate_caps).
+    _collect must deduplicate the truncated raw_turns copy against the full
+    chat_messages row so it does not resurrect with a synthetic timestamp and
+    displace a subsequent user bubble (e.g. 'Hi').
+    """
+    long_ideas = "💡 Feature ideas from this run — " + ("details " * 800)  # ~7200 chars
+    truncated_ideas = long_ideas[:4000]
+
+    t_ideas = _T0
+    t_user_hi = _T0 + timedelta(seconds=10)
+    t_ayma_reply = _T0 + timedelta(seconds=13)
+
+    db = _FakeDB(
+        chat_rows=[
+            {
+                "role": "ayma",
+                "text": long_ideas,
+                "created_at": t_ideas,
+            },
+            {
+                "role": "user",
+                "text": "Hi",
+                "client_msg_id": "m-hi-1",
+                "created_at": t_user_hi,
+            },
+            {
+                "role": "ayma",
+                "text": "Hey Daniel! Good to see you.",
+                "client_msg_id": "m-hi-1",
+                "created_at": t_ayma_reply,
+            },
+        ],
+        raw_rows=[
+            {
+                "_id": "session-1",
+                "turns": [
+                    {"role": "ayma", "text": truncated_ideas},
+                    {"role": "user", "text": "Hi"},
+                    {"role": "ayma", "text": "Hey Daniel! Good to see you."},
+                ],
+                "updated_at": t_ayma_reply,
+            }
+        ],
+    )
+
+    r = chat_history.recent(db, "u1", limit=40)
+    messages = r["messages"]
+    # Must NOT duplicate the ideas turn
+    assert len(messages) == 3
+    # Order must be ideas -> user "Hi" -> ayma reply
+    assert messages[0]["role"] == "ayma" and messages[0]["text"] == long_ideas[:8000]
+    assert messages[1]["role"] == "user" and messages[1]["text"] == "Hi"
+    assert messages[2]["role"] == "ayma" and messages[2]["text"] == "Hey Daniel! Good to see you."
+
