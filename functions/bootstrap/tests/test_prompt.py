@@ -323,10 +323,15 @@ def test_current_screen_context_layer():
         current_screen_context="The user is browsing the Explore screen.",
     )
     assert "browsing the Explore screen" in prompt
+    assert (
+        "A pin exists for this page context and you can refer to it as pinned."
+        in prompt
+    )
 
 
 def test_blank_current_screen_context_adds_nothing():
     assert "currently looking at" not in compose_system_prompt()
+    assert "A pin exists" not in compose_system_prompt()
 
 
 # --- cost-program Phase 1: byte-stable prompt prefix (context_opt) -----------
@@ -381,8 +386,9 @@ def test_flags_off_assembly_is_byte_identical_to_the_original_order():
         kwargs["profile_progress"],
         kwargs["questionnaire_note"],
         kwargs["story_context"],
-        "What the user is currently looking at in the app: "
-        + kwargs["current_screen_context"],
+        "What the user is currently looking at in the app (pinned page context): "
+        + kwargs["current_screen_context"]
+        + " A pin exists for this page context and you can refer to it as pinned.",
         kwargs["wiki_context"],
         "Conversation so far (voice and text turns interleaved). Continue "
         "it naturally — do not repeat yourself:\n"
