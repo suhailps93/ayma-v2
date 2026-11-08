@@ -320,15 +320,30 @@ def chunk_lines(lines, limit: int = MAX_BUBBLE_CHARS) -> list[str]:
 _TRIGGER = re.compile(r"^\s*/self-check\s*$", re.IGNORECASE)
 
 
-def is_self_check_command(text: str) -> bool:
-    """True only for the bare slash command ``/self-check``.
+_PLAIN_TRIGGER_PHRASE = "self check"
+_PLAIN_PUNCT = re.compile(r"[^a-z0-9 ]+")
 
-    Strict on purpose (slash-command semantics): a conversational
-    mention ("can you run a self check?") must never fire the runner —
-    that phrasing is exactly what produced the fake, summarized
-    self-check in session s-0Y9QgcivBffTuLNJyDe0IN.
+
+def _normalize_plain(text: str) -> str:
+    """Lowercase, punctuation to spaces, collapse whitespace — the
+    same normalization the analysis-mode text trigger uses."""
+    return " ".join(_PLAIN_PUNCT.sub(" ", (text or "").lower()).split())
+
+
+def is_self_check_command(text: str) -> bool:
+    """True for the bare slash command ``/self-check`` or the bare
+    plain phrase ``self check`` as the whole message (founder
+    2026-11-08: the typed plain phrase must run the runner too, not
+    only the slash form).
+
+    Whole-message only, on purpose: a conversational mention ("can
+    you run a self check?") must never fire the runner — that phrasing
+    is exactly what produced the fake, summarized self-check in
+    session s-0Y9QgcivBffTuLNJyDe0IN.
     """
-    return bool(_TRIGGER.match(text or ""))
+    if _TRIGGER.match(text or ""):
+        return True
+    return _normalize_plain(text) == _PLAIN_TRIGGER_PHRASE
 
 
 def excluded_keys() -> list[str]:

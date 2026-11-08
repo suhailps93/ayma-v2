@@ -18,7 +18,18 @@ from self_check import CheckResult, SelfCheckRunner, _Deps
 
 @pytest.mark.parametrize(
     "text",
-    ["/self-check", "  /self-check  ", "/SELF-CHECK", "/Self-Check"],
+    [
+        "/self-check",
+        "  /self-check  ",
+        "/SELF-CHECK",
+        "/Self-Check",
+        "self check",
+        "self-check",
+        "Self Check",
+        "  self check  ",
+        "self check.",
+        "self check!",
+    ],
 )
 def test_trigger_matches_bare_slash_command(text):
     assert self_check.is_self_check_command(text)
@@ -28,7 +39,6 @@ def test_trigger_matches_bare_slash_command(text):
     "text",
     [
         "",
-        "self-check",
         "run a self check",
         "can you run a self-check?",
         "/self-check please",
