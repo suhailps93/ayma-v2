@@ -13,6 +13,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_auth_mocks/src/mock_user_credential.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -791,6 +792,125 @@ void main() {
       await tester.pump();
       expect(termsChecked(tester), isFalse);
       expect(opened, isEmpty);
+    });
+  });
+
+  group('consent layout geometry (post-2345 regression)', () {
+    // The NOTE 141 tap-target fix put ~48dp-tall padded chips inside the
+    // consent sentences: every line a link sat on stretched to fit the
+    // chip, the spacing went gappy, the closing full stop wrapped onto its
+    // own line, and the checkbox sat beside the middle of the block. The
+    // label is plain text now, with the tap targets overlaid on the words;
+    // these tests pin the geometry so it cannot drift back.
+
+    RenderParagraph paragraphFor(WidgetTester tester, Key tileKey) {
+      final rich = find.descendant(
+        of: find.byKey(tileKey),
+        matching: find.byType(RichText),
+      );
+      expect(rich, findsOneWidget);
+      return tester.renderObject<RenderParagraph>(rich);
+    }
+
+    // Rebuilds [span] with every WidgetSpan dropped (a chip's word is kept
+    // as styled text): the same sentence with no in-text chips at all.
+    TextSpan stripWidgetSpans(InlineSpan span) {
+      if (span is WidgetSpan) {
+        final child = span.child;
+        return TextSpan(
+          text: child is Text ? child.data : '',
+          style: child is Text ? child.style : null,
+        );
+      }
+      if (span is TextSpan) {
+        return TextSpan(
+          text: span.text,
+          style: span.style,
+          children: span.children?.map(stripWidgetSpans).toList(),
+        );
+      }
+      return const TextSpan(text: '');
+    }
+
+    testWidgets('consent paragraphs keep their natural plain-text height',
+        (tester) async {
+      final auth = _FakeAuth();
+      await _pump(tester, auth, accept: false);
+
+      for (final tileKey in [
+        const Key('signin_terms_checkbox'),
+        const Key('signin_biometric_checkbox'),
+      ]) {
+        final paragraph = paragraphFor(tester, tileKey);
+        final reference = TextPainter(
+          text: stripWidgetSpans(paragraph.text),
+          textDirection: TextDirection.ltr,
+          textAlign: paragraph.textAlign,
+          textScaler: paragraph.textScaler,
+          strutStyle: paragraph.strutStyle,
+        )..layout(maxWidth: paragraph.size.width);
+        expect(
+          (paragraph.size.height - reference.size.height).abs(),
+          lessThanOrEqualTo(1.0),
+          reason: 'the $tileKey label must be no taller than the same '
+              'sentence rendered as plain text (no stretched lines)',
+        );
+      }
+    });
+
+    testWidgets('each checkbox top lines up with the first text line',
+        (tester) async {
+      final auth = _FakeAuth();
+      await _pump(tester, auth, accept: false);
+
+      for (final tileKey in [
+        const Key('signin_terms_checkbox'),
+        const Key('signin_biometric_checkbox'),
+      ]) {
+        final tile = find.byKey(tileKey);
+        final checkbox = find.descendant(
+          of: tile,
+          matching: find.byType(Checkbox),
+        );
+        expect(checkbox, findsOneWidget);
+        final paragraph = paragraphFor(tester, tileKey);
+        final firstLine = paragraph
+            .getBoxesForSelection(
+                const TextSelection(baseOffset: 0, extentOffset: 1))
+            .first;
+        final richFinder = find.descendant(
+          of: tile,
+          matching: find.byType(RichText),
+        );
+        final firstLineTop = tester.getTopLeft(richFinder).dy + firstLine.top;
+        final checkboxTop = tester.getTopLeft(checkbox).dy;
+        expect(
+          (checkboxTop - firstLineTop).abs(),
+          lessThanOrEqualTo(4.0),
+          reason: 'the $tileKey checkbox must sit beside the first line, '
+              'not beside the middle of the text block',
+        );
+      }
+    });
+
+    testWidgets('link tap targets stay at least 48dp tall', (tester) async {
+      final auth = _FakeAuth();
+      await _pump(tester, auth, accept: false);
+
+      for (final linkKey in [
+        const Key('signin_terms_link'),
+        const Key('signin_privacy_link'),
+        const Key('signin_biometric_info_link'),
+      ]) {
+        final link = find.byKey(linkKey);
+        expect(link, findsOneWidget);
+        expect(
+          tester.getSize(link).height,
+          greaterThanOrEqualTo(48.0 - 0.1),
+          reason: '$linkKey must keep a full-size tap target even though '
+              'the label text is back to its natural line height',
+        );
+      }
     });
   });
 }
