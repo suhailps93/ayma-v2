@@ -247,7 +247,7 @@ class VoiceSessionController extends ChangeNotifier {
   String? get endNotice => _endNotice;
 
   /// The reason for the most recent session termination, with client-origin
-  /// markers (e.g. 'client_idle_timeout', 'agent_idle_timeout', 'dropped', 'user_stop').
+  /// markers (e.g. 'client_idle_timeout', 'agent_idle_timeout', 'dropped', 'user_stop', 'user_goodbye').
   String? _disconnectReason;
   String? get disconnectReason => _disconnectReason;
 
@@ -555,7 +555,12 @@ class VoiceSessionController extends ChangeNotifier {
   /// Deliberately conservative — the whole trimmed message must be the
   /// request, so ordinary sentences that merely contain the words ("I
   /// feel disconnected", "don't disconnect", "disconnect the wifi")
-  /// never end a call.
+  /// never end a call. The polite question form is the same request
+  /// ("Can you disconnect?" — the founder's exact words on a live call,
+  /// 2026-11-07, which the bare-imperative set missed, leaving the
+  /// model to claim a disconnect the app never performed), so an
+  /// optional "can/could you" lead-in is accepted — still whole-message,
+  /// so "can you disconnect the wifi" never matches.
   static bool isDisconnectRequest(String text) {
     final normalized = text
         .trim()
@@ -565,7 +570,7 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   static final RegExp _disconnectRequestPattern = RegExp(
-    r'^(please\s+)?(disconnect|hang\s?up|hangup|end\s+(the|this)\s+call|stop\s+(the|this)\s+call)(\s+(please|now))?$',
+    r'^((can|could)\s+you\s+(please\s+)?)?(please\s+)?(disconnect|hang\s?up|hangup|end\s+(the|this)\s+call|stop\s+(the|this)\s+call)(\s+(please|now))?$',
   );
 
   /// Test hooks for the last-ended record (same pattern as
@@ -1447,11 +1452,16 @@ class VoiceSessionController extends ChangeNotifier {
     return labels;
   }
 
-  /// The agent deliberately ended the call itself (§F3) — currently only
-  /// `out_of_credits`, once mid-call usage crosses the user's balance to
-  /// zero. Surfaces via the exact same `cappedError` + [OutOfCreditsBanner] /
-  /// [showOutOfCreditsSheet] affordance the pre-call `usageCapped` check
-  /// above already uses, rather than a new one-off path.
+  /// The agent deliberately ended the call itself (§F3). Three reasons:
+  /// `idle_timeout` (nobody spoke for the agent's idle window — a benign
+  /// silence end), `user_goodbye` (the caller signed off — "goodbye",
+  /// "disconnect" — and the voice-actions relay is hanging up at their
+  /// request), and `out_of_credits` (mid-call usage crossed the user's
+  /// balance to zero — surfaces via the exact same `cappedError` +
+  /// [OutOfCreditsBanner] / [showOutOfCreditsSheet] affordance the
+  /// pre-call `usageCapped` check above already uses, rather than a
+  /// new one-off path). Any other reason is ignored and the transport's
+  /// own `closed` event decides the outcome.
   void _onCallEnding(String reason) {
     if (reason == 'idle_timeout') {
       debugPrint('[voice] disconnect reason: agent_idle_timeout');
@@ -1461,11 +1471,38 @@ class VoiceSessionController extends ChangeNotifier {
       ));
       return;
     }
+    if (reason == 'user_goodbye') {
+      debugPrint('[voice] disconnect reason: user_goodbye');
+      unawaited(_endForAgentHangup());
+      return;
+    }
     if (reason != 'out_of_credits') return;
     _cappedError = true;
     _disconnectReason = 'out_of_credits';
     _fail('Out of credits — Ayma had to end the call. Upgrade to '
         'keep going.');
+  }
+
+  /// Ends the call because the agent hung up at the user's own request
+  /// (`call_ending`/`user_goodbye`): back to idle with NO error banner
+  /// and NO end notice — the user asked for this end and already heard
+  /// the sign-off inside the call. Until this path existed, the signal
+  /// was ignored here and the room deletion that follows it landed on
+  /// the generic `closed` handler, which reported a dropped connection
+  /// and showed "The voice connection dropped." for an intentional
+  /// hangup (founder report, 2026-11-07). The teardown below nulls the
+  /// transport synchronously (see [_teardown]), so the room-deleted
+  /// `closed` event that follows the signal hits the stale-transport
+  /// guard and cannot resurrect the dropped path.
+  Future<void> _endForAgentHangup() async {
+    if (active == this) { active = null; _syncActiveNotifier(); }
+    _disposeSessionLifecycle();
+    await _teardown();
+    _agentSpeaking = false;
+    _muted = false;
+    _disconnectReason = 'user_goodbye';
+    _recordCallEnd();
+    _setPhase(VoiceSessionPhase.idle);
   }
 
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent

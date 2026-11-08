@@ -98,6 +98,52 @@ def test_out_of_range_seconds_are_clamped_not_rejected():
     assert "just now" in line
 
 
+def test_just_ended_user_goodbye_reason():
+    line = main._call_state_context(
+        main.CallStateModel(ended_seconds_ago=5, end_reason="user_goodbye")
+    )
+    assert "said goodbye" in line
+    assert "already ended" in line
+
+
+# --- the voice seed renderer ----------------------------------------------
+#
+# /bootstrap seeds the room the user is about to talk in, but the client
+# can only report the PREVIOUS call there. The seed must still state
+# that THIS call is live — otherwise the voice model can answer a
+# spoken "disconnect" as if no call were active (founder defect,
+# 2026-11-07, second occurrence).
+
+
+def test_voice_seed_always_states_live_call():
+    line = main._voice_call_state_context(None)
+    assert "live voice call" in line
+    assert "disconnect" in line
+
+
+def test_voice_seed_names_previous_call_as_previous():
+    line = main._voice_call_state_context(
+        main.CallStateModel(
+            ended_seconds_ago=42, end_reason="client_idle_timeout"
+        )
+    )
+    assert "live voice call" in line
+    assert "Previous call: a voice call with the user ended 42 seconds ago" in line
+    assert "30 seconds of silence" in line
+    # The just-ended framing must not leak into the live seed: inside
+    # this call there is no "already ended" call to acknowledge.
+    assert "already ended" not in line
+    assert "Call state: a voice call" not in line
+
+
+def test_voice_seed_stale_previous_call_is_omitted():
+    line = main._voice_call_state_context(
+        main.CallStateModel(ended_seconds_ago=3600, end_reason="user_stop")
+    )
+    assert "live voice call" in line
+    assert "Previous call" not in line
+
+
 # --- the request models ---------------------------------------------------
 
 

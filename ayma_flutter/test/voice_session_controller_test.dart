@@ -810,6 +810,119 @@ void main() {
     expect(c.endNotice, contains('3 minutes of silence'));
   });
 
+  // --- agent hang-up at the user's request (founder, 2026-11-07): the
+  // agent publishes call_ending(user_goodbye) and deletes the room; the
+  // client must end cleanly, never with the "connection dropped" error.
+
+  test(
+      'call_ending(user_goodbye) ends the call cleanly — no error banner, '
+      'no failure report', () async {
+    final reporter = _RecordingReporter();
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      errorReporter: reporter,
+    );
+    await _startLive(c, transport);
+    expect(c.phase, VoiceSessionPhase.live);
+
+    transport.emitCallEnding('user_goodbye');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.idle);
+    expect(c.isActive, isFalse);
+    expect(c.errorMessage, isNull);
+    expect(c.cappedError, isFalse);
+    expect(c.endNotice, isNull);
+    expect(c.disconnectReason, 'user_goodbye');
+    expect(transport.disconnectCalls, 1);
+    expect(
+      reporter.reports.where((r) => r.reason == 'voice_dropped'),
+      isEmpty,
+    );
+  });
+
+  test(
+      'the room close that follows a user_goodbye call_ending does not '
+      'surface the dropped error', () async {
+    final reporter = _RecordingReporter();
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      errorReporter: reporter,
+    );
+    await _startLive(c, transport);
+
+    // The agent deletes the room right after the call_ending signal, so
+    // the transport close is already in flight behind it — queued in
+    // the same turn, before the hangup teardown disposes the transport.
+    transport.emitCallEnding('user_goodbye');
+    transport.closedController.add('room deleted');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.idle);
+    expect(c.errorMessage, isNull);
+    expect(c.disconnectReason, 'user_goodbye');
+    expect(
+      reporter.reports.where((r) => r.reason == 'voice_dropped'),
+      isEmpty,
+    );
+  });
+
+  test(
+      'an unexpected transport drop (no call_ending) still shows the '
+      'dropped banner and still files the report', () async {
+    final reporter = _RecordingReporter();
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      errorReporter: reporter,
+    );
+    await _startLive(c, transport);
+
+    transport.closedController.add('network error');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.error);
+    expect(c.errorMessage, contains('connection dropped'));
+    expect(c.disconnectReason, 'dropped');
+    expect(
+      reporter.reports.where((r) => r.reason == 'voice_dropped'),
+      hasLength(1),
+    );
+  });
+
+  test(
+      'call-state context tracks the call: active while live, just-ended '
+      'as user_goodbye after an agent hang-up', () async {
+    VoiceSessionController.debugClearLastCallEnd();
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    final during = VoiceSessionController.chatCallState();
+    expect(during.status, 'active');
+    expect(during.isActive, isTrue);
+
+    transport.emitCallEnding('user_goodbye');
+    await Future<void>.delayed(Duration.zero);
+
+    final after = VoiceSessionController.chatCallState();
+    expect(after.status, 'just_ended');
+    expect(after.reason, 'user_goodbye');
+    VoiceSessionController.debugClearLastCallEnd();
+  });
+
   test('client idle guard ends a live call when the agent never reports',
       () async {
     final transport = FakeVoiceTransport();

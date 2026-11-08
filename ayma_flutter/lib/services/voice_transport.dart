@@ -82,7 +82,8 @@ abstract class VoiceTransport {
   /// mid-call (§1.7 step 3).
   Stream<ToolUsedEvent> get toolEvents;
 
-  /// Emits the reason string (currently only `out_of_credits`, §F3) the agent
+  /// Emits the reason string (`out_of_credits` §F3, `idle_timeout`, or
+  /// `user_goodbye` — the agent hanging up at the user's own request) the agent
   /// sent right before it deliberately ended the call itself — distinct from
   /// [closed], which also fires for an ordinary dropped connection. Always
   /// emitted (if at all) shortly *before* [closed] for the same disconnect,
