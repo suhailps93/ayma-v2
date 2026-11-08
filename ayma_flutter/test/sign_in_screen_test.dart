@@ -6,6 +6,7 @@ import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/biometric_consent.dart';
+import 'package:ayma_flutter/services/legal_links.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -683,5 +684,113 @@ void main() {
     await tester.pump();
     expect(tester.widget<TextField>(confirm).obscureText, isTrue);
     expect(tester.widget<TextField>(password).obscureText, isFalse);
+  });
+
+  group('consent legal links (NOTE 141 tap targets)', () {
+    final opened = <Uri>[];
+
+    setUp(() {
+      opened.clear();
+      LegalLinks.setLauncherForTesting((url) async {
+        opened.add(url);
+        return true;
+      });
+    });
+
+    tearDown(() => LegalLinks.setLauncherForTesting(null));
+
+    bool termsChecked(WidgetTester tester) =>
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const Key('signin_terms_checkbox')))
+            .value ==
+        true;
+    bool biometricChecked(WidgetTester tester) =>
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const Key('signin_biometric_checkbox')))
+            .value ==
+        true;
+
+    // The centre of the link chip, then points just inside each edge and
+    // corner. The edge points sit inside the chip's padded hit region but
+    // outside the word's glyphs, where a bare text span used to drop the
+    // tap onto the row and toggle consent (or fire the neighbouring link).
+    List<Offset> spotsFor(WidgetTester tester, Finder link) => [
+          tester.getCenter(link),
+          tester.getTopLeft(link) + const Offset(2, 2),
+          tester.getTopRight(link) + const Offset(-2, 2),
+          tester.getBottomLeft(link) + const Offset(2, -2),
+          tester.getBottomRight(link) + const Offset(-2, -2),
+          tester.getRect(link).centerLeft + const Offset(2, 0),
+          tester.getRect(link).centerRight + const Offset(-2, 0),
+        ];
+
+    testWidgets('Terms link opens the Terms page from its centre and edges, '
+        'and never toggles a checkbox', (tester) async {
+      final auth = _FakeAuth();
+      await _pump(tester, auth, accept: false);
+
+      final link = find.byKey(const Key('signin_terms_link'));
+      expect(link, findsOneWidget);
+      // The hit region is a padded chip about 48dp tall, not glyph-tight.
+      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
+
+      for (final spot in spotsFor(tester, link)) {
+        await tester.tapAt(spot);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 10));
+        expect(termsChecked(tester), isFalse,
+            reason: 'a Terms tap must never tick the Terms checkbox');
+        expect(biometricChecked(tester), isFalse,
+            reason: 'a Terms tap must never tick the biometric checkbox');
+      }
+      expect(opened, hasLength(7));
+      expect(opened, everyElement(Uri.parse(LegalLinks.termsUrl)));
+    });
+
+    testWidgets('Privacy link opens the Privacy page from its centre and '
+        'edges, and never toggles a checkbox', (tester) async {
+      final auth = _FakeAuth();
+      await _pump(tester, auth, accept: false);
+
+      final link = find.byKey(const Key('signin_privacy_link'));
+      expect(link, findsOneWidget);
+      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
+
+      for (final spot in spotsFor(tester, link)) {
+        await tester.tapAt(spot);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 10));
+        expect(termsChecked(tester), isFalse,
+            reason: 'a Privacy tap must never tick the Terms checkbox');
+        expect(biometricChecked(tester), isFalse,
+            reason: 'a Privacy tap must never tick the biometric checkbox');
+      }
+      expect(opened, hasLength(7));
+      expect(opened, everyElement(Uri.parse(LegalLinks.privacyUrl)));
+    });
+
+    testWidgets('tapping the checkbox itself still toggles consent, and '
+        'opens nothing', (tester) async {
+      final auth = _FakeAuth();
+      await _pump(tester, auth, accept: false);
+
+      final box = find.descendant(
+        of: find.byKey(const Key('signin_terms_checkbox')),
+        matching: find.byType(Checkbox),
+      );
+      expect(box, findsOneWidget);
+
+      await tester.tap(box);
+      await tester.pump();
+      expect(termsChecked(tester), isTrue);
+      expect(opened, isEmpty);
+
+      await tester.tap(box);
+      await tester.pump();
+      expect(termsChecked(tester), isFalse);
+      expect(opened, isEmpty);
+    });
   });
 }
