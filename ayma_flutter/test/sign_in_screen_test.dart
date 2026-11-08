@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/legal/biometric_consent_text.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
+import 'package:ayma_flutter/screens/biometric_info_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
@@ -713,18 +714,37 @@ void main() {
             .value ==
         true;
 
-    // The centre of the link chip, then points just inside each edge and
-    // corner. The edge points sit inside the chip's padded hit region but
-    // outside the word's glyphs, where a bare text span used to drop the
-    // tap onto the row and toggle consent (or fire the neighbouring link).
-    List<Offset> spotsFor(WidgetTester tester, Finder link) => [
-          tester.getCenter(link),
-          tester.getTopLeft(link) + const Offset(2, 2),
-          tester.getTopRight(link) + const Offset(-2, 2),
-          tester.getBottomLeft(link) + const Offset(2, -2),
-          tester.getBottomRight(link) + const Offset(-2, -2),
-          tester.getRect(link).centerLeft + const Offset(2, 0),
-          tester.getRect(link).centerRight + const Offset(-2, 0),
+    // The link's tap area is its visible word: the centre, then points just
+    // inside each edge and corner of the word's box. (NOTE 147: the old
+    // 48dp padded overlay was measured once and went stale a line high, so
+    // the word itself is the target now — a recognizer on the span, never a
+    // cached rect.)
+    Rect wordBox(WidgetTester tester, Key tileKey, String word) {
+      final rich = find.descendant(
+        of: find.byKey(tileKey),
+        matching: find.byType(RichText),
+      );
+      expect(rich, findsOneWidget);
+      final paragraph = tester.renderObject<RenderParagraph>(rich);
+      final plain = paragraph.text.toPlainText();
+      final start = plain.indexOf(word);
+      expect(start, greaterThanOrEqualTo(0),
+          reason: '$word must be in the $tileKey sentence');
+      final boxes = paragraph.getBoxesForSelection(
+        TextSelection(baseOffset: start, extentOffset: start + word.length),
+      );
+      expect(boxes, isNotEmpty);
+      return boxes.first.toRect().shift(tester.getTopLeft(rich));
+    }
+
+    List<Offset> spotsFor(Rect box) => [
+          box.center,
+          box.topLeft + const Offset(2, 2),
+          box.topRight + const Offset(-2, 2),
+          box.bottomLeft + const Offset(2, -2),
+          box.bottomRight + const Offset(-2, -2),
+          box.centerLeft + const Offset(2, 0),
+          box.centerRight + const Offset(-2, 0),
         ];
 
     testWidgets('Terms link opens the Terms page from its centre and edges, '
@@ -732,12 +752,9 @@ void main() {
       final auth = _FakeAuth();
       await _pump(tester, auth, accept: false);
 
-      final link = find.byKey(const Key('signin_terms_link'));
-      expect(link, findsOneWidget);
-      // The hit region is a padded chip about 48dp tall, not glyph-tight.
-      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
-
-      for (final spot in spotsFor(tester, link)) {
+      final box =
+          wordBox(tester, const Key('signin_terms_checkbox'), 'Terms');
+      for (final spot in spotsFor(box)) {
         await tester.tapAt(spot);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 10));
@@ -755,11 +772,9 @@ void main() {
       final auth = _FakeAuth();
       await _pump(tester, auth, accept: false);
 
-      final link = find.byKey(const Key('signin_privacy_link'));
-      expect(link, findsOneWidget);
-      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
-
-      for (final spot in spotsFor(tester, link)) {
+      final box = wordBox(
+          tester, const Key('signin_terms_checkbox'), 'Privacy Policy');
+      for (final spot in spotsFor(box)) {
         await tester.tapAt(spot);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 10));
@@ -800,8 +815,9 @@ void main() {
     // consent sentences: every line a link sat on stretched to fit the
     // chip, the spacing went gappy, the closing full stop wrapped onto its
     // own line, and the checkbox sat beside the middle of the block. The
-    // label is plain text now, with the tap targets overlaid on the words;
-    // these tests pin the geometry so it cannot drift back.
+    // label is plain text now, and each link opens from a recognizer on its
+    // own span (NOTE 147: the overlaid tap targets went stale a line high
+    // after a reflow); these tests pin the geometry so it cannot drift back.
 
     RenderParagraph paragraphFor(WidgetTester tester, Key tileKey) {
       final rich = find.descendant(
@@ -893,24 +909,196 @@ void main() {
       }
     });
 
-    testWidgets('link tap targets stay at least 48dp tall', (tester) async {
+    testWidgets('link words are glyph-tight, with no padded 48dp tap target',
+        (tester) async {
       final auth = _FakeAuth();
       await _pump(tester, auth, accept: false);
 
-      for (final linkKey in [
-        const Key('signin_terms_link'),
-        const Key('signin_privacy_link'),
-        const Key('signin_biometric_info_link'),
+      for (final (tileKey, word) in [
+        (const Key('signin_terms_checkbox'), 'Terms'),
+        (const Key('signin_terms_checkbox'), 'Privacy Policy'),
+        (
+          const Key('signin_biometric_checkbox'),
+          'Biometric Information'
+        ),
       ]) {
-        final link = find.byKey(linkKey);
-        expect(link, findsOneWidget);
+        final paragraph = paragraphFor(tester, tileKey);
+        final plain = paragraph.text.toPlainText();
+        final start = plain.indexOf(word);
+        expect(start, greaterThanOrEqualTo(0));
+        final boxes = paragraph.getBoxesForSelection(
+          TextSelection(
+              baseOffset: start, extentOffset: start + word.length),
+        );
+        expect(boxes, isNotEmpty);
         expect(
-          tester.getSize(link).height,
-          greaterThanOrEqualTo(48.0 - 0.1),
-          reason: '$linkKey must keep a full-size tap target even though '
-              'the label text is back to its natural line height',
+          boxes.first.toRect().height,
+          lessThan(24.0),
+          reason: '$word must be its visible word only — the NOTE 147 '
+              'defect was a measured-once 48dp overlay sitting a line high',
         );
       }
+    });
+  });
+  group('consent legal links stay on their words after a reflow (NOTE 147)',
+      () {
+    final opened = <Uri>[];
+
+    setUp(() {
+      opened.clear();
+      LegalLinks.setLauncherForTesting((url) async {
+        opened.add(url);
+        return true;
+      });
+    });
+
+    tearDown(() => LegalLinks.setLauncherForTesting(null));
+
+    bool termsChecked(WidgetTester tester) =>
+        tester
+                .widget<CheckboxListTile>(
+                    find.byKey(const Key('signin_terms_checkbox')))
+                .value ==
+            true;
+    bool biometricChecked(WidgetTester tester) =>
+        tester
+                .widget<CheckboxListTile>(
+                    find.byKey(const Key('signin_biometric_checkbox')))
+                .value ==
+            true;
+
+    // The centre of [word] where it is actually rendered right now, in
+    // global coordinates — read off the laid-out paragraph, never off a
+    // cached tap target. This is where a finger lands.
+    Offset wordCenter(WidgetTester tester, Key tileKey, String word) {
+      final rich = find.descendant(
+        of: find.byKey(tileKey),
+        matching: find.byType(RichText),
+      );
+      expect(rich, findsOneWidget);
+      final paragraph = tester.renderObject<RenderParagraph>(rich);
+      final plain = paragraph.text.toPlainText();
+      final start = plain.indexOf(word);
+      expect(start, greaterThanOrEqualTo(0),
+          reason: '$word must be in the $tileKey sentence');
+      final boxes = paragraph.getBoxesForSelection(
+        TextSelection(baseOffset: start, extentOffset: start + word.length),
+      );
+      expect(boxes, isNotEmpty);
+      return tester.getTopLeft(rich) + boxes.first.toRect().center;
+    }
+
+    // Pumps [app] under text scale 1.0, then re-pumps it under scale 2.0:
+    // the consent sentences reflow and their link words move down the page.
+    // A tap target measured before the reflow is stale after it — exactly
+    // the NOTE 147 defect on the sign-in screen (targets ~one line above
+    // the visible words, visible-text taps doing nothing).
+    Future<void> pumpAndReflow(WidgetTester tester, Widget app) async {
+      tester.view.physicalSize = const Size(1100, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      Future<void> pumpScale(double scale) async {
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+            child: app,
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await pumpScale(1.0);
+      await pumpScale(2.0);
+    }
+
+    testWidgets(
+        'Terms opens the Terms page from its visible word after a reflow, '
+        'and never toggles a checkbox', (tester) async {
+      final auth = _FakeAuth();
+      await pumpAndReflow(
+        tester,
+        MaterialApp(
+          home: SignInScreen(auth: auth, voiceController: _FakeVoice()),
+        ),
+      );
+
+      await tester.tapAt(
+          wordCenter(tester, const Key('signin_terms_checkbox'), 'Terms'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(opened, [Uri.parse(LegalLinks.termsUrl)]);
+      expect(termsChecked(tester), isFalse,
+          reason: 'a Terms tap must never tick the Terms checkbox');
+      expect(biometricChecked(tester), isFalse);
+    });
+
+    testWidgets(
+        'Privacy opens the Privacy page from its visible word after a '
+        'reflow, and never toggles a checkbox', (tester) async {
+      final auth = _FakeAuth();
+      await pumpAndReflow(
+        tester,
+        MaterialApp(
+          home: SignInScreen(auth: auth, voiceController: _FakeVoice()),
+        ),
+      );
+
+      await tester.tapAt(wordCenter(
+          tester, const Key('signin_terms_checkbox'), 'Privacy Policy'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(opened, [Uri.parse(LegalLinks.privacyUrl)]);
+      expect(termsChecked(tester), isFalse);
+      expect(biometricChecked(tester), isFalse);
+    });
+
+    testWidgets(
+        'Biometric Information opens its page from its visible word after '
+        'a reflow, and never toggles a checkbox', (tester) async {
+      final auth = _FakeAuth();
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) =>
+                SignInScreen(auth: auth, voiceController: _FakeVoice()),
+          ),
+          GoRoute(
+            path: BiometricInfoScreen.path,
+            builder: (_, __) => const BiometricInfoScreen(),
+          ),
+        ],
+      );
+      await pumpAndReflow(
+        tester,
+        MaterialApp.router(routerConfig: router),
+      );
+
+      await tester.tapAt(wordCenter(tester,
+          const Key('signin_biometric_checkbox'), 'Biometric Information'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Biometric information'), findsOneWidget);
+      expect(termsChecked(tester), isFalse);
+      expect(biometricChecked(tester), isFalse);
+    });
+
+    testWidgets('a tap on plain row text still toggles consent after a '
+        'reflow, and opens nothing', (tester) async {
+      final auth = _FakeAuth();
+      await pumpAndReflow(
+        tester,
+        MaterialApp(
+          home: SignInScreen(auth: auth, voiceController: _FakeVoice()),
+        ),
+      );
+
+      await tester.tapAt(wordCenter(
+          tester, const Key('signin_biometric_checkbox'), 'recognition'));
+      await tester.pump();
+      expect(biometricChecked(tester), isTrue);
+      expect(opened, isEmpty);
     });
   });
 }
