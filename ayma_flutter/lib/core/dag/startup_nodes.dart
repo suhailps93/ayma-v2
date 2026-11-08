@@ -463,9 +463,9 @@ class StartupNodes {
           }
           final user = ctx.contains('auth_user') ? ctx.get<User?>('auth_user') : null;
           await Future.wait([
-            MetaIntegrations.refresh(db),
-            SentryFlag.refresh(db),
-            DebugCaptureIsolation.refresh(db),
+            MetaIntegrations.refresh(db, timeout: kStartupFlagRefreshTimeout),
+            SentryFlag.refresh(db, timeout: kStartupFlagRefreshTimeout),
+            DebugCaptureIsolation.refresh(db, timeout: kStartupFlagRefreshTimeout),
             if (user != null && !user.isAnonymous)
               accentColorControllerGlobal.syncRemoteIfMissing(),
           ]);

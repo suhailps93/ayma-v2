@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'api_client.dart' show kInteractiveTimeout;
+import 'api_client.dart' show kStartupFlagRefreshTimeout;
 
 final _log = Logger('debug_capture_isolation');
 
@@ -69,8 +69,11 @@ class DebugCaptureIsolation {
     await loadCached();
     if (db != null) {
       try {
-        await refresh(db, timeout: const Duration(seconds: 2))
-            .timeout(const Duration(seconds: 2));
+        await refresh(
+          db,
+          timeout: const Duration(seconds: 2),
+          maxRetries: 0,
+        ).timeout(const Duration(seconds: 2));
       } catch (_) {}
     } else if (_refreshFuture != null) {
       try {
@@ -161,12 +164,19 @@ class DebugCaptureIsolation {
   /// untouched. Concurrent calls share the in-flight future.
   static Future<void> refresh(
     FirebaseFirestore db, {
-    Duration timeout = kInteractiveTimeout,
+    Duration timeout = kStartupFlagRefreshTimeout,
+    int maxRetries = 2,
+    Duration retryDelay = const Duration(seconds: 1),
   }) {
     if (_refreshFuture != null) {
       return _refreshFuture!;
     }
-    final fut = _doRefresh(db, timeout: timeout);
+    final fut = _doRefresh(
+      db,
+      timeout: timeout,
+      maxRetries: maxRetries,
+      retryDelay: retryDelay,
+    );
     _refreshFuture = fut;
     fut.whenComplete(() {
       if (identical(_refreshFuture, fut)) {
@@ -178,36 +188,51 @@ class DebugCaptureIsolation {
 
   static Future<void> _doRefresh(
     FirebaseFirestore db, {
-    Duration timeout = kInteractiveTimeout,
+    Duration timeout = kStartupFlagRefreshTimeout,
+    int maxRetries = 2,
+    Duration retryDelay = const Duration(seconds: 1),
   }) async {
-    try {
-      final snap = await db
-          .collection(collection)
-          .doc(docId)
-          .get()
-          .timeout(timeout);
-      if (snap.exists) {
-        final value = parse(snap.data());
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(_kDisabled, value);
-        disabled.value = value;
-        final msg = '[debug_capture_isolation] flag refreshed: '
-            'capture isolation disabled=$value';
-        _log.info(msg);
-        debugPrint(msg);
-        print(msg);
-      } else {
-        final msg = '[debug_capture_isolation] flag doc $collection/$docId '
-            'does not exist; keeping cached value';
-        _log.info(msg);
-        debugPrint(msg);
-        print(msg);
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final snap = await db
+            .collection(collection)
+            .doc(docId)
+            .get()
+            .timeout(timeout);
+        if (snap.exists) {
+          final value = parse(snap.data());
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool(_kDisabled, value);
+          disabled.value = value;
+          final msg = '[debug_capture_isolation] flag refreshed: '
+              'capture isolation disabled=$value';
+          _log.info(msg);
+          debugPrint(msg);
+          print(msg);
+        } else {
+          final msg = '[debug_capture_isolation] flag doc $collection/$docId '
+              'does not exist; keeping cached value';
+          _log.info(msg);
+          debugPrint(msg);
+          print(msg);
+        }
+        return;
+      } catch (e) {
+        final isLast = attempt >= maxRetries;
+        if (isLast) {
+          final err = '[debug_capture_isolation] flag refresh failed: $e';
+          _log.warning(err);
+          debugPrint(err);
+          print(err);
+        } else {
+          final err = '[debug_capture_isolation] flag refresh attempt '
+              '${attempt + 1} failed: $e; retrying in ${retryDelay.inSeconds}s';
+          _log.info(err);
+          debugPrint(err);
+          print(err);
+          await Future<void>.delayed(retryDelay);
+        }
       }
-    } catch (e) {
-      final err = '[debug_capture_isolation] flag refresh failed: $e';
-      _log.warning(err);
-      debugPrint(err);
-      print(err);
     }
   }
 }

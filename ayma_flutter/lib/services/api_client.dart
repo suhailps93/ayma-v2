@@ -16,6 +16,10 @@ import 'biometric_consent.dart';
 /// Target budget for interactive API and Firestore waits (PERF_PLAN Phase 1).
 const kInteractiveTimeout = Duration(seconds: 8);
 
+/// Default budget for background startup flag-refreshes (PERF_PLAN / Scout NOTE 140).
+/// Accommodates cold boot ProviderInstaller, TLS provider patching, and radio init.
+const kStartupFlagRefreshTimeout = Duration(seconds: 25);
+
 /// Long timeout for multi-model server-side operations (e.g. photoPublish moderation + face embedding).
 const kLongTimeout = Duration(seconds: 55);
 
