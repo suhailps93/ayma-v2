@@ -2,7 +2,12 @@
 2026-10-28: a false "Opened that conversation" chip showed even when the open
 failed). ``outcome_label`` returns ``NO_CHIP`` for any non-``navigated:``
 result so both surfaces (text ``tools_used`` and the voice ``tool_used`` event)
-suppress the success chip."""
+suppress the success chip.
+
+Same gating for the image tools (founder report 2026-11-09: the "Generated an
+image" chip showed on a reply whose generation had been refused server-side):
+``generate_image`` / ``edit_photo`` earn their chip only on the skill's exact
+success line."""
 
 import tool_labels
 from tool_labels import NO_CHIP, outcome_label
@@ -40,6 +45,52 @@ def test_non_nav_tools_are_unaffected():
     assert outcome_label("send_dm_message", "PREVIEW ONLY, nothing sent yet.") == (
         "Drafted a message"
     )
+
+
+def test_generate_image_chip_only_on_success():
+    # The skill's exact success line (skills/generate_image.py) earns the
+    # chip: outcome None -> the "Generated an image" label shows.
+    assert outcome_label(
+        "generate_image", "done — sent the image in the chat"
+    ) is None
+    assert tool_labels.tool_label("generate_image") == "Generated an image"
+
+
+def test_generate_image_no_chip_on_failure():
+    # The skill's real failure lines (model refused / save failed) get no
+    # chip at all — the reply text already explains the failure.
+    assert outcome_label(
+        "generate_image",
+        "I couldn't generate that image just now (403 PERMISSION_DENIED).",
+    ) == NO_CHIP
+    assert outcome_label(
+        "generate_image",
+        "I made the image but couldn't save it just now (boom).",
+    ) == NO_CHIP
+    assert outcome_label("generate_image", None) == NO_CHIP
+
+
+def test_edit_photo_chip_only_on_success():
+    # The skill's exact success line (skills/photo_edit.py) earns the chip:
+    # outcome None -> the existing fallback label shows, unchanged.
+    assert outcome_label(
+        "edit_photo", "done — sent the edited photo in the chat"
+    ) is None
+    assert tool_labels.tool_label("edit_photo") == "Edit photo"
+
+
+def test_edit_photo_no_chip_on_failure():
+    assert outcome_label(
+        "edit_photo",
+        "I couldn't generate that edited photo just now (403) — let me "
+        "just give you some advice instead.",
+    ) == NO_CHIP
+    assert outcome_label(
+        "edit_photo", "I made the edit but couldn't save it just now (boom)."
+    ) == NO_CHIP
+    # Another photo tool's success line is not edit_photo's marker.
+    assert outcome_label("edit_photo", "done — removed that photo") == NO_CHIP
+    assert outcome_label("edit_photo", None) == NO_CHIP
 
 
 def test_list_conversations_has_both_labels():

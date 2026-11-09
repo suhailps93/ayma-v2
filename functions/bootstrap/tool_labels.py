@@ -34,6 +34,18 @@ _NAV_CHIP_TOOLS = frozenset(
 # to exactly the tools whose chips are outcome-gated here.
 NAV_CHIP_TOOLS = _NAV_CHIP_TOOLS
 
+# Image tools whose chip claims an image now exists in the chat
+# ("Generated an image"). Each skill returns its success line ONLY when the
+# image was actually generated and stored; every failure path (model refused,
+# out of credits, save failed) returns a plain explanation sentence instead.
+# Gate the chip on the exact success marker so a failed generation never
+# shows a success chip (founder report 2026-11-09: the "Generated an image"
+# chip showed on a reply whose generation had been refused server-side).
+_IMAGE_CHIP_SUCCESS = {
+    "generate_image": "done — sent the image in the chat",
+    "edit_photo": "done — sent the edited photo in the chat",
+}
+
 TOOL_LABELS = {
     # Built-in grounding
     "web_search": "Searched the web",
@@ -154,9 +166,20 @@ def outcome_label(name: str, result: object) -> str | None:
     The app-control navigation tools (:data:`_NAV_CHIP_TOOLS`) only earn their
     "Opened …" chip on a real navigation — their result starts with
     ``navigated:``. Anything else (not found, the app didn't navigate) returns
-    :data:`NO_CHIP` so no false success chip shows (founder bug 2026-10-28)."""
+    :data:`NO_CHIP` so no false success chip shows (founder bug 2026-10-28).
+
+    The image tools (:data:`_IMAGE_CHIP_SUCCESS`) only earn their chip when
+    the skill's result is its success line — the image really was generated
+    and sent. Any other result returns :data:`NO_CHIP` (founder report
+    2026-11-09)."""
     if name in _NAV_CHIP_TOOLS:
         if isinstance(result, str) and result.startswith("navigated:"):
+            return None
+        return NO_CHIP
+    if name in _IMAGE_CHIP_SUCCESS:
+        if isinstance(result, str) and result.startswith(
+            _IMAGE_CHIP_SUCCESS[name]
+        ):
             return None
         return NO_CHIP
     if name != "send_dm_message" or not isinstance(result, str):
