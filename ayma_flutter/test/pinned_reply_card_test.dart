@@ -907,4 +907,170 @@ void main() {
       expect(find.text('That was us at the lake!'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'swipe to reply on a photo: the send also carries the storage-path reference as its own field for the server pull',
+    (tester) async {
+      const photoUrl = 'https://firebasestorage.googleapis.com/v0/b/x/o/'
+          'uploads%2Fu1%2Flake.jpg?alt=media&token=<redacted>';
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'user',
+            'text': '',
+            'image_path': '',
+            'image_url': photoUrl,
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.fling(
+        find.byType(CachedNetworkImage),
+        const Offset(-300, 0),
+        1000,
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'That was us at the lake!');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('composerSendButton')));
+      await tester.pumpAndSettle();
+
+      // Alongside the quote marker, the request carries the photo
+      // REFERENCE as a storage path in its own field — decoded from the
+      // stored URL — so the server can pull the exact photo itself.
+      // The photo bytes never ride the request.
+      expect(capture.requests, hasLength(1));
+      final sent = capture.requests.first;
+      expect(sent['reply_image_path'], 'uploads/u1/lake.jpg');
+    },
+  );
+
+  testWidgets(
+    'swipe to reply on an Ayma generated image: the send carries the generated path as the reference field',
+    (tester) async {
+      const generatedUrl = 'https://firebasestorage.googleapis.com/v0/b/x/o/'
+          'ayma_generated%2Fu1%2Fcaricature.png?alt=media&token=<redacted>';
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'ayma',
+            'text': 'Here is the caricature you asked for',
+            'image_path': 'ayma_generated/u1/caricature.png',
+            'image_url': generatedUrl,
+            'tools': ['Generated an image'],
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.fling(
+        find.textContaining('Here is the caricature'),
+        const Offset(300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Make the smile bigger');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('composerSendButton')));
+      await tester.pumpAndSettle();
+
+      expect(capture.requests, hasLength(1));
+      final sent = capture.requests.first;
+      expect(sent['reply_image_path'], 'ayma_generated/u1/caricature.png');
+    },
+  );
+
+  testWidgets(
+    'swipe to reply on plain text: the reference field stays empty',
+    (tester) async {
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'ayma',
+            'text': 'Would you prefer hiking or coffee for the first date?',
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.fling(
+        find.textContaining('Would you prefer hiking'),
+        const Offset(300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Hiking definitely!');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('composerSendButton')));
+      await tester.pumpAndSettle();
+
+      expect(capture.requests, hasLength(1));
+      final sent = capture.requests.first;
+      expect(sent['reply_image_path'], '');
+    },
+  );
+
+  test('storagePathFromImageUrl decodes the storage reference from a download URL', () {
+    expect(
+      storagePathFromImageUrl(
+        'https://firebasestorage.googleapis.com/v0/b/bucket/o/'
+        'uploads%2Fu1%2Flake.jpg?alt=media&token=<redacted>',
+      ),
+      'uploads/u1/lake.jpg',
+    );
+    expect(
+      storagePathFromImageUrl(
+        'https://firebasestorage.googleapis.com/v0/b/bucket/o/'
+        'ayma_generated%2Fu1%2Fcaricature.png?alt=media&token=<redacted>',
+      ),
+      'ayma_generated/u1/caricature.png',
+    );
+    // Not a Storage download URL: no reference.
+    expect(storagePathFromImageUrl('https://example.com/pic.jpg'), '');
+    expect(storagePathFromImageUrl(''), '');
+  });
 }

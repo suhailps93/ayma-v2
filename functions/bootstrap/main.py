@@ -1352,6 +1352,7 @@ class ChatRequest(_TruncatingModel):
         "shared_subject_uid": 128,
         "shared_subject_name": 200,
         "shared_ref_version": 64,
+        "reply_image_path": 256,
         "photo_url": 2000,
         "photo_source": 16,
         "screen": 32,
@@ -1426,6 +1427,16 @@ class ChatRequest(_TruncatingModel):
     shared_subject_uid: str = Field(default="", max_length=128)
     shared_subject_name: str = Field(default="", max_length=200)
     shared_ref_version: str = Field(default="", max_length=64)
+    # Set when the message is a swipe-reply to an earlier chat message that
+    # carried a photo: the REFERENCE to that photo — its storage path
+    # (`uploads/{uid}/...` for a photo the user sent, `ayma_generated/{uid}/...`
+    # for an image generated for this user) — never the photo bytes or a
+    # description of it (founder 2026-11-09: reference, not content — the
+    # same rule the shared-report reference above follows). `_prepare_chat`
+    # validates the path against the caller trees and pulls the exact
+    # photo server-side, so Ayma answers the reply looking at the photo
+    # the reply points at.
+    reply_image_path: str = Field(default="", max_length=256)
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
@@ -1619,6 +1630,14 @@ class _ChatCtx:
     # ``version``), or empty when the turn carries no share. Binds the
     # ``open_shared_report`` tool in the generation paths below.
     shared_ctx: dict = field(default_factory=dict)
+    # The exact photo a swipe-reply points at, pulled server-side from
+    # the turn `reply_image_path` reference (the client ships the
+    # reference only, never bytes). Attached to generation when the turn
+    # has no fresher image of its own, so Ayma answers the reply looking
+    # at the replied-to photo. Kept separate from `image` / `photo_image`:
+    # it must never trigger the "just shared a photo" or photo-context
+    # handling — the photo is not new, Ayma is just now able to see it.
+    reply_image: tuple[bytes, str] | None = None
 
 
 
@@ -1846,6 +1865,35 @@ async def _prepare_chat(
             _resolve_photo_context_image, photo_url
         )
 
+    # Swipe-reply to a photo message (founder 2026-11-09): the turn
+    # carries only the reference — the replied-to photo storage path.
+    # Pull the exact photo server-side, the same treatment the photo
+    # context above gets, but only from the trees of the caller (their
+    # uploads, or images generated for them). A reference outside those
+    # trees, or one that no longer resolves, is dropped quietly: it must
+    # never fail the message of the user, and the quote in the message
+    # text still names the photo.
+    reply_image: tuple[bytes, str] | None = None
+    reply_image_path = req.reply_image_path.strip()
+    if reply_image_path and (
+        reply_image_path.startswith(f"uploads/{uid}/")
+        or reply_image_path.startswith(f"ayma_generated/{uid}/")
+    ):
+        try:
+            reply_image = await asyncio.to_thread(
+                media_embed.download_bytes, reply_image_path
+            )
+        except Exception:  # noqa: BLE001 - a dead reference never fails the turn
+            logger.warning(
+                "reply photo reference did not resolve: %s", reply_image_path
+            )
+            reply_image = None
+    elif reply_image_path:
+        logger.warning(
+            "reply photo reference outside the trees of the caller: %s",
+            reply_image_path,
+        )
+
     window = _to_turns(req.recent_turns)
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
@@ -1987,6 +2035,12 @@ async def _prepare_chat(
         system_prompt += "\n\n" + _shared_report_context(
             shared_ctx["kind"], shared_ctx["subject_name"]
         )
+    # Swipe-reply photo reference (founder 2026-11-09): the user is
+    # replying to one specific photo from earlier in this chat, and the
+    # exact photo was pulled server-side from the reference — name that
+    # plainly so she answers about THIS photo.
+    if reply_image is not None:
+        system_prompt += "\n\n" + _reply_photo_context()
     if tour_active and not req.tour_continuation:
         current = skills.guided_tour._index_of(tour_state)
         steps = skills.guided_tour._tour_steps(tour_state)
@@ -2033,6 +2087,7 @@ async def _prepare_chat(
             bool(req.profile_edit),
             photo_url, photo_source, photo_image,
             shared_ctx=shared_ctx,
+            reply_image=reply_image,
         ),
     )
 
@@ -2104,6 +2159,23 @@ def _deep_dive_edit_context(report_id: str, target: str) -> str:
         )
     lines.append("Confirm what you did in one line and keep chatting.")
     return "\n".join(lines)
+
+
+def _reply_photo_context() -> str:
+    """The prompt block for a turn that swipe-replies to a photo message:
+    the user is replying to one specific photo from earlier in this chat,
+    and that exact photo — pulled server-side from the turn
+    `reply_image_path` reference — is attached to this turn for Ayma to
+    look at. The quote in the message of the user (`[Replying to ...]`)
+    points at it."""
+    return (
+        "REPLIED-TO PHOTO: the message of the user is a reply to a "
+        "photo earlier in this conversation (the quoted message in "
+        "their text). That exact photo is attached to this turn — "
+        "look at it and base your answer on what is actually in it. "
+        "It is the photo their reply points at, which may not be the "
+        "most recent photo in the conversation."
+    )
 
 
 def _shared_report_context(kind: str, subject_name: str) -> str:
@@ -2550,7 +2622,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
     user's unified **Brain** (§13.10): the chosen brain for a text/tools turn,
     but Gemini whenever the turn carries an image (vision → Gemini, since Muse
     can't read images — it would otherwise hallucinate the photo)."""
-    needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+    needs = "vision" if (ctx.image or ctx.photo_image or ctx.reply_image) else "tools"
     return await get_user_brain_provider(ctx.uid, "chat", needs=needs).generate_reply(
         req.message,
         system_prompt=ctx.system_prompt,
@@ -2606,7 +2678,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
             image_result=ctx.photo_edit_result,
             feedback_result=ctx.feedback_draft,
         ),
-        image=ctx.image or ctx.photo_image,
+        image=ctx.image or ctx.reply_image or ctx.photo_image,
         uid=ctx.uid,
         feature=token_ledger.FEATURE_CHAT,
         session_id=req.session_id,
@@ -2717,7 +2789,7 @@ async def chat_stream(
                 async with asyncio.timeout(_CHAT_TURN_TIMEOUT_SECONDS):
                     # Unified Brain (§13.10): the user's brain for a text/tools
                     # turn; Gemini when an image is attached (vision → Gemini).
-                    _needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+                    _needs = "vision" if (ctx.image or ctx.photo_image or ctx.reply_image) else "tools"
                     async for ev in get_user_brain_provider(
                         ctx.uid, "chat", needs=_needs
                     ).generate_reply_events(
@@ -2772,7 +2844,7 @@ async def chat_stream(
                             image_result=ctx.photo_edit_result,
                             feedback_result=ctx.feedback_draft,
                         ),
-                            image=ctx.image or ctx.photo_image,
+                            image=ctx.image or ctx.reply_image or ctx.photo_image,
                             uid=ctx.uid,
                             feature=token_ledger.FEATURE_CHAT,
                             session_id=req.session_id,

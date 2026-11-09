@@ -2283,6 +2283,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String replySnippet = '';
     String replyKind = '';
     String replyImageUrl = '';
+    String replyImagePath = '';
 
     if (replying != null) {
       replySubject = replying.role == TurnRole.user ? 'You' : 'Ayma';
@@ -2292,6 +2293,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // photo itself. Empty while that photo's upload is still in flight;
       // the quote then names the photo without a resolvable reference.
       replyImageUrl = replying.imageUrl ?? '';
+      // The storage-path REFERENCE for the same photo, sent as its own
+      // request field so the server can pull the exact photo itself —
+      // the quote marker only names it in the message text.
+      replyImagePath = storagePathFromImageUrl(replyImageUrl);
     } else if (screenCtx != null) {
       replySubject = screenCtx.label;
       replySnippet = screenCtx.note.isNotEmpty
@@ -2563,6 +2568,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           sharedSubjectUid: _sharedSubjectUid,
           sharedSubjectName: _sharedSubjectName,
           sharedRefVersion: _sharedRefVersion,
+          replyImagePath: replyImagePath,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -2604,6 +2610,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           sharedSubjectUid: _sharedSubjectUid,
           sharedSubjectName: _sharedSubjectName,
           sharedRefVersion: _sharedRefVersion,
+          replyImagePath: replyImagePath,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,

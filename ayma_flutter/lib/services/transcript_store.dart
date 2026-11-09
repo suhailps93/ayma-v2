@@ -167,6 +167,24 @@ String replyWirePrefix({
   return '[Replying to $subject: "$quote"]';
 }
 
+/// The Firebase Storage object path behind a photo download URL
+/// (the firebasestorage.googleapis.com form, whose object path is
+/// the url-encoded segment after `/o/`) — the storage REFERENCE for
+/// a photo a turn renders. A
+/// swipe-reply sends this path (never the photo bytes) so the server
+/// can pull the exact replied-to photo itself. `''` when [url] is not
+/// a Storage download URL — the reply then only names the photo in its
+/// quote, with no resolvable reference.
+String storagePathFromImageUrl(String url) {
+  final match = RegExp(r'/b/[^/]+/o/([^?]+)').firstMatch(url);
+  if (match == null) return '';
+  try {
+    return Uri.decodeComponent(match.group(1)!);
+  } on ArgumentError {
+    return '';
+  }
+}
+
 /// The single rolling window of conversation turns, voice and text interleaved
 /// through one code path (ARCHITECTURE.md §1.6, §1.7 step 4). Both the chat
 /// view and the context window sent to `/bootstrap` / `/chat` read from here.

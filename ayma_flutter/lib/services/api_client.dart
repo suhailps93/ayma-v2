@@ -281,6 +281,7 @@ abstract final class ChatContextCaps {
   static const sharedSubjectUid = 128;
   static const sharedSubjectName = 200;
   static const sharedRefVersion = 64;
+  static const replyImagePath = 256;
   static const photoUrl = 2000;
   static const photoSource = 16;
   static const screen = 32;
@@ -392,6 +393,7 @@ Map<String, dynamic> buildChatRequestBody({
   String sharedSubjectUid = '',
   String sharedSubjectName = '',
   String sharedRefVersion = '',
+  String replyImagePath = '',
   bool profileEdit = false,
   String photoUrl = '',
   String photoSource = '',
@@ -445,6 +447,11 @@ Map<String, dynamic> buildChatRequestBody({
           sharedSubjectName, ChatContextCaps.sharedSubjectName),
       'shared_ref_version':
           clampChatContext(sharedRefVersion, ChatContextCaps.sharedRefVersion),
+      // A swipe-reply to a photo message: the REFERENCE to that photo
+      // (its storage path) — never the photo itself. The server pulls
+      // the exact photo from the reference (founder 2026-11-09).
+      'reply_image_path':
+          clampChatContext(replyImagePath, ChatContextCaps.replyImagePath),
       'profile_edit': profileEdit,
       'photo_url': clampChatContext(photoUrl, ChatContextCaps.photoUrl),
       'photo_source':
@@ -2754,6 +2761,7 @@ class ApiClient {
     String sharedSubjectUid = '',
     String sharedSubjectName = '',
     String sharedRefVersion = '',
+    String replyImagePath = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2796,6 +2804,7 @@ class ApiClient {
           sharedSubjectUid: sharedSubjectUid,
           sharedSubjectName: sharedSubjectName,
           sharedRefVersion: sharedRefVersion,
+          replyImagePath: replyImagePath,
           profileEdit: profileEdit,
           photoUrl: photoUrl,
           photoSource: photoSource,
@@ -2848,6 +2857,7 @@ class ApiClient {
     String sharedSubjectUid = '',
     String sharedSubjectName = '',
     String sharedRefVersion = '',
+    String replyImagePath = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2885,6 +2895,7 @@ class ApiClient {
         sharedSubjectUid: sharedSubjectUid,
         sharedSubjectName: sharedSubjectName,
         sharedRefVersion: sharedRefVersion,
+        replyImagePath: replyImagePath,
         profileEdit: profileEdit,
         photoUrl: photoUrl,
         photoSource: photoSource,
