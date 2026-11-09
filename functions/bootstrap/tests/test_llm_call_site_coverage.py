@@ -20,6 +20,15 @@ from config import CONFIG
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# The ONE founder-authorized direct-Google inference exception, scoped to
+# IMAGE GENERATION only (founder decision 2026-11-08; AGENTS.md "scoped
+# exception" note). ``image_gen.py`` is the only served module permitted to
+# construct a direct image client — ``gemini.generate_image`` /
+# ``gemini.edit_image`` are its public face and route through it. Every OTHER
+# inference path (chat, matching, JSON, vision, voice) stays LiveKit-only and
+# is scanned below. Keep this set to image generation alone.
+IMAGE_GEN_EXCEPTION = {"image_gen.py"}
+
 
 def _modules():
     for p in sorted(ROOT.glob("**/*.py")):
@@ -46,6 +55,8 @@ def test_no_served_module_imports_google_genai():
     code — only the LiveKit gateway client (``inference_llm``) remains."""
     offenders = []
     for p, rel in _modules():
+        if rel in IMAGE_GEN_EXCEPTION:
+            continue  # scoped image-generation exception — see IMAGE_GEN_EXCEPTION
         tree = ast.parse(_source(p))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -70,6 +81,8 @@ def test_no_served_module_constructs_a_direct_google_client():
     served code (comments/docstrings excluded: this is an AST scan)."""
     offenders = []
     for p, rel in _modules():
+        if rel in IMAGE_GEN_EXCEPTION:
+            continue  # scoped image-generation exception — see IMAGE_GEN_EXCEPTION
         tree = ast.parse(_source(p))
         hits: set[str] = set()
         for node in ast.walk(tree):
@@ -99,9 +112,38 @@ def test_no_served_module_constructs_a_direct_google_client():
 
 def test_gemini_has_no_direct_client_helpers_left():
     """The Vertex/dev client factory and its retry wrapper are deleted —
-    nothing can even import them back into a call site."""
+    nothing can even import them back into a call site. The restored image
+    path does NOT bring them back: its one direct call lives in image_gen.py
+    (the scoped exception), not here."""
     assert not hasattr(gemini, "_client")
     assert not hasattr(gemini, "_generate")
+
+
+def test_the_direct_google_exception_is_scoped_to_image_generation():
+    """The one direct-Google exception is image generation, and it is narrow:
+    exactly the image_gen module is exempt, it really does construct a direct
+    image client (so the exemption is load-bearing, not a free pass), and
+    gemini.generate_image / edit_image route through it rather than calling
+    Google themselves."""
+    assert IMAGE_GEN_EXCEPTION == {"image_gen.py"}
+    src = _source(ROOT / "image_gen.py")
+    tree = ast.parse(src)
+    constructs_client = any(
+        isinstance(n, ast.Call)
+        and _dotted(n.func).endswith("Client")
+        and "genai" in _dotted(n.func)
+        for n in ast.walk(tree)
+    )
+    assert constructs_client, "image_gen must hold the real direct call"
+    # The public image funcs delegate to image_gen and carry no genai call.
+    gsrc = _source(ROOT / "gemini.py")
+    for name in ("generate_image", "edit_image"):
+        fn = next(
+            n for n in ast.parse(gsrc).body if getattr(n, "name", "") == name
+        )
+        body = ast.unparse(fn)
+        assert "genai" not in body and "generate_content" not in body, name
+    assert "image_gen" in gsrc
 
 
 def test_routed_wrappers_are_livekit_only():

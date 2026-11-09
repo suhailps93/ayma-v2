@@ -2269,6 +2269,21 @@ class ApiClient {
   Future<void> saveBrainPreference(String brain) =>
       _postJsonOk('/brain/preference', {'brain': brain});
 
+  /// `GET /image-model/preference` — the image-generation model catalog + the
+  /// user's current choice. Image generation is the ONE founder-authorized
+  /// direct-provider path; only configured providers are listed (Gemini-direct
+  /// is the default). [timeout] is raised on the models page so the load rides
+  /// through a scale-to-zero cold start.
+  Future<ImageModelCatalog> imageModelPreference({Duration? timeout}) async {
+    final m = await _getJson('/image-model/preference', const {}, timeout);
+    return ImageModelCatalog.fromMap(m);
+  }
+
+  /// `POST /image-model/preference` — persist the user's image-generation
+  /// model. Takes effect on the next image generation.
+  Future<void> saveImageModelPreference(String imageModel) =>
+      _postJsonOk('/image-model/preference', {'image_model': imageModel});
+
   /// `POST /models/preference` — the Models screen's ONE save (founder,
   /// 2026-11-06): persist the single Brain AND the whole voice stack in one
   /// action. [reconnect] is true when a voice call is active (the button
@@ -2278,10 +2293,13 @@ class ApiClient {
   Future<void> saveModelsPreference({
     required String brain,
     required VoiceSelection selection,
+    String imageModel = '',
     bool reconnect = false,
   }) =>
       _postJsonOk('/models/preference', {
         'brain': brain,
+        // Optional: omitted ('') leaves the saved image model untouched.
+        'image_model': imageModel,
         'mode': selection.mode,
         'realtime_model_id': selection.realtimeModelId,
         'stt_id': selection.sttId,
@@ -6053,6 +6071,71 @@ class BrainCatalog {
             .toList(),
         current: m['current'] as String? ?? '',
         defaultBrain: m['default'] as String? ?? '',
+      );
+}
+
+// --- Image model (§image-gen restore) -----------------------------------
+
+/// One selectable image-generation model from `GET /image-model/preference`.
+/// Image generation is the ONE founder-authorized direct-provider path; only
+/// configured providers are returned (no key → not listed), so [available] is
+/// always true for the entries that come back.
+class ImageModelOption {
+  const ImageModelOption({
+    required this.id,
+    required this.label,
+    this.description = '',
+    this.model = '',
+    this.available = true,
+  });
+
+  final String id; // 'gemini-direct' | 'xai-direct' | …
+  final String label;
+  final String description;
+  final String model; // the underlying model id
+  final bool available;
+
+  factory ImageModelOption.fromMap(Map m) => ImageModelOption(
+        id: m['id'] as String? ?? '',
+        label: m['label'] as String? ?? '',
+        description: m['description'] as String? ?? '',
+        model: m['model'] as String? ?? '',
+        available: m['available'] as bool? ?? true,
+      );
+}
+
+/// The `/image-model/preference` payload: the configured image-model list, the
+/// saved choice (empty when unset), and the default (`gemini-direct`) the UI
+/// pre-selects when nothing is saved.
+class ImageModelCatalog {
+  const ImageModelCatalog({
+    this.models = const [],
+    this.current = '',
+    this.defaultModel = '',
+  });
+
+  final List<ImageModelOption> models;
+  final String current; // '' when unset
+  final String defaultModel;
+
+  /// The id the dropdown should show: the saved choice if any, else the
+  /// default, else the first available model (never null when non-empty).
+  String get effectiveId {
+    if (current.isNotEmpty && models.any((m) => m.id == current)) {
+      return current;
+    }
+    if (defaultModel.isNotEmpty && models.any((m) => m.id == defaultModel)) {
+      return defaultModel;
+    }
+    return models.isNotEmpty ? models.first.id : '';
+  }
+
+  factory ImageModelCatalog.fromMap(Map<String, dynamic> m) => ImageModelCatalog(
+        models: ((m['models'] as List?) ?? const [])
+            .map((e) => ImageModelOption.fromMap(e as Map))
+            .toList(),
+        current: m['current'] as String? ?? '',
+        defaultModel: m['default'] as String? ?? '',
       );
 }
 

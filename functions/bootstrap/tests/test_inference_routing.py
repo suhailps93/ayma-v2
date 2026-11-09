@@ -662,11 +662,49 @@ def test_research_is_disabled():
         asyncio.run(gemini.research("q"))
 
 
-def test_generate_image_and_edit_image_are_disabled():
-    with pytest.raises(llm_routing.DirectGoogleDisabledError):
+def test_generate_image_and_edit_image_route_through_image_gen(monkeypatch):
+    """Image generation is the ONE founder-authorized direct-Google exception
+    (2026-11-08): generate_image / edit_image are restored and route through
+    image_gen (where the scoped direct call + cap live). They no longer raise
+    DirectGoogleDisabledError; an ``ok`` outcome returns (bytes, mime)."""
+    import image_gen
+
+    seen = []
+
+    async def fake_generate(prompt, *, image=None, uid=None, feature="misc"):
+        seen.append((prompt, image, uid, feature))
+        return image_gen.ImageOutcome(
+            image_gen.STATUS_OK, image_bytes=b"PNGBYTES", mime="image/png"
+        )
+
+    monkeypatch.setattr(image_gen, "generate", fake_generate)
+    monkeypatch.setattr(gemini.token_ledger, "check", lambda uid: None)
+
+    assert asyncio.run(gemini.generate_image("a sunset")) == (
+        b"PNGBYTES", "image/png"
+    )
+    assert asyncio.run(
+        gemini.edit_image(b"x", "image/png", "make it pop")
+    ) == (b"PNGBYTES", "image/png")
+    # edit_image grounds the generation in the input image.
+    assert seen[1][1] == (b"x", "image/png")
+
+
+def test_generate_image_surfaces_the_honest_outcome_message(monkeypatch):
+    """A non-ok outcome (paused/unconfigured/error) raises RuntimeError with
+    the outcome's user-safe message — never a silent image, never a stub."""
+    import image_gen
+
+    async def fake_generate(prompt, *, image=None, uid=None, feature="misc"):
+        return image_gen.ImageOutcome(
+            image_gen.STATUS_PAUSED, message=image_gen.PAUSED_MESSAGE
+        )
+
+    monkeypatch.setattr(image_gen, "generate", fake_generate)
+    monkeypatch.setattr(gemini.token_ledger, "check", lambda uid: None)
+    with pytest.raises(RuntimeError) as exc:
         asyncio.run(gemini.generate_image("a sunset"))
-    with pytest.raises(llm_routing.DirectGoogleDisabledError):
-        asyncio.run(gemini.edit_image(b"x", "image/png", "make it pop"))
+    assert "used up for today" in str(exc.value)
 
 
 def test_embeddings_are_gone_and_face_match_is_the_seam():

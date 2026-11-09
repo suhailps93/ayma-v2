@@ -308,6 +308,28 @@ class Config:
     a value <= 0 pauses search entirely. There is no uncapped configuration.
     ``WEB_SEARCH_DAILY_CAP``."""
 
+    image_gen_daily_cap: int
+    """Hard daily cap on image-generation provider calls — the ONE
+    founder-authorized direct-Google inference exception (``image_gen.py``,
+    founder decision 2026-11-08). Enforced atomically in Firestore BEFORE
+    every provider call (``image_gen_usage/{YYYY-MM-DD}``, America/Los_Angeles
+    day); a value <= 0 pauses image generation entirely. There is no uncapped
+    configuration. ``IMAGE_GEN_DAILY_CAP``; default 100."""
+
+    image_gen_xai_api_key: str
+    """Bearer key for the xAI image provider (``xai-direct`` catalog entry,
+    ``grok-imagine-image-2.0``). Empty = the xAI provider is NOT configured:
+    its model is not listed in the picker and any routed call returns the
+    honest ``unconfigured`` outcome with no provider call. The entry becomes
+    available with no code change once secret ``XAI_API_KEY`` is created in the
+    project. ``XAI_API_KEY``; default "" (no such secret exists yet)."""
+
+    image_gen_xai_model: str
+    """Model id for the ``xai-direct`` catalog entry — xAI's current Imagine
+    image model (generation + editing). Same ``AGENTS.md`` single-source rule;
+    the only image model id NOT in the Gemini family. LOCKED to
+    ``grok-imagine-image-2.0``. ``IMAGE_GEN_XAI_MODEL``."""
+
     gemini_chat_thinking_level: str
     """Thinking effort for **text chat** replies (``generate_reply``) — chat is
     conversational, not a reasoning task, so ``low`` keeps replies fast and the
@@ -1288,6 +1310,11 @@ def _load() -> Config:
         web_search_api_key=os.getenv("WEB_SEARCH_API_KEY", ""),
         web_search_cse_id=os.getenv("WEB_SEARCH_CSE_ID", ""),
         web_search_daily_cap=int(os.getenv("WEB_SEARCH_DAILY_CAP", "100")),
+        image_gen_daily_cap=int(os.getenv("IMAGE_GEN_DAILY_CAP", "100")),
+        image_gen_xai_api_key=os.getenv("XAI_API_KEY", ""),
+        image_gen_xai_model=os.getenv(
+            "IMAGE_GEN_XAI_MODEL", "grok-imagine-image-2.0"
+        ),
         gemini_chat_thinking_level=os.getenv(
             "GEMINI_CHAT_THINKING_LEVEL", "low"
         ),

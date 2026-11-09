@@ -278,27 +278,73 @@ def test_moderation_rejection_is_never_uploaded(monkeypatch):
 # --------------------------------------------------------------------- billing
 
 
-def test_gemini_generate_image_is_disabled_and_meters_nothing(monkeypatch):
-    """Image generation is disabled with the direct-Google kill (founder rule
-    2026-11-04): it raises instead of calling the image model, and a call
-    that never runs meters nothing."""
+def test_gemini_generate_image_is_restored_and_returns_bytes(monkeypatch):
+    """Image generation is restored (founder decision 2026-11-08): the
+    pre-kill contract is back — an ``ok`` outcome from the Gemini-direct path
+    returns (bytes, mime), and the prompt/uid/feature reach image_gen."""
     import gemini as gemini_mod
-    import llm_routing
+    import image_gen
 
-    recorded = []
+    seen = {}
+
+    async def fake_generate(prompt, *, image=None, uid=None, feature="misc"):
+        seen["call"] = (prompt, image, uid, feature)
+        return image_gen.ImageOutcome(
+            image_gen.STATUS_OK, image_bytes=b"IMG", mime="image/png"
+        )
+
     monkeypatch.setattr(gemini_mod.token_ledger, "check", lambda uid: None)
-    monkeypatch.setattr(
-        gemini_mod.token_ledger, "record",
-        lambda *a, **k: recorded.append((a, k)),
+    monkeypatch.setattr(image_gen, "generate", fake_generate)
+
+    out = asyncio.run(
+        gemini_mod.generate_image(
+            "a caricature", uid="u9", feature=token_ledger.FEATURE_IMAGE_GEN
+        )
+    )
+    assert out == (b"IMG", "image/png")
+    assert seen["call"] == (
+        "a caricature", None, "u9", token_ledger.FEATURE_IMAGE_GEN
     )
 
-    with pytest.raises(llm_routing.DirectGoogleDisabledError):
-        asyncio.run(
-            gemini_mod.generate_image(
-                "a caricature", uid="u9", feature=token_ledger.FEATURE_IMAGE_GEN
-            )
+
+def test_gemini_generate_image_surfaces_honest_failure_not_a_stub(monkeypatch):
+    """A non-ok outcome raises RuntimeError carrying the honest, user-safe
+    message from the typed outcome — the skill catches it and relays it as a
+    plain chat turn (test_model_failure_falls_back_to_text)."""
+    import gemini as gemini_mod
+    import image_gen
+
+    async def fake_generate(prompt, *, image=None, uid=None, feature="misc"):
+        return image_gen.ImageOutcome(
+            image_gen.STATUS_ERROR, message="safety refusal: no dice"
         )
-    assert recorded == []
+
+    monkeypatch.setattr(gemini_mod.token_ledger, "check", lambda uid: None)
+    monkeypatch.setattr(image_gen, "generate", fake_generate)
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(
+            gemini_mod.generate_image("x", uid="u9", feature="image_gen")
+        )
+    assert "safety refusal: no dice" in str(exc.value)
+
+
+def test_gemini_generate_image_out_of_credits_never_reaches_provider(monkeypatch):
+    """The per-user credit gate runs first: an out-of-credits user raises
+    TokenCapExceeded before image_gen is touched, so the daily cap is never
+    consumed and no provider call is made."""
+    import gemini as gemini_mod
+    import image_gen
+
+    def _cap(uid):
+        raise token_ledger.TokenCapExceeded("out of credits")
+
+    async def _never(*_a, **_k):  # pragma: no cover - must not be reached
+        raise AssertionError("image_gen must not run for a broke user")
+
+    monkeypatch.setattr(gemini_mod.token_ledger, "check", _cap)
+    monkeypatch.setattr(image_gen, "generate", _never)
+    with pytest.raises(token_ledger.TokenCapExceeded):
+        asyncio.run(gemini_mod.generate_image("x", uid="u9"))
 
 
 def test_cost_usd_for_image_gen_prices_image_output():

@@ -58,7 +58,8 @@ flowchart LR
     GCS[(Cloud Storage<br/>photos, selfies)]
     Links["Link validation (web research)<br/>404 / soft-404 / grounding redirects dropped,<br/>Links vs Social profiles de-duplicated"]
     VSearch["Vertex AI Search<br/>ayma-public-web engine"]
-    Disabled["DISABLED sub-paths (kill 2026-11-04,<br/>founder-decision items):<br/>grounded research, embeddings,<br/>batch, TTS previews, image edit"]
+    Disabled["DISABLED sub-paths (kill 2026-11-04,<br/>founder-decision items):<br/>grounded research, embeddings,<br/>batch, TTS previews"]
+    ImageGen["image_gen.py — IMAGE GEN<br/>the ONE scoped direct-Google exception (2026-11-08)<br/>pluggable provider catalog (gemini-direct default, xai-direct unavailable)<br/>fail-closed daily cap image_gen_usage/{day}<br/>per-user ayma_image_model; bills Google knowingly"]
     Sched[Cloud Scheduler<br/>/cron/* with X-Cron-Secret]
     SM[Secret Manager]
     BQ[(BigQuery billing_export)]
@@ -91,6 +92,8 @@ flowchart LR
   API -->|chat, JSON, vision (Inference-only)| Gateway
   API -->|DM assist /dm/assist §6.9 (dm_coach=meta default);<br/>DM translate /dm/translate §6.12 (translate=meta default);<br/>other surfaces when flipped to meta| MetaAPI
   API -.->|disabled, raise honestly| Disabled
+  API -->|generate_image / edit_photo:<br/>direct Gemini image call, capped + fail-closed| ImageGen
+  ImageGen -.->|direct, billed to Google| GeminiImg[Gemini image model<br/>gemini-2.5-flash-image]
   API -->|deep dive discovery| VSearch
   API -->|og:image fetch| Web
   API --> Links -->|HEAD/GET, public IPs only| Web
@@ -135,7 +138,8 @@ fallback settings are retained but inert. An Inference failure raises honestly.
 | Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference (media the gateway cannot take — HEIC, m4a, webm, ogg, aac — raises honestly) | `llm_route_vision` (inert) |
 | Text chat with tools | **Meta Muse Spark** (`LLM_PROVIDER_CHAT=meta` in `deploy-api.sh`; Gemini fallback). Leaves LiveKit Inference coverage: bills the Meta $150 credit, not LiveKit. With `chat=gemini` it is Inference | `llm_provider_chat` |
 | Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` (inert) |
-| DISABLED (founder-decision items): `gemini.research` (grounded deep-dive/skills search), embeddings (`media_embed`), batch (`gemini_batch`, wiki lint), voice preview TTS, image generate/edit | raise `DirectGoogleDisabledError` — the gateway has no equivalent, so these are off, not rerouted | — |
+| **Image generate/edit (`generate_image` / `edit_photo`)** | **Direct Gemini image model — the ONE founder-authorized scoped exception** (`image_gen.py`; `GEMINI_IMAGE_EDIT_MODEL`). Pluggable provider catalog + a fail-closed daily cap (`IMAGE_GEN_DAILY_CAP`, default 100, `image_gen_usage/{day}`). Per-user pick (`ayma_image_model`); `gemini-direct` default. `xai-direct` ships unavailable (no `XAI_API_KEY`). Bills Google, chosen knowingly — this exception does NOT extend to any other surface | per-user `ayma_image_model` |
+| DISABLED (founder-decision items): `gemini.research` (grounded deep-dive/skills search), embeddings (`media_embed`), batch (`gemini_batch`, wiki lint), voice preview TTS | raise `DirectGoogleDisabledError` — the gateway has no equivalent, so these are off, not rerouted | — |
 
 **Inference chat completion budget.** The chat model on the gateway is a *thinking* model, and its
 `completion_tokens` includes reasoning tokens (`inference_llm._usage`). The completion budget is a single

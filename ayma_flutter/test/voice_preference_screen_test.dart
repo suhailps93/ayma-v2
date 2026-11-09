@@ -87,6 +87,20 @@ Map<String, dynamic> _brainCatalog() => {
       'default': 'gemini',
     };
 
+Map<String, dynamic> _imageCatalog() => {
+      'models': [
+        {
+          'id': 'gemini-direct',
+          'label': 'Gemini (Google)',
+          'description': 'Google Gemini image model.',
+          'model': 'gemini-2.5-flash-image',
+          'available': true,
+        },
+      ],
+      'current': 'gemini-direct',
+      'default': 'gemini-direct',
+    };
+
 Map<String, dynamic> _realtimeCatalog() => {
       'modes': ['realtime', 'cascade'],
       'source': 'livekit',
@@ -166,6 +180,10 @@ ApiClient _api({Map<String, dynamic> Function()? voiceCatalog}) {
     }
     if (req.url.path == '/brain/preference' && req.method == 'GET') {
       return http.Response(jsonEncode(_brainCatalog()), 200,
+          headers: const {'content-type': 'application/json'});
+    }
+    if (req.url.path == '/image-model/preference' && req.method == 'GET') {
+      return http.Response(jsonEncode(_imageCatalog()), 200,
           headers: const {'content-type': 'application/json'});
     }
     if (req.url.path == '/models/preference') {
@@ -258,6 +276,7 @@ void main() {
     expect(_posts.single['path'], '/models/preference');
     final body = _posts.single['body'] as Map<String, dynamic>;
     expect(body['brain'], 'meta');
+    expect(body['image_model'], 'gemini-direct'); // the image picker's value
     expect(body['mode'], 'cascade');
     expect(body['stt_id'], 'deepgram/nova-3');
     expect(body['tts_id'], 'inworld/inworld-tts-1');
@@ -298,6 +317,7 @@ void main() {
     // Brain dropdown is removed (Nov 8 founder order).
     for (final label in [
       'BRAIN',
+      'IMAGE MODEL',
       'MODE',
       'SPEECH-TO-TEXT',
       'TEXT-TO-SPEECH',
@@ -311,6 +331,7 @@ void main() {
     // One info icon per picker in cascade mode; the realtime info icon stays home.
     for (final key in [
       'picker-info-brain',
+      'picker-info-image',
       'picker-info-mode',
       'picker-info-stt',
       'picker-info-tts',
@@ -321,7 +342,7 @@ void main() {
     }
     expect(find.byKey(const ValueKey('picker-info-realtime-model')),
         findsNothing);
-    expect(find.byIcon(Icons.info_outline), findsNWidgets(6));
+    expect(find.byIcon(Icons.info_outline), findsNWidgets(7));
     expect(find.byIcon(Icons.visibility_outlined), findsNothing);
 
     // Tapping the Brain info icon opens its explanation in a sheet.
@@ -341,6 +362,18 @@ void main() {
     expect(find.text('Voice'), findsOneWidget);
     expect(
       find.textContaining('How Ayma sounds when she speaks on a call'),
+      findsOneWidget,
+    );
+
+    // Dismiss, then the Image model picker renders with its info sheet.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('image-model-dropdown')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('picker-info-image')));
+    await tester.pumpAndSettle();
+    expect(find.text('Image model'), findsOneWidget);
+    expect(
+      find.textContaining('The model Ayma uses to create and edit images'),
       findsOneWidget,
     );
   });

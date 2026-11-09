@@ -160,6 +160,16 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     tab: 3,
   ),
   TourFeature(
+    featureId: 'ayma_image_model',
+    headline: 'Pick her image model',
+    subtitle: "Open Settings, then Ayma's models, to choose which model she "
+        'uses to create and edit images in chat. Gemini is the default; more '
+        'appear as they are switched on.',
+    icon: Icons.image_outlined,
+    anchorId: TourAnchors.profileAymaSettingsRow,
+    tab: 3,
+  ),
+  TourFeature(
     featureId: 'ask_ayma_change_models',
     headline: 'Just ask her to switch',
     subtitle: 'Tell Ayma "switch your brain to Muse", "use cascade mode", '
