@@ -30,6 +30,18 @@ key** the backend referral page uses (`referral_page.REFERRER_KEY`), so the app
 reads it after install and attributes the referral. No code → the plain
 `/get` link.
 
+## Shared-profile page-share passthrough (`ayma_page`)
+
+When a user shares a profile externally, the share kit composes a public link:
+`https://justabot.info/p/<token>` (backed by `page_share.py`). If the recipient
+taps this link on Android without the app installed, the landing page forwards to
+Google Play carrying the page token as the `ayma_page` install referrer
+(`&referrer=ayma_page%3D<token>`, key from `page_share_page.REFERRER_KEY`).
+On first launch after install, `InstallReferrerService` on Android reads this
+referrer and stashes it into `PendingPageShare`, matching the signed-out `/p/`
+in-app landing behaviour so the shared profile auto-opens the moment the user
+signs in.
+
 ## How the redirect works (`public/get.html`)
 
 Pure client-side JS, exposed as `window.aymaSmartLink` for testing:

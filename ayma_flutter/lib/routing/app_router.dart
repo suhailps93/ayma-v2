@@ -118,17 +118,21 @@ const _recoveryPendingAllowed = {
   PrivacyScreen.path,
 };
 
-void setupAuthDeepLinkDrain([FirebaseAuth? auth]) {
+void setupAuthDeepLinkDrain([
+  FirebaseAuth? auth,
+  void Function(String path)? navigate,
+]) {
+  final nav = navigate ?? navigateToRoute;
   (auth ?? FirebaseAuth.instance).authStateChanges().listen((user) {
     if (user != null && !user.isAnonymous) {
       DeepLinkQueue.instance.drainPostAuth(
         user.uid,
-        navigate: (path) => navigateToRoute(path),
+        navigate: (path) => nav(path),
       );
       // A page-share link that arrived signed-out: its target route was
       // stashed by the link screen — open it now sign-in has landed.
       final pendingShare = PendingPageShare.take();
-      if (pendingShare.isNotEmpty) navigateToRoute(pendingShare);
+      if (pendingShare.isNotEmpty) nav(pendingShare);
     }
   });
 }

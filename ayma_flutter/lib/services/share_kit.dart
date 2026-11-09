@@ -205,6 +205,13 @@ class PendingPageShare {
 
   static void stash(String path) => _path = path;
 
+  /// Stash a raw page token (e.g. from the Play install referrer) by routing
+  /// it through the `/p/<token>` deep-link route on drain.
+  static void stashToken(String token) {
+    final t = token.trim();
+    if (t.isNotEmpty) _path = '/p/$t';
+  }
+
   static String take() {
     final p = _path;
     _path = '';
