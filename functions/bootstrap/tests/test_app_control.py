@@ -1813,6 +1813,43 @@ def test_open_practice_date_reports_when_nobody_matches():
     assert out == "I couldn't find someone called nobody in the app."
 
 
+def test_open_practice_date_voice_flag_carries_the_auto_start_query():
+    # Bug DC2eUbckGA6J0ufDZpRG: a voice-mode ask must land on the practice
+    # screen with the voice flag set, so the voice call starts on its own
+    # instead of waiting for a manual tap on the voice button.
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-sofia", "Sofia Ruiz")
+    out = _run(
+        app_control._bind_open_practice_date(db, "me")("Sophia", voice=True)
+    )
+    assert out.startswith("navigated: screen=practice_date")
+    assert "voice mode" in out
+    cmd = db.store[_PENDING]
+    assert cmd["action"] == "navigate"
+    assert cmd["path"] == "/practice/u-sofia?voice=1"
+
+
+@pytest.mark.parametrize("phrase", [
+    "start a practice date with Sofia in voice mode",
+    "let me practice with Daniel by voice",
+    "start a voice practice date with Sofia",
+    "practice with her using voice",
+])
+def test_detect_practice_voice_intent_matches_voice_asks(phrase):
+    assert app_control.detect_practice_voice_intent(phrase)
+
+
+@pytest.mark.parametrize("phrase", [
+    "start a practice date with Sofia",
+    "let me practice with Daniel by text",
+    "start a practice date with Sofia in text mode",
+    "practice date with Sofia in voice mode, no wait, by text",
+])
+def test_detect_practice_voice_intent_ignores_text_and_plain_asks(phrase):
+    assert not app_control.detect_practice_voice_intent(phrase)
+
+
 def test_sim_tools_are_registered_in_the_command_set():
     # Both must be wired into COMMAND_SKILLS (and therefore voice + text), or
     # the model can never pick them and the denial bug returns.

@@ -4529,6 +4529,22 @@ def test_detect_voice_command_marks_a_partnerless_launch(phrase, tool):
     assert agent.detect_voice_command(phrase) == (tool, {"name": ""})
 
 
+def test_detect_voice_command_practice_voice_intent_carries_the_flag():
+    # Bug DC2eUbckGA6J0ufDZpRG: "in voice mode" rides the deterministic
+    # launch (the partner tail is the raw spoken tail, as elsewhere in
+    # this net — the tool resolver fuzzy-matches it); a plain or
+    # by-text ask keeps the plain launch.
+    assert agent.detect_voice_command(
+        "start a practice date with Sofia in voice mode"
+    ) == ("open_practice_date", {"name": "Sofia in voice mode", "voice": True})
+    assert agent.detect_voice_command(
+        "start a practice date with Sofia"
+    ) == ("open_practice_date", {"name": "Sofia"})
+    assert agent.detect_voice_command(
+        "start a practice date with Sofia by text"
+    ) == ("open_practice_date", {"name": "Sofia by text"})
+
+
 def test_detect_voice_command_launch_precedence():
     # "open Sofia's profile" stays navigation; a launch phrase is never it.
     assert agent.detect_voice_command("open Sofia's profile") == (

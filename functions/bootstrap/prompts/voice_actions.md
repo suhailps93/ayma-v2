@@ -24,7 +24,12 @@ not name or clearly mean.
 - launch_practice: the user asks to START a practice date with someone — a
   rehearsal conversation where THEY talk to a simulated match ("start a
   practice date with Sofia", "can I talk to her in practice?", "let me
-  practice with Daniel"). The ask must be about starting one NOW.
+  practice with Daniel"). The ask must be about starting one NOW. If they
+  ask for it IN VOICE MODE ("in voice mode", "by voice", "a voice practice
+  date"), also answer modality "voice" — the practice voice call then
+  starts on its own, with no extra tap. If they explicitly ask for text
+  ("by text", "texting"), answer modality "text". Otherwise leave
+  modality out.
 - launch_sim: the user asks to START an AI date simulation — an agent-to-agent
   (simulated) conversation ("run a date sim with Daniel", "start an agent to
   agent conversation with her", "can we start a simulated conversation with
@@ -122,6 +127,10 @@ something else ("disconnect the Wi-Fi") means none.
 - "tell me about the models you use" → none (no navigation ask).
 - "open Sofia's profile" → open_profile, member Sofia.
 - "start a practice date with Sofia" → launch_practice, partner Sofia.
+- "start a practice date with Sofia in voice mode" → launch_practice,
+  partner Sofia, modality voice.
+- "let me practice with Daniel by text" → launch_practice, partner
+  Daniel, modality text.
 - "let me practice with Daniel" → launch_practice, partner Daniel.
 - "Can I talk to her in practice?" (Dillu under discussion) →
   launch_practice, partner Dillu.
@@ -232,7 +241,7 @@ always present in your answer):
 
 - {"action": "navigate", "page": "<destination key>"}
 - {"action": "open_profile", "member": "<name>"}
-- {"action": "launch_practice", "partner": "<name>"}
+- {"action": "launch_practice", "partner": "<name>", "modality": "<voice|text, only when the user asks for one>"}
 - {"action": "launch_sim", "partner": "<name>"}
 - {"action": "set_stack", "tool": "<set_brain|set_voice_brain|set_voice_mode|set_realtime_model|set_stt|set_tts>", "value": "<target>"}
 - {"action": "set_voice", "voice_kind": "<language|accent|character>", "voice_value": "<the value alone>"}

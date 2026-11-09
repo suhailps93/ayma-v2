@@ -120,6 +120,17 @@ RESPONSE_SCHEMA: dict = {
                 "pronoun ('her')."
             ),
         },
+        "modality": {
+            "type": "string",
+            "enum": ["voice", "text", ""],
+            "description": (
+                "launch_practice only: 'voice' when the user asks for "
+                "the practice in voice mode ('in voice mode', 'by "
+                "voice') — the voice call then starts on its own; "
+                "'text' when they explicitly ask for text / texting; "
+                "empty when they do not say."
+            ),
+        },
         "tool": {
             "type": "string",
             "description": (
@@ -228,6 +239,7 @@ class Verdict:
     page: str = ""
     member: str = ""
     partner: str = ""
+    modality: str = ""
     tool: str = ""
     value: str = ""
     voice_kind: str = ""
@@ -290,6 +302,7 @@ def parse_verdict(raw: object) -> Verdict:
         page=_text("page"),
         member=_text("member"),
         partner=_text("partner"),
+        modality=_text("modality"),
         tool=_text("tool"),
         value=_text("value"),
         voice_kind=_text("voice_kind"),
@@ -444,7 +457,13 @@ def verdict_to_command(verdict: Verdict) -> tuple[str, dict] | None:
     if action in _LAUNCH_TOOLS:
         # An empty partner flows into the relay's existing partner-less
         # branch (the "who with?" clarification), never a launch.
-        return _LAUNCH_TOOLS[action], {"name": verdict.partner.strip()}
+        kwargs: dict = {"name": verdict.partner.strip()}
+        if action == "launch_practice" and verdict.modality.strip().lower() == "voice":
+            # Voice mode was asked for: the practice voice call starts
+            # on its own, no manual voice-button tap
+            # (bug DC2eUbckGA6J0ufDZpRG).
+            kwargs["voice"] = True
+        return _LAUNCH_TOOLS[action], kwargs
     if action == "set_stack":
         tool = verdict.tool.strip()
         kwarg = _STACK_TOOL_KWARGS.get(tool)

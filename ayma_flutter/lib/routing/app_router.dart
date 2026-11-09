@@ -295,10 +295,21 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: PracticeScreen.path,
-      builder: (context, state) => PracticeScreen(
-        uid: state.pathParameters['uid']!,
-        name: state.extra is String ? state.extra as String : '',
-      ),
+      builder: (context, state) {
+        // `?voice=1` (or an extra map with voice: true) is Ayma's
+        // voice-mode practice launch: the screen auto-starts the
+        // practice voice call (bug DC2eUbckGA6J0ufDZpRG).
+        final extra = state.extra;
+        final extraMap = extra is Map ? extra : const {};
+        return PracticeScreen(
+          uid: state.pathParameters['uid']!,
+          name: extra is String
+              ? extra
+              : (extraMap['name'] as String? ?? ''),
+          autoStartVoice: state.uri.queryParameters['voice'] == '1' ||
+              extraMap['voice'] == true,
+        );
+      },
     ),
     // AI Date Simulation (hackathon flagship): the two-persona conversation
     // preview. Entered from a match's profile with their name.

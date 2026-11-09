@@ -1669,7 +1669,15 @@ def detect_voice_command(transcript: str) -> tuple[str, dict] | None:
     launch_cmd = skills.app_control.detect_launch_command(text)
     if launch_cmd is not None:
         name, partner = launch_cmd
-        return name, {"name": partner or ""}
+        kwargs: dict = {"name": partner or ""}
+        if name == "open_practice_date" and (
+            skills.app_control.detect_practice_voice_intent(text)
+        ):
+            # "in voice mode" was asked for: the practice voice call
+            # starts on its own, no manual voice-button tap
+            # (bug DC2eUbckGA6J0ufDZpRG).
+            kwargs["voice"] = True
+        return name, kwargs
     tour_control = skills.guided_tour.detect_tour_control(text, bare_ok=False)
     if tour_control is not None:
         return {

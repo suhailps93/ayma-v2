@@ -359,6 +359,23 @@ void main() {
     expect(find.byKey(const Key('practiceVoiceButton')), findsOneWidget);
   });
 
+  testWidgets('autoStartVoice opens the voice simulator with no tap',
+      (tester) async {
+    // Bug DC2eUbckGA6J0ufDZpRG: a voice-mode request lands on the
+    // practice screen with autoStartVoice set — the voice call must
+    // open on its own, without tapping practiceVoiceButton.
+    final voice = _FakePracticeVoice();
+    await tester.pumpWidget(_wrap(PracticeScreen(
+      uid: 'her',
+      api: _practiceApi(),
+      autoStartVoice: true,
+      voice: voice,
+    )));
+    await _settle(tester);
+    await _settle(tester);
+    expect(find.byType(PracticeVoiceScreen), findsOneWidget);
+  });
+
   // --- Practice button on the profile rail --------------------------------- //
 
   testWidgets('profile shows a Practice button that opens the simulator',
