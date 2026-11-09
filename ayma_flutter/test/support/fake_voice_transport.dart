@@ -136,12 +136,17 @@ class FakeVoiceTransport implements VoiceTransport {
 
   /// Every [sendTourTapped] request, in order (the step index).
   final List<int> tourTappedCalls = [];
+
+  /// Every [sendTourTapped] request's attempt, in order (null when the
+  /// response carried no attempt).
+  final List<int?> tourTappedAttempts = [];
   bool failTourTapped = false;
 
   @override
-  Future<void> sendTourTapped({required int index}) async {
+  Future<void> sendTourTapped({required int index, int? attempt}) async {
     if (failTourTapped) throw StateError('data channel closed');
     tourTappedCalls.add(index);
+    tourTappedAttempts.add(attempt);
   }
 
   @override

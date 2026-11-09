@@ -1005,13 +1005,14 @@ void main() {
 
     tearDown(() => GuidedTourController.instance.endSession());
 
-    testWidgets('the tap never reaches the real control, Ayma switches the '
-        'tab, and the tour waits for the go', (tester) async {
+    testWidgets('Ayma switches the tab on presentation — no tap at all — '
+        'and the tour waits for the go', (tester) async {
       addTearDown(shellStub());
       final svc = service();
       await show(tester, svc, stepCmd('a1', command: tabCommand));
 
-      await tester.tapAt(anchorTap);
+      // ZERO taps: the step performed itself the moment it was shown
+      // (founder, 2026-11-09 — Ayma handles the tap, the user never taps).
       await settle(tester);
 
       expect(realTaps, 0);
@@ -1097,17 +1098,16 @@ void main() {
       expect(tourPings, isEmpty);
     });
 
-    testWidgets('before the action runs the page stays blocked', (tester) async {
+    testWidgets('the step performs on presentation with no tap — there is '
+        'no blocked waiting-for-a-tap state any more', (tester) async {
       final svc = service();
       await show(tester, svc, stepCmd('a3c', command: navCommand));
-
-      await tester.tapAt(tester.getCenter(
-        find.byKey(const ValueKey('opened-page-button')),
-      ));
       await settle(tester);
 
-      expect(pageTaps, 0);
-      expect(GuidedTourController.instance.step!.performed, isFalse);
+      // No tap was needed and none happened: Ayma navigated herself.
+      expect(pushed, ['/profile/wiki']);
+      expect(GuidedTourController.instance.step!.performed, isTrue);
+      expect((await lastEvent())!['event'], 'performed');
     });
 
     testWidgets('on a call a performed step blocks the orb but not the page',
@@ -1136,8 +1136,10 @@ void main() {
       addTearDown(shellStub());
       final svc = service();
       await show(tester, svc, stepCmd('a3e', command: tabCommand));
-      await tester.tapAt(anchorTap);
       await settle(tester);
+      // The step performed itself on presentation; the orb underneath is
+      // the user's again, so the first tap after that reaches it.
+      expect(GuidedTourController.instance.step!.performed, isTrue);
 
       await tester.tapAt(anchorTap);
       await settle(tester);
@@ -1240,7 +1242,7 @@ void main() {
       final svc = service();
       await show(tester, svc, stepCmd('a8', command: tabCommand));
 
-      await tester.tapAt(anchorTap);
+      // Zero taps on a call too: performed on presentation, agent told once.
       await settle(tester);
 
       expect((await lastEvent())!['event'], 'performed');
@@ -1569,50 +1571,52 @@ void main() {
       AppContext.instance.current.value = const ScreenContext();
     });
 
-    testWidgets('the bell step completes when the user reaches Notifications '
-        'WITHOUT the tour seeing a tap (the founder failure, 2026-11-09)',
+    testWidgets('the bell step performs ITSELF on presentation — Ayma opens '
+        'Notifications, no user tap (the founder failure, 2026-11-09)',
         (tester) async {
       final svc = service();
       await show(tester, svc, stepCmd('b1', command: bellCommand));
-      // Nothing yet: no tap happened and the tour navigated nowhere.
-      expect((await eventDoc.get()).exists, isFalse);
-
-      // The user taps the REAL bell (or gets to Notifications any other
-      // way): the destination becomes the current route without the tour
-      // performing it or intercepting anything.
-      routerPath = '/notifications';
-      AppContext.instance.current.value =
-          const ScreenContext(screen: 'notifications',
-            route: '/notifications');
       await pumpSeconds(tester, 1.2);
 
+      // The tour waited for a user tap before; now the step runs its own
+      // command the moment it is shown and reports the outcome itself.
       final ev = (await eventDoc.get()).data();
       expect(ev, isNotNull);
       expect(ev!['event'], 'performed');
       expect(ev['index'], 1);
       expect(ev['attempt'], 1);
-      expect(pushed, isEmpty); // the tour itself never navigated
-      expect(realTaps, 0); // and never saw a tap on the highlight
+      expect(pushed, ['/notifications']); // Ayma navigated herself
+      expect(realTaps, 0); // and never needed a tap on the highlight
       expect(GuidedTourController.instance.step!.performed, isTrue);
     });
 
-    testWidgets('a switch-tab step completes when the user switches tabs '
-        'themselves (no tap on the highlight)', (tester) async {
-      addTearDown(shellStub());
+    testWidgets('when Ayma\'s own attempt cannot confirm, the step still '
+        'completes from the state when the user gets there themselves',
+        (tester) async {
       final svc = service();
+      // No shell is listening, so Ayma's own tab switch cannot confirm.
       await show(tester, svc, stepCmd('b2', command: tabCommand));
-      expect((await eventDoc.get()).exists, isFalse);
+      await pumpSeconds(tester, 3);
+
+      var ev = (await eventDoc.get()).data();
+      expect(ev, isNotNull);
+      expect(ev!['event'], 'action_failed');
+      expect(ev['attempt'], 1);
+      expect(GuidedTourController.instance.step!.performed, isFalse);
 
       // The user taps the real Explore tab; the shell applies it, exactly
-      // as it applies Ayma's own TabRequest.
+      // as it applies Ayma's own TabRequest — and the state watch completes
+      // the step through the same outcome path (founder: however they got
+      // there, the step must notice).
+      addTearDown(shellStub());
       TabRequest.instance.request(1);
       await pumpSeconds(tester, 1.2);
 
       expect(AppContext.instance.current.value.screen, 'explore');
-      final ev = (await eventDoc.get()).data();
+      ev = (await eventDoc.get()).data();
       expect(ev, isNotNull);
       expect(ev!['event'], 'performed');
-      expect(ev['attempt'], 1);
+      expect(ev['attempt'], 2);
       expect(realTaps, 0);
       expect(GuidedTourController.instance.step!.performed, isTrue);
     });

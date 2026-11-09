@@ -1285,6 +1285,92 @@ class TourNarrationGate:
         self.pending = False
 
 
+class TourKickGate:
+    """Per-voice-session gate for the guided-tour response bridge (§11.2b):
+    decides whether a ``tour_tapped`` packet may fire its ``generate_reply``.
+
+    The bridge used to fire unconditionally, the moment a packet landed —
+    so a tap that arrived while Ayma was mid-line started a brand-new turn
+    that superseded the narration in progress: she stopped talking and
+    restarted from somewhere else (founder, 2026-11-09). One physical
+    response could also be reported twice (the tap, and the state the tap
+    produced), firing two kicks for one event. The gate enforces:
+
+    * never fire while a blocking ``advance_guided_tour`` is mid-wait — the
+      ``tour_event`` doc persists in Firestore and the waiting advance
+      consumes it itself (tracked via ``_session_tools``' ``_on_call``);
+    * never fire twice for the same response — dedupe by (step index,
+      attempt), with a short rapid-repeat window for attempt-less kicks;
+    * never fire while the agent is speaking or thinking — the kick is
+      deferred until she settles (bounded), then fires once.
+
+    One gate is created per call build and shared by ``_session_tools`` and
+    :func:`tour_tapped_handler`, like :class:`TourNarrationGate`."""
+
+    #: A repeated kick for the same (index, attempt) inside this window is
+    #: the same response reported twice, not a new response.
+    DEDUPE_SECONDS = 15.0
+    #: Attempt-less kicks (a tap / Next) for the same step repeat-fire only
+    #: after this long; a deliberate second response lands later than this.
+    RAPID_SECONDS = 3.0
+    #: How long a kick deferred by in-progress speech may wait for her to
+    #: settle before it is dropped (the event persists; the tour's own
+    #: bounded advance wait surfaces a still-waiting line instead).
+    SETTLE_TIMEOUT_SECONDS = 45.0
+    SETTLE_POLL_SECONDS = 0.3
+
+    def __init__(self) -> None:
+        self._advance_in_flight = 0
+        self._kicked: dict[tuple[int, int | None], float] = {}
+        self._last_attemptless: dict[int, float] = {}
+        self._pending: asyncio.Task | None = None
+
+    # -- blocking-advance tracking (fed by _session_tools._on_call) ------
+
+    def advance_started(self) -> None:
+        self._advance_in_flight += 1
+
+    def advance_finished(self) -> None:
+        self._advance_in_flight = max(0, self._advance_in_flight - 1)
+
+    @property
+    def advance_waiting(self) -> bool:
+        return self._advance_in_flight > 0
+
+    # -- dedupe ------------------------------------------------------------
+
+    def claim(self, index: int | None, attempt: int | None) -> bool:
+        """Record a kick for this response; False when it is a duplicate."""
+        now = time.monotonic()
+        if index is None:
+            return True
+        if attempt is not None:
+            key = (index, attempt)
+            last = self._kicked.get(key)
+            if last is not None and now - last < self.DEDUPE_SECONDS:
+                return False
+            self._kicked[key] = now
+            return True
+        last = self._last_attemptless.get(index)
+        if last is not None and now - last < self.RAPID_SECONDS:
+            return False
+        self._last_attemptless[index] = now
+        return True
+
+    # -- deferred kicks ------------------------------------------------------
+
+    @property
+    def has_pending(self) -> bool:
+        return self._pending is not None and not self._pending.done()
+
+    def defer(self, coro_factory: Callable[[], Awaitable[None]]) -> bool:
+        """Schedule THE deferred kick; False when one is already pending."""
+        if self.has_pending:
+            return False
+        self._pending = asyncio.ensure_future(coro_factory())
+        return True
+
+
 def relay_transcripts(
     ctx: JobContext,
     session: AgentSession,
@@ -2543,6 +2629,7 @@ def _session_tools(
     session_id: str = "",
     window: list[Turn] | None = None,
     tour_gate: "TourNarrationGate | None" = None,
+    tour_kick_gate: "TourKickGate | None" = None,
     dedupe: skills.VoiceTurnDedupe | None = None,
 ) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
@@ -2568,6 +2655,14 @@ def _session_tools(
         # (§11.2b). Set on start, so it's armed before the narration is spoken.
         if tour_gate is not None and phase == "start" and name in _GUIDED_TOUR_TOOLS:
             tour_gate.pending = True
+        # A blocking advance_guided_tour mid-wait consumes tour_events
+        # itself, so the tap bridge must not also fire a narration turn for
+        # the same response (TourKickGate, §11.2b).
+        if tour_kick_gate is not None and name == "advance_guided_tour":
+            if phase == "start":
+                tour_kick_gate.advance_started()
+            elif phase == "end":
+                tour_kick_gate.advance_finished()
         _publish_tool_event(ctx, phase, name, label)
 
     return skills.make_livekit_tools(
@@ -3044,25 +3139,93 @@ def voice_accent_control_handler(
     return _on_data
 
 
-def tour_tapped_handler(session: AgentSession) -> Callable[[object], None]:
-    """The ``tour_tapped`` data listener (§11.2b): the user tapped the guided
-    tour's spotlighted control, so drive Ayma to advance. Fires one
+def _tour_tapped_payload(packet) -> tuple[int | None, int | None]:  # noqa: ANN001
+    """The (step index, attempt) a ``tour_tapped`` packet carries, or
+    (None, None) when the payload is missing/malformed — older clients send
+    only the index, and a performed step's outcome adds its attempt."""
+    try:
+        data = json.loads(packet.data.decode("utf-8"))
+        if not isinstance(data, dict):
+            return None, None
+        index = data.get("index")
+        attempt = data.get("attempt")
+        return (
+            index if isinstance(index, int) else None,
+            attempt if isinstance(attempt, int) else None,
+        )
+    except Exception:  # noqa: BLE001 - a malformed payload must not crash
+        return None, None
+
+
+def tour_tapped_handler(
+    session: AgentSession, gate: "TourKickGate | None" = None
+) -> Callable[[object], None]:
+    """The ``tour_tapped`` data listener (§11.2b): the user responded to the
+    guided tour's current step, so drive Ayma to advance. Fires one
     ``generate_reply`` with the tour-tap instruction, which makes the model call
     ``advance_guided_tour`` — already in the session's tool set — that consumes
     the client's already-written ``tour_event`` doc and narrates the next step.
-    This is the bridge that advances the tour on a tap regardless of whether a
-    blocking ``advance_guided_tour`` happened to be mid-wait (founder/Scout,
-    2026-11-03). Malformed payloads are dropped."""
+    This is the bridge that advances the tour on a response regardless of
+    whether a blocking ``advance_guided_tour`` happened to be mid-wait
+    (founder/Scout, 2026-11-03). Malformed payloads are dropped.
 
-    def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
-        if getattr(packet, "topic", None) != TOPIC_TOUR_TAPPED:
-            return
+    Gated by [gate] (founder, 2026-11-09): the kick NEVER fires into speech
+    already in progress — a tap used to start a new turn that superseded the
+    narration Ayma was mid-way through, so she stopped talking and restarted
+    from somewhere else. While she is speaking/thinking the kick defers until
+    she settles (bounded); while a blocking advance is mid-wait it is dropped
+    outright (the waiting advance consumes the persisted event itself); and a
+    response reported twice fires exactly once."""
+
+    def _fire() -> None:
         try:
             res = session.generate_reply(instructions=load_tour_tapped_kick())
             if asyncio.iscoroutine(res):
                 asyncio.create_task(res)
         except Exception:  # noqa: BLE001 - never crash the data callback
             logger.exception("tour_tapped generate_reply failed to schedule")
+
+    def _speaking() -> bool:
+        return getattr(session, "agent_state", None) in ("speaking", "thinking")
+
+    async def _fire_when_settled() -> None:
+        # A kick deferred by in-progress speech: wait for her to settle,
+        # then fire once. A blocking advance that starts meanwhile consumes
+        # the event itself, so the deferred kick stands down.
+        waited = 0.0
+        while _speaking() and waited < TourKickGate.SETTLE_TIMEOUT_SECONDS:
+            await asyncio.sleep(TourKickGate.SETTLE_POLL_SECONDS)
+            waited += TourKickGate.SETTLE_POLL_SECONDS
+        if _speaking():
+            logger.info("tour_tapped kick dropped: agent never settled")
+            return
+        if gate is not None and gate.advance_waiting:
+            logger.info("tour_tapped kick stood down: advance is waiting")
+            return
+        _fire()
+
+    def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
+        if getattr(packet, "topic", None) != TOPIC_TOUR_TAPPED:
+            return
+        index, attempt = _tour_tapped_payload(packet)
+        if gate is not None:
+            if gate.advance_waiting:
+                # The waiting advance consumes the persisted tour_event
+                # itself — a second narration turn would double-narrate.
+                logger.info("tour_tapped kick dropped: advance is waiting")
+                return
+            if not gate.claim(index, attempt):
+                logger.info(
+                    "tour_tapped kick dropped: duplicate for step %s attempt %s",
+                    index,
+                    attempt,
+                )
+                return
+            if _speaking():
+                if not gate.defer(_fire_when_settled):
+                    logger.info("tour_tapped kick dropped: one already deferred")
+                return
+        _fire()
 
     return _on_data
 
@@ -3501,6 +3664,7 @@ async def _start_main_gemini_session(
         allow_interruptions=True,
     )
     tour_gate = TourNarrationGate()
+    tour_kick_gate = TourKickGate()
     dedupe = skills.VoiceTurnDedupe()
     relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
     # Session closed = the conversation is over (no more turns can arrive):
@@ -3588,6 +3752,7 @@ async def _start_main_gemini_session(
         session_id=seed.session_id,
         window=window,
         tour_gate=tour_gate,
+        tour_kick_gate=tour_kick_gate,
         dedupe=dedupe,
     )
     async def _goodbye() -> None:
@@ -3612,7 +3777,7 @@ async def _start_main_gemini_session(
         # A settings save mid-call arrives on the data channel (§13.9).
         ctx.room.on("data_received", voice_accent_control_handler(swapper))
     # A guided-tour tap arrives on the data channel (§11.2b) — drive the advance.
-    ctx.room.on("data_received", tour_tapped_handler(session))
+    ctx.room.on("data_received", tour_tapped_handler(session, tour_kick_gate))
     agent_kwargs: dict = {"instructions": _instructions, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
@@ -3806,6 +3971,7 @@ async def _start_main_cascade_session(
             resolved_brain_model = CONFIG.meta_chat_model
 
     tour_gate = TourNarrationGate()
+    tour_kick_gate = TourKickGate()
     dedupe = skills.VoiceTurnDedupe()
     relay_transcripts(ctx, session, collector=window, tour_gate=tour_gate)
     session.on("close", _flush_on_non_error_close(flush))
@@ -3860,6 +4026,7 @@ async def _start_main_cascade_session(
         session_id=seed.session_id,
         window=window,
         tour_gate=tour_gate,
+        tour_kick_gate=tour_kick_gate,
         dedupe=dedupe,
     )
     async def _goodbye() -> None:
@@ -3929,7 +4096,7 @@ async def _start_main_cascade_session(
         "tools": tools,
     }
     # A guided-tour tap arrives on the data channel (§11.2b) — drive the advance.
-    ctx.room.on("data_received", tour_tapped_handler(session))
+    ctx.room.on("data_received", tour_tapped_handler(session, tour_kick_gate))
     # A trailing stale user turn in the seeded history is dropped here so the
     # cascade greets/waits (like Gemini Live) instead of immediately answering a
     # message from the previous conversation (founder bug, 2026-10-27).

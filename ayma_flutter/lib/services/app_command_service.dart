@@ -256,11 +256,12 @@ class AppCommandService {
   /// a minimal `/chat` ping that makes the model consume stop and clean up tour state.
   final Future<void> Function(int index) _sendTourStop;
 
-  /// The one-line tour-tap signal the model reads as "a real tap happened —
-  /// advance." A fixed control signal, not a persona/prompt template (it is
-  /// never persisted; the backend drops it via `tour_continuation`).
+  /// The one-line tour-response signal the model reads as "the user
+  /// responded to the step — advance." A fixed control signal, not a
+  /// persona/prompt template (it is never persisted; the backend drops it
+  /// via `tour_continuation`).
   static const _tourTapSignal =
-      'The user just tapped the highlighted control in the guided tour. '
+      'The user just responded to the highlighted step in the guided tour. '
       'Continue the tour: call advance_guided_tour now to move to the next step.';
 
   static const _tourStopSignal =
@@ -287,15 +288,36 @@ class AppCommandService {
     }
   }
 
+  /// When each tour kick last fired, keyed by the `tour_event` it belongs
+  /// to (`index|kind|attempt`) on [_tourKickClock]'s monotonic clock.
+  final Map<String, int> _tourKickAt = <String, int>{};
+  final Stopwatch _tourKickClock = Stopwatch()..start();
+
+  /// How long an identical tour kick is treated as the SAME response. One
+  /// physical response can surface through two paths (the tap itself and
+  /// the state the tap produced), and both used to kick a fresh model turn:
+  /// the second made Ayma abandon the line she was speaking and start over
+  /// (founder, 2026-11-09). The `tour_event` doc persists either way, so
+  /// the one surviving narration turn (or a blocking `advance_guided_tour`
+  /// already waiting on it) still consumes it exactly once.
+  static const _tourKickCoalesceMs = 5000;
+
   /// Bridge a tour response to a model-narrated turn (§11.2b): on voice,
   /// tell the live agent (data channel → `generate_reply`); otherwise fire the
   /// TEXT `/chat` continuation. Either way the model calls `advance_guided_tour`,
   /// which consumes the already-written `tour_event` and narrates/spotlights the
   /// next step — no dependence on a blocking advance being alive at tap time.
-  void _kickTourAdvance(int index) {
+  /// Identical kicks for the same response ([kind] + [attempt]) inside the
+  /// coalesce window are dropped (see [_tourKickCoalesceMs]).
+  void _kickTourAdvance(int index, {required String kind, int? attempt}) {
+    final key = '$index|$kind|${attempt ?? ''}';
+    final now = _tourKickClock.elapsedMilliseconds;
+    final last = _tourKickAt[key];
+    if (last != null && now - last < _tourKickCoalesceMs) return;
+    _tourKickAt[key] = now;
     final voice = VoiceSessionController.active;
     if (voice != null && voice.isActive) {
-      unawaited(voice.notifyTourTapped(index: index));
+      unawaited(voice.notifyTourTapped(index: index, attempt: attempt));
       return;
     }
     unawaited(_sendTourContinuation(index));
@@ -913,6 +935,9 @@ class AppCommandService {
   /// which the backend's `advance_guided_tour` polls: the confirmed outcome
   /// of the step's command (`performed` / `action_failed`), a tap on a step
   /// with nothing to perform (`tapped`), Next (`skip`) or "Skip tour" (`stop`).
+  /// A step WITH a command is performed by Ayma the moment it is shown —
+  /// never on the user's tap (founder, 2026-11-08/09) — and a step whose
+  /// goal state is already true completes from the state instead.
   @visibleForTesting
   void runTourStep(
     DocumentReference<Map<String, dynamic>> ref,
@@ -1041,7 +1066,13 @@ class AppCommandService {
             : "That didn't open. Tap the highlight to try again, or $go to "
                 'move on.',
       );
-      if (_hasActiveVoice()) _kickTourAdvance(index);
+      if (_hasActiveVoice()) {
+        _kickTourAdvance(
+          index,
+          kind: ok ? 'performed' : 'action_failed',
+          attempt: attempt,
+        );
+      }
     }
 
     // The step's goal turned true WITHOUT the tour performing it — the
@@ -1063,6 +1094,21 @@ class AppCommandService {
       if (!guided.isShowing(id)) return; // the user moved on meanwhile
       performed = ok;
       reportOutcome(ok);
+    }
+
+    // Start the step's performance, at most one attempt in flight and never
+    // again once performed (by Ayma, or from the state via completeFromState
+    // — both latch [performed]). Fired from presentation (onShown): Ayma
+    // handles the tap herself, so the tour never waits on a user tap for
+    // her to act (founder, 2026-11-09). The one later trigger admitted is a
+    // tap after a FAILED attempt (the retry the failure notice offers) —
+    // every other tap is a no-op here.
+    void startPerform() {
+      final stepCommand = command;
+      if (stepCommand == null || inFlight || performed) return;
+      inFlight = true;
+      attempt++;
+      unawaited(perform(stepCommand));
     }
 
     // While this step is up, follow the app's ACTUAL state: AppContext
@@ -1134,6 +1180,13 @@ class AppCommandService {
         explainer: explainer,
         onShown: () {
           unawaited(ack(true));
+          // Perform on presentation, not on tap (founder, 2026-11-09): a
+          // step carrying a command runs it the moment the spotlight is
+          // confirmed up. If the goal was already reached as the step
+          // landed, completeFromState has latched performed and this is a
+          // no-op; the state watch below covers the user getting there
+          // first while the step is up.
+          startPerform();
           // VOICE, nothing to perform (the orb "this is me" step): on a live
           // call the orb IS the call bar, so the user can't tap the highlight
           // to complete the step — and advance_guided_tour would wait the full
@@ -1153,7 +1206,7 @@ class AppCommandService {
               performed: true,
               notice: "Have a look. When you're ready, say next.",
             );
-            _kickTourAdvance(index);
+            _kickTourAdvance(index, kind: 'performed', attempt: attempt);
           }
         },
         // Anchor not present: ack so the backend skips the step, and clear the
@@ -1164,26 +1217,24 @@ class AppCommandService {
           unawaited(ack(false));
         },
         // The tap on the highlight. A step with a command is Ayma's to
-        // perform; the flag is set before anything awaits, so a double tap
-        // can't run it twice, and a performed step can't run again. A step
-        // with nothing to perform completes on the tap: it writes the event
-        // the backend's advance_guided_tour consumes, clears the spotlight
-        // (session stays active until tour_end), and KICKS a model turn so
-        // the tour advances even if no blocking advance_guided_tour happened
-        // to be mid-wait (founder/Scout live failure, 2026-11-03). On a call
-        // the go is spoken only, so that tap does nothing.
+        // perform, and she performs it from presentation (onShown) — a tap
+        // here is never the trigger and never the go; startPerform admits
+        // only the retry after a failed attempt. A step with nothing to
+        // perform completes on the tap: it writes the event the backend's
+        // advance_guided_tour consumes, clears the spotlight (session stays
+        // active until tour_end), and KICKS a model turn so the tour
+        // advances even if no blocking advance_guided_tour happened to be
+        // mid-wait (founder/Scout live failure, 2026-11-03). On a call the
+        // go is spoken only, so that tap does nothing.
         onTapped: () {
           if (command != null) {
-            if (inFlight || performed) return;
-            inFlight = true;
-            attempt++;
-            unawaited(perform(command));
+            startPerform();
             return;
           }
           if (_hasActiveVoice()) return;
           event('tapped');
           guided.clearStep();
-          _kickTourAdvance(index);
+          _kickTourAdvance(index, kind: 'tapped');
         },
         // The "Skip tour" affordance ends the whole session.
         onStop: () {
@@ -1197,7 +1248,7 @@ class AppCommandService {
         onSkip: () {
           event('skip');
           guided.clearStep();
-          _kickTourAdvance(index);
+          _kickTourAdvance(index, kind: 'skip');
         },
       ),
       voiceOnly: _hasActiveVoice(),

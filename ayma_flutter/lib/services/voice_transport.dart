@@ -122,12 +122,15 @@ abstract class VoiceTransport {
     required String language,
   });
 
-  /// Tells the live agent the user tapped the guided tour's spotlighted control
-  /// (topic `tour_tapped`, payload `{"index": int}`), §11.2b. The agent turns
-  /// this into a `generate_reply` so Ayma calls `advance_guided_tour` — which
-  /// consumes the already-written `tour_event` doc and narrates the next step —
-  /// instead of only advancing if a blocking tool call happened to be mid-wait.
-  Future<void> sendTourTapped({required int index});
+  /// Tells the live agent the user responded to a guided tour step
+  /// (topic `tour_tapped`, payload `{"index": int, "attempt": int?}`), §11.2b.
+  /// The agent turns this into a `generate_reply` so Ayma calls
+  /// `advance_guided_tour` — which consumes the already-written `tour_event`
+  /// doc and narrates the next step — instead of only advancing if a blocking
+  /// tool call happened to be mid-wait. [attempt] rides along when the
+  /// response is a performed step's outcome, so the agent can dedupe the
+  /// same response reported twice (founder, 2026-11-09).
+  Future<void> sendTourTapped({required int index, int? attempt});
 
   /// Mid-call connection state: emits `true` when an established call's
   /// connection drops and the SDK starts re-establishing it, `false` when it
@@ -445,13 +448,13 @@ class LiveKitVoiceTransport implements VoiceTransport {
   }
 
   @override
-  Future<void> sendTourTapped({required int index}) async {
+  Future<void> sendTourTapped({required int index, int? attempt}) async {
     final participant = _room?.localParticipant;
     if (participant == null) {
       throw StateError('not connected to a voice room');
     }
     await participant.publishData(
-      utf8.encode(jsonEncode({'index': index})),
+      utf8.encode(jsonEncode({'index': index, 'attempt': attempt})),
       reliable: true,
       topic: _tourTappedControlTopic,
     );

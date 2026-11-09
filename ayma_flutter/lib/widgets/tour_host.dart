@@ -6,6 +6,7 @@ import '../services/guided_tour_controller.dart';
 import '../services/tab_request.dart';
 import '../services/tour_content.dart';
 import '../services/tour_controller.dart';
+import '../services/voice_session_controller.dart';
 import 'coach_mark_overlay.dart';
 
 /// Hosts the single interactive feature-tour overlay (§11.2a) at the ROOT of
@@ -84,30 +85,56 @@ class TourHost extends StatelessWidget {
         // highlight"/stray dialog (founder, 2026-11-03). The driven tour owns
         // the screen until it ends.
         if (guided.sessionActive) return child!;
-        final controller = TourController.instance;
-        final features = controller.features;
-        if (features == null) return child!;
-        return Stack(
-          children: [
-            child!,
-            // The overlay fills the whole window, above every route. Back while
-            // the tour is up is handled by `MainShellScreen`'s `PopScope` (it
-            // has a `Router` ancestor, which this builder-level context does
-            // not — a `BackButtonListener` here throws), where it skips the
-            // tour via `TourController`.
-            Positioned.fill(
-              child: CoachMarkOverlay(
-                key: const ValueKey('root-coach-mark'),
-                features: features,
-                spotlight: controller.spotlight,
-                store: controller.store,
-                onPrepareStep: _prepareStep,
-                onFinish: controller.finish,
-              ),
-            ),
-          ],
+        // The passive tour also never renders while a voice call is live:
+        // its cutout presses taps through to the real control behind it, and
+        // a step anchored on the orb would land the tap on the call control
+        // itself — the Nov 3 bug class (a tour tap hanging / dropping the
+        // call), still reachable on this surface (founder, 2026-11-09). The
+        // nested builders re-subscribe as the active session appears and
+        // its phase changes, so the suppression tracks the call exactly.
+        // The tour's state is untouched; it resumes when the call ends.
+        return ValueListenableBuilder<VoiceSessionController?>(
+          valueListenable: VoiceSessionController.activeNotifier,
+          child: child,
+          builder: (context, voice, child) {
+            if (voice == null) return _passiveTour(child!);
+            return AnimatedBuilder(
+              animation: voice,
+              child: child,
+              builder: (context, child) =>
+                  voice.isActive ? child! : _passiveTour(child!),
+            );
+          },
         );
       },
+    );
+  }
+
+  /// The passive coach-mark tour's overlay, or just [child] when no passive
+  /// tour is running.
+  Widget _passiveTour(Widget child) {
+    final controller = TourController.instance;
+    final features = controller.features;
+    if (features == null) return child;
+    return Stack(
+      children: [
+        child,
+        // The overlay fills the whole window, above every route. Back while
+        // the tour is up is handled by `MainShellScreen`'s `PopScope` (it
+        // has a `Router` ancestor, which this builder-level context does
+        // not — a `BackButtonListener` here throws), where it skips the
+        // tour via `TourController`.
+        Positioned.fill(
+          child: CoachMarkOverlay(
+            key: const ValueKey('root-coach-mark'),
+            features: features,
+            spotlight: controller.spotlight,
+            store: controller.store,
+            onPrepareStep: _prepareStep,
+            onFinish: controller.finish,
+          ),
+        ),
+      ],
     );
   }
 
