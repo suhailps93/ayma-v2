@@ -551,7 +551,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(_error!,
               textAlign: TextAlign.center,
-              style: AymaType.sans(size: 14, color: AymaColors.error)),
+              style: AymaType.sans(size: 14, color: ac.errorText)),
           const SizedBox(height: 12),
           FilledButton(onPressed: _load, child: const Text('Retry')),
         ]),
@@ -705,7 +705,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('${number.toString().padLeft(2, '0')}  CAREER & EDUCATION',
-            style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+            style: AymaType.mono(size: 11, color: ac.accentText).copyWith(letterSpacing: 2)),
         const SizedBox(height: 14),
         if (t.showTimeline && t.entries.isNotEmpty)
           CareerTimelineView(entries: t.entries, onTapEntry: _onTapTimelineEntry)
@@ -716,7 +716,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
               Icon(Icons.link, size: 14, color: ac.accent),
               const SizedBox(width: 6),
               Text('Add your LinkedIn to help Ayma build your timeline',
-                  style: AymaType.sans(size: 12.5, color: ac.accent)),
+                  style: AymaType.sans(size: 12.5, color: ac.accentText)),
             ]),
           ),
       ],
@@ -844,7 +844,7 @@ class _AymaNotesScreenState extends State<AymaNotesScreen>
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(_error!,
               textAlign: TextAlign.center,
-              style: AymaType.sans(size: 14, color: AymaColors.error)),
+              style: AymaType.sans(size: 14, color: ac.errorText)),
           const SizedBox(height: 12),
           FilledButton(onPressed: _load, child: const Text('Retry')),
         ]),
@@ -1055,7 +1055,7 @@ class _StoryCover extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text('Ayma keeps learning about you as you talk.',
-                      style: AymaType.sans(size: 12.5, color: ac.accent)),
+                      style: AymaType.sans(size: 12.5, color: ac.accentText)),
                 ),
               ]),
             ),
@@ -1121,7 +1121,7 @@ class _PhotosSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('${number.toString().padLeft(2, '0')}  PHOTOS',
-            style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+            style: AymaType.mono(size: 11, color: ac.accentText).copyWith(letterSpacing: 2)),
         const SizedBox(height: 10),
         Text('A few glimpses into my world.',
             style: AymaType.serif(size: 22, color: ac.fg)),
@@ -1209,7 +1209,7 @@ class _WebFindingsInterlude extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(header,
-            style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+            style: AymaType.mono(size: 11, color: ac.accentText).copyWith(letterSpacing: 2)),
         const SizedBox(height: 10),
         Text('What Ayma found online.', style: AymaType.serif(size: 22, color: ac.fg)),
         const SizedBox(height: 12),
@@ -1228,10 +1228,10 @@ class _WebFindingsInterlude extends StatelessWidget {
               Text('${facts.length} finding${facts.length == 1 ? '' : 's'}',
                   style: AymaType.sans(size: 12.5, weight: FontWeight.w600, color: ac.fg)),
               Text('$confirmed confirmed',
-                  style: AymaType.sans(size: 12.5, color: ac.success)),
+                  style: AymaType.sans(size: 12.5, color: ac.successText)),
               if (needsReview > 0)
                 Text('$needsReview needs review',
-                    style: AymaType.sans(size: 12.5, color: ac.warning)),
+                    style: AymaType.sans(size: 12.5, color: ac.warningText)),
             ],
           ),
         ],
@@ -1241,7 +1241,7 @@ class _WebFindingsInterlude extends StatelessWidget {
             onTap: onView,
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Text('VIEW WEB FINDINGS',
-                  style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
+                  style: AymaType.mono(size: 10, color: ac.accentText).copyWith(letterSpacing: 1.2)),
               const SizedBox(width: 4),
               Icon(Icons.arrow_forward, size: 12, color: ac.accent),
             ]),
@@ -1607,7 +1607,7 @@ class _AppearanceCardState extends State<_AppearanceCard> {
               onTap: () => context.push(_skillReportPath('face-analysis', reportId!)),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Text('VIEW FULL REPORT',
-                    style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
+                    style: AymaType.mono(size: 10, color: ac.accentText).copyWith(letterSpacing: 1.2)),
                 const SizedBox(width: 4),
                 Icon(Icons.arrow_forward, size: 12, color: ac.accent),
               ]),
@@ -1642,7 +1642,7 @@ class _AppearanceCardState extends State<_AppearanceCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('${widget.number!.toString().padLeft(2, '0')}  APPEARANCE ANALYSIS',
-              style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+              style: AymaType.mono(size: 11, color: ac.accentText).copyWith(letterSpacing: 2)),
           const SizedBox(height: 14),
           reportBox,
           const SizedBox(height: 10),

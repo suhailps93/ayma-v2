@@ -338,7 +338,7 @@ class _SimulationHeader extends StatelessWidget {
             ),
             child: Text('End',
                 style: AymaType.sans(
-                    size: 15, weight: FontWeight.w600, color: ac.accent)),
+                    size: 15, weight: FontWeight.w600, color: ac.accentText)),
           ),
         ],
       ),
