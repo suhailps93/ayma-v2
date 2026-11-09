@@ -1421,4 +1421,413 @@ void main() {
       expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
     });
   });
+
+  group('state-based completion + teardown guarantee (founder, 2026-11-09)',
+      () {
+    late FakeFirebaseFirestore fake;
+    late DocumentReference<Map<String, dynamic>> pending;
+    late DocumentReference<Map<String, dynamic>> eventDoc;
+    late DocumentReference<Map<String, dynamic>> stateDoc;
+    late List<int> tourPings;
+    late List<int> stopPings;
+    late int realTaps;
+    late bool voiceLive;
+    late String routerPath;
+    late List<String> pushed;
+
+    AppCommandService service() => AppCommandService(
+          firestore: fake,
+          auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+          sendTourContinuation: (index) async => tourPings.add(index),
+          sendTourStop: (index) async => stopPings.add(index),
+          hasActiveVoice: () => voiceLive,
+          chatPopupOpen: () => false,
+          currentPath: () => routerPath,
+          navigate: (path) {
+            pushed.add(path);
+            routerPath = path;
+          },
+        );
+
+    // The real TourHost over a real tappable orb anchor: the tour's own
+    // machinery end to end, with only the router path and the tab shell
+    // stubbed (the same shape as the action-driven group above).
+    Widget host() {
+      return MaterialApp(
+        theme: AymaTheme.dark,
+        builder: (context, child) => TourHost(child: child!),
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned(
+                left: 24,
+                bottom: 24,
+                child: VoiceControlMark(
+                  child: GestureDetector(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => realTaps++,
+                    child: const SizedBox(width: 64, height: 64),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    void Function() shellStub() {
+      const slugs = ['ayma', 'explore', 'messages', 'profile_tab'];
+      void listener() {
+        final tab = TabRequest.instance.consume();
+        if (tab != null) {
+          AppContext.instance.current.value =
+              ScreenContext(screen: slugs[tab], route: '/');
+        }
+      }
+
+      TabRequest.instance.pending.addListener(listener);
+      return () => TabRequest.instance.pending.removeListener(listener);
+    }
+
+    Map<String, dynamic> stepCmd(
+      String id, {
+      Map<String, dynamic>? command,
+      bool explainer = false,
+      int index = 1,
+      int total = 9,
+      String? route,
+      String say = 'Tap Explore.',
+    }) =>
+        <String, dynamic>{
+          'action': 'tour_step',
+          'id': id,
+          'index': index,
+          'total': total,
+          'anchor': TourAnchors.homeOrb,
+          'headline': 'Explore',
+          'say': say,
+          'command': command,
+          'explainer': explainer,
+          if (route != null) 'route': route,
+        };
+
+    // The founder's bell: Ayma performs a navigate to Notifications.
+    const bellCommand = <String, dynamic>{
+      'action': 'navigate',
+      'screen': 'notifications',
+      'path': '/notifications',
+    };
+    const tabCommand = <String, dynamic>{'action': 'switch_tab', 'tab': 1};
+    const storyCommand = <String, dynamic>{
+      'action': 'navigate',
+      'screen': 'story',
+      'path': '/profile/wiki',
+    };
+
+    Future<void> show(
+      WidgetTester tester,
+      AppCommandService svc,
+      Map<String, dynamic> cmd,
+    ) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host());
+      await pending.set(cmd);
+      svc.runTourStep(pending, cmd, id: cmd['id'] as String);
+      await settle(tester);
+    }
+
+    Future<void> pumpSeconds(WidgetTester tester, double seconds) async {
+      final steps = (seconds * 10).round();
+      for (var i = 0; i < steps; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    setUp(() {
+      GuidedTourController.instance.endSession();
+      AppContext.instance.current.value = const ScreenContext();
+      VoiceSessionController.active = null;
+      TabRequest.instance.consume();
+      fake = FakeFirebaseFirestore();
+      pending = fake.doc('users/u1/app_commands/pending');
+      eventDoc = fake.doc('users/u1/app_commands/tour_event');
+      stateDoc = fake.doc('users/u1/app_commands/tour_state');
+      tourPings = <int>[];
+      stopPings = <int>[];
+      realTaps = 0;
+      voiceLive = false;
+      routerPath = '/';
+      pushed = <String>[];
+    });
+
+    tearDown(() {
+      GuidedTourController.instance.endSession();
+      AppContext.instance.current.value = const ScreenContext();
+    });
+
+    testWidgets('the bell step completes when the user reaches Notifications '
+        'WITHOUT the tour seeing a tap (the founder failure, 2026-11-09)',
+        (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('b1', command: bellCommand));
+      // Nothing yet: no tap happened and the tour navigated nowhere.
+      expect((await eventDoc.get()).exists, isFalse);
+
+      // The user taps the REAL bell (or gets to Notifications any other
+      // way): the destination becomes the current route without the tour
+      // performing it or intercepting anything.
+      routerPath = '/notifications';
+      AppContext.instance.current.value =
+          const ScreenContext(screen: 'notifications',
+            route: '/notifications');
+      await pumpSeconds(tester, 1.2);
+
+      final ev = (await eventDoc.get()).data();
+      expect(ev, isNotNull);
+      expect(ev!['event'], 'performed');
+      expect(ev['index'], 1);
+      expect(ev['attempt'], 1);
+      expect(pushed, isEmpty); // the tour itself never navigated
+      expect(realTaps, 0); // and never saw a tap on the highlight
+      expect(GuidedTourController.instance.step!.performed, isTrue);
+    });
+
+    testWidgets('a switch-tab step completes when the user switches tabs '
+        'themselves (no tap on the highlight)', (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('b2', command: tabCommand));
+      expect((await eventDoc.get()).exists, isFalse);
+
+      // The user taps the real Explore tab; the shell applies it, exactly
+      // as it applies Ayma's own TabRequest.
+      TabRequest.instance.request(1);
+      await pumpSeconds(tester, 1.2);
+
+      expect(AppContext.instance.current.value.screen, 'explore');
+      final ev = (await eventDoc.get()).data();
+      expect(ev, isNotNull);
+      expect(ev!['event'], 'performed');
+      expect(ev['attempt'], 1);
+      expect(realTaps, 0);
+      expect(GuidedTourController.instance.step!.performed, isTrue);
+    });
+
+    testWidgets('a step whose goal is ALREADY true when it arrives completes '
+        'at once (no tap, no wait)', (tester) async {
+      routerPath = '/profile/wiki'; // the user is already on the page
+      final svc = service();
+      await show(tester, svc, stepCmd('b3', command: storyCommand));
+      await pumpSeconds(tester, 0.6);
+
+      final ev = (await eventDoc.get()).data();
+      expect(ev, isNotNull);
+      expect(ev!['event'], 'performed');
+      expect(pushed, isEmpty);
+      expect(GuidedTourController.instance.step!.performed, isTrue);
+    });
+
+    testWidgets('teardown: tour_state going inactive ends the session and '
+        'takes the step down (a lost tour_end can no longer strand it)',
+        (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('b4'));
+      expect(GuidedTourController.instance.sessionActive, isTrue);
+
+      // The tour ended server-side; its tour_end never reached this client.
+      await stateDoc.set(<String, dynamic>{
+        'active': false,
+        'index': -1,
+        'updated_at': Timestamp.now(),
+      });
+      await svc.checkTourState();
+      await settle(tester);
+
+      expect(GuidedTourController.instance.sessionActive, isFalse);
+      expect(GuidedTourController.instance.active, isFalse);
+    });
+
+    testWidgets('teardown: a tour_state stale past the backend TTL ends the '
+        'session on its own', (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('b5'));
+      expect(GuidedTourController.instance.sessionActive, isTrue);
+
+      await stateDoc.set(<String, dynamic>{
+        'active': true,
+        'index': 1,
+        'updated_at': Timestamp.fromDate(
+          DateTime.now().subtract(const Duration(minutes: 20)),
+        ),
+      });
+      await svc.checkTourState();
+      await settle(tester);
+
+      expect(GuidedTourController.instance.sessionActive, isFalse);
+      expect(GuidedTourController.instance.active, isFalse);
+    });
+
+    testWidgets('teardown: a live, fresh tour_state leaves the session '
+        'exactly as it is', (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('b6'));
+      expect(GuidedTourController.instance.sessionActive, isTrue);
+
+      await stateDoc.set(<String, dynamic>{
+        'active': true,
+        'index': 1,
+        'updated_at': Timestamp.now(),
+      });
+      await svc.checkTourState();
+      await settle(tester);
+
+      expect(GuidedTourController.instance.sessionActive, isTrue);
+      expect(GuidedTourController.instance.active, isTrue);
+    });
+
+    testWidgets('the final explainer card is removed when the tour ends '
+        'server-side (founder: "the card is not removed", 2026-11-09)',
+        (tester) async {
+      final svc = service();
+      await show(
+        tester,
+        svc,
+        stepCmd(
+          'b7',
+          explainer: true,
+          index: 6,
+          total: 7,
+          say: 'This shows your plan, your credits and what they have '
+              'been spent on.',
+        ),
+      );
+      // The last step's card is up over the You page.
+      expect(
+        find.text('This shows your plan, your credits and what they have '
+            'been spent on.'),
+        findsOneWidget,
+      );
+      expect(find.text('7 of 7'), findsOneWidget);
+
+      // The explainer completes server-side but the tour_end is lost.
+      await stateDoc.set(<String, dynamic>{
+        'active': false,
+        'index': -1,
+        'updated_at': Timestamp.now(),
+      });
+      await svc.checkTourState();
+      await settle(tester);
+
+      expect(GuidedTourController.instance.sessionActive, isFalse);
+      expect(
+        find.text('This shows your plan, your credits and what they have '
+            'been spent on.'),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsNothing);
+    });
+
+    testWidgets('an explainer ends when the user leaves its page — the card '
+        'does not follow them', (tester) async {
+      final svc = service();
+      AppContext.instance.current.value = const ScreenContext(
+        screen: 'profile',
+        route: '/profile/user/:uid',
+      );
+      await show(
+        tester,
+        svc,
+        stepCmd(
+          'b8',
+          explainer: true,
+          index: 0,
+          total: 6,
+          route: '/profile/user/:uid',
+          say: 'The heart is your like.',
+        ),
+      );
+      expect(GuidedTourController.instance.active, isTrue);
+
+      // The user leaves the explained page entirely, and lands somewhere
+      // else — two off-page publications in a row.
+      AppContext.instance.current.value =
+          const ScreenContext(screen: 'ayma', route: '/');
+      await tester.pump(const Duration(milliseconds: 100));
+      AppContext.instance.current.value =
+          const ScreenContext(screen: 'explore', route: '/');
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final ev = (await eventDoc.get()).data();
+      expect(ev, isNotNull);
+      expect(ev!['event'], 'stop');
+      expect(GuidedTourController.instance.sessionActive, isFalse);
+      expect(stopPings, [0]);
+    });
+  });
+
+  group('passive tour teardown (founder, 2026-11-09)', () {
+    tearDown(() {
+      TourController.instance.finish();
+    });
+
+    Widget host() {
+      return MaterialApp(
+        theme: AymaTheme.dark,
+        builder: (context, child) => TourHost(child: child!),
+        home: const Scaffold(body: SizedBox.expand()),
+      );
+    }
+
+    const steps = <TourFeature>[
+      TourFeature(featureId: 'pt_first', headline: 'First', subtitle: 'One.'),
+      TourFeature(
+          featureId: 'pt_last', headline: 'Your plan', subtitle: 'Two.'),
+    ];
+
+    testWidgets('finishing the last step removes the card and closes the '
+        'tour', (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host());
+      TourController.instance.start(steps, spotlight: false);
+      await settle(tester);
+      expect(find.text('First'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('coach-next')));
+      await settle(tester);
+      expect(find.text('Your plan'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('coach-next')));
+      await settle(tester);
+      expect(TourController.instance.active, isFalse);
+      expect(find.text('Your plan'), findsNothing);
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsNothing);
+    });
+
+    testWidgets('Skip tour on the last step removes the card and closes '
+        'the tour', (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host());
+      TourController.instance.start(steps, spotlight: false);
+      await settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey('coach-next')));
+      await settle(tester);
+      expect(find.text('Your plan'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('coach-skip')));
+      await settle(tester);
+      expect(TourController.instance.active, isFalse);
+      expect(find.text('Your plan'), findsNothing);
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsNothing);
+    });
+  });
+
 }
