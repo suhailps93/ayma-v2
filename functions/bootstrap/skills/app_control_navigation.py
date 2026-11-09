@@ -468,8 +468,8 @@ async def run_app_command(db, uid: str, dest_key: str) -> str:
     if isinstance(result, str) and result.startswith("navigated:"):
         return f"Opening {label} for you."
     return (
-        f"I tried to open {label}, but the app didn't switch screens just now — "
-        "you can also reach it yourself from the menu."
+        f"The app hasn't confirmed opening {label} yet — if it doesn't "
+        "switch shortly, you can also reach it from the menu."
     )
 
 
@@ -563,8 +563,8 @@ async def run_profile_command(db, uid: str, name: str) -> str:
     if isinstance(result, str) and result.startswith("I couldn't find"):
         return result
     return (
-        "I tried to open that profile, but the app didn't switch screens "
-        "just now — you can also reach it from Explore."
+        "The app hasn't confirmed opening that profile yet — if it doesn't "
+        "switch shortly, you can also reach it from Explore."
     )
 
 

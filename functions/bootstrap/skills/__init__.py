@@ -636,6 +636,10 @@ def make_livekit_tools(
     """
     from livekit.agents import function_tool
 
+    if dedupe is not None:
+        dedupe.db = db
+        dedupe.uid = uid
+
     tools = []
     for s in (
         _REGISTRY + _recall_skills() + _web_search_skills() + _STORY_MANAGE_REGISTRY

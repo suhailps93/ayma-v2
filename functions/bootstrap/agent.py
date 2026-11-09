@@ -1732,13 +1732,27 @@ _GOODBYE_RESULT = "call ended: the user said goodbye."
 # "I'm back" line (``_open_main_call``), spoken once it is actually live.
 
 #: The one line the agent itself speaks when an ack-gated command goes
-#: unconfirmed — short, truthful, and free of any success claim. Spoken via
+#: unconfirmed — short, truthful, and free of any success claim or false
+#: failure claim while the command may still execute client-side. Spoken via
 #: ``session.say`` (the literal words, not a model paraphrase) while the
 #: gate suppresses the model's own narration for the rest of the turn.
 _COMMAND_NOT_CONFIRMED_LINE = (
-    "Sorry, that didn't go through — the app didn't confirm it, "
-    "so nothing changed on your screen."
+    "The app hasn't confirmed that yet — if it doesn't open shortly, "
+    "you can reach it from the menu."
 )
+
+
+def _clean_destination_label(label: str) -> str:
+    """Short display label for spoken or chat notifications: strip parenthetical
+    explanations and clean up phrasing."""
+    if not label:
+        return ""
+    if "(" in label:
+        label = label.split("(", 1)[0].strip()
+    if label.lower().startswith("ayma's "):
+        label = label[7:].strip()
+    label = label.strip()
+    return label[:1].upper() + label[1:] if label else ""
 
 
 def _command_unconfirmed(name: str, result: object) -> bool:
@@ -1780,13 +1794,19 @@ class _CommandClaimGate:
     primitive :func:`relay_mute_control` uses) so the unconfirmed action is
     never narrated as done; the next finalized user turn re-arms it. The
     ``silenced`` latch is the same suppression for a queued reconnect (see
-    :meth:`note_silence`), except the gate speaks no line at all."""
+    :meth:`note_silence`), except the gate speaks no line at all.
+    When an ack-gated command is unconfirmed, speaks the truthful unconfirmed line
+    and arms a background watcher for a late ack; if the ack lands late with ok:True,
+    Ayma speaks a correction and clears the failure latch."""
 
-    def __init__(self, session: AgentSession) -> None:
+    def __init__(self, session: AgentSession, db=None, uid: str = "") -> None:
         self._session = session
+        self._db = db
+        self._uid = uid
         self.failed = False
         self.silenced = False
         self._announced = False
+        self._late_tasks: list[asyncio.Task] = []
 
     def note_turn(self) -> None:
         """A new finalized user turn started: re-arm."""
@@ -1794,15 +1814,9 @@ class _CommandClaimGate:
         self.silenced = False
         self._announced = False
 
-    def note_failure(self) -> None:
-        """An ack-gated command went unconfirmed this turn: latch, and
-        speak the honest line once — from the agent, not the model."""
-        self.failed = True
-        if self._announced:
-            return
-        self._announced = True
+    def _speak(self, line: str) -> None:
         try:
-            self._session.say(_COMMAND_NOT_CONFIRMED_LINE)
+            self._session.say(line)
         except Exception:  # noqa: BLE001 - the gate must never break the call
             # say() cannot run on a realtime session with no TTS whose
             # model does not support it (Gemini Live, supports_say False) -
@@ -1811,9 +1825,7 @@ class _CommandClaimGate:
             # the say() above (its handle is likewise unchecked here).
             try:
                 self._session.generate_reply(
-                    instructions=load_voice_verbatim_line(
-                        _COMMAND_NOT_CONFIRMED_LINE
-                    )
+                    instructions=load_voice_verbatim_line(line)
                 )
             except Exception as exc:  # noqa: BLE001 - never break the call
                 if _session_gone_error(exc):
@@ -1829,6 +1841,61 @@ class _CommandClaimGate:
                         "command claim gate could not speak its line"
                     )
 
+    def note_failure(self, name: str = "", label: str = "") -> None:
+        """An ack-gated command went unconfirmed this turn: latch, and
+        speak the honest line once — from the agent, not the model. Also
+        arms a background watch for a late ack."""
+        self.failed = True
+        if not self._announced:
+            self._announced = True
+            self._speak(_COMMAND_NOT_CONFIRMED_LINE)
+        self._arm_late_ack_watch(name, label)
+
+    def _arm_late_ack_watch(self, name: str = "", label: str = "") -> None:
+        import app_registry
+        from skills import app_control_queue
+
+        uid = self._uid
+        if not uid:
+            queued_uids = list(app_control_queue._LAST_QUEUED.keys())
+            if len(queued_uids) == 1:
+                uid = queued_uids[0]
+        if not uid:
+            return
+
+        last = app_control_queue.get_last_queued(uid)
+        if not last:
+            return
+        cmd_id = last["id"]
+        payload = last.get("payload") or {}
+
+        target_label = label
+        if not target_label:
+            screen = payload.get("screen")
+            if screen:
+                dest = app_registry.find_destination(screen)
+                target_label = dest["label"] if dest else screen
+            elif payload.get("action") == "open_profile" and payload.get("uid"):
+                target_label = "profile"
+        cleaned_label = _clean_destination_label(target_label)
+
+        def _on_late_ack(ack_data: dict) -> None:
+            self.failed = False
+            if cleaned_label:
+                correction = f"There it is — {cleaned_label} is open now."
+            else:
+                correction = "There it is — that's open now."
+            self._speak(correction)
+
+        try:
+            db = self._db or get_db()
+            task = asyncio.create_task(
+                app_control_queue.watch_late_ack(db, uid, cmd_id, _on_late_ack)
+            )
+            self._late_tasks.append(task)
+        except Exception:  # noqa: BLE001 - background watcher must never break gate
+            logger.exception("arming late ack watch failed")
+
     def note_silence(self) -> None:
         """A reconnect was queued this turn: latch the suppression WITHOUT
         speaking a line of the gate's own. The client is tearing this
@@ -1842,7 +1909,7 @@ class _CommandClaimGate:
         ack-gated result, latch the silence on a queued reconnect, ignore
         everything else."""
         if _command_unconfirmed(name, result):
-            self.note_failure()
+            self.note_failure(name=name)
         elif _reconnect_queued(name, result):
             self.note_silence()
 
@@ -1887,11 +1954,9 @@ def relay_voice_commands(
     read folded into the skill's verdict on every finalized turn — the
     same single model pass, so emotion costs no extra gateway call."""
     tools_by_name = _tools_by_name(tools)
-    # Ack-gated spoken claims: the gate observes every result the dedupe
-    # wrapper settles (this dispatcher's executions and the model's own
-    # calls alike) and owns the turn's narration when an ack-gated command
-    # goes unconfirmed.
-    gate = _CommandClaimGate(session)
+    resolved_uid = uid or getattr(dedupe, "uid", "")
+    resolved_db = getattr(dedupe, "db", None) or get_db()
+    gate = _CommandClaimGate(session, db=resolved_db, uid=resolved_uid)
     dedupe.outcome_observer = gate.observe
 
     # --- analysis mode + voice self-check (founder 2026-11-08) --------
@@ -2035,8 +2100,16 @@ def relay_voice_commands(
         if _command_unconfirmed(name, result):
             # Queued but never confirmed by the app: the gate owns this
             # turn's narration (the dedupe observer reports the same
-            # result; note_failure is idempotent).
-            gate.note_failure()
+            # result; note_failure is idempotent). Arms late-ack correction.
+            label = ""
+            if name == "open_screen" and "screen" in kwargs:
+                import app_registry
+
+                dest = app_registry.find_destination(kwargs["screen"])
+                label = dest["label"] if dest else kwargs["screen"]
+            elif name == "open_profile" and "name" in kwargs:
+                label = f"{kwargs['name']}'s profile"
+            gate.note_failure(name=name, label=label)
         if not fut.done():
             fut.set_result(result)
 
