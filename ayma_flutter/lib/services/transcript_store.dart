@@ -37,6 +37,7 @@ class TranscriptTurn {
     this.replySubject = '',
     this.replySnippet = '',
     this.replyKind = '',
+    this.replyImageUrl = '',
   });
 
   final TurnRole role;
@@ -129,6 +130,59 @@ class TranscriptTurn {
 
   /// Kind of reply: `'page'` for pinned page context, `'message'` for swipe-reply.
   final String replyKind;
+
+  /// When this turn is a swipe-reply to a message that carried a photo: the
+  /// replied-to photo's URL — a REFERENCE to the stored photo (the same
+  /// [imageUrl] the replied-to turn itself renders), never the photo bytes.
+  /// Empty for text-only replies and for non-reply turns. Renders as the
+  /// quoted card's thumbnail and rides the wire quote as a `[photo ref:…]`
+  /// marker (see [replyWirePrefix]) so a reply to a photo still names
+  /// exactly which photo it points at after a history reload.
+  final String replyImageUrl;
+}
+
+/// The quote text carried inside a `[Replying to …: "…"]` wire prefix for a
+/// swipe-reply: the replied-to message's own text, plus — when that message
+/// carried a photo — a trailing `[photo ref:<url>]` marker naming the photo
+/// by reference (its stored URL), never the photo itself. The chat screen's
+/// history loaders parse this exact shape back out into
+/// [TranscriptTurn.replyImageUrl].
+String replyQuoteWire(String snippet, String imageUrl) {
+  if (imageUrl.isEmpty) return snippet;
+  final marker = '[photo ref:$imageUrl]';
+  return snippet.isEmpty ? marker : '$snippet $marker';
+}
+
+/// The full wire prefix for a swipe-reply (`'…'` when there is nothing to
+/// quote). Text-only replies keep the historical shape byte-for-byte:
+/// `[Replying to <subject>: "<text>"]`.
+String replyWirePrefix({
+  required String subject,
+  required String snippet,
+  required String imageUrl,
+}) {
+  if (subject.isEmpty) return '';
+  final quote = replyQuoteWire(snippet, imageUrl);
+  if (quote.isEmpty) return '';
+  return '[Replying to $subject: "$quote"]';
+}
+
+/// The Firebase Storage object path behind a photo download URL
+/// (the firebasestorage.googleapis.com form, whose object path is
+/// the url-encoded segment after `/o/`) — the storage REFERENCE for
+/// a photo a turn renders. A
+/// swipe-reply sends this path (never the photo bytes) so the server
+/// can pull the exact replied-to photo itself. `''` when [url] is not
+/// a Storage download URL — the reply then only names the photo in its
+/// quote, with no resolvable reference.
+String storagePathFromImageUrl(String url) {
+  final match = RegExp(r'/b/[^/]+/o/([^?]+)').firstMatch(url);
+  if (match == null) return '';
+  try {
+    return Uri.decodeComponent(match.group(1)!);
+  } on ArgumentError {
+    return '';
+  }
 }
 
 /// The single rolling window of conversation turns, voice and text interleaved
@@ -166,10 +220,15 @@ class TranscriptStore extends ChangeNotifier {
               'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
               'text': () {
                 var s = t.text;
-                if (t.replyKind == 'message' &&
-                    t.replySubject.isNotEmpty &&
-                    t.replySnippet.isNotEmpty) {
-                  s = '[Replying to ${t.replySubject}: "${t.replySnippet}"]\n$s';
+                if (t.replyKind == 'message') {
+                  final prefix = replyWirePrefix(
+                    subject: t.replySubject,
+                    snippet: t.replySnippet,
+                    imageUrl: t.replyImageUrl,
+                  );
+                  if (prefix.isNotEmpty) {
+                    s = '$prefix\n$s';
+                  }
                 }
                 final hasImage = t.imageUrl != null || t.imageFile != null;
                 if (hasImage) {
@@ -204,6 +263,7 @@ class TranscriptStore extends ChangeNotifier {
     String replySubject = '',
     String replySnippet = '',
     String replyKind = '',
+    String replyImageUrl = '',
   }) {
     final trimmed = text.trim();
     final turn = TranscriptTurn(
@@ -221,6 +281,7 @@ class TranscriptStore extends ChangeNotifier {
       replySubject: replySubject,
       replySnippet: replySnippet,
       replyKind: replyKind,
+      replyImageUrl: replyImageUrl,
     );
     if (trimmed.isEmpty &&
         imageUrl == null &&
@@ -268,6 +329,7 @@ class TranscriptStore extends ChangeNotifier {
       replySubject: turn.replySubject,
       replySnippet: turn.replySnippet,
       replyKind: turn.replyKind,
+      replyImageUrl: turn.replyImageUrl,
     );
     notifyListeners();
   }
@@ -316,6 +378,7 @@ class TranscriptStore extends ChangeNotifier {
       replySubject: turn.replySubject,
       replySnippet: turn.replySnippet,
       replyKind: turn.replyKind,
+      replyImageUrl: turn.replyImageUrl,
     );
     _turns[i] = updated;
     notifyListeners();
@@ -355,6 +418,7 @@ class TranscriptStore extends ChangeNotifier {
       replySubject: turn.replySubject,
       replySnippet: turn.replySnippet,
       replyKind: turn.replyKind,
+      replyImageUrl: turn.replyImageUrl,
     );
     notifyListeners();
   }
