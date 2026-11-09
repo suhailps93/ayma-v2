@@ -6,6 +6,7 @@ import '../services/share_kit.dart';
 import '../theme.dart';
 import 'ayma_photo.dart';
 import 'ayma_toast.dart';
+import 'ayma_wing_loader.dart';
 
 /// The ONE share sheet every page uses (founder, 2026-11-08): a header
 /// naming the target (thumbnail + real subject + type label) over the
@@ -132,7 +133,7 @@ class _AymaShareSheetState extends State<AymaShareSheet> {
             ),
             ListTile(
               key: const ValueKey('shareSendToAyma'),
-              leading: const Icon(Icons.auto_awesome_outlined),
+              leading: const AymaWingsIcon(),
               title: const Text('Send to Ayma'),
               subtitle: const Text('Talk about it with Ayma'),
               onTap: _busy ? null : _sendToAyma,
