@@ -1739,18 +1739,38 @@ class VoiceSessionController extends ChangeNotifier {
     }
   }
 
-  /// The guided tour's spotlighted control was tapped (§11.2b): tell the live
+  /// The user responded to a guided-tour step (§11.2b): tell the live
   /// agent so it drives Ayma to advance (a `generate_reply` → `advance_guided_tour`
   /// consuming the already-written `tour_event`), instead of relying on a
   /// blocking tool call to be mid-wait at tap time. Returns false (no-op) when
   /// no call is live.
-  Future<bool> notifyTourTapped({required int index}) async {
+  ///
+  /// One physical response can be reported twice (the tap, and the state
+  /// the tap produced): an identical [index]/[attempt] notify inside
+  /// [_tourNotifyCoalesce] is dropped here too, so a duplicate can never
+  /// make the agent start a second narration turn over the first
+  /// (founder, 2026-11-09). The agent gates its side as well.
+  static const _tourNotifyCoalesce = Duration(seconds: 5);
+  String? _lastTourNotifyKey;
+  DateTime? _lastTourNotifyAt;
+
+  Future<bool> notifyTourTapped({required int index, int? attempt}) async {
     final transport = _transport;
     if (_phase != VoiceSessionPhase.live || transport == null) {
       return false;
     }
+    final key = '$index|${attempt ?? ''}';
+    final now = DateTime.now();
+    final lastAt = _lastTourNotifyAt;
+    if (_lastTourNotifyKey == key &&
+        lastAt != null &&
+        now.difference(lastAt) < _tourNotifyCoalesce) {
+      return false;
+    }
+    _lastTourNotifyKey = key;
+    _lastTourNotifyAt = now;
     try {
-      await transport.sendTourTapped(index: index);
+      await transport.sendTourTapped(index: index, attempt: attempt);
       return true;
     } catch (e) {
       debugPrint('[voice] tour-tapped send failed: $e');

@@ -541,10 +541,21 @@ def _say_directive(index: int, total: int, step: dict) -> str:
             "page_explainer_step",
             NUMBER=str(index + 1), TOTAL=str(total), SAY=str(step["say"]),
         )
+    # A step with a command is performed by Ayma herself the moment it is
+    # shown (the client runs it on presentation, never on a user tap —
+    # founder, 2026-11-09), so the narration must not ask for a tap she
+    # doesn't need: advance_guided_tour reports the performed outcome.
+    performing = isinstance(step.get("command"), dict)
     return (
         f"Guided tour — step {index + 1} of {total} is now spotlighted (no "
         "on-screen card: YOUR line is the only guidance the user gets). "
-        f"Say ONLY this to the user, warmly and in your own voice, about THIS "
+        + (
+            "The app is performing this step's action itself right now — "
+            "the user does not need to tap anything. "
+            if performing
+            else ""
+        )
+        + f"Say ONLY this to the user, warmly and in your own voice, about THIS "
         f"highlighted control (don't mention any other feature yet): "
         f"\"{step['say']}\" Then call advance_guided_tour — it waits for them "
         "and tells you what happened. "
