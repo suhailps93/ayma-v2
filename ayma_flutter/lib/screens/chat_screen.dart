@@ -520,6 +520,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// [_send]'s `askAyma?.matchReportId ?? _matchReportId`.
   String _matchReportId = '';
 
+  /// The shared-report reference set when the user posts a staged
+  /// Send-to-Ayma card for a REPORT kind (`deep_dive` / `appearance`):
+  /// kind + report id + subject (+ the opened run's version stamp for
+  /// Appearance). Every turn after it carries the reference — never the
+  /// report's contents — and Ayma pulls the exact report herself via her
+  /// `open_shared_report` tool (founder 2026-11-09: reference, not
+  /// content). Posting a card of any other kind clears it: the reference
+  /// always names the most recently shared report. Profile / match /
+  /// story shares never set it — their context already resolves
+  /// server-side (viewing briefing / match id / standing story context).
+  String _sharedKind = '';
+  String _sharedRefId = '';
+  String _sharedSubjectUid = '';
+  String _sharedSubjectName = '';
+  String _sharedRefVersion = '';
+
   String _currentUid() {
     try {
       return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -745,6 +761,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         name: k.label.isNotEmpty ? k.label : 'them',
         photo: k.photoUrl,
         refId: k.refId,
+        refVersion: k.refVersion,
         editSelf: isSelf,
       );
     });
@@ -2171,6 +2188,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (ps.kind == 'match' && ps.refId.isNotEmpty) {
         _matchReportId = ps.refId;
       }
+      // A posted report card leaves its REFERENCE on the session (the
+      // recursive send below — and every later turn — carries it; Ayma
+      // pulls the report herself). Any other card kind clears a previous
+      // reference: it always names the most recently shared report.
+      if (ps.kind == 'deep_dive' || ps.kind == 'appearance') {
+        _sharedKind = ps.kind;
+        _sharedRefId = ps.refId;
+        _sharedSubjectUid = ps.uid;
+        _sharedSubjectName = ps.name;
+        _sharedRefVersion = ps.refVersion;
+      } else {
+        _sharedKind = '';
+        _sharedRefId = '';
+        _sharedSubjectUid = '';
+        _sharedSubjectName = '';
+        _sharedRefVersion = '';
+      }
       _store.addSharedTurn(
         kind: ps.kind,
         uid: ps.uid,
@@ -2486,6 +2520,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           deepDiveTarget: deepDiveTarget,
           appearanceFindingId: appearanceFindingId,
           matchReportId: matchReportId,
+          sharedKind: _sharedKind,
+          sharedRefId: _sharedRefId,
+          sharedSubjectUid: _sharedSubjectUid,
+          sharedSubjectName: _sharedSubjectName,
+          sharedRefVersion: _sharedRefVersion,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -2522,6 +2561,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           deepDiveTarget: deepDiveTarget,
           appearanceFindingId: appearanceFindingId,
           matchReportId: matchReportId,
+          sharedKind: _sharedKind,
+          sharedRefId: _sharedRefId,
+          sharedSubjectUid: _sharedSubjectUid,
+          sharedSubjectName: _sharedSubjectName,
+          sharedRefVersion: _sharedRefVersion,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -4441,6 +4485,7 @@ class _SharedDraft {
     required this.name,
     required this.photo,
     required this.refId,
+    this.refVersion = '',
     this.editSelf = false,
   });
 
@@ -4449,6 +4494,11 @@ class _SharedDraft {
   final String name;
   final String photo;
   final String refId;
+
+  /// The version stamp of the exact record staged (Appearance: the
+  /// report run's `created_at`) — part of the share reference, so Ayma
+  /// pulls the run the user opened, not a later re-run.
+  final String refVersion;
   final bool editSelf;
 }
 

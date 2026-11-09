@@ -23,6 +23,7 @@ class ChatKickoff {
     this.shareKind = '',
     this.photoUrl = '',
     this.refId = '',
+    this.refVersion = '',
     this.editSelf = false,
     this.wantFace = true,
     this.wantBody = true,
@@ -125,6 +126,7 @@ class ChatKickoff {
     String shareKind = 'deep_dive',
     String photoUrl = '',
     String refId = '',
+    String refVersion = '',
     bool editSelf = false,
   }) =>
       ChatKickoff._('draft_about',
@@ -133,6 +135,7 @@ class ChatKickoff {
           shareKind: shareKind,
           photoUrl: photoUrl,
           refId: refId,
+          refVersion: refVersion,
           editSelf: editSelf);
 
   /// Open the Ayma chat with [text] pre-filled (and focused) in the composer
@@ -190,6 +193,13 @@ class ChatKickoff {
   /// [talkAbout]: photo for the card, and the DM thread / match id it opens.
   final String photoUrl;
   final String refId;
+
+  /// [draftAbout] for a report kind whose record is replaced wholesale by
+  /// a re-run (Appearance): the version stamp of the exact record the user
+  /// opened (the report's `created_at`), carried with the reference so the
+  /// backend can tell the shared run apart from a later re-run instead of
+  /// silently answering about the new one. Empty for every other kind.
+  final String refVersion;
 
   /// [talkAbout] with the user's OWN uid: open the chat in profile-edit mode
   /// (unlocks Ayma's public-profile section-edit tools).

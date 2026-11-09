@@ -341,6 +341,7 @@ class ShareTargets {
     required String uid,
     required String title,
     String photoUrl = '',
+    String reportVersion = '',
     Future<void> Function(BuildContext context)? externalOverride,
   }) =>
       ShareTarget(
@@ -358,6 +359,10 @@ class ShareTargets {
           shareKind: 'appearance',
           photoUrl: photoUrl,
           refId: uid,
+          // The exact run the user opened (the report's created_at): the
+          // record is replaced wholesale by a re-run, so the reference
+          // carries the stamp and Ayma's pull can refuse a silent swap.
+          refVersion: reportVersion,
         ),
       );
 }
