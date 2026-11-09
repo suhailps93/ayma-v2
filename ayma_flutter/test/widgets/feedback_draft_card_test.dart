@@ -167,6 +167,29 @@ void main() {
 
     expect(find.byKey(const ValueKey('feedback-sent')), findsOneWidget);
     expect(find.byKey(const ValueKey('feedback-send')), findsNothing);
+
+    // The restored thanks is still transient: it expires on its own
+    // instead of sticking in the thread for the rest of the session.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.byKey(const ValueKey('feedback-sent')), findsNothing);
+  });
+
+  testWidgets('a card restored as sent-shown renders nothing',
+      (tester) async {
+    await tester.pumpWidget(_wrap(FeedbackDraftCard(
+      kind: 'bug',
+      title: 'Orb flickers',
+      body: 'it flickers',
+      resolvedOutcome: 'sent-shown',
+      api: _api([]),
+      chatService: _FakeChatService(),
+      picker: _FakePicker(),
+      appVersionOverride: '1.30.0',
+      platformOverride: 'android',
+    )));
+
+    expect(find.byKey(const ValueKey('feedback-send')), findsNothing);
+    expect(find.byKey(const ValueKey('feedback-sent')), findsNothing);
   });
 
   testWidgets('a card restored as dismissed renders nothing',
@@ -191,6 +214,7 @@ void main() {
       (tester) async {
     final captured = <Map<String, dynamic>>[];
     var sent = false;
+    var expired = false;
     final chat = _FakeChatService();
     await tester.pumpWidget(_wrap(FeedbackDraftCard(
       kind: 'bug',
@@ -203,6 +227,7 @@ void main() {
       appVersionOverride: '1.30.0',
       platformOverride: 'android',
       onSent: () => sent = true,
+      onSentExpired: () => expired = true,
     )));
 
     // Edit the body.
@@ -233,5 +258,11 @@ void main() {
     expect(body['screenshot_paths'], ['uploads/me/feedback_1.png']);
     expect(sent, isTrue);
     expect(find.byKey(const ValueKey('feedback-sent')), findsOneWidget);
+
+    // The thanks confirmation lingers briefly, then the card removes
+    // itself and reports the expiry so the outcome turns terminal.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.byKey(const ValueKey('feedback-sent')), findsNothing);
+    expect(expired, isTrue);
   });
 }

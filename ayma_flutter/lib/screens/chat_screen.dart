@@ -4155,6 +4155,8 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                       widget.onFeedbackOutcome?.call('sent'),
                   onDismiss: () =>
                       widget.onFeedbackOutcome?.call('dismissed'),
+                  onSentExpired: () =>
+                      widget.onFeedbackOutcome?.call('sent-shown'),
                   api: widget.api,
                 ),
               ),

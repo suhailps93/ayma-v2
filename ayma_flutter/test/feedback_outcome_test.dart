@@ -41,6 +41,24 @@ void main() {
     expect(updated.feedbackKind, 'feature');
   });
 
+  test('the outcome settles from sent to sent-shown', () {
+    final store = TranscriptStore();
+    store.addPending('drafting');
+    store.resolvePending(
+      'Here is the card',
+      feedbackKind: 'bug',
+      feedbackTitle: 'Orb flickers',
+      feedbackBody: 'it flickers',
+    );
+    store.markFeedbackOutcome(store.turns.single, 'sent');
+    store.markFeedbackOutcome(store.turns.single, 'sent-shown');
+
+    final updated = store.turns.single;
+    expect(updated.feedbackOutcome, 'sent-shown');
+    expect(updated.feedbackKind, 'bug');
+    expect(updated.feedbackTitle, 'Orb flickers');
+  });
+
   test('markFeedbackOutcome is a no-op for a turn no longer in the window', () {
     final store = TranscriptStore();
     const orphan = TranscriptTurn(
