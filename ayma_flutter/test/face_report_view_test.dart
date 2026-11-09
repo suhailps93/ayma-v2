@@ -87,4 +87,19 @@ void main() {
     expect(find.byType(Image), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('AddToStoryButton touch target is at least 48pt high',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: SingleChildScrollView(child: FaceReportView(report: _sample())),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final btnFinder = find.byType(AddToStoryButton);
+    expect(btnFinder, findsOneWidget);
+    expect(tester.getSize(btnFinder).height, greaterThanOrEqualTo(48.0));
+  });
 }

@@ -664,6 +664,28 @@ void main() {
       expect(find.byKey(const ValueKey('reportCardRemove0')), findsOneWidget);
       expect(find.byKey(const ValueKey('reportCardRemove3')), findsOneWidget);
     });
+
+    testWidgets('remove affordance hit area is at least 48x48', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: AppearanceReportCard(
+                data: _data(),
+                name: 'Suhail',
+                accent: AymaColors.accent,
+                photos: _photos(4),
+                onRemovePhoto: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      final size =
+          tester.getSize(find.byKey(const ValueKey('reportCardRemove0')));
+      expect(size.width, greaterThanOrEqualTo(48.0));
+      expect(size.height, greaterThanOrEqualTo(48.0));
+    });
   });
 
   group('remove from card (screen)', () {

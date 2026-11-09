@@ -44,15 +44,15 @@ class ReportProgressBanner extends StatelessWidget {
     return Container(
       width: double.infinity,
       color: ac.accentFaint,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       child: Row(
         children: [
           const AymaWingLoader(size: 14, showLabel: false),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               message,
-              style: AymaType.sans(size: 12.5, color: ac.accent),
+              style: AymaType.sans(size: 12.5, color: ac.fgDim),
             ),
           ),
         ],
@@ -79,18 +79,24 @@ class ReportFailedBanner extends StatelessWidget {
     return Container(
       width: double.infinity,
       color: ac.accentFaint,
-      padding: const EdgeInsets.only(left: 16, right: 4),
+      padding: const EdgeInsets.only(left: 20, right: 12),
       child: Row(
         children: [
           Icon(Icons.error_outline, size: 16, color: ac.error),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               message,
-              style: AymaType.sans(size: 12.5, color: ac.error),
+              style: AymaType.sans(size: 12.5, color: ac.fgDim),
             ),
           ),
-          TextButton(onPressed: onRetry, child: const Text('Try again')),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+            ),
+            child: const Text('Try again'),
+          ),
         ],
       ),
     );

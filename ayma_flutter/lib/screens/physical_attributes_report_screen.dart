@@ -217,12 +217,12 @@ class _Row extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _ConfidenceDot(confidence: a.isStated ? 'high' : a.confidence),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           SizedBox(
             width: 128,
             child: Text(_label(a.field),
@@ -281,7 +281,13 @@ class _Message extends StatelessWidget {
               textAlign: TextAlign.center,
               style: AymaType.sans(size: 14, color: ac.fgMute)),
           if (onRetry != null)
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+              ),
+              child: const Text('Retry'),
+            ),
         ],
       ),
     );
