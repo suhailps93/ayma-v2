@@ -56,6 +56,7 @@ class _MessagesUnreadIconState extends State<MessagesUnreadIcon> {
       isLabelVisible: _count > 0,
       label: Text(_count > 99 ? '99+' : '$_count'),
       backgroundColor: context.ac.accent,
+      textColor: context.ac.onAccent,
       child: Icon(widget.icon, size: 22, color: widget.color),
     );
   }

@@ -6,7 +6,6 @@ import '../services/api_client.dart';
 import '../services/inbox_actions.dart';
 import '../services/notification_service.dart';
 import '../theme.dart';
-import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -162,7 +161,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
               return CenteredScroll(
                 padding: const EdgeInsets.all(24),
                 child: Text('Could not load notifications (${snap.error}).',
-                    style: AymaType.sans(size: 14, color: AymaColors.error)),
+                    style: AymaType.sans(size: 14, color: ac.errorText)),
               );
             }
             if (!snap.hasData) {
@@ -460,70 +459,57 @@ class _EntryRow extends StatelessWidget {
             color: unread ? ac.fg : ac.fgDim,
             weight: unread ? FontWeight.w600 : FontWeight.w400);
 
-    return Container(
-      // Unread rows carry a soft accent wash + a left bar so read vs unread
-      // reads at a glance.
-      decoration: BoxDecoration(
-        color: unread ? ac.accent.withValues(alpha: 0.06) : null,
-        border: Border(
-          left: BorderSide(
-            color: unread ? ac.accent : Colors.transparent,
-            width: 3,
-          ),
-        ),
-      ),
-      child: Material(
-        type: MaterialType.transparency,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(17, 16, 20, 16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _Leading(notif: n, isCheckin: isCheckin),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Text(title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: titleStyle),
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _Leading(notif: n),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: titleStyle),
+                        ),
+                        if (entry.when != null) ...[
+                          const SizedBox(width: 8),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(_clockLabel(entry.when!),
+                                style: AymaType.mono(
+                                    size: 11, color: ac.fgMute)),
                           ),
-                          if (entry.when != null) ...[
-                            const SizedBox(width: 8),
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Text(_clockLabel(entry.when!),
-                                  style: AymaType.mono(
-                                      size: 11, color: ac.fgMute)),
-                            ),
-                          ],
-                          if (count > 0) ...[
-                            const SizedBox(width: 8),
-                            _UnreadBadge(count: count, color: ac.accent),
-                          ],
                         ],
-                      ),
-                      if (subtitle != null && subtitle.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(subtitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: AymaType.sans(
-                                size: 13, soft: true, color: ac.fgMute)),
+                        if (count > 0) ...[
+                          const SizedBox(width: 8),
+                          _UnreadBadge(count: count, color: ac.accent),
+                        ],
                       ],
+                    ),
+                    if (subtitle != null && subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AymaType.sans(
+                              size: 13, soft: true, color: ac.fgMute)),
                     ],
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -544,8 +530,8 @@ class _UnreadBadge extends StatelessWidget {
         color: color,
         borderRadius: BorderRadius.circular(999),
       ),
-      child:
-          Text('$count', style: AymaType.mono(size: 10, color: Colors.white)),
+      child: Text('$count',
+          style: AymaType.mono(size: 10, color: context.ac.onAccent)),
     );
   }
 }
@@ -566,25 +552,20 @@ class _UnreadBadge extends StatelessWidget {
 /// - any other `skill_result` (a web search / deep dive finishing) —
 ///   [AymaSearchGlyph], the rail's web-search glyph.
 /// - `dm_message` — [AymaChatGlyph], the rail's chat glyph.
-/// - `ayma_checkin` — no dark disc at all: the small gradient [AymaOrb]
-///   itself stands in for the icon, same as the floating "Ask Ayma"
-///   launcher, since this is Ayma speaking rather than an activity to react
-///   to (its title also renders in the italic serif treatment for the same
-///   reason — see `_EntryRow.titleStyle`).
-/// - anything else — a plain Material icon; none of the four custom glyphs
-///   is a good fit outside their own domains.
+/// - `ayma_checkin` and anything else with no dedicated glyph — the flat
+///   [AymaWingsIcon] wings mark in the same `bgCard` disc, so every row
+///   speaks one flat icon language (founder order, 2026-11-09). Ayma is the
+///   first party behind these rows, so her wings read as "from Ayma" in
+///   place of the glossy orb; the check-in title keeps its own `AymaType.sans`
+///   size-15 treatment — see `_EntryRow.titleStyle`.
 class _Leading extends StatelessWidget {
-  const _Leading({required this.notif, required this.isCheckin});
+  const _Leading({required this.notif});
 
   final AppNotification notif;
-  final bool isCheckin;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    if (isCheckin) {
-      return const AymaOrb(size: 40, showGlow: false);
-    }
     return Container(
       width: 40,
       height: 40,
@@ -609,7 +590,7 @@ class _Leading extends StatelessWidget {
         }
         return AymaSearchGlyph(accent: accent, filled: true, size: 18);
       default:
-        return Icon(Icons.notifications_none, size: 18, color: accent);
+        return AymaWingsIcon(size: 18, color: accent);
     }
   }
 }

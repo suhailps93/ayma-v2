@@ -73,6 +73,7 @@ class _NotificationBellButtonState extends State<NotificationBellButton> {
       isLabelVisible: _count > 0,
       label: Text(_count > 99 ? '99+' : '$_count'),
       backgroundColor: ac.accent,
+      textColor: ac.onAccent,
       child: Icon(
         Icons.notifications_none_rounded,
         size: widget.compact ? 22 : null,
