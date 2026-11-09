@@ -2258,7 +2258,7 @@ The visual identity: an Ember terracotta accent, a serif/mono/sans type trio, a 
 | `lineSoft` | `#2A261F` | `#DDD9D2` |
 | `fg` (text primary) | `#EDE9DE` | `#1A1714` |
 | `fgDim` (text secondary) | `#BAB3A3` | `#4A443B` |
-| `fgMute` (text tertiary) | `#7E7669` | `#7A7468` |
+| `fgMute` (text tertiary) | `#8B8274` | `#706B60` |
 | `accent` (Ember) | `#DE8E69` | `#DE8E69` |
 | `accentSoft` / `accentFaint` | `#DE8E69` @ ~18% / ~8% alpha | same |
 | `secondary` (deepened ember) | `#7A3D20` | same |
