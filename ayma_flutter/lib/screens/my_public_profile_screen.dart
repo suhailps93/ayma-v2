@@ -241,9 +241,10 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
         leading: const AymaBackButton(),
         title: const Text('My public profile'),
         actions: [
-          // A pencil icon, consistent with the adjacent camera icon (§ founder
-          // 2026-10-28) — it can't crowd the app bar at large text the way the
-          // old "Edit manually" label could.
+          // A pencil icon, consistent with the adjacent share icon (§ founder
+          // 2026-10-28; the add-photo camera it sat beside was replaced by
+          // share 2026-11-08) — it can't crowd the app bar at large text the
+          // way the old "Edit manually" label could.
           IconButton(
             tooltip: 'Edit manually',
             icon: const Icon(Icons.edit_outlined),
@@ -265,13 +266,19 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
         header: [
           if (_pendingUpdates > 0)
             MaterialBanner(
+              // Explicit start 20 to share the profile body's left edge (the
+              // M3 single-row default is start 16); keep the M3 top 2.
+              padding: const EdgeInsetsDirectional.only(start: 20, top: 2),
               content: Text(_pendingUpdates == 1
                   ? 'Ayma suggests an update to your public profile.'
                   : 'Ayma suggests $_pendingUpdates updates to your '
                       'public profile.'),
               actions: [
                 TextButton(
-                    onPressed: _reviewUpdates, child: const Text('Review')),
+                    style:
+                        TextButton.styleFrom(minimumSize: const Size(0, 44)),
+                    onPressed: _reviewUpdates,
+                    child: const Text('Review')),
               ],
             ),
         ],

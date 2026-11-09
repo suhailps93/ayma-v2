@@ -80,6 +80,7 @@ class PartnerPreferencesFields extends StatelessWidget {
         label('How far would you go for a match?'),
         Wrap(
           spacing: 8,
+          runSpacing: 8,
           children: [
             for (final e in distancePrefOptions.entries)
               ChoiceChip(
