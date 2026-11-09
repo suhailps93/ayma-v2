@@ -15,7 +15,7 @@
 # is non-zero when any gap is found, so it can gate a deploy in CI or a script.
 #
 # Dimensions compared (same ones the staging audit covered):
-#   1. Cloud Run env vars + mounted secrets (api + agent services)
+#   1. Cloud Run env vars + mounted secrets (api service)
 #   2. Enabled GCP services/APIs
 #   3. Firebase Auth providers (email/phone/anonymous + federated IdPs)
 #   4. Firestore composite indexes
@@ -26,8 +26,8 @@ set -uo pipefail
 PROD_PROJECT=ayma-ai
 STAGING_PROJECT=ayma-staging
 REGION=us-central1
-PROD_API=ayma-api;         PROD_AGENT=ayma-agent
-STAGING_API=ayma-api-staging; STAGING_AGENT=ayma-agent-staging
+PROD_API=ayma-api
+STAGING_API=ayma-api-staging
 
 FROM=staging; TO=prod
 while [[ $# -gt 0 ]]; do
@@ -39,15 +39,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-resolve() { # env -> "project api_service agent_service"
+resolve() { # env -> "project api_service"
   case "$1" in
-    prod)    echo "$PROD_PROJECT $PROD_API $PROD_AGENT" ;;
-    staging) echo "$STAGING_PROJECT $STAGING_API $STAGING_AGENT" ;;
+    prod)    echo "$PROD_PROJECT $PROD_API" ;;
+    staging) echo "$STAGING_PROJECT $STAGING_API" ;;
     *) echo "bad env: $1 (use prod|staging)" >&2; exit 2 ;;
   esac
 }
-read -r FROM_PROJ FROM_API FROM_AGENT < <(resolve "$FROM")
-read -r TO_PROJ   TO_API   TO_AGENT   < <(resolve "$TO")
+read -r FROM_PROJ FROM_API < <(resolve "$FROM")
+read -r TO_PROJ   TO_API   < <(resolve "$TO")
 # Cloud Run services for both envs physically live in the ayma-ai GCP project.
 RUN_PROJECT=ayma-ai
 
@@ -75,7 +75,7 @@ compare_service() {
   from_keys="$(svc_keys "$from_svc")"; to_keys="$(svc_keys "$to_svc")"
   # Names present in FROM but missing in TO. Known intentional staging-only
   # keys are never promoted TO prod, so skip them when TO=prod.
-  local skip="ENV:LIVEKIT_ROOM_PREFIX ENV:SENTRY_ENVIRONMENT ENV:IMAGE_VARIANTS_ENABLED ENV:IMAGE_VARIANTS_PUSH_SA ENV:OPEN_WEIGHTS_BASE_URL ENV:GEMINI_LIVE_USE_DEV_API ENV:GOOGLE_CLOUD_PROJECT ENV:STORAGE_BUCKET ENV:AYMA_AGENT_URL ENV:GOOGLE_IMPORT_REDIRECT_URI"
+  local skip="ENV:LIVEKIT_ROOM_PREFIX ENV:SENTRY_ENVIRONMENT ENV:IMAGE_VARIANTS_ENABLED ENV:IMAGE_VARIANTS_PUSH_SA ENV:OPEN_WEIGHTS_BASE_URL ENV:GEMINI_LIVE_USE_DEV_API ENV:GOOGLE_CLOUD_PROJECT ENV:STORAGE_BUCKET ENV:AGENT_NAME_LIVEKIT ENV:GOOGLE_IMPORT_REDIRECT_URI"
   local k
   while IFS= read -r k; do
     [[ -z "$k" ]] && continue
@@ -90,7 +90,6 @@ compare_service() {
 }
 
 compare_service "api"   "$FROM_API"   "$TO_API"
-compare_service "agent" "$FROM_AGENT" "$TO_AGENT"
 
 echo ""
 echo "-- Enabled GCP services (app-capability only) --"
@@ -126,12 +125,17 @@ done <<<"$FROM_AUTH"
 echo ""
 echo "-- Firestore composite indexes --"
 idx_sig() {
-  firebase firestore:indexes --project "$1" 2>/dev/null | python3 -c "
+  ( gcloud firestore indexes composite list --project "$1" --format=json 2>/dev/null || firebase firestore:indexes --project "$1" 2>/dev/null ) | python3 -c "
 import sys,json
-d=json.load(sys.stdin)
-for i in d.get('indexes',[]):
-    fs=tuple((f.get('fieldPath'),f.get('order'),json.dumps(f.get('vectorConfig')) if f.get('vectorConfig') else None) for f in i.get('fields',[]) if f.get('fieldPath')!='__name__')
-    print(i.get('collectionGroup'),i.get('queryScope','COLLECTION'),fs)
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    d=[]
+items = d.get('indexes',[]) if isinstance(d,dict) else d
+for i in items:
+    cg = i.get('collectionGroup') or (i.get('name','').split('/collectionGroups/')[1].split('/')[0] if '/collectionGroups/' in i.get('name','') else '')
+    fs = tuple((f.get('fieldPath'),f.get('order'),json.dumps(f.get('vectorConfig')) if f.get('vectorConfig') else None) for f in i.get('fields',[]) if f.get('fieldPath')!='__name__')
+    print(cg,i.get('queryScope','COLLECTION'),fs)
 "
 }
 FROM_IDX="$(idx_sig "$FROM_PROJ")"; TO_IDX="$(idx_sig "$TO_PROJ")"
