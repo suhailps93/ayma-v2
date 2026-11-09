@@ -435,6 +435,25 @@ asgi_app = Starlette(routes=[
 ])
 
 
+class _BareMountASGI:
+    """Serve the bare ``/mcp`` URL (the one the app shows) as the mount root.
+    A Mount only matches ``/mcp/...``, so without this route the router answers
+    ``/mcp`` with a trailing-slash 307 whose Location is ``http://`` behind Cloud
+    Run. Same scope a Mount would build, so the flag gate and auth still apply."""
+
+    async def __call__(self, scope, receive, send):
+        child = {
+            **scope,
+            "path": f"{MOUNT_PATH}/",
+            "raw_path": f"{MOUNT_PATH}/".encode(),
+            "root_path": scope.get("root_path", "") + MOUNT_PATH,
+        }
+        await asgi_app(child, receive, send)
+
+
+bare_mount_app = _BareMountASGI()
+
+
 @contextlib.asynccontextmanager
 async def lifespan():
     """Run the SDK's streamable-HTTP session manager for the app's lifetime.
